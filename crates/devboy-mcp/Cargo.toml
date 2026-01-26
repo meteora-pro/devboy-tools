@@ -1,0 +1,24 @@
+[package]
+name = "devboy-mcp"
+description = "MCP (Model Context Protocol) server for devboy-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+devboy-core = { path = "../devboy-core" }
+devboy-gitlab = { path = "../devboy-gitlab" }
+devboy-github = { path = "../devboy-github" }
+devboy-storage = { path = "../devboy-storage" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+# MCP protocol (to be added when implementing)
+# rmcp = "0.1"
+
+[dev-dependencies]
+mockall.workspace = true
