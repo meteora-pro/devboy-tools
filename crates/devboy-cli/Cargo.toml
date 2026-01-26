@@ -1,0 +1,24 @@
+[package]
+name = "devboy-cli"
+description = "Command-line interface for devboy-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "devboy"
+path = "src/main.rs"
+
+[dependencies]
+devboy-core = { path = "../devboy-core" }
+devboy-mcp = { path = "../devboy-mcp" }
+devboy-storage = { path = "../devboy-storage" }
+devboy-gitlab = { path = "../devboy-gitlab" }
+devboy-github = { path = "../devboy-github" }
+tokio.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
