@@ -1,0 +1,88 @@
+name: Update Test Fixtures
+
+on:
+  schedule:
+    # Run every Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force update even if no changes detected'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  update-fixtures:
+    name: Update Fixtures
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Update fixtures
+        id: update
+        run: |
+          # Run fixture update script if it exists
+          if [ -f "scripts/update-fixtures.sh" ]; then
+            chmod +x scripts/update-fixtures.sh
+            ./scripts/update-fixtures.sh
+          elif [ -f "tests/fixtures/update.rs" ]; then
+            cargo run --bin update-fixtures 2>/dev/null || true
+          else
+            echo "No fixture update mechanism found, skipping..."
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Check for changes
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Pull Request
+        if: steps.update.outputs.has_changes == 'true' || github.event.inputs.force == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'chore: update test fixtures'
+          title: 'chore: update test fixtures'
+          body: |
+            ## Automated Fixture Update
+
+            This PR was automatically created by the weekly fixtures update workflow.
+
+            ### Changes
+            - Updated test fixtures to reflect current API responses
+            - Regenerated mock data where applicable
+
+            ### Review Checklist
+            - [ ] Verify fixture changes are expected
+            - [ ] Ensure tests still pass with updated fixtures
+            - [ ] Check for any breaking changes in API responses
+
+            ---
+            *This PR was generated automatically by GitHub Actions*
+          branch: chore/update-fixtures
+          delete-branch: true
+          labels: |
+            automated
+            fixtures
+            chore
+
+      - name: Report no changes
+        if: steps.update.outputs.has_changes == 'false' && github.event.inputs.force != 'true'
+        run: echo "No fixture changes detected. Skipping PR creation."
