@@ -52,7 +52,10 @@ impl Provider for GitHubClient {
     }
 
     async fn get_issues(&self, state: Option<&str>) -> Result<Vec<Issue>> {
-        let mut url = format!("{}/repos/{}/{}/issues", self.base_url, self.owner, self.repo);
+        let mut url = format!(
+            "{}/repos/{}/{}/issues",
+            self.base_url, self.owner, self.repo
+        );
         if let Some(s) = state {
             url.push_str(&format!("?state={}", s));
         }
