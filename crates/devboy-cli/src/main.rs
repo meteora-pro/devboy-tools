@@ -100,7 +100,11 @@ async fn main() -> anyhow::Result<()> {
             // TODO: Implement server
         }
         Some(Commands::Config { command }) => match command {
-            ConfigCommands::Gitlab { url, project, token } => {
+            ConfigCommands::Gitlab {
+                url,
+                project,
+                token,
+            } => {
                 tracing::info!("Configuring GitLab: url={:?}, project={:?}", url, project);
                 // TODO: Store configuration
                 if token.is_some() {
