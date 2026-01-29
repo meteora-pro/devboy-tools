@@ -14,8 +14,8 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 
-# Keychain access (to be added when implementing)
-# keyring = "2"
+# Keychain access
+keyring = "3"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

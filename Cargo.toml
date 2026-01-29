@@ -45,3 +45,5 @@ clap = { version = "4.5", features = ["derive"] }
 
 # Testing
 mockall = "0.13"
+insta = { version = "1.41", features = ["json", "yaml"] }
+httpmock = "0.8"
