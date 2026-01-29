@@ -9,6 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
+  RUST_LOG: warn
 
 jobs:
   fmt:
@@ -51,6 +52,15 @@ jobs:
             target: aarch64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+
+    # Secrets are only available in the main repo, not in forks
+    # Tests will run in Replay mode (using fixtures) when secrets are not available
+    env:
+      GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+      GITLAB_URL: ${{ secrets.GITLAB_URL }}
+      GITLAB_PROJECT_ID: ${{ secrets.GITLAB_PROJECT_ID }}
+      GITHUB_TEST_TOKEN: ${{ secrets.GH_TEST_TOKEN }}
+
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -59,8 +69,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+
       - name: Run tests
         run: cargo test --all-features
+
+      # Update fixtures if running on main with secrets
+      - name: Commit updated fixtures
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          if [[ -n $(git status --porcelain tests/fixtures/) ]]; then
+            echo "📸 Fixtures were updated by real API calls"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add tests/fixtures/
+            git commit -m "chore: update test fixtures [skip ci]"
+            git push
+          fi
 
   build:
     name: Build
@@ -97,3 +121,29 @@ jobs:
             target/${{ matrix.target }}/release/devboy
             target/${{ matrix.target }}/release/devboy.exe
           if-no-files-found: ignore
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    env:
+      GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+      GITLAB_URL: ${{ secrets.GITLAB_URL }}
+      GITLAB_PROJECT_ID: ${{ secrets.GITLAB_PROJECT_ID }}
+      GITHUB_TEST_TOKEN: ${{ secrets.GH_TEST_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate coverage
+        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
+          fail_ci_if_error: false

@@ -1,0 +1,25 @@
+[
+  {
+    "key": "mr#1",
+    "title": "feat: Setup Cargo workspace structure",
+    "description": "Initial workspace setup with all crates.",
+    "state": "opened",
+    "source": "gitlab",
+    "source_branch": "feat/setup-workspace",
+    "target_branch": "main",
+    "author": {
+      "id": "1",
+      "username": "developer",
+      "name": "Test Developer",
+      "email": null,
+      "avatar_url": null
+    },
+    "assignees": [],
+    "reviewers": [],
+    "labels": [],
+    "draft": false,
+    "url": "https://gitlab.example.com/project/-/merge_requests/1",
+    "created_at": "2026-01-26T00:00:00Z",
+    "updated_at": "2026-01-26T00:00:00Z"
+  }
+]
