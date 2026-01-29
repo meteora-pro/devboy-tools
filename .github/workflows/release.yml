@@ -99,7 +99,11 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
-          echo "## What's Changed" > CHANGELOG.md
+          VERSION="${GITHUB_REF#refs/tags/}"
+          DATE=$(date +%Y-%m-%d)
+          echo "## ${VERSION} (${DATE})" > CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "### What's Changed" >> CHANGELOG.md
           echo "" >> CHANGELOG.md
           git log $(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")..HEAD --pretty=format:"- %s" >> CHANGELOG.md || echo "- Initial release" >> CHANGELOG.md
 
