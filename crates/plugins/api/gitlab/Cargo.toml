@@ -8,7 +8,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-devboy-core = { path = "../devboy-core" }
+devboy-core = { path = "../../../devboy-core" }
 reqwest.workspace = true
 tokio.workspace = true
 serde.workspace = true

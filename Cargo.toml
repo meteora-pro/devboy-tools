@@ -4,16 +4,17 @@ resolver = "2"
 members = [
     "crates/devboy-core",
     "crates/devboy-storage",
-    "crates/devboy-gitlab",
-    "crates/devboy-github",
     "crates/devboy-mcp",
     "crates/devboy-cli",
+    # API plugins
+    "crates/plugins/api/gitlab",
+    "crates/plugins/api/github",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/meteora-pro/devboy-tools"
 authors = ["Meteora <dev@meteora.pro>"]
 

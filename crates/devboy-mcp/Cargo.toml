@@ -9,8 +9,8 @@ authors.workspace = true
 
 [dependencies]
 devboy-core = { path = "../devboy-core" }
-devboy-gitlab = { path = "../devboy-gitlab" }
-devboy-github = { path = "../devboy-github" }
+devboy-gitlab = { path = "../plugins/api/gitlab" }
+devboy-github = { path = "../plugins/api/github" }
 devboy-storage = { path = "../devboy-storage" }
 tokio.workspace = true
 serde.workspace = true
