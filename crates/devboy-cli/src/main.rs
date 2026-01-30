@@ -1,9 +1,12 @@
 //! DevBoy CLI - Command-line interface for devboy-tools.
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use devboy_core::{Config, IssueFilter, IssueProvider, MrFilter, MergeRequestProvider, Provider};
 use devboy_github::GitHubClient;
+use devboy_mcp::McpServer;
 use devboy_storage::{CredentialStore, KeychainStore};
 use tracing_subscriber::EnvFilter;
 
@@ -21,12 +24,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the MCP server
-    Serve {
-        /// Port to listen on
-        #[arg(short, long, default_value = "3000")]
-        port: u16,
-    },
+    /// Start the MCP server (stdio mode for AI assistants)
+    Mcp,
 
     /// Configuration management
     Config {
@@ -108,10 +107,8 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     match cli.command {
-        Some(Commands::Serve { port }) => {
-            tracing::info!("Starting MCP server on port {}", port);
-            // TODO: Implement MCP server
-            println!("MCP server not yet implemented");
+        Some(Commands::Mcp) => {
+            handle_mcp_command().await?;
         }
 
         Some(Commands::Config { command }) => {
@@ -430,6 +427,43 @@ async fn handle_test_command(provider: &str) -> Result<()> {
             println!("Supported providers: github, gitlab");
         }
     }
+
+    Ok(())
+}
+
+// =============================================================================
+// MCP Command
+// =============================================================================
+
+async fn handle_mcp_command() -> Result<()> {
+    let config = Config::load().context("Failed to load config")?;
+    let store = KeychainStore::new();
+
+    let mut server = McpServer::new();
+
+    // Add GitHub provider if configured
+    if let Some(gh) = &config.github {
+        if let Some(token) = store.get("github.token").ok().flatten() {
+            let client = GitHubClient::new(&gh.owner, &gh.repo, token);
+            server.add_provider(Arc::new(client));
+            tracing::info!("Added GitHub provider: {}/{}", gh.owner, gh.repo);
+        } else {
+            tracing::warn!("GitHub configured but no token found");
+        }
+    }
+
+    // Add GitLab provider if configured (TODO: implement GitLabClient)
+    if let Some(_gl) = &config.gitlab {
+        tracing::warn!("GitLab provider not yet implemented");
+    }
+
+    if server.providers().is_empty() {
+        tracing::warn!("No providers configured. MCP server will have limited functionality.");
+        tracing::info!("Configure GitHub: devboy config set github.owner <owner>");
+    }
+
+    // Run the MCP server (reads from stdin, writes to stdout)
+    server.run().await.context("MCP server error")?;
 
     Ok(())
 }
