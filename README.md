@@ -53,42 +53,105 @@ plugins/
 
 ## Installation
 
+### From Source (Recommended for Development)
+
 ```bash
-npx @devboy/tools serve
+git clone https://github.com/meteora-pro/devboy-tools.git
+cd devboy-tools
+cargo build --release
 ```
 
-Or download binary from [Releases](https://github.com/meteora-pro/devboy-tools/releases).
+### From Releases
+
+Download binary from [Releases](https://github.com/meteora-pro/devboy-tools/releases).
 
 ## Quick Start
 
-```bash
-# Configure provider (token saved to OS keychain)
-devboy config gitlab \
-  --url https://gitlab.example.com \
-  --project my/project \
-  --token glpat-xxxxx
+### 1. Configure Provider
 
-# Start MCP server
-devboy serve
+```bash
+# GitHub
+./target/release/devboy config set github.owner <owner>
+./target/release/devboy config set github.repo <repo>
+./target/release/devboy config set-secret github.token <token>
+
+# GitLab (coming soon)
+./target/release/devboy config set gitlab.url https://gitlab.example.com
+./target/release/devboy config set gitlab.project_id <project-id>
+./target/release/devboy config set-secret gitlab.token <token>
+```
+
+Tokens are stored securely in OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service).
+
+### 2. Verify Connection
+
+```bash
+./target/release/devboy test github
+```
+
+### 3. Test MCP Server
+
+```bash
+./scripts/test-mcp.sh
+```
+
+## Integration with AI Assistants
+
+### Claude Code (CLI)
+
+```bash
+claude mcp add devboy -- /path/to/devboy-tools/target/release/devboy mcp
+```
+
+Verify:
+```bash
+claude mcp list
 ```
 
 ### Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "devboy": {
-      "command": "npx",
-      "args": ["@devboy/tools", "serve"]
+      "command": "/path/to/devboy-tools/target/release/devboy",
+      "args": ["mcp"]
     }
   }
 }
 ```
 
+## CLI Commands
+
+```bash
+devboy --help                     # Show all commands
+devboy config list                # Show current configuration
+devboy config path                # Show config file location
+devboy config set <key> <value>   # Set config value
+devboy config set-secret <key> <value>  # Store secret in keychain
+devboy config get <key>           # Get config value
+devboy issues                     # List issues
+devboy mrs                        # List merge requests
+devboy test <provider>            # Test provider connection
+devboy mcp                        # Start MCP server (stdio)
+```
+
 ## Development
 
 ```bash
-cargo build && cargo test && cargo clippy
+# Build
+cargo build
+
+# Run tests
+cargo test
+
+# Lint
+cargo clippy
+
+# Build release
+cargo build --release
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
