@@ -181,7 +181,11 @@ fn map_issue(gh_issue: &GitHubIssue) -> Issue {
         priority: None, // GitHub doesn't have built-in priority
         labels: map_labels(&gh_issue.labels),
         author: map_user(gh_issue.user.as_ref()),
-        assignees: gh_issue.assignees.iter().map(|u| map_user_required(Some(u))).collect(),
+        assignees: gh_issue
+            .assignees
+            .iter()
+            .map(|u| map_user_required(Some(u)))
+            .collect(),
         url: Some(gh_issue.html_url.clone()),
         created_at: Some(gh_issue.created_at.clone()),
         updated_at: Some(gh_issue.updated_at.clone()),
@@ -239,20 +243,23 @@ fn map_comment(gh_comment: &GitHubComment) -> Comment {
 }
 
 fn map_review_comment(gh_comment: &GitHubReviewComment) -> Comment {
-    let position = gh_comment.line.or(gh_comment.original_line).map(|line| CodePosition {
-        file_path: gh_comment.path.clone(),
-        line,
-        line_type: gh_comment
-            .side
-            .as_ref()
-            .map(|s| if s == "LEFT" { "old" } else { "new" })
-            .unwrap_or("new")
-            .to_string(),
-        commit_sha: gh_comment
-            .commit_id
-            .clone()
-            .or_else(|| gh_comment.original_commit_id.clone()),
-    });
+    let position = gh_comment
+        .line
+        .or(gh_comment.original_line)
+        .map(|line| CodePosition {
+            file_path: gh_comment.path.clone(),
+            line,
+            line_type: gh_comment
+                .side
+                .as_ref()
+                .map(|s| if s == "LEFT" { "old" } else { "new" })
+                .unwrap_or("new")
+                .to_string(),
+            commit_sha: gh_comment
+                .commit_id
+                .clone()
+                .or_else(|| gh_comment.original_commit_id.clone()),
+        });
 
     Comment {
         id: gh_comment.id.to_string(),
@@ -499,15 +506,13 @@ impl MergeRequestProvider for GitHubClient {
 
         for comment in &review_comments {
             let thread_id = comment.in_reply_to_id.unwrap_or(comment.id);
-            comment_threads
-                .entry(thread_id)
-                .or_default()
-                .push(comment);
+            comment_threads.entry(thread_id).or_default().push(comment);
         }
 
         // Create discussions from threads
         for (thread_id, comments) in comment_threads {
-            let mapped_comments: Vec<Comment> = comments.iter().map(|c| map_review_comment(c)).collect();
+            let mapped_comments: Vec<Comment> =
+                comments.iter().map(|c| map_review_comment(c)).collect();
             let position = mapped_comments.first().and_then(|c| c.position.clone());
 
             discussions.push(Discussion {
@@ -574,10 +579,9 @@ impl MergeRequestProvider for GitHubClient {
         if let Some(position) = &input.position {
             let url = self.repo_url(&format!("/pulls/{}/comments", number));
 
-            let commit_sha = position
-                .commit_sha
-                .clone()
-                .ok_or_else(|| Error::InvalidData("commit_sha is required for code comments".to_string()))?;
+            let commit_sha = position.commit_sha.clone().ok_or_else(|| {
+                Error::InvalidData("commit_sha is required for code comments".to_string())
+            })?;
 
             let request = CreateReviewCommentRequest {
                 body: input.body,

@@ -43,7 +43,8 @@ impl ToolHandler {
         vec![
             ToolDefinition {
                 name: "get_issues".to_string(),
-                description: "Get issues from configured git providers (GitLab, GitHub)".to_string(),
+                description: "Get issues from configured git providers (GitLab, GitHub)"
+                    .to_string(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -86,7 +87,8 @@ impl ToolHandler {
             },
             ToolDefinition {
                 name: "get_merge_requests".to_string(),
-                description: "Get merge requests / pull requests from configured git providers".to_string(),
+                description: "Get merge requests / pull requests from configured git providers"
+                    .to_string(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -287,8 +289,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use devboy_core::{
-        Comment, CreateCommentInput, CreateIssueInput, Discussion, FileDiff, Issue,
-        MergeRequest, MergeRequestProvider, UpdateIssueInput, User,
+        Comment, CreateCommentInput, CreateIssueInput, Discussion, FileDiff, Issue, MergeRequest,
+        MergeRequestProvider, UpdateIssueInput, User,
     };
 
     /// Mock provider for testing.
@@ -349,7 +351,11 @@ mod tests {
             Ok(self.issues[0].clone())
         }
 
-        async fn update_issue(&self, _key: &str, _input: UpdateIssueInput) -> devboy_core::Result<Issue> {
+        async fn update_issue(
+            &self,
+            _key: &str,
+            _input: UpdateIssueInput,
+        ) -> devboy_core::Result<Issue> {
             Ok(self.issues[0].clone())
         }
 
@@ -375,7 +381,10 @@ mod tests {
 
     #[async_trait]
     impl MergeRequestProvider for MockProvider {
-        async fn get_merge_requests(&self, _filter: MrFilter) -> devboy_core::Result<Vec<MergeRequest>> {
+        async fn get_merge_requests(
+            &self,
+            _filter: MrFilter,
+        ) -> devboy_core::Result<Vec<MergeRequest>> {
             Ok(self.mrs.clone())
         }
 
@@ -391,7 +400,11 @@ mod tests {
             Ok(vec![])
         }
 
-        async fn add_comment(&self, _mr_key: &str, _input: CreateCommentInput) -> devboy_core::Result<Comment> {
+        async fn add_comment(
+            &self,
+            _mr_key: &str,
+            _input: CreateCommentInput,
+        ) -> devboy_core::Result<Comment> {
             Ok(Comment {
                 id: "1".to_string(),
                 body: "test".to_string(),

@@ -71,7 +71,10 @@ impl StdioTransport {
     /// Write a JSON-RPC response to the transport.
     pub fn write_response(&mut self, response: &JsonRpcResponse) -> io::Result<()> {
         let json = serde_json::to_string(response).map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("Serialization error: {}", e))
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Serialization error: {}", e),
+            )
         })?;
 
         tracing::debug!("Sending: {}", json);
@@ -83,7 +86,10 @@ impl StdioTransport {
     /// Write a JSON-RPC notification to the transport.
     pub fn write_notification(&mut self, notification: &JsonRpcNotification) -> io::Result<()> {
         let json = serde_json::to_string(notification).map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("Serialization error: {}", e))
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Serialization error: {}", e),
+            )
         })?;
 
         tracing::debug!("Sending notification: {}", json);
@@ -158,10 +164,8 @@ mod tests {
 
         let mut transport = StdioTransport::new(reader, writer);
 
-        let response = JsonRpcResponse::success(
-            RequestId::Number(1),
-            serde_json::json!({"test": true}),
-        );
+        let response =
+            JsonRpcResponse::success(RequestId::Number(1), serde_json::json!({"test": true}));
 
         transport.write_response(&response).unwrap();
 

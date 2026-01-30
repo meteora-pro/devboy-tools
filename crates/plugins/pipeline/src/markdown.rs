@@ -91,7 +91,10 @@ fn issue_to_markdown(issue: &Issue) -> String {
     output.push_str(&format!("## {} - {}\n\n", issue.key, issue.title));
 
     // Status line
-    output.push_str(&format!("**State:** {} | **Source:** {}", issue.state, issue.source));
+    output.push_str(&format!(
+        "**State:** {} | **Source:** {}",
+        issue.state, issue.source
+    ));
 
     if let Some(priority) = &issue.priority {
         output.push_str(&format!(" | **Priority:** {}", priority));
@@ -111,7 +114,11 @@ fn issue_to_markdown(issue: &Issue) -> String {
 
     // Assignees
     if !issue.assignees.is_empty() {
-        let assignees: Vec<String> = issue.assignees.iter().map(|a| format!("@{}", a.username)).collect();
+        let assignees: Vec<String> = issue
+            .assignees
+            .iter()
+            .map(|a| format!("@{}", a.username))
+            .collect();
         output.push_str(&format!("**Assignees:** {}\n", assignees.join(", ")));
     }
 
@@ -187,7 +194,10 @@ fn merge_request_to_markdown(mr: &MergeRequest) -> String {
     ));
 
     // Status line
-    output.push_str(&format!("**State:** {} | **Source:** {}\n", mr.state, mr.source));
+    output.push_str(&format!(
+        "**State:** {} | **Source:** {}\n",
+        mr.state, mr.source
+    ));
 
     // Labels
     if !mr.labels.is_empty() {
@@ -201,13 +211,21 @@ fn merge_request_to_markdown(mr: &MergeRequest) -> String {
 
     // Assignees
     if !mr.assignees.is_empty() {
-        let assignees: Vec<String> = mr.assignees.iter().map(|a| format!("@{}", a.username)).collect();
+        let assignees: Vec<String> = mr
+            .assignees
+            .iter()
+            .map(|a| format!("@{}", a.username))
+            .collect();
         output.push_str(&format!("**Assignees:** {}\n", assignees.join(", ")));
     }
 
     // Reviewers
     if !mr.reviewers.is_empty() {
-        let reviewers: Vec<String> = mr.reviewers.iter().map(|r| format!("@{}", r.username)).collect();
+        let reviewers: Vec<String> = mr
+            .reviewers
+            .iter()
+            .map(|r| format!("@{}", r.username))
+            .collect();
         output.push_str(&format!("**Reviewers:** {}\n", reviewers.join(", ")));
     }
 
@@ -375,10 +393,7 @@ fn comment_to_markdown(comment: &Comment) -> String {
 
     // Position (for code comments)
     if let Some(pos) = &comment.position {
-        output.push_str(&format!(
-            "📍 `{}` line {}\n",
-            pos.file_path, pos.line
-        ));
+        output.push_str(&format!("📍 `{}` line {}\n", pos.file_path, pos.line));
     }
 
     // Body
@@ -445,10 +460,7 @@ fn discussion_to_markdown(discussion: &Discussion, index: usize) -> String {
 
     // Position
     if let Some(pos) = &discussion.position {
-        output.push_str(&format!(
-            "📍 `{}` line {}\n\n",
-            pos.file_path, pos.line
-        ));
+        output.push_str(&format!("📍 `{}` line {}\n\n", pos.file_path, pos.line));
     }
 
     // Notes (comments in the discussion)
@@ -647,8 +659,8 @@ mod tests {
 
     #[test]
     fn test_markdown_vs_json_size() {
-        let issues: Vec<Issue> = (1..=5).map(|i| {
-            Issue {
+        let issues: Vec<Issue> = (1..=5)
+            .map(|i| Issue {
                 key: format!("gh#{}", i),
                 title: format!("Issue number {}", i),
                 description: Some("A description".to_string()),
@@ -661,8 +673,8 @@ mod tests {
                 url: None,
                 created_at: None,
                 updated_at: None,
-            }
-        }).collect();
+            })
+            .collect();
 
         let json = serde_json::to_string_pretty(&issues).unwrap();
         let markdown = issues_to_markdown(&issues);

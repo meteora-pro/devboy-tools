@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use devboy_core::{Config, IssueFilter, IssueProvider, MrFilter, MergeRequestProvider, Provider};
+use devboy_core::{Config, IssueFilter, IssueProvider, MergeRequestProvider, MrFilter, Provider};
 use devboy_github::GitHubClient;
 use devboy_mcp::McpServer;
 use devboy_storage::{CredentialStore, KeychainStore};
@@ -144,14 +144,18 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
     match command {
         ConfigCommands::Set { key, value } => {
             let mut config = Config::load().context("Failed to load config")?;
-            config.set(&key, &value).context("Failed to set config value")?;
+            config
+                .set(&key, &value)
+                .context("Failed to set config value")?;
             config.save().context("Failed to save config")?;
             println!("Set {} = {}", key, value);
         }
 
         ConfigCommands::SetSecret { key, value } => {
             let store = KeychainStore::new();
-            store.store(&key, &value).context("Failed to store secret")?;
+            store
+                .store(&key, &value)
+                .context("Failed to store secret")?;
             println!("Secret {} stored in keychain", key);
         }
 
@@ -245,12 +249,10 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
             }
         }
 
-        ConfigCommands::Path => {
-            match Config::config_path() {
-                Ok(path) => println!("{}", path.display()),
-                Err(e) => println!("Error: {}", e),
-            }
-        }
+        ConfigCommands::Path => match Config::config_path() {
+            Ok(path) => println!("{}", path.display()),
+            Err(e) => println!("Error: {}", e),
+        },
     }
 
     Ok(())
@@ -286,7 +288,10 @@ async fn handle_issues_command(state: &str, limit: u32) -> Result<()> {
             ..Default::default()
         };
 
-        let issues = client.get_issues(filter).await.context("Failed to fetch issues")?;
+        let issues = client
+            .get_issues(filter)
+            .await
+            .context("Failed to fetch issues")?;
 
         if issues.is_empty() {
             println!("No issues found with state: {}", state);
@@ -332,7 +337,10 @@ async fn handle_mrs_command(state: &str, limit: u32) -> Result<()> {
             ..Default::default()
         };
 
-        let prs = client.get_merge_requests(filter).await.context("Failed to fetch PRs")?;
+        let prs = client
+            .get_merge_requests(filter)
+            .await
+            .context("Failed to fetch PRs")?;
 
         if prs.is_empty() {
             println!("No pull requests found with state: {}", state);
@@ -379,7 +387,9 @@ async fn handle_test_command(provider: &str) -> Result<()> {
             let token = store
                 .get("github.token")
                 .context("Failed to get token")?
-                .context("GitHub token not set. Run: devboy config set-secret github.token <token>")?;
+                .context(
+                    "GitHub token not set. Run: devboy config set-secret github.token <token>",
+                )?;
 
             println!("Testing GitHub connection...");
             println!("  Repository: {}/{}", gh.owner, gh.repo);
@@ -389,7 +399,11 @@ async fn handle_test_command(provider: &str) -> Result<()> {
             // Test by getting current user
             match client.get_current_user().await {
                 Ok(user) => {
-                    println!("  Authenticated as: {} ({})", user.username, user.name.unwrap_or_default());
+                    println!(
+                        "  Authenticated as: {} ({})",
+                        user.username,
+                        user.name.unwrap_or_default()
+                    );
                     println!();
                     println!("GitHub connection successful!");
                 }
@@ -411,7 +425,9 @@ async fn handle_test_command(provider: &str) -> Result<()> {
             let _token = store
                 .get("gitlab.token")
                 .context("Failed to get token")?
-                .context("GitLab token not set. Run: devboy config set-secret gitlab.token <token>")?;
+                .context(
+                    "GitLab token not set. Run: devboy config set-secret gitlab.token <token>",
+                )?;
 
             println!("Testing GitLab connection...");
             println!("  URL: {}", gl.url);

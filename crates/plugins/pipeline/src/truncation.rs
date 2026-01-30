@@ -150,12 +150,7 @@ impl TruncationPlugin {
         let remaining = total - shown;
         format!(
             "📊 Showing {}/{} {}. {} more available. Use `offset={}` and `limit={}` for next page.",
-            shown,
-            total,
-            item_type,
-            remaining,
-            shown,
-            self.config.max_items
+            shown, total, item_type, remaining, shown, self.config.max_items
         )
     }
 }

@@ -31,7 +31,10 @@ async fn test_mode_detection() {
 
     // Mode should be Replay unless GITHUB_TOKEN is set
     if std::env::var("GITHUB_TOKEN").is_ok() {
-        assert!(provider.mode().is_record(), "Expected Record mode with token");
+        assert!(
+            provider.mode().is_record(),
+            "Expected Record mode with token"
+        );
     } else {
         assert!(
             provider.mode().is_replay(),
@@ -51,7 +54,10 @@ async fn test_get_issues() {
 
     // Verify issue structure
     let issue = &issues[0];
-    assert!(issue.key.starts_with("gh#"), "Issue key should start with gh#");
+    assert!(
+        issue.key.starts_with("gh#"),
+        "Issue key should start with gh#"
+    );
     assert!(!issue.title.is_empty(), "Issue should have a title");
     assert_eq!(issue.source, "github", "Source should be github");
 }

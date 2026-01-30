@@ -12,9 +12,8 @@ use serde_json::Value;
 
 use crate::handlers::ToolHandler;
 use crate::protocol::{
-    InitializeParams, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
-    RequestId, ServerCapabilities, ServerInfo, ToolCallParams, ToolsCapability, ToolsListResult,
-    MCP_VERSION,
+    InitializeParams, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, RequestId,
+    ServerCapabilities, ServerInfo, ToolCallParams, ToolsCapability, ToolsListResult, MCP_VERSION,
 };
 use crate::transport::{IncomingMessage, StdioTransport};
 
@@ -45,7 +44,10 @@ impl McpServer {
 
     /// Run the MCP server main loop.
     pub async fn run(&mut self) -> devboy_core::Result<()> {
-        tracing::info!("Starting MCP server with {} providers", self.providers.len());
+        tracing::info!(
+            "Starting MCP server with {} providers",
+            self.providers.len()
+        );
 
         let mut transport = StdioTransport::stdio();
         let handler = ToolHandler::new(self.providers.clone());
@@ -162,7 +164,9 @@ impl McpServer {
         let result = InitializeResult {
             protocol_version: MCP_VERSION.to_string(),
             capabilities: ServerCapabilities {
-                tools: Some(ToolsCapability { list_changed: false }),
+                tools: Some(ToolsCapability {
+                    list_changed: false,
+                }),
                 resources: None,
                 prompts: None,
             },
@@ -201,10 +205,7 @@ impl McpServer {
                 }
             },
             None => {
-                return JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::invalid_params("Missing params"),
-                );
+                return JsonRpcResponse::error(id, JsonRpcError::invalid_params("Missing params"));
             }
         };
 
@@ -229,7 +230,7 @@ impl Default for McpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{JSONRPC_VERSION, RequestId};
+    use crate::protocol::{RequestId, JSONRPC_VERSION};
 
     #[test]
     fn test_server_creation() {
