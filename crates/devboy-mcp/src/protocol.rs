@@ -305,10 +305,8 @@ mod tests {
 
     #[test]
     fn test_response_error() {
-        let resp = JsonRpcResponse::error(
-            RequestId::Number(1),
-            JsonRpcError::method_not_found("test"),
-        );
+        let resp =
+            JsonRpcResponse::error(RequestId::Number(1), JsonRpcError::method_not_found("test"));
 
         assert!(resp.result.is_none());
         assert!(resp.error.is_some());

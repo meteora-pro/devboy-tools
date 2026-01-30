@@ -95,11 +95,7 @@ impl FixtureProvider {
     pub fn load_issues(&self) -> Result<Vec<Issue>> {
         let path = self.fixtures_dir.join("issues.json");
         let content = std::fs::read_to_string(&path).map_err(|e| {
-            devboy_core::Error::Config(format!(
-                "Failed to load fixture {}: {}",
-                path.display(),
-                e
-            ))
+            devboy_core::Error::Config(format!("Failed to load fixture {}: {}", path.display(), e))
         })?;
         let issues: Vec<Issue> = serde_json::from_str(&content)?;
         Ok(issues)
@@ -115,11 +111,7 @@ impl FixtureProvider {
         };
 
         let content = std::fs::read_to_string(&path).map_err(|e| {
-            devboy_core::Error::Config(format!(
-                "Failed to load fixture {}: {}",
-                path.display(),
-                e
-            ))
+            devboy_core::Error::Config(format!("Failed to load fixture {}: {}", path.display(), e))
         })?;
         let mrs: Vec<MergeRequest> = serde_json::from_str(&content)?;
         Ok(mrs)

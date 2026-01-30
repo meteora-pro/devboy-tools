@@ -133,10 +133,7 @@ fn test_json_vs_markdown_token_savings() {
     println!("{}", markdown_output.content);
 
     // Markdown should be at least 30% smaller than JSON
-    assert!(
-        md_len < json_len,
-        "Markdown should be smaller than JSON"
-    );
+    assert!(md_len < json_len, "Markdown should be smaller than JSON");
     assert!(
         savings >= 30,
         "Expected at least 30% savings, got {}%",
@@ -198,7 +195,9 @@ fn test_pull_requests_markdown_output() {
     assert!(output.content.contains("# Merge Requests"));
     assert!(output.content.contains("## pr#5"));
     assert!(output.content.contains("**Branch:**"));
-    assert!(output.content.contains("`andreymaznyakthailand-bot-patch-1` → `main`"));
+    assert!(output
+        .content
+        .contains("`andreymaznyakthailand-bot-patch-1` → `main`"));
 }
 
 // ============================================================================
@@ -224,14 +223,24 @@ fn test_truncation_with_pagination_hints() {
     println!("{}", output.to_string_with_hints());
 
     assert!(output.truncated, "Output should be marked as truncated");
-    assert_eq!(output.total_count, Some(5), "Should report total of 5 issues");
+    assert_eq!(
+        output.total_count,
+        Some(5),
+        "Should report total of 5 issues"
+    );
     assert_eq!(output.included_count, 2, "Should include only 2 issues");
 
     // Check agent hint
     let hint = output.agent_hint.as_ref().expect("Should have agent hint");
     assert!(hint.contains("2/5"), "Hint should show 2/5");
-    assert!(hint.contains("3 more"), "Hint should mention 3 more available");
-    assert!(hint.contains("offset"), "Hint should mention offset parameter");
+    assert!(
+        hint.contains("3 more"),
+        "Hint should mention 3 more available"
+    );
+    assert!(
+        hint.contains("offset"),
+        "Hint should mention offset parameter"
+    );
 }
 
 #[test]
@@ -414,10 +423,7 @@ fn test_format_comparison_demo() {
 
     // Summary
     println!("━━━ Summary ━━━");
-    println!(
-        "JSON:     {} chars (baseline)",
-        json.len()
-    );
+    println!("JSON:     {} chars (baseline)", json.len());
     println!(
         "Markdown: {} chars ({:.0}% of JSON)",
         md.content.len(),

@@ -6,8 +6,8 @@ use std::env;
 
 use async_trait::async_trait;
 use devboy_core::{
-    Comment, CreateCommentInput, CreateIssueInput, Discussion, Error, FileDiff, Issue,
-    IssueFilter, IssueProvider, MergeRequest, MergeRequestProvider, MrFilter, Provider, Result,
+    Comment, CreateCommentInput, CreateIssueInput, Discussion, Error, FileDiff, Issue, IssueFilter,
+    IssueProvider, MergeRequest, MergeRequestProvider, MrFilter, Provider, Result,
     UpdateIssueInput, User,
 };
 use devboy_github::GitHubClient;

@@ -400,7 +400,9 @@ mod tests {
         );
 
         // Set GitLab config
-        config.set("gitlab.url", "https://gitlab.example.com").unwrap();
+        config
+            .set("gitlab.url", "https://gitlab.example.com")
+            .unwrap();
         config.set("gitlab.project_id", "123").unwrap();
 
         assert_eq!(
