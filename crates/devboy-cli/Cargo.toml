@@ -15,7 +15,6 @@ path = "src/main.rs"
 devboy-core = { path = "../devboy-core" }
 devboy-mcp = { path = "../devboy-mcp" }
 devboy-storage = { path = "../devboy-storage" }
-devboy-gitlab = { path = "../plugins/api/gitlab" }
 devboy-github = { path = "../plugins/api/github" }
 tokio.workspace = true
 clap.workspace = true
