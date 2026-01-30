@@ -4,6 +4,7 @@
 //!
 //! - **Provider traits**: [`IssueProvider`], [`MergeRequestProvider`], [`Provider`]
 //! - **Unified types**: [`Issue`], [`MergeRequest`], [`Discussion`], [`Comment`], [`FileDiff`]
+//! - **Configuration**: [`Config`], [`GitHubConfig`], [`GitLabConfig`]
 //! - **Error handling**: [`Error`], [`Result`]
 //!
 //! # Example
@@ -21,6 +22,7 @@
 //! }
 //! ```
 
+pub mod config;
 pub mod error;
 pub mod provider;
 pub mod types;
@@ -36,3 +38,6 @@ pub use types::{
     CodePosition, Comment, CreateCommentInput, CreateIssueInput, Discussion, FileDiff, Issue,
     IssueFilter, MergeRequest, MrFilter, Pagination, UpdateIssueInput, User,
 };
+
+// Re-export config types
+pub use config::{ClickUpConfig, Config, GitHubConfig, GitLabConfig, JiraConfig};

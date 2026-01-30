@@ -1,0 +1,48 @@
+[
+  {
+    "key": "pr#5",
+    "title": "Update README.md",
+    "description": null,
+    "state": "open",
+    "source": "github",
+    "source_branch": "andreymaznyakthailand-bot-patch-1",
+    "target_branch": "main",
+    "author": {
+      "id": "233059123",
+      "username": "andreymaznyakthailand-bot",
+      "name": null,
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/233059123?v=4"
+    },
+    "assignees": [],
+    "reviewers": [],
+    "labels": [],
+    "draft": false,
+    "url": "https://github.com/andreymaznyakthailand-bot/dev-boy-test-github-project/pull/5",
+    "created_at": "2025-12-28T16:30:57Z",
+    "updated_at": "2025-12-28T16:30:57Z"
+  },
+  {
+    "key": "pr#4",
+    "title": "Test PR from MCP",
+    "description": "This PR was created via MCP for testing purposes",
+    "state": "open",
+    "source": "github",
+    "source_branch": "feat/test-mcp-pr",
+    "target_branch": "main",
+    "author": {
+      "id": "233059123",
+      "username": "andreymaznyakthailand-bot",
+      "name": null,
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/233059123?v=4"
+    },
+    "assignees": [],
+    "reviewers": [],
+    "labels": [],
+    "draft": false,
+    "url": "https://github.com/andreymaznyakthailand-bot/dev-boy-test-github-project/pull/4",
+    "created_at": "2025-12-28T16:30:39Z",
+    "updated_at": "2025-12-28T16:30:55Z"
+  }
+]

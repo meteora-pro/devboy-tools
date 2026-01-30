@@ -3,6 +3,8 @@
 //! This module provides test infrastructure for devboy-tools:
 //! - `FixtureProvider`: Loads data from JSON fixtures in tests/fixtures/
 //! - `TestMode`: Record (real API) or Replay (fixtures) mode detection
+//! - `TestProvider`: Provider wrapper with Record/Replay support
+//! - `ApiResult`: Result type with fallback support
 //!
 //! # Test Mode Detection
 //!
@@ -13,6 +15,17 @@
 //! This allows:
 //! - Main repo CI runs with real API (secrets configured)
 //! - Forks/contributors run tests with fixtures (no secrets needed)
+//!
+//! # Error Handling (ADR-003)
+//!
+//! - 401/403 → Test fails (bad credentials)
+//! - 5xx/Network → Fallback to fixtures
+//! - Fixtures missing → Test fails
+
+pub mod api_result;
+pub mod test_provider;
+
+pub use test_provider::TestProvider;
 
 use std::env;
 use std::path::PathBuf;
