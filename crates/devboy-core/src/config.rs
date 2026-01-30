@@ -438,12 +438,14 @@ mod tests {
 
     #[test]
     fn test_save_and_load() {
-        let mut config = Config::default();
-        config.github = Some(GitHubConfig {
-            owner: "test-owner".to_string(),
-            repo: "test-repo".to_string(),
-            base_url: None,
-        });
+        let config = Config {
+            github: Some(GitHubConfig {
+                owner: "test-owner".to_string(),
+                repo: "test-repo".to_string(),
+                base_url: None,
+            }),
+            ..Default::default()
+        };
 
         // Save to temp file
         let temp_file = NamedTempFile::new().unwrap();
