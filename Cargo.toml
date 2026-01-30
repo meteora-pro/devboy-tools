@@ -9,6 +9,8 @@ members = [
     # API plugins
     "crates/plugins/api/gitlab",
     "crates/plugins/api/github",
+    # Pipeline plugins
+    "crates/plugins/pipeline",
 ]
 
 [workspace.package]

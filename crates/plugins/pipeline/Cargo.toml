@@ -1,0 +1,16 @@
+[package]
+name = "devboy-pipeline"
+description = "Output pipeline plugins for devboy-tools - truncation, markdown conversion, token optimization"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+devboy-core = { path = "../../devboy-core" }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
