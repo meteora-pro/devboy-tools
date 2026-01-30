@@ -39,6 +39,7 @@ impl Default for MarkdownConfig {
 
 /// Markdown plugin for converting structured data to Markdown.
 pub struct MarkdownPlugin {
+    #[allow(dead_code)] // Reserved for future use
     config: MarkdownConfig,
 }
 
