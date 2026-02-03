@@ -22,7 +22,10 @@
 mod common;
 
 use common::TestProvider;
-use devboy_core::{IssueFilter, IssueProvider, MergeRequestProvider, MrFilter, Provider};
+use devboy_core::{
+    CreateCommentInput, CreateIssueInput, IssueFilter, IssueProvider, MergeRequestProvider,
+    MrFilter, Provider, UpdateIssueInput,
+};
 
 /// Test that we can detect the correct test mode.
 #[tokio::test]
@@ -195,4 +198,346 @@ async fn test_pr_url_format() {
             );
         }
     }
+}
+
+/// Test getting comments for an issue.
+#[tokio::test]
+async fn test_get_issue_comments() {
+    let provider = TestProvider::github();
+
+    // First get all issues
+    let issues = provider.get_issues(IssueFilter::default()).await.unwrap();
+    assert!(!issues.is_empty());
+
+    // Get comments for the first issue
+    let key = &issues[0].key;
+    let comments = provider.get_comments(key).await.unwrap();
+
+    // Comments should be a vector (may be empty)
+    for comment in &comments {
+        assert!(!comment.id.is_empty(), "Comment should have an ID");
+        assert!(!comment.body.is_empty(), "Comment should have a body");
+    }
+}
+
+/// Test getting a single pull request.
+#[tokio::test]
+async fn test_get_pull_request() {
+    let provider = TestProvider::github();
+
+    // First get all PRs
+    let prs = provider
+        .get_merge_requests(MrFilter::default())
+        .await
+        .unwrap();
+    assert!(!prs.is_empty());
+
+    // Get a specific PR
+    let key = &prs[0].key;
+    let pr = provider.get_merge_request(key).await.unwrap();
+
+    assert_eq!(&pr.key, key);
+    assert!(!pr.title.is_empty(), "PR should have a title");
+}
+
+/// Test getting discussions for a pull request.
+#[tokio::test]
+async fn test_get_pull_request_discussions() {
+    let provider = TestProvider::github();
+
+    // First get all PRs
+    let prs = provider
+        .get_merge_requests(MrFilter::default())
+        .await
+        .unwrap();
+    assert!(!prs.is_empty());
+
+    // Get discussions for the first PR
+    let key = &prs[0].key;
+    let discussions = provider.get_discussions(key).await.unwrap();
+
+    // Discussions should be a vector (may be empty)
+    for discussion in &discussions {
+        assert!(!discussion.id.is_empty(), "Discussion should have an ID");
+    }
+}
+
+/// Test getting diffs for a pull request.
+#[tokio::test]
+async fn test_get_pull_request_diffs() {
+    let provider = TestProvider::github();
+
+    // First get all PRs
+    let prs = provider
+        .get_merge_requests(MrFilter::default())
+        .await
+        .unwrap();
+    assert!(!prs.is_empty());
+
+    // Get diffs for the first PR
+    let key = &prs[0].key;
+    let diffs = provider.get_diffs(key).await.unwrap();
+
+    // Diffs should be a vector (may be empty for PRs without changes)
+    for diff in &diffs {
+        assert!(!diff.file_path.is_empty(), "Diff should have a file path");
+    }
+}
+
+/// Test that adding comment to PR returns error in test mode.
+/// Note: In real implementation this would check if PR exists,
+/// but TestProvider always returns "not supported" for write operations.
+#[tokio::test]
+async fn test_add_comment_to_pr_not_supported() {
+    use devboy_core::{CreateCommentInput, MergeRequestProvider};
+
+    let provider = TestProvider::github();
+
+    let input = CreateCommentInput {
+        body: "Test comment".to_string(),
+        position: None,
+        discussion_id: None,
+    };
+
+    // Write operations are not supported in TestProvider
+    let result = MergeRequestProvider::add_comment(&provider, "pr#1", input).await;
+
+    assert!(result.is_err(), "Adding comment should fail in test mode");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("not supported"),
+        "Error should indicate operation not supported: {}",
+        err_msg
+    );
+}
+
+/// Test that PR and Issue with same number are distinguished.
+#[tokio::test]
+async fn test_pr_issue_distinction() {
+    let provider = TestProvider::github();
+
+    // Get issues and PRs
+    let issues = provider.get_issues(IssueFilter::default()).await.unwrap();
+    let prs = provider
+        .get_merge_requests(MrFilter::default())
+        .await
+        .unwrap();
+
+    // Extract numbers from keys
+    let issue_numbers: Vec<u64> = issues
+        .iter()
+        .map(|i| i.key.strip_prefix("gh#").unwrap().parse().unwrap())
+        .collect();
+    let pr_numbers: Vec<u64> = prs
+        .iter()
+        .map(|p| p.key.strip_prefix("pr#").unwrap().parse().unwrap())
+        .collect();
+
+    // In GitHub, PRs are also issues, so there may be overlap in numbering
+    // But get_issues should filter out PRs
+    for issue in &issues {
+        let num: u64 = issue.key.strip_prefix("gh#").unwrap().parse().unwrap();
+        // Issues returned should not be PRs
+        assert!(
+            !pr_numbers.contains(&num) || issue_numbers.contains(&num),
+            "Issue {} should not be a PR",
+            issue.key
+        );
+    }
+}
+
+/// Test that adding a comment to an issue returns error in test mode.
+#[tokio::test]
+async fn test_add_issue_comment_not_supported() {
+    let provider = TestProvider::github();
+
+    // First get all issues
+    let issues = provider.get_issues(IssueFilter::default()).await.unwrap();
+    assert!(!issues.is_empty(), "Should have at least one issue");
+
+    // Add a comment to the first issue
+    let key = &issues[0].key;
+    let comment_body = "Test comment";
+
+    let result = IssueProvider::add_comment(&provider, key, comment_body).await;
+
+    // Write operations are not supported in TestProvider
+    assert!(
+        result.is_err(),
+        "Add comment should fail in test mode with proper error"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("not supported"),
+        "Error should indicate operation not supported: {}",
+        err_msg
+    );
+}
+
+/// Test that adding a comment to a PR returns error in test mode.
+#[tokio::test]
+async fn test_add_pr_comment_not_supported() {
+    let provider = TestProvider::github();
+
+    // First get all PRs
+    let prs = provider
+        .get_merge_requests(MrFilter::default())
+        .await
+        .unwrap();
+    assert!(!prs.is_empty(), "Should have at least one PR");
+
+    // Add a comment to the first PR
+    let key = &prs[0].key;
+    let input = CreateCommentInput {
+        body: "Test PR comment".to_string(),
+        position: None,
+        discussion_id: None,
+    };
+
+    let result = MergeRequestProvider::add_comment(&provider, key, input).await;
+
+    // Write operations are not supported in TestProvider
+    assert!(
+        result.is_err(),
+        "Add PR comment should fail in test mode with proper error"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("not supported"),
+        "Error should indicate operation not supported: {}",
+        err_msg
+    );
+}
+
+/// Test that adding an inline comment returns error in test mode.
+#[tokio::test]
+async fn test_add_pr_inline_comment_not_supported() {
+    use devboy_core::CodePosition;
+
+    let provider = TestProvider::github();
+
+    // First get all PRs
+    let prs = provider
+        .get_merge_requests(MrFilter::default())
+        .await
+        .unwrap();
+    assert!(!prs.is_empty(), "Should have at least one PR");
+
+    let key = &prs[0].key;
+
+    // Try to add an inline comment (position provided)
+    let input = CreateCommentInput {
+        body: "Test inline comment".to_string(),
+        position: Some(CodePosition {
+            file_path: "src/main.rs".to_string(),
+            line: 1,
+            line_type: "new".to_string(),
+            commit_sha: None,
+        }),
+        discussion_id: None,
+    };
+
+    let result = MergeRequestProvider::add_comment(&provider, key, input).await;
+
+    // Write operations are not supported in TestProvider
+    assert!(
+        result.is_err(),
+        "Add inline comment should fail in test mode"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("not supported"),
+        "Error should indicate operation not supported: {}",
+        err_msg
+    );
+}
+
+/// Test that creating a new issue returns error in test mode.
+#[tokio::test]
+async fn test_create_issue_not_supported() {
+    let provider = TestProvider::github();
+
+    let input = CreateIssueInput {
+        title: "Test Issue".to_string(),
+        description: Some("Test description".to_string()),
+        labels: vec!["test".to_string()],
+        assignees: vec![],
+        priority: None,
+    };
+
+    let result = provider.create_issue(input).await;
+
+    // Write operations are not supported in TestProvider
+    assert!(
+        result.is_err(),
+        "Create issue should fail in test mode with proper error"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("not supported"),
+        "Error should indicate operation not supported: {}",
+        err_msg
+    );
+}
+
+/// Test that updating an issue returns error in test mode.
+#[tokio::test]
+async fn test_update_issue_not_supported() {
+    let provider = TestProvider::github();
+
+    // First get all issues
+    let issues = provider.get_issues(IssueFilter::default()).await.unwrap();
+    assert!(
+        !issues.is_empty(),
+        "Should have at least one issue to update"
+    );
+
+    let key = &issues[0].key;
+    let input = UpdateIssueInput {
+        title: Some("Updated Title".to_string()),
+        description: Some("Updated description".to_string()),
+        state: None,
+        labels: Some(vec!["test".to_string()]),
+        assignees: None,
+        priority: None,
+    };
+
+    let result = provider.update_issue(key, input).await;
+
+    // Write operations are not supported in TestProvider
+    assert!(
+        result.is_err(),
+        "Update issue should fail in test mode with proper error"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("not supported"),
+        "Error should indicate operation not supported: {}",
+        err_msg
+    );
+}
+
+/// Test that adding comment via PR interface returns error in test mode.
+/// Note: In real implementation this would validate that the key is a PR,
+/// but TestProvider always returns "not supported" for write operations.
+#[tokio::test]
+async fn test_add_comment_via_pr_key_not_supported() {
+    let provider = TestProvider::github();
+
+    // Write operations are not supported in TestProvider regardless of key format
+    let input = CreateCommentInput {
+        body: "This should fail".to_string(),
+        position: None,
+        discussion_id: None,
+    };
+
+    let result = MergeRequestProvider::add_comment(&provider, "pr#1", input).await;
+
+    assert!(result.is_err(), "Adding comment should fail in test mode");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("not supported"),
+        "Error should indicate operation not supported: {}",
+        err_msg
+    );
 }

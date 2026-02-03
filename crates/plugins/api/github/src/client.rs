@@ -575,13 +575,33 @@ impl MergeRequestProvider for GitHubClient {
     async fn add_comment(&self, mr_key: &str, input: CreateCommentInput) -> Result<Comment> {
         let number = parse_pr_key(mr_key)?;
 
+        // First verify that this is actually a PR, not an issue
+        let pr_url = self.repo_url(&format!("/pulls/{}", number));
+        let pr_result: Result<GitHubPullRequest> = self.get(&pr_url).await;
+
+        if let Err(Error::Http(status)) = &pr_result {
+            if status.contains("404") {
+                return Err(Error::InvalidData(format!(
+                    "{} is not a valid pull request (it may be an issue)",
+                    mr_key
+                )));
+            }
+        }
+
+        // Propagate other errors and save PR for later use
+        let pr: GitHubPullRequest = pr_result?;
+
         // If position is provided, create a review comment
         if let Some(position) = &input.position {
             let url = self.repo_url(&format!("/pulls/{}/comments", number));
 
-            let commit_sha = position.commit_sha.clone().ok_or_else(|| {
-                Error::InvalidData("commit_sha is required for code comments".to_string())
-            })?;
+            // If commit_sha is not provided, use the PR head commit
+            let commit_sha = if let Some(sha) = &position.commit_sha {
+                sha.clone()
+            } else {
+                // Use the already fetched PR head commit SHA
+                pr.head.sha
+            };
 
             let request = CreateReviewCommentRequest {
                 body: input.body,
@@ -600,7 +620,7 @@ impl MergeRequestProvider for GitHubClient {
             return Ok(map_review_comment(&gh_comment));
         }
 
-        // Otherwise create a general comment
+        // Otherwise create a general comment using PR endpoint
         let url = self.repo_url(&format!("/issues/{}/comments", number));
         let request = CreateCommentRequest { body: input.body };
 
