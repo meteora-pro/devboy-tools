@@ -248,23 +248,38 @@ impl IssueProvider for TestProvider {
 
     async fn create_issue(&self, _input: CreateIssueInput) -> Result<Issue> {
         Err(Error::Config(
-            "Create issue not supported in test mode".to_string(),
+            "Create issue not supported in tests".to_string(),
         ))
     }
 
     async fn update_issue(&self, _key: &str, _input: UpdateIssueInput) -> Result<Issue> {
         Err(Error::Config(
-            "Update issue not supported in test mode".to_string(),
+            "Update issue not supported in tests".to_string(),
         ))
     }
 
-    async fn get_comments(&self, _issue_key: &str) -> Result<Vec<Comment>> {
-        Ok(vec![])
+    async fn get_comments(&self, issue_key: &str) -> Result<Vec<Comment>> {
+        if self.mode.is_record() {
+            let Some(client) = &self.github_client else {
+                return Err(Error::Config("GitHub client not initialized".to_string()));
+            };
+            client.get_comments(issue_key).await
+        } else {
+            // In replay mode, return mock comments
+            Ok(vec![Comment {
+                id: "1".to_string(),
+                body: "Test comment".to_string(),
+                author: None,
+                created_at: Some("2024-01-01T00:00:00Z".to_string()),
+                updated_at: None,
+                position: None,
+            }])
+        }
     }
 
     async fn add_comment(&self, _issue_key: &str, _body: &str) -> Result<Comment> {
         Err(Error::Config(
-            "Add comment not supported in test mode".to_string(),
+            "Add comment not supported in tests".to_string(),
         ))
     }
 
@@ -290,17 +305,55 @@ impl MergeRequestProvider for TestProvider {
             .ok_or_else(|| Error::NotFound(format!("MR {} not found", key)))
     }
 
-    async fn get_discussions(&self, _mr_key: &str) -> Result<Vec<Discussion>> {
-        Ok(vec![])
+    async fn get_discussions(&self, mr_key: &str) -> Result<Vec<Discussion>> {
+        if self.mode.is_record() {
+            let Some(client) = &self.github_client else {
+                return Err(Error::Config("GitHub client not initialized".to_string()));
+            };
+            client.get_discussions(mr_key).await
+        } else {
+            // In replay mode, return mock discussions
+            Ok(vec![Discussion {
+                id: "1".to_string(),
+                resolved: false,
+                resolved_by: None,
+                comments: vec![Comment {
+                    id: "1".to_string(),
+                    body: "Review comment".to_string(),
+                    author: None,
+                    created_at: Some("2024-01-01T00:00:00Z".to_string()),
+                    updated_at: None,
+                    position: None,
+                }],
+                position: None,
+            }])
+        }
     }
 
-    async fn get_diffs(&self, _mr_key: &str) -> Result<Vec<FileDiff>> {
-        Ok(vec![])
+    async fn get_diffs(&self, mr_key: &str) -> Result<Vec<FileDiff>> {
+        if self.mode.is_record() {
+            let Some(client) = &self.github_client else {
+                return Err(Error::Config("GitHub client not initialized".to_string()));
+            };
+            client.get_diffs(mr_key).await
+        } else {
+            // In replay mode, return mock diffs
+            Ok(vec![FileDiff {
+                file_path: "src/main.rs".to_string(),
+                old_path: None,
+                new_file: false,
+                deleted_file: false,
+                renamed_file: false,
+                diff: "+added line\n-removed line".to_string(),
+                additions: Some(1),
+                deletions: Some(1),
+            }])
+        }
     }
 
     async fn add_comment(&self, _mr_key: &str, _input: CreateCommentInput) -> Result<Comment> {
         Err(Error::Config(
-            "Add comment not supported in test mode".to_string(),
+            "Add comment not supported in tests".to_string(),
         ))
     }
 
