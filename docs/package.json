@@ -1,0 +1,14 @@
+{
+  "name": "devboy-tools-docs",
+  "version": "1.0.0",
+  "description": "DevBoy Tools documentation",
+  "scripts": {
+    "prebuild": "node -e \"require('fs').rmSync('doc_build', { recursive: true, force: true })\"",
+    "dev": "rspress dev",
+    "build": "rspress build",
+    "preview": "rspress preview"
+  },
+  "devDependencies": {
+    "rspress": "^1.47.1"
+  }
+}
