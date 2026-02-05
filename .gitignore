@@ -16,3 +16,7 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Node.js (documentation)
+node_modules/
+doc_build/
