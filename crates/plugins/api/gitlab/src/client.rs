@@ -9,9 +9,9 @@ use devboy_core::{
 use tracing::{debug, warn};
 
 use crate::types::{
-    CreateDiscussionRequest, CreateIssueRequest, CreateNoteRequest, DiscussionPosition,
-    GitLabDiff, GitLabDiscussion, GitLabIssue, GitLabMergeRequest, GitLabMergeRequestChanges,
-    GitLabNote, GitLabNotePosition, GitLabUser, UpdateIssueRequest,
+    CreateDiscussionRequest, CreateIssueRequest, CreateNoteRequest, DiscussionPosition, GitLabDiff,
+    GitLabDiscussion, GitLabIssue, GitLabMergeRequest, GitLabMergeRequestChanges, GitLabNote,
+    GitLabNotePosition, GitLabUser, UpdateIssueRequest,
 };
 use crate::DEFAULT_GITLAB_URL;
 
@@ -261,11 +261,7 @@ fn map_position(gl_position: &GitLabNotePosition) -> Option<CodePosition> {
 
 fn map_discussion(gl_discussion: &GitLabDiscussion) -> Discussion {
     // Filter out system notes
-    let notes: Vec<&GitLabNote> = gl_discussion
-        .notes
-        .iter()
-        .filter(|n| !n.system)
-        .collect();
+    let notes: Vec<&GitLabNote> = gl_discussion.notes.iter().filter(|n| !n.system).collect();
 
     if notes.is_empty() {
         return Discussion {
@@ -561,9 +557,7 @@ impl MergeRequestProvider for GitLabClient {
                 "/merge_requests/{}/discussions/{}/notes",
                 iid, discussion_id
             ));
-            let request = CreateNoteRequest {
-                body: input.body,
-            };
+            let request = CreateNoteRequest { body: input.body };
             let gl_note: GitLabNote = self.post(&url, &request).await?;
             return Ok(map_note(&gl_note));
         }
@@ -610,18 +604,15 @@ impl MergeRequestProvider for GitLabClient {
             };
 
             let gl_discussion: GitLabDiscussion = self.post(&url, &request).await?;
-            let first_note = gl_discussion
-                .notes
-                .first()
-                .ok_or_else(|| Error::InvalidData("Discussion created with no notes".to_string()))?;
+            let first_note = gl_discussion.notes.first().ok_or_else(|| {
+                Error::InvalidData("Discussion created with no notes".to_string())
+            })?;
             return Ok(map_note(first_note));
         }
 
         // General comment (note) on the MR
         let url = self.project_url(&format!("/merge_requests/{}/notes", iid));
-        let request = CreateNoteRequest {
-            body: input.body,
-        };
+        let request = CreateNoteRequest { body: input.body };
 
         let gl_note: GitLabNote = self.post(&url, &request).await?;
         Ok(map_note(&gl_note))
@@ -1482,10 +1473,8 @@ mod tests {
             let server = MockServer::start();
 
             server.mock(|when, then| {
-                when.method(GET)
-                    .path("/api/v4/projects/123/issues/999");
-                then.status(404)
-                    .body("{\"message\":\"404 Not Found\"}");
+                when.method(GET).path("/api/v4/projects/123/issues/999");
+                then.status(404).body("{\"message\":\"404 Not Found\"}");
             });
 
             let client = create_test_client(&server);
@@ -1500,10 +1489,8 @@ mod tests {
             let server = MockServer::start();
 
             server.mock(|when, then| {
-                when.method(GET)
-                    .path("/api/v4/user");
-                then.status(401)
-                    .body("{\"message\":\"401 Unauthorized\"}");
+                when.method(GET).path("/api/v4/user");
+                then.status(401).body("{\"message\":\"401 Unauthorized\"}");
             });
 
             let client = create_test_client(&server);
