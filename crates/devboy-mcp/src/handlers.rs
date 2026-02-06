@@ -164,6 +164,11 @@ impl ToolHandler {
                         "type": "array",
                         "items": { "type": "string" },
                         "description": "Assignee usernames"
+                    },
+                    "provider": {
+                        "type": "string",
+                        "enum": ["github", "gitlab"],
+                        "description": "Target provider to create the issue in. If not specified, uses the first configured provider."
                     }
                 }
             }),
@@ -555,8 +560,25 @@ impl ToolHandler {
             priority: None,
         };
 
-        // Use first provider
-        let provider = &self.providers[0];
+        let provider = if let Some(ref name) = params.provider {
+            match self.find_provider_by_name(name) {
+                Some(p) => p,
+                None => {
+                    let available: Vec<_> = self
+                        .providers
+                        .iter()
+                        .map(|p| get_provider_name(p.as_ref()))
+                        .collect();
+                    return ToolCallResult::error(format!(
+                        "Provider '{}' not configured. Available: {}",
+                        name,
+                        available.join(", ")
+                    ));
+                }
+            }
+        } else {
+            &self.providers[0]
+        };
         match provider.create_issue(input).await {
             Ok(issue) => {
                 let msg = format!(
@@ -877,6 +899,12 @@ impl ToolHandler {
     // HELPER METHODS
     // =========================================================================
 
+    fn find_provider_by_name(&self, name: &str) -> Option<&Arc<dyn Provider>> {
+        self.providers
+            .iter()
+            .find(|p| get_provider_name(p.as_ref()) == name)
+    }
+
     fn create_pipeline(&self, format: &Option<String>) -> Pipeline {
         let output_format = match format.as_deref() {
             Some("json") => OutputFormat::Json,
@@ -924,6 +952,7 @@ struct CreateIssueParams {
     description: Option<String>,
     labels: Option<Vec<String>>,
     assignees: Option<Vec<String>>,
+    provider: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1252,5 +1281,42 @@ mod tests {
 
         // 6 issue tools + 5 MR tools = 11 total
         assert_eq!(tools.len(), 11);
+    }
+
+    #[tokio::test]
+    async fn test_create_issue_with_provider() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "title": "New issue",
+            "provider": "mock"
+        });
+        let result = handler.execute("create_issue", Some(args)).await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Created issue"));
+    }
+
+    #[tokio::test]
+    async fn test_create_issue_with_unknown_provider() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "title": "New issue",
+            "provider": "jira"
+        });
+        let result = handler.execute("create_issue", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Provider 'jira' not configured"));
+        assert!(content.contains("mock"));
     }
 }

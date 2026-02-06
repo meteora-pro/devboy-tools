@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use devboy_core::{Config, IssueFilter, IssueProvider, MergeRequestProvider, MrFilter, Provider};
 use devboy_github::GitHubClient;
+use devboy_gitlab::GitLabClient;
 use devboy_mcp::McpServer;
 use devboy_storage::{CredentialStore, KeychainStore};
 use tracing_subscriber::EnvFilter;
@@ -422,7 +423,7 @@ async fn handle_test_command(provider: &str) -> Result<()> {
                 .as_ref()
                 .context("GitLab not configured. Run: devboy config set gitlab.url <url>")?;
 
-            let _token = store
+            let token = store
                 .get("gitlab.token")
                 .context("Failed to get token")?
                 .context(
@@ -433,9 +434,25 @@ async fn handle_test_command(provider: &str) -> Result<()> {
             println!("  URL: {}", gl.url);
             println!("  Project: {}", gl.project_id);
 
-            // TODO: Implement GitLab test
-            println!();
-            println!("GitLab test not yet implemented");
+            let client = GitLabClient::with_base_url(&gl.url, &gl.project_id, token);
+
+            match client.get_current_user().await {
+                Ok(user) => {
+                    println!(
+                        "  Authenticated as: {} ({})",
+                        user.username,
+                        user.name.unwrap_or_default()
+                    );
+                    println!();
+                    println!("GitLab connection successful!");
+                }
+                Err(e) => {
+                    println!("  Error: {}", e);
+                    println!();
+                    println!("GitLab connection failed!");
+                    return Err(e.into());
+                }
+            }
         }
 
         _ => {
@@ -468,9 +485,15 @@ async fn handle_mcp_command() -> Result<()> {
         }
     }
 
-    // Add GitLab provider if configured (TODO: implement GitLabClient)
-    if let Some(_gl) = &config.gitlab {
-        tracing::warn!("GitLab provider not yet implemented");
+    // Add GitLab provider if configured
+    if let Some(gl) = &config.gitlab {
+        if let Some(token) = store.get("gitlab.token").ok().flatten() {
+            let client = GitLabClient::with_base_url(&gl.url, &gl.project_id, token);
+            server.add_provider(Arc::new(client));
+            tracing::info!("Added GitLab provider: {} (project {})", gl.url, gl.project_id);
+        } else {
+            tracing::warn!("GitLab configured but no token found");
+        }
     }
 
     if server.providers().is_empty() {
