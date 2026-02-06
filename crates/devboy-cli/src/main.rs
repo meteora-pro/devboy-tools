@@ -490,7 +490,11 @@ async fn handle_mcp_command() -> Result<()> {
         if let Some(token) = store.get("gitlab.token").ok().flatten() {
             let client = GitLabClient::with_base_url(&gl.url, &gl.project_id, token);
             server.add_provider(Arc::new(client));
-            tracing::info!("Added GitLab provider: {} (project {})", gl.url, gl.project_id);
+            tracing::info!(
+                "Added GitLab provider: {} (project {})",
+                gl.url,
+                gl.project_id
+            );
         } else {
             tracing::warn!("GitLab configured but no token found");
         }
