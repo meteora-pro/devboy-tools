@@ -16,6 +16,7 @@ devboy-core = { path = "../devboy-core" }
 devboy-mcp = { path = "../devboy-mcp" }
 devboy-storage = { path = "../devboy-storage" }
 devboy-github = { path = "../plugins/api/github" }
+devboy-gitlab = { path = "../plugins/api/gitlab" }
 tokio.workspace = true
 clap.workspace = true
 tracing.workspace = true
