@@ -1,0 +1,31 @@
+[package]
+name = "devboy-cli"
+description = "Command-line interface for devboy-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "devboy"
+path = "src/main.rs"
+
+[dependencies]
+devboy-core = { path = "../devboy-core" }
+devboy-mcp = { path = "../devboy-mcp" }
+devboy-storage = { path = "../devboy-storage" }
+devboy-github = { path = "../plugins/api/github" }
+devboy-gitlab = { path = "../plugins/api/gitlab" }
+tokio.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+devboy-pipeline = { path = "../plugins/pipeline" }

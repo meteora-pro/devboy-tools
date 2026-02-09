@@ -1,0 +1,114 @@
+# GitHub Integration
+
+DevBoy Tools provides full integration with GitHub for managing issues, pull requests, and code reviews through AI assistants.
+
+import RepoConfigExtractor from '../components/RepoConfigExtractor';
+
+<RepoConfigExtractor />
+
+## Required Token Scopes
+
+When creating a GitHub personal access token, you need to select the following scopes:
+
+| Scope | Description | Required For |
+|-------|-------------|--------------|
+| `repo` | Full repository access | Reading issues, PRs, diffs; creating comments |
+| `read:user` | Read user information | Identifying the current user |
+
+## Configuration
+
+### Basic Configuration
+
+```bash
+# Set repository owner (user or organization)
+devboy config set github.owner <owner>
+
+# Set repository name
+devboy config set github.repo <repo>
+
+# Store token in OS keychain
+devboy config set-secret github.token <token>
+```
+
+### Configuration File
+
+Settings are stored in `~/.config/devboy-tools/config.toml`:
+
+```toml
+[github]
+owner = "meteora-pro"
+repo = "devboy-tools"
+```
+
+The token is stored separately in the OS keychain for security.
+
+## MCP Tools
+
+Once configured, the following MCP tools are available:
+
+### Issue Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_issues` | List issues with filters (state, labels, assignee) |
+| `get_issue` | Get a single issue by key (e.g., "gh#123") |
+| `get_issue_comments` | Get all comments for an issue |
+| `create_issue` | Create a new issue |
+| `update_issue` | Update an existing issue |
+| `add_issue_comment` | Add a comment to an issue |
+
+### Pull Request Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_merge_requests` | List PRs with filters |
+| `get_merge_request` | Get a single PR by key (e.g., "pr#123") |
+| `get_merge_request_discussions` | Get code review discussions |
+| `get_merge_request_diffs` | Get file diffs for a PR |
+| `create_merge_request_comment` | Add a comment (general or inline) |
+
+## Output Formats
+
+All tools support three output formats via the `format` parameter:
+
+- `markdown` (default) - Human-readable with formatting
+- `compact` - Condensed format for limited context
+- `json` - Raw JSON data
+
+Example:
+```json
+{
+  "key": "gh#123",
+  "format": "json"
+}
+```
+
+## Testing
+
+Verify your GitHub configuration:
+
+```bash
+devboy test github
+```
+
+This will test the connection and display your GitHub user information.
+
+## Troubleshooting
+
+### "Bad credentials" error
+
+- Verify your token is copied correctly
+- Check that the token hasn't expired
+- Ensure the token has the required `repo` scope
+
+### "Not Found" error
+
+- Verify the owner and repo names are correct
+- Ensure the repository exists and is accessible
+- Check that your token has access to the repository
+
+### Rate limiting
+
+GitHub API has rate limits:
+- 5,000 requests per hour for authenticated users
+- The tool will show a rate limit error if exceeded
