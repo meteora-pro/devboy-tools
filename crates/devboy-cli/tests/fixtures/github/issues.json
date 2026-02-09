@@ -1,0 +1,105 @@
+[
+  {
+    "key": "gh#7",
+    "title": "Test issue from MCP",
+    "description": "This is a test issue created via MCP dev-boy_github-issues to verify the integration works correctly.",
+    "state": "open",
+    "source": "github",
+    "priority": null,
+    "labels": [],
+    "author": {
+      "id": "233059123",
+      "username": "andreymaznyakthailand-bot",
+      "name": null,
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/233059123?v=4"
+    },
+    "assignees": [],
+    "url": "https://github.com/andreymaznyakthailand-bot/dev-boy-test-github-project/issues/7",
+    "created_at": "2026-01-24T17:23:45Z",
+    "updated_at": "2026-01-24T17:23:45Z"
+  },
+  {
+    "key": "gh#6",
+    "title": "Test issue DEV-400 fix verification",
+    "description": null,
+    "state": "open",
+    "source": "github",
+    "priority": null,
+    "labels": [],
+    "author": {
+      "id": "233059123",
+      "username": "andreymaznyakthailand-bot",
+      "name": null,
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/233059123?v=4"
+    },
+    "assignees": [],
+    "url": "https://github.com/andreymaznyakthailand-bot/dev-boy-test-github-project/issues/6",
+    "created_at": "2026-01-24T16:39:38Z",
+    "updated_at": "2026-01-24T16:39:38Z"
+  },
+  {
+    "key": "gh#3",
+    "title": "test subissue",
+    "description": "test decsription",
+    "state": "open",
+    "source": "github",
+    "priority": null,
+    "labels": [],
+    "author": {
+      "id": "233059123",
+      "username": "andreymaznyakthailand-bot",
+      "name": null,
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/233059123?v=4"
+    },
+    "assignees": [],
+    "url": "https://github.com/andreymaznyakthailand-bot/dev-boy-test-github-project/issues/3",
+    "created_at": "2025-12-28T16:29:55Z",
+    "updated_at": "2025-12-28T16:29:55Z"
+  },
+  {
+    "key": "gh#2",
+    "title": "Second test issue",
+    "description": "test description ",
+    "state": "open",
+    "source": "github",
+    "priority": null,
+    "labels": [],
+    "author": {
+      "id": "233059123",
+      "username": "andreymaznyakthailand-bot",
+      "name": null,
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/233059123?v=4"
+    },
+    "assignees": [],
+    "url": "https://github.com/andreymaznyakthailand-bot/dev-boy-test-github-project/issues/2",
+    "created_at": "2025-12-28T16:29:38Z",
+    "updated_at": "2025-12-28T16:30:14Z"
+  },
+  {
+    "key": "gh#1",
+    "title": "Test Issue from MCP - Updated",
+    "description": "Updated description via MCP test",
+    "state": "open",
+    "source": "github",
+    "priority": null,
+    "labels": [
+      "test",
+      "mcp"
+    ],
+    "author": {
+      "id": "233059123",
+      "username": "andreymaznyakthailand-bot",
+      "name": null,
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/233059123?v=4"
+    },
+    "assignees": [],
+    "url": "https://github.com/andreymaznyakthailand-bot/dev-boy-test-github-project/issues/1",
+    "created_at": "2025-12-28T16:26:47Z",
+    "updated_at": "2025-12-28T16:29:43Z"
+  }
+]

@@ -1,0 +1,23 @@
+[package]
+name = "devboy-core"
+description = "Core traits, types, and error handling for devboy-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+toml.workspace = true
+dirs.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+mockall.workspace = true
+tempfile.workspace = true
