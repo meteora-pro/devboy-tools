@@ -2,6 +2,7 @@ import { defineConfig } from 'rspress/config';
 
 export default defineConfig({
   root: '.',
+  base: '/devboy-tools/',
   title: 'DevBoy Tools',
   description: 'MCP server for AI coding agents with GitLab, GitHub, ClickUp, and Jira integration',
   themeConfig: {
