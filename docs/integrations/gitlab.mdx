@@ -1,0 +1,131 @@
+# GitLab Integration
+
+DevBoy Tools provides full integration with GitLab for managing issues, merge requests, and code reviews through AI assistants. Both GitLab.com and self-hosted GitLab instances are supported.
+
+import ConfigExtractor from '../components/ConfigExtractor';
+
+<ConfigExtractor provider="gitlab" />
+
+## Required Token Scopes
+
+When creating a GitLab Personal Access Token, you need to select the following scopes:
+
+| Scope | Description | Required For |
+|-------|-------------|--------------|
+| `api` | Full API access | Reading/creating issues, MRs, comments, diffs |
+| `read_user` | Read user information | Identifying the current user |
+
+## Configuration
+
+### Basic Configuration
+
+```bash
+# Set GitLab instance URL (defaults to https://gitlab.com)
+devboy config set gitlab.url https://gitlab.com
+
+# Set project ID (numeric ID or full path)
+devboy config set gitlab.project_id group/project
+
+# Store token in OS keychain
+devboy config set-secret gitlab.token <token>
+```
+
+### Configuration File
+
+Settings are stored in `~/.config/devboy-tools/config.toml`:
+
+```toml
+[gitlab]
+url = "https://gitlab.com"
+project_id = "group/project"
+```
+
+The token is stored separately in the OS keychain for security.
+
+### Self-Hosted GitLab
+
+For GitLab Enterprise or self-managed instances, set the `url` to your instance:
+
+```bash
+devboy config set gitlab.url https://gitlab.example.com
+devboy config set gitlab.project_id my-group/my-project
+devboy config set-secret gitlab.token <token>
+```
+
+## MCP Tools
+
+Once configured, the following MCP tools are available:
+
+### Issue Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_issues` | List issues with filters (state, labels, assignee) |
+| `get_issue` | Get a single issue by key (e.g., `gitlab#123`) |
+| `get_issue_comments` | Get all comments for an issue |
+| `create_issue` | Create a new issue |
+| `update_issue` | Update an existing issue |
+| `add_issue_comment` | Add a comment to an issue |
+
+### Merge Request Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_merge_requests` | List MRs with filters (state, author, labels, branches) |
+| `get_merge_request` | Get a single MR by key (e.g., `mr#123`) |
+| `get_merge_request_discussions` | Get code review discussions with resolution status |
+| `get_merge_request_diffs` | Get file diffs for a MR |
+| `create_merge_request_comment` | Add a comment (general or inline code review) |
+
+## Output Formats
+
+All tools support three output formats via the `format` parameter:
+
+- `markdown` (default) - Human-readable with formatting
+- `compact` - Condensed format for limited context
+- `json` - Raw JSON data
+
+Example:
+```json
+{
+  "key": "gitlab#123",
+  "format": "json"
+}
+```
+
+## Testing
+
+Verify your GitLab configuration:
+
+```bash
+devboy test gitlab
+```
+
+This will test the connection and display your GitLab user information.
+
+## Troubleshooting
+
+### "401 Unauthorized" error
+
+- Verify your token is copied correctly
+- Check that the token hasn't expired
+- Ensure the token has the required `api` scope
+
+### "404 Not Found" error
+
+- Verify the project ID or path is correct
+- Ensure the project exists and is accessible with your token
+- For paths with subgroups, use the full path (e.g., `group/subgroup/project`)
+
+### "403 Forbidden" error
+
+- Your token may lack the required scope
+- The project may have restricted API access
+- Check if your account has the necessary project permissions
+
+### Rate limiting
+
+GitLab API has rate limits:
+- GitLab.com: 2,000 requests per minute for authenticated users
+- Self-hosted: depends on instance configuration
+- The tool will show a rate limit error if exceeded
