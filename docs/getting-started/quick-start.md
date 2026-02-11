@@ -1,46 +1,52 @@
 # Quick Start
 
-This guide will help you get DevBoy Tools up and running with GitHub integration in minutes.
+This guide will help you get DevBoy Tools up and running in minutes.
 
-## Step 1: Create a GitHub Token
+## Step 1: Choose Your Provider
 
-Before configuring DevBoy, you need a GitHub personal access token.
+DevBoy Tools supports GitHub and GitLab. Pick the one your project uses.
 
-For detailed instructions, see the [GitHub Integration](/integrations/github#required-token-scopes) page.
+### GitHub
 
-**Quick summary:**
 1. Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
 2. Click **Generate new token (classic)**
-3. Give it a descriptive name (e.g., "DevBoy Tools")
-4. Select the `repo` and `read:user` scopes
-5. Click **Generate token** and copy it
-
-## Step 2: Configure DevBoy
-
-Set up your GitHub integration:
+3. Select the `repo` and `read:user` scopes
+4. Click **Generate token** and copy it
 
 ```bash
-# Set the repository owner (user or organization)
-devboy config set github.owner <your-github-username>
-
-# Set the repository name
-devboy config set github.repo <your-repo-name>
-
-# Store the token securely in OS keychain
-devboy config set-secret github.token <your-token>
+devboy config set github.owner <owner>
+devboy config set github.repo <repo>
+devboy config set-secret github.token <token>
 ```
 
-## Step 3: Verify Connection
+### GitLab
 
-Test that everything is working:
+1. Go to GitLab → User Settings → Access Tokens
+2. Click **Add new token**
+3. Select the `api` and `read_user` scopes
+4. Click **Create personal access token** and copy it
 
 ```bash
+devboy config set gitlab.url <instance-url>
+devboy config set gitlab.project_id <project-id>
+devboy config set-secret gitlab.token <token>
+```
+
+> **Tip:** Use the Quick Config Generator on the [GitHub](/integrations/github) or [GitLab](/integrations/gitlab) integration page — paste your repo URL and it will generate the commands for you.
+
+## Step 2: Verify Connection
+
+```bash
+# For GitHub
 devboy test github
+
+# For GitLab
+devboy test gitlab
 ```
 
 You should see output confirming the connection is successful.
 
-## Step 4: Try Some Commands
+## Step 3: Try Some Commands
 
 ### List Issues
 
@@ -48,13 +54,13 @@ You should see output confirming the connection is successful.
 devboy issues
 ```
 
-### List Pull Requests
+### List Merge Requests / Pull Requests
 
 ```bash
 devboy mrs
 ```
 
-## Step 5: Integrate with AI Assistants
+## Step 4: Integrate with AI Assistants
 
 ### Claude Code (CLI)
 
@@ -85,3 +91,8 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
 **Linux:** `~/.config/Claude/claude_desktop_config.json`
+
+## Next Steps
+
+- [GitHub Integration](/integrations/github) - Full GitHub configuration reference
+- [GitLab Integration](/integrations/gitlab) - Full GitLab configuration reference
