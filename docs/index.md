@@ -14,14 +14,13 @@ Open Source MCP server written in Rust. Designed for coding agents with plugin s
 
 - **Secure Credential Storage**: Tokens stored in OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service)
 - **GitHub Integration**: Full support for issues, pull requests, and code review
-- **GitLab Integration**: Support for merge requests and project management
-- **Issue Tracker Support**: ClickUp and Jira integrations (coming soon)
+- **GitLab Integration**: Full support for issues, merge requests, and code review (including self-hosted instances)
 - **MCP Protocol**: Native Model Context Protocol support for AI assistants
 
 ## Quick Start
 
 1. [Install](/getting-started/) DevBoy Tools
-2. Configure with [GitHub](/integrations/github)
+2. Configure with [GitHub](/integrations/github) or [GitLab](/integrations/gitlab)
 3. Connect to your [AI assistant](/getting-started/quick-start#step-5-integrate-with-ai-assistants)
 
 ## Next Steps
@@ -29,3 +28,4 @@ Open Source MCP server written in Rust. Designed for coding agents with plugin s
 - [Installation Guide](/getting-started/) - Detailed installation instructions
 - [Quick Start](/getting-started/quick-start) - Get up and running in minutes
 - [GitHub Integration](/integrations/github) - Configure GitHub access
+- [GitLab Integration](/integrations/gitlab) - Configure GitLab access

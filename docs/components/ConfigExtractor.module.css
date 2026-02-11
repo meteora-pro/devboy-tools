@@ -130,3 +130,10 @@
 .config-generator__copy-btn--copied:hover {
   background: #16a34a;
 }
+
+.config-generator__hint {
+  display: block;
+  font-size: 12px;
+  color: var(--rp-c-text-2);
+  line-height: 1.4;
+}
