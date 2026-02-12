@@ -70,7 +70,7 @@ pub trait CredentialStore: Send + Sync {
 /// - macOS: Keychain Services
 /// - Windows: Credential Manager
 /// - Linux: Secret Service (GNOME Keyring / KWallet)
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct KeychainStore {
     service_name: String,
 }
@@ -94,6 +94,12 @@ impl KeychainStore {
 
     fn make_entry(&self, key: &str) -> std::result::Result<Entry, keyring::Error> {
         Entry::new(&self.service_name, key)
+    }
+}
+
+impl Default for KeychainStore {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -292,6 +298,71 @@ mod tests {
     #[test]
     fn test_email_key() {
         assert_eq!(email_key("jira"), "jira/email");
+    }
+
+    #[test]
+    fn test_memory_store_delete_nonexistent() {
+        let store = MemoryStore::new();
+
+        // Delete non-existent key should succeed
+        store.delete("nonexistent/key").unwrap();
+
+        // Verify it's still not there
+        assert_eq!(store.get("nonexistent/key").unwrap(), None);
+    }
+
+    #[test]
+    fn test_memory_store_exists() {
+        let store = MemoryStore::new();
+
+        assert!(!store.exists("test/key"));
+
+        store.store("test/key", "value").unwrap();
+        assert!(store.exists("test/key"));
+
+        store.delete("test/key").unwrap();
+        assert!(!store.exists("test/key"));
+    }
+
+    #[test]
+    fn test_memory_store_overwrite() {
+        let store = MemoryStore::new();
+
+        store.store("test/key", "value1").unwrap();
+        assert_eq!(store.get("test/key").unwrap(), Some("value1".to_string()));
+
+        store.store("test/key", "value2").unwrap();
+        assert_eq!(store.get("test/key").unwrap(), Some("value2".to_string()));
+    }
+
+    #[test]
+    fn test_credential_store_exists_default_impl() {
+        // Test the default exists() impl from the trait
+        let store = MemoryStore::new();
+
+        store.store("key1", "val1").unwrap();
+
+        // CredentialStore::exists uses the default impl calling get()
+        assert!(CredentialStore::exists(&store, "key1"));
+        assert!(!CredentialStore::exists(&store, "key2"));
+    }
+
+    #[test]
+    fn test_keychain_store_new() {
+        let store = KeychainStore::new();
+        assert_eq!(store.service_name, "devboy-tools");
+    }
+
+    #[test]
+    fn test_keychain_store_with_service_name() {
+        let store = KeychainStore::with_service_name("test-service");
+        assert_eq!(store.service_name, "test-service");
+    }
+
+    #[test]
+    fn test_keychain_store_default() {
+        let store = KeychainStore::default();
+        assert_eq!(store.service_name, "devboy-tools");
     }
 
     // Note: KeychainStore tests are not included here because they would

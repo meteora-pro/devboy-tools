@@ -658,6 +658,475 @@ mod tests {
         assert_eq!(truncate_text(text, 100), "Short");
     }
 
+    fn sample_mr() -> MergeRequest {
+        MergeRequest {
+            key: "pr#10".to_string(),
+            title: "Add new feature".to_string(),
+            description: Some("This PR adds a new feature.".to_string()),
+            state: "open".to_string(),
+            source: "github".to_string(),
+            source_branch: "feature-branch".to_string(),
+            target_branch: "main".to_string(),
+            author: Some(sample_user()),
+            assignees: vec![sample_user()],
+            reviewers: vec![User {
+                id: "2".to_string(),
+                username: "reviewer1".to_string(),
+                name: Some("Reviewer".to_string()),
+                email: None,
+                avatar_url: None,
+            }],
+            labels: vec!["enhancement".to_string()],
+            url: Some("https://github.com/test/repo/pull/10".to_string()),
+            created_at: Some("2024-01-15T10:30:00Z".to_string()),
+            updated_at: Some("2024-01-16T14:00:00Z".to_string()),
+            draft: false,
+        }
+    }
+
+    fn sample_comment() -> Comment {
+        Comment {
+            id: "1".to_string(),
+            body: "This looks good!".to_string(),
+            author: Some(sample_user()),
+            created_at: Some("2024-01-15T10:30:00Z".to_string()),
+            updated_at: None,
+            position: None,
+        }
+    }
+
+    fn sample_comment_with_position() -> Comment {
+        Comment {
+            id: "2".to_string(),
+            body: "Fix this line".to_string(),
+            author: Some(sample_user()),
+            created_at: Some("2024-01-15T11:00:00Z".to_string()),
+            updated_at: None,
+            position: Some(devboy_core::CodePosition {
+                file_path: "src/main.rs".to_string(),
+                line: 42,
+                line_type: "new".to_string(),
+                commit_sha: None,
+            }),
+        }
+    }
+
+    fn sample_discussion() -> Discussion {
+        Discussion {
+            id: "d1".to_string(),
+            resolved: false,
+            resolved_by: None,
+            comments: vec![sample_comment()],
+            position: None,
+        }
+    }
+
+    #[test]
+    fn test_merge_request_to_markdown() {
+        let mr = sample_mr();
+        let md = merge_request_to_markdown(&mr);
+
+        assert!(md.contains("## pr#10"));
+        assert!(md.contains("Add new feature"));
+        assert!(md.contains("**Branch:** `feature-branch` → `main`"));
+        assert!(md.contains("**State:** open"));
+        assert!(md.contains("**Labels:** enhancement"));
+        assert!(md.contains("**Author:** @testuser"));
+        assert!(md.contains("**Assignees:** @testuser"));
+        assert!(md.contains("**Reviewers:** @reviewer1"));
+        assert!(md.contains("This PR adds a new feature."));
+    }
+
+    #[test]
+    fn test_merge_request_to_markdown_draft() {
+        let mut mr = sample_mr();
+        mr.draft = true;
+        let md = merge_request_to_markdown(&mr);
+
+        assert!(md.contains("[DRAFT]"));
+    }
+
+    #[test]
+    fn test_merge_requests_to_markdown_empty() {
+        let md = merge_requests_to_markdown(&[]);
+        assert_eq!(md, "No merge requests found.");
+    }
+
+    #[test]
+    fn test_merge_requests_to_markdown_multiple() {
+        let mrs = vec![sample_mr()];
+        let md = merge_requests_to_markdown(&mrs);
+
+        assert!(md.contains("# Merge Requests"));
+        assert!(md.contains("pr#10"));
+    }
+
+    #[test]
+    fn test_merge_requests_to_compact() {
+        let mrs = vec![sample_mr()];
+        let compact = merge_requests_to_compact(&mrs);
+
+        assert!(compact.contains("pr#10"));
+        assert!(compact.contains("[open]"));
+        assert!(compact.contains("Add new feature"));
+        assert!(compact.contains("feature-branch → main"));
+    }
+
+    #[test]
+    fn test_merge_requests_to_compact_draft() {
+        let mut mr = sample_mr();
+        mr.draft = true;
+        let compact = merge_requests_to_compact(&[mr]);
+
+        assert!(compact.contains("[DRAFT]"));
+    }
+
+    #[test]
+    fn test_merge_requests_to_compact_empty() {
+        let compact = merge_requests_to_compact(&[]);
+        assert_eq!(compact, "No merge requests found.");
+    }
+
+    #[test]
+    fn test_comment_to_markdown() {
+        let comment = sample_comment();
+        let md = comment_to_markdown(&comment);
+
+        assert!(md.contains("**@testuser**"));
+        assert!(md.contains("2024-01-15"));
+        assert!(md.contains("This looks good!"));
+    }
+
+    #[test]
+    fn test_comment_to_markdown_with_position() {
+        let comment = sample_comment_with_position();
+        let md = comment_to_markdown(&comment);
+
+        assert!(md.contains("`src/main.rs` line 42"));
+    }
+
+    #[test]
+    fn test_comments_to_markdown() {
+        let comments = vec![sample_comment()];
+        let md = comments_to_markdown(&comments);
+
+        assert!(md.contains("# Comments"));
+        assert!(md.contains("This looks good!"));
+        assert!(md.contains("---"));
+    }
+
+    #[test]
+    fn test_comments_to_markdown_empty() {
+        let md = comments_to_markdown(&[]);
+        assert_eq!(md, "No comments.");
+    }
+
+    #[test]
+    fn test_comments_to_compact() {
+        let comments = vec![sample_comment()];
+        let compact = comments_to_compact(&comments);
+
+        assert!(compact.contains("@testuser: This looks good!"));
+    }
+
+    #[test]
+    fn test_comments_to_compact_no_author() {
+        let comment = Comment {
+            id: "1".to_string(),
+            body: "Anonymous comment".to_string(),
+            author: None,
+            created_at: None,
+            updated_at: None,
+            position: None,
+        };
+        let compact = comments_to_compact(&[comment]);
+
+        assert!(compact.contains("unknown: Anonymous comment"));
+    }
+
+    #[test]
+    fn test_comments_to_compact_empty() {
+        let compact = comments_to_compact(&[]);
+        assert_eq!(compact, "No comments.");
+    }
+
+    #[test]
+    fn test_discussion_to_markdown() {
+        let discussion = sample_discussion();
+        let md = discussion_to_markdown(&discussion, 1);
+
+        assert!(md.contains("## Discussion #1"));
+        assert!(md.contains("Open"));
+        assert!(md.contains("This looks good!"));
+        assert!(md.contains("---"));
+    }
+
+    #[test]
+    fn test_discussion_to_markdown_resolved() {
+        let mut discussion = sample_discussion();
+        discussion.resolved = true;
+        let md = discussion_to_markdown(&discussion, 2);
+
+        assert!(md.contains("## Discussion #2"));
+        assert!(md.contains("Resolved"));
+    }
+
+    #[test]
+    fn test_discussion_to_markdown_with_position() {
+        let mut discussion = sample_discussion();
+        discussion.position = Some(devboy_core::CodePosition {
+            file_path: "src/lib.rs".to_string(),
+            line: 10,
+            line_type: "new".to_string(),
+            commit_sha: None,
+        });
+        let md = discussion_to_markdown(&discussion, 1);
+
+        assert!(md.contains("`src/lib.rs` line 10"));
+    }
+
+    #[test]
+    fn test_discussions_to_markdown() {
+        let discussions = vec![sample_discussion()];
+        let md = discussions_to_markdown(&discussions);
+
+        assert!(md.contains("# Discussions"));
+        assert!(md.contains("Discussion #1"));
+    }
+
+    #[test]
+    fn test_discussions_to_markdown_empty() {
+        let md = discussions_to_markdown(&[]);
+        assert_eq!(md, "No discussions.");
+    }
+
+    #[test]
+    fn test_discussions_to_compact() {
+        let discussions = vec![sample_discussion()];
+        let compact = discussions_to_compact(&discussions);
+
+        assert!(compact.contains("#1"));
+        assert!(compact.contains("1 replies"));
+    }
+
+    #[test]
+    fn test_discussions_to_compact_resolved() {
+        let mut discussion = sample_discussion();
+        discussion.resolved = true;
+        let compact = discussions_to_compact(&[discussion]);
+
+        assert!(compact.contains("\u{2705}")); // ✅
+    }
+
+    #[test]
+    fn test_discussions_to_compact_with_position() {
+        let mut discussion = sample_discussion();
+        discussion.position = Some(devboy_core::CodePosition {
+            file_path: "src/lib.rs".to_string(),
+            line: 10,
+            line_type: "new".to_string(),
+            commit_sha: None,
+        });
+        let compact = discussions_to_compact(&[discussion]);
+
+        assert!(compact.contains("@src/lib.rs:10"));
+    }
+
+    #[test]
+    fn test_discussions_to_compact_empty() {
+        let compact = discussions_to_compact(&[]);
+        assert_eq!(compact, "No discussions.");
+    }
+
+    #[test]
+    fn test_markdown_plugin_new() {
+        let plugin = MarkdownPlugin::new();
+        assert_eq!(plugin.config.max_description_len, 200);
+        assert!(plugin.config.include_timestamps);
+        assert!(plugin.config.include_urls);
+        assert!(plugin.config.include_author);
+    }
+
+    #[test]
+    fn test_markdown_plugin_with_config() {
+        let plugin = MarkdownPlugin::with_config(MarkdownConfig {
+            include_timestamps: false,
+            include_urls: false,
+            include_author: false,
+            max_description_len: 100,
+        });
+        assert_eq!(plugin.config.max_description_len, 100);
+        assert!(!plugin.config.include_timestamps);
+    }
+
+    #[test]
+    fn test_markdown_plugin_default() {
+        let plugin = MarkdownPlugin::default();
+        assert_eq!(plugin.config.max_description_len, 200);
+    }
+
+    #[test]
+    fn test_diff_renamed() {
+        let diff = FileDiff {
+            file_path: "new_name.rs".to_string(),
+            old_path: Some("old_name.rs".to_string()),
+            new_file: false,
+            deleted_file: false,
+            renamed_file: true,
+            diff: String::new(),
+            additions: None,
+            deletions: None,
+        };
+
+        let md = diff_to_markdown(&diff);
+        assert!(md.contains("Renamed from: `old_name.rs`"));
+    }
+
+    #[test]
+    fn test_diff_new_file() {
+        let diff = FileDiff {
+            file_path: "new_file.rs".to_string(),
+            old_path: None,
+            new_file: true,
+            deleted_file: false,
+            renamed_file: false,
+            diff: "+new content".to_string(),
+            additions: Some(1),
+            deletions: Some(0),
+        };
+
+        let md = diff_to_markdown(&diff);
+        assert!(md.contains("\u{2795}")); // ➕
+    }
+
+    #[test]
+    fn test_diff_deleted_file() {
+        let diff = FileDiff {
+            file_path: "old_file.rs".to_string(),
+            old_path: None,
+            new_file: false,
+            deleted_file: true,
+            renamed_file: false,
+            diff: String::new(),
+            additions: Some(0),
+            deletions: Some(10),
+        };
+
+        let md = diff_to_markdown(&diff);
+        assert!(md.contains("\u{2796}")); // ➖
+    }
+
+    #[test]
+    fn test_diffs_to_markdown_empty() {
+        let md = diffs_to_markdown(&[]);
+        assert_eq!(md, "No file changes.");
+    }
+
+    #[test]
+    fn test_diffs_to_compact_empty() {
+        let compact = diffs_to_compact(&[]);
+        assert_eq!(compact, "No file changes.");
+    }
+
+    #[test]
+    fn test_diffs_to_compact_renamed() {
+        let diff = FileDiff {
+            file_path: "new_name.rs".to_string(),
+            old_path: Some("old_name.rs".to_string()),
+            new_file: false,
+            deleted_file: false,
+            renamed_file: true,
+            diff: String::new(),
+            additions: None,
+            deletions: None,
+        };
+
+        let compact = diffs_to_compact(&[diff]);
+        assert!(compact.contains("[R] new_name.rs"));
+    }
+
+    #[test]
+    fn test_format_timestamp() {
+        assert_eq!(format_timestamp("2024-01-15T10:30:00Z"), "2024-01-15");
+        assert_eq!(format_timestamp("short"), "short");
+    }
+
+    #[test]
+    fn test_issue_without_optional_fields() {
+        let issue = Issue {
+            key: "gh#1".to_string(),
+            title: "Minimal issue".to_string(),
+            description: None,
+            state: "open".to_string(),
+            source: "github".to_string(),
+            priority: None,
+            labels: vec![],
+            author: None,
+            assignees: vec![],
+            url: None,
+            created_at: None,
+            updated_at: None,
+        };
+
+        let md = issue_to_markdown(&issue);
+        assert!(md.contains("gh#1"));
+        assert!(!md.contains("**Priority:**"));
+        assert!(!md.contains("**Labels:**"));
+        assert!(!md.contains("**Author:**"));
+        assert!(!md.contains("**Assignees:**"));
+    }
+
+    #[test]
+    fn test_issue_with_empty_description() {
+        let issue = Issue {
+            key: "gh#1".to_string(),
+            title: "Issue".to_string(),
+            description: Some("".to_string()),
+            state: "open".to_string(),
+            source: "github".to_string(),
+            priority: None,
+            labels: vec![],
+            author: None,
+            assignees: vec![],
+            url: None,
+            created_at: None,
+            updated_at: None,
+        };
+
+        let md = issue_to_markdown(&issue);
+        // Empty description should not add a block
+        assert!(!md.contains("\n\n\n"));
+    }
+
+    #[test]
+    fn test_mr_without_optional_fields() {
+        let mr = MergeRequest {
+            key: "pr#1".to_string(),
+            title: "Minimal MR".to_string(),
+            description: None,
+            state: "open".to_string(),
+            source: "github".to_string(),
+            source_branch: "feature".to_string(),
+            target_branch: "main".to_string(),
+            author: None,
+            assignees: vec![],
+            reviewers: vec![],
+            labels: vec![],
+            url: None,
+            created_at: None,
+            updated_at: None,
+            draft: false,
+        };
+
+        let md = merge_request_to_markdown(&mr);
+        assert!(md.contains("pr#1"));
+        assert!(!md.contains("**Labels:**"));
+        assert!(!md.contains("**Author:**"));
+        assert!(!md.contains("**Assignees:**"));
+        assert!(!md.contains("**Reviewers:**"));
+        assert!(!md.contains("[DRAFT]"));
+    }
+
     #[test]
     fn test_markdown_vs_json_size() {
         let issues: Vec<Issue> = (1..=5)

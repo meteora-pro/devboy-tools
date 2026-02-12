@@ -223,4 +223,100 @@ mod tests {
         let summary = plugin.create_summary(5, 5, "issues");
         assert!(summary.is_empty());
     }
+
+    #[test]
+    fn test_truncate_string_very_small_limit() {
+        let s = "Hello, world!";
+        let result = truncate_string(s, 3);
+        assert_eq!(result, "...");
+    }
+
+    #[test]
+    fn test_truncate_string_zero_limit() {
+        let s = "Hello, world!";
+        let result = truncate_string(s, 0);
+        assert_eq!(result, "...");
+    }
+
+    #[test]
+    fn test_truncate_string_hard_truncate() {
+        // String with no spaces or newlines — forces hard truncate
+        let s = "abcdefghijklmnopqrstuvwxyz";
+        let result = truncate_string(s, 10);
+        assert!(result.ends_with("..."));
+        assert!(result.len() <= 13); // 10 - 3 + 3
+    }
+
+    #[test]
+    fn test_truncate_diff_few_lines() {
+        // <= 10 lines, should use truncate_string
+        let diff = "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8";
+        let result = truncate_diff(diff, 10);
+        assert!(result.ends_with("...") || result == diff);
+    }
+
+    #[test]
+    fn test_plugin_with_config() {
+        let config = TruncationConfig {
+            max_items: 5,
+            max_total_chars: 200,
+            max_item_chars: 50,
+            show_indicators: false,
+        };
+        let plugin = TruncationPlugin::with_config(config);
+
+        assert_eq!(plugin.max_items(), 5);
+        assert_eq!(plugin.max_total_chars(), 200);
+        assert_eq!(plugin.max_item_chars(), 50);
+    }
+
+    #[test]
+    fn test_plugin_with_limits() {
+        let plugin = TruncationPlugin::with_limits(15, 2000);
+
+        assert_eq!(plugin.max_items(), 15);
+        assert_eq!(plugin.max_total_chars(), 2000);
+        assert_eq!(plugin.max_item_chars(), 500); // default
+    }
+
+    #[test]
+    fn test_plugin_truncate() {
+        let plugin = TruncationPlugin::with_limits(10, 20);
+
+        let short = "Hello";
+        assert_eq!(plugin.truncate(short), "Hello");
+
+        let long = "This is a much longer string that will be truncated";
+        let result = plugin.truncate(&long);
+        assert!(result.len() <= 23); // 20 + "..."
+    }
+
+    #[test]
+    fn test_plugin_truncate_item() {
+        let config = TruncationConfig {
+            max_item_chars: 10,
+            ..Default::default()
+        };
+        let plugin = TruncationPlugin::with_config(config);
+
+        let long = "This is a long item description";
+        let result = plugin.truncate_item(&long);
+        assert!(result.len() <= 13); // 10 + "..."
+    }
+
+    #[test]
+    fn test_plugin_default() {
+        let plugin = TruncationPlugin::default();
+        assert_eq!(plugin.max_items(), 20);
+        assert_eq!(plugin.max_total_chars(), 4000);
+    }
+
+    #[test]
+    fn test_truncation_config_default() {
+        let config = TruncationConfig::default();
+        assert_eq!(config.max_items, 20);
+        assert_eq!(config.max_total_chars, 4000);
+        assert_eq!(config.max_item_chars, 500);
+        assert!(config.show_indicators);
+    }
 }

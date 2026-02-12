@@ -1,0 +1,12 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 90%
+        threshold: 1%
+    patch:
+      default:
+        target: 90%
+
+ignore:
+  - "crates/devboy-cli/src/main.rs"

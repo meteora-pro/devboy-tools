@@ -429,4 +429,314 @@ mod tests {
         assert!(output.content.len() <= 100);
         assert!(output.truncated);
     }
+
+    fn sample_merge_requests() -> Vec<MergeRequest> {
+        (1..=5)
+            .map(|i| MergeRequest {
+                key: format!("mr#{}", i),
+                title: format!("MR {}", i),
+                description: Some(format!("MR description {}", i)),
+                state: "opened".to_string(),
+                source: "gitlab".to_string(),
+                source_branch: format!("feature-{}", i),
+                target_branch: "main".to_string(),
+                author: None,
+                assignees: vec![],
+                reviewers: vec![],
+                labels: vec![],
+                url: Some(format!(
+                    "https://gitlab.com/test/repo/-/merge_requests/{}",
+                    i
+                )),
+                created_at: Some("2024-01-01T00:00:00Z".to_string()),
+                updated_at: Some("2024-01-02T00:00:00Z".to_string()),
+                draft: false,
+            })
+            .collect()
+    }
+
+    fn sample_diffs() -> Vec<FileDiff> {
+        (1..=5)
+            .map(|i| FileDiff {
+                file_path: format!("src/file_{}.rs", i),
+                old_path: None,
+                new_file: i == 1,
+                deleted_file: false,
+                renamed_file: false,
+                diff: format!("+added line {}\n-removed line {}", i, i),
+                additions: Some(1),
+                deletions: Some(1),
+            })
+            .collect()
+    }
+
+    fn sample_comments() -> Vec<Comment> {
+        (1..=5)
+            .map(|i| Comment {
+                id: format!("{}", i),
+                body: format!("Comment body {}", i),
+                author: None,
+                created_at: Some("2024-01-01T00:00:00Z".to_string()),
+                updated_at: None,
+                position: None,
+            })
+            .collect()
+    }
+
+    fn sample_discussions() -> Vec<Discussion> {
+        (1..=5)
+            .map(|i| Discussion {
+                id: format!("{}", i),
+                resolved: i % 2 == 0,
+                resolved_by: None,
+                comments: vec![Comment {
+                    id: format!("c{}", i),
+                    body: format!("Discussion comment {}", i),
+                    author: None,
+                    created_at: None,
+                    updated_at: None,
+                    position: None,
+                }],
+                position: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_transform_merge_requests_markdown() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Markdown,
+            max_items: 3,
+            max_chars: 10000,
+            ..Default::default()
+        });
+
+        let mrs = sample_merge_requests();
+        let output = pipeline.transform_merge_requests(mrs).unwrap();
+
+        assert!(output.content.contains("mr#1"));
+        assert!(output.content.contains("MR 1"));
+        assert!(output.truncated);
+        assert_eq!(output.included_count, 3);
+    }
+
+    #[test]
+    fn test_transform_merge_requests_json() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_items: 2,
+            max_chars: 10000,
+            ..Default::default()
+        });
+
+        let mrs: Vec<MergeRequest> = sample_merge_requests().into_iter().take(2).collect();
+        let output = pipeline.transform_merge_requests(mrs).unwrap();
+
+        let parsed: Vec<MergeRequest> = serde_json::from_str(&output.content).unwrap();
+        assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn test_transform_merge_requests_compact() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Compact,
+            max_items: 2,
+            max_chars: 10000,
+            ..Default::default()
+        });
+
+        let mrs: Vec<MergeRequest> = sample_merge_requests().into_iter().take(2).collect();
+        let output = pipeline.transform_merge_requests(mrs).unwrap();
+
+        assert!(output.content.contains("mr#1"));
+        assert!(!output.truncated);
+    }
+
+    #[test]
+    fn test_transform_diffs_markdown() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Markdown,
+            max_items: 3,
+            max_chars: 10000,
+            ..Default::default()
+        });
+
+        let diffs = sample_diffs();
+        let output = pipeline.transform_diffs(diffs).unwrap();
+
+        assert!(output.content.contains("src/file_1.rs"));
+        assert!(output.truncated);
+        assert_eq!(output.included_count, 3);
+        assert!(output.agent_hint.unwrap().contains("get_diffs"));
+    }
+
+    #[test]
+    fn test_transform_diffs_json() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_items: 2,
+            max_chars: 10000,
+            ..Default::default()
+        });
+
+        let diffs: Vec<FileDiff> = sample_diffs().into_iter().take(2).collect();
+        let output = pipeline.transform_diffs(diffs).unwrap();
+
+        let parsed: Vec<FileDiff> = serde_json::from_str(&output.content).unwrap();
+        assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn test_transform_diffs_compact() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Compact,
+            max_items: 10,
+            max_chars: 10000,
+            ..Default::default()
+        });
+
+        let diffs: Vec<FileDiff> = sample_diffs().into_iter().take(2).collect();
+        let output = pipeline.transform_diffs(diffs).unwrap();
+
+        assert!(output.content.contains("src/file_1.rs"));
+        assert!(!output.truncated);
+    }
+
+    #[test]
+    fn test_transform_comments_markdown() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Markdown,
+            max_items: 3,
+            max_chars: 10000,
+            ..Default::default()
+        });
+
+        let comments = sample_comments();
+        let output = pipeline.transform_comments(comments).unwrap();
+
+        assert!(output.content.contains("Comment body 1"));
+        assert!(output.truncated);
+        assert_eq!(output.included_count, 3);
+    }
+
+    #[test]
+    fn test_transform_comments_json() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_items: 2,
+            max_chars: 10000,
+            ..Default::default()
+        });
+
+        let comments: Vec<Comment> = sample_comments().into_iter().take(2).collect();
+        let output = pipeline.transform_comments(comments).unwrap();
+
+        let parsed: Vec<Comment> = serde_json::from_str(&output.content).unwrap();
+        assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn test_transform_comments_compact() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Compact,
+            max_items: 10,
+            max_chars: 10000,
+            ..Default::default()
+        });
+
+        let comments: Vec<Comment> = sample_comments().into_iter().take(2).collect();
+        let output = pipeline.transform_comments(comments).unwrap();
+
+        assert!(output.content.contains("Comment body 1"));
+    }
+
+    #[test]
+    fn test_transform_discussions_markdown() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Markdown,
+            max_items: 3,
+            max_chars: 10000,
+            ..Default::default()
+        });
+
+        let discussions = sample_discussions();
+        let output = pipeline.transform_discussions(discussions).unwrap();
+
+        assert!(output.content.contains("Discussion comment 1"));
+        assert!(output.truncated);
+        assert_eq!(output.included_count, 3);
+    }
+
+    #[test]
+    fn test_transform_discussions_json() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_items: 2,
+            max_chars: 10000,
+            ..Default::default()
+        });
+
+        let discussions: Vec<Discussion> = sample_discussions().into_iter().take(2).collect();
+        let output = pipeline.transform_discussions(discussions).unwrap();
+
+        let parsed: Vec<Discussion> = serde_json::from_str(&output.content).unwrap();
+        assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn test_transform_discussions_compact() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Compact,
+            max_items: 10,
+            max_chars: 10000,
+            ..Default::default()
+        });
+
+        let discussions: Vec<Discussion> = sample_discussions().into_iter().take(2).collect();
+        let output = pipeline.transform_discussions(discussions).unwrap();
+
+        // Compact format shows counts, not full content
+        assert!(output.content.contains("#1"));
+        assert!(output.content.contains("replies"));
+    }
+
+    #[test]
+    fn test_transform_output_to_string_with_hints() {
+        let output = TransformOutput::new("content".to_string());
+        assert_eq!(output.to_string_with_hints(), "content");
+
+        let output = TransformOutput::new("content".to_string()).with_truncation(
+            10,
+            5,
+            "hint text".to_string(),
+        );
+        assert!(output.to_string_with_hints().contains("content"));
+        assert!(output.to_string_with_hints().contains("hint text"));
+    }
+
+    #[test]
+    fn test_pipeline_default() {
+        let pipeline = Pipeline::default();
+        let issues: Vec<Issue> = sample_issues().into_iter().take(1).collect();
+        let output = pipeline.transform_issues(issues).unwrap();
+        assert!(!output.content.is_empty());
+    }
+
+    #[test]
+    fn test_pipeline_hints_disabled() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            max_items: 2,
+            max_chars: 100000,
+            include_hints: false,
+            ..Default::default()
+        });
+
+        let issues = sample_issues();
+        let output = pipeline.transform_issues(issues).unwrap();
+
+        // Items truncated but no hint since hints are disabled
+        assert_eq!(output.included_count, 2);
+        assert!(!output.truncated);
+        assert!(output.agent_hint.is_none());
+    }
 }
