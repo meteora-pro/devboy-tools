@@ -287,7 +287,7 @@ mod tests {
         assert_eq!(plugin.truncate(short), "Hello");
 
         let long = "This is a much longer string that will be truncated";
-        let result = plugin.truncate(&long);
+        let result = plugin.truncate(long);
         assert!(result.len() <= 23); // 20 + "..."
     }
 
@@ -300,7 +300,7 @@ mod tests {
         let plugin = TruncationPlugin::with_config(config);
 
         let long = "This is a long item description";
-        let result = plugin.truncate_item(&long);
+        let result = plugin.truncate_item(long);
         assert!(result.len() <= 13); // 10 + "..."
     }
 
