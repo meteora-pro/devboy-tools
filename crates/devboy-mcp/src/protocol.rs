@@ -320,4 +320,76 @@ mod tests {
         assert!(json.contains("\"type\":\"text\""));
         assert!(json.contains("\"text\":\"Hello\""));
     }
+
+    #[test]
+    fn test_tool_call_result_error() {
+        let result = ToolCallResult::error("Something failed".to_string());
+        assert_eq!(result.is_error, Some(true));
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("Something failed"));
+    }
+
+    #[test]
+    fn test_parse_error() {
+        let err = JsonRpcError::parse_error("bad json");
+        assert_eq!(err.code, JsonRpcError::PARSE_ERROR);
+        assert!(err.message.contains("bad json"));
+        assert!(err.data.is_none());
+    }
+
+    #[test]
+    fn test_invalid_request_error() {
+        let err = JsonRpcError::invalid_request("not initialized");
+        assert_eq!(err.code, JsonRpcError::INVALID_REQUEST);
+        assert!(err.message.contains("not initialized"));
+    }
+
+    #[test]
+    fn test_invalid_params_error() {
+        let err = JsonRpcError::invalid_params("missing field");
+        assert_eq!(err.code, JsonRpcError::INVALID_PARAMS);
+        assert!(err.message.contains("missing field"));
+    }
+
+    #[test]
+    fn test_internal_error() {
+        let err = JsonRpcError::internal_error("unexpected");
+        assert_eq!(err.code, JsonRpcError::INTERNAL_ERROR);
+        assert!(err.message.contains("unexpected"));
+    }
+
+    #[test]
+    fn test_request_id_variants() {
+        let num = RequestId::Number(42);
+        let str_id = RequestId::String("abc".to_string());
+        let null = RequestId::Null;
+
+        assert_eq!(num, RequestId::Number(42));
+        assert_eq!(str_id, RequestId::String("abc".to_string()));
+        assert_eq!(null, RequestId::Null);
+
+        // Serialization
+        let json = serde_json::to_string(&num).unwrap();
+        assert_eq!(json, "42");
+
+        let json = serde_json::to_string(&str_id).unwrap();
+        assert_eq!(json, "\"abc\"");
+
+        let json = serde_json::to_string(&null).unwrap();
+        assert_eq!(json, "null");
+    }
+
+    #[test]
+    fn test_notification_serialization() {
+        let notif = JsonRpcNotification {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            method: "initialized".to_string(),
+            params: None,
+        };
+
+        let json = serde_json::to_string(&notif).unwrap();
+        assert!(json.contains("\"method\":\"initialized\""));
+        // params should be skipped when None
+        assert!(!json.contains("params"));
+    }
 }

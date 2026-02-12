@@ -320,4 +320,236 @@ mod tests {
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, JsonRpcError::METHOD_NOT_FOUND);
     }
+
+    #[test]
+    fn test_add_provider_and_providers() {
+        use async_trait::async_trait;
+        use devboy_core::{
+            Comment, CreateCommentInput, CreateIssueInput, Discussion, FileDiff, Issue,
+            IssueFilter, IssueProvider, MergeRequest, MergeRequestProvider, MrFilter,
+            UpdateIssueInput, User,
+        };
+
+        struct TestProvider;
+
+        #[async_trait]
+        impl IssueProvider for TestProvider {
+            async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
+                Ok(vec![])
+            }
+            async fn get_issue(&self, _key: &str) -> devboy_core::Result<Issue> {
+                Err(devboy_core::Error::NotFound("not found".into()))
+            }
+            async fn create_issue(&self, _input: CreateIssueInput) -> devboy_core::Result<Issue> {
+                Err(devboy_core::Error::NotFound("not found".into()))
+            }
+            async fn update_issue(
+                &self,
+                _key: &str,
+                _input: UpdateIssueInput,
+            ) -> devboy_core::Result<Issue> {
+                Err(devboy_core::Error::NotFound("not found".into()))
+            }
+            async fn get_comments(&self, _issue_key: &str) -> devboy_core::Result<Vec<Comment>> {
+                Ok(vec![])
+            }
+            async fn add_comment(
+                &self,
+                _issue_key: &str,
+                _body: &str,
+            ) -> devboy_core::Result<Comment> {
+                Err(devboy_core::Error::NotFound("not found".into()))
+            }
+            fn provider_name(&self) -> &'static str {
+                "test"
+            }
+        }
+
+        #[async_trait]
+        impl MergeRequestProvider for TestProvider {
+            async fn get_merge_requests(
+                &self,
+                _filter: MrFilter,
+            ) -> devboy_core::Result<Vec<MergeRequest>> {
+                Ok(vec![])
+            }
+            async fn get_merge_request(&self, _key: &str) -> devboy_core::Result<MergeRequest> {
+                Err(devboy_core::Error::NotFound("not found".into()))
+            }
+            async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<Vec<Discussion>> {
+                Ok(vec![])
+            }
+            async fn get_diffs(&self, _mr_key: &str) -> devboy_core::Result<Vec<FileDiff>> {
+                Ok(vec![])
+            }
+            async fn add_comment(
+                &self,
+                _mr_key: &str,
+                _input: CreateCommentInput,
+            ) -> devboy_core::Result<Comment> {
+                Err(devboy_core::Error::NotFound("not found".into()))
+            }
+            fn provider_name(&self) -> &'static str {
+                "test"
+            }
+        }
+
+        #[async_trait]
+        impl Provider for TestProvider {
+            async fn get_current_user(&self) -> devboy_core::Result<User> {
+                Ok(User {
+                    id: "1".to_string(),
+                    username: "test".to_string(),
+                    name: None,
+                    email: None,
+                    avatar_url: None,
+                })
+            }
+        }
+
+        let mut server = McpServer::new();
+        assert!(server.providers().is_empty());
+
+        server.add_provider(Arc::new(TestProvider));
+        assert_eq!(server.providers().len(), 1);
+    }
+
+    #[test]
+    fn test_handle_notification_initialized() {
+        let mut server = McpServer::new();
+        // Should not panic
+        server.handle_notification("initialized");
+    }
+
+    #[test]
+    fn test_handle_notification_cancelled() {
+        let mut server = McpServer::new();
+        // Should not panic
+        server.handle_notification("notifications/cancelled");
+    }
+
+    #[test]
+    fn test_handle_notification_unknown() {
+        let mut server = McpServer::new();
+        // Should not panic
+        server.handle_notification("some/unknown/notification");
+    }
+
+    #[tokio::test]
+    async fn test_handle_message_notification() {
+        let mut server = McpServer::new();
+        let handler = ToolHandler::new(vec![]);
+
+        let msg = IncomingMessage::Notification(crate::protocol::JsonRpcNotification {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            method: "initialized".to_string(),
+            params: None,
+        });
+
+        let response = server.handle_message(msg, &handler).await;
+        // Notifications should return None
+        assert!(response.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_handle_message_request() {
+        let mut server = McpServer::new();
+        let handler = ToolHandler::new(vec![]);
+
+        let msg = IncomingMessage::Request(JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "ping".to_string(),
+            params: None,
+        });
+
+        let response = server.handle_message(msg, &handler).await;
+        // Requests should return Some
+        assert!(response.is_some());
+        let resp = response.unwrap();
+        assert!(resp.result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_handle_tools_call() {
+        let mut server = McpServer::new();
+        let handler = ToolHandler::new(vec![]);
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "get_issues",
+                "arguments": {}
+            })),
+        };
+
+        let resp = server.handle_request(req, &handler).await;
+        // Will return error since no providers, but should not panic
+        assert!(resp.result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_handle_tools_call_missing_params() {
+        let mut server = McpServer::new();
+        let handler = ToolHandler::new(vec![]);
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: None,
+        };
+
+        let resp = server.handle_request(req, &handler).await;
+        assert!(resp.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_handle_tools_call_invalid_params() {
+        let mut server = McpServer::new();
+        let handler = ToolHandler::new(vec![]);
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!("not an object")),
+        };
+
+        let resp = server.handle_request(req, &handler).await;
+        assert!(resp.error.is_some());
+    }
+
+    #[test]
+    fn test_initialize_without_params() {
+        let mut server = McpServer::new();
+
+        let resp = server.handle_initialize(RequestId::Number(1), None);
+
+        assert!(resp.result.is_some());
+        assert!(resp.error.is_none());
+        assert!(server.initialized);
+    }
+
+    #[test]
+    fn test_initialize_with_invalid_params() {
+        let mut server = McpServer::new();
+
+        // Invalid params should still succeed (just log a warning)
+        let resp = server.handle_initialize(
+            RequestId::Number(1),
+            Some(serde_json::json!({"invalid": true})),
+        );
+
+        assert!(resp.result.is_some());
+        assert!(server.initialized);
+    }
+
+    #[test]
+    fn test_default_trait() {
+        let server = McpServer::default();
+        assert!(server.providers().is_empty());
+    }
 }

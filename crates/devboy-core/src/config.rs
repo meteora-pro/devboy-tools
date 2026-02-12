@@ -474,6 +474,285 @@ mod tests {
     }
 
     #[test]
+    fn test_set_and_get_gitlab() {
+        let mut config = Config::default();
+
+        config
+            .set("gitlab.url", "https://gitlab.example.com")
+            .unwrap();
+        config.set("gitlab.project_id", "456").unwrap();
+
+        assert_eq!(
+            config.get("gitlab.url").unwrap(),
+            Some("https://gitlab.example.com".to_string())
+        );
+        assert_eq!(
+            config.get("gitlab.project_id").unwrap(),
+            Some("456".to_string())
+        );
+        // Test alias
+        assert_eq!(
+            config.get("gitlab.project").unwrap(),
+            Some("456".to_string())
+        );
+    }
+
+    #[test]
+    fn test_set_and_get_gitlab_alias() {
+        let mut config = Config::default();
+
+        config.set("gitlab.project", "789").unwrap();
+
+        assert_eq!(
+            config.get("gitlab.project_id").unwrap(),
+            Some("789".to_string())
+        );
+    }
+
+    #[test]
+    fn test_set_and_get_clickup() {
+        let mut config = Config::default();
+
+        config.set("clickup.list_id", "list123").unwrap();
+
+        assert_eq!(
+            config.get("clickup.list_id").unwrap(),
+            Some("list123".to_string())
+        );
+        // Test alias
+        assert_eq!(
+            config.get("clickup.list").unwrap(),
+            Some("list123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_set_and_get_clickup_alias() {
+        let mut config = Config::default();
+
+        config.set("clickup.list", "list456").unwrap();
+
+        assert_eq!(
+            config.get("clickup.list_id").unwrap(),
+            Some("list456".to_string())
+        );
+    }
+
+    #[test]
+    fn test_set_and_get_jira() {
+        let mut config = Config::default();
+
+        config.set("jira.url", "https://jira.example.com").unwrap();
+        config.set("jira.project_key", "PROJ").unwrap();
+        config.set("jira.email", "user@example.com").unwrap();
+
+        assert_eq!(
+            config.get("jira.url").unwrap(),
+            Some("https://jira.example.com".to_string())
+        );
+        assert_eq!(
+            config.get("jira.project_key").unwrap(),
+            Some("PROJ".to_string())
+        );
+        assert_eq!(
+            config.get("jira.email").unwrap(),
+            Some("user@example.com".to_string())
+        );
+        // Test alias
+        assert_eq!(
+            config.get("jira.project").unwrap(),
+            Some("PROJ".to_string())
+        );
+    }
+
+    #[test]
+    fn test_set_and_get_jira_alias() {
+        let mut config = Config::default();
+
+        config.set("jira.project", "KEY").unwrap();
+
+        assert_eq!(
+            config.get("jira.project_key").unwrap(),
+            Some("KEY".to_string())
+        );
+    }
+
+    #[test]
+    fn test_set_github_base_url() {
+        let mut config = Config::default();
+
+        config
+            .set("github.base_url", "https://github.example.com/api/v3")
+            .unwrap();
+
+        assert_eq!(
+            config.get("github.base_url").unwrap(),
+            Some("https://github.example.com/api/v3".to_string())
+        );
+        // url alias should also work for get
+        assert_eq!(
+            config.get("github.url").unwrap(),
+            Some("https://github.example.com/api/v3".to_string())
+        );
+    }
+
+    #[test]
+    fn test_set_github_url_alias() {
+        let mut config = Config::default();
+
+        config
+            .set("github.url", "https://github.example.com/api/v3")
+            .unwrap();
+
+        assert_eq!(
+            config.get("github.base_url").unwrap(),
+            Some("https://github.example.com/api/v3".to_string())
+        );
+    }
+
+    #[test]
+    fn test_unknown_field_errors() {
+        let mut config = Config::default();
+
+        // GitHub unknown field
+        assert!(config.set("github.unknown", "value").is_err());
+        config.set("github.owner", "test").unwrap();
+        assert!(config.get("github.unknown").is_err());
+
+        // GitLab unknown field
+        assert!(config.set("gitlab.unknown", "value").is_err());
+        config.set("gitlab.url", "https://gitlab.com").unwrap();
+        assert!(config.get("gitlab.unknown").is_err());
+
+        // ClickUp unknown field
+        assert!(config.set("clickup.unknown", "value").is_err());
+        config.set("clickup.list_id", "123").unwrap();
+        assert!(config.get("clickup.unknown").is_err());
+
+        // Jira unknown field
+        assert!(config.set("jira.unknown", "value").is_err());
+        config.set("jira.url", "https://jira.com").unwrap();
+        assert!(config.get("jira.unknown").is_err());
+    }
+
+    #[test]
+    fn test_get_unconfigured_providers() {
+        let config = Config::default();
+
+        assert_eq!(config.get("github.owner").unwrap(), None);
+        assert_eq!(config.get("gitlab.url").unwrap(), None);
+        assert_eq!(config.get("clickup.list_id").unwrap(), None);
+        assert_eq!(config.get("jira.url").unwrap(), None);
+    }
+
+    #[test]
+    fn test_unknown_provider_set() {
+        let mut config = Config::default();
+        let result = config.set("unknown.field", "value");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Unknown provider: unknown"));
+    }
+
+    #[test]
+    fn test_unknown_provider_get() {
+        let config = Config::default();
+        let result = config.get("unknown.field");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_malformed_toml() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path().to_path_buf();
+
+        std::fs::write(&path, "invalid toml content [[[").unwrap();
+
+        let result = Config::load_from(&path);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Failed to parse config file"));
+    }
+
+    #[test]
+    fn test_configured_providers_all() {
+        let config = Config {
+            github: Some(GitHubConfig {
+                owner: "o".to_string(),
+                repo: "r".to_string(),
+                base_url: None,
+            }),
+            gitlab: Some(GitLabConfig {
+                url: "u".to_string(),
+                project_id: "p".to_string(),
+            }),
+            clickup: Some(ClickUpConfig {
+                list_id: "l".to_string(),
+            }),
+            jira: Some(JiraConfig {
+                url: "u".to_string(),
+                project_key: "k".to_string(),
+                email: "e".to_string(),
+            }),
+        };
+
+        let providers = config.configured_providers();
+        assert_eq!(providers.len(), 4);
+        assert!(providers.contains(&"github"));
+        assert!(providers.contains(&"gitlab"));
+        assert!(providers.contains(&"clickup"));
+        assert!(providers.contains(&"jira"));
+        assert!(config.has_any_provider());
+    }
+
+    #[test]
+    fn test_config_dir() {
+        // config_dir() should return a path ending with CONFIG_DIR_NAME
+        let dir = Config::config_dir().unwrap();
+        assert!(dir.ends_with("devboy-tools"));
+    }
+
+    #[test]
+    fn test_config_path() {
+        // config_path() should return config_dir/config.toml
+        let path = Config::config_path().unwrap();
+        assert!(path.ends_with("config.toml"));
+        assert!(path.parent().unwrap().ends_with("devboy-tools"));
+    }
+
+    #[test]
+    fn test_load_default_path() {
+        // load() uses config_path() — the file likely doesn't exist, so returns default
+        let config = Config::load().unwrap();
+        // We just verify it doesn't error; the config may or may not have providers
+        // depending on the test machine
+        let _ = config.configured_providers();
+    }
+
+    #[test]
+    fn test_save_default_path() {
+        // Test save() to an actual temp location by using save_to
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let config = Config {
+            github: Some(GitHubConfig {
+                owner: "test".to_string(),
+                repo: "repo".to_string(),
+                base_url: None,
+            }),
+            ..Default::default()
+        };
+
+        config.save_to(&path).unwrap();
+        assert!(path.exists());
+
+        // Reload and verify
+        let loaded = Config::load_from(&path).unwrap();
+        assert_eq!(loaded.github.unwrap().owner, "test");
+    }
+
+    #[test]
     fn test_toml_serialization() {
         let config = Config {
             github: Some(GitHubConfig {
