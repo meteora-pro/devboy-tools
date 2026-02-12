@@ -700,6 +700,370 @@ mod tests {
     }
 
     #[test]
+    fn test_map_user_none() {
+        assert!(map_user(None).is_none());
+    }
+
+    #[test]
+    fn test_map_user_required_with_user() {
+        let gh_user = GitHubUser {
+            id: 1,
+            login: "user1".to_string(),
+            name: Some("User One".to_string()),
+            email: None,
+            avatar_url: None,
+        };
+        let user = map_user_required(Some(&gh_user));
+        assert_eq!(user.username, "user1");
+    }
+
+    #[test]
+    fn test_map_user_required_without_user() {
+        let user = map_user_required(None);
+        assert_eq!(user.id, "unknown");
+        assert_eq!(user.username, "unknown");
+        assert_eq!(user.name, Some("Unknown".to_string()));
+    }
+
+    #[test]
+    fn test_map_labels() {
+        let labels = vec![
+            GitHubLabel {
+                id: 1,
+                name: "bug".to_string(),
+                color: None,
+                description: None,
+            },
+            GitHubLabel {
+                id: 2,
+                name: "feature".to_string(),
+                color: Some("00ff00".to_string()),
+                description: Some("Feature request".to_string()),
+            },
+        ];
+        let result = map_labels(&labels);
+        assert_eq!(result, vec!["bug", "feature"]);
+    }
+
+    #[test]
+    fn test_map_labels_empty() {
+        let result = map_labels(&[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_map_comment() {
+        let gh_comment = GitHubComment {
+            id: 42,
+            body: "Nice work!".to_string(),
+            user: Some(GitHubUser {
+                id: 1,
+                login: "reviewer".to_string(),
+                name: None,
+                email: None,
+                avatar_url: None,
+            }),
+            created_at: "2024-01-15T10:00:00Z".to_string(),
+            updated_at: Some("2024-01-15T12:00:00Z".to_string()),
+        };
+
+        let comment = map_comment(&gh_comment);
+        assert_eq!(comment.id, "42");
+        assert_eq!(comment.body, "Nice work!");
+        assert!(comment.author.is_some());
+        assert_eq!(comment.author.unwrap().username, "reviewer");
+        assert_eq!(comment.created_at, Some("2024-01-15T10:00:00Z".to_string()));
+        assert_eq!(comment.updated_at, Some("2024-01-15T12:00:00Z".to_string()));
+        assert!(comment.position.is_none());
+    }
+
+    #[test]
+    fn test_map_review_comment_with_line() {
+        let gh_comment = GitHubReviewComment {
+            id: 100,
+            body: "Fix this".to_string(),
+            user: Some(GitHubUser {
+                id: 1,
+                login: "reviewer".to_string(),
+                name: None,
+                email: None,
+                avatar_url: None,
+            }),
+            created_at: "2024-01-15T10:00:00Z".to_string(),
+            updated_at: None,
+            path: "src/main.rs".to_string(),
+            line: Some(42),
+            original_line: None,
+            position: None,
+            side: Some("RIGHT".to_string()),
+            diff_hunk: None,
+            commit_id: Some("abc123".to_string()),
+            original_commit_id: None,
+            in_reply_to_id: None,
+        };
+
+        let comment = map_review_comment(&gh_comment);
+        assert_eq!(comment.id, "100");
+        assert_eq!(comment.body, "Fix this");
+        let pos = comment.position.unwrap();
+        assert_eq!(pos.file_path, "src/main.rs");
+        assert_eq!(pos.line, 42);
+        assert_eq!(pos.line_type, "new");
+        assert_eq!(pos.commit_sha, Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn test_map_review_comment_with_left_side() {
+        let gh_comment = GitHubReviewComment {
+            id: 101,
+            body: "Old code".to_string(),
+            user: None,
+            created_at: "2024-01-15T10:00:00Z".to_string(),
+            updated_at: None,
+            path: "src/lib.rs".to_string(),
+            line: Some(10),
+            original_line: None,
+            position: None,
+            side: Some("LEFT".to_string()),
+            diff_hunk: None,
+            commit_id: None,
+            original_commit_id: Some("def456".to_string()),
+            in_reply_to_id: None,
+        };
+
+        let comment = map_review_comment(&gh_comment);
+        let pos = comment.position.unwrap();
+        assert_eq!(pos.line_type, "old");
+        assert_eq!(pos.commit_sha, Some("def456".to_string()));
+    }
+
+    #[test]
+    fn test_map_review_comment_with_original_line_fallback() {
+        let gh_comment = GitHubReviewComment {
+            id: 102,
+            body: "Outdated".to_string(),
+            user: None,
+            created_at: "2024-01-15T10:00:00Z".to_string(),
+            updated_at: None,
+            path: "src/lib.rs".to_string(),
+            line: None,
+            original_line: Some(5),
+            position: None,
+            side: None,
+            diff_hunk: None,
+            commit_id: None,
+            original_commit_id: None,
+            in_reply_to_id: None,
+        };
+
+        let comment = map_review_comment(&gh_comment);
+        let pos = comment.position.unwrap();
+        assert_eq!(pos.line, 5);
+        assert_eq!(pos.line_type, "new"); // default when no side
+    }
+
+    #[test]
+    fn test_map_review_comment_without_line() {
+        let gh_comment = GitHubReviewComment {
+            id: 103,
+            body: "General".to_string(),
+            user: None,
+            created_at: "2024-01-15T10:00:00Z".to_string(),
+            updated_at: None,
+            path: "src/lib.rs".to_string(),
+            line: None,
+            original_line: None,
+            position: None,
+            side: None,
+            diff_hunk: None,
+            commit_id: None,
+            original_commit_id: None,
+            in_reply_to_id: None,
+        };
+
+        let comment = map_review_comment(&gh_comment);
+        assert!(comment.position.is_none());
+    }
+
+    #[test]
+    fn test_map_file() {
+        let gh_file = GitHubFile {
+            sha: "abc123".to_string(),
+            filename: "src/main.rs".to_string(),
+            status: "modified".to_string(),
+            additions: 10,
+            deletions: 3,
+            changes: 13,
+            patch: Some("@@ -1,3 +1,10 @@\n+new line".to_string()),
+            previous_filename: None,
+        };
+
+        let diff = map_file(&gh_file);
+        assert_eq!(diff.file_path, "src/main.rs");
+        assert!(!diff.new_file);
+        assert!(!diff.deleted_file);
+        assert!(!diff.renamed_file);
+        assert_eq!(diff.additions, Some(10));
+        assert_eq!(diff.deletions, Some(3));
+        assert!(diff.diff.contains("+new line"));
+    }
+
+    #[test]
+    fn test_map_file_added() {
+        let gh_file = GitHubFile {
+            sha: "abc".to_string(),
+            filename: "new_file.rs".to_string(),
+            status: "added".to_string(),
+            additions: 50,
+            deletions: 0,
+            changes: 50,
+            patch: None,
+            previous_filename: None,
+        };
+
+        let diff = map_file(&gh_file);
+        assert!(diff.new_file);
+        assert!(!diff.deleted_file);
+        assert!(diff.diff.is_empty());
+    }
+
+    #[test]
+    fn test_map_file_removed() {
+        let gh_file = GitHubFile {
+            sha: "abc".to_string(),
+            filename: "old_file.rs".to_string(),
+            status: "removed".to_string(),
+            additions: 0,
+            deletions: 30,
+            changes: 30,
+            patch: None,
+            previous_filename: None,
+        };
+
+        let diff = map_file(&gh_file);
+        assert!(diff.deleted_file);
+        assert!(!diff.new_file);
+    }
+
+    #[test]
+    fn test_map_file_renamed() {
+        let gh_file = GitHubFile {
+            sha: "abc".to_string(),
+            filename: "new_name.rs".to_string(),
+            status: "renamed".to_string(),
+            additions: 0,
+            deletions: 0,
+            changes: 0,
+            patch: None,
+            previous_filename: Some("old_name.rs".to_string()),
+        };
+
+        let diff = map_file(&gh_file);
+        assert!(diff.renamed_file);
+        assert_eq!(diff.old_path, Some("old_name.rs".to_string()));
+    }
+
+    #[test]
+    fn test_map_pull_request_with_full_data() {
+        let pr = GitHubPullRequest {
+            id: 1,
+            number: 10,
+            title: "Add feature".to_string(),
+            body: Some("Description".to_string()),
+            state: "open".to_string(),
+            html_url: "https://github.com/test/repo/pull/10".to_string(),
+            draft: false,
+            merged: false,
+            merged_at: None,
+            user: Some(GitHubUser {
+                id: 1,
+                login: "author".to_string(),
+                name: None,
+                email: None,
+                avatar_url: None,
+            }),
+            assignees: vec![GitHubUser {
+                id: 2,
+                login: "assignee".to_string(),
+                name: Some("Assignee".to_string()),
+                email: None,
+                avatar_url: None,
+            }],
+            requested_reviewers: vec![GitHubUser {
+                id: 3,
+                login: "reviewer".to_string(),
+                name: None,
+                email: None,
+                avatar_url: None,
+            }],
+            labels: vec![GitHubLabel {
+                id: 1,
+                name: "enhancement".to_string(),
+                color: None,
+                description: None,
+            }],
+            head: GitHubBranchRef {
+                ref_name: "feature-branch".to_string(),
+                sha: "abc123".to_string(),
+            },
+            base: GitHubBranchRef {
+                ref_name: "main".to_string(),
+                sha: "def456".to_string(),
+            },
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            updated_at: "2024-01-02T00:00:00Z".to_string(),
+        };
+
+        let mr = map_pull_request(&pr);
+        assert_eq!(mr.key, "pr#10");
+        assert_eq!(mr.title, "Add feature");
+        assert_eq!(mr.description, Some("Description".to_string()));
+        assert_eq!(mr.state, "open");
+        assert_eq!(mr.source, "github");
+        assert_eq!(mr.source_branch, "feature-branch");
+        assert_eq!(mr.target_branch, "main");
+        assert!(mr.author.is_some());
+        assert_eq!(mr.assignees.len(), 1);
+        assert_eq!(mr.assignees[0].username, "assignee");
+        assert_eq!(mr.reviewers.len(), 1);
+        assert_eq!(mr.reviewers[0].username, "reviewer");
+        assert_eq!(mr.labels, vec!["enhancement"]);
+        assert!(!mr.draft);
+    }
+
+    #[test]
+    fn test_map_pull_request_merged_at() {
+        let pr = GitHubPullRequest {
+            id: 1,
+            number: 10,
+            title: "Merged PR".to_string(),
+            body: None,
+            state: "closed".to_string(),
+            html_url: "https://github.com/test/repo/pull/10".to_string(),
+            draft: false,
+            merged: false,
+            merged_at: Some("2024-01-03T00:00:00Z".to_string()),
+            user: None,
+            assignees: vec![],
+            requested_reviewers: vec![],
+            labels: vec![],
+            head: GitHubBranchRef {
+                ref_name: "feature".to_string(),
+                sha: "abc123".to_string(),
+            },
+            base: GitHubBranchRef {
+                ref_name: "main".to_string(),
+                sha: "def456".to_string(),
+            },
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            updated_at: "2024-01-02T00:00:00Z".to_string(),
+        };
+
+        let mr = map_pull_request(&pr);
+        assert_eq!(mr.state, "merged");
+    }
+
+    #[test]
     fn test_map_issue() {
         let gh_issue = GitHubIssue {
             id: 1,
@@ -734,6 +1098,45 @@ mod tests {
         assert_eq!(issue.state, "open");
         assert_eq!(issue.source, "github");
         assert_eq!(issue.labels, vec!["bug"]);
+    }
+
+    #[test]
+    fn test_map_issue_with_assignees() {
+        let gh_issue = GitHubIssue {
+            id: 1,
+            number: 1,
+            title: "Issue".to_string(),
+            body: None,
+            state: "open".to_string(),
+            html_url: "https://github.com/test/repo/issues/1".to_string(),
+            user: None,
+            assignees: vec![
+                GitHubUser {
+                    id: 1,
+                    login: "user1".to_string(),
+                    name: None,
+                    email: None,
+                    avatar_url: None,
+                },
+                GitHubUser {
+                    id: 2,
+                    login: "user2".to_string(),
+                    name: None,
+                    email: None,
+                    avatar_url: None,
+                },
+            ],
+            labels: vec![],
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            updated_at: "2024-01-02T00:00:00Z".to_string(),
+            closed_at: None,
+            pull_request: None,
+        };
+
+        let issue = map_issue(&gh_issue);
+        assert_eq!(issue.assignees.len(), 2);
+        assert_eq!(issue.assignees[0].username, "user1");
+        assert_eq!(issue.assignees[1].username, "user2");
     }
 
     #[test]
@@ -785,5 +1188,656 @@ mod tests {
         closed_pr.state = "closed".to_string();
         let pr = map_pull_request(&closed_pr);
         assert_eq!(pr.state, "closed");
+    }
+
+    #[test]
+    fn test_repo_url() {
+        let client =
+            GitHubClient::with_base_url("https://api.github.com", "owner", "repo", "token");
+        assert_eq!(
+            client.repo_url("/issues"),
+            "https://api.github.com/repos/owner/repo/issues"
+        );
+        assert_eq!(
+            client.repo_url("/pulls/1"),
+            "https://api.github.com/repos/owner/repo/pulls/1"
+        );
+    }
+
+    #[test]
+    fn test_repo_url_strips_trailing_slash() {
+        let client =
+            GitHubClient::with_base_url("https://api.github.com/", "owner", "repo", "token");
+        assert_eq!(
+            client.repo_url("/issues"),
+            "https://api.github.com/repos/owner/repo/issues"
+        );
+    }
+
+    #[test]
+    fn test_provider_name() {
+        let client = GitHubClient::new("owner", "repo", "token");
+        assert_eq!(IssueProvider::provider_name(&client), "github");
+        assert_eq!(MergeRequestProvider::provider_name(&client), "github");
+    }
+
+    // =========================================================================
+    // Integration tests with httpmock
+    // =========================================================================
+
+    mod integration {
+        use super::*;
+        use httpmock::prelude::*;
+
+        fn create_test_client(server: &MockServer) -> GitHubClient {
+            GitHubClient::with_base_url(server.base_url(), "owner", "repo", "test-token")
+        }
+
+        fn sample_issue_json() -> serde_json::Value {
+            serde_json::json!({
+                "id": 1,
+                "number": 42,
+                "title": "Test Issue",
+                "body": "Issue body",
+                "state": "open",
+                "html_url": "https://github.com/owner/repo/issues/42",
+                "user": {"id": 1, "login": "author"},
+                "assignees": [],
+                "labels": [{"id": 1, "name": "bug"}],
+                "created_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-02T00:00:00Z"
+            })
+        }
+
+        fn sample_pr_json() -> serde_json::Value {
+            serde_json::json!({
+                "id": 1,
+                "number": 10,
+                "title": "Test PR",
+                "body": "PR body",
+                "state": "open",
+                "html_url": "https://github.com/owner/repo/pull/10",
+                "draft": false,
+                "merged": false,
+                "user": {"id": 1, "login": "author"},
+                "assignees": [],
+                "requested_reviewers": [],
+                "labels": [],
+                "head": {"ref": "feature", "sha": "abc123"},
+                "base": {"ref": "main", "sha": "def456"},
+                "created_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-02T00:00:00Z"
+            })
+        }
+
+        #[tokio::test]
+        async fn test_get_issues() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/issues")
+                    .header("Authorization", "Bearer test-token");
+                then.status(200)
+                    .json_body(serde_json::json!([sample_issue_json()]));
+            });
+
+            let client = create_test_client(&server);
+            let issues = client
+                .get_issues(IssueFilter {
+                    state: Some("open".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issues.len(), 1);
+            assert_eq!(issues[0].key, "gh#42");
+            assert_eq!(issues[0].title, "Test Issue");
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_filters_pull_requests() {
+            let server = MockServer::start();
+
+            let mut pr_as_issue = sample_issue_json();
+            pr_as_issue["pull_request"] = serde_json::json!({"url": "..."});
+            pr_as_issue["number"] = serde_json::json!(99);
+
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/issues");
+                then.status(200)
+                    .json_body(serde_json::json!([sample_issue_json(), pr_as_issue]));
+            });
+
+            let client = create_test_client(&server);
+            let issues = client.get_issues(IssueFilter::default()).await.unwrap();
+
+            // Only the real issue, not the PR
+            assert_eq!(issues.len(), 1);
+            assert_eq!(issues[0].key, "gh#42");
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_with_all_filters() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/issues")
+                    .query_param("state", "closed")
+                    .query_param("labels", "bug,feature")
+                    .query_param("assignee", "user1")
+                    .query_param("per_page", "10")
+                    .query_param("page", "2")
+                    .query_param("sort", "created")
+                    .query_param("direction", "asc");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+
+            let client = create_test_client(&server);
+            let issues = client
+                .get_issues(IssueFilter {
+                    state: Some("closed".to_string()),
+                    labels: Some(vec!["bug".to_string(), "feature".to_string()]),
+                    assignee: Some("user1".to_string()),
+                    limit: Some(10),
+                    offset: Some(10),
+                    sort_by: Some("created_at".to_string()),
+                    sort_order: Some("asc".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert!(issues.is_empty());
+        }
+
+        #[tokio::test]
+        async fn test_get_issue() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/issues/42");
+                then.status(200).json_body(sample_issue_json());
+            });
+
+            let client = create_test_client(&server);
+            let issue = client.get_issue("gh#42").await.unwrap();
+
+            assert_eq!(issue.key, "gh#42");
+            assert_eq!(issue.title, "Test Issue");
+        }
+
+        #[tokio::test]
+        async fn test_get_issue_rejects_pr() {
+            let server = MockServer::start();
+
+            let mut issue_json = sample_issue_json();
+            issue_json["pull_request"] = serde_json::json!({"url": "..."});
+
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/issues/42");
+                then.status(200).json_body(issue_json);
+            });
+
+            let client = create_test_client(&server);
+            let result = client.get_issue("gh#42").await;
+            assert!(result.is_err());
+        }
+
+        #[tokio::test]
+        async fn test_create_issue() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/repos/owner/repo/issues")
+                    .body_includes("\"title\":\"New Issue\"");
+                then.status(201).json_body(sample_issue_json());
+            });
+
+            let client = create_test_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "New Issue".to_string(),
+                    description: Some("Body".to_string()),
+                    labels: vec!["bug".to_string()],
+                    assignees: vec![],
+                    priority: None,
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "gh#42");
+        }
+
+        #[tokio::test]
+        async fn test_update_issue() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(PATCH)
+                    .path("/repos/owner/repo/issues/42")
+                    .body_includes("\"state\":\"closed\"");
+                then.status(200).json_body(sample_issue_json());
+            });
+
+            let client = create_test_client(&server);
+            let issue = client
+                .update_issue(
+                    "gh#42",
+                    UpdateIssueInput {
+                        state: Some("closed".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "gh#42");
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_state_mapping() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(PATCH)
+                    .path("/repos/owner/repo/issues/42")
+                    .body_includes("\"state\":\"open\"");
+                then.status(200).json_body(sample_issue_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "gh#42",
+                    UpdateIssueInput {
+                        state: Some("opened".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await;
+
+            assert!(result.is_ok());
+        }
+
+        #[tokio::test]
+        async fn test_get_comments() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/issues/42/comments");
+                then.status(200).json_body(serde_json::json!([{
+                    "id": 1,
+                    "body": "Comment text",
+                    "user": {"id": 1, "login": "commenter"},
+                    "created_at": "2024-01-15T10:00:00Z"
+                }]));
+            });
+
+            let client = create_test_client(&server);
+            let comments = client.get_comments("gh#42").await.unwrap();
+
+            assert_eq!(comments.len(), 1);
+            assert_eq!(comments[0].body, "Comment text");
+        }
+
+        #[tokio::test]
+        async fn test_add_comment() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/repos/owner/repo/issues/42/comments")
+                    .body_includes("\"body\":\"My comment\"");
+                then.status(201).json_body(serde_json::json!({
+                    "id": 1,
+                    "body": "My comment",
+                    "user": {"id": 1, "login": "me"},
+                    "created_at": "2024-01-15T10:00:00Z"
+                }));
+            });
+
+            let client = create_test_client(&server);
+            let comment = IssueProvider::add_comment(&client, "gh#42", "My comment")
+                .await
+                .unwrap();
+
+            assert_eq!(comment.body, "My comment");
+        }
+
+        #[tokio::test]
+        async fn test_get_pull_request() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/pulls/10");
+                then.status(200).json_body(sample_pr_json());
+            });
+
+            let client = create_test_client(&server);
+            let mr = client.get_merge_request("pr#10").await.unwrap();
+
+            assert_eq!(mr.key, "pr#10");
+            assert_eq!(mr.title, "Test PR");
+            assert_eq!(mr.source_branch, "feature");
+            assert_eq!(mr.target_branch, "main");
+        }
+
+        #[tokio::test]
+        async fn test_get_pull_requests() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/pulls");
+                then.status(200)
+                    .json_body(serde_json::json!([sample_pr_json()]));
+            });
+
+            let client = create_test_client(&server);
+            let mrs = client
+                .get_merge_requests(MrFilter::default())
+                .await
+                .unwrap();
+
+            assert_eq!(mrs.len(), 1);
+            assert_eq!(mrs[0].key, "pr#10");
+        }
+
+        #[tokio::test]
+        async fn test_get_pull_requests_with_filters() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/pulls")
+                    .query_param("state", "closed")
+                    .query_param("head", "feature")
+                    .query_param("base", "main")
+                    .query_param("per_page", "5");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+
+            let client = create_test_client(&server);
+            let mrs = client
+                .get_merge_requests(MrFilter {
+                    state: Some("closed".to_string()),
+                    source_branch: Some("feature".to_string()),
+                    target_branch: Some("main".to_string()),
+                    limit: Some(5),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert!(mrs.is_empty());
+        }
+
+        #[tokio::test]
+        async fn test_get_pull_requests_merged_filter() {
+            let server = MockServer::start();
+
+            let mut merged_pr = sample_pr_json();
+            merged_pr["merged"] = serde_json::json!(true);
+            merged_pr["state"] = serde_json::json!("closed");
+
+            let open_pr = sample_pr_json();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/pulls")
+                    .query_param("state", "closed");
+                then.status(200)
+                    .json_body(serde_json::json!([merged_pr, open_pr]));
+            });
+
+            let client = create_test_client(&server);
+            let mrs = client
+                .get_merge_requests(MrFilter {
+                    state: Some("merged".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            // Only merged PRs returned
+            assert_eq!(mrs.len(), 1);
+            assert_eq!(mrs[0].state, "merged");
+        }
+
+        #[tokio::test]
+        async fn test_get_discussions() {
+            let server = MockServer::start();
+
+            // Reviews
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/pulls/10/reviews");
+                then.status(200).json_body(serde_json::json!([{
+                    "id": 1,
+                    "user": {"id": 1, "login": "reviewer"},
+                    "body": "LGTM",
+                    "state": "APPROVED",
+                    "submitted_at": "2024-01-15T10:00:00Z"
+                }]));
+            });
+
+            // Review comments
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/pulls/10/comments");
+                then.status(200).json_body(serde_json::json!([{
+                    "id": 100,
+                    "body": "Fix this line",
+                    "user": {"id": 2, "login": "reviewer2"},
+                    "created_at": "2024-01-15T11:00:00Z",
+                    "path": "src/main.rs",
+                    "line": 42,
+                    "side": "RIGHT"
+                }]));
+            });
+
+            // Issue comments
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/issues/10/comments");
+                then.status(200).json_body(serde_json::json!([{
+                    "id": 200,
+                    "body": "General comment",
+                    "user": {"id": 3, "login": "user3"},
+                    "created_at": "2024-01-15T12:00:00Z"
+                }]));
+            });
+
+            let client = create_test_client(&server);
+            let discussions = client.get_discussions("pr#10").await.unwrap();
+
+            // 1 review comment thread + 1 review + 1 general comment = 3
+            assert_eq!(discussions.len(), 3);
+        }
+
+        #[tokio::test]
+        async fn test_get_diffs() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/pulls/10/files");
+                then.status(200).json_body(serde_json::json!([{
+                    "sha": "abc123",
+                    "filename": "src/main.rs",
+                    "status": "modified",
+                    "additions": 10,
+                    "deletions": 3,
+                    "changes": 13,
+                    "patch": "@@ +new code"
+                }]));
+            });
+
+            let client = create_test_client(&server);
+            let diffs = client.get_diffs("pr#10").await.unwrap();
+
+            assert_eq!(diffs.len(), 1);
+            assert_eq!(diffs[0].file_path, "src/main.rs");
+            assert_eq!(diffs[0].additions, Some(10));
+        }
+
+        #[tokio::test]
+        async fn test_add_mr_comment_general() {
+            let server = MockServer::start();
+
+            // PR lookup
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/pulls/10");
+                then.status(200).json_body(sample_pr_json());
+            });
+
+            // Create comment
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/repos/owner/repo/issues/10/comments");
+                then.status(201).json_body(serde_json::json!({
+                    "id": 1,
+                    "body": "General comment",
+                    "user": {"id": 1, "login": "me"},
+                    "created_at": "2024-01-15T10:00:00Z"
+                }));
+            });
+
+            let client = create_test_client(&server);
+            let comment = MergeRequestProvider::add_comment(
+                &client,
+                "pr#10",
+                CreateCommentInput {
+                    body: "General comment".to_string(),
+                    position: None,
+                    discussion_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(comment.body, "General comment");
+        }
+
+        #[tokio::test]
+        async fn test_add_mr_comment_inline() {
+            let server = MockServer::start();
+
+            // PR lookup
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/pulls/10");
+                then.status(200).json_body(sample_pr_json());
+            });
+
+            // Create review comment
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/repos/owner/repo/pulls/10/comments")
+                    .body_includes("\"path\":\"src/main.rs\"")
+                    .body_includes("\"line\":42");
+                then.status(201).json_body(serde_json::json!({
+                    "id": 1,
+                    "body": "Inline comment",
+                    "user": {"id": 1, "login": "me"},
+                    "created_at": "2024-01-15T10:00:00Z",
+                    "path": "src/main.rs",
+                    "line": 42,
+                    "side": "RIGHT"
+                }));
+            });
+
+            let client = create_test_client(&server);
+            let comment = MergeRequestProvider::add_comment(
+                &client,
+                "pr#10",
+                CreateCommentInput {
+                    body: "Inline comment".to_string(),
+                    position: Some(CodePosition {
+                        file_path: "src/main.rs".to_string(),
+                        line: 42,
+                        line_type: "new".to_string(),
+                        commit_sha: Some("abc123".to_string()),
+                    }),
+                    discussion_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(comment.body, "Inline comment");
+        }
+
+        #[tokio::test]
+        async fn test_handle_response_401() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/issues");
+                then.status(401).body("Bad credentials");
+            });
+
+            let client = create_test_client(&server);
+            let result = client.get_issues(IssueFilter::default()).await;
+
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            assert!(matches!(err, Error::Unauthorized(_)));
+        }
+
+        #[tokio::test]
+        async fn test_handle_response_404() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/issues/999");
+                then.status(404).body("Not Found");
+            });
+
+            let client = create_test_client(&server);
+            let result = client.get_issue("gh#999").await;
+
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            assert!(matches!(err, Error::NotFound(_)));
+        }
+
+        #[tokio::test]
+        async fn test_handle_response_500() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/issues");
+                then.status(500).body("Internal Server Error");
+            });
+
+            let client = create_test_client(&server);
+            let result = client.get_issues(IssueFilter::default()).await;
+
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            assert!(matches!(err, Error::ServerError { .. }));
+        }
+
+        #[tokio::test]
+        async fn test_get_current_user() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/user");
+                then.status(200).json_body(serde_json::json!({
+                    "id": 1,
+                    "login": "testuser",
+                    "name": "Test User",
+                    "email": "test@example.com"
+                }));
+            });
+
+            let client = create_test_client(&server);
+            let user = client.get_current_user().await.unwrap();
+
+            assert_eq!(user.username, "testuser");
+            assert_eq!(user.name, Some("Test User".to_string()));
+        }
     }
 }

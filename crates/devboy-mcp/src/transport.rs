@@ -184,4 +184,118 @@ mod tests {
 
         assert!(msg.is_none());
     }
+
+    #[test]
+    fn test_read_empty_line() {
+        let reader = Box::new(Cursor::new("\n".to_string()));
+        let writer = Box::new(Vec::new());
+
+        let mut transport = StdioTransport::new(reader, writer);
+        let msg = transport.read_message().unwrap();
+
+        assert!(msg.is_none());
+    }
+
+    #[test]
+    fn test_read_invalid_json() {
+        let reader = Box::new(Cursor::new("not valid json\n".to_string()));
+        let writer = Box::new(Vec::new());
+
+        let mut transport = StdioTransport::new(reader, writer);
+        let result = transport.read_message();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn test_write_notification() {
+        use std::sync::{Arc, Mutex};
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let buffer_clone = buffer.clone();
+
+        struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for SharedWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let reader = Box::new(Cursor::new(Vec::new()));
+        let writer = Box::new(SharedWriter(buffer_clone));
+
+        let mut transport = StdioTransport::new(reader, writer);
+
+        let notification = JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "test/notification".to_string(),
+            params: Some(serde_json::json!({"key": "value"})),
+        };
+
+        transport.write_notification(&notification).unwrap();
+
+        let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("\"jsonrpc\":\"2.0\""));
+        assert!(output.contains("\"method\":\"test/notification\""));
+        assert!(output.ends_with('\n'));
+    }
+
+    #[test]
+    fn test_write_notification_without_params() {
+        use std::sync::{Arc, Mutex};
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let buffer_clone = buffer.clone();
+
+        struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for SharedWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let reader = Box::new(Cursor::new(Vec::new()));
+        let writer = Box::new(SharedWriter(buffer_clone));
+
+        let mut transport = StdioTransport::new(reader, writer);
+
+        let notification = JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "initialized".to_string(),
+            params: None,
+        };
+
+        transport.write_notification(&notification).unwrap();
+
+        let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("\"method\":\"initialized\""));
+    }
+
+    #[test]
+    fn test_read_request_with_string_id() {
+        let input = r#"{"jsonrpc":"2.0","id":"abc","method":"ping"}"#;
+        let reader = Box::new(Cursor::new(format!("{}\n", input)));
+        let writer = Box::new(Vec::new());
+
+        let mut transport = StdioTransport::new(reader, writer);
+        let msg = transport.read_message().unwrap();
+
+        match msg {
+            Some(IncomingMessage::Request(req)) => {
+                assert_eq!(req.method, "ping");
+                assert_eq!(req.id, RequestId::String("abc".to_string()));
+            }
+            _ => panic!("Expected request"),
+        }
+    }
 }
