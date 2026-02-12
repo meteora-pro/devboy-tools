@@ -8,5 +8,9 @@ coverage:
       default:
         target: 90%
 
+comment:
+  layout: "header, diff, files"
+  require_changes: true
+
 ignore:
   - "crates/devboy-cli/src/main.rs"
