@@ -1319,4 +1319,696 @@ mod tests {
         assert!(content.contains("Provider 'jira' not configured"));
         assert!(content.contains("mock"));
     }
+
+    #[tokio::test]
+    async fn test_get_issue_comments_handler() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({"key": "gh#1"});
+        let result = handler.execute("get_issue_comments", Some(args)).await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Test comment"));
+    }
+
+    #[tokio::test]
+    async fn test_get_issue_comments_missing_params() {
+        let handler = ToolHandler::new(vec![Arc::new(MockProvider::new()) as Arc<dyn Provider>]);
+
+        let result = handler.execute("get_issue_comments", None).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Missing required parameter: key"));
+    }
+
+    #[tokio::test]
+    async fn test_get_issue_comments_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+
+        let args = serde_json::json!({"key": "gh#1"});
+        let result = handler.execute("get_issue_comments", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("No providers configured"));
+    }
+
+    #[tokio::test]
+    async fn test_update_issue_handler() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "gh#1",
+            "title": "Updated title",
+            "state": "closed"
+        });
+        let result = handler.execute("update_issue", Some(args)).await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Updated issue"));
+    }
+
+    #[tokio::test]
+    async fn test_update_issue_missing_params() {
+        let handler = ToolHandler::new(vec![Arc::new(MockProvider::new()) as Arc<dyn Provider>]);
+
+        let result = handler.execute("update_issue", None).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Missing required parameter: key"));
+    }
+
+    #[tokio::test]
+    async fn test_update_issue_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+
+        let args = serde_json::json!({"key": "gh#1"});
+        let result = handler.execute("update_issue", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_add_issue_comment_handler() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "gh#1",
+            "body": "My comment"
+        });
+        let result = handler.execute("add_issue_comment", Some(args)).await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Added comment"));
+    }
+
+    #[tokio::test]
+    async fn test_add_issue_comment_missing_params() {
+        let handler = ToolHandler::new(vec![Arc::new(MockProvider::new()) as Arc<dyn Provider>]);
+
+        let result = handler.execute("add_issue_comment", None).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Missing required parameters: key, body"));
+    }
+
+    #[tokio::test]
+    async fn test_add_issue_comment_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+
+        let args = serde_json::json!({"key": "gh#1", "body": "comment"});
+        let result = handler.execute("add_issue_comment", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_handler() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({"key": "pr#1"});
+        let result = handler.execute("get_merge_request", Some(args)).await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("pr#1"));
+        assert!(content.contains("Test PR"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_missing_params() {
+        let handler = ToolHandler::new(vec![Arc::new(MockProvider::new()) as Arc<dyn Provider>]);
+
+        let result = handler.execute("get_merge_request", None).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Missing required parameter: key"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+
+        let args = serde_json::json!({"key": "pr#1"});
+        let result = handler.execute("get_merge_request", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_create_merge_request_comment_handler() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "body": "Looks good"
+        });
+        let result = handler
+            .execute("create_merge_request_comment", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Added comment"));
+    }
+
+    #[tokio::test]
+    async fn test_create_merge_request_comment_inline() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "body": "Fix this",
+            "file_path": "src/main.rs",
+            "line": 42,
+            "line_type": "old",
+            "commit_sha": "abc123"
+        });
+        let result = handler
+            .execute("create_merge_request_comment", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_create_merge_request_comment_missing_params() {
+        let handler = ToolHandler::new(vec![Arc::new(MockProvider::new()) as Arc<dyn Provider>]);
+
+        let result = handler.execute("create_merge_request_comment", None).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Missing required parameters: key, body"));
+    }
+
+    #[tokio::test]
+    async fn test_create_merge_request_comment_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+
+        let args = serde_json::json!({"key": "pr#1", "body": "comment"});
+        let result = handler
+            .execute("create_merge_request_comment", Some(args))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_issues_with_format_json() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({"format": "json"});
+        let result = handler.execute("get_issues", Some(args)).await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        // JSON format should contain valid JSON
+        assert!(content.contains("gh#1"));
+    }
+
+    #[tokio::test]
+    async fn test_get_issues_with_format_compact() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({"format": "compact"});
+        let result = handler.execute("get_issues", Some(args)).await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("gh#1"));
+    }
+
+    #[tokio::test]
+    async fn test_create_pipeline_formats() {
+        let handler = ToolHandler::new(vec![]);
+
+        let pipeline = handler.create_pipeline(&Some("json".to_string()));
+        assert!(pipeline.transform_issues(vec![]).is_ok());
+
+        let pipeline = handler.create_pipeline(&Some("compact".to_string()));
+        assert!(pipeline.transform_issues(vec![]).is_ok());
+
+        let pipeline = handler.create_pipeline(&None);
+        assert!(pipeline.transform_issues(vec![]).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_with_pipeline_config() {
+        let _handler = ToolHandler::new(vec![]).with_pipeline_config(PipelineConfig {
+            format: OutputFormat::Compact,
+            ..Default::default()
+        });
+
+        // The default format from config should be used as base
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]).with_pipeline_config(PipelineConfig {
+            format: OutputFormat::Compact,
+            ..Default::default()
+        });
+
+        let result = handler.execute("get_issues", None).await;
+        assert!(result.is_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_create_issue_without_provider_param() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "title": "New issue"
+        });
+        let result = handler.execute("create_issue", Some(args)).await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Created issue"));
+    }
+
+    #[tokio::test]
+    async fn test_create_issue_missing_params() {
+        let handler = ToolHandler::new(vec![Arc::new(MockProvider::new()) as Arc<dyn Provider>]);
+
+        let result = handler.execute("create_issue", None).await;
+
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_create_issue_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+
+        let args = serde_json::json!({"title": "New issue"});
+        let result = handler.execute("create_issue", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_issue_missing_params() {
+        let handler = ToolHandler::new(vec![Arc::new(MockProvider::new()) as Arc<dyn Provider>]);
+
+        let result = handler.execute("get_issue", None).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Missing required parameter: key"));
+    }
+
+    #[tokio::test]
+    async fn test_get_issue_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+
+        let args = serde_json::json!({"key": "gh#1"});
+        let result = handler.execute("get_issue", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_requests_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+
+        let result = handler.execute("get_merge_requests", None).await;
+
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_missing_params() {
+        let handler = ToolHandler::new(vec![Arc::new(MockProvider::new()) as Arc<dyn Provider>]);
+
+        let result = handler.execute("get_merge_request_discussions", None).await;
+
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+
+        let args = serde_json::json!({"key": "pr#1"});
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_diffs_missing_params() {
+        let handler = ToolHandler::new(vec![Arc::new(MockProvider::new()) as Arc<dyn Provider>]);
+
+        let result = handler.execute("get_merge_request_diffs", None).await;
+
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_diffs_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+
+        let args = serde_json::json!({"key": "pr#1"});
+        let result = handler.execute("get_merge_request_diffs", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_issue_invalid_params() {
+        let handler = ToolHandler::new(vec![Arc::new(MockProvider::new()) as Arc<dyn Provider>]);
+
+        // Invalid JSON structure for GetIssueParams (missing required 'key' field)
+        let args = serde_json::json!({"invalid": true});
+        let result = handler.execute("get_issue", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Invalid parameters"));
+    }
+
+    // =========================================================================
+    // Tests with FailingProvider to cover error paths in handler loops
+    // =========================================================================
+
+    struct FailingProvider;
+
+    #[async_trait]
+    impl IssueProvider for FailingProvider {
+        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
+            Err(devboy_core::Error::Api {
+                status: 500,
+                message: "api error".into(),
+            })
+        }
+        async fn get_issue(&self, _key: &str) -> devboy_core::Result<Issue> {
+            Err(devboy_core::Error::NotFound("not found".into()))
+        }
+        async fn create_issue(&self, _input: CreateIssueInput) -> devboy_core::Result<Issue> {
+            Err(devboy_core::Error::Api {
+                status: 500,
+                message: "create failed".into(),
+            })
+        }
+        async fn update_issue(
+            &self,
+            _key: &str,
+            _input: UpdateIssueInput,
+        ) -> devboy_core::Result<Issue> {
+            Err(devboy_core::Error::Api {
+                status: 500,
+                message: "update failed".into(),
+            })
+        }
+        async fn get_comments(&self, _key: &str) -> devboy_core::Result<Vec<Comment>> {
+            Err(devboy_core::Error::NotFound("not found".into()))
+        }
+        async fn add_comment(&self, _key: &str, _body: &str) -> devboy_core::Result<Comment> {
+            Err(devboy_core::Error::Api {
+                status: 500,
+                message: "comment failed".into(),
+            })
+        }
+        fn provider_name(&self) -> &'static str {
+            "failing"
+        }
+    }
+
+    #[async_trait]
+    impl MergeRequestProvider for FailingProvider {
+        async fn get_merge_requests(
+            &self,
+            _filter: MrFilter,
+        ) -> devboy_core::Result<Vec<MergeRequest>> {
+            Err(devboy_core::Error::Api {
+                status: 500,
+                message: "api error".into(),
+            })
+        }
+        async fn get_merge_request(&self, _key: &str) -> devboy_core::Result<MergeRequest> {
+            Err(devboy_core::Error::NotFound("not found".into()))
+        }
+        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<Vec<Discussion>> {
+            Err(devboy_core::Error::NotFound("not found".into()))
+        }
+        async fn get_diffs(&self, _mr_key: &str) -> devboy_core::Result<Vec<FileDiff>> {
+            Err(devboy_core::Error::NotFound("not found".into()))
+        }
+        async fn add_comment(
+            &self,
+            _mr_key: &str,
+            _input: CreateCommentInput,
+        ) -> devboy_core::Result<Comment> {
+            Err(devboy_core::Error::Api {
+                status: 500,
+                message: "comment failed".into(),
+            })
+        }
+        fn provider_name(&self) -> &'static str {
+            "failing"
+        }
+    }
+
+    #[async_trait]
+    impl Provider for FailingProvider {
+        async fn get_current_user(&self) -> devboy_core::Result<User> {
+            Err(devboy_core::Error::Api {
+                status: 401,
+                message: "auth error".into(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_issues_all_providers_fail() {
+        let provider = Arc::new(FailingProvider) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let result = handler.execute("get_issues", None).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Failed to get issues"));
+    }
+
+    #[tokio::test]
+    async fn test_get_issue_provider_fails() {
+        let provider = Arc::new(FailingProvider) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({"key": "gh#1"});
+        let result = handler.execute("get_issue", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Issue not found"));
+    }
+
+    #[tokio::test]
+    async fn test_get_issue_comments_provider_fails() {
+        let provider = Arc::new(FailingProvider) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({"key": "gh#1"});
+        let result = handler.execute("get_issue_comments", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Issue not found"));
+    }
+
+    #[tokio::test]
+    async fn test_create_issue_provider_fails() {
+        let provider = Arc::new(FailingProvider) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({"title": "New issue"});
+        let result = handler.execute("create_issue", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Failed to create issue"));
+    }
+
+    #[tokio::test]
+    async fn test_update_issue_provider_fails() {
+        let provider = Arc::new(FailingProvider) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({"key": "gh#1", "title": "Updated"});
+        let result = handler.execute("update_issue", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Failed to update issue"));
+    }
+
+    #[tokio::test]
+    async fn test_add_issue_comment_provider_fails() {
+        let provider = Arc::new(FailingProvider) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({"key": "gh#1", "body": "comment"});
+        let result = handler.execute("add_issue_comment", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Failed to add comment to issue"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_requests_all_providers_fail() {
+        let provider = Arc::new(FailingProvider) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let result = handler.execute("get_merge_requests", None).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Failed to get merge requests"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_provider_fails() {
+        let provider = Arc::new(FailingProvider) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({"key": "pr#1"});
+        let result = handler.execute("get_merge_request", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Merge request not found"));
+    }
+
+    #[tokio::test]
+    async fn test_get_discussions_provider_fails() {
+        let provider = Arc::new(FailingProvider) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({"key": "pr#1"});
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Merge request not found"));
+    }
+
+    #[tokio::test]
+    async fn test_get_diffs_provider_fails() {
+        let provider = Arc::new(FailingProvider) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({"key": "pr#1"});
+        let result = handler.execute("get_merge_request_diffs", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Merge request not found"));
+    }
+
+    #[tokio::test]
+    async fn test_create_mr_comment_provider_fails() {
+        let provider = Arc::new(FailingProvider) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({"key": "pr#1", "body": "comment"});
+        let result = handler
+            .execute("create_merge_request_comment", Some(args))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Failed to add comment to merge request"));
+    }
+
+    #[tokio::test]
+    async fn test_create_issue_with_failing_named_provider() {
+        let provider = Arc::new(FailingProvider) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "title": "New issue",
+            "provider": "failing"
+        });
+        let result = handler.execute("create_issue", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Failed to create issue"));
+    }
 }
