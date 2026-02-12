@@ -722,11 +722,12 @@ mod tests {
 
     #[test]
     fn test_load_default_path() {
-        // load() uses config_path() — the file likely doesn't exist, so returns default
-        let config = Config::load().unwrap();
-        // We just verify it doesn't error; the config may or may not have providers
-        // depending on the test machine
-        let _ = config.configured_providers();
+        // Use a temp path so the test is isolated from the real user/system config
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        // load_from() should return a default config if the file doesn't exist
+        let config = Config::load_from(&path).unwrap();
+        assert!(!config.has_any_provider());
     }
 
     #[test]

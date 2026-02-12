@@ -176,7 +176,7 @@ mod tests {
         let s = "Hello world this is a test";
         let result = truncate_string(s, 15);
         assert!(result.ends_with("..."));
-        assert!(result.len() <= 18); // 15 + "..."
+        assert!(result.len() <= 15);
     }
 
     #[test]
@@ -243,8 +243,8 @@ mod tests {
         // String with no spaces or newlines — forces hard truncate
         let s = "abcdefghijklmnopqrstuvwxyz";
         let result = truncate_string(s, 10);
-        assert!(result.ends_with("..."));
-        assert!(result.len() <= 13); // 10 - 3 + 3
+        assert_eq!(result.len(), 10);
+        assert_eq!(result, "abcdefg...");
     }
 
     #[test]
@@ -288,7 +288,8 @@ mod tests {
 
         let long = "This is a much longer string that will be truncated";
         let result = plugin.truncate(long);
-        assert!(result.len() <= 23); // 20 + "..."
+        assert!(result.len() <= 20);
+        assert!(result.ends_with("..."));
     }
 
     #[test]
@@ -301,7 +302,8 @@ mod tests {
 
         let long = "This is a long item description";
         let result = plugin.truncate_item(long);
-        assert!(result.len() <= 13); // 10 + "..."
+        assert!(result.len() <= 10);
+        assert!(result.ends_with("..."));
     }
 
     #[test]
