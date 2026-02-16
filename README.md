@@ -82,6 +82,7 @@ Download binary from [Releases](https://github.com/meteora-pro/devboy-tools/rele
 ./target/release/devboy config set-secret gitlab.token <token>
 
 # ClickUp
+./target/release/devboy config set clickup.team_id <team-id>
 ./target/release/devboy config set clickup.list_id <list-id>
 ./target/release/devboy config set-secret clickup.token <token>
 ```

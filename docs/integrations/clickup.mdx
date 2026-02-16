@@ -25,12 +25,17 @@ ClickUp Personal API Tokens do not use the `Bearer` prefix — the token is sent
 ### Basic Configuration
 
 ```bash
-# Set the ClickUp list ID (find it in the list URL or settings)
+# Set the ClickUp team (workspace) and list IDs (found in the list URL)
+devboy config set clickup.team_id <team_id>
 devboy config set clickup.list_id <list_id>
 
 # Store token in OS keychain
 devboy config set-secret clickup.token <token>
 ```
+
+:::tip
+The `team_id` is required for **Custom Task IDs** (e.g., `DEV-42`). Without it, only `CU-{id}` keys are supported.
+:::
 
 ### Configuration File
 
@@ -38,29 +43,29 @@ Settings are stored in `~/.config/devboy-tools/config.toml`:
 
 ```toml
 [clickup]
+team_id = "9015891466"
 list_id = "901234567890"
 ```
 
 The token is stored separately in the OS keychain for security.
 
-### Finding Your List ID
+### Finding Your IDs
 
-The list ID can be found in the ClickUp URL when viewing a list. ClickUp uses different URL formats:
+Both `team_id` and `list_id` can be found in the ClickUp URL when viewing a list:
 
 ```
-https://app.clickup.com/12345678/v/li/901234567890
-                                      ^^^^^^^^^^^^
-                                      This is the list ID
+https://app.clickup.com/9015891466/v/li/901234567890
+                        ^^^^^^^^^^       ^^^^^^^^^^^^
+                        team ID          list ID
 
-https://app.clickup.com/12345678/v/l/6-901234567890-1
-                                      ^ ^^^^^^^^^^^^ ^
-                                      |  list ID     suffix
-                                      view type
+https://app.clickup.com/9015891466/v/l/6-901234567890-1
+                        ^^^^^^^^^^       ^^^^^^^^^^^^
+                        team ID          list ID
 ```
 
 In the `/v/l/` format, the list ID is the number between the hyphens.
 
-You can also find it via **List Settings** > **List Info** > **List ID**.
+You can also find the list ID via **List Settings** > **List Info** > **List ID**.
 
 ## MCP Tools
 
@@ -80,7 +85,11 @@ Once configured, the following MCP tools are available:
 ### Task Key Format
 
 - **Default**: `CU-{task_id}` (e.g., `CU-abc123`)
-- **Custom ID**: If your workspace has custom task IDs enabled, the custom ID is used as the key (e.g., `DEV-42`)
+- **Custom ID**: If your workspace has custom task IDs enabled and `team_id` is configured, the custom ID is used as the key (e.g., `DEV-42`)
+
+:::note
+Custom task IDs (e.g., `DEV-42`) require `team_id` to be set in configuration. Without `team_id`, all tasks use the `CU-{id}` format.
+:::
 
 ### Priority Mapping
 
