@@ -87,6 +87,9 @@ pub struct GitLabConfig {
 pub struct ClickUpConfig {
     /// ClickUp list ID
     pub list_id: String,
+    /// ClickUp team (workspace) ID — required for custom task ID resolution
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
 }
 
 /// Jira provider configuration.
@@ -254,9 +257,11 @@ impl Config {
             "clickup" => {
                 let config = self.clickup.get_or_insert_with(|| ClickUpConfig {
                     list_id: String::new(),
+                    team_id: None,
                 });
                 match field {
                     "list_id" | "list" => config.list_id = value.to_string(),
+                    "team_id" | "team" => config.team_id = Some(value.to_string()),
                     _ => {
                         return Err(Error::Config(format!(
                             "Unknown ClickUp config field: {}",
@@ -339,6 +344,7 @@ impl Config {
                 };
                 match field {
                     "list_id" | "list" => Ok(Some(config.list_id.clone())),
+                    "team_id" | "team" => Ok(config.team_id.clone()),
                     _ => Err(Error::Config(format!(
                         "Unknown ClickUp config field: {}",
                         field
@@ -688,6 +694,7 @@ mod tests {
             }),
             clickup: Some(ClickUpConfig {
                 list_id: "l".to_string(),
+                team_id: None,
             }),
             jira: Some(JiraConfig {
                 url: "u".to_string(),

@@ -107,10 +107,31 @@ const PROVIDERS: Record<string, ProviderConfig> = {
       ],
     },
   },
+  clickup: {
+    regex: /app\.clickup\.com\/(\d+)\/v\/(?:li\/(\d+)|l\/[a-z\d]+-(\d+)(?:-\d+)?)/i,
+    urlPlaceholder: 'https://app.clickup.com/12345678/v/l/6-901234567890-1',
+    tokenLabel: 'ClickUp Token',
+    urlLabel: 'List URL',
+    extractInfo: (match) => [
+      { label: 'Team ID', value: match[1] },
+      { label: 'List ID', value: match[2] || match[3] },
+    ],
+    commands: (info, _extra, token) =>
+      `devboy config set clickup.list_id ${info[1].value} \\\ndevboy config set clickup.team_id ${info[0].value} \\\ndevboy config set-secret clickup.token ${token}`,
+    tokenHelp: {
+      title: 'Steps to create a ClickUp Personal API Token:',
+      steps: [
+        { text: 'Go to ClickUp → Settings → Apps' },
+        { text: 'Find the', bold: 'API Token section' },
+        { text: '', bold: 'Generate' },
+        { text: 'Copy the token immediately — it won\'t be shown again' },
+      ],
+    },
+  },
 };
 
 type ConfigExtractorProps = {
-  provider: 'github' | 'gitlab';
+  provider: 'github' | 'gitlab' | 'clickup';
 };
 
 export default function ConfigExtractor({ provider }: ConfigExtractorProps) {

@@ -4,7 +4,7 @@ export default defineConfig({
   root: '.',
   base: process.env.DOCS_BASE_PATH || '/',
   title: 'DevBoy Tools',
-  description: 'MCP server for AI coding agents with GitHub and GitLab integration',
+  description: 'MCP server for AI coding agents with GitHub, GitLab, and ClickUp integration',
   themeConfig: {
     nav: [
       { text: 'Getting Started', link: '/getting-started/' },
@@ -27,6 +27,7 @@ export default defineConfig({
           items: [
             { text: 'GitHub', link: '/integrations/github' },
             { text: 'GitLab', link: '/integrations/gitlab' },
+            { text: 'ClickUp', link: '/integrations/clickup' },
           ],
         },
       ],
