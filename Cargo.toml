@@ -9,6 +9,7 @@ members = [
     # API plugins
     "crates/plugins/api/gitlab",
     "crates/plugins/api/github",
+    "crates/plugins/api/clickup",
     # Pipeline plugins
     "crates/plugins/pipeline",
 ]

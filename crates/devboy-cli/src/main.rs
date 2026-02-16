@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use devboy_clickup::ClickUpClient;
 use devboy_core::{Config, IssueFilter, IssueProvider, MergeRequestProvider, MrFilter, Provider};
 use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
@@ -58,7 +59,7 @@ enum Commands {
 
     /// Test provider connection
     Test {
-        /// Provider to test (github, gitlab)
+        /// Provider to test (github, gitlab, clickup)
         provider: String,
     },
 }
@@ -218,6 +219,11 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
             if let Some(cu) = &config.clickup {
                 println!("[clickup]");
                 println!("  list_id = {}", cu.list_id);
+                if let Some(team_id) = &cu.team_id {
+                    println!("  team_id = {}", team_id);
+                } else {
+                    println!("  team_id = (not set, recommended for custom task IDs)");
+                }
                 if store.exists("clickup.token") {
                     println!("  token = ******* (in keychain)");
                 } else {
@@ -455,9 +461,55 @@ async fn handle_test_command(provider: &str) -> Result<()> {
             }
         }
 
+        "clickup" => {
+            let cu = config.clickup.as_ref().context(
+                "ClickUp not configured. Run: devboy config set clickup.list_id <list_id>",
+            )?;
+
+            let token = store
+                .get("clickup.token")
+                .context("Failed to get token")?
+                .context(
+                    "ClickUp token not set. Run: devboy config set-secret clickup.token <token>",
+                )?;
+
+            println!("Testing ClickUp connection...");
+            println!("  List ID: {}", cu.list_id);
+            if let Some(team_id) = &cu.team_id {
+                println!("  Team ID: {}", team_id);
+            } else {
+                println!("  Team ID: (not set)");
+                println!("  Hint: Set team_id for custom task IDs (e.g., DEV-42) and better integration:");
+                println!("    devboy config set clickup.team_id <team_id>");
+            }
+
+            let mut client = ClickUpClient::new(&cu.list_id, token);
+            if let Some(team_id) = &cu.team_id {
+                client = client.with_team_id(team_id);
+            }
+
+            match client.get_current_user().await {
+                Ok(user) => {
+                    println!(
+                        "  Authenticated as: {} ({})",
+                        user.username,
+                        user.name.unwrap_or_default()
+                    );
+                    println!();
+                    println!("ClickUp connection successful!");
+                }
+                Err(e) => {
+                    println!("  Error: {}", e);
+                    println!();
+                    println!("ClickUp connection failed!");
+                    return Err(e.into());
+                }
+            }
+        }
+
         _ => {
             println!("Unknown provider: {}", provider);
-            println!("Supported providers: github, gitlab");
+            println!("Supported providers: github, gitlab, clickup");
         }
     }
 
@@ -497,6 +549,20 @@ async fn handle_mcp_command() -> Result<()> {
             );
         } else {
             tracing::warn!("GitLab configured but no token found");
+        }
+    }
+
+    // Add ClickUp provider if configured
+    if let Some(cu) = &config.clickup {
+        if let Some(token) = store.get("clickup.token").ok().flatten() {
+            let mut client = ClickUpClient::new(&cu.list_id, token);
+            if let Some(team_id) = &cu.team_id {
+                client = client.with_team_id(team_id);
+            }
+            server.add_provider(Arc::new(client));
+            tracing::info!("Added ClickUp provider (list {})", cu.list_id);
+        } else {
+            tracing::warn!("ClickUp configured but no token found");
         }
     }
 

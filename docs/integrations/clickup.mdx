@@ -1,0 +1,166 @@
+import ConfigExtractor from '../components/ConfigExtractor';
+
+# ClickUp Integration
+
+DevBoy Tools provides integration with ClickUp for managing tasks (issues) through AI assistants. ClickUp tasks are mapped to the unified issue interface, so you can work with them alongside GitHub and GitLab issues.
+
+<ConfigExtractor provider="clickup" />
+
+## Required Token
+
+ClickUp uses a **Personal API Token** for authentication. You can generate one in ClickUp:
+
+**Settings** > **Apps** > **API Token** > **Generate**
+
+| Token Type | Description | Required For |
+|------------|-------------|--------------|
+| Personal API Token | Full access to your workspace | Reading/creating tasks, comments |
+
+:::note
+ClickUp Personal API Tokens do not use the `Bearer` prefix — the token is sent directly in the `Authorization` header.
+:::
+
+## Configuration
+
+### Basic Configuration
+
+```bash
+# Required: list ID (found in the list URL)
+devboy config set clickup.list_id <list_id>
+
+# Recommended: team ID for custom task IDs (e.g., DEV-42)
+devboy config set clickup.team_id <team_id>
+
+# Store token in OS keychain
+devboy config set-secret clickup.token <token>
+```
+
+:::tip[Recommended: Set `team_id`]
+While `team_id` is optional, setting it significantly improves the integration:
+
+- **Custom Task IDs** — tasks are identified as `DEV-42` instead of `CU-86c88mv5`
+- **`create_issue` returns custom IDs** — newly created tasks show their custom ID (e.g., `DEV-542`)
+- **Lookup by custom ID** — `get_issue`, `update_issue`, `add_comment` all accept custom IDs directly
+
+Without `team_id`, tasks are only accessible via internal ClickUp IDs (`CU-{id}` format).
+:::
+
+### Configuration File
+
+Settings are stored in `~/.config/devboy-tools/config.toml`:
+
+```toml
+[clickup]
+team_id = "9015891466"
+list_id = "901234567890"
+```
+
+The token is stored separately in the OS keychain for security.
+
+### Finding Your IDs
+
+Both `team_id` and `list_id` can be found in the ClickUp URL when viewing a list:
+
+```
+https://app.clickup.com/9015891466/v/li/901234567890
+                        ^^^^^^^^^^       ^^^^^^^^^^^^
+                        team ID          list ID
+
+https://app.clickup.com/9015891466/v/l/6-901234567890-1
+                        ^^^^^^^^^^       ^^^^^^^^^^^^
+                        team ID          list ID
+```
+
+In the `/v/l/` format, the list ID is the number between the hyphens.
+
+You can also find the list ID via **List Settings** > **List Info** > **List ID**.
+
+## MCP Tools
+
+Once configured, the following MCP tools are available:
+
+### Issue Tools (Tasks)
+
+| Tool | Description |
+|------|-------------|
+| `get_issues` | List tasks with filters (state, tags, assignee, pagination) |
+| `get_issue` | Get a single task by key (e.g., `CU-abc123` or `DEV-42`) |
+| `get_issue_comments` | Get all comments for a task |
+| `create_issue` | Create a new task in the configured list |
+| `update_issue` | Update an existing task (title, description, status, priority) |
+| `add_issue_comment` | Add a comment to a task |
+
+### Task Key Format
+
+- **Default**: `CU-{task_id}` (e.g., `CU-abc123`)
+- **Custom ID**: If your workspace has custom task IDs enabled and `team_id` is configured, the custom ID is used as the key (e.g., `DEV-42`)
+
+:::note
+Custom task IDs (e.g., `DEV-42`) require `team_id` to be set in configuration. Without `team_id`, all tasks use the `CU-{id}` format.
+:::
+
+### Priority Mapping
+
+ClickUp priorities are mapped to the unified format:
+
+| ClickUp Priority | Unified Priority |
+|------------------|------------------|
+| 1 - Urgent | `urgent` |
+| 2 - High | `high` |
+| 3 - Normal | `normal` |
+| 4 - Low | `low` |
+
+### Merge Request Tools
+
+ClickUp does not have merge requests. All MR-related tools will return a `ProviderUnsupported` error when used with ClickUp. Use a GitHub or GitLab provider for MR operations.
+
+## Output Formats
+
+All tools support three output formats via the `format` parameter:
+
+- `markdown` (default) - Human-readable with formatting
+- `compact` - Condensed format for limited context
+- `json` - Raw JSON data
+
+Example:
+```json
+{
+  "key": "CU-abc123",
+  "format": "json"
+}
+```
+
+## Testing
+
+Verify your ClickUp configuration:
+
+```bash
+devboy test clickup
+```
+
+This will test the connection by verifying the token can access the configured list.
+
+## Troubleshooting
+
+### "401 Unauthorized" error
+
+- Verify your API token is copied correctly
+- Check that the token hasn't been revoked
+- Ensure you're using a Personal API Token (not an OAuth token)
+
+### "404 Not Found" error
+
+- Verify the list ID is correct
+- Ensure the list exists and is accessible with your token
+- Check that the task ID exists when using `get_issue`
+
+### "403 Forbidden" error
+
+- Your token may not have access to the workspace or list
+- Check your workspace permissions in ClickUp
+
+### Rate limiting
+
+ClickUp API has rate limits:
+- 100 requests per minute per token
+- The tool will show a rate limit error if exceeded

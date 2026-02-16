@@ -56,7 +56,7 @@ impl ToolHandler {
 
         tools.push(ToolDefinition {
             name: "get_issues".to_string(),
-            description: "Get issues from configured providers (GitLab, GitHub). Returns a list of issues with filters.".to_string(),
+            description: "Get issues from configured providers (GitLab, GitHub, ClickUp). Returns a list of issues with filters.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -93,6 +93,11 @@ impl ToolHandler {
                         "type": "string",
                         "enum": ["markdown", "compact", "json"],
                         "description": "Output format (default: markdown)"
+                    },
+                    "provider": {
+                        "type": "string",
+                        "enum": ["github", "gitlab", "clickup"],
+                        "description": "Filter by provider. If not specified, returns issues from all configured providers."
                     }
                 }
             }),
@@ -100,14 +105,14 @@ impl ToolHandler {
 
         tools.push(ToolDefinition {
             name: "get_issue".to_string(),
-            description: "Get a single issue by key (e.g., 'gh#123', 'gitlab#456'). Returns full issue details.".to_string(),
+            description: "Get a single issue by key (e.g., 'gh#123', 'gitlab#456', 'CU-abc', 'DEV-42'). Returns full issue details.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "required": ["key"],
                 "properties": {
                     "key": {
                         "type": "string",
-                        "description": "Issue key (e.g., 'gh#123' for GitHub, 'gitlab#456' for GitLab)"
+                        "description": "Issue key (e.g., 'gh#123' for GitHub, 'gitlab#456' for GitLab, 'CU-abc' or custom ID like 'DEV-42' for ClickUp)"
                     },
                     "format": {
                         "type": "string",
@@ -167,7 +172,7 @@ impl ToolHandler {
                     },
                     "provider": {
                         "type": "string",
-                        "enum": ["github", "gitlab"],
+                        "enum": ["github", "gitlab", "clickup"],
                         "description": "Target provider to create the issue in. If not specified, uses the first configured provider."
                     }
                 }
@@ -437,7 +442,27 @@ impl ToolHandler {
         let mut all_issues = Vec::new();
         let mut errors = Vec::new();
 
-        for provider in &self.providers {
+        let providers: Vec<_> = if let Some(ref name) = params.provider {
+            match self.find_provider_by_name(name) {
+                Some(p) => vec![p],
+                None => {
+                    let available: Vec<_> = self
+                        .providers
+                        .iter()
+                        .map(|p| get_provider_name(p.as_ref()))
+                        .collect();
+                    return ToolCallResult::error(format!(
+                        "Provider '{}' not configured. Available: {}",
+                        name,
+                        available.join(", ")
+                    ));
+                }
+            }
+        } else {
+            self.providers.iter().collect()
+        };
+
+        for provider in &providers {
             match provider.get_issues(filter.clone()).await {
                 Ok(issues) => {
                     tracing::debug!(
@@ -932,6 +957,7 @@ struct GetIssuesParams {
     limit: Option<usize>,
     offset: Option<usize>,
     format: Option<String>,
+    provider: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
