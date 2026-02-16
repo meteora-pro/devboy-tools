@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use devboy_clickup::ClickUpClient;
 use devboy_core::{Config, IssueFilter, IssueProvider, MergeRequestProvider, MrFilter, Provider};
 use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
@@ -58,7 +59,7 @@ enum Commands {
 
     /// Test provider connection
     Test {
-        /// Provider to test (github, gitlab)
+        /// Provider to test (github, gitlab, clickup)
         provider: String,
     },
 }
@@ -455,9 +456,45 @@ async fn handle_test_command(provider: &str) -> Result<()> {
             }
         }
 
+        "clickup" => {
+            let cu = config.clickup.as_ref().context(
+                "ClickUp not configured. Run: devboy config set clickup.list_id <list_id>",
+            )?;
+
+            let token = store
+                .get("clickup.token")
+                .context("Failed to get token")?
+                .context(
+                    "ClickUp token not set. Run: devboy config set-secret clickup.token <token>",
+                )?;
+
+            println!("Testing ClickUp connection...");
+            println!("  List ID: {}", cu.list_id);
+
+            let client = ClickUpClient::new(&cu.list_id, token);
+
+            match client.get_current_user().await {
+                Ok(user) => {
+                    println!(
+                        "  Authenticated as: {} ({})",
+                        user.username,
+                        user.name.unwrap_or_default()
+                    );
+                    println!();
+                    println!("ClickUp connection successful!");
+                }
+                Err(e) => {
+                    println!("  Error: {}", e);
+                    println!();
+                    println!("ClickUp connection failed!");
+                    return Err(e.into());
+                }
+            }
+        }
+
         _ => {
             println!("Unknown provider: {}", provider);
-            println!("Supported providers: github, gitlab");
+            println!("Supported providers: github, gitlab, clickup");
         }
     }
 
@@ -497,6 +534,17 @@ async fn handle_mcp_command() -> Result<()> {
             );
         } else {
             tracing::warn!("GitLab configured but no token found");
+        }
+    }
+
+    // Add ClickUp provider if configured
+    if let Some(cu) = &config.clickup {
+        if let Some(token) = store.get("clickup.token").ok().flatten() {
+            let client = ClickUpClient::new(&cu.list_id, token);
+            server.add_provider(Arc::new(client));
+            tracing::info!("Added ClickUp provider (list {})", cu.list_id);
+        } else {
+            tracing::warn!("ClickUp configured but no token found");
         }
     }
 
