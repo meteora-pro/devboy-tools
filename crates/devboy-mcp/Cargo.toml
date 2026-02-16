@@ -11,6 +11,7 @@ authors.workspace = true
 devboy-core = { path = "../devboy-core" }
 devboy-gitlab = { path = "../plugins/api/gitlab" }
 devboy-github = { path = "../plugins/api/github" }
+devboy-clickup = { path = "../plugins/api/clickup" }
 devboy-storage = { path = "../devboy-storage" }
 devboy-pipeline = { path = "../plugins/pipeline" }
 tokio.workspace = true
