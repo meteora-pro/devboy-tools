@@ -9,8 +9,9 @@ use devboy_core::{
 use tracing::{debug, warn};
 
 use crate::types::{
-    ClickUpComment, ClickUpCommentList, ClickUpPriority, ClickUpTask, ClickUpTaskList, ClickUpUser,
-    CreateCommentRequest, CreateTaskRequest, UpdateTaskRequest,
+    ClickUpComment, ClickUpCommentList, ClickUpListInfo, ClickUpPriority, ClickUpTask,
+    ClickUpTaskList, ClickUpUser, CreateCommentRequest, CreateCommentResponse, CreateTaskRequest,
+    UpdateTaskRequest,
 };
 use crate::DEFAULT_CLICKUP_URL;
 
@@ -135,6 +136,32 @@ impl ClickUpClient {
             .json()
             .await
             .map_err(|e| Error::InvalidData(format!("Failed to parse response: {}", e)))
+    }
+
+    /// Resolve a unified state name ("open"/"closed") to the actual ClickUp status name
+    /// by fetching the list's configured statuses.
+    /// If the state doesn't match a known type, it's passed as-is (exact status name).
+    async fn resolve_status(&self, state: &str) -> Result<String> {
+        let status_type = match state {
+            "closed" => "closed",
+            "open" | "opened" => "open",
+            _ => return Ok(state.to_string()),
+        };
+
+        let url = format!("{}/list/{}", self.base_url, self.list_id);
+        let list_info: ClickUpListInfo = self.get(&url).await?;
+
+        list_info
+            .statuses
+            .iter()
+            .find(|s| s.status_type.as_deref() == Some(status_type))
+            .map(|s| s.status.clone())
+            .ok_or_else(|| {
+                Error::InvalidData(format!(
+                    "No status with type '{}' found in list {}",
+                    status_type, self.list_id
+                ))
+            })
     }
 
     /// Build the URL for accessing a task by key.
@@ -437,17 +464,39 @@ impl IssueProvider for ClickUpClient {
         };
 
         let task: ClickUpTask = self.post(&url, &request).await?;
+        let task_id = task.id.clone();
+
+        // ClickUp generates custom_id asynchronously after task creation.
+        // Retry GET until custom_id is available (matching DevBoy backend pattern).
+        if task.custom_id.is_none() {
+            for attempt in 1..=3u64 {
+                tokio::time::sleep(std::time::Duration::from_millis(300 * attempt)).await;
+                let fetch_url = format!("{}/task/{}", self.base_url, task_id);
+                if let Ok(fetched) = self.get::<ClickUpTask>(&fetch_url).await {
+                    if fetched.custom_id.is_some() {
+                        debug!(
+                            task_id = task_id,
+                            custom_id = ?fetched.custom_id,
+                            attempt = attempt,
+                            "Got custom_id after retry"
+                        );
+                        return Ok(map_task(&fetched));
+                    }
+                }
+            }
+            warn!(task_id = task_id, "custom_id not available after 3 retries, using POST response");
+        }
+
         Ok(map_task(&task))
     }
 
     async fn update_issue(&self, key: &str, input: UpdateIssueInput) -> Result<Issue> {
         let url = self.task_url(key)?;
 
-        let status = input.state.map(|s| match s.as_str() {
-            "closed" => "closed".to_string(),
-            "open" | "opened" => "open".to_string(),
-            other => other.to_string(),
-        });
+        let status = match input.state {
+            Some(s) => Some(self.resolve_status(&s).await?),
+            None => None,
+        };
 
         let priority = input.priority.as_deref().and_then(priority_to_clickup);
 
@@ -487,8 +536,16 @@ impl IssueProvider for ClickUpClient {
             comment_text: body.to_string(),
         };
 
-        let cu_comment: ClickUpComment = self.post(&url, &request).await?;
-        Ok(map_comment(&cu_comment))
+        // ClickUp POST returns minimal response (id + date), not full comment
+        let response: CreateCommentResponse = self.post(&url, &request).await?;
+        Ok(Comment {
+            id: response.id,
+            body: body.to_string(),
+            author: None,
+            created_at: map_timestamp(&response.date),
+            updated_at: None,
+            position: None,
+        })
     }
 
     fn provider_name(&self) -> &'static str {
@@ -1268,14 +1325,24 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_create_issue() {
+        async fn test_create_issue_with_custom_id_retry() {
             let server = MockServer::start();
 
+            // POST returns task without custom_id
             server.mock(|when, then| {
                 when.method(POST)
                     .path("/list/12345/task")
                     .body_includes("\"name\":\"New Task\"");
                 then.status(200).json_body(sample_task_json());
+            });
+
+            // GET retry returns task with custom_id
+            let mut task_with_custom_id = sample_task_json();
+            task_with_custom_id["custom_id"] = serde_json::json!("DEV-100");
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(task_with_custom_id);
             });
 
             let client = create_test_client(&server);
@@ -1290,6 +1357,38 @@ mod tests {
                 .await
                 .unwrap();
 
+            // Should use custom_id from retry GET
+            assert_eq!(issue.key, "DEV-100");
+        }
+
+        #[tokio::test]
+        async fn test_create_issue_fallback_without_custom_id() {
+            let server = MockServer::start();
+
+            // POST returns task without custom_id
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/list/12345/task")
+                    .body_includes("\"name\":\"New Task\"");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            // GET retry also returns without custom_id
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "New Task".to_string(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            // Fallback to CU-{id}
             assert_eq!(issue.key, "CU-abc123");
         }
 
@@ -1297,11 +1396,15 @@ mod tests {
         async fn test_create_issue_with_priority() {
             let server = MockServer::start();
 
+            // Return task with custom_id to skip retry
+            let mut task = sample_task_json();
+            task["custom_id"] = serde_json::json!("DEV-101");
+
             server.mock(|when, then| {
                 when.method(POST)
                     .path("/list/12345/task")
                     .body_includes("\"priority\":1");
-                then.status(200).json_body(sample_task_json());
+                then.status(200).json_body(task);
             });
 
             let client = create_test_client(&server);
@@ -1314,6 +1417,7 @@ mod tests {
                 .await;
 
             assert!(result.is_ok());
+            assert_eq!(result.unwrap().key, "DEV-101");
         }
 
         #[tokio::test]
@@ -1374,10 +1478,22 @@ mod tests {
         async fn test_update_issue_state_mapping() {
             let server = MockServer::start();
 
+            // Mock list info endpoint for status resolution
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(serde_json::json!({
+                    "statuses": [
+                        {"status": "to do", "type": "open"},
+                        {"status": "in progress", "type": "custom"},
+                        {"status": "complete", "type": "closed"}
+                    ]
+                }));
+            });
+
             server.mock(|when, then| {
                 when.method(PUT)
                     .path("/task/abc123")
-                    .body_includes("\"status\":\"closed\"");
+                    .body_includes("\"status\":\"complete\"");
                 then.status(200).json_body(sample_task_json());
             });
 
@@ -1387,6 +1503,67 @@ mod tests {
                     "CU-abc123",
                     UpdateIssueInput {
                         state: Some("closed".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await;
+
+            assert!(result.is_ok());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_state_open_mapping() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(serde_json::json!({
+                    "statuses": [
+                        {"status": "to do", "type": "open"},
+                        {"status": "complete", "type": "closed"}
+                    ]
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"status\":\"to do\"");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        state: Some("open".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await;
+
+            assert!(result.is_ok());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_exact_status_name() {
+            let server = MockServer::start();
+
+            // Exact status name — no list lookup needed
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"status\":\"in progress\"");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        state: Some("in progress".to_string()),
                         ..Default::default()
                     },
                 )
@@ -1428,15 +1605,15 @@ mod tests {
         async fn test_add_comment() {
             let server = MockServer::start();
 
+            // ClickUp POST /comment returns minimal response (id as number, no comment_text)
             server.mock(|when, then| {
                 when.method(POST)
                     .path("/task/abc123/comment")
                     .body_includes("\"comment_text\":\"My comment\"");
                 then.status(200).json_body(serde_json::json!({
-                    "id": "42",
-                    "comment_text": "My comment",
-                    "user": {"id": 1, "username": "me"},
-                    "date": "1705312800000"
+                    "id": 458315,
+                    "hist_id": "26b2d7f1-test",
+                    "date": 1705312800000_i64
                 }));
             });
 
@@ -1446,7 +1623,11 @@ mod tests {
                 .unwrap();
 
             assert_eq!(comment.body, "My comment");
-            assert_eq!(comment.id, "42");
+            assert_eq!(comment.id, "458315");
+            assert_eq!(
+                comment.created_at,
+                Some("2024-01-15T10:00:00Z".to_string())
+            );
         }
 
         #[tokio::test]

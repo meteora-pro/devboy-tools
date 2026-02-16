@@ -93,6 +93,11 @@ impl ToolHandler {
                         "type": "string",
                         "enum": ["markdown", "compact", "json"],
                         "description": "Output format (default: markdown)"
+                    },
+                    "provider": {
+                        "type": "string",
+                        "enum": ["github", "gitlab", "clickup"],
+                        "description": "Filter by provider. If not specified, returns issues from all configured providers."
                     }
                 }
             }),
@@ -437,7 +442,27 @@ impl ToolHandler {
         let mut all_issues = Vec::new();
         let mut errors = Vec::new();
 
-        for provider in &self.providers {
+        let providers: Vec<_> = if let Some(ref name) = params.provider {
+            match self.find_provider_by_name(name) {
+                Some(p) => vec![p],
+                None => {
+                    let available: Vec<_> = self
+                        .providers
+                        .iter()
+                        .map(|p| get_provider_name(p.as_ref()))
+                        .collect();
+                    return ToolCallResult::error(format!(
+                        "Provider '{}' not configured. Available: {}",
+                        name,
+                        available.join(", ")
+                    ));
+                }
+            }
+        } else {
+            self.providers.iter().collect()
+        };
+
+        for provider in &providers {
             match provider.get_issues(filter.clone()).await {
                 Ok(issues) => {
                     tracing::debug!(
@@ -932,6 +957,7 @@ struct GetIssuesParams {
     limit: Option<usize>,
     offset: Option<usize>,
     format: Option<String>,
+    provider: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -117,7 +117,7 @@ const PROVIDERS: Record<string, ProviderConfig> = {
       { label: 'List ID', value: match[2] || match[3] },
     ],
     commands: (info, _extra, token) =>
-      `devboy config set clickup.team_id ${info[0].value} \\\ndevboy config set clickup.list_id ${info[1].value} \\\ndevboy config set-secret clickup.token ${token}`,
+      `devboy config set clickup.list_id ${info[1].value} \\\ndevboy config set clickup.team_id ${info[0].value} \\\ndevboy config set-secret clickup.token ${token}`,
     tokenHelp: {
       title: 'Steps to create a ClickUp Personal API Token:',
       steps: [

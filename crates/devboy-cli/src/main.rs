@@ -221,6 +221,8 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
                 println!("  list_id = {}", cu.list_id);
                 if let Some(team_id) = &cu.team_id {
                     println!("  team_id = {}", team_id);
+                } else {
+                    println!("  team_id = (not set, recommended for custom task IDs)");
                 }
                 if store.exists("clickup.token") {
                     println!("  token = ******* (in keychain)");
@@ -475,6 +477,10 @@ async fn handle_test_command(provider: &str) -> Result<()> {
             println!("  List ID: {}", cu.list_id);
             if let Some(team_id) = &cu.team_id {
                 println!("  Team ID: {}", team_id);
+            } else {
+                println!("  Team ID: (not set)");
+                println!("  Hint: Set team_id for custom task IDs (e.g., DEV-42) and better integration:");
+                println!("    devboy config set clickup.team_id <team_id>");
             }
 
             let mut client = ClickUpClient::new(&cu.list_id, token);
