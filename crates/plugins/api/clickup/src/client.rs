@@ -78,6 +78,24 @@ impl ClickUpClient {
         self.handle_response(response).await
     }
 
+    /// Make an authenticated GET request with properly encoded query parameters.
+    async fn get_with_query<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        params: &[(&str, &str)],
+    ) -> Result<T> {
+        debug!(url = url, params = ?params, "ClickUp GET request with query");
+
+        let response = self
+            .request(reqwest::Method::GET, url)
+            .query(params)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        self.handle_response(response).await
+    }
+
     /// Make an authenticated POST request.
     async fn post<T: serde::de::DeserializeOwned, B: serde::Serialize>(
         &self,
@@ -245,17 +263,12 @@ fn map_task_key(task: &ClickUpTask) -> String {
 fn epoch_ms_to_iso8601(epoch_ms: &str) -> Option<String> {
     let ms: i64 = epoch_ms.parse().ok()?;
     let secs = ms / 1000;
-    let nanos = ((ms % 1000) * 1_000_000) as u32;
-
-    // Format as ISO 8601 using chrono-free manual approach
-    // Unix epoch: 1970-01-01T00:00:00Z
-    // We use a simple formatting approach via time calculation
-    let datetime = time_from_unix(secs, nanos);
+    let datetime = time_from_unix(secs);
     Some(datetime)
 }
 
 /// Convert unix timestamp to ISO 8601 string without external crate.
-fn time_from_unix(secs: i64, _nanos: u32) -> String {
+fn time_from_unix(secs: i64) -> String {
     // Days from unix epoch
     let mut days = secs / 86400;
     let day_secs = secs.rem_euclid(86400);
@@ -344,29 +357,40 @@ fn priority_to_clickup(priority: &str) -> Option<u8> {
 impl IssueProvider for ClickUpClient {
     async fn get_issues(&self, filter: IssueFilter) -> Result<Vec<Issue>> {
         let limit = filter.limit.unwrap_or(20) as usize;
+        if limit == 0 {
+            return Ok(vec![]);
+        }
         let offset = filter.offset.unwrap_or(0) as usize;
 
         // Calculate which pages we need to fetch
         let start_page = offset / PAGE_SIZE as usize;
         let end_page = (offset + limit).saturating_sub(1) / PAGE_SIZE as usize;
 
-        // Build base query params (without page)
-        let mut base_params = vec![];
+        // Build base query params (without page).
+        // Values are properly URL-encoded by reqwest's .query() method.
+        let mut base_params: Vec<(&str, String)> = vec![];
 
         let include_closed = matches!(filter.state.as_deref(), Some("closed") | Some("all"));
         if include_closed {
-            base_params.push("include_closed=true".to_string());
+            base_params.push(("include_closed", "true".to_string()));
         }
 
-        base_params.push("subtasks=true".to_string());
+        base_params.push(("subtasks", "true".to_string()));
 
-        if let Some(assignees) = &filter.assignee {
-            base_params.push(format!("assignees[]={}", assignees));
+        if let Some(assignee) = &filter.assignee {
+            // ClickUp API expects numeric user IDs for assignee filtering,
+            // but IssueFilter.assignee is documented as a username.
+            // Pass through as-is — it will work if the caller provides a user ID.
+            warn!(
+                assignee = assignee.as_str(),
+                "ClickUp assignee filter expects numeric user IDs, not usernames"
+            );
+            base_params.push(("assignees[]", assignee.clone()));
         }
 
         if let Some(tags) = &filter.labels {
             for tag in tags {
-                base_params.push(format!("tags[]={}", tag));
+                base_params.push(("tags[]", tag.clone()));
             }
         }
 
@@ -376,30 +400,26 @@ impl IssueProvider for ClickUpClient {
                 "updated_at" | "updated" => "updated",
                 _ => "updated",
             };
-            base_params.push(format!("order_by={}", cu_order_by));
+            base_params.push(("order_by", cu_order_by.to_string()));
         }
 
         if let Some(order) = &filter.sort_order {
             if order == "asc" {
-                base_params.push("reverse=true".to_string());
+                base_params.push(("reverse", "true".to_string()));
             }
         }
 
         // Fetch all needed pages
+        let base_url = format!("{}/list/{}/task", self.base_url, self.list_id);
         let mut all_tasks: Vec<ClickUpTask> = Vec::new();
 
         for page in start_page..=end_page {
             let mut params = base_params.clone();
-            params.push(format!("page={}", page));
+            params.push(("page", page.to_string()));
 
-            let url = format!(
-                "{}/list/{}/task?{}",
-                self.base_url,
-                self.list_id,
-                params.join("&")
-            );
-
-            let response: ClickUpTaskList = self.get(&url).await?;
+            let param_refs: Vec<(&str, &str)> =
+                params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            let response: ClickUpTaskList = self.get_with_query(&base_url, &param_refs).await?;
             let page_len = response.tasks.len();
             all_tasks.extend(response.tasks);
 
@@ -1210,6 +1230,21 @@ mod tests {
             assert_eq!(issues.len(), 2);
             assert_eq!(issues[0].key, "CU-task1");
             assert_eq!(issues[1].key, "CU-task2");
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_limit_zero() {
+            // No server needed — should return immediately without making API calls
+            let client = ClickUpClient::new("12345", "token");
+            let issues = client
+                .get_issues(IssueFilter {
+                    limit: Some(0),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert!(issues.is_empty());
         }
 
         #[tokio::test]
