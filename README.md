@@ -76,10 +76,14 @@ Download binary from [Releases](https://github.com/meteora-pro/devboy-tools/rele
 ./target/release/devboy config set github.repo <repo>
 ./target/release/devboy config set-secret github.token <token>
 
-# GitLab (coming soon)
+# GitLab
 ./target/release/devboy config set gitlab.url https://gitlab.example.com
 ./target/release/devboy config set gitlab.project_id <project-id>
 ./target/release/devboy config set-secret gitlab.token <token>
+
+# ClickUp
+./target/release/devboy config set clickup.list_id <list-id>
+./target/release/devboy config set-secret clickup.token <token>
 ```
 
 Tokens are stored securely in OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service).
