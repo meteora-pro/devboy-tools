@@ -14,10 +14,14 @@ use crate::types::{
 };
 use crate::DEFAULT_CLICKUP_URL;
 
+/// Maximum number of tasks per page in ClickUp API.
+const PAGE_SIZE: u32 = 100;
+
 /// ClickUp API client.
 pub struct ClickUpClient {
     base_url: String,
     list_id: String,
+    team_id: Option<String>,
     token: String,
     client: reqwest::Client,
 }
@@ -37,12 +41,19 @@ impl ClickUpClient {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             list_id: list_id.into(),
+            team_id: None,
             token: token.into(),
             client: reqwest::Client::builder()
                 .user_agent("devboy-tools")
                 .build()
                 .expect("Failed to create HTTP client"),
         }
+    }
+
+    /// Set team (workspace) ID — required for custom task ID resolution.
+    pub fn with_team_id(mut self, team_id: impl Into<String>) -> Self {
+        self.team_id = Some(team_id.into());
+        self
     }
 
     /// Build request with common headers.
@@ -125,6 +136,28 @@ impl ClickUpClient {
             .await
             .map_err(|e| Error::InvalidData(format!("Failed to parse response: {}", e)))
     }
+
+    /// Build the URL for accessing a task by key.
+    /// For `CU-{id}` keys, uses the raw task ID directly.
+    /// For custom IDs (e.g., `DEV-42`), appends `?custom_task_ids=true&team_id=` params.
+    fn task_url(&self, key: &str) -> Result<String> {
+        if let Some(raw_id) = key.strip_prefix("CU-") {
+            Ok(format!("{}/task/{}", self.base_url, raw_id))
+        } else {
+            // Custom task ID — requires team_id
+            let team_id = self.team_id.as_ref().ok_or_else(|| {
+                Error::Config(format!(
+                    "team_id is required to resolve custom task ID '{}'. \
+                     Run: devboy config set clickup.team_id <team_id>",
+                    key
+                ))
+            })?;
+            Ok(format!(
+                "{}/task/{}?custom_task_ids=true&team_id={}",
+                self.base_url, key, team_id
+            ))
+        }
+    }
 }
 
 // =============================================================================
@@ -171,12 +204,63 @@ fn map_state(task: &ClickUpTask) -> String {
     }
 }
 
+/// Build the unified issue key for a task.
+/// Uses `custom_id` when available (e.g., `DEV-42`), otherwise `CU-{id}`.
 fn map_task_key(task: &ClickUpTask) -> String {
     if let Some(custom_id) = &task.custom_id {
         custom_id.clone()
     } else {
         format!("CU-{}", task.id)
     }
+}
+
+/// Convert ClickUp epoch-millisecond timestamp to ISO 8601 string.
+fn epoch_ms_to_iso8601(epoch_ms: &str) -> Option<String> {
+    let ms: i64 = epoch_ms.parse().ok()?;
+    let secs = ms / 1000;
+    let nanos = ((ms % 1000) * 1_000_000) as u32;
+
+    // Format as ISO 8601 using chrono-free manual approach
+    // Unix epoch: 1970-01-01T00:00:00Z
+    // We use a simple formatting approach via time calculation
+    let datetime = time_from_unix(secs, nanos);
+    Some(datetime)
+}
+
+/// Convert unix timestamp to ISO 8601 string without external crate.
+fn time_from_unix(secs: i64, _nanos: u32) -> String {
+    // Days from unix epoch
+    let mut days = secs / 86400;
+    let day_secs = secs.rem_euclid(86400);
+    if secs % 86400 < 0 {
+        days -= 1;
+    }
+
+    let hours = day_secs / 3600;
+    let minutes = (day_secs % 3600) / 60;
+    let seconds = day_secs % 60;
+
+    // Convert days since epoch to year-month-day
+    // Algorithm from http://howardhinnant.github.io/date_algorithms.html
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y, m, d, hours, minutes, seconds
+    )
+}
+
+fn map_timestamp(ts: &Option<String>) -> Option<String> {
+    ts.as_ref().and_then(|s| epoch_ms_to_iso8601(s))
 }
 
 fn map_task(task: &ClickUpTask) -> Issue {
@@ -198,8 +282,8 @@ fn map_task(task: &ClickUpTask) -> Issue {
             .map(|u| map_user_required(Some(u)))
             .collect(),
         url: Some(task.url.clone()),
-        created_at: task.date_created.clone(),
-        updated_at: task.date_updated.clone(),
+        created_at: map_timestamp(&task.date_created),
+        updated_at: map_timestamp(&task.date_updated),
     }
 }
 
@@ -208,17 +292,10 @@ fn map_comment(cu_comment: &ClickUpComment) -> Comment {
         id: cu_comment.id.clone(),
         body: cu_comment.comment_text.clone(),
         author: map_user(cu_comment.user.as_ref()),
-        created_at: cu_comment.date.clone(),
+        created_at: map_timestamp(&cu_comment.date),
         updated_at: None,
         position: None,
     }
-}
-
-/// Parse task key to extract the raw task ID.
-/// - `CU-abc123` -> `abc123`
-/// - Anything else (e.g., `DEV-123`) -> used as-is (treated as custom_id or raw ID)
-fn parse_task_key(key: &str) -> &str {
-    key.strip_prefix("CU-").unwrap_or(key)
 }
 
 /// Map a unified priority string to a ClickUp priority number.
@@ -239,34 +316,32 @@ fn priority_to_clickup(priority: &str) -> Option<u8> {
 #[async_trait]
 impl IssueProvider for ClickUpClient {
     async fn get_issues(&self, filter: IssueFilter) -> Result<Vec<Issue>> {
-        let mut url = format!("{}/list/{}/task", self.base_url, self.list_id);
-        let mut params = vec![];
+        let limit = filter.limit.unwrap_or(20) as usize;
+        let offset = filter.offset.unwrap_or(0) as usize;
 
-        // ClickUp uses include_closed=true to also show closed tasks
+        // Calculate which pages we need to fetch
+        let start_page = offset / PAGE_SIZE as usize;
+        let end_page = (offset + limit).saturating_sub(1) / PAGE_SIZE as usize;
+
+        // Build base query params (without page)
+        let mut base_params = vec![];
+
         let include_closed = matches!(filter.state.as_deref(), Some("closed") | Some("all"));
         if include_closed {
-            params.push("include_closed=true".to_string());
+            base_params.push("include_closed=true".to_string());
         }
 
-        params.push("subtasks=true".to_string());
+        base_params.push("subtasks=true".to_string());
 
         if let Some(assignees) = &filter.assignee {
-            // ClickUp filters assignees by user ID, but we receive a username.
-            // Pass it as a query param; the API will ignore unknown values gracefully.
-            params.push(format!("assignees[]={}", assignees));
+            base_params.push(format!("assignees[]={}", assignees));
         }
 
         if let Some(tags) = &filter.labels {
             for tag in tags {
-                params.push(format!("tags[]={}", tag));
+                base_params.push(format!("tags[]={}", tag));
             }
         }
-
-        // Pagination: ClickUp uses page-based (0-indexed, 100 per page)
-        let limit = filter.limit.unwrap_or(20);
-        let offset = filter.offset.unwrap_or(0);
-        let page = offset / 100;
-        params.push(format!("page={}", page));
 
         if let Some(order_by) = &filter.sort_by {
             let cu_order_by = match order_by.as_str() {
@@ -274,23 +349,40 @@ impl IssueProvider for ClickUpClient {
                 "updated_at" | "updated" => "updated",
                 _ => "updated",
             };
-            params.push(format!("order_by={}", cu_order_by));
+            base_params.push(format!("order_by={}", cu_order_by));
         }
 
         if let Some(order) = &filter.sort_order {
-            let reverse = order == "asc";
-            if reverse {
-                params.push("reverse=true".to_string());
+            if order == "asc" {
+                base_params.push("reverse=true".to_string());
             }
         }
 
-        if !params.is_empty() {
-            url.push_str(&format!("?{}", params.join("&")));
+        // Fetch all needed pages
+        let mut all_tasks: Vec<ClickUpTask> = Vec::new();
+
+        for page in start_page..=end_page {
+            let mut params = base_params.clone();
+            params.push(format!("page={}", page));
+
+            let url = format!(
+                "{}/list/{}/task?{}",
+                self.base_url,
+                self.list_id,
+                params.join("&")
+            );
+
+            let response: ClickUpTaskList = self.get(&url).await?;
+            let page_len = response.tasks.len();
+            all_tasks.extend(response.tasks);
+
+            // Stop if this page has fewer than PAGE_SIZE items (no more data)
+            if page_len < PAGE_SIZE as usize {
+                break;
+            }
         }
 
-        let response: ClickUpTaskList = self.get(&url).await?;
-
-        let mut issues: Vec<Issue> = response.tasks.iter().map(map_task).collect();
+        let mut issues: Vec<Issue> = all_tasks.iter().map(map_task).collect();
 
         // Filter by state client-side if needed
         if let Some(state) = &filter.state {
@@ -305,22 +397,21 @@ impl IssueProvider for ClickUpClient {
             }
         }
 
-        // Apply client-side offset within page and limit
-        let page_offset = (offset % 100) as usize;
-        if page_offset > 0 && page_offset < issues.len() {
-            issues = issues.split_off(page_offset);
-        } else if page_offset >= issues.len() {
+        // Apply offset within first page and limit
+        let offset_in_first_page = offset % PAGE_SIZE as usize;
+        if offset_in_first_page < issues.len() {
+            issues = issues.split_off(offset_in_first_page);
+        } else {
             issues.clear();
         }
 
-        issues.truncate(limit as usize);
+        issues.truncate(limit);
 
         Ok(issues)
     }
 
     async fn get_issue(&self, key: &str) -> Result<Issue> {
-        let task_id = parse_task_key(key);
-        let url = format!("{}/task/{}", self.base_url, task_id);
+        let url = self.task_url(key)?;
         let task: ClickUpTask = self.get(&url).await?;
         Ok(map_task(&task))
     }
@@ -350,8 +441,7 @@ impl IssueProvider for ClickUpClient {
     }
 
     async fn update_issue(&self, key: &str, input: UpdateIssueInput) -> Result<Issue> {
-        let task_id = parse_task_key(key);
-        let url = format!("{}/task/{}", self.base_url, task_id);
+        let url = self.task_url(key)?;
 
         let status = input.state.map(|s| match s.as_str() {
             "closed" => "closed".to_string(),
@@ -373,15 +463,26 @@ impl IssueProvider for ClickUpClient {
     }
 
     async fn get_comments(&self, issue_key: &str) -> Result<Vec<Comment>> {
-        let task_id = parse_task_key(issue_key);
-        let url = format!("{}/task/{}/comment", self.base_url, task_id);
+        let base_url = self.task_url(issue_key)?;
+        // Append /comment — handle both raw URL and URL with query params
+        let url = if base_url.contains('?') {
+            let (path, query) = base_url.split_once('?').unwrap();
+            format!("{}/comment?{}", path, query)
+        } else {
+            format!("{}/comment", base_url)
+        };
         let response: ClickUpCommentList = self.get(&url).await?;
         Ok(response.comments.iter().map(map_comment).collect())
     }
 
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment> {
-        let task_id = parse_task_key(issue_key);
-        let url = format!("{}/task/{}/comment", self.base_url, task_id);
+        let base_url = self.task_url(issue_key)?;
+        let url = if base_url.contains('?') {
+            let (path, query) = base_url.split_once('?').unwrap();
+            format!("{}/comment?{}", path, query)
+        } else {
+            format!("{}/comment", base_url)
+        };
         let request = CreateCommentRequest {
             comment_text: body.to_string(),
         };
@@ -468,18 +569,55 @@ mod tests {
     use crate::types::{ClickUpStatus, ClickUpTag};
 
     #[test]
-    fn test_parse_task_key_cu_prefix() {
-        assert_eq!(parse_task_key("CU-abc123"), "abc123");
+    fn test_epoch_ms_to_iso8601() {
+        // 2024-01-01T00:00:00Z = 1704067200000 ms
+        assert_eq!(
+            epoch_ms_to_iso8601("1704067200000"),
+            Some("2024-01-01T00:00:00Z".to_string())
+        );
+
+        // 2024-01-02T00:00:00Z = 1704153600000 ms
+        assert_eq!(
+            epoch_ms_to_iso8601("1704153600000"),
+            Some("2024-01-02T00:00:00Z".to_string())
+        );
+
+        // 2024-01-15T10:00:00Z = 1705312800000 ms
+        assert_eq!(
+            epoch_ms_to_iso8601("1705312800000"),
+            Some("2024-01-15T10:00:00Z".to_string())
+        );
+
+        // Invalid input
+        assert_eq!(epoch_ms_to_iso8601("not_a_number"), None);
     }
 
     #[test]
-    fn test_parse_task_key_custom_id() {
-        assert_eq!(parse_task_key("DEV-123"), "DEV-123");
+    fn test_task_url_cu_prefix() {
+        let client =
+            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", "token");
+        let url = client.task_url("CU-abc123").unwrap();
+        assert_eq!(url, "https://api.clickup.com/api/v2/task/abc123");
     }
 
     #[test]
-    fn test_parse_task_key_raw_id() {
-        assert_eq!(parse_task_key("abc123"), "abc123");
+    fn test_task_url_custom_id_with_team() {
+        let client =
+            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", "token")
+                .with_team_id("9876");
+        let url = client.task_url("DEV-42").unwrap();
+        assert_eq!(
+            url,
+            "https://api.clickup.com/api/v2/task/DEV-42?custom_task_ids=true&team_id=9876"
+        );
+    }
+
+    #[test]
+    fn test_task_url_custom_id_without_team() {
+        let client =
+            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", "token");
+        let result = client.task_url("DEV-42");
+        assert!(result.is_err());
     }
 
     #[test]
@@ -535,6 +673,9 @@ mod tests {
             issue.url,
             Some("https://app.clickup.com/t/abc123".to_string())
         );
+        // Timestamps are now ISO 8601
+        assert_eq!(issue.created_at, Some("2024-01-01T00:00:00Z".to_string()));
+        assert_eq!(issue.updated_at, Some("2024-01-02T00:00:00Z".to_string()));
     }
 
     #[test]
@@ -677,7 +818,8 @@ mod tests {
         assert_eq!(comment.body, "Nice work!");
         assert!(comment.author.is_some());
         assert_eq!(comment.author.unwrap().username, "reviewer");
-        assert_eq!(comment.created_at, Some("1705312800000".to_string()));
+        // Timestamp is now ISO 8601
+        assert_eq!(comment.created_at, Some("2024-01-15T10:00:00Z".to_string()));
         assert!(comment.position.is_none());
     }
 
@@ -726,6 +868,12 @@ mod tests {
     }
 
     #[test]
+    fn test_with_team_id() {
+        let client = ClickUpClient::new("12345", "token").with_team_id("9876");
+        assert_eq!(client.team_id, Some("9876".to_string()));
+    }
+
+    #[test]
     fn test_provider_name() {
         let client = ClickUpClient::new("12345", "token");
         assert_eq!(IssueProvider::provider_name(&client), "clickup");
@@ -734,7 +882,6 @@ mod tests {
 
     #[test]
     fn test_map_task_description_fallback() {
-        // When text_content is None, use description
         let task = ClickUpTask {
             id: "abc".to_string(),
             custom_id: None,
@@ -795,6 +942,11 @@ mod tests {
             ClickUpClient::with_base_url(server.base_url(), "12345", "pk_test_token")
         }
 
+        fn create_test_client_with_team(server: &MockServer) -> ClickUpClient {
+            ClickUpClient::with_base_url(server.base_url(), "12345", "pk_test_token")
+                .with_team_id("9876")
+        }
+
         fn sample_task_json() -> serde_json::Value {
             serde_json::json!({
                 "id": "abc123",
@@ -835,6 +987,23 @@ mod tests {
             })
         }
 
+        fn sample_task_with_custom_id_json() -> serde_json::Value {
+            serde_json::json!({
+                "id": "abc123",
+                "custom_id": "DEV-42",
+                "name": "Task with custom ID",
+                "status": {
+                    "status": "open",
+                    "type": "open"
+                },
+                "tags": [],
+                "assignees": [],
+                "url": "https://app.clickup.com/t/abc123",
+                "date_created": "1704067200000",
+                "date_updated": "1704153600000"
+            })
+        }
+
         #[tokio::test]
         async fn test_get_issues() {
             let server = MockServer::start();
@@ -855,6 +1024,11 @@ mod tests {
             assert_eq!(issues[0].title, "Test Task");
             assert_eq!(issues[0].source, "clickup");
             assert_eq!(issues[0].priority, Some("high".to_string()));
+            // Verify ISO 8601 timestamps
+            assert_eq!(
+                issues[0].created_at,
+                Some("2024-01-01T00:00:00Z".to_string())
+            );
         }
 
         #[tokio::test]
@@ -905,7 +1079,6 @@ mod tests {
                 .await
                 .unwrap();
 
-            // Only open tasks
             assert_eq!(issues.len(), 1);
             assert_eq!(issues[0].state, "open");
         }
@@ -940,7 +1113,6 @@ mod tests {
         async fn test_get_issues_pagination() {
             let server = MockServer::start();
 
-            // Create 5 tasks
             let tasks: Vec<serde_json::Value> = (0..5)
                 .map(|i| {
                     serde_json::json!({
@@ -966,7 +1138,6 @@ mod tests {
 
             let client = create_test_client(&server);
 
-            // Request with limit=2, offset=1
             let issues = client
                 .get_issues(IssueFilter {
                     limit: Some(2),
@@ -979,6 +1150,77 @@ mod tests {
             assert_eq!(issues.len(), 2);
             assert_eq!(issues[0].key, "CU-task1");
             assert_eq!(issues[1].key, "CU-task2");
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_multi_page() {
+            let server = MockServer::start();
+
+            // Page 0: 100 tasks
+            let page0_tasks: Vec<serde_json::Value> = (0..100)
+                .map(|i| {
+                    serde_json::json!({
+                        "id": format!("task{}", i),
+                        "name": format!("Task {}", i),
+                        "status": {"status": "open", "type": "open"},
+                        "tags": [],
+                        "assignees": [],
+                        "url": format!("https://app.clickup.com/t/task{}", i),
+                        "date_created": "1704067200000",
+                        "date_updated": "1704153600000"
+                    })
+                })
+                .collect();
+
+            // Page 1: 50 tasks
+            let page1_tasks: Vec<serde_json::Value> = (100..150)
+                .map(|i| {
+                    serde_json::json!({
+                        "id": format!("task{}", i),
+                        "name": format!("Task {}", i),
+                        "status": {"status": "open", "type": "open"},
+                        "tags": [],
+                        "assignees": [],
+                        "url": format!("https://app.clickup.com/t/task{}", i),
+                        "date_created": "1704067200000",
+                        "date_updated": "1704153600000"
+                    })
+                })
+                .collect();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/list/12345/task")
+                    .query_param("page", "0");
+                then.status(200)
+                    .json_body(serde_json::json!({"tasks": page0_tasks}));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/list/12345/task")
+                    .query_param("page", "1");
+                then.status(200)
+                    .json_body(serde_json::json!({"tasks": page1_tasks}));
+            });
+
+            let client = create_test_client(&server);
+
+            // Request 120 tasks — should fetch 2 pages
+            let issues = client
+                .get_issues(IssueFilter {
+                    limit: Some(120),
+                    offset: Some(0),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issues.len(), 120);
+            assert_eq!(issues[0].key, "CU-task0");
+            assert_eq!(issues[99].key, "CU-task99");
+            assert_eq!(issues[100].key, "CU-task100");
+            assert_eq!(issues[119].key, "CU-task119");
         }
 
         #[tokio::test]
@@ -996,6 +1238,33 @@ mod tests {
             assert_eq!(issue.key, "CU-abc123");
             assert_eq!(issue.title, "Test Task");
             assert_eq!(issue.priority, Some("high".to_string()));
+        }
+
+        #[tokio::test]
+        async fn test_get_issue_by_custom_id() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/task/DEV-42")
+                    .query_param("custom_task_ids", "true")
+                    .query_param("team_id", "9876");
+                then.status(200)
+                    .json_body(sample_task_with_custom_id_json());
+            });
+
+            let client = create_test_client_with_team(&server);
+            let issue = client.get_issue("DEV-42").await.unwrap();
+
+            assert_eq!(issue.key, "DEV-42");
+            assert_eq!(issue.title, "Task with custom ID");
+        }
+
+        #[tokio::test]
+        async fn test_get_issue_custom_id_without_team_fails() {
+            let client = ClickUpClient::new("12345", "token");
+            let result = client.get_issue("DEV-42").await;
+            assert!(result.is_err());
         }
 
         #[tokio::test]
@@ -1074,6 +1343,34 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn test_update_issue_by_custom_id() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/DEV-42")
+                    .query_param("custom_task_ids", "true")
+                    .query_param("team_id", "9876");
+                then.status(200)
+                    .json_body(sample_task_with_custom_id_json());
+            });
+
+            let client = create_test_client_with_team(&server);
+            let issue = client
+                .update_issue(
+                    "DEV-42",
+                    UpdateIssueInput {
+                        title: Some("Updated".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "DEV-42");
+        }
+
+        #[tokio::test]
         async fn test_update_issue_state_mapping() {
             let server = MockServer::start();
 
@@ -1120,6 +1417,11 @@ mod tests {
             assert_eq!(comments.len(), 1);
             assert_eq!(comments[0].body, "Looks good!");
             assert_eq!(comments[0].author.as_ref().unwrap().username, "reviewer");
+            // Verify ISO 8601 timestamp
+            assert_eq!(
+                comments[0].created_at,
+                Some("2024-01-15T10:00:00Z".to_string())
+            );
         }
 
         #[tokio::test]

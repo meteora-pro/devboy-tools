@@ -100,14 +100,14 @@ impl ToolHandler {
 
         tools.push(ToolDefinition {
             name: "get_issue".to_string(),
-            description: "Get a single issue by key (e.g., 'gh#123', 'gitlab#456', 'CU-abc'). Returns full issue details.".to_string(),
+            description: "Get a single issue by key (e.g., 'gh#123', 'gitlab#456', 'CU-abc', 'DEV-42'). Returns full issue details.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "required": ["key"],
                 "properties": {
                     "key": {
                         "type": "string",
-                        "description": "Issue key (e.g., 'gh#123' for GitHub, 'gitlab#456' for GitLab, 'CU-abc' for ClickUp)"
+                        "description": "Issue key (e.g., 'gh#123' for GitHub, 'gitlab#456' for GitLab, 'CU-abc' or custom ID like 'DEV-42' for ClickUp)"
                     },
                     "format": {
                         "type": "string",

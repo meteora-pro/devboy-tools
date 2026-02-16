@@ -219,6 +219,9 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
             if let Some(cu) = &config.clickup {
                 println!("[clickup]");
                 println!("  list_id = {}", cu.list_id);
+                if let Some(team_id) = &cu.team_id {
+                    println!("  team_id = {}", team_id);
+                }
                 if store.exists("clickup.token") {
                     println!("  token = ******* (in keychain)");
                 } else {
@@ -470,8 +473,14 @@ async fn handle_test_command(provider: &str) -> Result<()> {
 
             println!("Testing ClickUp connection...");
             println!("  List ID: {}", cu.list_id);
+            if let Some(team_id) = &cu.team_id {
+                println!("  Team ID: {}", team_id);
+            }
 
-            let client = ClickUpClient::new(&cu.list_id, token);
+            let mut client = ClickUpClient::new(&cu.list_id, token);
+            if let Some(team_id) = &cu.team_id {
+                client = client.with_team_id(team_id);
+            }
 
             match client.get_current_user().await {
                 Ok(user) => {
@@ -540,7 +549,10 @@ async fn handle_mcp_command() -> Result<()> {
     // Add ClickUp provider if configured
     if let Some(cu) = &config.clickup {
         if let Some(token) = store.get("clickup.token").ok().flatten() {
-            let client = ClickUpClient::new(&cu.list_id, token);
+            let mut client = ClickUpClient::new(&cu.list_id, token);
+            if let Some(team_id) = &cu.team_id {
+                client = client.with_team_id(team_id);
+            }
             server.add_provider(Arc::new(client));
             tracing::info!("Added ClickUp provider (list {})", cu.list_id);
         } else {
