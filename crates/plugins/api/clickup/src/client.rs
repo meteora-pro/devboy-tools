@@ -484,7 +484,10 @@ impl IssueProvider for ClickUpClient {
                     }
                 }
             }
-            warn!(task_id = task_id, "custom_id not available after 3 retries, using POST response");
+            warn!(
+                task_id = task_id,
+                "custom_id not available after 3 retries, using POST response"
+            );
         }
 
         Ok(map_task(&task))
@@ -1624,10 +1627,7 @@ mod tests {
 
             assert_eq!(comment.body, "My comment");
             assert_eq!(comment.id, "458315");
-            assert_eq!(
-                comment.created_at,
-                Some("2024-01-15T10:00:00Z".to_string())
-            );
+            assert_eq!(comment.created_at, Some("2024-01-15T10:00:00Z".to_string()));
         }
 
         #[tokio::test]
