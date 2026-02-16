@@ -109,6 +109,28 @@ pub struct ClickUpCommentList {
 // Create/Update types
 // =============================================================================
 
+// =============================================================================
+// List (for status resolution)
+// =============================================================================
+
+/// ClickUp list status (from GET /list/{list_id}).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClickUpListStatus {
+    pub status: String,
+    #[serde(default, rename = "type")]
+    pub status_type: Option<String>,
+}
+
+/// Partial response from GET /list/{list_id} (only statuses needed).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClickUpListInfo {
+    pub statuses: Vec<ClickUpListStatus>,
+}
+
+// =============================================================================
+// Create/Update types
+// =============================================================================
+
 /// Request body for creating a task.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateTaskRequest {
@@ -142,4 +164,40 @@ pub struct UpdateTaskRequest {
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateCommentRequest {
     pub comment_text: String,
+}
+
+/// Response from POST /task/{task_id}/comment.
+/// ClickUp returns a minimal response (no comment_text, id and date may be numbers).
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateCommentResponse {
+    #[serde(deserialize_with = "value_to_string")]
+    pub id: String,
+    #[serde(default, deserialize_with = "option_value_to_string")]
+    pub date: Option<String>,
+}
+
+/// Deserialize a value that may be a string or a number into String.
+fn value_to_string<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::String(s) => Ok(s),
+        serde_json::Value::Number(n) => Ok(n.to_string()),
+        other => Ok(other.to_string()),
+    }
+}
+
+/// Deserialize an optional value that may be a string or a number into Option<String>.
+fn option_value_to_string<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.map(|v| match v {
+        serde_json::Value::String(s) => s,
+        serde_json::Value::Number(n) => n.to_string(),
+        other => other.to_string(),
+    }))
 }

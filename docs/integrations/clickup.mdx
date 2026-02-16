@@ -25,16 +25,24 @@ ClickUp Personal API Tokens do not use the `Bearer` prefix — the token is sent
 ### Basic Configuration
 
 ```bash
-# Set the ClickUp team (workspace) and list IDs (found in the list URL)
-devboy config set clickup.team_id <team_id>
+# Required: list ID (found in the list URL)
 devboy config set clickup.list_id <list_id>
+
+# Recommended: team ID for custom task IDs (e.g., DEV-42)
+devboy config set clickup.team_id <team_id>
 
 # Store token in OS keychain
 devboy config set-secret clickup.token <token>
 ```
 
-:::tip
-The `team_id` is required for **Custom Task IDs** (e.g., `DEV-42`). Without it, only `CU-{id}` keys are supported.
+:::tip[Recommended: Set `team_id`]
+While `team_id` is optional, setting it significantly improves the integration:
+
+- **Custom Task IDs** — tasks are identified as `DEV-42` instead of `CU-86c88mv5`
+- **`create_issue` returns custom IDs** — newly created tasks show their custom ID (e.g., `DEV-542`)
+- **Lookup by custom ID** — `get_issue`, `update_issue`, `add_comment` all accept custom IDs directly
+
+Without `team_id`, tasks are only accessible via internal ClickUp IDs (`CU-{id}` format).
 :::
 
 ### Configuration File
