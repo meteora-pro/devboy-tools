@@ -690,6 +690,14 @@ fn priority_to_jira(priority: &str) -> String {
 /// Map generic/alias status names to Jira status category keys.
 ///
 /// Jira has 4 status categories: `new`, `indeterminate`, `done`, `undefined`.
+/// Escape special characters in a JQL string value.
+///
+/// JQL uses double quotes for string values. Backslashes and double quotes
+/// inside the value must be escaped to prevent injection.
+fn escape_jql(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 /// This maps user-friendly aliases to the correct category key, used as fallback
 /// when the exact status name is not found in available transitions.
 fn generic_status_to_category(status: &str) -> Option<&'static str> {
@@ -743,17 +751,17 @@ impl IssueProvider for JiraClient {
         }
 
         if let Some(search) = &filter.search {
-            jql_parts.push(format!("summary ~ \"{}\"", search));
+            jql_parts.push(format!("summary ~ \"{}\"", escape_jql(search)));
         }
 
         if let Some(labels) = &filter.labels {
             for label in labels {
-                jql_parts.push(format!("labels = \"{}\"", label));
+                jql_parts.push(format!("labels = \"{}\"", escape_jql(label)));
             }
         }
 
         if let Some(assignee) = &filter.assignee {
-            jql_parts.push(format!("assignee = \"{}\"", assignee));
+            jql_parts.push(format!("assignee = \"{}\"", escape_jql(assignee)));
         }
 
         let jql = jql_parts.join(" AND ");
@@ -779,7 +787,7 @@ impl IssueProvider for JiraClient {
 
                 let mut all_issues: Vec<Issue> = Vec::new();
                 let mut next_page_token: Option<String> = None;
-                let total_needed = offset + limit;
+                let total_needed = offset.saturating_add(limit);
                 let mut fetched_count = 0u32;
 
                 loop {
@@ -2672,6 +2680,134 @@ mod tests {
 
             assert!(result.is_err());
             assert!(matches!(result.unwrap_err(), Error::Unauthorized(_)));
+        }
+
+        #[tokio::test]
+        async fn test_transition_not_found_error_lists_available() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-1/transitions");
+                then.status(200).json_body(serde_json::json!({
+                    "transitions": [
+                        {
+                            "id": "21",
+                            "name": "Start Progress",
+                            "to": {
+                                "name": "In Bearbeitung",
+                                "statusCategory": {"key": "indeterminate"}
+                            }
+                        }
+                    ]
+                }));
+            });
+
+            // Project statuses — no matching category for "nonexistent"
+            mock_project_statuses(&server, sample_project_statuses_json());
+
+            let client = create_self_hosted_client(&server);
+            let result = client
+                .update_issue(
+                    "PROJ-1",
+                    UpdateIssueInput {
+                        state: Some("nonexistent".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await;
+
+            assert!(result.is_err());
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("No transition to status"), "got: {}", err);
+            assert!(
+                err.contains("In Bearbeitung"),
+                "should list available: {}",
+                err
+            );
+        }
+
+        #[tokio::test]
+        async fn test_cloud_get_issues_pagination_next_page_token() {
+            let server = MockServer::start();
+
+            // Page 2 mock must be registered first — httpmock matches most specific.
+            // Page 2: has nextPageToken param, returns 1 issue, no more pages
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search/jql")
+                    .query_param("nextPageToken", "page2token");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [
+                        {
+                            "id": "10003",
+                            "key": "PROJ-3",
+                            "fields": {
+                                "summary": "Issue 3",
+                                "status": {"name": "Done"},
+                                "labels": [],
+                                "created": "2024-01-03T10:00:00.000+0000"
+                            }
+                        }
+                    ]
+                }));
+            });
+
+            // Page 1: no nextPageToken param, returns 2 issues + nextPageToken
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search/jql")
+                    .query_param_exists("jql");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [
+                        {
+                            "id": "10001",
+                            "key": "PROJ-1",
+                            "fields": {
+                                "summary": "Issue 1",
+                                "status": {"name": "Open"},
+                                "labels": [],
+                                "created": "2024-01-01T10:00:00.000+0000"
+                            }
+                        },
+                        {
+                            "id": "10002",
+                            "key": "PROJ-2",
+                            "fields": {
+                                "summary": "Issue 2",
+                                "status": {"name": "Open"},
+                                "labels": [],
+                                "created": "2024-01-02T10:00:00.000+0000"
+                            }
+                        }
+                    ],
+                    "nextPageToken": "page2token"
+                }));
+            });
+
+            let client = create_cloud_client(&server);
+            let issues = client
+                .get_issues(IssueFilter {
+                    limit: Some(3),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issues.len(), 3);
+            assert_eq!(issues[0].key, "jira#PROJ-1");
+            assert_eq!(issues[1].key, "jira#PROJ-2");
+            assert_eq!(issues[2].key, "jira#PROJ-3");
+        }
+
+        #[test]
+        fn test_escape_jql() {
+            assert_eq!(escape_jql("simple"), "simple");
+            assert_eq!(escape_jql(r#"has "quotes""#), r#"has \"quotes\""#);
+            assert_eq!(escape_jql(r"back\slash"), r"back\\slash");
+            assert_eq!(
+                escape_jql(r#"both "and" \ here"#),
+                r#"both \"and\" \\ here"#
+            );
         }
     }
 }
