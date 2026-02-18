@@ -96,8 +96,18 @@ impl ToolHandler {
                     },
                     "provider": {
                         "type": "string",
-                        "enum": ["github", "gitlab", "clickup"],
+                        "enum": ["github", "gitlab", "clickup", "jira"],
                         "description": "Filter by provider. If not specified, returns issues from all configured providers."
+                    },
+                    "sort_by": {
+                        "type": "string",
+                        "enum": ["created_at", "updated_at"],
+                        "description": "Sort by field (default: updated_at)"
+                    },
+                    "sort_order": {
+                        "type": "string",
+                        "enum": ["asc", "desc"],
+                        "description": "Sort order (default: desc)"
                     }
                 }
             }),
@@ -105,14 +115,14 @@ impl ToolHandler {
 
         tools.push(ToolDefinition {
             name: "get_issue".to_string(),
-            description: "Get a single issue by key (e.g., 'gh#123', 'gitlab#456', 'CU-abc', 'DEV-42'). Returns full issue details.".to_string(),
+            description: "Get a single issue by key (e.g., 'gh#123', 'gitlab#456', 'CU-abc', 'DEV-42', 'jira#PROJ-123'). Returns full issue details.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "required": ["key"],
                 "properties": {
                     "key": {
                         "type": "string",
-                        "description": "Issue key (e.g., 'gh#123' for GitHub, 'gitlab#456' for GitLab, 'CU-abc' or custom ID like 'DEV-42' for ClickUp)"
+                        "description": "Issue key (e.g., 'gh#123' for GitHub, 'gitlab#456' for GitLab, 'CU-abc' or custom ID like 'DEV-42' for ClickUp, 'jira#PROJ-123' for Jira)"
                     },
                     "format": {
                         "type": "string",
@@ -172,7 +182,7 @@ impl ToolHandler {
                     },
                     "provider": {
                         "type": "string",
-                        "enum": ["github", "gitlab", "clickup"],
+                        "enum": ["github", "gitlab", "clickup", "jira"],
                         "description": "Target provider to create the issue in. If not specified, uses the first configured provider."
                     }
                 }
@@ -436,7 +446,8 @@ impl ToolHandler {
             assignee: params.assignee,
             limit: Some(params.limit.unwrap_or(20) as u32),
             offset: Some(params.offset.unwrap_or(0) as u32),
-            ..Default::default()
+            sort_by: params.sort_by,
+            sort_order: params.sort_order,
         };
 
         let mut all_issues = Vec::new();
@@ -958,6 +969,8 @@ struct GetIssuesParams {
     offset: Option<usize>,
     format: Option<String>,
     provider: Option<String>,
+    sort_by: Option<String>,
+    sort_order: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

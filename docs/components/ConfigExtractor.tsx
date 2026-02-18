@@ -53,7 +53,7 @@ const PROVIDERS: Record<string, ProviderConfig> = {
       { label: 'Repo', value: match[2] },
     ],
     commands: (info, _extra, token) =>
-      `devboy config set github.owner ${info[0].value} \\\ndevboy config set github.repo ${info[1].value} \\\ndevboy config set-secret github.token ${token}`,
+      `devboy config set github.owner ${info[0].value}\ndevboy config set github.repo ${info[1].value}\ndevboy config set-secret github.token ${token}`,
     tokenHelp: {
       title: 'Steps to create a GitHub token:',
       steps: [
@@ -89,7 +89,7 @@ const PROVIDERS: Record<string, ProviderConfig> = {
     ],
     autoFillExtra: (match) => ({ projectId: match[2] }),
     commands: (info, extra, token) =>
-      `devboy config set gitlab.url ${info[0].value} \\\ndevboy config set gitlab.project_id ${extra.projectId || '<project-id>'} \\\ndevboy config set-secret gitlab.token ${token}`,
+      `devboy config set gitlab.url ${info[0].value}\ndevboy config set gitlab.project_id ${extra.projectId || '<project-id>'}\ndevboy config set-secret gitlab.token ${token}`,
     tokenHelp: {
       title: 'Steps to create a GitLab Personal Access Token:',
       steps: [
@@ -117,7 +117,7 @@ const PROVIDERS: Record<string, ProviderConfig> = {
       { label: 'List ID', value: match[2] || match[3] },
     ],
     commands: (info, _extra, token) =>
-      `devboy config set clickup.list_id ${info[1].value} \\\ndevboy config set clickup.team_id ${info[0].value} \\\ndevboy config set-secret clickup.token ${token}`,
+      `devboy config set clickup.list_id ${info[1].value}\ndevboy config set clickup.team_id ${info[0].value}\ndevboy config set-secret clickup.token ${token}`,
     tokenHelp: {
       title: 'Steps to create a ClickUp Personal API Token:',
       steps: [
@@ -128,10 +128,39 @@ const PROVIDERS: Record<string, ProviderConfig> = {
       ],
     },
   },
+  jira: {
+    regex: /^(https?:\/\/[^\/]+)\/(?:browse\/([A-Z][A-Z0-9_]*)|projects\/([A-Z][A-Z0-9_]*))/,
+    urlPlaceholder: 'https://company.atlassian.net/browse/PROJ-1',
+    tokenLabel: 'Jira Token',
+    urlLabel: 'Issue or Project URL',
+    extractInfo: (match) => [
+      { label: 'Instance', value: match[1] },
+      { label: 'Project Key', value: (match[2] || match[3] || '').replace(/-\d+$/, '') },
+    ],
+    extraFields: [
+      {
+        key: 'email',
+        label: 'Email',
+        placeholder: 'user@example.com',
+        hint: 'Your Atlassian account email (required for Cloud authentication).',
+      },
+    ],
+    commands: (info, extra, token) =>
+      `devboy config set jira.url ${info[0].value}\ndevboy config set jira.project_key ${info[1].value}\ndevboy config set jira.email ${extra.email || '<email>'}\ndevboy config set-secret jira.token ${token}`,
+    tokenHelp: {
+      title: 'Steps to create a Jira API token:',
+      steps: [
+        { text: 'For Jira Cloud: Go to https://id.atlassian.com/manage-profile/security/api-tokens' },
+        { text: '', bold: 'Create API token' },
+        { text: 'Give it a label (e.g., "DevBoy Tools")' },
+        { text: 'Copy the token immediately — it won\'t be shown again' },
+      ],
+    },
+  },
 };
 
 type ConfigExtractorProps = {
-  provider: 'github' | 'gitlab' | 'clickup';
+  provider: 'github' | 'gitlab' | 'clickup' | 'jira';
 };
 
 export default function ConfigExtractor({ provider }: ConfigExtractorProps) {
