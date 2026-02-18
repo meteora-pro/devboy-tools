@@ -1,0 +1,213 @@
+import ConfigExtractor from '../components/ConfigExtractor';
+
+# Jira Integration
+
+DevBoy Tools provides integration with Jira for managing issues through AI assistants. Both Jira Cloud and Jira Self-Hosted (Data Center) are supported. The deployment flavor is auto-detected from the URL.
+
+<ConfigExtractor provider="jira" />
+
+## Authentication
+
+Jira supports different authentication methods depending on the deployment type:
+
+| Deployment | Auth Method | Token Source |
+|------------|-------------|-------------|
+| **Jira Cloud** (`*.atlassian.net`) | Basic Auth (`email:api-token`) | [Atlassian API Tokens](https://id.atlassian.com/manage-profile/security/api-tokens) |
+| **Self-Hosted** (PAT) | Bearer Token | Administration > Personal Access Tokens |
+| **Self-Hosted** (basic) | Basic Auth (`user:password`) | Use `user:password` as the token value |
+
+:::tip[Auto-detection]
+The deployment flavor is automatically detected from the URL:
+- URLs containing `.atlassian.net` are treated as **Jira Cloud** (API v3)
+- All other URLs are treated as **Self-Hosted** (API v2)
+:::
+
+## Configuration
+
+### Basic Configuration
+
+```bash
+# Set Jira instance URL
+devboy config set jira.url https://company.atlassian.net
+
+# Set project key
+devboy config set jira.project_key PROJ
+
+# Set email (used for Cloud authentication)
+devboy config set jira.email user@example.com
+
+# Store token in OS keychain
+devboy config set-secret jira.token <token>
+```
+
+### Configuration File
+
+Settings are stored in `~/.config/devboy-tools/config.toml`:
+
+```toml
+[jira]
+url = "https://company.atlassian.net"
+project_key = "PROJ"
+email = "user@example.com"
+```
+
+The token is stored separately in the OS keychain for security.
+
+### Self-Hosted Jira
+
+For Jira Server or Data Center instances:
+
+```bash
+devboy config set jira.url https://jira.company.com
+devboy config set jira.project_key PROJ
+devboy config set jira.email user@company.com
+
+# Using a Personal Access Token (PAT):
+devboy config set-secret jira.token <pat-token>
+
+# Or using basic auth (user:password):
+devboy config set-secret jira.token "username:password"
+```
+
+:::note
+For Self-Hosted Jira, the `email` field is still required in the config but is only used for Cloud authentication. With Self-Hosted, authentication is determined by the token format:
+- Token without `:` is treated as a **Bearer PAT**
+- Token with `:` is treated as **Basic Auth** credentials
+:::
+
+## MCP Tools
+
+Once configured, the following MCP tools are available:
+
+### Issue Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_issues` | List issues with filters (state, labels, assignee, search, pagination, sorting) |
+| `get_issue` | Get a single issue by key (e.g., `jira#PROJ-123` or `PROJ-123`) |
+| `get_issue_comments` | Get all comments for an issue |
+| `create_issue` | Create a new issue (type: Task) |
+| `update_issue` | Update an existing issue (title, description, status, priority, labels) |
+| `add_issue_comment` | Add a comment to an issue |
+
+### Issue Key Format
+
+Jira issues use the standard Jira key format: `PROJ-123` (project key + number).
+
+### State Filtering
+
+The `state` filter maps to Jira status categories:
+
+| Filter Value | JQL Clause |
+|-------------|------------|
+| `open` / `opened` | `statusCategory != Done` |
+| `closed` / `done` | `statusCategory = Done` |
+| `all` | No filter |
+| Any other value | `status = "<value>"` (exact status name) |
+
+### Sorting
+
+Use `sort_by` and `sort_order` parameters to control issue ordering:
+
+| `sort_by` | JQL Field |
+|-----------|-----------|
+| `created_at` | `created` |
+| `updated_at` (default) | `updated` |
+| `priority` | `priority` |
+
+| `sort_order` | Direction |
+|-------------|-----------|
+| `desc` (default) | Newest / highest first |
+| `asc` | Oldest / lowest first |
+
+### Status Changes
+
+Status changes are performed via Jira transitions. When updating an issue's state, the tool:
+1. Fetches available transitions for the issue
+2. Finds a transition whose target status matches (case-insensitive)
+3. Executes the transition
+
+If no matching transition is found, the tool returns an error with available statuses.
+
+### Priority Mapping
+
+Jira priorities are mapped to the unified format:
+
+| Jira Priority | Unified Priority |
+|--------------|------------------|
+| Highest / Critical / Blocker | `urgent` |
+| High | `high` |
+| Medium | `normal` |
+| Low | `low` |
+| Lowest / Trivial | `low` |
+
+### Atlassian Document Format (ADF)
+
+Jira Cloud uses ADF for rich text content. The integration handles this automatically:
+- **Creating/updating**: Plain text is converted to ADF paragraphs
+- **Reading**: ADF documents are converted back to plain text
+
+Jira Self-Hosted uses plain text directly.
+
+### Merge Request Tools
+
+Jira does not have merge requests. All MR-related tools will return a `ProviderUnsupported` error when used with Jira. Use a GitHub or GitLab provider for MR operations.
+
+## Output Formats
+
+All tools support three output formats via the `format` parameter:
+
+- `markdown` (default) - Human-readable with formatting
+- `compact` - Condensed format for limited context
+- `json` - Raw JSON data
+
+Example:
+```json
+{
+  "key": "jira#PROJ-123",
+  "format": "json"
+}
+```
+
+## Testing
+
+Verify your Jira configuration:
+
+```bash
+devboy test jira
+```
+
+This will test the connection by calling the `/myself` endpoint and display your Jira user information.
+
+## Troubleshooting
+
+### "401 Unauthorized" error
+
+- **Cloud**: Verify your API token and email are correct. API tokens are generated at [Atlassian API Tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
+- **Self-Hosted (PAT)**: Check that the Personal Access Token hasn't expired
+- **Self-Hosted (basic)**: Verify username and password are correct
+
+### "404 Not Found" error
+
+- Verify the project key is correct (e.g., `PROJ`, not the full project name)
+- Ensure the issue exists when using `get_issue`
+- Check that your Jira URL doesn't have a trailing path (use `https://jira.company.com`, not `https://jira.company.com/jira`)
+
+### "403 Forbidden" error
+
+- Your token may lack permissions for the project
+- Check project-level permissions in Jira administration
+- For Cloud, ensure the API token is for the correct Atlassian account
+
+### "No transition found" error
+
+- The target status may not be reachable from the current status
+- Check the issue's current workflow in Jira
+- Use the exact status name as shown in Jira (case-insensitive)
+
+### Rate limiting
+
+Jira API has rate limits:
+- Jira Cloud: Rate limits vary, typically generous for API tokens
+- Self-Hosted: Depends on instance configuration
+- The tool will show a rate limit error if exceeded

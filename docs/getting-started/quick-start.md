@@ -4,7 +4,7 @@ This guide will help you get DevBoy Tools up and running in minutes.
 
 ## Step 1: Choose Your Provider
 
-DevBoy Tools supports GitHub and GitLab. Pick the one your project uses.
+DevBoy Tools supports GitHub, GitLab, ClickUp, and Jira. Pick the one your project uses.
 
 ### GitHub
 
@@ -32,7 +32,19 @@ devboy config set gitlab.project_id <project-id>
 devboy config set-secret gitlab.token <token>
 ```
 
-> **Tip:** Use the Quick Config Generator on the [GitHub](/integrations/github) or [GitLab](/integrations/gitlab) integration page — paste your repo URL and it will generate the commands for you.
+### Jira
+
+1. For Jira Cloud: Go to https://id.atlassian.com/manage-profile/security/api-tokens
+2. Click **Create API token**, give it a label, and copy it
+
+```bash
+devboy config set jira.url https://company.atlassian.net
+devboy config set jira.project_key PROJ
+devboy config set jira.email user@example.com
+devboy config set-secret jira.token <token>
+```
+
+> **Tip:** Use the Quick Config Generator on the [GitHub](/integrations/github), [GitLab](/integrations/gitlab), or [Jira](/integrations/jira) integration page — paste your URL and it will generate the commands for you.
 
 ## Step 2: Verify Connection
 
@@ -42,6 +54,9 @@ devboy test github
 
 # For GitLab
 devboy test gitlab
+
+# For Jira
+devboy test jira
 ```
 
 You should see output confirming the connection is successful.
@@ -96,3 +111,4 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
 - [GitHub Integration](/integrations/github) - Full GitHub configuration reference
 - [GitLab Integration](/integrations/gitlab) - Full GitLab configuration reference
+- [Jira Integration](/integrations/jira) - Full Jira configuration reference
