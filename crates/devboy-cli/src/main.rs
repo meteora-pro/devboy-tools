@@ -8,6 +8,7 @@ use devboy_clickup::ClickUpClient;
 use devboy_core::{Config, IssueFilter, IssueProvider, MergeRequestProvider, MrFilter, Provider};
 use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
+use devboy_jira::JiraClient;
 use devboy_mcp::McpServer;
 use devboy_storage::{CredentialStore, KeychainStore};
 use tracing_subscriber::EnvFilter;
@@ -59,7 +60,7 @@ enum Commands {
 
     /// Test provider connection
     Test {
-        /// Provider to test (github, gitlab, clickup)
+        /// Provider to test (github, gitlab, clickup, jira)
         provider: String,
     },
 }
@@ -507,9 +508,46 @@ async fn handle_test_command(provider: &str) -> Result<()> {
             }
         }
 
+        "jira" => {
+            let jira = config
+                .jira
+                .as_ref()
+                .context("Jira not configured. Run: devboy config set jira.url <url>")?;
+
+            let token = store
+                .get("jira.token")
+                .context("Failed to get token")?
+                .context("Jira token not set. Run: devboy config set-secret jira.token <token>")?;
+
+            println!("Testing Jira connection...");
+            println!("  URL: {}", jira.url);
+            println!("  Project: {}", jira.project_key);
+            println!("  Email: {}", jira.email);
+
+            let client = JiraClient::new(&jira.url, &jira.project_key, &jira.email, token);
+
+            match client.get_current_user().await {
+                Ok(user) => {
+                    println!(
+                        "  Authenticated as: {} ({})",
+                        user.username,
+                        user.name.unwrap_or_default()
+                    );
+                    println!();
+                    println!("Jira connection successful!");
+                }
+                Err(e) => {
+                    println!("  Error: {}", e);
+                    println!();
+                    println!("Jira connection failed!");
+                    return Err(e.into());
+                }
+            }
+        }
+
         _ => {
             println!("Unknown provider: {}", provider);
-            println!("Supported providers: github, gitlab, clickup");
+            println!("Supported providers: github, gitlab, clickup, jira");
         }
     }
 
@@ -563,6 +601,21 @@ async fn handle_mcp_command() -> Result<()> {
             tracing::info!("Added ClickUp provider (list {})", cu.list_id);
         } else {
             tracing::warn!("ClickUp configured but no token found");
+        }
+    }
+
+    // Add Jira provider if configured
+    if let Some(jira) = &config.jira {
+        if let Some(token) = store.get("jira.token").ok().flatten() {
+            let client = JiraClient::new(&jira.url, &jira.project_key, &jira.email, token);
+            server.add_provider(Arc::new(client));
+            tracing::info!(
+                "Added Jira provider: {} (project {})",
+                jira.url,
+                jira.project_key
+            );
+        } else {
+            tracing::warn!("Jira configured but no token found");
         }
     }
 

@@ -6,7 +6,7 @@ This guide covers various ways to install DevBoy Tools on your system.
 
 - **Rust** 1.75 or later (for building from source)
 - **Git** (for cloning the repository)
-- A **GitHub** or **GitLab** account (for API access)
+- A **GitHub**, **GitLab**, **Jira**, or **ClickUp** account (for API access)
 
 ## Installation Methods
 
