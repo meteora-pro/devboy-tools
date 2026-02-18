@@ -83,7 +83,7 @@ Once configured, the following MCP tools are available:
 
 | Tool | Description |
 |------|-------------|
-| `get_issues` | List issues with filters (state, labels, assignee, search, pagination) |
+| `get_issues` | List issues with filters (state, labels, assignee, search, pagination, sorting) |
 | `get_issue` | Get a single issue by key (e.g., `jira#PROJ-123` or `PROJ-123`) |
 | `get_issue_comments` | Get all comments for an issue |
 | `create_issue` | Create a new issue (type: Task) |
@@ -104,6 +104,21 @@ The `state` filter maps to Jira status categories:
 | `closed` / `done` | `statusCategory = Done` |
 | `all` | No filter |
 | Any other value | `status = "<value>"` (exact status name) |
+
+### Sorting
+
+Use `sort_by` and `sort_order` parameters to control issue ordering:
+
+| `sort_by` | JQL Field |
+|-----------|-----------|
+| `created_at` | `created` |
+| `updated_at` (default) | `updated` |
+| `priority` | `priority` |
+
+| `sort_order` | Direction |
+|-------------|-----------|
+| `desc` (default) | Newest / highest first |
+| `asc` | Oldest / lowest first |
 
 ### Status Changes
 
