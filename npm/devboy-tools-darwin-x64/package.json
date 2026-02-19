@@ -1,0 +1,15 @@
+{
+  "name": "@devboy-tools/darwin-x64",
+  "version": "0.0.0",
+  "description": "DevBoy Tools binary for macOS x64",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/meteora-pro/devboy-tools.git",
+    "directory": "npm/devboy-tools-darwin-x64"
+  },
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "files": ["bin/devboy"],
+  "preferUnplugged": true
+}

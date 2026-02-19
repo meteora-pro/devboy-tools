@@ -20,3 +20,6 @@ Thumbs.db
 # Node.js (documentation)
 node_modules/
 doc_build/
+
+# npm platform packages (binaries added by CI)
+npm/devboy-tools-*/bin/

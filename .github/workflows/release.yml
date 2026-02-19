@@ -85,6 +85,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -99,9 +101,8 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
-          VERSION="${GITHUB_REF#refs/tags/}"
           DATE=$(date +%Y-%m-%d)
-          echo "## ${VERSION} (${DATE})" > CHANGELOG.md
+          echo "## ${GITHUB_REF_NAME} (${DATE})" > CHANGELOG.md
           echo "" >> CHANGELOG.md
           echo "### What's Changed" >> CHANGELOG.md
           echo "" >> CHANGELOG.md
@@ -119,12 +120,14 @@ jobs:
     name: Publish to npm
     needs: release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Download artifacts
@@ -132,28 +135,68 @@ jobs:
         with:
           path: artifacts
 
-      - name: Prepare npm package
-        run: |
-          mkdir -p npm-package/bin
+      - name: Extract version from tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-          # Extract binaries
-          for archive in artifacts/**/*.tar.gz; do
-            if [ -f "$archive" ]; then
-              tar -xzf "$archive" -C npm-package/bin/ || true
-            fi
+      - name: Prepare platform packages
+        run: |
+          VERSION="${{ steps.version.outputs.value }}"
+
+          # Map: artifact name -> npm package dir, binary name
+          declare -A ARTIFACT_TO_PKG=(
+            ["devboy-linux-x86_64"]="devboy-tools-linux-x64"
+            ["devboy-linux-arm64"]="devboy-tools-linux-arm64"
+            ["devboy-macos-x86_64"]="devboy-tools-darwin-x64"
+            ["devboy-macos-arm64"]="devboy-tools-darwin-arm64"
+          )
+
+          # Unix platforms
+          for artifact in "${!ARTIFACT_TO_PKG[@]}"; do
+            pkg_dir="npm/${ARTIFACT_TO_PKG[$artifact]}"
+            mkdir -p "$pkg_dir/bin"
+
+            tar -xzf "artifacts/$artifact/$artifact.tar.gz" -C "$pkg_dir/bin/"
+            chmod 755 "$pkg_dir/bin/devboy"
+
+            # Set version in package.json
+            jq --arg v "$VERSION" '.version = $v' "$pkg_dir/package.json" > "$pkg_dir/package.json.tmp"
+            mv "$pkg_dir/package.json.tmp" "$pkg_dir/package.json"
           done
 
-          # Copy package files
-          if [ -f "npm/package.json" ]; then
-            cp npm/package.json npm-package/
-            cp npm/install.js npm-package/ 2>/dev/null || true
-            cp npm/README.md npm-package/ 2>/dev/null || true
-          fi
+          # Windows
+          WIN_PKG="npm/devboy-tools-win32-x64"
+          mkdir -p "$WIN_PKG/bin"
+          unzip -o "artifacts/devboy-windows-x86_64.exe/devboy-windows-x86_64.exe.zip" -d "$WIN_PKG/bin/"
+          jq --arg v "$VERSION" '.version = $v' "$WIN_PKG/package.json" > "$WIN_PKG/package.json.tmp"
+          mv "$WIN_PKG/package.json.tmp" "$WIN_PKG/package.json"
 
-      - name: Publish to npm
-        if: hashFiles('npm-package/package.json') != ''
+      - name: Prepare main package
         run: |
-          cd npm-package
+          VERSION="${{ steps.version.outputs.value }}"
+          PKG="npm/devboy-tools/package.json"
+
+          # Set version and update optionalDependencies versions
+          jq --arg v "$VERSION" '
+            .version = $v |
+            .optionalDependencies |= with_entries(.value = $v)
+          ' "$PKG" > "$PKG.tmp"
+          mv "$PKG.tmp" "$PKG"
+
+      - name: Publish platform packages
+        run: |
+          for pkg_dir in npm/devboy-tools-*/; do
+            echo "Publishing $(jq -r .name "$pkg_dir/package.json")..."
+            cd "$pkg_dir"
+            npm publish --access public
+            cd "$GITHUB_WORKSPACE"
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.DEVBOY_TOOLS_NPM_TOKEN }}
+
+      - name: Publish main package
+        run: |
+          cd npm/devboy-tools
           npm publish --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.DEVBOY_TOOLS_NPM_TOKEN }}
