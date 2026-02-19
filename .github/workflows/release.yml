@@ -143,7 +143,7 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.value }}"
 
-          # Map: artifact name -> npm package dir, binary name
+          # Map: artifact name -> npm package dir
           declare -A ARTIFACT_TO_PKG=(
             ["devboy-linux-x86_64"]="devboy-tools-linux-x64"
             ["devboy-linux-arm64"]="devboy-tools-linux-arm64"
