@@ -54,7 +54,17 @@ plugins/
 
 ## Installation
 
-### From Source (Recommended for Development)
+### From npm (Recommended)
+
+```bash
+npm install @devboy-tools/cli
+# or
+pnpm add @devboy-tools/cli
+```
+
+The correct binary for your platform is installed automatically.
+
+### From Source
 
 ```bash
 git clone https://github.com/meteora-pro/devboy-tools.git
