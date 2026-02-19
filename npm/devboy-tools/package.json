@@ -1,0 +1,46 @@
+{
+  "name": "@devboy-tools/cli",
+  "version": "0.0.0",
+  "description": "Fast and efficient MCP server for coding agents — npm wrapper for Rust binary",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/meteora-pro/devboy-tools.git",
+    "directory": "npm/devboy-tools"
+  },
+  "homepage": "https://github.com/meteora-pro/devboy-tools",
+  "bugs": {
+    "url": "https://github.com/meteora-pro/devboy-tools/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "devboy",
+    "code-review",
+    "ai-agent",
+    "gitlab",
+    "github",
+    "clickup",
+    "jira"
+  ],
+  "bin": {
+    "devboy": "bin/devboy-tools.js"
+  },
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "bin/devboy-tools.js",
+    "index.js",
+    "index.d.ts"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@devboy-tools/darwin-arm64": "0.0.0",
+    "@devboy-tools/darwin-x64": "0.0.0",
+    "@devboy-tools/linux-arm64": "0.0.0",
+    "@devboy-tools/linux-x64": "0.0.0",
+    "@devboy-tools/win32-x64": "0.0.0"
+  }
+}
