@@ -35,8 +35,9 @@ pub use provider::{IssueProvider, MergeRequestProvider, Provider};
 
 // Re-export all types
 pub use types::{
-    CodePosition, Comment, CreateCommentInput, CreateIssueInput, Discussion, FileDiff, Issue,
-    IssueFilter, MergeRequest, MrFilter, Pagination, UpdateIssueInput, User,
+    CodePosition, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
+    Discussion, FileDiff, Issue, IssueFilter, MergeRequest, MrFilter, Pagination, UpdateIssueInput,
+    User,
 };
 
 // Re-export config types

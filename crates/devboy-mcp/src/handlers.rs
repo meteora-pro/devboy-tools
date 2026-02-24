@@ -6,13 +6,13 @@
 //! Tools are organized by category:
 //! - **Issues**: get_issues, get_issue, get_issue_comments, create_issue, update_issue, add_issue_comment
 //! - **Merge Requests**: get_merge_requests, get_merge_request, get_merge_request_discussions,
-//!   get_merge_request_diffs, create_merge_request_comment
+//!   get_merge_request_diffs, create_merge_request, create_merge_request_comment
 
 use std::sync::Arc;
 
 use devboy_core::{
-    CodePosition, CreateCommentInput, CreateIssueInput, IssueFilter, IssueProvider,
-    MergeRequestProvider, MrFilter, Provider, UpdateIssueInput,
+    CodePosition, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, IssueFilter,
+    IssueProvider, MergeRequestProvider, MrFilter, Provider, UpdateIssueInput,
 };
 use devboy_pipeline::{OutputFormat, Pipeline, PipelineConfig};
 use serde::{Deserialize, Serialize};
@@ -360,6 +360,52 @@ impl ToolHandler {
         });
 
         tools.push(ToolDefinition {
+            name: "create_merge_request".to_string(),
+            description: "Create a new merge request (GitLab) or pull request (GitHub).".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "required": ["title", "source_branch", "target_branch"],
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "MR/PR title"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "MR/PR description/body"
+                    },
+                    "source_branch": {
+                        "type": "string",
+                        "description": "Source branch (head branch with changes)"
+                    },
+                    "target_branch": {
+                        "type": "string",
+                        "description": "Target branch (base branch to merge into)"
+                    },
+                    "draft": {
+                        "type": "boolean",
+                        "description": "Create as draft/WIP (default: false)"
+                    },
+                    "labels": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Labels to add"
+                    },
+                    "reviewers": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Reviewer usernames"
+                    },
+                    "provider": {
+                        "type": "string",
+                        "enum": ["github", "gitlab"],
+                        "description": "Target provider. If not specified, uses the first configured provider."
+                    }
+                }
+            }),
+        });
+
+        tools.push(ToolDefinition {
             name: "create_merge_request_comment".to_string(),
             description: "Add a comment to a merge request. Can be a general comment or an inline code review comment.".to_string(),
             input_schema: serde_json::json!({
@@ -419,6 +465,7 @@ impl ToolHandler {
                 self.handle_get_merge_request_discussions(arguments).await
             }
             "get_merge_request_diffs" => self.handle_get_merge_request_diffs(arguments).await,
+            "create_merge_request" => self.handle_create_merge_request(arguments).await,
             "create_merge_request_comment" => {
                 self.handle_create_merge_request_comment(arguments).await
             }
@@ -874,6 +921,69 @@ impl ToolHandler {
         ToolCallResult::error(format!("Merge request not found: {}", params.key))
     }
 
+    async fn handle_create_merge_request(&self, arguments: Option<Value>) -> ToolCallResult {
+        let params: CreateMergeRequestParams = match arguments {
+            Some(v) => match serde_json::from_value(v) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("Invalid parameters: {}", e)),
+            },
+            None => {
+                return ToolCallResult::error(
+                    "Missing required parameters: title, source_branch, target_branch".to_string(),
+                )
+            }
+        };
+
+        if self.providers.is_empty() {
+            return ToolCallResult::error("No providers configured".to_string());
+        }
+
+        let input = CreateMergeRequestInput {
+            title: params.title,
+            description: params.description,
+            source_branch: params.source_branch,
+            target_branch: params.target_branch,
+            draft: params.draft.unwrap_or(false),
+            labels: params.labels.unwrap_or_default(),
+            reviewers: params.reviewers.unwrap_or_default(),
+        };
+
+        let provider = if let Some(ref name) = params.provider {
+            match self.find_provider_by_name(name) {
+                Some(p) => p,
+                None => {
+                    let available: Vec<_> = self
+                        .providers
+                        .iter()
+                        .map(|p| get_provider_name(p.as_ref()))
+                        .collect();
+                    return ToolCallResult::error(format!(
+                        "Provider '{}' not configured. Available: {}",
+                        name,
+                        available.join(", ")
+                    ));
+                }
+            }
+        } else {
+            &self.providers[0]
+        };
+
+        match provider.create_merge_request(input).await {
+            Ok(mr) => {
+                let msg = format!(
+                    "Created {} - {}\n{} -> {}\nURL: {}",
+                    mr.key,
+                    mr.title,
+                    mr.source_branch,
+                    mr.target_branch,
+                    mr.url.unwrap_or_default()
+                );
+                ToolCallResult::text(msg)
+            }
+            Err(e) => ToolCallResult::error(format!("Failed to create merge request: {}", e)),
+        }
+    }
+
     async fn handle_create_merge_request_comment(
         &self,
         arguments: Option<Value>,
@@ -1040,6 +1150,18 @@ struct GetMergeRequestDiffsParams {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct CreateMergeRequestParams {
+    title: String,
+    description: Option<String>,
+    source_branch: String,
+    target_branch: String,
+    draft: Option<bool>,
+    labels: Option<Vec<String>>,
+    reviewers: Option<Vec<String>>,
+    provider: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct CreateMergeRequestCommentParams {
     key: String,
     body: String,
@@ -1058,7 +1180,9 @@ struct CreateMergeRequestCommentParams {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use devboy_core::{Comment, Discussion, FileDiff, Issue, MergeRequest, User};
+    use devboy_core::{
+        Comment, CreateMergeRequestInput, Discussion, FileDiff, Issue, MergeRequest, User,
+    };
 
     struct MockProvider {
         issues: Vec<Issue>,
@@ -1210,6 +1334,13 @@ mod tests {
             })
         }
 
+        async fn create_merge_request(
+            &self,
+            _input: CreateMergeRequestInput,
+        ) -> devboy_core::Result<MergeRequest> {
+            Ok(self.mrs[0].clone())
+        }
+
         fn provider_name(&self) -> &'static str {
             "mock"
         }
@@ -1318,8 +1449,8 @@ mod tests {
         let handler = ToolHandler::new(vec![]);
         let tools = handler.available_tools();
 
-        // 6 issue tools + 5 MR tools = 11 total
-        assert_eq!(tools.len(), 11);
+        // 6 issue tools + 6 MR tools = 12 total
+        assert_eq!(tools.len(), 12);
     }
 
     #[tokio::test]
@@ -1589,6 +1720,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_create_merge_request_handler() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "title": "New MR",
+            "source_branch": "feature",
+            "target_branch": "main"
+        });
+        let result = handler.execute("create_merge_request", Some(args)).await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Created"));
+    }
+
+    #[tokio::test]
+    async fn test_create_merge_request_with_provider() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "title": "New MR",
+            "source_branch": "feature",
+            "target_branch": "main",
+            "provider": "mock"
+        });
+        let result = handler.execute("create_merge_request", Some(args)).await;
+
+        assert!(result.is_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_create_merge_request_unknown_provider() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "title": "New MR",
+            "source_branch": "feature",
+            "target_branch": "main",
+            "provider": "jira"
+        });
+        let result = handler.execute("create_merge_request", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Provider 'jira' not configured"));
+    }
+
+    #[tokio::test]
+    async fn test_create_merge_request_missing_params() {
+        let handler = ToolHandler::new(vec![Arc::new(MockProvider::new()) as Arc<dyn Provider>]);
+
+        let result = handler.execute("create_merge_request", None).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Missing required parameters"));
+    }
+
+    #[tokio::test]
+    async fn test_create_merge_request_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+
+        let args = serde_json::json!({
+            "title": "New MR",
+            "source_branch": "feature",
+            "target_branch": "main"
+        });
+        let result = handler.execute("create_merge_request", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
     async fn test_get_issues_with_format_json() {
         let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
         let handler = ToolHandler::new(vec![provider]);
@@ -1851,6 +2064,15 @@ mod tests {
                 message: "comment failed".into(),
             })
         }
+        async fn create_merge_request(
+            &self,
+            _input: CreateMergeRequestInput,
+        ) -> devboy_core::Result<MergeRequest> {
+            Err(devboy_core::Error::Api {
+                status: 500,
+                message: "create mr failed".into(),
+            })
+        }
         fn provider_name(&self) -> &'static str {
             "failing"
         }
@@ -2031,6 +2253,25 @@ mod tests {
             crate::protocol::ToolResultContent::Text { text } => text,
         };
         assert!(content.contains("Failed to add comment to merge request"));
+    }
+
+    #[tokio::test]
+    async fn test_create_merge_request_provider_fails() {
+        let provider = Arc::new(FailingProvider) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "title": "New MR",
+            "source_branch": "feature",
+            "target_branch": "main"
+        });
+        let result = handler.execute("create_merge_request", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Failed to create merge request"));
     }
 
     #[tokio::test]

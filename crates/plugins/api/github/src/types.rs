@@ -227,6 +227,20 @@ pub struct UpdateIssueRequest {
     pub assignees: Option<Vec<String>>,
 }
 
+/// Request body for creating a pull request.
+#[derive(Debug, Clone, Serialize)]
+pub struct CreatePullRequestRequest {
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    /// Source branch (head)
+    pub head: String,
+    /// Target branch (base)
+    pub base: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft: Option<bool>,
+}
+
 /// Request body for creating a comment.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateCommentRequest {

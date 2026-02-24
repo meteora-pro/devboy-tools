@@ -2,16 +2,16 @@
 
 use async_trait::async_trait;
 use devboy_core::{
-    CodePosition, Comment, CreateCommentInput, CreateIssueInput, Discussion, Error, FileDiff,
-    Issue, IssueFilter, IssueProvider, MergeRequest, MergeRequestProvider, MrFilter, Provider,
-    Result, UpdateIssueInput, User,
+    CodePosition, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
+    Discussion, Error, FileDiff, Issue, IssueFilter, IssueProvider, MergeRequest,
+    MergeRequestProvider, MrFilter, Provider, Result, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
 use crate::types::{
-    CreateCommentRequest, CreateIssueRequest, CreateReviewCommentRequest, GitHubComment,
-    GitHubFile, GitHubIssue, GitHubLabel, GitHubPullRequest, GitHubReview, GitHubReviewComment,
-    GitHubUser, UpdateIssueRequest,
+    CreateCommentRequest, CreateIssueRequest, CreatePullRequestRequest, CreateReviewCommentRequest,
+    GitHubComment, GitHubFile, GitHubIssue, GitHubLabel, GitHubPullRequest, GitHubReview,
+    GitHubReviewComment, GitHubUser, UpdateIssueRequest,
 };
 use crate::DEFAULT_GITHUB_URL;
 
@@ -626,6 +626,55 @@ impl MergeRequestProvider for GitHubClient {
 
         let gh_comment: GitHubComment = self.post(&url, &request).await?;
         Ok(map_comment(&gh_comment))
+    }
+
+    async fn create_merge_request(
+        &self,
+        input: CreateMergeRequestInput,
+    ) -> Result<MergeRequest> {
+        let url = self.repo_url("/pulls");
+
+        let request = CreatePullRequestRequest {
+            title: input.title,
+            body: input.description,
+            head: input.source_branch,
+            base: input.target_branch,
+            draft: if input.draft { Some(true) } else { None },
+        };
+
+        let gh_pr: GitHubPullRequest = self.post(&url, &request).await?;
+
+        // Add labels if provided
+        if !input.labels.is_empty() {
+            let labels_url = self.repo_url(&format!("/issues/{}/labels", gh_pr.number));
+            let _: serde_json::Value = self
+                .post(
+                    &labels_url,
+                    &serde_json::json!({ "labels": input.labels }),
+                )
+                .await?;
+        }
+
+        // Add reviewers if provided
+        if !input.reviewers.is_empty() {
+            let reviewers_url =
+                self.repo_url(&format!("/pulls/{}/requested_reviewers", gh_pr.number));
+            let _: serde_json::Value = self
+                .post(
+                    &reviewers_url,
+                    &serde_json::json!({ "reviewers": input.reviewers }),
+                )
+                .await?;
+        }
+
+        // Re-fetch the PR to get updated labels/reviewers
+        if !input.labels.is_empty() || !input.reviewers.is_empty() {
+            let pr_url = self.repo_url(&format!("/pulls/{}", gh_pr.number));
+            let updated_pr: GitHubPullRequest = self.get(&pr_url).await?;
+            return Ok(map_pull_request(&updated_pr));
+        }
+
+        Ok(map_pull_request(&gh_pr))
     }
 
     fn provider_name(&self) -> &'static str {
