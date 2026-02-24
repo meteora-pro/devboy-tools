@@ -5,10 +5,10 @@
 
 use async_trait::async_trait;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::types::{
-    Comment, CreateCommentInput, CreateIssueInput, Discussion, FileDiff, Issue, IssueFilter,
-    MergeRequest, MrFilter, UpdateIssueInput, User,
+    Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Discussion, FileDiff,
+    Issue, IssueFilter, MergeRequest, MrFilter, UpdateIssueInput, User,
 };
 
 /// Provider for working with issues.
@@ -39,25 +39,62 @@ pub trait IssueProvider: Send + Sync {
 }
 
 /// Provider for working with merge requests / pull requests.
+///
+/// Only `provider_name()` is required. All other methods have default implementations
+/// that return `Error::ProviderUnsupported`, so providers like ClickUp and Jira
+/// only need to override the methods they actually support.
 #[async_trait]
 pub trait MergeRequestProvider: Send + Sync {
-    /// Get a list of merge requests with optional filters.
-    async fn get_merge_requests(&self, filter: MrFilter) -> Result<Vec<MergeRequest>>;
-
-    /// Get a single merge request by key (e.g., "mr#123", "pr#456").
-    async fn get_merge_request(&self, key: &str) -> Result<MergeRequest>;
-
-    /// Get discussions/comments for a merge request.
-    async fn get_discussions(&self, mr_key: &str) -> Result<Vec<Discussion>>;
-
-    /// Get file diffs for a merge request.
-    async fn get_diffs(&self, mr_key: &str) -> Result<Vec<FileDiff>>;
-
-    /// Add a comment to a merge request.
-    async fn add_comment(&self, mr_key: &str, input: CreateCommentInput) -> Result<Comment>;
-
     /// Get the provider name for logging.
     fn provider_name(&self) -> &'static str;
+
+    /// Get a list of merge requests with optional filters.
+    async fn get_merge_requests(&self, _filter: MrFilter) -> Result<Vec<MergeRequest>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_merge_requests".to_string(),
+        })
+    }
+
+    /// Get a single merge request by key (e.g., "mr#123", "pr#456").
+    async fn get_merge_request(&self, _key: &str) -> Result<MergeRequest> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_merge_request".to_string(),
+        })
+    }
+
+    /// Get discussions/comments for a merge request.
+    async fn get_discussions(&self, _mr_key: &str) -> Result<Vec<Discussion>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_discussions".to_string(),
+        })
+    }
+
+    /// Get file diffs for a merge request.
+    async fn get_diffs(&self, _mr_key: &str) -> Result<Vec<FileDiff>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_diffs".to_string(),
+        })
+    }
+
+    /// Add a comment to a merge request.
+    async fn add_comment(&self, _mr_key: &str, _input: CreateCommentInput) -> Result<Comment> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "add_merge_request_comment".to_string(),
+        })
+    }
+
+    /// Create a new merge request / pull request.
+    async fn create_merge_request(&self, _input: CreateMergeRequestInput) -> Result<MergeRequest> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "create_merge_request".to_string(),
+        })
+    }
 }
 
 /// Combined provider trait for services that support both issues and merge requests.

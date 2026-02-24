@@ -2,16 +2,16 @@
 
 use async_trait::async_trait;
 use devboy_core::{
-    CodePosition, Comment, CreateCommentInput, CreateIssueInput, Discussion, Error, FileDiff,
-    Issue, IssueFilter, IssueProvider, MergeRequest, MergeRequestProvider, MrFilter, Provider,
-    Result, UpdateIssueInput, User,
+    CodePosition, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
+    Discussion, Error, FileDiff, Issue, IssueFilter, IssueProvider, MergeRequest,
+    MergeRequestProvider, MrFilter, Provider, Result, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
 use crate::types::{
-    CreateDiscussionRequest, CreateIssueRequest, CreateNoteRequest, DiscussionPosition, GitLabDiff,
-    GitLabDiscussion, GitLabIssue, GitLabMergeRequest, GitLabMergeRequestChanges, GitLabNote,
-    GitLabNotePosition, GitLabUser, UpdateIssueRequest,
+    CreateDiscussionRequest, CreateIssueRequest, CreateMergeRequestRequest, CreateNoteRequest,
+    DiscussionPosition, GitLabDiff, GitLabDiscussion, GitLabIssue, GitLabMergeRequest,
+    GitLabMergeRequestChanges, GitLabNote, GitLabNotePosition, GitLabUser, UpdateIssueRequest,
 };
 use crate::DEFAULT_GITLAB_URL;
 
@@ -616,6 +616,42 @@ impl MergeRequestProvider for GitLabClient {
 
         let gl_note: GitLabNote = self.post(&url, &request).await?;
         Ok(map_note(&gl_note))
+    }
+
+    async fn create_merge_request(&self, input: CreateMergeRequestInput) -> Result<MergeRequest> {
+        let url = self.project_url("/merge_requests");
+
+        let labels = if input.labels.is_empty() {
+            None
+        } else {
+            Some(input.labels.join(","))
+        };
+
+        // Prefix title with "Draft: " if draft is requested
+        let title = if input.draft && !input.title.starts_with("Draft:") {
+            format!("Draft: {}", input.title)
+        } else {
+            input.title
+        };
+
+        if !input.reviewers.is_empty() {
+            warn!(
+                "GitLab reviewers require user IDs, not usernames; ignoring reviewers: {:?}",
+                input.reviewers
+            );
+        }
+
+        let request = CreateMergeRequestRequest {
+            source_branch: input.source_branch,
+            target_branch: input.target_branch,
+            title,
+            description: input.description,
+            labels,
+            reviewer_ids: None,
+        };
+
+        let gl_mr: GitLabMergeRequest = self.post(&url, &request).await?;
+        Ok(map_merge_request(&gl_mr))
     }
 
     fn provider_name(&self) -> &'static str {

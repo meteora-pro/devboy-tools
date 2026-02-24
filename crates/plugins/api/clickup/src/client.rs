@@ -2,9 +2,8 @@
 
 use async_trait::async_trait;
 use devboy_core::{
-    Comment, CreateCommentInput, CreateIssueInput, Discussion, Error, FileDiff, Issue, IssueFilter,
-    IssueProvider, MergeRequest, MergeRequestProvider, MrFilter, Provider, Result,
-    UpdateIssueInput, User,
+    Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, MergeRequestProvider,
+    Provider, Result, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
@@ -578,41 +577,6 @@ impl IssueProvider for ClickUpClient {
 
 #[async_trait]
 impl MergeRequestProvider for ClickUpClient {
-    async fn get_merge_requests(&self, _filter: MrFilter) -> Result<Vec<MergeRequest>> {
-        Err(Error::ProviderUnsupported {
-            provider: "clickup".to_string(),
-            operation: "get_merge_requests".to_string(),
-        })
-    }
-
-    async fn get_merge_request(&self, _key: &str) -> Result<MergeRequest> {
-        Err(Error::ProviderUnsupported {
-            provider: "clickup".to_string(),
-            operation: "get_merge_request".to_string(),
-        })
-    }
-
-    async fn get_discussions(&self, _mr_key: &str) -> Result<Vec<Discussion>> {
-        Err(Error::ProviderUnsupported {
-            provider: "clickup".to_string(),
-            operation: "get_discussions".to_string(),
-        })
-    }
-
-    async fn get_diffs(&self, _mr_key: &str) -> Result<Vec<FileDiff>> {
-        Err(Error::ProviderUnsupported {
-            provider: "clickup".to_string(),
-            operation: "get_diffs".to_string(),
-        })
-    }
-
-    async fn add_comment(&self, _mr_key: &str, _input: CreateCommentInput) -> Result<Comment> {
-        Err(Error::ProviderUnsupported {
-            provider: "clickup".to_string(),
-            operation: "add_merge_request_comment".to_string(),
-        })
-    }
-
     fn provider_name(&self) -> &'static str {
         "clickup"
     }
@@ -647,6 +611,7 @@ impl Provider for ClickUpClient {
 mod tests {
     use super::*;
     use crate::types::{ClickUpStatus, ClickUpTag};
+    use devboy_core::{CreateCommentInput, MrFilter};
 
     #[test]
     fn test_epoch_ms_to_iso8601() {

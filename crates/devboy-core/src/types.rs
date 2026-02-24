@@ -149,6 +149,25 @@ pub struct MergeRequest {
     pub updated_at: Option<String>,
 }
 
+/// Input for creating a merge request / pull request.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CreateMergeRequestInput {
+    /// Title of the merge request
+    pub title: String,
+    /// Description / body
+    pub description: Option<String>,
+    /// Source branch (head)
+    pub source_branch: String,
+    /// Target branch (base)
+    pub target_branch: String,
+    /// Whether to create as draft/WIP
+    pub draft: bool,
+    /// Labels to add
+    pub labels: Vec<String>,
+    /// Reviewer usernames
+    pub reviewers: Vec<String>,
+}
+
 /// Filter parameters for listing merge requests.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MrFilter {
