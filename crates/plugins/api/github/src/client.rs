@@ -628,10 +628,7 @@ impl MergeRequestProvider for GitHubClient {
         Ok(map_comment(&gh_comment))
     }
 
-    async fn create_merge_request(
-        &self,
-        input: CreateMergeRequestInput,
-    ) -> Result<MergeRequest> {
+    async fn create_merge_request(&self, input: CreateMergeRequestInput) -> Result<MergeRequest> {
         let url = self.repo_url("/pulls");
 
         let request = CreatePullRequestRequest {
@@ -644,34 +641,53 @@ impl MergeRequestProvider for GitHubClient {
 
         let gh_pr: GitHubPullRequest = self.post(&url, &request).await?;
 
-        // Add labels if provided
+        // Add labels if provided (best-effort: PR is already created)
         if !input.labels.is_empty() {
             let labels_url = self.repo_url(&format!("/issues/{}/labels", gh_pr.number));
-            let _: serde_json::Value = self
-                .post(
-                    &labels_url,
-                    &serde_json::json!({ "labels": input.labels }),
-                )
-                .await?;
+            let result: Result<serde_json::Value> = self
+                .post(&labels_url, &serde_json::json!({ "labels": input.labels }))
+                .await;
+            if let Err(err) = result {
+                warn!(
+                    error = ?err,
+                    pr_number = gh_pr.number,
+                    "Failed to add labels to GitHub pull request"
+                );
+            }
         }
 
-        // Add reviewers if provided
+        // Add reviewers if provided (best-effort: PR is already created)
         if !input.reviewers.is_empty() {
             let reviewers_url =
                 self.repo_url(&format!("/pulls/{}/requested_reviewers", gh_pr.number));
-            let _: serde_json::Value = self
+            let result: Result<serde_json::Value> = self
                 .post(
                     &reviewers_url,
                     &serde_json::json!({ "reviewers": input.reviewers }),
                 )
-                .await?;
+                .await;
+            if let Err(err) = result {
+                warn!(
+                    error = ?err,
+                    pr_number = gh_pr.number,
+                    "Failed to add reviewers to GitHub pull request"
+                );
+            }
         }
 
-        // Re-fetch the PR to get updated labels/reviewers
+        // Re-fetch the PR to get updated labels/reviewers (best-effort)
         if !input.labels.is_empty() || !input.reviewers.is_empty() {
             let pr_url = self.repo_url(&format!("/pulls/{}", gh_pr.number));
-            let updated_pr: GitHubPullRequest = self.get(&pr_url).await?;
-            return Ok(map_pull_request(&updated_pr));
+            match self.get::<GitHubPullRequest>(&pr_url).await {
+                Ok(updated_pr) => return Ok(map_pull_request(&updated_pr)),
+                Err(err) => {
+                    warn!(
+                        error = ?err,
+                        pr_number = gh_pr.number,
+                        "Failed to re-fetch GitHub pull request"
+                    );
+                }
+            }
         }
 
         Ok(map_pull_request(&gh_pr))
