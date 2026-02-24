@@ -948,9 +948,9 @@ impl ToolHandler {
             reviewers: params.reviewers.unwrap_or_default(),
         };
 
-        let provider = if let Some(ref name) = params.provider {
+        let providers: Vec<_> = if let Some(ref name) = params.provider {
             match self.find_provider_by_name(name) {
-                Some(p) => p,
+                Some(p) => vec![p],
                 None => {
                     let available: Vec<_> = self
                         .providers
@@ -965,23 +965,31 @@ impl ToolHandler {
                 }
             }
         } else {
-            &self.providers[0]
+            self.providers.iter().collect()
         };
 
-        match provider.create_merge_request(input).await {
-            Ok(mr) => {
-                let msg = format!(
-                    "Created {} - {}\n{} -> {}\nURL: {}",
-                    mr.key,
-                    mr.title,
-                    mr.source_branch,
-                    mr.target_branch,
-                    mr.url.unwrap_or_default()
-                );
-                ToolCallResult::text(msg)
+        // Try providers in order until one succeeds (skip those that don't support MRs)
+        let mut last_error = String::new();
+        for provider in &providers {
+            match provider.create_merge_request(input.clone()).await {
+                Ok(mr) => {
+                    let msg = format!(
+                        "Created {} - {}\n{} -> {}\nURL: {}",
+                        mr.key,
+                        mr.title,
+                        mr.source_branch,
+                        mr.target_branch,
+                        mr.url.unwrap_or_default()
+                    );
+                    return ToolCallResult::text(msg);
+                }
+                Err(e) => {
+                    last_error = format!("{}: {}", get_provider_name(provider.as_ref()), e);
+                }
             }
-            Err(e) => ToolCallResult::error(format!("Failed to create merge request: {}", e)),
         }
+
+        ToolCallResult::error(format!("Failed to create merge request: {}", last_error))
     }
 
     async fn handle_create_merge_request_comment(

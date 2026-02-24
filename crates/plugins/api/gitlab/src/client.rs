@@ -618,10 +618,7 @@ impl MergeRequestProvider for GitLabClient {
         Ok(map_note(&gl_note))
     }
 
-    async fn create_merge_request(
-        &self,
-        input: CreateMergeRequestInput,
-    ) -> Result<MergeRequest> {
+    async fn create_merge_request(&self, input: CreateMergeRequestInput) -> Result<MergeRequest> {
         let url = self.project_url("/merge_requests");
 
         let labels = if input.labels.is_empty() {
@@ -637,13 +634,20 @@ impl MergeRequestProvider for GitLabClient {
             input.title
         };
 
+        if !input.reviewers.is_empty() {
+            warn!(
+                "GitLab reviewers require user IDs, not usernames; ignoring reviewers: {:?}",
+                input.reviewers
+            );
+        }
+
         let request = CreateMergeRequestRequest {
             source_branch: input.source_branch,
             target_branch: input.target_branch,
             title,
             description: input.description,
             labels,
-            reviewer_ids: None, // GitLab needs user IDs, not usernames; skip for now
+            reviewer_ids: None,
         };
 
         let gl_mr: GitLabMergeRequest = self.post(&url, &request).await?;

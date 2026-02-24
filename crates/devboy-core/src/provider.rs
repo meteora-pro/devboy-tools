@@ -89,10 +89,7 @@ pub trait MergeRequestProvider: Send + Sync {
     }
 
     /// Create a new merge request / pull request.
-    async fn create_merge_request(
-        &self,
-        _input: CreateMergeRequestInput,
-    ) -> Result<MergeRequest> {
+    async fn create_merge_request(&self, _input: CreateMergeRequestInput) -> Result<MergeRequest> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "create_merge_request".to_string(),
