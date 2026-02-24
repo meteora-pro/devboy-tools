@@ -200,6 +200,21 @@ pub struct UpdateIssueRequest {
     pub assignee_ids: Option<Vec<u64>>,
 }
 
+/// Request body for creating a merge request.
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateMergeRequestRequest {
+    pub source_branch: String,
+    pub target_branch: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// GitLab expects comma-separated string for labels
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reviewer_ids: Option<Vec<u64>>,
+}
+
 /// Request body for creating a note (comment).
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateNoteRequest {

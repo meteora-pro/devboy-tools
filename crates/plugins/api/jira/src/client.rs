@@ -5,9 +5,8 @@
 
 use async_trait::async_trait;
 use devboy_core::{
-    Comment, CreateCommentInput, CreateIssueInput, Discussion, Error, FileDiff, Issue, IssueFilter,
-    IssueProvider, MergeRequest, MergeRequestProvider, MrFilter, Provider, Result,
-    UpdateIssueInput, User,
+    Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, MergeRequestProvider,
+    Provider, Result, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
@@ -1020,41 +1019,6 @@ impl IssueProvider for JiraClient {
 
 #[async_trait]
 impl MergeRequestProvider for JiraClient {
-    async fn get_merge_requests(&self, _filter: MrFilter) -> Result<Vec<MergeRequest>> {
-        Err(Error::ProviderUnsupported {
-            provider: "jira".to_string(),
-            operation: "get_merge_requests".to_string(),
-        })
-    }
-
-    async fn get_merge_request(&self, _key: &str) -> Result<MergeRequest> {
-        Err(Error::ProviderUnsupported {
-            provider: "jira".to_string(),
-            operation: "get_merge_request".to_string(),
-        })
-    }
-
-    async fn get_discussions(&self, _mr_key: &str) -> Result<Vec<Discussion>> {
-        Err(Error::ProviderUnsupported {
-            provider: "jira".to_string(),
-            operation: "get_discussions".to_string(),
-        })
-    }
-
-    async fn get_diffs(&self, _mr_key: &str) -> Result<Vec<FileDiff>> {
-        Err(Error::ProviderUnsupported {
-            provider: "jira".to_string(),
-            operation: "get_diffs".to_string(),
-        })
-    }
-
-    async fn add_comment(&self, _mr_key: &str, _input: CreateCommentInput) -> Result<Comment> {
-        Err(Error::ProviderUnsupported {
-            provider: "jira".to_string(),
-            operation: "add_merge_request_comment".to_string(),
-        })
-    }
-
     fn provider_name(&self) -> &'static str {
         "jira"
     }
@@ -1077,6 +1041,7 @@ impl Provider for JiraClient {
 mod tests {
     use super::*;
     use crate::types::*;
+    use devboy_core::{CreateCommentInput, MrFilter};
 
     // =========================================================================
     // Flavor detection tests
