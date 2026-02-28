@@ -27,6 +27,7 @@
 
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use tracing::{debug, info};
 
@@ -43,6 +44,34 @@ const CONFIG_DIR_NAME: &str = "devboy-tools";
 /// Main configuration structure.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
+    /// GitHub configuration
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github: Option<GitHubConfig>,
+
+    /// GitLab configuration
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gitlab: Option<GitLabConfig>,
+
+    /// ClickUp configuration
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clickup: Option<ClickUpConfig>,
+
+    /// Jira configuration
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jira: Option<JiraConfig>,
+
+    /// Named contexts (profiles) configuration.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub contexts: BTreeMap<String, ContextConfig>,
+
+    /// Currently active context name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_context: Option<String>,
+}
+
+/// Per-context provider configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ContextConfig {
     /// GitHub configuration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GitHubConfig>,
@@ -112,6 +141,9 @@ fn default_gitlab_url() -> String {
 // =============================================================================
 
 impl Config {
+    /// Name of the implicit context for legacy top-level provider configuration.
+    pub const DEFAULT_CONTEXT_NAME: &'static str = "default";
+
     /// Get the configuration directory path.
     pub fn config_dir() -> Result<PathBuf> {
         dirs::config_dir()
@@ -185,6 +217,7 @@ impl Config {
             || self.gitlab.is_some()
             || self.clickup.is_some()
             || self.jira.is_some()
+            || self.contexts.values().any(ContextConfig::has_any_provider)
     }
 
     /// Get a list of configured provider names.
@@ -203,6 +236,71 @@ impl Config {
             providers.push("jira");
         }
         providers
+    }
+
+    /// Get all context names, including implicit legacy `default` context when applicable.
+    pub fn context_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.contexts.keys().cloned().collect();
+        if self.legacy_default_context().is_some()
+            && !names.iter().any(|n| n == Self::DEFAULT_CONTEXT_NAME)
+        {
+            names.push(Self::DEFAULT_CONTEXT_NAME.to_string());
+        }
+        names.sort();
+        names
+    }
+
+    /// Get context config by name, including implicit legacy `default` context.
+    pub fn get_context(&self, name: &str) -> Option<ContextConfig> {
+        if name == Self::DEFAULT_CONTEXT_NAME {
+            return self
+                .contexts
+                .get(name)
+                .cloned()
+                .or_else(|| self.legacy_default_context());
+        }
+
+        self.contexts.get(name).cloned()
+    }
+
+    /// Resolve the currently active context name.
+    pub fn resolve_active_context_name(&self) -> Option<String> {
+        if let Some(active) = &self.active_context {
+            if self.get_context(active).is_some() {
+                return Some(active.clone());
+            }
+        }
+
+        if self.get_context(Self::DEFAULT_CONTEXT_NAME).is_some() {
+            return Some(Self::DEFAULT_CONTEXT_NAME.to_string());
+        }
+
+        self.context_names().into_iter().next()
+    }
+
+    /// Set active context if it exists.
+    pub fn set_active_context(&mut self, name: &str) -> Result<()> {
+        if self.get_context(name).is_none() {
+            return Err(Error::Config(format!("Unknown context: {}", name)));
+        }
+        self.active_context = Some(name.to_string());
+        Ok(())
+    }
+
+    /// Return the implicit legacy context from top-level provider fields.
+    pub fn legacy_default_context(&self) -> Option<ContextConfig> {
+        let ctx = ContextConfig {
+            github: self.github.clone(),
+            gitlab: self.gitlab.clone(),
+            clickup: self.clickup.clone(),
+            jira: self.jira.clone(),
+        };
+
+        if ctx.has_any_provider() {
+            Some(ctx)
+        } else {
+            None
+        }
     }
 
     /// Set a configuration value by key path.
@@ -370,6 +468,34 @@ impl Config {
     }
 }
 
+impl ContextConfig {
+    /// Check whether this context config defines at least one provider.
+    pub fn has_any_provider(&self) -> bool {
+        self.github.is_some()
+            || self.gitlab.is_some()
+            || self.clickup.is_some()
+            || self.jira.is_some()
+    }
+
+    /// Return configured provider names for this context.
+    pub fn configured_providers(&self) -> Vec<&'static str> {
+        let mut providers = Vec::new();
+        if self.github.is_some() {
+            providers.push("github");
+        }
+        if self.gitlab.is_some() {
+            providers.push("gitlab");
+        }
+        if self.clickup.is_some() {
+            providers.push("clickup");
+        }
+        if self.jira.is_some() {
+            providers.push("jira");
+        }
+        providers
+    }
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -384,6 +510,7 @@ mod tests {
         let config = Config::default();
         assert!(config.github.is_none());
         assert!(config.gitlab.is_none());
+        assert!(config.contexts.is_empty());
         assert!(!config.has_any_provider());
         assert!(config.configured_providers().is_empty());
     }
@@ -701,6 +828,8 @@ mod tests {
                 project_key: "k".to_string(),
                 email: "e".to_string(),
             }),
+            contexts: BTreeMap::new(),
+            active_context: None,
         };
 
         let providers = config.configured_providers();
@@ -774,6 +903,8 @@ mod tests {
             }),
             clickup: None,
             jira: None,
+            contexts: BTreeMap::new(),
+            active_context: None,
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -786,5 +917,34 @@ mod tests {
         let parsed: Config = toml::from_str(&toml_str).unwrap();
         assert!(parsed.github.is_some());
         assert!(parsed.gitlab.is_some());
+    }
+
+    #[test]
+    fn test_contexts_and_active_context() {
+        let mut config = Config::default();
+        config.contexts.insert(
+            "dashboard".to_string(),
+            ContextConfig {
+                github: Some(GitHubConfig {
+                    owner: "meteora-pro".to_string(),
+                    repo: "dev-boy-monorepo".to_string(),
+                    base_url: None,
+                }),
+                clickup: Some(ClickUpConfig {
+                    list_id: "abc123".to_string(),
+                    team_id: None,
+                }),
+                ..Default::default()
+            },
+        );
+
+        let names = config.context_names();
+        assert_eq!(names, vec!["dashboard".to_string()]);
+
+        config.set_active_context("dashboard").unwrap();
+        assert_eq!(
+            config.resolve_active_context_name(),
+            Some("dashboard".to_string())
+        );
     }
 }
