@@ -947,4 +947,111 @@ mod tests {
             Some("dashboard".to_string())
         );
     }
+
+    #[test]
+    fn test_context_names_include_legacy_default() {
+        let mut config = Config {
+            github: Some(GitHubConfig {
+                owner: "legacy-owner".to_string(),
+                repo: "legacy-repo".to_string(),
+                base_url: None,
+            }),
+            ..Default::default()
+        };
+        config
+            .contexts
+            .insert("workspace".to_string(), ContextConfig::default());
+
+        assert_eq!(
+            config.context_names(),
+            vec!["default".to_string(), "workspace".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_get_context_prefers_explicit_default_over_legacy() {
+        let mut config = Config {
+            github: Some(GitHubConfig {
+                owner: "legacy-owner".to_string(),
+                repo: "legacy-repo".to_string(),
+                base_url: None,
+            }),
+            ..Default::default()
+        };
+        config.contexts.insert(
+            Config::DEFAULT_CONTEXT_NAME.to_string(),
+            ContextConfig {
+                github: Some(GitHubConfig {
+                    owner: "explicit-owner".to_string(),
+                    repo: "explicit-repo".to_string(),
+                    base_url: None,
+                }),
+                ..Default::default()
+            },
+        );
+
+        let default_ctx = config.get_context(Config::DEFAULT_CONTEXT_NAME).unwrap();
+        let gh = default_ctx.github.unwrap();
+        assert_eq!(gh.owner, "explicit-owner");
+        assert_eq!(gh.repo, "explicit-repo");
+    }
+
+    #[test]
+    fn test_resolve_active_context_fallbacks() {
+        let mut config = Config {
+            active_context: Some("missing".to_string()),
+            github: Some(GitHubConfig {
+                owner: "legacy-owner".to_string(),
+                repo: "legacy-repo".to_string(),
+                base_url: None,
+            }),
+            ..Default::default()
+        };
+        config
+            .contexts
+            .insert("beta".to_string(), ContextConfig::default());
+        config
+            .contexts
+            .insert("alpha".to_string(), ContextConfig::default());
+
+        assert_eq!(
+            config.resolve_active_context_name(),
+            Some("default".to_string())
+        );
+
+        config.github = None;
+        assert_eq!(
+            config.resolve_active_context_name(),
+            Some("alpha".to_string())
+        );
+    }
+
+    #[test]
+    fn test_set_active_context_unknown_context_errors() {
+        let mut config = Config::default();
+        let result = config.set_active_context("missing");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unknown context"));
+    }
+
+    #[test]
+    fn test_context_config_configured_providers() {
+        let context = ContextConfig {
+            github: Some(GitHubConfig {
+                owner: "owner".to_string(),
+                repo: "repo".to_string(),
+                base_url: None,
+            }),
+            jira: Some(JiraConfig {
+                url: "https://jira.example.com".to_string(),
+                project_key: "DEV".to_string(),
+                email: "dev@example.com".to_string(),
+            }),
+            ..Default::default()
+        };
+
+        let providers = context.configured_providers();
+        assert_eq!(providers, vec!["github", "jira"]);
+        assert!(context.has_any_provider());
+    }
 }

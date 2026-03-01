@@ -353,7 +353,7 @@ impl Default for McpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{RequestId, JSONRPC_VERSION};
+    use crate::protocol::{RequestId, ToolCallResult, ToolResultContent, JSONRPC_VERSION};
 
     #[test]
     fn test_server_creation() {
@@ -676,5 +676,124 @@ mod tests {
         let server = McpServer::new();
         let err = server.set_active_context("missing").unwrap_err();
         assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_context_names_and_active_context_switch() {
+        let server = McpServer::new();
+        assert_eq!(server.active_context_name(), "default".to_string());
+        assert_eq!(server.context_names(), vec!["default".to_string()]);
+
+        let mut server = server;
+        server.contexts.insert("workspace".to_string(), vec![]);
+
+        assert_eq!(
+            server.context_names(),
+            vec!["default".to_string(), "workspace".to_string()]
+        );
+
+        server.set_active_context("workspace").unwrap();
+        assert_eq!(server.active_context_name(), "workspace".to_string());
+    }
+
+    #[tokio::test]
+    async fn test_tools_call_get_current_context() {
+        let mut server = McpServer::new();
+        server.contexts.insert("workspace".to_string(), vec![]);
+        server.set_active_context("workspace").unwrap();
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "get_current_context",
+                "arguments": {}
+            })),
+        };
+
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none());
+        let result: ToolCallResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+        let text = match &result.content[0] {
+            ToolResultContent::Text { text } => text,
+        };
+        assert_eq!(text, "workspace");
+        assert_eq!(result.is_error, None);
+    }
+
+    #[tokio::test]
+    async fn test_tools_call_list_contexts_marks_active() {
+        let mut server = McpServer::new();
+        server.contexts.insert("workspace".to_string(), vec![]);
+        server.set_active_context("workspace").unwrap();
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(2),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "list_contexts",
+                "arguments": {}
+            })),
+        };
+
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none());
+        let result: ToolCallResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+        let text = match &result.content[0] {
+            ToolResultContent::Text { text } => text,
+        };
+        assert!(text.contains("* default"));
+        assert!(text.contains("* workspace (active)"));
+    }
+
+    #[tokio::test]
+    async fn test_tools_call_use_context_success_and_error_paths() {
+        let mut server = McpServer::new();
+        server.contexts.insert("workspace".to_string(), vec![]);
+
+        let missing_name_req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(3),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "use_context",
+                "arguments": {}
+            })),
+        };
+        let missing_name_resp = server.handle_request(missing_name_req).await;
+        let missing_name_result: ToolCallResult =
+            serde_json::from_value(missing_name_resp.result.unwrap()).unwrap();
+        assert_eq!(missing_name_result.is_error, Some(true));
+
+        let missing_context_req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(4),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "use_context",
+                "arguments": { "name": "missing" }
+            })),
+        };
+        let missing_context_resp = server.handle_request(missing_context_req).await;
+        let missing_context_result: ToolCallResult =
+            serde_json::from_value(missing_context_resp.result.unwrap()).unwrap();
+        assert_eq!(missing_context_result.is_error, Some(true));
+
+        let success_req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(5),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "use_context",
+                "arguments": { "name": "workspace" }
+            })),
+        };
+        let success_resp = server.handle_request(success_req).await;
+        let success_result: ToolCallResult =
+            serde_json::from_value(success_resp.result.unwrap()).unwrap();
+        assert_eq!(success_result.is_error, None);
+        assert_eq!(server.active_context_name(), "workspace".to_string());
     }
 }
