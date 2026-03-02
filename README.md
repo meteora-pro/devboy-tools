@@ -57,12 +57,12 @@ plugins/
 ### From npm (Recommended)
 
 ```bash
-npm install @devboy-tools/cli
+npm install -g @devboy-tools/cli
 # or
-pnpm add @devboy-tools/cli
+pnpm add -g @devboy-tools/cli
 ```
 
-The correct binary for your platform is installed automatically.
+The correct binary for your platform is installed automatically. Global install makes the `devboy` command available system-wide.
 
 ### From Source
 
