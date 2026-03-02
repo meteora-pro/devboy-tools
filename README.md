@@ -172,6 +172,10 @@ cargo build --release
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+## Related Projects
+
+- [devboy-tools-agent-usage](https://github.com/meteora-pro/devboy-tools-agent-usage) — CLI tool for analyzing AI agent usage (Claude Code): cost, time, tasks, focus. Reads JSONL logs and provides token/cost breakdowns, task grouping by git branch, tool call categories, and session timeline visualization.
+
 ## Coverage Report
 
 [![Codecov](https://codecov.io/gh/meteora-pro/devboy-tools/branch/main/graph/badge.svg)](https://codecov.io/gh/meteora-pro/devboy-tools)
