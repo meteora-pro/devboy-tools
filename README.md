@@ -57,12 +57,12 @@ plugins/
 ### From npm (Recommended)
 
 ```bash
-npm install @devboy-tools/cli
+npm install -g @devboy-tools/cli
 # or
-pnpm add @devboy-tools/cli
+pnpm add -g @devboy-tools/cli
 ```
 
-The correct binary for your platform is installed automatically.
+The correct binary for your platform is installed automatically. Global install makes the `devboy` command available system-wide.
 
 ### From Source
 
@@ -171,6 +171,10 @@ cargo build --release
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Related Projects
+
+- [devboy-tools-agent-usage](https://github.com/meteora-pro/devboy-tools-agent-usage) — CLI tool for analyzing AI agent usage (Claude Code): cost, time, tasks, focus. Reads JSONL logs and provides token/cost breakdowns, task grouping by git branch, tool call categories, and session timeline visualization.
 
 ## Coverage Report
 
