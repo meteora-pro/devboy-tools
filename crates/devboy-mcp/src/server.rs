@@ -54,6 +54,11 @@ impl McpServer {
             .push(provider);
     }
 
+    /// Ensure a named context exists, even if it has no providers.
+    pub fn ensure_context(&mut self, context: &str) {
+        self.contexts.entry(context.to_string()).or_default();
+    }
+
     /// Set active context.
     pub fn set_active_context(&self, context: &str) -> devboy_core::Result<()> {
         if !self.contexts.contains_key(context) {
@@ -92,7 +97,7 @@ impl McpServer {
         self.contexts.get(&active).cloned().unwrap_or_default()
     }
 
-    /// Get all registered providers.
+    /// Get providers in the default context.
     pub fn providers(&self) -> &[Arc<dyn Provider>] {
         self.contexts
             .get("default")
@@ -685,7 +690,7 @@ mod tests {
         assert_eq!(server.context_names(), vec!["default".to_string()]);
 
         let mut server = server;
-        server.contexts.insert("workspace".to_string(), vec![]);
+        server.ensure_context("workspace");
 
         assert_eq!(
             server.context_names(),

@@ -641,17 +641,21 @@ async fn handle_mcp_command() -> Result<()> {
 
     // Add configured named contexts.
     for (context_name, context) in &config.contexts {
+        server.ensure_context(context_name);
         any_provider_added |= add_context_providers(&mut server, &store, context_name, context);
     }
 
     // Backward-compatible implicit default context from top-level provider fields.
-    if let Some(default_context) = config.legacy_default_context() {
-        any_provider_added |= add_context_providers(
-            &mut server,
-            &store,
-            Config::DEFAULT_CONTEXT_NAME,
-            &default_context,
-        );
+    // Skip when explicit `contexts.default` exists to match Config::get_context precedence.
+    if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME) {
+        if let Some(default_context) = config.legacy_default_context() {
+            any_provider_added |= add_context_providers(
+                &mut server,
+                &store,
+                Config::DEFAULT_CONTEXT_NAME,
+                &default_context,
+            );
+        }
     }
 
     // Set active context (if configured and valid).
