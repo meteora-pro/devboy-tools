@@ -33,3 +33,7 @@ Open Source MCP server written in Rust. Designed for coding agents with plugin s
 - [GitLab Integration](/integrations/gitlab) - Configure GitLab access
 - [ClickUp Integration](/integrations/clickup) - Configure ClickUp access
 - [Jira Integration](/integrations/jira) - Configure Jira access
+
+## Related Projects
+
+- [devboy-tools-agent-usage](https://github.com/meteora-pro/devboy-tools-agent-usage) — CLI tool for analyzing AI agent usage (Claude Code): cost, time, tasks, focus
