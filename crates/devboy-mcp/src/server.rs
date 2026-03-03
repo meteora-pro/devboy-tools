@@ -5,9 +5,11 @@
 //! 2. Handle tool calls - execute tools via providers
 //! 3. Shutdown - graceful cleanup
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 use devboy_core::Provider;
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::handlers::ToolHandler;
@@ -19,43 +21,104 @@ use crate::transport::{IncomingMessage, StdioTransport};
 
 /// MCP server for devboy-tools.
 pub struct McpServer {
-    providers: Vec<Arc<dyn Provider>>,
+    contexts: HashMap<String, Vec<Arc<dyn Provider>>>,
+    active_context: RwLock<String>,
     initialized: bool,
 }
 
 impl McpServer {
     /// Create a new MCP server.
     pub fn new() -> Self {
+        let mut contexts = HashMap::new();
+        contexts.insert("default".to_string(), Vec::new());
         Self {
-            providers: Vec::new(),
+            contexts,
+            active_context: RwLock::new("default".to_string()),
             initialized: false,
         }
     }
 
     /// Add a provider to the server.
     pub fn add_provider(&mut self, provider: Arc<dyn Provider>) {
-        self.providers.push(provider);
+        self.contexts
+            .entry("default".to_string())
+            .or_default()
+            .push(provider);
     }
 
-    /// Get all registered providers.
+    /// Add a provider under a named context.
+    pub fn add_provider_to_context(&mut self, context: &str, provider: Arc<dyn Provider>) {
+        self.contexts
+            .entry(context.to_string())
+            .or_default()
+            .push(provider);
+    }
+
+    /// Ensure a named context exists, even if it has no providers.
+    pub fn ensure_context(&mut self, context: &str) {
+        self.contexts.entry(context.to_string()).or_default();
+    }
+
+    /// Set active context.
+    pub fn set_active_context(&self, context: &str) -> devboy_core::Result<()> {
+        if !self.contexts.contains_key(context) {
+            return Err(devboy_core::Error::Config(format!(
+                "Context '{}' not found",
+                context
+            )));
+        }
+
+        let mut active = self
+            .active_context
+            .write()
+            .map_err(|_| devboy_core::Error::Config("Active context lock poisoned".to_string()))?;
+        *active = context.to_string();
+        Ok(())
+    }
+
+    /// Get active context name.
+    pub fn active_context_name(&self) -> String {
+        self.active_context
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| "default".to_string())
+    }
+
+    /// List all context names.
+    pub fn context_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.contexts.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// Get providers in active context.
+    pub fn active_providers(&self) -> Vec<Arc<dyn Provider>> {
+        let active = self.active_context_name();
+        self.contexts.get(&active).cloned().unwrap_or_default()
+    }
+
+    /// Get providers in the default context.
     pub fn providers(&self) -> &[Arc<dyn Provider>] {
-        &self.providers
+        self.contexts
+            .get("default")
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     /// Run the MCP server main loop.
     pub async fn run(&mut self) -> devboy_core::Result<()> {
         tracing::info!(
-            "Starting MCP server with {} providers",
-            self.providers.len()
+            "Starting MCP server with {} contexts (active: {})",
+            self.contexts.len(),
+            self.active_context_name()
         );
 
         let mut transport = StdioTransport::stdio();
-        let handler = ToolHandler::new(self.providers.clone());
 
         loop {
             match transport.read_message() {
                 Ok(Some(msg)) => {
-                    let response = self.handle_message(msg, &handler).await;
+                    let response = self.handle_message(msg).await;
                     if let Some(resp) = response {
                         if let Err(e) = transport.write_response(&resp) {
                             tracing::error!("Failed to write response: {}", e);
@@ -84,13 +147,9 @@ impl McpServer {
     }
 
     /// Handle an incoming message.
-    async fn handle_message(
-        &mut self,
-        msg: IncomingMessage,
-        handler: &ToolHandler,
-    ) -> Option<JsonRpcResponse> {
+    async fn handle_message(&mut self, msg: IncomingMessage) -> Option<JsonRpcResponse> {
         match msg {
-            IncomingMessage::Request(req) => Some(self.handle_request(req, handler).await),
+            IncomingMessage::Request(req) => Some(self.handle_request(req).await),
             IncomingMessage::Notification(notif) => {
                 self.handle_notification(&notif.method);
                 None // Notifications don't get responses
@@ -99,17 +158,13 @@ impl McpServer {
     }
 
     /// Handle a JSON-RPC request.
-    async fn handle_request(
-        &mut self,
-        req: JsonRpcRequest,
-        handler: &ToolHandler,
-    ) -> JsonRpcResponse {
+    async fn handle_request(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
         tracing::debug!("Handling request: {} (id: {:?})", req.method, req.id);
 
         match req.method.as_str() {
             "initialize" => self.handle_initialize(req.id, req.params),
-            "tools/list" => self.handle_tools_list(req.id, handler),
-            "tools/call" => self.handle_tools_call(req.id, req.params, handler).await,
+            "tools/list" => self.handle_tools_list(req.id),
+            "tools/call" => self.handle_tools_call(req.id, req.params).await,
             "ping" => self.handle_ping(req.id),
             method => {
                 tracing::warn!("Unknown method: {}", method);
@@ -180,20 +235,44 @@ impl McpServer {
     }
 
     /// Handle tools/list request.
-    fn handle_tools_list(&self, id: RequestId, handler: &ToolHandler) -> JsonRpcResponse {
+    fn handle_tools_list(&self, id: RequestId) -> JsonRpcResponse {
+        let handler = ToolHandler::new(self.active_providers());
         let tools = handler.available_tools();
+        let mut tools = tools;
+        tools.push(crate::protocol::ToolDefinition {
+            name: "list_contexts".to_string(),
+            description: "List configured contexts and indicate the active context.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+        });
+        tools.push(crate::protocol::ToolDefinition {
+            name: "use_context".to_string(),
+            description: "Switch active context at runtime.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                    "name": { "type": "string", "description": "Context name to activate" }
+                }
+            }),
+        });
+        tools.push(crate::protocol::ToolDefinition {
+            name: "get_current_context".to_string(),
+            description: "Get current active context name.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+        });
 
         let result = ToolsListResult { tools };
         JsonRpcResponse::success(id, serde_json::to_value(result).unwrap())
     }
 
     /// Handle tools/call request.
-    async fn handle_tools_call(
-        &self,
-        id: RequestId,
-        params: Option<Value>,
-        handler: &ToolHandler,
-    ) -> JsonRpcResponse {
+    async fn handle_tools_call(&mut self, id: RequestId, params: Option<Value>) -> JsonRpcResponse {
         let params: ToolCallParams = match params {
             Some(p) => match serde_json::from_value(p) {
                 Ok(params) => params,
@@ -211,7 +290,56 @@ impl McpServer {
 
         tracing::info!("Calling tool: {}", params.name);
 
-        let result = handler.execute(&params.name, params.arguments).await;
+        let result = match params.name.as_str() {
+            "list_contexts" => {
+                let active = self.active_context_name();
+                let names = self.context_names();
+                let content = names
+                    .into_iter()
+                    .map(|name| {
+                        if name == active {
+                            format!("* {} (active)", name)
+                        } else {
+                            format!("* {}", name)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                crate::protocol::ToolCallResult::text(content)
+            }
+            "get_current_context" => {
+                crate::protocol::ToolCallResult::text(self.active_context_name())
+            }
+            "use_context" => {
+                #[derive(Deserialize)]
+                struct UseContextParams {
+                    name: String,
+                }
+
+                match params.arguments {
+                    Some(args) => match serde_json::from_value::<UseContextParams>(args) {
+                        Ok(args) => match self.set_active_context(&args.name) {
+                            Ok(()) => crate::protocol::ToolCallResult::text(format!(
+                                "Active context set to '{}'",
+                                args.name
+                            )),
+                            Err(e) => crate::protocol::ToolCallResult::error(e.to_string()),
+                        },
+                        Err(e) => crate::protocol::ToolCallResult::error(format!(
+                            "Invalid parameters: {}",
+                            e
+                        )),
+                    },
+                    None => crate::protocol::ToolCallResult::error(
+                        "Missing required parameter: name".to_string(),
+                    ),
+                }
+            }
+            _ => {
+                let handler = ToolHandler::new(self.active_providers());
+                handler.execute(&params.name, params.arguments).await
+            }
+        };
         JsonRpcResponse::success(id, serde_json::to_value(result).unwrap())
     }
 
@@ -230,19 +358,18 @@ impl Default for McpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{RequestId, JSONRPC_VERSION};
+    use crate::protocol::{RequestId, ToolCallResult, ToolResultContent, JSONRPC_VERSION};
 
     #[test]
     fn test_server_creation() {
         let server = McpServer::new();
-        assert!(server.providers.is_empty());
+        assert!(server.providers().is_empty());
         assert!(!server.initialized);
     }
 
     #[test]
     fn test_initialize_response() {
         let mut server = McpServer::new();
-        let handler = ToolHandler::new(vec![]);
 
         let req = JsonRpcRequest {
             jsonrpc: JSONRPC_VERSION.to_string(),
@@ -260,7 +387,7 @@ mod tests {
 
         let resp = tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(server.handle_request(req, &handler));
+            .block_on(server.handle_request(req));
 
         assert!(resp.result.is_some());
         assert!(resp.error.is_none());
@@ -270,15 +397,17 @@ mod tests {
     #[test]
     fn test_tools_list() {
         let server = McpServer::new();
-        let handler = ToolHandler::new(vec![]);
 
-        let resp = server.handle_tools_list(RequestId::Number(1), &handler);
+        let resp = server.handle_tools_list(RequestId::Number(1));
 
         assert!(resp.result.is_some());
         let result: ToolsListResult = serde_json::from_value(resp.result.unwrap()).unwrap();
         assert!(!result.tools.is_empty());
         assert!(result.tools.iter().any(|t| t.name == "get_issues"));
         assert!(result.tools.iter().any(|t| t.name == "get_merge_requests"));
+        assert!(result.tools.iter().any(|t| t.name == "list_contexts"));
+        assert!(result.tools.iter().any(|t| t.name == "use_context"));
+        assert!(result.tools.iter().any(|t| t.name == "get_current_context"));
     }
 
     #[test]
@@ -304,7 +433,6 @@ mod tests {
     #[test]
     fn test_unknown_method() {
         let mut server = McpServer::new();
-        let handler = ToolHandler::new(vec![]);
 
         let req = JsonRpcRequest {
             jsonrpc: JSONRPC_VERSION.to_string(),
@@ -315,7 +443,7 @@ mod tests {
 
         let resp = tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(server.handle_request(req, &handler));
+            .block_on(server.handle_request(req));
 
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, JsonRpcError::METHOD_NOT_FOUND);
@@ -438,7 +566,6 @@ mod tests {
     #[tokio::test]
     async fn test_handle_message_notification() {
         let mut server = McpServer::new();
-        let handler = ToolHandler::new(vec![]);
 
         let msg = IncomingMessage::Notification(crate::protocol::JsonRpcNotification {
             jsonrpc: JSONRPC_VERSION.to_string(),
@@ -446,7 +573,7 @@ mod tests {
             params: None,
         });
 
-        let response = server.handle_message(msg, &handler).await;
+        let response = server.handle_message(msg).await;
         // Notifications should return None
         assert!(response.is_none());
     }
@@ -454,7 +581,6 @@ mod tests {
     #[tokio::test]
     async fn test_handle_message_request() {
         let mut server = McpServer::new();
-        let handler = ToolHandler::new(vec![]);
 
         let msg = IncomingMessage::Request(JsonRpcRequest {
             jsonrpc: JSONRPC_VERSION.to_string(),
@@ -463,7 +589,7 @@ mod tests {
             params: None,
         });
 
-        let response = server.handle_message(msg, &handler).await;
+        let response = server.handle_message(msg).await;
         // Requests should return Some
         assert!(response.is_some());
         let resp = response.unwrap();
@@ -473,7 +599,6 @@ mod tests {
     #[tokio::test]
     async fn test_handle_tools_call() {
         let mut server = McpServer::new();
-        let handler = ToolHandler::new(vec![]);
 
         let req = JsonRpcRequest {
             jsonrpc: JSONRPC_VERSION.to_string(),
@@ -485,7 +610,7 @@ mod tests {
             })),
         };
 
-        let resp = server.handle_request(req, &handler).await;
+        let resp = server.handle_request(req).await;
         // Will return error since no providers, but should not panic
         assert!(resp.result.is_some());
     }
@@ -493,7 +618,6 @@ mod tests {
     #[tokio::test]
     async fn test_handle_tools_call_missing_params() {
         let mut server = McpServer::new();
-        let handler = ToolHandler::new(vec![]);
 
         let req = JsonRpcRequest {
             jsonrpc: JSONRPC_VERSION.to_string(),
@@ -502,14 +626,13 @@ mod tests {
             params: None,
         };
 
-        let resp = server.handle_request(req, &handler).await;
+        let resp = server.handle_request(req).await;
         assert!(resp.error.is_some());
     }
 
     #[tokio::test]
     async fn test_handle_tools_call_invalid_params() {
         let mut server = McpServer::new();
-        let handler = ToolHandler::new(vec![]);
 
         let req = JsonRpcRequest {
             jsonrpc: JSONRPC_VERSION.to_string(),
@@ -518,7 +641,7 @@ mod tests {
             params: Some(serde_json::json!("not an object")),
         };
 
-        let resp = server.handle_request(req, &handler).await;
+        let resp = server.handle_request(req).await;
         assert!(resp.error.is_some());
     }
 
@@ -551,5 +674,131 @@ mod tests {
     fn test_default_trait() {
         let server = McpServer::default();
         assert!(server.providers().is_empty());
+    }
+
+    #[test]
+    fn test_context_switch_missing_context() {
+        let server = McpServer::new();
+        let err = server.set_active_context("missing").unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_context_names_and_active_context_switch() {
+        let server = McpServer::new();
+        assert_eq!(server.active_context_name(), "default".to_string());
+        assert_eq!(server.context_names(), vec!["default".to_string()]);
+
+        let mut server = server;
+        server.ensure_context("workspace");
+
+        assert_eq!(
+            server.context_names(),
+            vec!["default".to_string(), "workspace".to_string()]
+        );
+
+        server.set_active_context("workspace").unwrap();
+        assert_eq!(server.active_context_name(), "workspace".to_string());
+    }
+
+    #[tokio::test]
+    async fn test_tools_call_get_current_context() {
+        let mut server = McpServer::new();
+        server.contexts.insert("workspace".to_string(), vec![]);
+        server.set_active_context("workspace").unwrap();
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "get_current_context",
+                "arguments": {}
+            })),
+        };
+
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none());
+        let result: ToolCallResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+        let text = match &result.content[0] {
+            ToolResultContent::Text { text } => text,
+        };
+        assert_eq!(text, "workspace");
+        assert_eq!(result.is_error, None);
+    }
+
+    #[tokio::test]
+    async fn test_tools_call_list_contexts_marks_active() {
+        let mut server = McpServer::new();
+        server.contexts.insert("workspace".to_string(), vec![]);
+        server.set_active_context("workspace").unwrap();
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(2),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "list_contexts",
+                "arguments": {}
+            })),
+        };
+
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none());
+        let result: ToolCallResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+        let text = match &result.content[0] {
+            ToolResultContent::Text { text } => text,
+        };
+        assert!(text.contains("* default"));
+        assert!(text.contains("* workspace (active)"));
+    }
+
+    #[tokio::test]
+    async fn test_tools_call_use_context_success_and_error_paths() {
+        let mut server = McpServer::new();
+        server.contexts.insert("workspace".to_string(), vec![]);
+
+        let missing_name_req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(3),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "use_context",
+                "arguments": {}
+            })),
+        };
+        let missing_name_resp = server.handle_request(missing_name_req).await;
+        let missing_name_result: ToolCallResult =
+            serde_json::from_value(missing_name_resp.result.unwrap()).unwrap();
+        assert_eq!(missing_name_result.is_error, Some(true));
+
+        let missing_context_req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(4),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "use_context",
+                "arguments": { "name": "missing" }
+            })),
+        };
+        let missing_context_resp = server.handle_request(missing_context_req).await;
+        let missing_context_result: ToolCallResult =
+            serde_json::from_value(missing_context_resp.result.unwrap()).unwrap();
+        assert_eq!(missing_context_result.is_error, Some(true));
+
+        let success_req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(5),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "use_context",
+                "arguments": { "name": "workspace" }
+            })),
+        };
+        let success_resp = server.handle_request(success_req).await;
+        let success_result: ToolCallResult =
+            serde_json::from_value(success_resp.result.unwrap()).unwrap();
+        assert_eq!(success_result.is_error, None);
+        assert_eq!(server.active_context_name(), "workspace".to_string());
     }
 }

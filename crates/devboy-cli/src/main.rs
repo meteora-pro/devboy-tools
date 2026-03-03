@@ -1,11 +1,14 @@
 //! DevBoy CLI - Command-line interface for devboy-tools.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use devboy_clickup::ClickUpClient;
-use devboy_core::{Config, IssueFilter, IssueProvider, MergeRequestProvider, MrFilter, Provider};
+use devboy_core::{
+    Config, ContextConfig, IssueFilter, IssueProvider, MergeRequestProvider, MrFilter, Provider,
+};
 use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
 use devboy_jira::JiraClient;
@@ -34,6 +37,12 @@ enum Commands {
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
+    },
+
+    /// Context (profile) management
+    Context {
+        #[command(subcommand)]
+        command: ContextCommands,
     },
 
     /// Get information about issues
@@ -96,6 +105,14 @@ enum ConfigCommands {
     Path,
 }
 
+#[derive(Subcommand)]
+enum ContextCommands {
+    /// List available contexts and show active one
+    List,
+    /// Switch active context
+    Use { name: String },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -116,6 +133,10 @@ async fn main() -> Result<()> {
 
         Some(Commands::Config { command }) => {
             handle_config_command(command)?;
+        }
+
+        Some(Commands::Context { command }) => {
+            handle_context_command(command)?;
         }
 
         Some(Commands::Issues { state, limit }) => {
@@ -272,6 +293,59 @@ fn mask_secret(value: &str) -> String {
     } else {
         format!("{}...{}", &value[..4], &value[value.len() - 4..])
     }
+}
+
+fn load_runtime_config() -> Result<(Config, PathBuf)> {
+    let local_path = PathBuf::from(".devboy.toml");
+    if local_path.exists() {
+        let config = Config::load_from(&local_path).context("Failed to load .devboy.toml")?;
+        return Ok((config, local_path));
+    }
+
+    let path = Config::config_path().context("Failed to determine config path")?;
+    let config = Config::load().context("Failed to load config")?;
+    Ok((config, path))
+}
+
+fn handle_context_command(command: ContextCommands) -> Result<()> {
+    match command {
+        ContextCommands::List => {
+            let (config, source_path) = load_runtime_config()?;
+            let active = config.resolve_active_context_name();
+            let names = config.context_names();
+
+            if names.is_empty() {
+                println!("No contexts configured.");
+                println!("Config source: {}", source_path.display());
+                return Ok(());
+            }
+
+            println!("Contexts (source: {}):", source_path.display());
+            for name in names {
+                if active.as_deref() == Some(name.as_str()) {
+                    println!("* {} (active)", name);
+                } else {
+                    println!("* {}", name);
+                }
+            }
+        }
+        ContextCommands::Use { name } => {
+            let (mut config, source_path) = load_runtime_config()?;
+            config
+                .set_active_context(&name)
+                .context("Failed to switch context")?;
+            config
+                .save_to(&source_path)
+                .context("Failed to save context selection")?;
+            println!(
+                "Active context set to '{}' ({})",
+                name,
+                source_path.display()
+            );
+        }
+    }
+
+    Ok(())
 }
 
 // =============================================================================
@@ -559,68 +633,43 @@ async fn handle_test_command(provider: &str) -> Result<()> {
 // =============================================================================
 
 async fn handle_mcp_command() -> Result<()> {
-    let config = Config::load().context("Failed to load config")?;
+    let (config, config_path) = load_runtime_config()?;
     let store = KeychainStore::new();
 
     let mut server = McpServer::new();
+    let mut any_provider_added = false;
 
-    // Add GitHub provider if configured
-    if let Some(gh) = &config.github {
-        if let Some(token) = store.get("github.token").ok().flatten() {
-            let client = GitHubClient::new(&gh.owner, &gh.repo, token);
-            server.add_provider(Arc::new(client));
-            tracing::info!("Added GitHub provider: {}/{}", gh.owner, gh.repo);
-        } else {
-            tracing::warn!("GitHub configured but no token found");
-        }
+    // Add configured named contexts.
+    for (context_name, context) in &config.contexts {
+        server.ensure_context(context_name);
+        any_provider_added |= add_context_providers(&mut server, &store, context_name, context);
     }
 
-    // Add GitLab provider if configured
-    if let Some(gl) = &config.gitlab {
-        if let Some(token) = store.get("gitlab.token").ok().flatten() {
-            let client = GitLabClient::with_base_url(&gl.url, &gl.project_id, token);
-            server.add_provider(Arc::new(client));
-            tracing::info!(
-                "Added GitLab provider: {} (project {})",
-                gl.url,
-                gl.project_id
+    // Backward-compatible implicit default context from top-level provider fields.
+    // Skip when explicit `contexts.default` exists to match Config::get_context precedence.
+    if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME) {
+        if let Some(default_context) = config.legacy_default_context() {
+            any_provider_added |= add_context_providers(
+                &mut server,
+                &store,
+                Config::DEFAULT_CONTEXT_NAME,
+                &default_context,
             );
-        } else {
-            tracing::warn!("GitLab configured but no token found");
         }
     }
 
-    // Add ClickUp provider if configured
-    if let Some(cu) = &config.clickup {
-        if let Some(token) = store.get("clickup.token").ok().flatten() {
-            let mut client = ClickUpClient::new(&cu.list_id, token);
-            if let Some(team_id) = &cu.team_id {
-                client = client.with_team_id(team_id);
-            }
-            server.add_provider(Arc::new(client));
-            tracing::info!("Added ClickUp provider (list {})", cu.list_id);
+    // Set active context (if configured and valid).
+    if let Some(active) = config.resolve_active_context_name() {
+        if let Err(e) = server.set_active_context(&active) {
+            tracing::warn!("Could not set active context '{}': {}", active, e);
         } else {
-            tracing::warn!("ClickUp configured but no token found");
+            tracing::info!("Active context: {}", active);
         }
     }
 
-    // Add Jira provider if configured
-    if let Some(jira) = &config.jira {
-        if let Some(token) = store.get("jira.token").ok().flatten() {
-            let client = JiraClient::new(&jira.url, &jira.project_key, &jira.email, token);
-            server.add_provider(Arc::new(client));
-            tracing::info!(
-                "Added Jira provider: {} (project {})",
-                jira.url,
-                jira.project_key
-            );
-        } else {
-            tracing::warn!("Jira configured but no token found");
-        }
-    }
-
-    if server.providers().is_empty() {
+    if !any_provider_added {
         tracing::warn!("No providers configured. MCP server will have limited functionality.");
+        tracing::info!("Config source: {}", config_path.display());
         tracing::info!("Configure GitHub: devboy config set github.owner <owner>");
     }
 
@@ -628,4 +677,110 @@ async fn handle_mcp_command() -> Result<()> {
     server.run().await.context("MCP server error")?;
 
     Ok(())
+}
+
+fn get_token_for_context(
+    store: &KeychainStore,
+    context_name: &str,
+    provider: &str,
+) -> Option<String> {
+    let scoped_key = format!("contexts.{}.{}.token", context_name, provider);
+    store
+        .get(&scoped_key)
+        .ok()
+        .flatten()
+        .or_else(|| store.get(&format!("{}.token", provider)).ok().flatten())
+}
+
+fn add_context_providers(
+    server: &mut McpServer,
+    store: &KeychainStore,
+    context_name: &str,
+    context: &ContextConfig,
+) -> bool {
+    let mut added = false;
+
+    if let Some(gh) = &context.github {
+        if let Some(token) = get_token_for_context(store, context_name, "github") {
+            let client = GitHubClient::new(&gh.owner, &gh.repo, token);
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added GitHub provider to context '{}': {}/{}",
+                context_name,
+                gh.owner,
+                gh.repo
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "GitHub configured in context '{}' but no token found (tried contexts.{}.github.token then github.token)",
+                context_name,
+                context_name
+            );
+        }
+    }
+
+    if let Some(gl) = &context.gitlab {
+        if let Some(token) = get_token_for_context(store, context_name, "gitlab") {
+            let client = GitLabClient::with_base_url(&gl.url, &gl.project_id, token);
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added GitLab provider to context '{}': {} (project {})",
+                context_name,
+                gl.url,
+                gl.project_id
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "GitLab configured in context '{}' but no token found (tried contexts.{}.gitlab.token then gitlab.token)",
+                context_name,
+                context_name
+            );
+        }
+    }
+
+    if let Some(cu) = &context.clickup {
+        if let Some(token) = get_token_for_context(store, context_name, "clickup") {
+            let mut client = ClickUpClient::new(&cu.list_id, token);
+            if let Some(team_id) = &cu.team_id {
+                client = client.with_team_id(team_id);
+            }
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added ClickUp provider to context '{}': list {}",
+                context_name,
+                cu.list_id
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "ClickUp configured in context '{}' but no token found (tried contexts.{}.clickup.token then clickup.token)",
+                context_name,
+                context_name
+            );
+        }
+    }
+
+    if let Some(jira) = &context.jira {
+        if let Some(token) = get_token_for_context(store, context_name, "jira") {
+            let client = JiraClient::new(&jira.url, &jira.project_key, &jira.email, token);
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added Jira provider to context '{}': {} (project {})",
+                context_name,
+                jira.url,
+                jira.project_key
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "Jira configured in context '{}' but no token found (tried contexts.{}.jira.token then jira.token)",
+                context_name,
+                context_name
+            );
+        }
+    }
+
+    added
 }

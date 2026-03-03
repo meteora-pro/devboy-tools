@@ -8,6 +8,7 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: 'Getting Started', link: '/getting-started/' },
+      { text: 'Configuration', link: '/configuration/' },
       { text: 'Integrations', link: '/integrations/github' },
       { text: 'GitHub', link: 'https://github.com/meteora-pro/devboy-tools' },
     ],
@@ -18,6 +19,15 @@ export default defineConfig({
           items: [
             { text: 'Installation', link: '/getting-started/' },
             { text: 'Quick Start', link: '/getting-started/quick-start' },
+          ],
+        },
+      ],
+      '/configuration/': [
+        {
+          text: 'Configuration',
+          items: [
+            { text: 'Overview', link: '/configuration/' },
+            { text: 'Contexts (Multi-Project)', link: '/configuration/contexts' },
           ],
         },
       ],
