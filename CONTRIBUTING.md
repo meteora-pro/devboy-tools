@@ -1,12 +1,12 @@
-# Contributing to DevBoy Tools
+# Contributing to DevBoy tools
 
-Thank you for your interest in contributing to DevBoy Tools! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to DevBoy tools! This document provides guidelines and instructions for contributing.
 
 ## Code of Conduct
 
 By participating in this project, you agree to maintain a respectful and inclusive environment for everyone.
 
-## Getting Started
+## Getting started
 
 ### Prerequisites
 
@@ -14,7 +14,7 @@ By participating in this project, you agree to maintain a respectful and inclusi
 - Git
 - A GitLab or GitHub account for testing
 
-### Development Setup
+### Development setup
 
 1. **Fork and clone the repository**
 
@@ -41,9 +41,9 @@ By participating in this project, you agree to maintain a respectful and inclusi
    cargo run -- --help
    ```
 
-## Development Workflow
+## Development workflow
 
-### Branch Naming
+### Branch naming
 
 Use descriptive branch names with prefixes:
 
@@ -56,7 +56,7 @@ Use descriptive branch names with prefixes:
 
 Example: `feat/add-jira-provider`
 
-### Commit Messages
+### Commit messages
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
@@ -84,7 +84,7 @@ fix(storage): handle missing keychain on Linux
 docs: update installation instructions
 ```
 
-## Code Style
+## Code style
 
 ### Formatting
 
@@ -102,7 +102,7 @@ Code must pass `clippy` without warnings:
 cargo clippy --all-targets --all-features
 ```
 
-### Best Practices
+### Best practices
 
 - Write idiomatic Rust code
 - Use descriptive variable and function names
@@ -112,7 +112,7 @@ cargo clippy --all-targets --all-features
 
 ## Testing
 
-### Running Tests
+### Running tests
 
 ```bash
 # Run all tests
@@ -125,7 +125,7 @@ cargo test -p devboy-core
 cargo test -- --nocapture
 ```
 
-### Writing Tests
+### Writing tests
 
 - Place unit tests in the same file using `#[cfg(test)]` module
 - Place integration tests in `tests/` directory
@@ -145,7 +145,7 @@ mod tests {
 }
 ```
 
-## Pull Request Process
+## Pull request process
 
 1. **Create a feature branch** from the latest `master`
 
@@ -183,7 +183,7 @@ mod tests {
    - Push additional commits
    - Re-request review when ready
 
-## Project Structure
+## Project structure
 
 ```
 devboy-tools/
@@ -214,7 +214,7 @@ devboy-tools/
 4. Add tests and documentation
 5. Update README with new provider info
 
-## Getting Help
+## Getting help
 
 - Open an [issue](https://github.com/meteora-pro/devboy-tools/issues) for bugs or feature requests
 - Start a [discussion](https://github.com/meteora-pro/devboy-tools/discussions) for questions

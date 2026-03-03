@@ -1,12 +1,12 @@
 # GitHub Integration
 
-DevBoy Tools provides full integration with GitHub for managing issues, pull requests, and code reviews through AI assistants.
+DevBoy tools provides full integration with GitHub for managing issues, pull requests, and code reviews through AI assistants.
 
-import ConfigExtractor from '../components/ConfigExtractor';
+import ConfigExtractor from '../../components/ConfigExtractor';
 
 <ConfigExtractor provider="github" />
 
-## Required Token Scopes
+## Required token scopes
 
 When creating a GitHub personal access token, you need to select the following scopes:
 
@@ -17,7 +17,7 @@ When creating a GitHub personal access token, you need to select the following s
 
 ## Configuration
 
-### Basic Configuration
+### Basic configuration
 
 ```bash
 # Set repository owner (user or organization)
@@ -30,7 +30,7 @@ devboy config set github.repo <repo>
 devboy config set-secret github.token <token>
 ```
 
-### Configuration File
+### Configuration file
 
 Settings are stored in `~/.config/devboy-tools/config.toml`:
 
@@ -42,11 +42,11 @@ repo = "devboy-tools"
 
 The token is stored separately in the OS keychain for security.
 
-## MCP Tools
+## MCP tools
 
 Once configured, the following MCP tools are available:
 
-### Issue Tools
+### Issue tools
 
 | Tool | Description |
 |------|-------------|
@@ -57,7 +57,7 @@ Once configured, the following MCP tools are available:
 | `update_issue` | Update an existing issue |
 | `add_issue_comment` | Add a comment to an issue |
 
-### Pull Request Tools
+### Pull request tools
 
 | Tool | Description |
 |------|-------------|
@@ -68,7 +68,7 @@ Once configured, the following MCP tools are available:
 | `create_merge_request` | Create a new pull request |
 | `create_merge_request_comment` | Add a comment (general or inline) |
 
-## Output Formats
+## Output formats
 
 All tools support three output formats via the `format` parameter:
 

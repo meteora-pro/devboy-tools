@@ -70,7 +70,7 @@ fn sample_diffs() -> Vec<FileDiff> {
             deleted_file: false,
             renamed_file: false,
             diff: r#"@@ -0,0 +1,10 @@
-+# DevBoy Tools
++# DevBoy tools
 +
 +LLM-optimized developer tools.
 +

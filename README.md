@@ -1,4 +1,4 @@
-# DevBoy Tools
+# DevBoy tools
 
 [![CI](https://github.com/meteora-pro/devboy-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/meteora-pro/devboy-tools/actions/workflows/ci.yml)
 [![Codecov](https://codecov.io/gh/meteora-pro/devboy-tools/branch/main/graph/badge.svg)](https://codecov.io/gh/meteora-pro/devboy-tools)
@@ -37,7 +37,7 @@ One server supports multiple project contexts with instant switching:
 
 Switch contexts via CLI (`devboy context use <name>`) or MCP tools (`use_context`).
 
-### Plugin System
+### Plugin system
 
 Tools are dynamic based on project configuration:
 
@@ -66,7 +66,7 @@ pnpm add -g @devboy-tools/cli
 
 The correct binary for your platform is installed automatically. Global install makes the `devboy` command available system-wide.
 
-### From Source
+### From source
 
 ```bash
 git clone https://github.com/meteora-pro/devboy-tools.git
@@ -74,11 +74,11 @@ cd devboy-tools
 cargo build --release
 ```
 
-### From Releases
+### From releases
 
 Download binary from [Releases](https://github.com/meteora-pro/devboy-tools/releases).
 
-## Quick Start
+## Quick start
 
 ### 1. Configure Provider
 
@@ -176,11 +176,11 @@ cargo build --release
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-## Related Projects
+## Related projects
 
 - [devboy-tools-agent-usage](https://github.com/meteora-pro/devboy-tools-agent-usage) — CLI tool for analyzing AI agent usage (Claude Code): cost, time, tasks, focus. Reads JSONL logs and provides token/cost breakdowns, task grouping by git branch, tool call categories, and session timeline visualization.
 
-## Coverage Report
+## Coverage report
 
 [![Codecov](https://codecov.io/gh/meteora-pro/devboy-tools/branch/main/graph/badge.svg)](https://codecov.io/gh/meteora-pro/devboy-tools)
 
