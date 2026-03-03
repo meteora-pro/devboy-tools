@@ -2,11 +2,11 @@
 
 Contexts allow you to manage multiple project configurations in a single config file and switch between them. This is especially useful for AI agents that work across several repositories.
 
-## Why Contexts?
+## Why contexts?
 
 Without contexts, the architecture follows a **1 server = 1 project** model. If you work on multiple projects, you'd need to restart the MCP server or maintain separate config files. Contexts solve this by letting you define multiple project profiles and switch between them.
 
-## Defining Contexts
+## Defining contexts
 
 Each context is a named group of provider configurations under the `[contexts.<name>]` section:
 
@@ -26,7 +26,7 @@ team_id = "xyz789"
 
 A context can include any combination of providers (GitHub, GitLab, ClickUp, Jira).
 
-## Switching Contexts
+## Switching contexts
 
 ### CLI
 
@@ -38,7 +38,7 @@ devboy context list
 devboy context use dashboard
 ```
 
-### MCP Tools
+### MCP tools
 
 When running as an MCP server, the following tools are available:
 
@@ -50,7 +50,7 @@ When running as an MCP server, the following tools are available:
 
 AI agents can use these tools to discover available projects and switch between them mid-conversation.
 
-## Token Resolution
+## Token resolution
 
 Tokens are resolved in the following order:
 
@@ -67,7 +67,7 @@ devboy config set-secret github.token <token>
 
 For most setups, a single global token per provider is sufficient.
 
-## Active Context Resolution
+## Active context resolution
 
 When no context is explicitly selected, DevBoy resolves the active context in this order:
 
@@ -75,7 +75,7 @@ When no context is explicitly selected, DevBoy resolves the active context in th
 2. A context named `default` (explicit or legacy)
 3. The first context alphabetically
 
-## Backward Compatibility
+## Backward compatibility
 
 Existing single-project configs continue to work. Top-level provider sections are treated as an implicit `default` context:
 
@@ -96,7 +96,7 @@ repo = "devboy-tools"
 
 If both exist, the explicit `[contexts.default]` takes precedence.
 
-## Full Example
+## Full example
 
 ```toml
 # Active context selection

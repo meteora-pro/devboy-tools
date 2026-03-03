@@ -1,12 +1,12 @@
-import ConfigExtractor from '../components/ConfigExtractor';
+import ConfigExtractor from '../../components/ConfigExtractor';
 
 # ClickUp Integration
 
-DevBoy Tools provides integration with ClickUp for managing tasks (issues) through AI assistants. ClickUp tasks are mapped to the unified issue interface, so you can work with them alongside GitHub and GitLab issues.
+DevBoy tools provides integration with ClickUp for managing tasks (issues) through AI assistants. ClickUp tasks are mapped to the unified issue interface, so you can work with them alongside GitHub and GitLab issues.
 
 <ConfigExtractor provider="clickup" />
 
-## Required Token
+## Required token
 
 ClickUp uses a **Personal API Token** for authentication. You can generate one in ClickUp:
 
@@ -22,7 +22,7 @@ ClickUp Personal API Tokens do not use the `Bearer` prefix — the token is sent
 
 ## Configuration
 
-### Basic Configuration
+### Basic configuration
 
 ```bash
 # Required: list ID (found in the list URL)
@@ -45,7 +45,7 @@ While `team_id` is optional, setting it significantly improves the integration:
 Without `team_id`, tasks are only accessible via internal ClickUp IDs (`CU-{id}` format).
 :::
 
-### Configuration File
+### Configuration file
 
 Settings are stored in `~/.config/devboy-tools/config.toml`:
 
@@ -57,7 +57,7 @@ list_id = "901234567890"
 
 The token is stored separately in the OS keychain for security.
 
-### Finding Your IDs
+### Finding your IDs
 
 Both `team_id` and `list_id` can be found in the ClickUp URL when viewing a list:
 
@@ -75,11 +75,11 @@ In the `/v/l/` format, the list ID is the number between the hyphens.
 
 You can also find the list ID via **List Settings** > **List Info** > **List ID**.
 
-## MCP Tools
+## MCP tools
 
 Once configured, the following MCP tools are available:
 
-### Issue Tools (Tasks)
+### Issue tools (tasks)
 
 | Tool | Description |
 |------|-------------|
@@ -90,7 +90,7 @@ Once configured, the following MCP tools are available:
 | `update_issue` | Update an existing task (title, description, status, priority) |
 | `add_issue_comment` | Add a comment to a task |
 
-### Task Key Format
+### Task key format
 
 - **Default**: `CU-{task_id}` (e.g., `CU-abc123`)
 - **Custom ID**: If your workspace has custom task IDs enabled and `team_id` is configured, the custom ID is used as the key (e.g., `DEV-42`)
@@ -99,7 +99,7 @@ Once configured, the following MCP tools are available:
 Custom task IDs (e.g., `DEV-42`) require `team_id` to be set in configuration. Without `team_id`, all tasks use the `CU-{id}` format.
 :::
 
-### Priority Mapping
+### Priority mapping
 
 ClickUp priorities are mapped to the unified format:
 
@@ -110,11 +110,11 @@ ClickUp priorities are mapped to the unified format:
 | 3 - Normal | `normal` |
 | 4 - Low | `low` |
 
-### Merge Request Tools
+### Merge request tools
 
 ClickUp does not have merge requests. All MR-related tools will return a `ProviderUnsupported` error when used with ClickUp. Use a GitHub or GitLab provider for MR operations.
 
-## Output Formats
+## Output formats
 
 All tools support three output formats via the `format` parameter:
 

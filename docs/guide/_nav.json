@@ -1,0 +1,17 @@
+[
+  {
+    "text": "Getting started",
+    "link": "/getting-started/",
+    "activeMatch": "/getting-started/"
+  },
+  {
+    "text": "Configuration",
+    "link": "/configuration/",
+    "activeMatch": "/configuration/"
+  },
+  {
+    "text": "Integrations",
+    "link": "/integrations/github",
+    "activeMatch": "/integrations/"
+  }
+]
