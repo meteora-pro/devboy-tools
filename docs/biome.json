@@ -7,10 +7,12 @@
       }
     }
   },
+  "files": {
+    "includes": ["**", "!doc_build", "!dist"]
+  },
   "vcs": {
     "enabled": true,
-    "clientKind": "git",
-    "useIgnoreFile": true
+    "clientKind": "git"
   },
   "formatter": {
     "indentStyle": "space"
