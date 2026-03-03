@@ -1,12 +1,12 @@
 # GitLab Integration
 
-DevBoy Tools provides full integration with GitLab for managing issues, merge requests, and code reviews through AI assistants. Both GitLab.com and self-hosted GitLab instances are supported.
+DevBoy tools provides full integration with GitLab for managing issues, merge requests, and code reviews through AI assistants. Both GitLab.com and self-hosted GitLab instances are supported.
 
-import ConfigExtractor from '../components/ConfigExtractor';
+import ConfigExtractor from '../../components/ConfigExtractor';
 
 <ConfigExtractor provider="gitlab" />
 
-## Required Token Scopes
+## Required token scopes
 
 When creating a GitLab Personal Access Token, you need to select the following scopes:
 
@@ -17,7 +17,7 @@ When creating a GitLab Personal Access Token, you need to select the following s
 
 ## Configuration
 
-### Basic Configuration
+### Basic configuration
 
 ```bash
 # Set GitLab instance URL (defaults to https://gitlab.com)
@@ -30,7 +30,7 @@ devboy config set gitlab.project_id group/project
 devboy config set-secret gitlab.token <token>
 ```
 
-### Configuration File
+### Configuration file
 
 Settings are stored in `~/.config/devboy-tools/config.toml`:
 
@@ -42,7 +42,7 @@ project_id = "group/project"
 
 The token is stored separately in the OS keychain for security.
 
-### Self-Hosted GitLab
+### Self-hosted GitLab
 
 For GitLab Enterprise or self-managed instances, set the `url` to your instance:
 
@@ -52,11 +52,11 @@ devboy config set gitlab.project_id my-group/my-project
 devboy config set-secret gitlab.token <token>
 ```
 
-## MCP Tools
+## MCP tools
 
 Once configured, the following MCP tools are available:
 
-### Issue Tools
+### Issue tools
 
 | Tool | Description |
 |------|-------------|
@@ -67,7 +67,7 @@ Once configured, the following MCP tools are available:
 | `update_issue` | Update an existing issue |
 | `add_issue_comment` | Add a comment to an issue |
 
-### Merge Request Tools
+### Merge request tools
 
 | Tool | Description |
 |------|-------------|
@@ -78,7 +78,7 @@ Once configured, the following MCP tools are available:
 | `create_merge_request` | Create a new merge request |
 | `create_merge_request_comment` | Add a comment (general or inline code review) |
 
-## Output Formats
+## Output formats
 
 All tools support three output formats via the `format` parameter:
 

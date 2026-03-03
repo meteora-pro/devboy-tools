@@ -1,0 +1,22 @@
+[
+  {
+    "type": "file",
+    "name": "github",
+    "label": "GitHub"
+  },
+  {
+    "type": "file",
+    "name": "gitlab",
+    "label": "GitLab"
+  },
+  {
+    "type": "file",
+    "name": "clickup",
+    "label": "ClickUp"
+  },
+  {
+    "type": "file",
+    "name": "jira",
+    "label": "Jira"
+  }
+]

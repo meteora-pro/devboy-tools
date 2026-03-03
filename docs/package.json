@@ -1,14 +1,26 @@
 {
   "name": "devboy-tools-docs",
   "version": "1.0.0",
-  "description": "DevBoy Tools documentation",
+  "private": true,
+  "type": "module",
+  "description": "DevBoy tools documentation",
   "scripts": {
-    "prebuild": "node -e \"require('fs').rmSync('doc_build', { recursive: true, force: true })\"",
     "dev": "rspress dev",
     "build": "rspress build",
-    "preview": "rspress preview"
+    "preview": "rspress preview",
+    "check": "biome check --write",
+    "format": "biome format --write",
+    "lint": "biome lint"
+  },
+  "dependencies": {
+    "@rspress/core": "^2.0.2"
   },
   "devDependencies": {
-    "rspress": "^1.47.1"
+    "@biomejs/biome": "2.3.8",
+    "@types/node": "^22.8.1",
+    "@types/react": "^19.2.13",
+    "@types/react-dom": "^19.2.3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
   }
 }

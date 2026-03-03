@@ -3,11 +3,11 @@
 [![npm](https://img.shields.io/npm/v/@devboy-tools/cli)](https://www.npmjs.com/package/@devboy-tools/cli)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-npm distribution of [DevBoy Tools](https://github.com/meteora-pro/devboy-tools) — a fast MCP server for coding agents, written in Rust.
+npm distribution of [DevBoy tools](https://github.com/meteora-pro/devboy-tools) — a fast MCP server for coding agents, written in Rust.
 
 The correct binary for your platform is installed automatically via platform-specific packages.
 
-## Supported Platforms
+## Supported platforms
 
 | OS      | Architecture | Package                      |
 |---------|-------------|------------------------------|
@@ -77,7 +77,7 @@ console.log(version);         // "0.3.0"
 import { getBinaryPath, name, version } from "@devboy-tools/cli";
 ```
 
-## Environment Variables
+## Environment variables
 
 | Variable             | Description                                      |
 |----------------------|--------------------------------------------------|

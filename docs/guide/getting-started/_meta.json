@@ -1,0 +1,12 @@
+[
+  {
+    "type": "file",
+    "name": "index",
+    "label": "Installation"
+  },
+  {
+    "type": "file",
+    "name": "quick-start",
+    "label": "Quick start"
+  }
+]

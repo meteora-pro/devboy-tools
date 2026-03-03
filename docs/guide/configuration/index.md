@@ -1,10 +1,10 @@
 # Configuration
 
-DevBoy Tools uses a layered configuration system with TOML files and OS keychain for secrets.
+DevBoy tools uses a layered configuration system with TOML files and OS keychain for secrets.
 
-## Configuration Files
+## Configuration files
 
-### Global Config
+### Global config
 
 The main configuration file is stored in a platform-specific location:
 
@@ -18,7 +18,7 @@ The main configuration file is stored in a platform-specific location:
 devboy config path
 ```
 
-### Project-Local Config
+### Project-local config
 
 You can place a `.devboy.toml` file in your project root to override the global config. This is useful when working with AI assistants (MCP mode) in a specific repository.
 
@@ -46,7 +46,7 @@ devboy config set-secret github.token <token>
 devboy config set-secret gitlab.token <token>
 ```
 
-## CLI Commands
+## CLI commands
 
 ```bash
 # Set a config value
