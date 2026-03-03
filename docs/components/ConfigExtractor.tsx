@@ -59,7 +59,7 @@ const PROVIDERS: Record<string, ProviderConfig> = {
       steps: [
         { text: 'Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)' },
         { text: '', bold: 'Generate new token (classic)' },
-        { text: 'Give it a name (e.g., "DevBoy Tools")' },
+        { text: 'Give it a name (e.g., "DevBoy tools")' },
         {
           text: 'Select these scopes:',
           scopes: [
@@ -95,7 +95,7 @@ const PROVIDERS: Record<string, ProviderConfig> = {
       steps: [
         { text: 'Go to GitLab → User Settings → Access Tokens' },
         { text: '', bold: 'Add new token' },
-        { text: 'Give it a name (e.g., "DevBoy Tools")' },
+        { text: 'Give it a name (e.g., "DevBoy tools")' },
         {
           text: 'Select these scopes:',
           scopes: [
@@ -152,7 +152,7 @@ const PROVIDERS: Record<string, ProviderConfig> = {
       steps: [
         { text: 'For Jira Cloud: Go to https://id.atlassian.com/manage-profile/security/api-tokens' },
         { text: '', bold: 'Create API token' },
-        { text: 'Give it a label (e.g., "DevBoy Tools")' },
+        { text: 'Give it a label (e.g., "DevBoy tools")' },
         { text: 'Copy the token immediately — it won\'t be shown again' },
       ],
     },

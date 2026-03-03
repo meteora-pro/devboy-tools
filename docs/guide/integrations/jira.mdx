@@ -1,8 +1,8 @@
-import ConfigExtractor from '../components/ConfigExtractor';
+import ConfigExtractor from '../../components/ConfigExtractor';
 
 # Jira Integration
 
-DevBoy Tools provides integration with Jira for managing issues through AI assistants. Both Jira Cloud and Jira Self-Hosted (Data Center) are supported. The deployment flavor is auto-detected from the URL.
+DevBoy tools provides integration with Jira for managing issues through AI assistants. Both Jira Cloud and Jira Self-Hosted (Data Center) are supported. The deployment flavor is auto-detected from the URL.
 
 <ConfigExtractor provider="jira" />
 
@@ -24,7 +24,7 @@ The deployment flavor is automatically detected from the URL:
 
 ## Configuration
 
-### Basic Configuration
+### Basic configuration
 
 ```bash
 # Set Jira instance URL
@@ -40,7 +40,7 @@ devboy config set jira.email user@example.com
 devboy config set-secret jira.token <token>
 ```
 
-### Configuration File
+### Configuration file
 
 Settings are stored in `~/.config/devboy-tools/config.toml`:
 
@@ -53,7 +53,7 @@ email = "user@example.com"
 
 The token is stored separately in the OS keychain for security.
 
-### Self-Hosted Jira
+### Self-hosted Jira
 
 For Jira Server or Data Center instances:
 
@@ -75,11 +75,11 @@ For Self-Hosted Jira, the `email` field is still required in the config but is o
 - Token with `:` is treated as **Basic Auth** credentials
 :::
 
-## MCP Tools
+## MCP tools
 
 Once configured, the following MCP tools are available:
 
-### Issue Tools
+### Issue tools
 
 | Tool | Description |
 |------|-------------|
@@ -90,11 +90,11 @@ Once configured, the following MCP tools are available:
 | `update_issue` | Update an existing issue (title, description, status, priority, labels) |
 | `add_issue_comment` | Add a comment to an issue |
 
-### Issue Key Format
+### Issue key format
 
 Jira issues use the standard Jira key format: `PROJ-123` (project key + number).
 
-### State Filtering
+### State filtering
 
 The `state` filter maps to Jira status categories:
 
@@ -129,7 +129,7 @@ Status changes are performed via Jira transitions. When updating an issue's stat
 
 If no matching transition is found, the tool returns an error with available statuses.
 
-### Priority Mapping
+### Priority mapping
 
 Jira priorities are mapped to the unified format:
 
@@ -149,11 +149,11 @@ Jira Cloud uses ADF for rich text content. The integration handles this automati
 
 Jira Self-Hosted uses plain text directly.
 
-### Merge Request Tools
+### Merge request tools
 
 Jira does not have merge requests. All MR-related tools will return a `ProviderUnsupported` error when used with Jira. Use a GitHub or GitLab provider for MR operations.
 
-## Output Formats
+## Output formats
 
 All tools support three output formats via the `format` parameter:
 

@@ -1,7 +1,7 @@
 {
   "name": "@devboy-tools/linux-arm64",
   "version": "0.0.0",
-  "description": "DevBoy Tools binary for Linux ARM64",
+  "description": "DevBoy tools binary for Linux ARM64",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

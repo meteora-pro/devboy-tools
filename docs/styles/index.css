@@ -1,0 +1,21 @@
+/* Shimmer effect for hero name */
+.rp-home-hero__title-brand {
+  --rp-home-hero-title-bg: linear-gradient(
+    135deg,
+    #6366f1,
+    #06b6d4,
+    #6366f1
+  ) !important;
+  --rp-home-hero-title-color: transparent !important;
+  background-size: 200% 100% !important;
+  animation: shimmer 6.5s linear infinite !important;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

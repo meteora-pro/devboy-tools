@@ -1,10 +1,10 @@
-# Quick Start
+# Quick start
 
-This guide will help you get DevBoy Tools up and running in minutes.
+This guide will help you get DevBoy tools up and running in minutes.
 
-## Step 1: Choose Your Provider
+## Step 1: Choose your provider
 
-DevBoy Tools supports GitHub, GitLab, ClickUp, and Jira. Pick the one your project uses.
+DevBoy tools supports GitHub, GitLab, ClickUp, and Jira. Pick the one your project uses.
 
 ### GitHub
 
@@ -46,7 +46,7 @@ devboy config set-secret jira.token <token>
 
 > **Tip:** Use the Quick Config Generator on the [GitHub](/integrations/github), [GitLab](/integrations/gitlab), or [Jira](/integrations/jira) integration page — paste your URL and it will generate the commands for you.
 
-## Step 2: Verify Connection
+## Step 2: Verify connection
 
 ```bash
 # For GitHub
@@ -61,21 +61,21 @@ devboy test jira
 
 You should see output confirming the connection is successful.
 
-## Step 3: Try Some Commands
+## Step 3: Try some commands
 
-### List Issues
+### List issues
 
 ```bash
 devboy issues
 ```
 
-### List Merge Requests / Pull Requests
+### List merge requests / pull requests
 
 ```bash
 devboy mrs
 ```
 
-## Step 4: Integrate with AI Assistants
+## Step 4: Integrate with AI assistants
 
 ### Claude Code (CLI)
 
@@ -107,7 +107,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
 **Linux:** `~/.config/Claude/claude_desktop_config.json`
 
-## Next Steps
+## Next steps
 
 - [GitHub Integration](/integrations/github) - Full GitHub configuration reference
 - [GitLab Integration](/integrations/gitlab) - Full GitLab configuration reference
