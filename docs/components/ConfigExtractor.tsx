@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styles from './ConfigExtractor.module.css';
 
 const PLACEHOLDER_TOKEN = '<your-token>';
@@ -35,7 +35,11 @@ type ProviderConfig = {
   extractInfo: (match: RegExpMatchArray) => ExtractedField[];
   extraFields?: ExtraField[];
   autoFillExtra?: (match: RegExpMatchArray) => Record<string, string>;
-  commands: (info: ExtractedField[], extra: Record<string, string>, token: string) => string;
+  commands: (
+    info: ExtractedField[],
+    extra: Record<string, string>,
+    token: string,
+  ) => string;
   tokenHelp: {
     title: string;
     steps: TokenHelpStep[];
@@ -44,7 +48,7 @@ type ProviderConfig = {
 
 const PROVIDERS: Record<string, ProviderConfig> = {
   github: {
-    regex: /github\.com\/([^\/]+)\/([^\/]+?)(?:\.git)?(?:\/.*)?$/,
+    regex: /github\.com\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/.*)?$/,
     urlPlaceholder: 'https://github.com/owner/repo',
     tokenLabel: 'GitHub Token',
     urlLabel: 'Repository URL',
@@ -57,7 +61,9 @@ const PROVIDERS: Record<string, ProviderConfig> = {
     tokenHelp: {
       title: 'Steps to create a GitHub token:',
       steps: [
-        { text: 'Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)' },
+        {
+          text: 'Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)',
+        },
         { text: '', bold: 'Generate new token (classic)' },
         { text: 'Give it a name (e.g., "DevBoy tools")' },
         {
@@ -72,19 +78,17 @@ const PROVIDERS: Record<string, ProviderConfig> = {
     },
   },
   gitlab: {
-    regex: /^(https?:\/\/[^\/]+)\/(.+?)(?:\.git)?(?:\/-\/.*)?$/,
+    regex: /^(https?:\/\/[^/]+)\/(.+?)(?:\.git)?(?:\/-\/.*)?$/,
     urlPlaceholder: 'https://gitlab.com/group/project',
     tokenLabel: 'GitLab Token',
     urlLabel: 'Project URL',
-    extractInfo: (match) => [
-      { label: 'Instance', value: match[1] },
-    ],
+    extractInfo: (match) => [{ label: 'Instance', value: match[1] }],
     extraFields: [
       {
         key: 'projectId',
         label: 'Project ID',
         placeholder: '12345 or group/project',
-        hint: 'Go to your project\'s main page — the numeric ID is shown below the project name. You can also use the full path (e.g., group/subgroup/project).',
+        hint: "Go to your project's main page — the numeric ID is shown below the project name. You can also use the full path (e.g., group/subgroup/project).",
       },
     ],
     autoFillExtra: (match) => ({ projectId: match[2] }),
@@ -99,7 +103,10 @@ const PROVIDERS: Record<string, ProviderConfig> = {
         {
           text: 'Select these scopes:',
           scopes: [
-            { code: 'api', description: 'Full API access (issues, MRs, comments, diffs)' },
+            {
+              code: 'api',
+              description: 'Full API access (issues, MRs, comments, diffs)',
+            },
             { code: 'read_user', description: 'Read user information' },
           ],
         },
@@ -108,7 +115,8 @@ const PROVIDERS: Record<string, ProviderConfig> = {
     },
   },
   clickup: {
-    regex: /app\.clickup\.com\/(\d+)\/v\/(?:li\/(\d+)|l\/[a-z\d]+-(\d+)(?:-\d+)?)/i,
+    regex:
+      /app\.clickup\.com\/(\d+)\/v\/(?:li\/(\d+)|l\/[a-z\d]+-(\d+)(?:-\d+)?)/i,
     urlPlaceholder: 'https://app.clickup.com/12345678/v/l/6-901234567890-1',
     tokenLabel: 'ClickUp Token',
     urlLabel: 'List URL',
@@ -124,18 +132,22 @@ const PROVIDERS: Record<string, ProviderConfig> = {
         { text: 'Go to ClickUp → Settings → Apps' },
         { text: 'Find the', bold: 'API Token section' },
         { text: '', bold: 'Generate' },
-        { text: 'Copy the token immediately — it won\'t be shown again' },
+        { text: "Copy the token immediately — it won't be shown again" },
       ],
     },
   },
   jira: {
-    regex: /^(https?:\/\/[^\/]+)\/(?:browse\/([A-Z][A-Z0-9_]*)|projects\/([A-Z][A-Z0-9_]*))/,
+    regex:
+      /^(https?:\/\/[^/]+)\/(?:browse\/([A-Z][A-Z0-9_]*)|projects\/([A-Z][A-Z0-9_]*))/,
     urlPlaceholder: 'https://company.atlassian.net/browse/PROJ-1',
     tokenLabel: 'Jira Token',
     urlLabel: 'Issue or Project URL',
     extractInfo: (match) => [
       { label: 'Instance', value: match[1] },
-      { label: 'Project Key', value: (match[2] || match[3] || '').replace(/-\d+$/, '') },
+      {
+        label: 'Project Key',
+        value: (match[2] || match[3] || '').replace(/-\d+$/, ''),
+      },
     ],
     extraFields: [
       {
@@ -150,10 +162,12 @@ const PROVIDERS: Record<string, ProviderConfig> = {
     tokenHelp: {
       title: 'Steps to create a Jira API token:',
       steps: [
-        { text: 'For Jira Cloud: Go to https://id.atlassian.com/manage-profile/security/api-tokens' },
+        {
+          text: 'For Jira Cloud: Go to https://id.atlassian.com/manage-profile/security/api-tokens',
+        },
         { text: '', bold: 'Create API token' },
         { text: 'Give it a label (e.g., "DevBoy tools")' },
-        { text: 'Copy the token immediately — it won\'t be shown again' },
+        { text: "Copy the token immediately — it won't be shown again" },
       ],
     },
   },
@@ -188,7 +202,7 @@ export default function ConfigExtractor({ provider }: ConfigExtractorProps) {
         setInfoFields(config.extractInfo(match));
         if (config.autoFillExtra) {
           setExtraValues((prev) => {
-            const autoFilled = config.autoFillExtra!(match);
+            const autoFilled = config.autoFillExtra?.(match);
             const merged = { ...prev };
             for (const [key, value] of Object.entries(autoFilled)) {
               if (!merged[key]) {
@@ -255,10 +269,15 @@ export default function ConfigExtractor({ provider }: ConfigExtractorProps) {
 
   return (
     <div className={styles['config-generator']}>
-      <h4 className={styles['config-generator__title']}>Quick Config Generator</h4>
+      <h4 className={styles['config-generator__title']}>
+        Quick Config Generator
+      </h4>
 
       <div className={styles['config-generator__field']}>
-        <label htmlFor={urlInputId} className={styles['config-generator__label']}>
+        <label
+          htmlFor={urlInputId}
+          className={styles['config-generator__label']}
+        >
           {config.urlLabel}
         </label>
         <input
@@ -273,7 +292,10 @@ export default function ConfigExtractor({ provider }: ConfigExtractorProps) {
 
       {config.extraFields?.map((field) => (
         <div key={field.key} className={styles['config-generator__field']}>
-          <label htmlFor={`${provider}-${field.key}`} className={styles['config-generator__label']}>
+          <label
+            htmlFor={`${provider}-${field.key}`}
+            className={styles['config-generator__label']}
+          >
             {field.label}
           </label>
           <input
@@ -285,13 +307,18 @@ export default function ConfigExtractor({ provider }: ConfigExtractorProps) {
             className={styles['config-generator__input']}
           />
           {field.hint && (
-            <span className={styles['config-generator__hint']}>{field.hint}</span>
+            <span className={styles['config-generator__hint']}>
+              {field.hint}
+            </span>
           )}
         </div>
       ))}
 
       <div className={styles['config-generator__field']}>
-        <label htmlFor={tokenInputId} className={styles['config-generator__label']}>
+        <label
+          htmlFor={tokenInputId}
+          className={styles['config-generator__label']}
+        >
           {config.tokenLabel}
         </label>
         <input
@@ -319,11 +346,14 @@ export default function ConfigExtractor({ provider }: ConfigExtractorProps) {
             </p>
             <ol className={styles['config-generator__help-list']}>
               {config.tokenHelp.steps.map((step, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: static list, order never changes
                 <li key={i}>
                   {step.bold ? (
                     <>
-                      {step.text && `${step.text} `}Click <strong>{step.bold}</strong>
-                      {i === config.tokenHelp.steps.length - 1 && ' and copy it immediately'}
+                      {step.text && `${step.text} `}Click{' '}
+                      <strong>{step.bold}</strong>
+                      {i === config.tokenHelp.steps.length - 1 &&
+                        ' and copy it immediately'}
                     </>
                   ) : step.scopes ? (
                     <>
