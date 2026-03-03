@@ -17,6 +17,9 @@ Thumbs.db
 .env
 .env.local
 
+# Local project config
+.devboy.toml
+
 # Node.js (documentation)
 node_modules/
 doc_build/

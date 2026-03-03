@@ -4,14 +4,14 @@
 [![Codecov](https://codecov.io/gh/meteora-pro/devboy-tools/branch/main/graph/badge.svg)](https://codecov.io/gh/meteora-pro/devboy-tools)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-Fast and efficient Open Source MCP server written in Rust. Designed for coding agents with plugin system (API providers + LLM-optimized pipeline) and project-scoped isolation (1 server = 1 project).
+Fast and efficient Open Source MCP server written in Rust. Designed for coding agents with plugin system (API providers + LLM-optimized pipeline) and multi-project context switching.
 
 ## Why DevBoy?
 
 | | Others | DevBoy |
 |-|--------|--------|
 | **Privacy** | Cloud-based credentials | Local OS keychain |
-| **Focus** | All projects at once | 1 server = 1 project (intentional) |
+| **Focus** | All projects at once | Context-based project isolation |
 | **Context** | Static tool descriptions | Dynamic per-project prompts |
 | **Efficiency** | Raw JSON (~2000 tokens) | Optimized output (~100 tokens) |
 | **Tools** | Generic aggregators | Purpose-built for dev workflows |
@@ -19,21 +19,23 @@ Fast and efficient Open Source MCP server written in Rust. Designed for coding a
 
 ## Architecture
 
-### One Server = One Project
+### Contexts (Multi-Project)
 
-Intentional constraint for focused AI context:
+One server supports multiple project contexts with instant switching:
 
 ```
 ┌─────────────────────────────────────┐
 │           DevBoy MCP Server         │
 ├─────────────────────────────────────┤
-│  1 Repository                       │
-│  1 Task List                        │
-│  1 Set of Configured Plugins        │
+│  Context: devboy-tools              │
+│    └── GitHub: meteora-pro/devboy   │
+│  Context: dashboard                 │
+│    ├── GitLab: project #42          │
+│    └── ClickUp: list abc123         │
 └─────────────────────────────────────┘
 ```
 
-For multi-project workflows → run multiple DevBoy servers.
+Switch contexts via CLI (`devboy context use <name>`) or MCP tools (`use_context`).
 
 ### Plugin System
 
@@ -142,16 +144,18 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ## CLI Commands
 
 ```bash
-devboy --help                     # Show all commands
-devboy config list                # Show current configuration
-devboy config path                # Show config file location
-devboy config set <key> <value>   # Set config value
+devboy --help                           # Show all commands
+devboy config list                      # Show current configuration
+devboy config path                      # Show config file location
+devboy config set <key> <value>         # Set config value
 devboy config set-secret <key> <value>  # Store secret in keychain
-devboy config get <key>           # Get config value
-devboy issues                     # List issues
-devboy mrs                        # List merge requests
-devboy test <provider>            # Test provider connection
-devboy mcp                        # Start MCP server (stdio)
+devboy config get <key>                 # Get config value
+devboy context list                     # List contexts, show active
+devboy context use <name>               # Switch active context
+devboy issues                           # List issues
+devboy mrs                              # List merge requests
+devboy test <provider>                  # Test provider connection
+devboy mcp                              # Start MCP server (stdio)
 ```
 
 ## Development
