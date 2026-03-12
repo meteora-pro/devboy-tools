@@ -1175,6 +1175,352 @@ mod tests {
         assert_eq!(mgr.all_tools().len(), 2);
     }
 
+    // =========================================================================
+    // McpProxyClient — invalid token (non-ASCII)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_connect_invalid_bearer_token() {
+        let result = McpProxyClient::connect(
+            "test-server",
+            "http://localhost:1/mcp",
+            None,
+            Some("token-with-\x01-control-chars"),
+            "bearer",
+            ProxyTransport::StreamableHttp,
+        )
+        .await;
+
+        let err = result.err().expect("should be error");
+        assert!(err.to_string().contains("Invalid token"));
+    }
+
+    #[tokio::test]
+    async fn test_connect_invalid_api_key_token() {
+        let result = McpProxyClient::connect(
+            "test-server",
+            "http://localhost:1/mcp",
+            None,
+            Some("key-with-\x01-control"),
+            "api_key",
+            ProxyTransport::StreamableHttp,
+        )
+        .await;
+
+        let err = result.err().expect("should be error");
+        assert!(err.to_string().contains("Invalid token"));
+    }
+
+    // =========================================================================
+    // McpProxyClient — SSE transport via mock
+    // =========================================================================
+
+    /// Helper: set up SSE mock endpoint that returns endpoint event + initialize response.
+    fn setup_sse_mock(server: &MockServer) {
+        // SSE stream: returns endpoint event, then initialize response
+        server.mock(|when, then| {
+            when.method(GET).path("/sse");
+            then.status(200)
+                .header("content-type", "text/event-stream")
+                .header("cache-control", "no-cache")
+                .body(
+                    "event: endpoint\ndata: /messages\n\n\
+                     event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"serverInfo\":{\"name\":\"mock-sse\",\"version\":\"1.0\"}}}\n\n"
+                );
+        });
+
+        // POST endpoint for requests (initialize is sent here)
+        server.mock(|when, then| {
+            when.method(POST).path("/messages");
+            then.status(200);
+        });
+    }
+
+    #[tokio::test]
+    async fn test_connect_sse_transport() {
+        let server = MockServer::start();
+        setup_sse_mock(&server);
+
+        let url = format!("{}/sse", server.base_url());
+        let result = McpProxyClient::connect(
+            "sse-server",
+            &url,
+            Some("sse"),
+            None,
+            "none",
+            ProxyTransport::Sse,
+        )
+        .await;
+
+        assert!(result.is_ok(), "SSE connect failed: {:?}", result.err());
+        let client = result.unwrap();
+        assert_eq!(client.prefix(), "sse");
+        assert_eq!(client.transport, ProxyTransport::Sse);
+    }
+
+    #[tokio::test]
+    async fn test_connect_sse_with_bearer_auth() {
+        let server = MockServer::start();
+
+        // SSE stream with auth check
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/sse")
+                .header("Authorization", "Bearer sse-token");
+            then.status(200)
+                .header("content-type", "text/event-stream")
+                .header("cache-control", "no-cache")
+                .body(
+                    "event: endpoint\ndata: /messages\n\n\
+                     event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"serverInfo\":{\"name\":\"mock\",\"version\":\"1.0\"}}}\n\n"
+                );
+        });
+
+        server.mock(|when, then| {
+            when.method(POST).path("/messages");
+            then.status(200);
+        });
+
+        let url = format!("{}/sse", server.base_url());
+        let result = McpProxyClient::connect(
+            "sse-server",
+            &url,
+            None,
+            Some("sse-token"),
+            "bearer",
+            ProxyTransport::Sse,
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "SSE connect with auth failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sse_request_dispatch_path() {
+        // Verify that an SSE-transport client dispatches via request_sse.
+        // We test that the request method correctly routes to SSE path
+        // by checking the client transport type after connect.
+        let server = MockServer::start();
+        setup_sse_mock(&server);
+
+        let url = format!("{}/sse", server.base_url());
+        let client = McpProxyClient::connect(
+            "sse-server",
+            &url,
+            Some("sse"),
+            None,
+            "none",
+            ProxyTransport::Sse,
+        )
+        .await
+        .unwrap();
+
+        // Verify the client is configured for SSE transport
+        assert_eq!(client.transport, ProxyTransport::Sse);
+        // The post_url should be resolved from the endpoint event
+        assert!(client.post_url.contains("/messages"));
+    }
+
+    // =========================================================================
+    // McpProxyClient — fetch_tools with error response
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_fetch_tools_with_error_response() {
+        let server = MockServer::start();
+
+        // Initialize endpoint
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"initialize""#);
+            then.status(200).json_body(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "serverInfo": { "name": "mock", "version": "1.0" }
+                }
+            }));
+        });
+
+        // tools/list returns error
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"tools/list""#);
+            then.status(200).json_body(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "error": { "code": -32601, "message": "Method not found" }
+            }));
+        });
+
+        let url = format!("{}/mcp", server.base_url());
+        let mut client = McpProxyClient::connect(
+            "test-server",
+            &url,
+            None,
+            None,
+            "none",
+            ProxyTransport::StreamableHttp,
+        )
+        .await
+        .unwrap();
+
+        // fetch_tools should succeed but not populate tools (error response has no result)
+        client.fetch_tools().await.unwrap();
+        assert!(client.upstream_tools.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_fetch_tools_with_empty_result() {
+        let server = MockServer::start();
+
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"initialize""#);
+            then.status(200).json_body(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "serverInfo": { "name": "mock", "version": "1.0" }
+                }
+            }));
+        });
+
+        // tools/list returns result without tools field
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"tools/list""#);
+            then.status(200).json_body(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": { "something_else": true }
+            }));
+        });
+
+        let url = format!("{}/mcp", server.base_url());
+        let mut client = McpProxyClient::connect(
+            "test-server",
+            &url,
+            None,
+            None,
+            "none",
+            ProxyTransport::StreamableHttp,
+        )
+        .await
+        .unwrap();
+
+        // fetch_tools should succeed, but tools remain empty (deserialization fails silently)
+        client.fetch_tools().await.unwrap();
+        assert!(client.upstream_tools.is_empty());
+    }
+
+    // =========================================================================
+    // McpProxyClient — call_tool with None arguments
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_call_tool_with_none_arguments_uses_empty_object() {
+        let server = MockServer::start();
+        setup_mock_upstream(&server, sample_tools());
+
+        // Verify that arguments defaults to {}
+        let tool_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""arguments":{}"#)
+                .body_includes(r#""method":"tools/call""#);
+            then.status(200).json_body(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {
+                    "content": [{ "type": "text", "text": "no args ok" }]
+                }
+            }));
+        });
+
+        let url = format!("{}/mcp", server.base_url());
+        let client = McpProxyClient::connect(
+            "test-server",
+            &url,
+            None,
+            None,
+            "none",
+            ProxyTransport::StreamableHttp,
+        )
+        .await
+        .unwrap();
+
+        let result = client.call_tool("get_issues", None).await.unwrap();
+        assert!(result.is_error.is_none());
+        tool_mock.assert();
+    }
+
+    // =========================================================================
+    // ProxyManager — try_call transport error
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_proxy_manager_try_call_transport_error() {
+        let server = MockServer::start();
+        setup_mock_upstream(&server, sample_tools());
+
+        let url = format!("{}/mcp", server.base_url());
+        let client = McpProxyClient::connect(
+            "upstream",
+            &url,
+            Some("up"),
+            None,
+            "none",
+            ProxyTransport::StreamableHttp,
+        )
+        .await
+        .unwrap();
+
+        let mut mgr = ProxyManager::new();
+        mgr.add_client(client);
+
+        // Drop the mock server so the next call fails with a transport error
+        drop(server);
+
+        let result = mgr
+            .try_call("up__get_issues", Some(serde_json::json!({})))
+            .await;
+
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.is_error, Some(true));
+        match &result.content[0] {
+            ToolResultContent::Text { text } => assert!(text.contains("Proxy error")),
+        }
+    }
+
+    // =========================================================================
+    // ProxyManager — default trait
+    // =========================================================================
+
+    #[test]
+    fn test_proxy_manager_default() {
+        let mgr = ProxyManager::default();
+        assert!(mgr.is_empty());
+        assert!(mgr.all_tools().is_empty());
+    }
+
+    // =========================================================================
+    // ProxyManager — multiple clients routing
+    // =========================================================================
+
     #[tokio::test]
     async fn test_proxy_manager_multiple_clients() {
         let server1 = MockServer::start();
