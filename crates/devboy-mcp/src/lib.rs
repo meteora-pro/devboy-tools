@@ -23,9 +23,11 @@
 
 pub mod handlers;
 pub mod protocol;
+pub mod proxy;
 pub mod server;
 pub mod tools;
 pub mod transport;
 
 pub use handlers::ToolHandler;
+pub use proxy::{McpProxyClient, ProxyManager, ProxyTransport};
 pub use server::McpServer;
