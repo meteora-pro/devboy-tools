@@ -51,6 +51,10 @@ clap = { version = "4.5", features = ["derive"] }
 toml = "0.8"
 dirs = "6.0"
 
+# SSE / Streaming
+reqwest-eventsource = "0.6"
+futures = "0.3"
+
 # Testing
 mockall = "0.13"
 insta = { version = "1.41", features = ["json", "yaml"] }

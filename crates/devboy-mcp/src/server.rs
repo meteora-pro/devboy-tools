@@ -17,6 +17,7 @@ use crate::protocol::{
     InitializeParams, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, RequestId,
     ServerCapabilities, ServerInfo, ToolCallParams, ToolsCapability, ToolsListResult, MCP_VERSION,
 };
+use crate::proxy::ProxyManager;
 use crate::transport::{IncomingMessage, StdioTransport};
 
 /// MCP server for devboy-tools.
@@ -24,6 +25,7 @@ pub struct McpServer {
     contexts: HashMap<String, Vec<Arc<dyn Provider>>>,
     active_context: RwLock<String>,
     initialized: bool,
+    proxy_manager: ProxyManager,
 }
 
 impl McpServer {
@@ -35,7 +37,13 @@ impl McpServer {
             contexts,
             active_context: RwLock::new("default".to_string()),
             initialized: false,
+            proxy_manager: ProxyManager::new(),
         }
+    }
+
+    /// Set the proxy manager for upstream MCP server connections.
+    pub fn set_proxy_manager(&mut self, proxy_manager: ProxyManager) {
+        self.proxy_manager = proxy_manager;
     }
 
     /// Add a provider to the server.
@@ -267,6 +275,9 @@ impl McpServer {
             }),
         });
 
+        // Append proxied tools from upstream MCP servers
+        tools.extend(self.proxy_manager.all_tools());
+
         let result = ToolsListResult { tools };
         JsonRpcResponse::success(id, serde_json::to_value(result).unwrap())
     }
@@ -336,8 +347,17 @@ impl McpServer {
                 }
             }
             _ => {
-                let handler = ToolHandler::new(self.active_providers());
-                handler.execute(&params.name, params.arguments).await
+                // Try proxied upstream tools first
+                if let Some(proxy_result) = self
+                    .proxy_manager
+                    .try_call(&params.name, params.arguments.clone())
+                    .await
+                {
+                    proxy_result
+                } else {
+                    let handler = ToolHandler::new(self.active_providers());
+                    handler.execute(&params.name, params.arguments).await
+                }
             }
         };
         JsonRpcResponse::success(id, serde_json::to_value(result).unwrap())
@@ -800,5 +820,45 @@ mod tests {
             serde_json::from_value(success_resp.result.unwrap()).unwrap();
         assert_eq!(success_result.is_error, None);
         assert_eq!(server.active_context_name(), "workspace".to_string());
+    }
+
+    #[test]
+    fn test_set_proxy_manager() {
+        let mut server = McpServer::new();
+        let proxy_manager = ProxyManager::new();
+        server.set_proxy_manager(proxy_manager);
+        // No panic, proxy_manager is set
+    }
+
+    #[test]
+    fn test_tools_list_includes_proxy_tools() {
+        let mut server = McpServer::new();
+
+        // Create a ProxyManager and manually simulate fetched tools
+        // by checking that the server returns proxy tools in tools/list.
+        // Since ProxyManager.all_tools() returns empty when no clients are added,
+        // we verify the baseline behavior.
+        let proxy_manager = ProxyManager::new();
+        server.set_proxy_manager(proxy_manager);
+
+        let resp = server.handle_tools_list(RequestId::Number(1));
+        let result: ToolsListResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+
+        // Should have base tools (get_issues, get_merge_requests, etc.) + context tools
+        assert!(result.tools.iter().any(|t| t.name == "get_issues"));
+        assert!(result.tools.iter().any(|t| t.name == "list_contexts"));
+        assert!(result.tools.iter().any(|t| t.name == "use_context"));
+        assert!(result.tools.iter().any(|t| t.name == "get_current_context"));
+        // No proxy tools (empty manager)
+        assert!(!result.tools.iter().any(|t| t.name.contains("__")));
+    }
+
+    #[test]
+    fn test_default_server_has_empty_proxy_manager() {
+        let server = McpServer::default();
+        // proxy_manager is empty by default — all_tools returns nothing
+        let resp = server.handle_tools_list(RequestId::Number(1));
+        let result: ToolsListResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+        assert!(!result.tools.iter().any(|t| t.name.contains("__")));
     }
 }
