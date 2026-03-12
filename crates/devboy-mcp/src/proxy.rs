@@ -514,6 +514,7 @@ impl ProxyManager {
 // =============================================================================
 
 #[cfg(test)]
+#[allow(clippy::err_expect)]
 mod tests {
     use super::*;
     use crate::protocol::ToolResultContent;
@@ -1642,7 +1643,7 @@ mod tests {
         .unwrap();
 
         let result = client.call_tool("some_tool", None).await;
-        let err = result.err().expect("should be error");
+        let err = result.expect_err("should be error");
         assert!(err.to_string().contains("Mismatched JSON-RPC id"));
     }
 }
