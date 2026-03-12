@@ -343,6 +343,15 @@ impl McpProxyClient {
             .await
             .map_err(|e| devboy_core::Error::Http(format!("Failed to parse response: {}", e)))?;
 
+        // Verify response ID matches request ID
+        let expected_id = RequestId::Number(id);
+        if resp.id != expected_id {
+            return Err(devboy_core::Error::Http(format!(
+                "Mismatched JSON-RPC id: expected {:?}, got {:?}",
+                expected_id, resp.id
+            )));
+        }
+
         Ok(resp)
     }
 
@@ -1578,5 +1587,62 @@ mod tests {
         assert_eq!(tools.len(), 2);
         assert!(tools.iter().any(|t| t.name == "s1__tool_a"));
         assert!(tools.iter().any(|t| t.name == "s2__tool_b"));
+    }
+
+    // =========================================================================
+    // Response ID validation
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_mismatched_response_id_returns_error() {
+        let server = MockServer::start();
+
+        // Initialize returns correct id
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"initialize""#);
+            then.status(200)
+                .header("mcp-session-id", "sess-1")
+                .json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "serverInfo": { "name": "mock", "version": "1.0" }
+                    }
+                }));
+        });
+
+        // tools/call returns mismatched id
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"tools/call""#);
+            then.status(200).json_body(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 999,
+                "result": {
+                    "content": [{ "type": "text", "text": "wrong id" }]
+                }
+            }));
+        });
+
+        let url = format!("{}/mcp", server.base_url());
+        let client = McpProxyClient::connect(
+            "test-server",
+            &url,
+            None,
+            None,
+            "none",
+            ProxyTransport::StreamableHttp,
+        )
+        .await
+        .unwrap();
+
+        let result = client.call_tool("some_tool", None).await;
+        let err = result.err().expect("should be error");
+        assert!(err.to_string().contains("Mismatched JSON-RPC id"));
     }
 }

@@ -697,42 +697,7 @@ async fn handle_mcp_command() -> Result<()> {
 
     // Connect to upstream MCP proxy servers (if configured).
     if !config.proxy_mcp_servers.is_empty() {
-        let mut proxy_manager = ProxyManager::new();
-        for proxy_cfg in &config.proxy_mcp_servers {
-            let token = proxy_cfg
-                .token_key
-                .as_deref()
-                .and_then(|key| store.get(key).ok().flatten());
-
-            let transport = ProxyTransport::parse(&proxy_cfg.transport);
-
-            match McpProxyClient::connect(
-                &proxy_cfg.name,
-                &proxy_cfg.url,
-                proxy_cfg.tool_prefix.as_deref(),
-                token.as_deref(),
-                &proxy_cfg.auth_type,
-                transport,
-            )
-            .await
-            {
-                Ok(client) => {
-                    tracing::info!(
-                        "Connected to upstream MCP server '{}' at {}",
-                        proxy_cfg.name,
-                        proxy_cfg.url
-                    );
-                    proxy_manager.add_client(client);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to connect to upstream MCP server '{}': {}",
-                        proxy_cfg.name,
-                        e
-                    );
-                }
-            }
-        }
+        let mut proxy_manager = build_proxy_manager(&config, &store).await;
         if !proxy_manager.is_empty() {
             if let Err(e) = proxy_manager.fetch_all_tools().await {
                 tracing::warn!("Failed to fetch proxy tools: {}", e);
@@ -772,33 +737,7 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
         return Ok(());
     }
 
-    let mut proxy_manager = ProxyManager::new();
-    for proxy_cfg in &config.proxy_mcp_servers {
-        let token = proxy_cfg
-            .token_key
-            .as_deref()
-            .and_then(|key| store.get(key).ok().flatten());
-
-        let transport = ProxyTransport::parse(&proxy_cfg.transport);
-
-        match McpProxyClient::connect(
-            &proxy_cfg.name,
-            &proxy_cfg.url,
-            proxy_cfg.tool_prefix.as_deref(),
-            token.as_deref(),
-            &proxy_cfg.auth_type,
-            transport,
-        )
-        .await
-        {
-            Ok(client) => {
-                proxy_manager.add_client(client);
-            }
-            Err(e) => {
-                eprintln!("Failed to connect to '{}': {}", proxy_cfg.name, e);
-            }
-        }
-    }
+    let mut proxy_manager = build_proxy_manager(&config, &store).await;
 
     if proxy_manager.is_empty() {
         eprintln!("Could not connect to any upstream MCP server.");
@@ -851,6 +790,46 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn build_proxy_manager(config: &Config, store: &KeychainStore) -> ProxyManager {
+    let mut proxy_manager = ProxyManager::new();
+    for proxy_cfg in &config.proxy_mcp_servers {
+        let token = proxy_cfg
+            .token_key
+            .as_deref()
+            .and_then(|key| store.get(key).ok().flatten());
+
+        let transport = ProxyTransport::parse(&proxy_cfg.transport);
+
+        match McpProxyClient::connect(
+            &proxy_cfg.name,
+            &proxy_cfg.url,
+            proxy_cfg.tool_prefix.as_deref(),
+            token.as_deref(),
+            &proxy_cfg.auth_type,
+            transport,
+        )
+        .await
+        {
+            Ok(client) => {
+                tracing::info!(
+                    "Connected to upstream MCP server '{}' at {}",
+                    proxy_cfg.name,
+                    proxy_cfg.url
+                );
+                proxy_manager.add_client(client);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to connect to upstream MCP server '{}': {}",
+                    proxy_cfg.name,
+                    e
+                );
+            }
+        }
+    }
+    proxy_manager
 }
 
 fn get_token_for_context(
