@@ -8,5 +8,10 @@
     "type": "file",
     "name": "contexts",
     "label": "Contexts (Multi-Project)"
+  },
+  {
+    "type": "file",
+    "name": "proxy",
+    "label": "MCP Proxy"
   }
 ]
