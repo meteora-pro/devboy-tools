@@ -67,6 +67,39 @@ pub struct Config {
     /// Currently active context name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_context: Option<String>,
+
+    /// Upstream MCP servers to proxy.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proxy_mcp_servers: Vec<ProxyMcpServerConfig>,
+}
+
+/// Configuration for an upstream MCP server to proxy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyMcpServerConfig {
+    /// Server name (used as tool prefix if tool_prefix not set)
+    pub name: String,
+    /// Server URL (SSE or Streamable HTTP endpoint)
+    pub url: String,
+    /// Auth type: "bearer", "api_key", "none"
+    #[serde(default = "default_auth_none")]
+    pub auth_type: String,
+    /// Keychain key for auth token
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_key: Option<String>,
+    /// Tool name prefix override (default: name)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_prefix: Option<String>,
+    /// Transport type: "sse" (default) or "streamable-http"
+    #[serde(default = "default_transport_sse")]
+    pub transport: String,
+}
+
+fn default_transport_sse() -> String {
+    "sse".to_string()
+}
+
+fn default_auth_none() -> String {
+    "none".to_string()
 }
 
 /// Per-context provider configuration.
@@ -830,6 +863,7 @@ mod tests {
             }),
             contexts: BTreeMap::new(),
             active_context: None,
+            proxy_mcp_servers: Vec::new(),
         };
 
         let providers = config.configured_providers();
@@ -905,6 +939,7 @@ mod tests {
             jira: None,
             contexts: BTreeMap::new(),
             active_context: None,
+            proxy_mcp_servers: Vec::new(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -1053,5 +1088,122 @@ mod tests {
         let providers = context.configured_providers();
         assert_eq!(providers, vec!["github", "jira"]);
         assert!(context.has_any_provider());
+    }
+
+    // =========================================================================
+    // ProxyMcpServerConfig tests
+    // =========================================================================
+
+    #[test]
+    fn test_proxy_mcp_server_config_defaults() {
+        let toml_str = r#"
+            [[proxy_mcp_servers]]
+            name = "my-server"
+            url = "https://example.com/mcp"
+        "#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.proxy_mcp_servers.len(), 1);
+
+        let proxy = &config.proxy_mcp_servers[0];
+        assert_eq!(proxy.name, "my-server");
+        assert_eq!(proxy.url, "https://example.com/mcp");
+        assert_eq!(proxy.auth_type, "none");
+        assert_eq!(proxy.transport, "sse");
+        assert!(proxy.token_key.is_none());
+        assert!(proxy.tool_prefix.is_none());
+    }
+
+    #[test]
+    fn test_proxy_mcp_server_config_full() {
+        let toml_str = r#"
+            [[proxy_mcp_servers]]
+            name = "devboy-cloud"
+            url = "https://app.devboy.pro/api/mcp"
+            auth_type = "bearer"
+            token_key = "devboy-cloud.token"
+            tool_prefix = "cloud"
+            transport = "streamable-http"
+        "#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let proxy = &config.proxy_mcp_servers[0];
+
+        assert_eq!(proxy.name, "devboy-cloud");
+        assert_eq!(proxy.auth_type, "bearer");
+        assert_eq!(proxy.token_key.as_deref(), Some("devboy-cloud.token"));
+        assert_eq!(proxy.tool_prefix.as_deref(), Some("cloud"));
+        assert_eq!(proxy.transport, "streamable-http");
+    }
+
+    #[test]
+    fn test_proxy_mcp_server_config_multiple() {
+        let toml_str = r#"
+            [[proxy_mcp_servers]]
+            name = "server1"
+            url = "https://s1.example.com/mcp"
+
+            [[proxy_mcp_servers]]
+            name = "server2"
+            url = "https://s2.example.com/mcp"
+            auth_type = "api_key"
+            token_key = "s2.token"
+        "#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.proxy_mcp_servers.len(), 2);
+        assert_eq!(config.proxy_mcp_servers[0].name, "server1");
+        assert_eq!(config.proxy_mcp_servers[1].name, "server2");
+        assert_eq!(config.proxy_mcp_servers[1].auth_type, "api_key");
+    }
+
+    #[test]
+    fn test_proxy_mcp_server_config_serialization_roundtrip() {
+        let config = Config {
+            proxy_mcp_servers: vec![ProxyMcpServerConfig {
+                name: "test".to_string(),
+                url: "https://test.com/mcp".to_string(),
+                auth_type: "bearer".to_string(),
+                token_key: Some("test.token".to_string()),
+                tool_prefix: Some("tst".to_string()),
+                transport: "streamable-http".to_string(),
+            }],
+            ..Default::default()
+        };
+
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        assert!(toml_str.contains("[[proxy_mcp_servers]]"));
+        assert!(toml_str.contains("name = \"test\""));
+
+        let parsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.proxy_mcp_servers.len(), 1);
+        assert_eq!(parsed.proxy_mcp_servers[0].name, "test");
+        assert_eq!(parsed.proxy_mcp_servers[0].transport, "streamable-http");
+    }
+
+    #[test]
+    fn test_proxy_mcp_server_config_skips_none_fields_in_serialization() {
+        let config = Config {
+            proxy_mcp_servers: vec![ProxyMcpServerConfig {
+                name: "minimal".to_string(),
+                url: "https://test.com/mcp".to_string(),
+                auth_type: "none".to_string(),
+                token_key: None,
+                tool_prefix: None,
+                transport: "sse".to_string(),
+            }],
+            ..Default::default()
+        };
+
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        assert!(!toml_str.contains("token_key"));
+        assert!(!toml_str.contains("tool_prefix"));
+    }
+
+    #[test]
+    fn test_empty_proxy_mcp_servers_not_serialized() {
+        let config = Config::default();
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        assert!(!toml_str.contains("proxy_mcp_servers"));
     }
 }
