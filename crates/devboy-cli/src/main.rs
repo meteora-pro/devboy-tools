@@ -12,7 +12,7 @@ use devboy_core::{
 use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
 use devboy_jira::JiraClient;
-use devboy_mcp::McpServer;
+use devboy_mcp::{McpProxyClient, McpServer, ProxyManager, ProxyTransport};
 use devboy_storage::{CredentialStore, KeychainStore};
 use tracing_subscriber::EnvFilter;
 
@@ -72,6 +72,12 @@ enum Commands {
         /// Provider to test (github, gitlab, clickup, jira)
         provider: String,
     },
+
+    /// Interact with upstream MCP proxy servers
+    Proxy {
+        #[command(subcommand)]
+        command: ProxyCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -103,6 +109,24 @@ enum ConfigCommands {
 
     /// Show configuration file path
     Path,
+}
+
+#[derive(Subcommand)]
+enum ProxyCommands {
+    /// List available tools from all upstream proxy servers
+    Tools {
+        /// Show tool descriptions
+        #[arg(long)]
+        descriptions: bool,
+    },
+    /// Call a tool on an upstream proxy server
+    Call {
+        /// Tool name (e.g., devboy-cloud__get_issues)
+        tool: String,
+        /// JSON arguments (optional)
+        #[arg(default_value = "{}")]
+        args: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -149,6 +173,10 @@ async fn main() -> Result<()> {
 
         Some(Commands::Test { provider }) => {
             handle_test_command(&provider).await?;
+        }
+
+        Some(Commands::Proxy { command }) => {
+            handle_proxy_command(command).await?;
         }
 
         None => {
@@ -667,6 +695,17 @@ async fn handle_mcp_command() -> Result<()> {
         }
     }
 
+    // Connect to upstream MCP proxy servers (if configured).
+    if !config.proxy_mcp_servers.is_empty() {
+        let mut proxy_manager = build_proxy_manager(&config, &store).await;
+        if !proxy_manager.is_empty() {
+            if let Err(e) = proxy_manager.fetch_all_tools().await {
+                tracing::warn!("Failed to fetch proxy tools: {}", e);
+            }
+            server.set_proxy_manager(proxy_manager);
+        }
+    }
+
     if !any_provider_added {
         tracing::warn!("No providers configured. MCP server will have limited functionality.");
         tracing::info!("Config source: {}", config_path.display());
@@ -677,6 +716,120 @@ async fn handle_mcp_command() -> Result<()> {
     server.run().await.context("MCP server error")?;
 
     Ok(())
+}
+
+// =============================================================================
+// Proxy Command
+// =============================================================================
+
+async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
+    let (config, _) = load_runtime_config()?;
+    let store = KeychainStore::new();
+
+    if config.proxy_mcp_servers.is_empty() {
+        println!("No proxy MCP servers configured.");
+        println!("Add to config.toml:");
+        println!();
+        println!("  [[proxy_mcp_servers]]");
+        println!("  name = \"my-server\"");
+        println!("  url = \"https://example.com/api/mcp\"");
+        println!("  transport = \"streamable-http\"");
+        return Ok(());
+    }
+
+    let mut proxy_manager = build_proxy_manager(&config, &store).await;
+
+    if proxy_manager.is_empty() {
+        eprintln!("Could not connect to any upstream MCP server.");
+        return Ok(());
+    }
+
+    match command {
+        ProxyCommands::Tools { descriptions } => {
+            proxy_manager
+                .fetch_all_tools()
+                .await
+                .context("Failed to fetch tools from upstream servers")?;
+            let tools = proxy_manager.all_tools();
+            if tools.is_empty() {
+                println!("No tools available from upstream servers.");
+            } else {
+                println!("Available proxy tools ({}):", tools.len());
+                println!();
+                for tool in &tools {
+                    if descriptions {
+                        let desc = tool.description.lines().next().unwrap_or("");
+                        println!("  {} - {}", tool.name, desc);
+                    } else {
+                        println!("  {}", tool.name);
+                    }
+                }
+            }
+        }
+        ProxyCommands::Call { tool, args } => {
+            let arguments: Option<serde_json::Value> = match serde_json::from_str(&args) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    eprintln!("Invalid JSON arguments: {}", e);
+                    return Ok(());
+                }
+            };
+
+            match proxy_manager.try_call(&tool, arguments).await {
+                Some(result) => {
+                    let json = serde_json::to_string_pretty(&result)
+                        .unwrap_or_else(|_| format!("{:?}", result));
+                    println!("{}", json);
+                }
+                None => {
+                    eprintln!("Tool '{}' not found in any upstream server.", tool);
+                    eprintln!("Run 'devboy proxy tools' to see available tools.");
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn build_proxy_manager(config: &Config, store: &KeychainStore) -> ProxyManager {
+    let mut proxy_manager = ProxyManager::new();
+    for proxy_cfg in &config.proxy_mcp_servers {
+        let token = proxy_cfg
+            .token_key
+            .as_deref()
+            .and_then(|key| store.get(key).ok().flatten());
+
+        let transport = ProxyTransport::parse(&proxy_cfg.transport);
+
+        match McpProxyClient::connect(
+            &proxy_cfg.name,
+            &proxy_cfg.url,
+            proxy_cfg.tool_prefix.as_deref(),
+            token.as_deref(),
+            &proxy_cfg.auth_type,
+            transport,
+        )
+        .await
+        {
+            Ok(client) => {
+                tracing::info!(
+                    "Connected to upstream MCP server '{}' at {}",
+                    proxy_cfg.name,
+                    proxy_cfg.url
+                );
+                proxy_manager.add_client(client);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to connect to upstream MCP server '{}': {}",
+                    proxy_cfg.name,
+                    e
+                );
+            }
+        }
+    }
+    proxy_manager
 }
 
 fn get_token_for_context(

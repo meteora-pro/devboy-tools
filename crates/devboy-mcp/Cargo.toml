@@ -18,7 +18,12 @@ tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+reqwest.workspace = true
+reqwest-eventsource.workspace = true
+futures.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true
 async-trait.workspace = true
+httpmock.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
