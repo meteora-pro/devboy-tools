@@ -1,4 +1,4 @@
-# MCP Proxy
+# MCP proxy
 
 DevBoy can proxy tool calls to upstream MCP servers, exposing their tools alongside its own. This lets you combine tools from multiple MCP servers into a single endpoint.
 

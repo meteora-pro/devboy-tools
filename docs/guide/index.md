@@ -27,7 +27,7 @@ features:
     details: Switch between projects on the fly. Each context has its own providers, tokens, and settings.
     icon: 🔄
   - title: MCP protocol
-    details: Native Model Context Protocol support. Works with Claude Code, Claude Desktop, and any MCP-compatible client.
+    details: Native Model Context Protocol support. Proxy upstream MCP servers to combine tools into a single endpoint. Works with Claude Code, Claude Desktop, and any MCP-compatible client.
     icon: 🤖
   - title: Built with Rust
     details: Fast, reliable, and cross-platform. Single binary, no runtime dependencies.

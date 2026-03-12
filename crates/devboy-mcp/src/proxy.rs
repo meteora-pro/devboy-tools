@@ -28,13 +28,16 @@ pub enum ProxyTransport {
 }
 
 impl ProxyTransport {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "streamable-http" | "streamable_http" | "http" => Self::StreamableHttp,
             _ => Self::Sse,
         }
     }
 }
+
+/// Pending SSE response receivers indexed by request ID.
+type PendingResponses = Arc<Mutex<Vec<(i64, oneshot::Sender<JsonRpcResponse>)>>>;
 
 /// Single upstream MCP server connection.
 pub struct McpProxyClient {
@@ -48,7 +51,7 @@ pub struct McpProxyClient {
     /// Session ID for Streamable HTTP transport.
     session_id: RwLock<Option<String>>,
     /// Channel to receive SSE responses routed by request id (SSE transport only).
-    pending: Arc<Mutex<Vec<(i64, oneshot::Sender<JsonRpcResponse>)>>>,
+    pending: PendingResponses,
 }
 
 impl McpProxyClient {
@@ -118,8 +121,7 @@ impl McpProxyClient {
 
         let post_url = Self::wait_for_endpoint(&mut es, url).await?;
 
-        let pending: Arc<Mutex<Vec<(i64, oneshot::Sender<JsonRpcResponse>)>>> =
-            Arc::new(Mutex::new(Vec::new()));
+        let pending: PendingResponses = Arc::new(Mutex::new(Vec::new()));
 
         // Spawn SSE listener
         let pending_clone = pending.clone();
@@ -128,16 +130,13 @@ impl McpProxyClient {
                 match event {
                     Ok(Event::Message(msg)) => {
                         if msg.event == "message" {
-                            if let Ok(resp) =
-                                serde_json::from_str::<JsonRpcResponse>(&msg.data)
-                            {
+                            if let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(&msg.data) {
                                 let id_num = match &resp.id {
                                     RequestId::Number(n) => *n,
                                     _ => continue,
                                 };
                                 let mut pending = pending_clone.lock().await;
-                                if let Some(idx) =
-                                    pending.iter().position(|(id, _)| *id == id_num)
+                                if let Some(idx) = pending.iter().position(|(id, _)| *id == id_num)
                                 {
                                     let (_, sender) = pending.remove(idx);
                                     let _ = sender.send(resp);
@@ -339,9 +338,10 @@ impl McpProxyClient {
             )));
         }
 
-        let resp: JsonRpcResponse = response.json().await.map_err(|e| {
-            devboy_core::Error::Http(format!("Failed to parse response: {}", e))
-        })?;
+        let resp: JsonRpcResponse = response
+            .json()
+            .await
+            .map_err(|e| devboy_core::Error::Http(format!("Failed to parse response: {}", e)))?;
 
         Ok(resp)
     }
@@ -442,6 +442,12 @@ pub struct ProxyManager {
     clients: Vec<McpProxyClient>,
 }
 
+impl Default for ProxyManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProxyManager {
     pub fn new() -> Self {
         Self {
@@ -509,22 +515,22 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_proxy_transport_from_str() {
+    fn test_proxy_transport_parse() {
         assert_eq!(
-            ProxyTransport::from_str("streamable-http"),
+            ProxyTransport::parse("streamable-http"),
             ProxyTransport::StreamableHttp
         );
         assert_eq!(
-            ProxyTransport::from_str("streamable_http"),
+            ProxyTransport::parse("streamable_http"),
             ProxyTransport::StreamableHttp
         );
         assert_eq!(
-            ProxyTransport::from_str("http"),
+            ProxyTransport::parse("http"),
             ProxyTransport::StreamableHttp
         );
-        assert_eq!(ProxyTransport::from_str("sse"), ProxyTransport::Sse);
-        assert_eq!(ProxyTransport::from_str(""), ProxyTransport::Sse);
-        assert_eq!(ProxyTransport::from_str("unknown"), ProxyTransport::Sse);
+        assert_eq!(ProxyTransport::parse("sse"), ProxyTransport::Sse);
+        assert_eq!(ProxyTransport::parse(""), ProxyTransport::Sse);
+        assert_eq!(ProxyTransport::parse("unknown"), ProxyTransport::Sse);
     }
 
     #[test]
@@ -568,12 +574,11 @@ mod tests {
             when.method(POST)
                 .path("/mcp")
                 .body_includes(r#""method":"tools/list""#);
-            then.status(200)
-                .json_body(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 2,
-                    "result": { "tools": tools }
-                }));
+            then.status(200).json_body(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": { "tools": tools }
+            }));
         });
     }
 

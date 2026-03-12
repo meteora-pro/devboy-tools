@@ -10,6 +10,11 @@
     "activeMatch": "/configuration/"
   },
   {
+    "text": "MCP proxy",
+    "link": "/configuration/proxy",
+    "activeMatch": "/configuration/proxy"
+  },
+  {
     "text": "Integrations",
     "link": "/integrations/github",
     "activeMatch": "/integrations/"
