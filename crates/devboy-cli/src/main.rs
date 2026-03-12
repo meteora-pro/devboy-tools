@@ -704,7 +704,7 @@ async fn handle_mcp_command() -> Result<()> {
                 .as_deref()
                 .and_then(|key| store.get(key).ok().flatten());
 
-            let transport = ProxyTransport::from_str(&proxy_cfg.transport);
+            let transport = ProxyTransport::parse(&proxy_cfg.transport);
 
             match McpProxyClient::connect(
                 &proxy_cfg.name,
@@ -779,7 +779,7 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
             .as_deref()
             .and_then(|key| store.get(key).ok().flatten());
 
-        let transport = ProxyTransport::from_str(&proxy_cfg.transport);
+        let transport = ProxyTransport::parse(&proxy_cfg.transport);
 
         match McpProxyClient::connect(
             &proxy_cfg.name,
@@ -795,10 +795,7 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
                 proxy_manager.add_client(client);
             }
             Err(e) => {
-                eprintln!(
-                    "Failed to connect to '{}': {}",
-                    proxy_cfg.name, e
-                );
+                eprintln!("Failed to connect to '{}': {}", proxy_cfg.name, e);
             }
         }
     }

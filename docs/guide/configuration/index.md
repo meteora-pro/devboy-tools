@@ -46,9 +46,9 @@ devboy config set-secret github.token <token>
 devboy config set-secret gitlab.token <token>
 ```
 
-## MCP Proxy
+## MCP proxy
 
-You can proxy tools from upstream MCP servers through DevBoy. See [MCP Proxy](./proxy) for details.
+You can proxy tools from upstream MCP servers through DevBoy. See [MCP proxy](./proxy) for details.
 
 ```toml
 [[proxy_mcp_servers]]
