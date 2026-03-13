@@ -25,9 +25,11 @@ clap.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
+dialoguer = "0.11"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tempfile.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true

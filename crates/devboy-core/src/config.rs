@@ -71,6 +71,10 @@ pub struct Config {
     /// Upstream MCP servers to proxy.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub proxy_mcp_servers: Vec<ProxyMcpServerConfig>,
+
+    /// Built-in tools filtering configuration.
+    #[serde(default, skip_serializing_if = "BuiltinToolsConfig::is_empty")]
+    pub builtin_tools: BuiltinToolsConfig,
 }
 
 /// Configuration for an upstream MCP server to proxy.
@@ -163,6 +167,63 @@ pub struct JiraConfig {
     pub project_key: String,
     /// User email (required for Jira auth)
     pub email: String,
+}
+
+/// Configuration for controlling which built-in tools are available.
+///
+/// Supports two mutually exclusive modes:
+/// - `disabled`: blacklist specific tools (all others remain enabled)
+/// - `enabled`: whitelist specific tools (all others are disabled)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BuiltinToolsConfig {
+    /// List of tool names to disable (blacklist mode).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled: Vec<String>,
+
+    /// List of tool names to enable (whitelist mode). All others are disabled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enabled: Vec<String>,
+}
+
+impl BuiltinToolsConfig {
+    /// Check whether the config is empty (no filtering).
+    pub fn is_empty(&self) -> bool {
+        self.disabled.is_empty() && self.enabled.is_empty()
+    }
+
+    /// Validate the config: `disabled` and `enabled` must not both be set.
+    pub fn validate(&self) -> Result<()> {
+        if !self.disabled.is_empty() && !self.enabled.is_empty() {
+            return Err(Error::Config(
+                "builtin_tools: 'disabled' and 'enabled' are mutually exclusive, use only one"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Check whether a tool with the given name should be available.
+    pub fn is_tool_allowed(&self, name: &str) -> bool {
+        if !self.enabled.is_empty() {
+            return self.enabled.iter().any(|n| n == name);
+        }
+        if !self.disabled.is_empty() {
+            return !self.disabled.iter().any(|n| n == name);
+        }
+        true
+    }
+
+    /// Log warnings for tool names that are not in the known set.
+    pub fn warn_unknown_tools(&self, known: &[&str]) {
+        for name in self.disabled.iter().chain(self.enabled.iter()) {
+            if !known.iter().any(|k| k == name) {
+                tracing::warn!(
+                    "builtin_tools: unknown tool name '{}', it will have no effect",
+                    name
+                );
+            }
+        }
+    }
 }
 
 fn default_gitlab_url() -> String {
@@ -864,6 +925,7 @@ mod tests {
             contexts: BTreeMap::new(),
             active_context: None,
             proxy_mcp_servers: Vec::new(),
+            builtin_tools: BuiltinToolsConfig::default(),
         };
 
         let providers = config.configured_providers();
@@ -940,6 +1002,7 @@ mod tests {
             contexts: BTreeMap::new(),
             active_context: None,
             proxy_mcp_servers: Vec::new(),
+            builtin_tools: BuiltinToolsConfig::default(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -1205,5 +1268,148 @@ mod tests {
         let config = Config::default();
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(!toml_str.contains("proxy_mcp_servers"));
+    }
+
+    // =========================================================================
+    // BuiltinToolsConfig tests
+    // =========================================================================
+
+    #[test]
+    fn test_builtin_tools_config_default_is_empty() {
+        let config = BuiltinToolsConfig::default();
+        assert!(config.is_empty());
+        assert!(config.validate().is_ok());
+        assert!(config.is_tool_allowed("get_issues"));
+    }
+
+    #[test]
+    fn test_builtin_tools_disabled_mode() {
+        let config = BuiltinToolsConfig {
+            disabled: vec!["get_issues".to_string(), "create_issue".to_string()],
+            enabled: vec![],
+        };
+        assert!(!config.is_empty());
+        assert!(config.validate().is_ok());
+        assert!(!config.is_tool_allowed("get_issues"));
+        assert!(!config.is_tool_allowed("create_issue"));
+        assert!(config.is_tool_allowed("get_merge_requests"));
+        assert!(config.is_tool_allowed("list_contexts"));
+    }
+
+    #[test]
+    fn test_builtin_tools_enabled_mode() {
+        let config = BuiltinToolsConfig {
+            disabled: vec![],
+            enabled: vec![
+                "list_contexts".to_string(),
+                "use_context".to_string(),
+                "get_current_context".to_string(),
+            ],
+        };
+        assert!(!config.is_empty());
+        assert!(config.validate().is_ok());
+        assert!(config.is_tool_allowed("list_contexts"));
+        assert!(config.is_tool_allowed("use_context"));
+        assert!(!config.is_tool_allowed("get_issues"));
+        assert!(!config.is_tool_allowed("create_issue"));
+    }
+
+    #[test]
+    fn test_builtin_tools_mutually_exclusive_error() {
+        let config = BuiltinToolsConfig {
+            disabled: vec!["get_issues".to_string()],
+            enabled: vec!["list_contexts".to_string()],
+        };
+        assert!(config.validate().is_err());
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn test_builtin_tools_toml_parsing_disabled() {
+        let toml_str = r#"
+            [builtin_tools]
+            disabled = ["get_issues", "create_issue"]
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(!config.builtin_tools.is_empty());
+        assert_eq!(config.builtin_tools.disabled.len(), 2);
+        assert!(config.builtin_tools.enabled.is_empty());
+    }
+
+    #[test]
+    fn test_builtin_tools_toml_parsing_enabled() {
+        let toml_str = r#"
+            [builtin_tools]
+            enabled = ["list_contexts", "use_context", "get_current_context"]
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.builtin_tools.enabled.len(), 3);
+        assert!(config.builtin_tools.disabled.is_empty());
+    }
+
+    #[test]
+    fn test_builtin_tools_not_serialized_when_empty() {
+        let config = Config::default();
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        assert!(!toml_str.contains("builtin_tools"));
+    }
+
+    #[test]
+    fn test_builtin_tools_serialization_roundtrip() {
+        let config = Config {
+            builtin_tools: BuiltinToolsConfig {
+                disabled: vec!["get_issues".to_string(), "create_issue".to_string()],
+                enabled: vec![],
+            },
+            ..Default::default()
+        };
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        assert!(toml_str.contains("[builtin_tools]"));
+        assert!(toml_str.contains("get_issues"));
+
+        let parsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.builtin_tools.disabled.len(), 2);
+    }
+
+    #[test]
+    fn test_builtin_tools_warn_unknown_with_unknown_names() {
+        let known = &["get_issues", "create_issue"];
+        let config = BuiltinToolsConfig {
+            disabled: vec!["get_issues".to_string(), "nonexistent_tool".to_string()],
+            enabled: vec![],
+        };
+        // Should not panic, logs a warning for nonexistent_tool
+        config.warn_unknown_tools(known);
+    }
+
+    #[test]
+    fn test_builtin_tools_warn_unknown_all_known() {
+        let known = &["get_issues", "create_issue"];
+        let config = BuiltinToolsConfig {
+            disabled: vec!["get_issues".to_string()],
+            enabled: vec![],
+        };
+        // All names are known — no warnings expected
+        config.warn_unknown_tools(known);
+    }
+
+    #[test]
+    fn test_builtin_tools_warn_unknown_in_enabled_list() {
+        let known = &["get_issues", "create_issue"];
+        let config = BuiltinToolsConfig {
+            disabled: vec![],
+            enabled: vec!["get_issues".to_string(), "unknown_tool".to_string()],
+        };
+        // Verify that the enabled list is also checked
+        config.warn_unknown_tools(known);
+    }
+
+    #[test]
+    fn test_builtin_tools_warn_unknown_empty_config() {
+        let known = &["get_issues"];
+        let config = BuiltinToolsConfig::default();
+        // Empty config — nothing to check
+        config.warn_unknown_tools(known);
     }
 }
