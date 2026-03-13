@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use devboy_core::Provider;
+use devboy_core::{BuiltinToolsConfig, Provider};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -26,6 +26,7 @@ pub struct McpServer {
     active_context: RwLock<String>,
     initialized: bool,
     proxy_manager: ProxyManager,
+    builtin_tools_config: BuiltinToolsConfig,
 }
 
 impl McpServer {
@@ -38,7 +39,20 @@ impl McpServer {
             active_context: RwLock::new("default".to_string()),
             initialized: false,
             proxy_manager: ProxyManager::new(),
+            builtin_tools_config: BuiltinToolsConfig::default(),
         }
+    }
+
+    /// Set the built-in tools filtering configuration.
+    ///
+    /// Returns an error if both `disabled` and `enabled` are set (mutually exclusive).
+    pub fn set_builtin_tools_config(
+        &mut self,
+        config: BuiltinToolsConfig,
+    ) -> devboy_core::Result<()> {
+        config.validate()?;
+        self.builtin_tools_config = config;
+        Ok(())
     }
 
     /// Set the proxy manager for upstream MCP server connections.
@@ -166,7 +180,7 @@ impl McpServer {
     }
 
     /// Handle a JSON-RPC request.
-    async fn handle_request(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
+    pub async fn handle_request(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
         tracing::debug!("Handling request: {} (id: {:?})", req.method, req.id);
 
         match req.method.as_str() {
@@ -245,8 +259,7 @@ impl McpServer {
     /// Handle tools/list request.
     fn handle_tools_list(&self, id: RequestId) -> JsonRpcResponse {
         let handler = ToolHandler::new(self.active_providers());
-        let tools = handler.available_tools();
-        let mut tools = tools;
+        let mut tools = handler.available_tools();
         tools.push(crate::protocol::ToolDefinition {
             name: "list_contexts".to_string(),
             description: "List configured contexts and indicate the active context.".to_string(),
@@ -275,7 +288,12 @@ impl McpServer {
             }),
         });
 
-        // Append proxied tools from upstream MCP servers
+        // Filter built-in tools based on config
+        if !self.builtin_tools_config.is_empty() {
+            tools.retain(|t| self.builtin_tools_config.is_tool_allowed(&t.name));
+        }
+
+        // Append proxied tools from upstream MCP servers (not affected by builtin_tools filter)
         tools.extend(self.proxy_manager.all_tools());
 
         let result = ToolsListResult { tools };
@@ -300,6 +318,20 @@ impl McpServer {
         };
 
         tracing::info!("Calling tool: {}", params.name);
+
+        // Block disabled built-in tools (proxy tools are not affected)
+        if !self.builtin_tools_config.is_empty()
+            && !self.builtin_tools_config.is_tool_allowed(&params.name)
+            && !self.proxy_manager.has_tool(&params.name)
+        {
+            return JsonRpcResponse::error(
+                id,
+                JsonRpcError::method_not_found(&format!(
+                    "Tool '{}' is disabled by builtin_tools configuration",
+                    params.name
+                )),
+            );
+        }
 
         let result = match params.name.as_str() {
             "list_contexts" => {
@@ -860,5 +892,101 @@ mod tests {
         let resp = server.handle_tools_list(RequestId::Number(1));
         let result: ToolsListResult = serde_json::from_value(resp.result.unwrap()).unwrap();
         assert!(!result.tools.iter().any(|t| t.name.contains("__")));
+    }
+
+    #[test]
+    fn test_builtin_tools_disabled_filters_tools_list() {
+        let mut server = McpServer::new();
+        server
+            .set_builtin_tools_config(BuiltinToolsConfig {
+                disabled: vec!["get_issues".to_string(), "create_issue".to_string()],
+                enabled: vec![],
+            })
+            .unwrap();
+
+        let resp = server.handle_tools_list(RequestId::Number(1));
+        let result: ToolsListResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+
+        assert!(!result.tools.iter().any(|t| t.name == "get_issues"));
+        assert!(!result.tools.iter().any(|t| t.name == "create_issue"));
+        // Non-disabled tools should still be present
+        assert!(result.tools.iter().any(|t| t.name == "get_merge_requests"));
+        assert!(result.tools.iter().any(|t| t.name == "list_contexts"));
+    }
+
+    #[test]
+    fn test_builtin_tools_enabled_whitelist_filters_tools_list() {
+        let mut server = McpServer::new();
+        server
+            .set_builtin_tools_config(BuiltinToolsConfig {
+                disabled: vec![],
+                enabled: vec![
+                    "list_contexts".to_string(),
+                    "use_context".to_string(),
+                    "get_current_context".to_string(),
+                ],
+            })
+            .unwrap();
+
+        let resp = server.handle_tools_list(RequestId::Number(1));
+        let result: ToolsListResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+
+        assert_eq!(result.tools.len(), 3);
+        assert!(result.tools.iter().any(|t| t.name == "list_contexts"));
+        assert!(result.tools.iter().any(|t| t.name == "use_context"));
+        assert!(result.tools.iter().any(|t| t.name == "get_current_context"));
+        assert!(!result.tools.iter().any(|t| t.name == "get_issues"));
+    }
+
+    #[tokio::test]
+    async fn test_disabled_tool_call_returns_error() {
+        let mut server = McpServer::new();
+        server
+            .set_builtin_tools_config(BuiltinToolsConfig {
+                disabled: vec!["get_issues".to_string()],
+                enabled: vec![],
+            })
+            .unwrap();
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "get_issues",
+                "arguments": {}
+            })),
+        };
+
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_some());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, JsonRpcError::METHOD_NOT_FOUND);
+        assert!(err.message.contains("disabled"));
+    }
+
+    #[tokio::test]
+    async fn test_disabled_tool_allows_non_disabled() {
+        let mut server = McpServer::new();
+        server
+            .set_builtin_tools_config(BuiltinToolsConfig {
+                disabled: vec!["get_issues".to_string()],
+                enabled: vec![],
+            })
+            .unwrap();
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "get_current_context",
+                "arguments": {}
+            })),
+        };
+
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none());
+        assert!(resp.result.is_some());
     }
 }
