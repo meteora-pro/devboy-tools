@@ -156,6 +156,12 @@ devboy issues                           # List issues
 devboy mrs                              # List merge requests
 devboy test <provider>                  # Test provider connection
 devboy mcp                              # Start MCP server (stdio)
+devboy tools                            # Interactive tool management (TUI)
+devboy tools list                       # List tools with enabled/disabled status
+devboy tools disable <names...>         # Disable specific built-in tools
+devboy tools enable <names...>          # Re-enable specific tools
+devboy tools reset                      # Reset all filtering
+devboy tools call <name> [args]         # Call a built-in tool directly
 ```
 
 ## Development

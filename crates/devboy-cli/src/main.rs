@@ -7,13 +7,18 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use devboy_clickup::ClickUpClient;
 use devboy_core::{
-    Config, ContextConfig, IssueFilter, IssueProvider, MergeRequestProvider, MrFilter, Provider,
+    BuiltinToolsConfig, Config, ContextConfig, IssueFilter, IssueProvider, MergeRequestProvider,
+    MrFilter, Provider,
 };
 use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
 use devboy_jira::JiraClient;
-use devboy_mcp::{McpProxyClient, McpServer, ProxyManager, ProxyTransport};
+use devboy_mcp::{
+    JsonRpcRequest, McpProxyClient, McpServer, ProxyManager, ProxyTransport, RequestId,
+    JSONRPC_VERSION, KNOWN_BUILTIN_TOOLS,
+};
 use devboy_storage::{CredentialStore, KeychainStore};
+use dialoguer::MultiSelect;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -78,6 +83,12 @@ enum Commands {
         #[command(subcommand)]
         command: ProxyCommands,
     },
+
+    /// Manage built-in tools (enable/disable). Interactive mode when run without subcommand.
+    Tools {
+        #[command(subcommand)]
+        command: Option<ToolsCommands>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -137,6 +148,34 @@ enum ContextCommands {
     Use { name: String },
 }
 
+#[derive(Subcommand)]
+enum ToolsCommands {
+    /// List all built-in tools and their status (enabled/disabled)
+    List,
+    /// Disable specific built-in tools
+    Disable {
+        /// Tool names to disable
+        #[arg(required = true, num_args = 1..)]
+        names: Vec<String>,
+    },
+    /// Enable specific built-in tools (remove from disabled list)
+    Enable {
+        /// Tool names to enable
+        #[arg(required = true, num_args = 1..)]
+        names: Vec<String>,
+    },
+    /// Reset all built-in tools filtering (re-enable everything)
+    Reset,
+    /// Call a built-in tool directly
+    Call {
+        /// Tool name (e.g., get_issues, list_contexts)
+        name: String,
+        /// JSON arguments (optional)
+        #[arg(default_value = "{}")]
+        args: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -177,6 +216,10 @@ async fn main() -> Result<()> {
 
         Some(Commands::Proxy { command }) => {
             handle_proxy_command(command).await?;
+        }
+
+        Some(Commands::Tools { command }) => {
+            handle_tools_command(command).await?;
         }
 
         None => {
@@ -665,6 +708,15 @@ async fn handle_mcp_command() -> Result<()> {
     let store = KeychainStore::new();
 
     let mut server = McpServer::new();
+
+    // Apply built-in tools filtering config.
+    if !config.builtin_tools.is_empty() {
+        config.builtin_tools.warn_unknown_tools(KNOWN_BUILTIN_TOOLS);
+        server
+            .set_builtin_tools_config(config.builtin_tools.clone())
+            .context("Invalid builtin_tools configuration")?;
+    }
+
     let mut any_provider_added = false;
 
     // Add configured named contexts.
@@ -936,4 +988,434 @@ fn add_context_providers(
     }
 
     added
+}
+
+// =============================================================================
+// Tools Command
+// =============================================================================
+
+async fn handle_tools_command(command: Option<ToolsCommands>) -> Result<()> {
+    match command {
+        None => handle_tools_interactive()?,
+        Some(ToolsCommands::List) => handle_tools_list()?,
+        Some(ToolsCommands::Disable { names }) => handle_tools_disable(names)?,
+        Some(ToolsCommands::Enable { names }) => handle_tools_enable(names)?,
+        Some(ToolsCommands::Reset) => handle_tools_reset()?,
+        Some(ToolsCommands::Call { name, args }) => handle_tools_call(&name, &args).await?,
+    }
+    Ok(())
+}
+
+fn handle_tools_interactive() -> Result<()> {
+    let (mut config, config_path) = load_runtime_config()?;
+
+    let tools: Vec<&str> = KNOWN_BUILTIN_TOOLS.to_vec();
+
+    // Determine which tools are currently enabled
+    let defaults: Vec<bool> = tools
+        .iter()
+        .map(|name| config.builtin_tools.is_tool_allowed(name))
+        .collect();
+
+    let selections = MultiSelect::new()
+        .with_prompt("Select enabled built-in tools (Space to toggle, Enter to confirm)")
+        .items(&tools)
+        .defaults(&defaults)
+        .interact()
+        .context("Interactive selection cancelled")?;
+
+    // Collect disabled tools list
+    let disabled: Vec<String> = tools
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !selections.contains(i))
+        .map(|(_, name)| name.to_string())
+        .collect();
+
+    config.builtin_tools = if disabled.is_empty() {
+        BuiltinToolsConfig::default()
+    } else {
+        BuiltinToolsConfig {
+            disabled,
+            enabled: Vec::new(),
+        }
+    };
+
+    config
+        .save_to(&config_path)
+        .context("Failed to save config")?;
+
+    // Print summary
+    let enabled_count = selections.len();
+    let disabled_count = tools.len() - enabled_count;
+    println!(
+        "Saved: {} tools enabled, {} disabled ({})",
+        enabled_count,
+        disabled_count,
+        config_path.display()
+    );
+
+    Ok(())
+}
+
+fn handle_tools_list() -> Result<()> {
+    let (config, _) = load_runtime_config()?;
+    print_tools_list(&config);
+    Ok(())
+}
+
+fn print_tools_list(config: &Config) {
+    println!("Built-in tools:");
+    println!();
+    for name in KNOWN_BUILTIN_TOOLS {
+        let status = if config.builtin_tools.is_tool_allowed(name) {
+            "enabled"
+        } else {
+            "disabled"
+        };
+        println!("  {} [{}]", name, status);
+    }
+
+    if !config.builtin_tools.disabled.is_empty() {
+        println!();
+        println!(
+            "Mode: blacklist (disabled: {})",
+            config.builtin_tools.disabled.join(", ")
+        );
+    } else if !config.builtin_tools.enabled.is_empty() {
+        println!();
+        println!(
+            "Mode: whitelist (enabled: {})",
+            config.builtin_tools.enabled.join(", ")
+        );
+    }
+}
+
+fn handle_tools_disable(names: Vec<String>) -> Result<()> {
+    let (mut config, config_path) = load_runtime_config()?;
+    apply_tools_disable(&mut config, &names)?;
+    config
+        .save_to(&config_path)
+        .context("Failed to save config")?;
+    println!("Disabled tools: {}", names.join(", "));
+    Ok(())
+}
+
+fn apply_tools_disable(config: &mut Config, names: &[String]) -> Result<()> {
+    for name in names {
+        if !KNOWN_BUILTIN_TOOLS.contains(&name.as_str()) {
+            eprintln!("Warning: unknown tool '{}'", name);
+        }
+    }
+
+    if !config.builtin_tools.enabled.is_empty() {
+        anyhow::bail!(
+            "Cannot use 'disable' when whitelist (enabled) mode is active. Use 'reset' first."
+        );
+    }
+
+    for name in names {
+        if !config.builtin_tools.disabled.contains(name) {
+            config.builtin_tools.disabled.push(name.clone());
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_tools_enable(names: Vec<String>) -> Result<()> {
+    let (mut config, config_path) = load_runtime_config()?;
+    apply_tools_enable(&mut config, &names)?;
+    config
+        .save_to(&config_path)
+        .context("Failed to save config")?;
+    println!("Enabled tools: {}", names.join(", "));
+    Ok(())
+}
+
+fn apply_tools_enable(config: &mut Config, names: &[String]) -> Result<()> {
+    for name in names {
+        if !KNOWN_BUILTIN_TOOLS.contains(&name.as_str()) {
+            eprintln!("Warning: unknown tool '{}'", name);
+        }
+    }
+
+    if !config.builtin_tools.enabled.is_empty() {
+        anyhow::bail!(
+            "Cannot use 'enable' when whitelist (enabled) mode is active. Use 'reset' first."
+        );
+    }
+
+    config.builtin_tools.disabled.retain(|n| !names.contains(n));
+
+    Ok(())
+}
+
+fn handle_tools_reset() -> Result<()> {
+    let (mut config, config_path) = load_runtime_config()?;
+    apply_tools_reset(&mut config);
+    config
+        .save_to(&config_path)
+        .context("Failed to save config")?;
+    println!("All built-in tools filtering has been reset (all tools enabled).");
+    Ok(())
+}
+
+fn apply_tools_reset(config: &mut Config) {
+    config.builtin_tools = BuiltinToolsConfig::default();
+}
+
+async fn handle_tools_call(name: &str, args: &str) -> Result<()> {
+    let arguments: serde_json::Value =
+        serde_json::from_str(args).context("Invalid JSON arguments")?;
+
+    let (config, _) = load_runtime_config()?;
+    let store = KeychainStore::new();
+
+    let mut server = McpServer::new();
+
+    // Apply built-in tools filtering
+    if !config.builtin_tools.is_empty() {
+        server
+            .set_builtin_tools_config(config.builtin_tools.clone())
+            .context("Invalid builtin_tools configuration")?;
+    }
+
+    // Add providers (same as handle_mcp_command)
+    for (context_name, context) in &config.contexts {
+        server.ensure_context(context_name);
+        add_context_providers(&mut server, &store, context_name, context);
+    }
+    if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME) {
+        if let Some(default_context) = config.legacy_default_context() {
+            add_context_providers(
+                &mut server,
+                &store,
+                Config::DEFAULT_CONTEXT_NAME,
+                &default_context,
+            );
+        }
+    }
+    if let Some(active) = config.resolve_active_context_name() {
+        let _ = server.set_active_context(&active);
+    }
+
+    let req = JsonRpcRequest {
+        jsonrpc: JSONRPC_VERSION.to_string(),
+        id: RequestId::Number(1),
+        method: "tools/call".to_string(),
+        params: Some(serde_json::json!({
+            "name": name,
+            "arguments": arguments,
+        })),
+    };
+
+    let resp = server.handle_request(req).await;
+
+    if let Some(error) = resp.error {
+        eprintln!("Error: {}", error.message);
+        std::process::exit(1);
+    }
+
+    if let Some(result) = resp.result {
+        let json = serde_json::to_string_pretty(&result)?;
+        println!("{}", json);
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn config_with_disabled(names: &[&str]) -> Config {
+        let mut config = Config::default();
+        config.builtin_tools.disabled = names.iter().map(|s| s.to_string()).collect();
+        config
+    }
+
+    fn config_with_enabled(names: &[&str]) -> Config {
+        let mut config = Config::default();
+        config.builtin_tools.enabled = names.iter().map(|s| s.to_string()).collect();
+        config
+    }
+
+    // -- disable tests --
+
+    #[test]
+    fn test_disable_adds_tools_to_disabled_list() {
+        let mut config = Config::default();
+        let names = vec!["get_issues".to_string(), "create_issue".to_string()];
+
+        apply_tools_disable(&mut config, &names).unwrap();
+
+        assert_eq!(config.builtin_tools.disabled, names);
+        assert!(config.builtin_tools.enabled.is_empty());
+    }
+
+    #[test]
+    fn test_disable_does_not_duplicate() {
+        let mut config = config_with_disabled(&["get_issues"]);
+        let names = vec!["get_issues".to_string(), "create_issue".to_string()];
+
+        apply_tools_disable(&mut config, &names).unwrap();
+
+        assert_eq!(
+            config.builtin_tools.disabled,
+            vec!["get_issues".to_string(), "create_issue".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_disable_fails_when_whitelist_active() {
+        let mut config = config_with_enabled(&["get_issues"]);
+        let names = vec!["create_issue".to_string()];
+
+        let result = apply_tools_disable(&mut config, &names);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("whitelist (enabled) mode is active"));
+    }
+
+    // -- enable tests --
+
+    #[test]
+    fn test_enable_removes_from_disabled_list() {
+        let mut config = config_with_disabled(&["get_issues", "create_issue", "update_issue"]);
+        let names = vec!["get_issues".to_string(), "update_issue".to_string()];
+
+        apply_tools_enable(&mut config, &names).unwrap();
+
+        assert_eq!(
+            config.builtin_tools.disabled,
+            vec!["create_issue".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_enable_noop_if_not_disabled() {
+        let mut config = config_with_disabled(&["create_issue"]);
+        let names = vec!["get_issues".to_string()];
+
+        apply_tools_enable(&mut config, &names).unwrap();
+
+        // create_issue stays disabled, get_issues was not in the list
+        assert_eq!(
+            config.builtin_tools.disabled,
+            vec!["create_issue".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_enable_fails_when_whitelist_active() {
+        let mut config = config_with_enabled(&["get_issues"]);
+        let names = vec!["create_issue".to_string()];
+
+        let result = apply_tools_enable(&mut config, &names);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("whitelist (enabled) mode is active"));
+    }
+
+    // -- reset tests --
+
+    #[test]
+    fn test_reset_clears_disabled() {
+        let mut config = config_with_disabled(&["get_issues", "create_issue"]);
+
+        apply_tools_reset(&mut config);
+
+        assert!(config.builtin_tools.disabled.is_empty());
+        assert!(config.builtin_tools.enabled.is_empty());
+    }
+
+    #[test]
+    fn test_reset_clears_enabled() {
+        let mut config = config_with_enabled(&["get_issues"]);
+
+        apply_tools_reset(&mut config);
+
+        assert!(config.builtin_tools.disabled.is_empty());
+        assert!(config.builtin_tools.enabled.is_empty());
+    }
+
+    // -- persistence round-trip --
+
+    #[test]
+    fn test_disable_persists_to_file() {
+        let mut tmp = NamedTempFile::new().unwrap();
+        writeln!(tmp).unwrap();
+        let path = tmp.path().to_path_buf();
+
+        let mut config = Config::default();
+        apply_tools_disable(
+            &mut config,
+            &["get_issues".to_string(), "create_issue".to_string()],
+        )
+        .unwrap();
+        config.save_to(&path).unwrap();
+
+        let loaded = Config::load_from(&path).unwrap();
+        assert_eq!(
+            loaded.builtin_tools.disabled,
+            vec!["get_issues".to_string(), "create_issue".to_string()]
+        );
+        assert!(!loaded.builtin_tools.is_tool_allowed("get_issues"));
+        assert!(loaded.builtin_tools.is_tool_allowed("update_issue"));
+    }
+
+    #[test]
+    fn test_reset_persists_to_file() {
+        let mut tmp = NamedTempFile::new().unwrap();
+        writeln!(tmp).unwrap();
+        let path = tmp.path().to_path_buf();
+
+        let config = config_with_disabled(&["get_issues"]);
+        config.save_to(&path).unwrap();
+
+        let mut config = Config::load_from(&path).unwrap();
+        apply_tools_reset(&mut config);
+        config.save_to(&path).unwrap();
+
+        let loaded = Config::load_from(&path).unwrap();
+        assert!(loaded.builtin_tools.is_empty());
+    }
+
+    // -- sequential workflow --
+
+    #[test]
+    fn test_disable_then_enable_workflow() {
+        let mut config = Config::default();
+
+        // Disable 3 tools
+        apply_tools_disable(
+            &mut config,
+            &[
+                "get_issues".to_string(),
+                "create_issue".to_string(),
+                "update_issue".to_string(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(config.builtin_tools.disabled.len(), 3);
+        assert!(!config.builtin_tools.is_tool_allowed("get_issues"));
+
+        // Re-enable one tool
+        apply_tools_enable(&mut config, &["get_issues".to_string()]).unwrap();
+        assert_eq!(config.builtin_tools.disabled.len(), 2);
+        assert!(config.builtin_tools.is_tool_allowed("get_issues"));
+        assert!(!config.builtin_tools.is_tool_allowed("create_issue"));
+
+        // Reset everything
+        apply_tools_reset(&mut config);
+        assert!(config.builtin_tools.is_empty());
+        assert!(config.builtin_tools.is_tool_allowed("create_issue"));
+    }
 }

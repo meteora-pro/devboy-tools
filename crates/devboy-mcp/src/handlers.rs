@@ -20,6 +20,437 @@ use serde_json::Value;
 
 use crate::protocol::{ToolCallResult, ToolDefinition};
 
+/// Defines the complete tool registry in one place.
+///
+/// For each provider tool: name, description, JSON schema, and handler method.
+/// Context management tools only need name (handled by McpServer, not ToolHandler).
+///
+/// Generates:
+/// - `KNOWN_BUILTIN_TOOLS` — all tool names (provider + context)
+/// - `ToolHandler::available_tools()` — tool definitions with schemas
+/// - `ToolHandler::execute()` — match routing to handler methods
+macro_rules! define_tools {
+    (
+        $(
+            $name:literal => $handler:ident {
+                description: $desc:literal,
+                schema: $schema:tt
+            }
+        ),+ $(,)?
+        ;
+        context: $( $ctx_name:literal ),+ $(,)?
+    ) => {
+        /// All known built-in tool names (provider tools + context management tools).
+        pub const KNOWN_BUILTIN_TOOLS: &[&str] = &[
+            $( $name, )+
+            $( $ctx_name, )+
+        ];
+
+        impl ToolHandler {
+            /// Get available tool definitions.
+            pub fn available_tools(&self) -> Vec<ToolDefinition> {
+                vec![
+                    $(
+                        ToolDefinition {
+                            name: $name.to_string(),
+                            description: $desc.to_string(),
+                            input_schema: serde_json::json!($schema),
+                        },
+                    )+
+                ]
+            }
+
+            /// Execute a tool by name with arguments.
+            pub async fn execute(&self, name: &str, arguments: Option<Value>) -> ToolCallResult {
+                match name {
+                    $( $name => self.$handler(arguments).await, )+
+                    _ => ToolCallResult::error(format!("Unknown tool: {}", name)),
+                }
+            }
+        }
+    };
+}
+
+define_tools! {
+    // =====================================================================
+    // Issues
+    // =====================================================================
+
+    "get_issues" => handle_get_issues {
+        description: "Get issues from configured providers (GitLab, GitHub, ClickUp). Returns a list of issues with filters.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "state": {
+                    "type": "string",
+                    "enum": ["open", "closed", "all"],
+                    "description": "Filter by issue state (default: open)"
+                },
+                "search": {
+                    "type": "string",
+                    "description": "Search query for title and description"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Filter by label names"
+                },
+                "assignee": {
+                    "type": "string",
+                    "description": "Filter by assignee username"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results (default: 20)",
+                    "minimum": 1,
+                    "maximum": 100
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Number of results to skip for pagination (default: 0)",
+                    "minimum": 0
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["markdown", "compact", "json"],
+                    "description": "Output format (default: markdown)"
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["github", "gitlab", "clickup", "jira"],
+                    "description": "Filter by provider. If not specified, returns issues from all configured providers."
+                },
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["created_at", "updated_at"],
+                    "description": "Sort by field (default: updated_at)"
+                },
+                "sort_order": {
+                    "type": "string",
+                    "enum": ["asc", "desc"],
+                    "description": "Sort order (default: desc)"
+                }
+            }
+        }
+    },
+
+    "get_issue" => handle_get_issue {
+        description: "Get a single issue by key (e.g., 'gh#123', 'gitlab#456', 'CU-abc', 'DEV-42', 'jira#PROJ-123'). Returns full issue details.",
+        schema: {
+            "type": "object",
+            "required": ["key"],
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Issue key (e.g., 'gh#123' for GitHub, 'gitlab#456' for GitLab, 'CU-abc' or custom ID like 'DEV-42' for ClickUp, 'jira#PROJ-123' for Jira)"
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["markdown", "compact", "json"],
+                    "description": "Output format (default: markdown)"
+                }
+            }
+        }
+    },
+
+    "get_issue_comments" => handle_get_issue_comments {
+        description: "Get comments for an issue. Returns all comments with author and timestamp.",
+        schema: {
+            "type": "object",
+            "required": ["key"],
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Issue key (e.g., 'gh#123')"
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["markdown", "compact", "json"],
+                    "description": "Output format (default: markdown)"
+                }
+            }
+        }
+    },
+
+    "create_issue" => handle_create_issue {
+        description: "Create a new issue in the configured provider.",
+        schema: {
+            "type": "object",
+            "required": ["title"],
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Issue title"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Issue description/body"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Labels to add"
+                },
+                "assignees": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Assignee usernames"
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["github", "gitlab", "clickup", "jira"],
+                    "description": "Target provider to create the issue in. If not specified, uses the first configured provider."
+                }
+            }
+        }
+    },
+
+    "update_issue" => handle_update_issue {
+        description: "Update an existing issue. Only provided fields will be changed.",
+        schema: {
+            "type": "object",
+            "required": ["key"],
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Issue key (e.g., 'gh#123')"
+                },
+                "title": {
+                    "type": "string",
+                    "description": "New title"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "New description"
+                },
+                "state": {
+                    "type": "string",
+                    "enum": ["open", "closed"],
+                    "description": "New state"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "New labels (replaces existing)"
+                },
+                "assignees": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "New assignees (replaces existing)"
+                }
+            }
+        }
+    },
+
+    "add_issue_comment" => handle_add_issue_comment {
+        description: "Add a comment to an issue.",
+        schema: {
+            "type": "object",
+            "required": ["key", "body"],
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Issue key (e.g., 'gh#123')"
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Comment text"
+                }
+            }
+        }
+    },
+
+    // =====================================================================
+    // Merge Requests
+    // =====================================================================
+
+    "get_merge_requests" => handle_get_merge_requests {
+        description: "Get merge requests / pull requests from configured providers.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "state": {
+                    "type": "string",
+                    "enum": ["open", "closed", "merged", "all"],
+                    "description": "Filter by MR/PR state (default: open)"
+                },
+                "author": {
+                    "type": "string",
+                    "description": "Filter by author username"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Filter by label names"
+                },
+                "source_branch": {
+                    "type": "string",
+                    "description": "Filter by source branch"
+                },
+                "target_branch": {
+                    "type": "string",
+                    "description": "Filter by target branch"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results (default: 20)",
+                    "minimum": 1,
+                    "maximum": 100
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["markdown", "compact", "json"],
+                    "description": "Output format (default: markdown)"
+                }
+            }
+        }
+    },
+
+    "get_merge_request" => handle_get_merge_request {
+        description: "Get a single merge request / pull request by key (e.g., 'pr#123', 'mr#456').",
+        schema: {
+            "type": "object",
+            "required": ["key"],
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "MR/PR key (e.g., 'pr#123' for GitHub, 'mr#456' for GitLab)"
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["markdown", "compact", "json"],
+                    "description": "Output format (default: markdown)"
+                }
+            }
+        }
+    },
+
+    "get_merge_request_discussions" => handle_get_merge_request_discussions {
+        description: "Get discussions/review comments for a merge request. Includes code review threads with positions.",
+        schema: {
+            "type": "object",
+            "required": ["key"],
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "MR/PR key (e.g., 'pr#123')"
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["markdown", "compact", "json"],
+                    "description": "Output format (default: markdown)"
+                }
+            }
+        }
+    },
+
+    "get_merge_request_diffs" => handle_get_merge_request_diffs {
+        description: "Get file diffs for a merge request. Shows changed files with additions/deletions.",
+        schema: {
+            "type": "object",
+            "required": ["key"],
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "MR/PR key (e.g., 'pr#123')"
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["markdown", "compact", "json"],
+                    "description": "Output format (default: markdown)"
+                }
+            }
+        }
+    },
+
+    "create_merge_request" => handle_create_merge_request {
+        description: "Create a new merge request (GitLab) or pull request (GitHub).",
+        schema: {
+            "type": "object",
+            "required": ["title", "source_branch", "target_branch"],
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "MR/PR title"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "MR/PR description/body"
+                },
+                "source_branch": {
+                    "type": "string",
+                    "description": "Source branch (head branch with changes)"
+                },
+                "target_branch": {
+                    "type": "string",
+                    "description": "Target branch (base branch to merge into)"
+                },
+                "draft": {
+                    "type": "boolean",
+                    "description": "Create as draft/WIP (default: false)"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Labels to add"
+                },
+                "reviewers": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Reviewer usernames"
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["github", "gitlab"],
+                    "description": "Target provider. If not specified, uses the first configured provider."
+                }
+            }
+        }
+    },
+
+    "create_merge_request_comment" => handle_create_merge_request_comment {
+        description: "Add a comment to a merge request. Can be a general comment or an inline code review comment.",
+        schema: {
+            "type": "object",
+            "required": ["key", "body"],
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "MR/PR key (e.g., 'pr#123')"
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Comment text"
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "File path for inline comment (optional)"
+                },
+                "line": {
+                    "type": "integer",
+                    "description": "Line number for inline comment (required if file_path is set)"
+                },
+                "line_type": {
+                    "type": "string",
+                    "enum": ["old", "new"],
+                    "description": "Line type: 'old' for deleted line, 'new' for added line (default: new)"
+                },
+                "commit_sha": {
+                    "type": "string",
+                    "description": "Commit SHA for inline comment (required for GitHub)"
+                },
+                "discussion_id": {
+                    "type": "string",
+                    "description": "Reply to existing discussion (optional)"
+                }
+            }
+        }
+    };
+
+    // Context management (handled by McpServer, not ToolHandler)
+    context: "list_contexts", "use_context", "get_current_context"
+}
+
 /// Helper to get provider name without ambiguity.
 fn get_provider_name(provider: &dyn Provider) -> &'static str {
     IssueProvider::provider_name(provider)
@@ -44,433 +475,6 @@ impl ToolHandler {
     pub fn with_pipeline_config(mut self, config: PipelineConfig) -> Self {
         self.pipeline_config = config;
         self
-    }
-
-    /// Get available tool definitions, grouped by category.
-    pub fn available_tools(&self) -> Vec<ToolDefinition> {
-        let mut tools = Vec::new();
-
-        // =================================================================
-        // ISSUES GROUP
-        // =================================================================
-
-        tools.push(ToolDefinition {
-            name: "get_issues".to_string(),
-            description: "Get issues from configured providers (GitLab, GitHub, ClickUp). Returns a list of issues with filters.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "state": {
-                        "type": "string",
-                        "enum": ["open", "closed", "all"],
-                        "description": "Filter by issue state (default: open)"
-                    },
-                    "search": {
-                        "type": "string",
-                        "description": "Search query for title and description"
-                    },
-                    "labels": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Filter by label names"
-                    },
-                    "assignee": {
-                        "type": "string",
-                        "description": "Filter by assignee username"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of results (default: 20)",
-                        "minimum": 1,
-                        "maximum": 100
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "description": "Number of results to skip for pagination (default: 0)",
-                        "minimum": 0
-                    },
-                    "format": {
-                        "type": "string",
-                        "enum": ["markdown", "compact", "json"],
-                        "description": "Output format (default: markdown)"
-                    },
-                    "provider": {
-                        "type": "string",
-                        "enum": ["github", "gitlab", "clickup", "jira"],
-                        "description": "Filter by provider. If not specified, returns issues from all configured providers."
-                    },
-                    "sort_by": {
-                        "type": "string",
-                        "enum": ["created_at", "updated_at"],
-                        "description": "Sort by field (default: updated_at)"
-                    },
-                    "sort_order": {
-                        "type": "string",
-                        "enum": ["asc", "desc"],
-                        "description": "Sort order (default: desc)"
-                    }
-                }
-            }),
-        });
-
-        tools.push(ToolDefinition {
-            name: "get_issue".to_string(),
-            description: "Get a single issue by key (e.g., 'gh#123', 'gitlab#456', 'CU-abc', 'DEV-42', 'jira#PROJ-123'). Returns full issue details.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "required": ["key"],
-                "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "Issue key (e.g., 'gh#123' for GitHub, 'gitlab#456' for GitLab, 'CU-abc' or custom ID like 'DEV-42' for ClickUp, 'jira#PROJ-123' for Jira)"
-                    },
-                    "format": {
-                        "type": "string",
-                        "enum": ["markdown", "compact", "json"],
-                        "description": "Output format (default: markdown)"
-                    }
-                }
-            }),
-        });
-
-        tools.push(ToolDefinition {
-            name: "get_issue_comments".to_string(),
-            description:
-                "Get comments for an issue. Returns all comments with author and timestamp."
-                    .to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "required": ["key"],
-                "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "Issue key (e.g., 'gh#123')"
-                    },
-                    "format": {
-                        "type": "string",
-                        "enum": ["markdown", "compact", "json"],
-                        "description": "Output format (default: markdown)"
-                    }
-                }
-            }),
-        });
-
-        tools.push(ToolDefinition {
-            name: "create_issue".to_string(),
-            description: "Create a new issue in the configured provider.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "required": ["title"],
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "Issue title"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Issue description/body"
-                    },
-                    "labels": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Labels to add"
-                    },
-                    "assignees": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Assignee usernames"
-                    },
-                    "provider": {
-                        "type": "string",
-                        "enum": ["github", "gitlab", "clickup", "jira"],
-                        "description": "Target provider to create the issue in. If not specified, uses the first configured provider."
-                    }
-                }
-            }),
-        });
-
-        tools.push(ToolDefinition {
-            name: "update_issue".to_string(),
-            description: "Update an existing issue. Only provided fields will be changed."
-                .to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "required": ["key"],
-                "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "Issue key (e.g., 'gh#123')"
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": "New title"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "New description"
-                    },
-                    "state": {
-                        "type": "string",
-                        "enum": ["open", "closed"],
-                        "description": "New state"
-                    },
-                    "labels": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "New labels (replaces existing)"
-                    },
-                    "assignees": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "New assignees (replaces existing)"
-                    }
-                }
-            }),
-        });
-
-        tools.push(ToolDefinition {
-            name: "add_issue_comment".to_string(),
-            description: "Add a comment to an issue.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "required": ["key", "body"],
-                "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "Issue key (e.g., 'gh#123')"
-                    },
-                    "body": {
-                        "type": "string",
-                        "description": "Comment text"
-                    }
-                }
-            }),
-        });
-
-        // =================================================================
-        // MERGE REQUESTS GROUP
-        // =================================================================
-
-        tools.push(ToolDefinition {
-            name: "get_merge_requests".to_string(),
-            description: "Get merge requests / pull requests from configured providers."
-                .to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "state": {
-                        "type": "string",
-                        "enum": ["open", "closed", "merged", "all"],
-                        "description": "Filter by MR/PR state (default: open)"
-                    },
-                    "author": {
-                        "type": "string",
-                        "description": "Filter by author username"
-                    },
-                    "labels": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Filter by label names"
-                    },
-                    "source_branch": {
-                        "type": "string",
-                        "description": "Filter by source branch"
-                    },
-                    "target_branch": {
-                        "type": "string",
-                        "description": "Filter by target branch"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of results (default: 20)",
-                        "minimum": 1,
-                        "maximum": 100
-                    },
-                    "format": {
-                        "type": "string",
-                        "enum": ["markdown", "compact", "json"],
-                        "description": "Output format (default: markdown)"
-                    }
-                }
-            }),
-        });
-
-        tools.push(ToolDefinition {
-            name: "get_merge_request".to_string(),
-            description:
-                "Get a single merge request / pull request by key (e.g., 'pr#123', 'mr#456')."
-                    .to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "required": ["key"],
-                "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "MR/PR key (e.g., 'pr#123' for GitHub, 'mr#456' for GitLab)"
-                    },
-                    "format": {
-                        "type": "string",
-                        "enum": ["markdown", "compact", "json"],
-                        "description": "Output format (default: markdown)"
-                    }
-                }
-            }),
-        });
-
-        tools.push(ToolDefinition {
-            name: "get_merge_request_discussions".to_string(),
-            description: "Get discussions/review comments for a merge request. Includes code review threads with positions.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "required": ["key"],
-                "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "MR/PR key (e.g., 'pr#123')"
-                    },
-                    "format": {
-                        "type": "string",
-                        "enum": ["markdown", "compact", "json"],
-                        "description": "Output format (default: markdown)"
-                    }
-                }
-            }),
-        });
-
-        tools.push(ToolDefinition {
-            name: "get_merge_request_diffs".to_string(),
-            description:
-                "Get file diffs for a merge request. Shows changed files with additions/deletions."
-                    .to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "required": ["key"],
-                "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "MR/PR key (e.g., 'pr#123')"
-                    },
-                    "format": {
-                        "type": "string",
-                        "enum": ["markdown", "compact", "json"],
-                        "description": "Output format (default: markdown)"
-                    }
-                }
-            }),
-        });
-
-        tools.push(ToolDefinition {
-            name: "create_merge_request".to_string(),
-            description: "Create a new merge request (GitLab) or pull request (GitHub).".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "required": ["title", "source_branch", "target_branch"],
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "MR/PR title"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "MR/PR description/body"
-                    },
-                    "source_branch": {
-                        "type": "string",
-                        "description": "Source branch (head branch with changes)"
-                    },
-                    "target_branch": {
-                        "type": "string",
-                        "description": "Target branch (base branch to merge into)"
-                    },
-                    "draft": {
-                        "type": "boolean",
-                        "description": "Create as draft/WIP (default: false)"
-                    },
-                    "labels": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Labels to add"
-                    },
-                    "reviewers": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Reviewer usernames"
-                    },
-                    "provider": {
-                        "type": "string",
-                        "enum": ["github", "gitlab"],
-                        "description": "Target provider. If not specified, uses the first configured provider."
-                    }
-                }
-            }),
-        });
-
-        tools.push(ToolDefinition {
-            name: "create_merge_request_comment".to_string(),
-            description: "Add a comment to a merge request. Can be a general comment or an inline code review comment.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "required": ["key", "body"],
-                "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "MR/PR key (e.g., 'pr#123')"
-                    },
-                    "body": {
-                        "type": "string",
-                        "description": "Comment text"
-                    },
-                    "file_path": {
-                        "type": "string",
-                        "description": "File path for inline comment (optional)"
-                    },
-                    "line": {
-                        "type": "integer",
-                        "description": "Line number for inline comment (required if file_path is set)"
-                    },
-                    "line_type": {
-                        "type": "string",
-                        "enum": ["old", "new"],
-                        "description": "Line type: 'old' for deleted line, 'new' for added line (default: new)"
-                    },
-                    "commit_sha": {
-                        "type": "string",
-                        "description": "Commit SHA for inline comment (required for GitHub)"
-                    },
-                    "discussion_id": {
-                        "type": "string",
-                        "description": "Reply to existing discussion (optional)"
-                    }
-                }
-            }),
-        });
-
-        tools
-    }
-
-    /// Execute a tool by name with arguments.
-    pub async fn execute(&self, name: &str, arguments: Option<Value>) -> ToolCallResult {
-        match name {
-            // Issues
-            "get_issues" => self.handle_get_issues(arguments).await,
-            "get_issue" => self.handle_get_issue(arguments).await,
-            "get_issue_comments" => self.handle_get_issue_comments(arguments).await,
-            "create_issue" => self.handle_create_issue(arguments).await,
-            "update_issue" => self.handle_update_issue(arguments).await,
-            "add_issue_comment" => self.handle_add_issue_comment(arguments).await,
-            // Merge Requests
-            "get_merge_requests" => self.handle_get_merge_requests(arguments).await,
-            "get_merge_request" => self.handle_get_merge_request(arguments).await,
-            "get_merge_request_discussions" => {
-                self.handle_get_merge_request_discussions(arguments).await
-            }
-            "get_merge_request_diffs" => self.handle_get_merge_request_diffs(arguments).await,
-            "create_merge_request" => self.handle_create_merge_request(arguments).await,
-            "create_merge_request_comment" => {
-                self.handle_create_merge_request_comment(arguments).await
-            }
-            _ => ToolCallResult::error(format!("Unknown tool: {}", name)),
-        }
     }
 
     // =========================================================================

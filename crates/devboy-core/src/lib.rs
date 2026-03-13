@@ -42,6 +42,6 @@ pub use types::{
 
 // Re-export config types
 pub use config::{
-    ClickUpConfig, Config, ContextConfig, GitHubConfig, GitLabConfig, JiraConfig,
-    ProxyMcpServerConfig,
+    BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, GitHubConfig, GitLabConfig,
+    JiraConfig, ProxyMcpServerConfig,
 };
