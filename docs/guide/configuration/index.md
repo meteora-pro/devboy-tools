@@ -46,6 +46,66 @@ devboy config set-secret github.token <token>
 devboy config set-secret gitlab.token <token>
 ```
 
+## Built-in tools
+
+By default all built-in tools are enabled. You can disable specific tools to reduce LLM context size — disabled tools won't appear in `tools/list` and won't consume tokens.
+
+DevBoy uses a **blacklist** approach: all tools are enabled by default, and you explicitly disable the ones you don't need. This means any new tools added in future versions will be available automatically.
+
+### Configuration
+
+```toml
+[builtin_tools]
+disabled = ["create_issue", "update_issue", "add_issue_comment"]
+```
+
+### CLI commands
+
+```bash
+# Interactive mode — toggle tools with checkboxes
+devboy tools
+
+# List all tools with their status
+devboy tools list
+
+# Disable specific tools
+devboy tools disable create_issue update_issue
+
+# Re-enable specific tools
+devboy tools enable create_issue
+
+# Reset all filtering (re-enable everything)
+devboy tools reset
+
+# Call a built-in tool directly
+devboy tools call list_contexts
+devboy tools call get_issues '{"state":"open","limit":5}'
+```
+
+### Available built-in tools
+
+| Tool | Description |
+|------|-------------|
+| `get_issues` | List issues |
+| `get_issue` | Get issue details |
+| `get_issue_comments` | Get issue comments |
+| `create_issue` | Create a new issue |
+| `update_issue` | Update an issue |
+| `add_issue_comment` | Add comment to issue |
+| `get_merge_requests` | List merge requests |
+| `get_merge_request` | Get MR details |
+| `get_merge_request_discussions` | Get MR discussions |
+| `get_merge_request_diffs` | Get MR diffs |
+| `create_merge_request` | Create a new MR |
+| `create_merge_request_comment` | Add comment to MR |
+| `list_contexts` | List available contexts |
+| `use_context` | Switch active context |
+| `get_current_context` | Get current context |
+
+:::tip
+Proxy tools from upstream MCP servers are **not** affected by builtin_tools filtering.
+:::
+
 ## MCP proxy
 
 You can proxy tools from upstream MCP servers through DevBoy. See [MCP proxy](./proxy) for details.
@@ -82,4 +142,18 @@ devboy proxy tools
 
 # Call a proxied tool
 devboy proxy call <tool_name> [args_json]
+
+# Manage built-in tools (interactive mode)
+devboy tools
+
+# List tools with status
+devboy tools list
+
+# Disable/enable/reset tools
+devboy tools disable <names...>
+devboy tools enable <names...>
+devboy tools reset
+
+# Call a built-in tool directly
+devboy tools call <name> [args_json]
 ```

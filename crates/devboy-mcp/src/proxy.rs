@@ -488,6 +488,13 @@ impl ProxyManager {
             .collect()
     }
 
+    /// Check whether a tool name belongs to a proxied upstream.
+    pub fn has_tool(&self, tool_name: &str) -> bool {
+        self.clients
+            .iter()
+            .any(|c| tool_name.starts_with(&format!("{}__", c.prefix())))
+    }
+
     /// Try to route a tool call to the matching upstream.
     /// Returns None if no upstream matches the tool name prefix.
     pub async fn try_call(
