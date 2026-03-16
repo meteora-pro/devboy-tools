@@ -2,7 +2,21 @@
 
 This guide will help you get DevBoy tools up and running in minutes.
 
-## Step 1: Choose your provider
+## Step 1: Initialize your project
+
+The fastest way to get started is using the interactive init command:
+
+```bash
+devboy init
+```
+
+This will guide you through selecting providers and configuring them. For more details, see [Project initialization](./init).
+
+### Alternative: Manual configuration
+
+If you prefer manual setup, follow the steps below.
+
+## Step 2: Choose your provider
 
 DevBoy tools supports GitHub, GitLab, ClickUp, and Jira. Pick the one your project uses.
 
@@ -79,8 +93,16 @@ devboy mrs
 
 ### Claude Code (CLI)
 
+The easiest way is to use the init command with `--claude` flag:
+
 ```bash
-claude mcp add devboy -- /path/to/devboy mcp
+devboy init --claude
+```
+
+Or register manually:
+
+```bash
+claude mcp add devboy -- devboy mcp
 ```
 
 Verify the integration:
