@@ -453,6 +453,7 @@ fn test_init_with_proxy_token() {
             "--proxy-token",
             "secret-token-value",
         ])
+        .env("DEVBOY_SKIP_KEYCHAIN", "1") // Skip real keychain for CI
         .current_dir(temp_dir.path())
         .output()
         .expect("Failed to execute command");

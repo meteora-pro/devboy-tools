@@ -20,7 +20,7 @@ use devboy_mcp::{
     JsonRpcRequest, McpProxyClient, McpServer, ProxyManager, ProxyTransport, RequestId,
     JSONRPC_VERSION, KNOWN_BUILTIN_TOOLS,
 };
-use devboy_storage::{CredentialStore, KeychainStore};
+use devboy_storage::{CredentialStore, KeychainStore, MemoryStore};
 use dialoguer::{Confirm, Input, MultiSelect, Password};
 use tracing_subscriber::EnvFilter;
 
@@ -263,6 +263,23 @@ enum ToolsCommands {
     },
 }
 
+/// Environment variable to skip keychain operations (for CI testing).
+/// When set to "1" or "true", uses in-memory store instead of OS keychain.
+const SKIP_KEYCHAIN_ENV: &str = "DEVBOY_SKIP_KEYCHAIN";
+
+/// Get credential store, using MemoryStore if DEVBOY_SKIP_KEYCHAIN is set.
+/// This allows integration tests to run without OS keychain access.
+fn get_credential_store() -> Box<dyn CredentialStore> {
+    if std::env::var(SKIP_KEYCHAIN_ENV)
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false)
+    {
+        Box::new(MemoryStore::new())
+    } else {
+        Box::new(KeychainStore::new())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -493,7 +510,7 @@ async fn handle_init_command(
 
     // Store tokens in keychain
     if !options.tokens.is_empty() {
-        let store = KeychainStore::new();
+        let store = get_credential_store();
         for (key, value) in &options.tokens {
             store
                 .store(key, value)
@@ -767,7 +784,7 @@ fn configure_jira_interactive() -> Result<JiraConfig> {
 
 fn prompt_token(provider_name: &str, key_name: &str) -> Result<Option<String>> {
     // Check if token already exists
-    let store = KeychainStore::new();
+    let store = get_credential_store();
     if store.exists(key_name) {
         let overwrite = Confirm::new()
             .with_prompt(format!(
@@ -1027,7 +1044,7 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
         }
 
         ConfigCommands::SetSecret { key, value } => {
-            let store = KeychainStore::new();
+            let store = get_credential_store();
             store
                 .store(&key, &value)
                 .context("Failed to store secret")?;
@@ -1043,7 +1060,7 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
             }
 
             // Then try keychain
-            let store = KeychainStore::new();
+            let store = get_credential_store();
             if let Some(value) = store.get(&key).ok().flatten() {
                 println!("{} (from keychain)", mask_secret(&value));
                 return Ok(());
@@ -1054,7 +1071,7 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
 
         ConfigCommands::List => {
             let config = Config::load().context("Failed to load config")?;
-            let store = KeychainStore::new();
+            let store = get_credential_store();
 
             println!("Configuration:");
             println!();
@@ -1205,7 +1222,7 @@ fn handle_context_command(command: ContextCommands) -> Result<()> {
 
 async fn handle_issues_command(state: &str, limit: u32) -> Result<()> {
     let config = Config::load().context("Failed to load config")?;
-    let store = KeychainStore::new();
+    let store = get_credential_store();
 
     if let Some(gh) = &config.github {
         let token = store
@@ -1254,7 +1271,7 @@ async fn handle_issues_command(state: &str, limit: u32) -> Result<()> {
 
 async fn handle_mrs_command(state: &str, limit: u32) -> Result<()> {
     let config = Config::load().context("Failed to load config")?;
-    let store = KeychainStore::new();
+    let store = get_credential_store();
 
     if let Some(gh) = &config.github {
         let token = store
@@ -1308,7 +1325,7 @@ async fn handle_mrs_command(state: &str, limit: u32) -> Result<()> {
 
 async fn handle_test_command(provider: &str) -> Result<()> {
     let config = Config::load().context("Failed to load config")?;
-    let store = KeychainStore::new();
+    let store = get_credential_store();
 
     match provider {
         "github" => {
@@ -1485,7 +1502,7 @@ async fn handle_test_command(provider: &str) -> Result<()> {
 
 async fn handle_mcp_command() -> Result<()> {
     let (config, config_path) = load_runtime_config()?;
-    let store = KeychainStore::new();
+    let store = get_credential_store();
 
     let mut server = McpServer::new();
 
@@ -1502,7 +1519,8 @@ async fn handle_mcp_command() -> Result<()> {
     // Add configured named contexts.
     for (context_name, context) in &config.contexts {
         server.ensure_context(context_name);
-        any_provider_added |= add_context_providers(&mut server, &store, context_name, context);
+        any_provider_added |=
+            add_context_providers(&mut server, store.as_ref(), context_name, context);
     }
 
     // Backward-compatible implicit default context from top-level provider fields.
@@ -1511,7 +1529,7 @@ async fn handle_mcp_command() -> Result<()> {
         if let Some(default_context) = config.legacy_default_context() {
             any_provider_added |= add_context_providers(
                 &mut server,
-                &store,
+                store.as_ref(),
                 Config::DEFAULT_CONTEXT_NAME,
                 &default_context,
             );
@@ -1529,7 +1547,7 @@ async fn handle_mcp_command() -> Result<()> {
 
     // Connect to upstream MCP proxy servers (if configured).
     if !config.proxy_mcp_servers.is_empty() {
-        let mut proxy_manager = build_proxy_manager(&config, &store).await;
+        let mut proxy_manager = build_proxy_manager(&config, store.as_ref()).await;
         if !proxy_manager.is_empty() {
             if let Err(e) = proxy_manager.fetch_all_tools().await {
                 tracing::warn!("Failed to fetch proxy tools: {}", e);
@@ -1583,7 +1601,7 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
     }
 
     let (config, _) = load_runtime_config()?;
-    let store = KeychainStore::new();
+    let store = get_credential_store();
 
     if config.proxy_mcp_servers.is_empty() {
         println!("No proxy MCP servers configured.");
@@ -1598,7 +1616,7 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
         return Ok(());
     }
 
-    let mut proxy_manager = build_proxy_manager(&config, &store).await;
+    let mut proxy_manager = build_proxy_manager(&config, store.as_ref()).await;
 
     if proxy_manager.is_empty() {
         eprintln!("Could not connect to any upstream MCP server.");
@@ -1712,7 +1730,7 @@ fn handle_proxy_add(
     // Store token in keychain if provided
     if let Some(token_value) = token {
         let key = final_token_key.as_ref().unwrap();
-        let store = KeychainStore::new();
+        let store = get_credential_store();
         store
             .store(key, &token_value)
             .with_context(|| format!("Failed to store token in keychain as '{}'", key))?;
@@ -1752,7 +1770,7 @@ fn handle_proxy_remove(name: &str) -> Result<()> {
     Ok(())
 }
 
-async fn build_proxy_manager(config: &Config, store: &KeychainStore) -> ProxyManager {
+async fn build_proxy_manager(config: &Config, store: &dyn CredentialStore) -> ProxyManager {
     let mut proxy_manager = ProxyManager::new();
     for proxy_cfg in &config.proxy_mcp_servers {
         let token = proxy_cfg
@@ -1793,7 +1811,7 @@ async fn build_proxy_manager(config: &Config, store: &KeychainStore) -> ProxyMan
 }
 
 fn get_token_for_context(
-    store: &KeychainStore,
+    store: &dyn CredentialStore,
     context_name: &str,
     provider: &str,
 ) -> Option<String> {
@@ -1807,7 +1825,7 @@ fn get_token_for_context(
 
 fn add_context_providers(
     server: &mut McpServer,
-    store: &KeychainStore,
+    store: &dyn CredentialStore,
     context_name: &str,
     context: &ContextConfig,
 ) -> bool {
@@ -2078,7 +2096,7 @@ async fn handle_tools_call(name: &str, args: &str) -> Result<()> {
         serde_json::from_str(args).context("Invalid JSON arguments")?;
 
     let (config, _) = load_runtime_config()?;
-    let store = KeychainStore::new();
+    let store = get_credential_store();
 
     let mut server = McpServer::new();
 
@@ -2092,13 +2110,13 @@ async fn handle_tools_call(name: &str, args: &str) -> Result<()> {
     // Add providers (same as handle_mcp_command)
     for (context_name, context) in &config.contexts {
         server.ensure_context(context_name);
-        add_context_providers(&mut server, &store, context_name, context);
+        add_context_providers(&mut server, store.as_ref(), context_name, context);
     }
     if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME) {
         if let Some(default_context) = config.legacy_default_context() {
             add_context_providers(
                 &mut server,
-                &store,
+                store.as_ref(),
                 Config::DEFAULT_CONTEXT_NAME,
                 &default_context,
             );
