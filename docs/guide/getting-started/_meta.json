@@ -6,6 +6,11 @@
   },
   {
     "type": "file",
+    "name": "init",
+    "label": "Project initialization"
+  },
+  {
+    "type": "file",
     "name": "quick-start",
     "label": "Quick start"
   }
