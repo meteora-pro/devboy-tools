@@ -366,6 +366,7 @@ struct InitOptions {
     proxy: Option<ProxyMcpServerConfig>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_init_command(
     yes: bool,
     dry_run: bool,
