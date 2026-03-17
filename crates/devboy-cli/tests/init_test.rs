@@ -471,10 +471,7 @@ fn test_init_with_proxy_token() {
         content.contains("proxy.my-server.token"),
         "Should contain auto-generated token key"
     );
-    assert!(
-        content.contains("bearer"),
-        "Should have bearer auth type"
-    );
+    assert!(content.contains("bearer"), "Should have bearer auth type");
 }
 
 #[test]
@@ -500,10 +497,7 @@ fn test_init_with_proxy_auth_type() {
     assert!(output.status.success(), "Command should succeed");
 
     let content = fs::read_to_string(&config_path).unwrap();
-    assert!(
-        content.contains("api_key"),
-        "Should have api_key auth type"
-    );
+    assert!(content.contains("api_key"), "Should have api_key auth type");
 }
 
 #[test]
@@ -539,10 +533,7 @@ fn test_proxy_add_creates_config() {
         content.contains("[[proxy_mcp_servers]]"),
         "Should contain proxy section"
     );
-    assert!(
-        content.contains("my-server"),
-        "Should contain proxy name"
-    );
+    assert!(content.contains("my-server"), "Should contain proxy name");
 }
 
 #[test]
@@ -572,7 +563,10 @@ fn test_proxy_add_with_all_options() {
     assert!(output.status.success(), "Command should succeed");
 
     let content = fs::read_to_string(&config_path).unwrap();
-    assert!(content.contains("custom-proxy"), "Should contain proxy name");
+    assert!(
+        content.contains("custom-proxy"),
+        "Should contain proxy name"
+    );
     assert!(
         content.contains("https://custom.example.com/mcp"),
         "Should contain URL"
@@ -648,11 +642,11 @@ transport = "sse"
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    assert!(output.status.success(), "Command should succeed with --force");
     assert!(
-        stdout.contains("Overwriting"),
-        "Should mention overwriting"
+        output.status.success(),
+        "Command should succeed with --force"
     );
+    assert!(stdout.contains("Overwriting"), "Should mention overwriting");
 
     let content = fs::read_to_string(&config_path).unwrap();
     assert!(
