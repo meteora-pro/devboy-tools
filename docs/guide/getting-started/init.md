@@ -38,6 +38,7 @@ This automatically detects your Git provider from the `origin` remote and create
 | `--claude` | | Register devboy as MCP server in Claude Code |
 | `--context` | `-c` | Specify context name (default: directory name) |
 | `--proxy` | | Add MCP proxy server URL |
+| `--proxy-only` | | Only configure proxy, skip git remote auto-detection (requires `--proxy`) |
 | `--proxy-name` | | Proxy server name (default: "proxy", requires `--proxy`) |
 | `--proxy-transport` | | Transport type: "streamable-http" or "sse" (default: "streamable-http", requires `--proxy`) |
 | `--proxy-token` | | Proxy token value (stored in keychain automatically, requires `--proxy`) |
@@ -106,6 +107,21 @@ devboy init --yes \
   --proxy-token "your-token-here" \
   --proxy-token-key "my.custom.key"
 ```
+
+### Initialize with proxy only (no Git provider)
+
+If you only want to configure a proxy server without auto-detecting Git remotes:
+
+```bash
+devboy init --yes \
+  --proxy "https://mcp.example.com/api" \
+  --proxy-only \
+  --proxy-name my-server \
+  --proxy-token "your-token-here" \
+  --claude
+```
+
+This skips Git remote detection and creates a minimal config with only the proxy server configured.
 
 See [MCP proxy](../configuration/proxy) for more details on proxy configuration.
 

@@ -106,6 +106,10 @@ enum Commands {
         #[arg(long)]
         proxy: Option<String>,
 
+        /// Only configure proxy, skip git remote auto-detection
+        #[arg(long, requires = "proxy")]
+        proxy_only: bool,
+
         /// Proxy server name (default: "proxy")
         #[arg(long, requires = "proxy")]
         proxy_name: Option<String>,
@@ -352,6 +356,7 @@ async fn main() -> Result<()> {
             claude,
             context,
             proxy,
+            proxy_only,
             proxy_name,
             proxy_transport,
             proxy_token_key,
@@ -365,6 +370,7 @@ async fn main() -> Result<()> {
                 claude,
                 context,
                 proxy,
+                proxy_only,
                 proxy_name,
                 proxy_transport,
                 proxy_token_key,
@@ -442,6 +448,7 @@ async fn handle_init_command(
     claude: bool,
     context_name: Option<String>,
     proxy_url: Option<String>,
+    proxy_only: bool,
     proxy_name: Option<String>,
     proxy_transport: Option<TransportType>,
     proxy_token_key: Option<String>,
@@ -475,7 +482,19 @@ async fn handle_init_command(
     }
 
     // Collect options
-    let mut options = if yes {
+    let mut options = if proxy_only {
+        // Skip git remote detection, create minimal config with just proxy
+        let ctx_name = context_name.unwrap_or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
+                .unwrap_or_else(|| "default".to_string())
+        });
+        InitOptions {
+            context_name: Some(ctx_name),
+            ..Default::default()
+        }
+    } else if yes {
         collect_options_auto(context_name)?
     } else {
         collect_options_interactive(context_name)?
