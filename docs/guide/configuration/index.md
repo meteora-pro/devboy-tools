@@ -113,7 +113,7 @@ You can proxy tools from upstream MCP servers through DevBoy. See [MCP proxy](./
 ```toml
 [[proxy_mcp_servers]]
 name = "devboy-cloud"
-url = "https://app.devboy.pro/api/mcp?name=my-project"
+url = "https://mcp.example.com/api"
 auth_type = "bearer"
 token_key = "devboy-cloud.token"
 transport = "streamable-http"
