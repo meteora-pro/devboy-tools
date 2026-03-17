@@ -502,6 +502,56 @@ fn test_init_with_proxy_auth_type() {
 }
 
 #[test]
+fn test_init_with_proxy_only_skips_git_detection() {
+    // Create a git repo with GitHub remote - but with --proxy-only it should NOT be added
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "init",
+            "--yes",
+            "--proxy",
+            "https://example.com/mcp",
+            "--proxy-only",
+            "--proxy-name",
+            "my-server",
+        ])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "Command should succeed");
+    // Should NOT detect GitHub
+    assert!(
+        !stdout.contains("Detected GitHub"),
+        "Should NOT detect GitHub when --proxy-only is used"
+    );
+
+    let content = fs::read_to_string(&config_path).unwrap();
+    // Should have proxy config
+    assert!(
+        content.contains("my-server"),
+        "Should contain proxy server name"
+    );
+    assert!(
+        content.contains("https://example.com/mcp"),
+        "Should contain proxy URL"
+    );
+    // Should NOT have GitHub config
+    assert!(
+        !content.contains("[contexts.") || !content.contains(".github]"),
+        "Should NOT contain github config section"
+    );
+    assert!(
+        !content.contains("owner = "),
+        "Should NOT contain github owner"
+    );
+}
+
+#[test]
 fn test_proxy_add_creates_config() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join(".devboy.toml");
