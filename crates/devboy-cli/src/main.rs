@@ -596,7 +596,13 @@ async fn handle_init_command(
 
     // Register with Claude Code
     if claude {
-        register_claude_mcp().await?;
+        // Use proxy_name if provided, otherwise default to "devboy"
+        let server_name = options
+            .proxy
+            .as_ref()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "devboy".to_string());
+        register_claude_mcp(&server_name).await?;
     }
 
     println!();
@@ -1029,12 +1035,15 @@ fn create_backup(path: &PathBuf) -> Result<PathBuf> {
 }
 
 /// Register devboy as MCP server in Claude Code.
-async fn register_claude_mcp() -> Result<()> {
-    println!("Registering devboy MCP server in Claude Code...");
+///
+/// # Arguments
+/// * `server_name` - Name to register the MCP server as (e.g., "devboy", "my-custom-server")
+async fn register_claude_mcp(server_name: &str) -> Result<()> {
+    println!("Registering '{}' MCP server in Claude Code...", server_name);
 
     // Try using claude CLI first
     let claude_result = Command::new("claude")
-        .args(["mcp", "add", "devboy", "--", "devboy", "mcp"])
+        .args(["mcp", "add", server_name, "--", "devboy", "mcp"])
         .status();
 
     match claude_result {
@@ -1044,7 +1053,7 @@ async fn register_claude_mcp() -> Result<()> {
         }
         _ => {
             // Fall back to editing ~/.claude.json directly
-            register_claude_mcp_direct()?;
+            register_claude_mcp_direct(server_name)?;
         }
     }
 
@@ -1052,7 +1061,10 @@ async fn register_claude_mcp() -> Result<()> {
 }
 
 /// Register devboy MCP server by editing ~/.claude.json directly.
-fn register_claude_mcp_direct() -> Result<()> {
+///
+/// # Arguments
+/// * `server_name` - Name to register the MCP server as (e.g., "devboy", "my-custom-server")
+fn register_claude_mcp_direct(server_name: &str) -> Result<()> {
     let home = dirs::home_dir().context("Could not determine home directory")?;
     let claude_config_path = home.join(".claude.json");
 
@@ -1088,8 +1100,8 @@ fn register_claude_mcp_direct() -> Result<()> {
         _ => {}
     }
 
-    // Add devboy server
-    claude_config["mcpServers"]["devboy"] = serde_json::json!({
+    // Add server with the specified name
+    claude_config["mcpServers"][server_name] = serde_json::json!({
         "command": "devboy",
         "args": ["mcp"]
     });
@@ -2654,5 +2666,186 @@ mod tests {
         // Check proxy
         assert_eq!(config.proxy_mcp_servers.len(), 1);
         assert_eq!(config.proxy_mcp_servers[0].name, "devboy-cloud");
+    }
+
+    // ==========================================================================
+    // Claude MCP registration tests
+    // ==========================================================================
+
+    /// Helper to create a test claude.json config in a temp directory
+    fn create_test_claude_config(content: &str) -> tempfile::TempDir {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let claude_json = tmp_dir.path().join(".claude.json");
+        std::fs::write(&claude_json, content).unwrap();
+        tmp_dir
+    }
+
+    /// Register MCP server using a custom home directory for testing
+    fn register_claude_mcp_direct_with_home(
+        server_name: &str,
+        home: &std::path::Path,
+    ) -> Result<()> {
+        let claude_config_path = home.join(".claude.json");
+
+        let mut claude_config: serde_json::Value = if claude_config_path.exists() {
+            let content = std::fs::read_to_string(&claude_config_path)
+                .context("Failed to read ~/.claude.json")?;
+            let parsed: serde_json::Value =
+                serde_json::from_str(&content).context("Failed to parse ~/.claude.json")?;
+
+            if !parsed.is_object() {
+                anyhow::bail!(
+                    "~/.claude.json exists but is not a JSON object. \
+                     Please fix it manually or delete it."
+                );
+            }
+            parsed
+        } else {
+            serde_json::json!({})
+        };
+
+        match claude_config.get("mcpServers") {
+            Some(servers) if !servers.is_object() => {
+                anyhow::bail!(
+                    "~/.claude.json has 'mcpServers' but it's not an object. \
+                     Please fix it manually."
+                );
+            }
+            None => {
+                claude_config["mcpServers"] = serde_json::json!({});
+            }
+            _ => {}
+        }
+
+        claude_config["mcpServers"][server_name] = serde_json::json!({
+            "command": "devboy",
+            "args": ["mcp"]
+        });
+
+        let content = serde_json::to_string_pretty(&claude_config)
+            .context("Failed to serialize claude config")?;
+        std::fs::write(&claude_config_path, content).context("Failed to write ~/.claude.json")?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_register_claude_mcp_default_name() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+
+        register_claude_mcp_direct_with_home("devboy", tmp_dir.path()).unwrap();
+
+        let content = std::fs::read_to_string(tmp_dir.path().join(".claude.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert!(config["mcpServers"]["devboy"].is_object());
+        assert_eq!(config["mcpServers"]["devboy"]["command"], "devboy");
+        assert_eq!(config["mcpServers"]["devboy"]["args"][0], "mcp");
+    }
+
+    #[test]
+    fn test_register_claude_mcp_custom_name() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+
+        register_claude_mcp_direct_with_home("my-custom-server", tmp_dir.path()).unwrap();
+
+        let content = std::fs::read_to_string(tmp_dir.path().join(".claude.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // Should be registered under custom name, not "devboy"
+        assert!(config["mcpServers"]["devboy"].is_null());
+        assert!(config["mcpServers"]["my-custom-server"].is_object());
+        assert_eq!(
+            config["mcpServers"]["my-custom-server"]["command"],
+            "devboy"
+        );
+        assert_eq!(config["mcpServers"]["my-custom-server"]["args"][0], "mcp");
+    }
+
+    #[test]
+    fn test_register_claude_mcp_preserves_existing_servers() {
+        let tmp_dir = create_test_claude_config(
+            r#"{
+            "mcpServers": {
+                "existing-server": {
+                    "command": "some-cmd",
+                    "args": ["arg1"]
+                }
+            }
+        }"#,
+        );
+
+        register_claude_mcp_direct_with_home("my-proxy", tmp_dir.path()).unwrap();
+
+        let content = std::fs::read_to_string(tmp_dir.path().join(".claude.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // Existing server should be preserved
+        assert!(config["mcpServers"]["existing-server"].is_object());
+        assert_eq!(
+            config["mcpServers"]["existing-server"]["command"],
+            "some-cmd"
+        );
+
+        // New server should be added
+        assert!(config["mcpServers"]["my-proxy"].is_object());
+        assert_eq!(config["mcpServers"]["my-proxy"]["command"], "devboy");
+    }
+
+    #[test]
+    fn test_register_claude_mcp_creates_mcp_servers_section() {
+        let tmp_dir = create_test_claude_config(r#"{"someOtherKey": "value"}"#);
+
+        register_claude_mcp_direct_with_home("devboy", tmp_dir.path()).unwrap();
+
+        let content = std::fs::read_to_string(tmp_dir.path().join(".claude.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // Original key should be preserved
+        assert_eq!(config["someOtherKey"], "value");
+
+        // mcpServers should be created
+        assert!(config["mcpServers"]["devboy"].is_object());
+    }
+
+    #[test]
+    fn test_register_claude_mcp_creates_file_if_not_exists() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let claude_json = tmp_dir.path().join(".claude.json");
+
+        // File should not exist initially
+        assert!(!claude_json.exists());
+
+        register_claude_mcp_direct_with_home("devboy", tmp_dir.path()).unwrap();
+
+        // File should now exist
+        assert!(claude_json.exists());
+
+        let content = std::fs::read_to_string(&claude_json).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(config["mcpServers"]["devboy"].is_object());
+    }
+
+    #[test]
+    fn test_register_claude_mcp_fails_on_non_object_root() {
+        let tmp_dir = create_test_claude_config(r#"[]"#);
+
+        let result = register_claude_mcp_direct_with_home("devboy", tmp_dir.path());
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not a JSON object"));
+    }
+
+    #[test]
+    fn test_register_claude_mcp_fails_on_non_object_mcp_servers() {
+        let tmp_dir = create_test_claude_config(r#"{"mcpServers": "invalid"}"#);
+
+        let result = register_claude_mcp_direct_with_home("devboy", tmp_dir.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not an object"));
     }
 }
