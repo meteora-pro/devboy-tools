@@ -1,14 +1,16 @@
 //! DevBoy CLI - Command-line interface for devboy-tools.
 
+use std::io::{self, IsTerminal};
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use devboy_clickup::ClickUpClient;
 use devboy_core::{
-    BuiltinToolsConfig, Config, ContextConfig, IssueFilter, IssueProvider, MergeRequestProvider,
-    MrFilter, Provider,
+    BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, GitHubConfig, GitLabConfig,
+    IssueFilter, IssueProvider, JiraConfig, MergeRequestProvider, MrFilter, Provider,
 };
 use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
@@ -18,7 +20,7 @@ use devboy_mcp::{
     JSONRPC_VERSION, KNOWN_BUILTIN_TOOLS,
 };
 use devboy_storage::{CredentialStore, KeychainStore};
-use dialoguer::MultiSelect;
+use dialoguer::{Confirm, Input, MultiSelect, Password};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -35,6 +37,29 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Initialize a new .devboy.toml configuration file
+    Init {
+        /// Skip prompts and use defaults (required in non-TTY environments)
+        #[arg(short, long)]
+        yes: bool,
+
+        /// Show what would be done without making changes
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Overwrite existing config (creates timestamped backup)
+        #[arg(short, long)]
+        force: bool,
+
+        /// Register devboy as MCP server in Claude Code
+        #[arg(long)]
+        claude: bool,
+
+        /// Context name for the configuration
+        #[arg(short, long)]
+        context: Option<String>,
+    },
+
     /// Start the MCP server (stdio mode for AI assistants)
     Mcp,
 
@@ -190,6 +215,16 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     match cli.command {
+        Some(Commands::Init {
+            yes,
+            dry_run,
+            force,
+            claude,
+            context,
+        }) => {
+            handle_init_command(yes, dry_run, force, claude, context).await?;
+        }
+
         Some(Commands::Mcp) => {
             handle_mcp_command().await?;
         }
@@ -228,6 +263,619 @@ async fn main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+// =============================================================================
+// Init Command
+// =============================================================================
+
+/// Output path for the configuration file.
+const INIT_CONFIG_FILE: &str = ".devboy.toml";
+
+/// Options collected during init.
+#[derive(Debug, Default)]
+struct InitOptions {
+    context_name: Option<String>,
+    github: Option<GitHubConfig>,
+    gitlab: Option<GitLabConfig>,
+    clickup: Option<ClickUpConfig>,
+    jira: Option<JiraConfig>,
+    tokens: Vec<(String, String)>, // (key, value) pairs for keychain
+}
+
+async fn handle_init_command(
+    yes: bool,
+    dry_run: bool,
+    force: bool,
+    claude: bool,
+    context_name: Option<String>,
+) -> Result<()> {
+    let config_path = PathBuf::from(INIT_CONFIG_FILE);
+    let is_tty = io::stdin().is_terminal();
+
+    // Check TTY requirement for interactive mode
+    if !yes && !is_tty {
+        anyhow::bail!(
+            "Non-interactive environment detected. Use --yes flag for non-interactive mode."
+        );
+    }
+
+    // Check for existing config
+    if config_path.exists() && !force {
+        if dry_run {
+            println!(
+                "[dry-run] Config file already exists: {}",
+                config_path.display()
+            );
+            println!("[dry-run] Use --force to overwrite (will create backup)");
+            return Ok(());
+        }
+        anyhow::bail!(
+            "Config file already exists: {}\nUse --force to overwrite (will create backup)",
+            config_path.display()
+        );
+    }
+
+    // Collect options
+    let options = if yes {
+        collect_options_auto(context_name)?
+    } else {
+        collect_options_interactive(context_name)?
+    };
+
+    // Build configuration
+    let config = build_config(&options);
+    let toml_content =
+        toml::to_string_pretty(&config).context("Failed to serialize configuration")?;
+
+    // Dry-run mode: just print what would be done
+    if dry_run {
+        println!("[dry-run] Would create: {}", config_path.display());
+        println!();
+        println!("{}", toml_content);
+
+        if !options.tokens.is_empty() {
+            println!();
+            println!(
+                "[dry-run] Would store {} token(s) in keychain:",
+                options.tokens.len()
+            );
+            for (key, _) in &options.tokens {
+                println!("  - {}", key);
+            }
+        }
+
+        if claude {
+            println!();
+            println!("[dry-run] Would register devboy MCP server in Claude Code");
+        }
+
+        return Ok(());
+    }
+
+    // Create backup if forcing overwrite
+    if config_path.exists() && force {
+        let backup_path = create_backup(&config_path)?;
+        println!("Created backup: {}", backup_path.display());
+    }
+
+    // Write configuration file
+    std::fs::write(&config_path, &toml_content).context("Failed to write configuration file")?;
+    println!("Created: {}", config_path.display());
+
+    // Store tokens in keychain
+    if !options.tokens.is_empty() {
+        let store = KeychainStore::new();
+        for (key, value) in &options.tokens {
+            store
+                .store(key, value)
+                .with_context(|| format!("Failed to store {} in keychain", key))?;
+            println!("Stored {} in keychain", key);
+        }
+    }
+
+    // Register with Claude Code
+    if claude {
+        register_claude_mcp().await?;
+    }
+
+    println!();
+    println!("Initialization complete!");
+    println!();
+    println!("Next steps:");
+    println!("  1. Review the configuration: cat {}", INIT_CONFIG_FILE);
+    println!("  2. Test connection: devboy test <provider>");
+    println!("  3. Start using: devboy mcp");
+
+    Ok(())
+}
+
+/// Collect options automatically from git remote.
+fn collect_options_auto(context_name: Option<String>) -> Result<InitOptions> {
+    // Derive context name from directory if not provided
+    let ctx_name = context_name.unwrap_or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
+            .unwrap_or_else(|| "default".to_string())
+    });
+
+    let mut options = InitOptions {
+        context_name: Some(ctx_name),
+        ..Default::default()
+    };
+
+    // Try to detect GitHub/GitLab from git remote
+    if let Some((provider, owner, repo)) = detect_git_remote() {
+        match provider.as_str() {
+            "github" => {
+                options.github = Some(GitHubConfig {
+                    owner,
+                    repo,
+                    base_url: None,
+                });
+                println!(
+                    "Detected GitHub repository: {}/{}",
+                    options.github.as_ref().unwrap().owner,
+                    options.github.as_ref().unwrap().repo
+                );
+            }
+            "gitlab" => {
+                let project_id = format!("{}/{}", owner, repo);
+                options.gitlab = Some(GitLabConfig {
+                    url: "https://gitlab.com".to_string(),
+                    project_id,
+                });
+                println!(
+                    "Detected GitLab repository: {}",
+                    options.gitlab.as_ref().unwrap().project_id
+                );
+            }
+            _ => {}
+        }
+    } else {
+        println!("No git remote detected. Creating minimal config.");
+    }
+
+    Ok(options)
+}
+
+/// Collect options interactively from user.
+fn collect_options_interactive(context_name: Option<String>) -> Result<InitOptions> {
+    let mut options = InitOptions::default();
+
+    println!("DevBoy tools configuration setup");
+    println!("================================");
+    println!();
+
+    // Context name
+    let default_context = context_name.unwrap_or_else(|| {
+        // Try to derive from directory name
+        std::env::current_dir()
+            .ok()
+            .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
+            .unwrap_or_else(|| "default".to_string())
+    });
+
+    let ctx_name: String = Input::new()
+        .with_prompt("Context name")
+        .default(default_context)
+        .interact_text()
+        .context("Failed to read context name")?;
+
+    options.context_name = Some(ctx_name.clone());
+
+    // Provider selection
+    let providers = vec!["GitHub", "GitLab", "ClickUp", "Jira"];
+    let defaults = detect_provider_defaults();
+
+    let selections = MultiSelect::new()
+        .with_prompt("Select providers to configure (Space to toggle, Enter to confirm)")
+        .items(&providers)
+        .defaults(&defaults)
+        .interact()
+        .context("Provider selection cancelled")?;
+
+    println!();
+
+    // Configure selected providers
+    for idx in selections {
+        match providers[idx] {
+            "GitHub" => {
+                options.github = Some(configure_github_interactive(&ctx_name)?);
+                if let Some(token) = prompt_token("GitHub", "github.token")? {
+                    options.tokens.push(("github.token".to_string(), token));
+                }
+            }
+            "GitLab" => {
+                options.gitlab = Some(configure_gitlab_interactive(&ctx_name)?);
+                if let Some(token) = prompt_token("GitLab", "gitlab.token")? {
+                    options.tokens.push(("gitlab.token".to_string(), token));
+                }
+            }
+            "ClickUp" => {
+                options.clickup = Some(configure_clickup_interactive()?);
+                if let Some(token) = prompt_token("ClickUp", "clickup.token")? {
+                    options.tokens.push(("clickup.token".to_string(), token));
+                }
+            }
+            "Jira" => {
+                options.jira = Some(configure_jira_interactive()?);
+                if let Some(token) = prompt_token("Jira API", "jira.token")? {
+                    options.tokens.push(("jira.token".to_string(), token));
+                }
+            }
+            _ => {}
+        }
+        println!();
+    }
+
+    Ok(options)
+}
+
+fn configure_github_interactive(_context_name: &str) -> Result<GitHubConfig> {
+    println!("GitHub Configuration");
+    println!("--------------------");
+
+    // Try to detect from git remote
+    let (default_owner, default_repo) = detect_git_remote()
+        .filter(|(p, _, _)| p == "github")
+        .map(|(_, o, r)| (o, r))
+        .unwrap_or_default();
+
+    let owner: String = Input::new()
+        .with_prompt("Repository owner")
+        .default(default_owner)
+        .interact_text()
+        .context("Failed to read owner")?;
+
+    let repo: String = Input::new()
+        .with_prompt("Repository name")
+        .default(default_repo.clone())
+        .interact_text()
+        .context("Failed to read repo")?;
+
+    let use_enterprise = Confirm::new()
+        .with_prompt("Use GitHub Enterprise?")
+        .default(false)
+        .interact()
+        .context("Failed to read enterprise choice")?;
+
+    let base_url = if use_enterprise {
+        let url: String = Input::new()
+            .with_prompt("GitHub Enterprise API URL")
+            .interact_text()
+            .context("Failed to read enterprise URL")?;
+        Some(url)
+    } else {
+        None
+    };
+
+    Ok(GitHubConfig {
+        owner,
+        repo,
+        base_url,
+    })
+}
+
+fn configure_gitlab_interactive(_context_name: &str) -> Result<GitLabConfig> {
+    println!("GitLab Configuration");
+    println!("--------------------");
+
+    // Try to detect from git remote
+    let default_project = detect_git_remote()
+        .filter(|(p, _, _)| p == "gitlab")
+        .map(|(_, o, r)| format!("{}/{}", o, r))
+        .unwrap_or_default();
+
+    let url: String = Input::new()
+        .with_prompt("GitLab URL")
+        .default("https://gitlab.com".to_string())
+        .interact_text()
+        .context("Failed to read GitLab URL")?;
+
+    let project_id: String = Input::new()
+        .with_prompt("Project ID (numeric or path like 'owner/repo')")
+        .default(default_project)
+        .interact_text()
+        .context("Failed to read project ID")?;
+
+    Ok(GitLabConfig { url, project_id })
+}
+
+fn configure_clickup_interactive() -> Result<ClickUpConfig> {
+    println!("ClickUp Configuration");
+    println!("---------------------");
+
+    let list_id: String = Input::new()
+        .with_prompt("List ID")
+        .interact_text()
+        .context("Failed to read list ID")?;
+
+    let has_team_id = Confirm::new()
+        .with_prompt("Configure Team ID? (required for custom task IDs like DEV-123)")
+        .default(true)
+        .interact()
+        .context("Failed to read team ID choice")?;
+
+    let team_id = if has_team_id {
+        let id: String = Input::new()
+            .with_prompt("Team ID")
+            .interact_text()
+            .context("Failed to read team ID")?;
+        Some(id)
+    } else {
+        None
+    };
+
+    Ok(ClickUpConfig { list_id, team_id })
+}
+
+fn configure_jira_interactive() -> Result<JiraConfig> {
+    println!("Jira Configuration");
+    println!("------------------");
+
+    let url: String = Input::new()
+        .with_prompt("Jira URL (e.g., https://company.atlassian.net)")
+        .interact_text()
+        .context("Failed to read Jira URL")?;
+
+    let project_key: String = Input::new()
+        .with_prompt("Project key (e.g., PROJ)")
+        .interact_text()
+        .context("Failed to read project key")?;
+
+    let email: String = Input::new()
+        .with_prompt("Your email (for authentication)")
+        .interact_text()
+        .context("Failed to read email")?;
+
+    Ok(JiraConfig {
+        url,
+        project_key,
+        email,
+    })
+}
+
+fn prompt_token(provider_name: &str, key_name: &str) -> Result<Option<String>> {
+    // Check if token already exists
+    let store = KeychainStore::new();
+    if store.exists(key_name) {
+        let overwrite = Confirm::new()
+            .with_prompt(format!(
+                "{} token already exists in keychain. Overwrite?",
+                provider_name
+            ))
+            .default(false)
+            .interact()
+            .context("Failed to read overwrite choice")?;
+
+        if !overwrite {
+            return Ok(None);
+        }
+    }
+
+    let store_token = Confirm::new()
+        .with_prompt(format!("Store {} token in keychain?", provider_name))
+        .default(true)
+        .interact()
+        .context("Failed to read token choice")?;
+
+    if !store_token {
+        return Ok(None);
+    }
+
+    let token: String = Password::new()
+        .with_prompt(format!("{} token", provider_name))
+        .interact()
+        .context("Failed to read token")?;
+
+    if token.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(token))
+}
+
+/// Detect git remote and return (provider, owner, repo).
+fn detect_git_remote() -> Option<(String, String, String)> {
+    let output = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    parse_git_url(&url)
+}
+
+/// Parse git URL to extract provider, owner, and repo.
+fn parse_git_url(url: &str) -> Option<(String, String, String)> {
+    // Handle SSH format: git@github.com:owner/repo.git
+    if let Some(rest) = url.strip_prefix("git@") {
+        let parts: Vec<&str> = rest.splitn(2, ':').collect();
+        if parts.len() == 2 {
+            let host = parts[0];
+            let path = parts[1].trim_end_matches(".git");
+            let path_parts: Vec<&str> = path.splitn(2, '/').collect();
+            if path_parts.len() == 2 {
+                let provider = if host.contains("github") {
+                    "github"
+                } else if host.contains("gitlab") {
+                    "gitlab"
+                } else {
+                    return None;
+                };
+                return Some((
+                    provider.to_string(),
+                    path_parts[0].to_string(),
+                    path_parts[1].to_string(),
+                ));
+            }
+        }
+    }
+
+    // Handle HTTPS format: https://github.com/owner/repo.git
+    if url.starts_with("https://") || url.starts_with("http://") {
+        let without_proto = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))?;
+
+        let parts: Vec<&str> = without_proto.splitn(2, '/').collect();
+        if parts.len() == 2 {
+            let host = parts[0];
+            let path = parts[1].trim_end_matches(".git");
+            let path_parts: Vec<&str> = path.splitn(2, '/').collect();
+            if path_parts.len() == 2 {
+                let provider = if host.contains("github") {
+                    "github"
+                } else if host.contains("gitlab") {
+                    "gitlab"
+                } else {
+                    return None;
+                };
+                return Some((
+                    provider.to_string(),
+                    path_parts[0].to_string(),
+                    path_parts[1].to_string(),
+                ));
+            }
+        }
+    }
+
+    None
+}
+
+/// Detect which providers should be pre-selected based on git remote.
+fn detect_provider_defaults() -> Vec<bool> {
+    let detected = detect_git_remote();
+    let is_github = detected
+        .as_ref()
+        .map(|(p, _, _)| p == "github")
+        .unwrap_or(false);
+    let is_gitlab = detected
+        .as_ref()
+        .map(|(p, _, _)| p == "gitlab")
+        .unwrap_or(false);
+
+    // [GitHub, GitLab, ClickUp, Jira]
+    vec![is_github, is_gitlab, false, false]
+}
+
+/// Build Config from collected options.
+fn build_config(options: &InitOptions) -> Config {
+    let mut config = Config::default();
+
+    let context_name = options
+        .context_name
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
+
+    // If we have any providers, add them to a context
+    if options.github.is_some()
+        || options.gitlab.is_some()
+        || options.clickup.is_some()
+        || options.jira.is_some()
+    {
+        let context = ContextConfig {
+            github: options.github.clone(),
+            gitlab: options.gitlab.clone(),
+            clickup: options.clickup.clone(),
+            jira: options.jira.clone(),
+        };
+        config.contexts.insert(context_name, context);
+    }
+
+    config
+}
+
+/// Create a timestamped backup of existing config.
+fn create_backup(path: &PathBuf) -> Result<PathBuf> {
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let backup_name = format!(".devboy.toml.backup.{}", timestamp);
+    let backup_path = path.with_file_name(backup_name);
+
+    std::fs::copy(path, &backup_path).context("Failed to create backup")?;
+
+    Ok(backup_path)
+}
+
+/// Register devboy as MCP server in Claude Code.
+async fn register_claude_mcp() -> Result<()> {
+    println!("Registering devboy MCP server in Claude Code...");
+
+    // Try using claude CLI first
+    let claude_result = Command::new("claude")
+        .args(["mcp", "add", "devboy", "--", "devboy", "mcp"])
+        .status();
+
+    match claude_result {
+        Ok(status) if status.success() => {
+            println!("Successfully registered via Claude CLI");
+            return Ok(());
+        }
+        _ => {
+            // Fall back to editing ~/.claude.json directly
+            register_claude_mcp_direct()?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Register devboy MCP server by editing ~/.claude.json directly.
+fn register_claude_mcp_direct() -> Result<()> {
+    let home = dirs::home_dir().context("Could not determine home directory")?;
+    let claude_config_path = home.join(".claude.json");
+
+    let mut claude_config: serde_json::Value = if claude_config_path.exists() {
+        let content = std::fs::read_to_string(&claude_config_path)
+            .context("Failed to read ~/.claude.json")?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&content).context("Failed to parse ~/.claude.json")?;
+
+        // Ensure root is an object
+        if !parsed.is_object() {
+            anyhow::bail!(
+                "~/.claude.json exists but is not a JSON object. \
+                 Please fix it manually or delete it."
+            );
+        }
+        parsed
+    } else {
+        serde_json::json!({})
+    };
+
+    // Ensure mcpServers is an object (or create it)
+    match claude_config.get("mcpServers") {
+        Some(servers) if !servers.is_object() => {
+            anyhow::bail!(
+                "~/.claude.json has 'mcpServers' but it's not an object. \
+                 Please fix it manually."
+            );
+        }
+        None => {
+            claude_config["mcpServers"] = serde_json::json!({});
+        }
+        _ => {}
+    }
+
+    // Add devboy server
+    claude_config["mcpServers"]["devboy"] = serde_json::json!({
+        "command": "devboy",
+        "args": ["mcp"]
+    });
+
+    // Write back
+    let content = serde_json::to_string_pretty(&claude_config)
+        .context("Failed to serialize claude config")?;
+    std::fs::write(&claude_config_path, content).context("Failed to write ~/.claude.json")?;
+
+    println!("Successfully registered in ~/.claude.json");
     Ok(())
 }
 
@@ -1417,5 +2065,152 @@ mod tests {
         apply_tools_reset(&mut config);
         assert!(config.builtin_tools.is_empty());
         assert!(config.builtin_tools.is_tool_allowed("create_issue"));
+    }
+
+    // ==========================================================================
+    // Init command tests
+    // ==========================================================================
+
+    #[test]
+    fn test_parse_git_url_github_ssh() {
+        let result = parse_git_url("git@github.com:meteora-pro/devboy-tools.git");
+        assert_eq!(
+            result,
+            Some((
+                "github".to_string(),
+                "meteora-pro".to_string(),
+                "devboy-tools".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_git_url_github_ssh_no_git_suffix() {
+        let result = parse_git_url("git@github.com:owner/repo");
+        assert_eq!(
+            result,
+            Some((
+                "github".to_string(),
+                "owner".to_string(),
+                "repo".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_git_url_github_https() {
+        let result = parse_git_url("https://github.com/meteora-pro/devboy-tools.git");
+        assert_eq!(
+            result,
+            Some((
+                "github".to_string(),
+                "meteora-pro".to_string(),
+                "devboy-tools".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_git_url_github_https_no_git_suffix() {
+        let result = parse_git_url("https://github.com/owner/repo");
+        assert_eq!(
+            result,
+            Some((
+                "github".to_string(),
+                "owner".to_string(),
+                "repo".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_git_url_gitlab_ssh() {
+        let result = parse_git_url("git@gitlab.com:company/project.git");
+        assert_eq!(
+            result,
+            Some((
+                "gitlab".to_string(),
+                "company".to_string(),
+                "project".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_git_url_gitlab_https() {
+        let result = parse_git_url("https://gitlab.com/company/project.git");
+        assert_eq!(
+            result,
+            Some((
+                "gitlab".to_string(),
+                "company".to_string(),
+                "project".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_git_url_unknown_host() {
+        let result = parse_git_url("git@bitbucket.org:owner/repo.git");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_git_url_invalid() {
+        assert_eq!(parse_git_url("not-a-url"), None);
+        assert_eq!(parse_git_url(""), None);
+    }
+
+    #[test]
+    fn test_build_config_with_github() {
+        let options = InitOptions {
+            context_name: Some("my-project".to_string()),
+            github: Some(GitHubConfig {
+                owner: "owner".to_string(),
+                repo: "repo".to_string(),
+                base_url: None,
+            }),
+            ..Default::default()
+        };
+
+        let config = build_config(&options);
+
+        assert!(config.contexts.contains_key("my-project"));
+        let ctx = config.contexts.get("my-project").unwrap();
+        assert!(ctx.github.is_some());
+        assert_eq!(ctx.github.as_ref().unwrap().owner, "owner");
+        assert_eq!(ctx.github.as_ref().unwrap().repo, "repo");
+    }
+
+    #[test]
+    fn test_build_config_empty_options() {
+        let options = InitOptions::default();
+        let config = build_config(&options);
+        assert!(config.contexts.is_empty());
+    }
+
+    #[test]
+    fn test_build_config_multiple_providers() {
+        let options = InitOptions {
+            context_name: Some("test".to_string()),
+            github: Some(GitHubConfig {
+                owner: "gh-owner".to_string(),
+                repo: "gh-repo".to_string(),
+                base_url: None,
+            }),
+            gitlab: Some(GitLabConfig {
+                url: "https://gitlab.com".to_string(),
+                project_id: "gl/project".to_string(),
+            }),
+            ..Default::default()
+        };
+
+        let config = build_config(&options);
+        let ctx = config.contexts.get("test").unwrap();
+
+        assert!(ctx.github.is_some());
+        assert!(ctx.gitlab.is_some());
+        assert!(ctx.clickup.is_none());
+        assert!(ctx.jira.is_none());
     }
 }
