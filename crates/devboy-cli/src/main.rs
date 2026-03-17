@@ -75,6 +75,14 @@ enum Commands {
         /// Keychain key for proxy token (e.g., "proxy.token")
         #[arg(long, requires = "proxy")]
         proxy_token_key: Option<String>,
+
+        /// Proxy token value (will be stored in keychain automatically)
+        #[arg(long, requires = "proxy")]
+        proxy_token: Option<String>,
+
+        /// Proxy auth type: bearer, api_key, or none (default: bearer if token provided, else none)
+        #[arg(long, requires = "proxy")]
+        proxy_auth_type: Option<String>,
     },
 
     /// Start the MCP server (stdio mode for AI assistants)
@@ -183,6 +191,14 @@ enum ProxyCommands {
         #[arg(long)]
         token_key: Option<String>,
 
+        /// Token value (will be stored in keychain automatically)
+        #[arg(long)]
+        token: Option<String>,
+
+        /// Auth type: bearer, api_key, or none (default: bearer if token provided, else none)
+        #[arg(long)]
+        auth_type: Option<String>,
+
         /// Overwrite existing proxy with same name
         #[arg(short, long)]
         force: bool,
@@ -271,6 +287,8 @@ async fn main() -> Result<()> {
             proxy_name,
             proxy_transport,
             proxy_token_key,
+            proxy_token,
+            proxy_auth_type,
         }) => {
             handle_init_command(
                 yes,
@@ -282,6 +300,8 @@ async fn main() -> Result<()> {
                 proxy_name,
                 proxy_transport,
                 proxy_token_key,
+                proxy_token,
+                proxy_auth_type,
             )
             .await?;
         }
@@ -356,6 +376,8 @@ async fn handle_init_command(
     proxy_name: Option<String>,
     proxy_transport: Option<String>,
     proxy_token_key: Option<String>,
+    proxy_token: Option<String>,
+    proxy_auth_type: Option<String>,
 ) -> Result<()> {
     let config_path = PathBuf::from(INIT_CONFIG_FILE);
     let is_tty = io::stdin().is_terminal();
@@ -392,20 +414,44 @@ async fn handle_init_command(
 
     // Add proxy configuration if provided
     if let Some(url) = proxy_url {
-        let name = proxy_name.unwrap_or_else(|| "proxy".to_string());
+        let name = proxy_name.clone().unwrap_or_else(|| "proxy".to_string());
         let transport = proxy_transport.unwrap_or_else(|| "streamable-http".to_string());
-        options.proxy = Some(ProxyMcpServerConfig {
-            name,
-            url,
-            auth_type: if proxy_token_key.is_some() {
+
+        // Determine token key: use provided or generate default
+        let token_key = if proxy_token.is_some() || proxy_token_key.is_some() {
+            Some(
+                proxy_token_key
+                    .clone()
+                    .unwrap_or_else(|| format!("proxy.{}.token", name)),
+            )
+        } else {
+            None
+        };
+
+        // Determine auth type
+        let auth_type = proxy_auth_type.unwrap_or_else(|| {
+            if token_key.is_some() {
                 "bearer".to_string()
             } else {
                 "none".to_string()
-            },
-            token_key: proxy_token_key,
+            }
+        });
+
+        options.proxy = Some(ProxyMcpServerConfig {
+            name,
+            url,
+            auth_type,
+            token_key,
             tool_prefix: None,
             transport,
         });
+
+        // Add token to tokens list if provided
+        if let Some(token_value) = proxy_token {
+            let key = proxy_token_key
+                .unwrap_or_else(|| format!("proxy.{}.token", proxy_name.unwrap_or_else(|| "proxy".to_string())));
+            options.tokens.push((key, token_value));
+        }
     }
 
     // Build configuration
@@ -1519,9 +1565,19 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
             url,
             transport,
             token_key,
+            token,
+            auth_type,
             force,
         } => {
-            return handle_proxy_add(name, url, transport, token_key.clone(), *force);
+            return handle_proxy_add(
+                name,
+                url,
+                transport,
+                token_key.clone(),
+                token.clone(),
+                auth_type.clone(),
+                *force,
+            );
         }
         ProxyCommands::Remove { name } => {
             return handle_proxy_remove(name);
@@ -1607,6 +1663,8 @@ fn handle_proxy_add(
     url: &str,
     transport: &str,
     token_key: Option<String>,
+    token: Option<String>,
+    auth_type: Option<String>,
     force: bool,
 ) -> Result<()> {
     let (mut config, config_path) = load_runtime_config()?;
@@ -1629,16 +1687,28 @@ fn handle_proxy_add(
         println!("Overwriting existing proxy '{}'", name);
     }
 
+    // Determine token key: use provided or generate default if token provided
+    let final_token_key = if token.is_some() || token_key.is_some() {
+        Some(token_key.unwrap_or_else(|| format!("proxy.{}.token", name)))
+    } else {
+        None
+    };
+
+    // Determine auth type
+    let final_auth_type = auth_type.unwrap_or_else(|| {
+        if final_token_key.is_some() {
+            "bearer".to_string()
+        } else {
+            "none".to_string()
+        }
+    });
+
     // Add new proxy
     let proxy = ProxyMcpServerConfig {
         name: name.to_string(),
         url: url.to_string(),
-        auth_type: if token_key.is_some() {
-            "bearer".to_string()
-        } else {
-            "none".to_string()
-        },
-        token_key,
+        auth_type: final_auth_type.clone(),
+        token_key: final_token_key.clone(),
         tool_prefix: None,
         transport: transport.to_string(),
     };
@@ -1648,8 +1718,22 @@ fn handle_proxy_add(
         .save_to(&config_path)
         .context("Failed to save config")?;
 
+    // Store token in keychain if provided
+    if let Some(token_value) = token {
+        let key = final_token_key.as_ref().unwrap();
+        let store = KeychainStore::new();
+        store
+            .store(key, &token_value)
+            .with_context(|| format!("Failed to store token in keychain as '{}'", key))?;
+        println!("Stored token in keychain as '{}'", key);
+    }
+
     println!("Added proxy '{}' -> {}", name, url);
     println!("  transport: {}", transport);
+    println!("  auth_type: {}", final_auth_type);
+    if let Some(key) = &final_token_key {
+        println!("  token_key: {}", key);
+    }
     println!();
     println!("Config saved to: {}", config_path.display());
 
