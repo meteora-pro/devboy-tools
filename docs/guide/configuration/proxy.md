@@ -7,13 +7,10 @@ DevBoy can proxy tool calls to upstream MCP servers, exposing their tools alongs
 The fastest way to add a proxy server:
 
 ```bash
-# Add proxy server
-devboy proxy add devboy-cloud \
-  --url "https://app.devboy.pro/api/mcp?name=my-project" \
-  --token-key devboy.token
-
-# Store the token securely
-devboy config set-secret devboy.token <YOUR_TOKEN>
+# Add proxy server with token (stored in keychain automatically)
+devboy proxy add my-server \
+  --url "https://mcp.example.com/api" \
+  --token "your-token-here"
 
 # Verify available tools
 devboy proxy tools
@@ -23,10 +20,12 @@ Or during project initialization:
 
 ```bash
 devboy init --yes \
-  --proxy "https://app.devboy.pro/api/mcp?name=my-project" \
-  --proxy-name devboy-cloud \
-  --proxy-token-key devboy.token
+  --proxy "https://mcp.example.com/api" \
+  --proxy-name my-server \
+  --proxy-token "your-token-here"
 ```
+
+The token is automatically stored in keychain as `proxy.my-server.token`.
 
 ## Use case
 
@@ -39,7 +38,7 @@ Add upstream servers to your `config.toml` or `.devboy.toml`:
 ```toml
 [[proxy_mcp_servers]]
 name = "devboy-cloud"
-url = "https://app.devboy.pro/api/mcp?name=my-project"
+url = "https://mcp.example.com/api"
 auth_type = "bearer"
 token_key = "devboy-cloud.token"
 transport = "streamable-http"
@@ -74,7 +73,7 @@ You can proxy multiple upstream servers:
 ```toml
 [[proxy_mcp_servers]]
 name = "devboy-cloud"
-url = "https://app.devboy.pro/api/mcp?name=project-a"
+url = "https://mcp.example.com/api?name=project-a"
 auth_type = "bearer"
 token_key = "devboy-cloud.token"
 transport = "streamable-http"
@@ -103,7 +102,7 @@ devboy proxy add my-server --url "https://example.com/mcp"
 
 # With all options
 devboy proxy add devboy-cloud \
-  --url "https://app.devboy.pro/api/mcp?name=my-project" \
+  --url "https://mcp.example.com/api" \
   --transport streamable-http \
   --token-key devboy-cloud.token
 
@@ -115,7 +114,9 @@ devboy proxy add my-server --url "https://new.example.com/mcp" --force
 |--------|---------|-------------|
 | `--url` | (required) | Proxy server URL |
 | `--transport` | `streamable-http` | Transport type: `streamable-http` or `sse` |
-| `--token-key` | — | Keychain key for auth token |
+| `--token` | — | Token value (stored in keychain automatically) |
+| `--token-key` | `proxy.{name}.token` | Custom keychain key for token |
+| `--auth-type` | `bearer` if token, else `none` | Auth type: `bearer`, `api_key`, or `none` |
 | `--force` | `false` | Overwrite existing proxy with same name |
 
 ### Remove a proxy server

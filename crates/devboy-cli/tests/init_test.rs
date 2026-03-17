@@ -438,6 +438,75 @@ fn test_init_with_proxy_and_token_key() {
 }
 
 #[test]
+fn test_init_with_proxy_token() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "init",
+            "--yes",
+            "--proxy",
+            "https://example.com/mcp",
+            "--proxy-name",
+            "my-server",
+            "--proxy-token",
+            "secret-token-value",
+        ])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        stdout.contains("Stored") || stdout.contains("keychain"),
+        "Should mention token storage"
+    );
+
+    let content = fs::read_to_string(&config_path).unwrap();
+    // Token key should be auto-generated as proxy.my-server.token
+    assert!(
+        content.contains("proxy.my-server.token"),
+        "Should contain auto-generated token key"
+    );
+    assert!(
+        content.contains("bearer"),
+        "Should have bearer auth type"
+    );
+}
+
+#[test]
+fn test_init_with_proxy_auth_type() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "init",
+            "--yes",
+            "--proxy",
+            "https://example.com/mcp",
+            "--proxy-token-key",
+            "my.key",
+            "--proxy-auth-type",
+            "api_key",
+        ])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(output.status.success(), "Command should succeed");
+
+    let content = fs::read_to_string(&config_path).unwrap();
+    assert!(
+        content.contains("api_key"),
+        "Should have api_key auth type"
+    );
+}
+
+#[test]
 fn test_proxy_add_creates_config() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join(".devboy.toml");
