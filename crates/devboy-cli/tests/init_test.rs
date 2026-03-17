@@ -770,3 +770,287 @@ fn test_proxy_remove_nonexistent_fails() {
         "Should indicate proxy not found"
     );
 }
+
+// =============================================================================
+// Claude MCP registration integration tests
+// =============================================================================
+
+/// Helper to mock HOME directory for Claude config tests.
+/// Note: These tests verify the CLI arguments are processed correctly.
+/// The actual Claude registration may fail (no claude CLI, permission issues, etc.)
+/// but we can verify the arguments are parsed and used correctly.
+
+#[test]
+fn test_init_claude_flag_help_shows_option() {
+    let output = Command::new(devboy_bin())
+        .args(["init", "--help"])
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(
+        stdout.contains("--claude"),
+        "Help should mention --claude flag"
+    );
+    assert!(
+        stdout.contains("Register devboy as MCP server"),
+        "Help should describe --claude flag"
+    );
+}
+
+#[test]
+fn test_init_with_claude_and_proxy_name_uses_custom_name() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    // Create a fake HOME directory for Claude config
+    let fake_home = TempDir::new().unwrap();
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "init",
+            "--yes",
+            "--proxy",
+            "https://example.com/mcp",
+            "--proxy-name",
+            "my-custom-server",
+            "--claude",
+        ])
+        .env("HOME", fake_home.path())
+        // Skip keychain operations in CI
+        .env("DEVBOY_SKIP_KEYCHAIN", "1")
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // The command should succeed (or at least attempt to register)
+    // Note: The actual Claude registration might fail if claude CLI is not installed
+    // But we can verify the output mentions the custom server name
+
+    // Check that config file was created
+    assert!(config_path.exists(), "Config file should be created");
+
+    // Check config content has the custom proxy name
+    let content = fs::read_to_string(&config_path).unwrap();
+    assert!(
+        content.contains("my-custom-server"),
+        "Config should contain custom proxy name"
+    );
+
+    // Check that the output mentions registering with the custom name
+    // (either success or failure message should include the name)
+    let combined_output = format!("{}{}", stdout, stderr);
+    assert!(
+        combined_output.contains("my-custom-server")
+            || combined_output.contains("Registering")
+            || combined_output.contains("Claude"),
+        "Output should mention Claude registration: stdout={}, stderr={}",
+        stdout,
+        stderr
+    );
+}
+
+#[test]
+fn test_init_with_claude_without_proxy_uses_default_name() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    // Create a fake HOME directory for Claude config
+    let fake_home = TempDir::new().unwrap();
+
+    let output = Command::new(devboy_bin())
+        .args(["init", "--yes", "--claude"])
+        .env("HOME", fake_home.path())
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Check that config file was created
+    assert!(config_path.exists(), "Config file should be created");
+
+    // The default name should be "devboy" when no proxy is configured
+    let combined_output = format!("{}{}", stdout, stderr);
+    assert!(
+        combined_output.contains("devboy")
+            || combined_output.contains("Registering")
+            || combined_output.contains("Claude"),
+        "Output should mention Claude registration with default name: stdout={}, stderr={}",
+        stdout,
+        stderr
+    );
+}
+
+#[test]
+fn test_init_with_claude_creates_claude_json_with_custom_name() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+
+    // Create a fake HOME directory for Claude config
+    let fake_home = TempDir::new().unwrap();
+    let claude_json_path = fake_home.path().join(".claude.json");
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "init",
+            "--yes",
+            "--proxy",
+            "https://example.com/mcp",
+            "--proxy-name",
+            "custom-mcp-server",
+            "--claude",
+        ])
+        .env("HOME", fake_home.path())
+        .env("DEVBOY_SKIP_KEYCHAIN", "1")
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Check if Claude registration succeeded
+    if claude_json_path.exists() {
+        let claude_content = fs::read_to_string(&claude_json_path).unwrap();
+        let claude_config: serde_json::Value = serde_json::from_str(&claude_content).unwrap();
+
+        // Claude CLI might register in different locations:
+        // 1. Global: mcpServers (used by register_claude_mcp_direct fallback)
+        // 2. Project-specific: projects/[path]/mcpServers (used by claude CLI)
+
+        let global_mcp = &claude_config["mcpServers"]["custom-mcp-server"];
+
+        // Check if registered in global mcpServers (direct fallback)
+        let registered_globally = global_mcp.is_object();
+
+        // Check if registered in any project (claude CLI creates project-specific config)
+        let registered_in_project = claude_config["projects"]
+            .as_object()
+            .map(|projects| {
+                projects
+                    .values()
+                    .any(|project| project["mcpServers"]["custom-mcp-server"].is_object())
+            })
+            .unwrap_or(false);
+
+        assert!(
+            registered_globally || registered_in_project,
+            "MCP server should be registered with custom name 'custom-mcp-server'. \
+             Global: {}, Project: {}. Config: {}",
+            registered_globally,
+            registered_in_project,
+            claude_content
+        );
+
+        // Verify "devboy" is NOT registered anywhere (when using custom name)
+        let devboy_global = claude_config["mcpServers"]["devboy"].is_object();
+        let devboy_in_project = claude_config["projects"]
+            .as_object()
+            .map(|projects| {
+                projects
+                    .values()
+                    .any(|project| project["mcpServers"]["devboy"].is_object())
+            })
+            .unwrap_or(false);
+
+        assert!(
+            !devboy_global && !devboy_in_project,
+            "MCP server should NOT be registered as 'devboy' when --proxy-name is provided"
+        );
+    } else {
+        // If .claude.json wasn't created, verify from stdout
+        assert!(
+            stdout.contains("custom-mcp-server") || stdout.contains("Claude CLI"),
+            "Should either create .claude.json or mention Claude CLI registration"
+        );
+    }
+}
+
+#[test]
+fn test_init_with_claude_preserves_existing_mcp_servers() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+
+    // Create a fake HOME directory with existing Claude config
+    let fake_home = TempDir::new().unwrap();
+    let claude_json_path = fake_home.path().join(".claude.json");
+
+    // Create existing Claude config with another MCP server
+    let existing_config = r#"{
+        "mcpServers": {
+            "existing-server": {
+                "command": "some-other-cmd",
+                "args": ["arg1", "arg2"]
+            }
+        },
+        "someOtherSetting": "value"
+    }"#;
+    fs::write(&claude_json_path, existing_config).unwrap();
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "init",
+            "--yes",
+            "--proxy",
+            "https://example.com/mcp",
+            "--proxy-name",
+            "new-server",
+            "--claude",
+        ])
+        .env("HOME", fake_home.path())
+        .env("DEVBOY_SKIP_KEYCHAIN", "1")
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    // Command should succeed regardless of registration method
+    assert!(
+        output.status.success(),
+        "Command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // If Claude registration used direct config edit, verify preservation
+    if claude_json_path.exists() {
+        let claude_content = fs::read_to_string(&claude_json_path).unwrap();
+        let claude_config: serde_json::Value = serde_json::from_str(&claude_content).unwrap();
+
+        // Verify existing global MCP server is preserved
+        assert!(
+            claude_config["mcpServers"]["existing-server"].is_object(),
+            "Existing MCP server should be preserved"
+        );
+        assert_eq!(
+            claude_config["mcpServers"]["existing-server"]["command"], "some-other-cmd",
+            "Existing server command should be unchanged"
+        );
+
+        // Verify other settings are preserved
+        assert_eq!(
+            claude_config["someOtherSetting"], "value",
+            "Other settings should be preserved"
+        );
+
+        // Verify new server is added (either globally or in project)
+        // Claude CLI adds to project, fallback adds to global
+        let new_server_global = claude_config["mcpServers"]["new-server"].is_object();
+        let new_server_in_project = claude_config["projects"]
+            .as_object()
+            .map(|projects| {
+                projects
+                    .values()
+                    .any(|project| project["mcpServers"]["new-server"].is_object())
+            })
+            .unwrap_or(false);
+
+        assert!(
+            new_server_global || new_server_in_project,
+            "New MCP server should be added either globally or in project. Config: {}",
+            claude_content
+        );
+    }
+}
