@@ -37,6 +37,10 @@ This automatically detects your Git provider from the `origin` remote and create
 | `--force` | `-f` | Overwrite existing config (creates timestamped backup) |
 | `--claude` | | Register devboy as MCP server in Claude Code |
 | `--context` | `-c` | Specify context name (default: directory name) |
+| `--proxy` | | Add MCP proxy server URL |
+| `--proxy-name` | | Proxy server name (default: "proxy", requires `--proxy`) |
+| `--proxy-transport` | | Transport type: "streamable-http" or "sse" (default: "streamable-http", requires `--proxy`) |
+| `--proxy-token-key` | | Keychain key for proxy token (requires `--proxy`) |
 
 ## Examples
 
@@ -79,6 +83,23 @@ devboy init --context production
 ```
 
 Creates configuration with context named "production" instead of the directory name.
+
+### Initialize with MCP proxy server
+
+```bash
+devboy init --yes \
+  --proxy "https://app.devboy.pro/api/mcp?name=my-project" \
+  --proxy-name "devboy-cloud" \
+  --proxy-token-key "devboy.token"
+```
+
+This creates configuration with both the auto-detected Git provider and a proxy connection to DevBoy Cloud. Store the token separately:
+
+```bash
+devboy config set-secret devboy.token <YOUR_TOKEN>
+```
+
+See [MCP proxy](../configuration/proxy) for more details on proxy configuration.
 
 ## Auto-detection
 

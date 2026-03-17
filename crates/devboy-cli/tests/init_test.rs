@@ -355,3 +355,304 @@ fn test_init_unknown_provider_no_config() {
         "Should indicate unknown provider or minimal config"
     );
 }
+
+// =============================================================================
+// Proxy command integration tests
+// =============================================================================
+
+#[test]
+fn test_init_with_proxy_flag() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "init",
+            "--yes",
+            "--proxy",
+            "https://app.devboy.pro/api/mcp",
+            "--proxy-name",
+            "devboy-cloud",
+            "--proxy-transport",
+            "streamable-http",
+        ])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(output.status.success(), "Command should succeed");
+    assert!(config_path.exists(), "Config file should be created");
+
+    let content = fs::read_to_string(&config_path).unwrap();
+    assert!(
+        content.contains("[[proxy_mcp_servers]]"),
+        "Should contain proxy_mcp_servers section"
+    );
+    assert!(
+        content.contains("devboy-cloud"),
+        "Should contain proxy name"
+    );
+    assert!(
+        content.contains("https://app.devboy.pro/api/mcp"),
+        "Should contain proxy URL"
+    );
+    assert!(
+        content.contains("streamable-http"),
+        "Should contain transport type"
+    );
+}
+
+#[test]
+fn test_init_with_proxy_and_token_key() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "init",
+            "--yes",
+            "--proxy",
+            "https://example.com/mcp",
+            "--proxy-token-key",
+            "my.secret.token",
+        ])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(output.status.success(), "Command should succeed");
+
+    let content = fs::read_to_string(&config_path).unwrap();
+    assert!(
+        content.contains("token_key"),
+        "Should contain token_key field"
+    );
+    assert!(
+        content.contains("my.secret.token"),
+        "Should contain token key value"
+    );
+    assert!(
+        content.contains("bearer"),
+        "Should have bearer auth type when token_key is set"
+    );
+}
+
+#[test]
+fn test_proxy_add_creates_config() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    // Create minimal config first
+    fs::write(&config_path, "").unwrap();
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "proxy",
+            "add",
+            "my-server",
+            "--url",
+            "https://example.com/mcp",
+        ])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        stdout.contains("Added proxy 'my-server'"),
+        "Should confirm proxy added"
+    );
+
+    let content = fs::read_to_string(&config_path).unwrap();
+    assert!(
+        content.contains("[[proxy_mcp_servers]]"),
+        "Should contain proxy section"
+    );
+    assert!(
+        content.contains("my-server"),
+        "Should contain proxy name"
+    );
+}
+
+#[test]
+fn test_proxy_add_with_all_options() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    // Create minimal config first
+    fs::write(&config_path, "").unwrap();
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "proxy",
+            "add",
+            "custom-proxy",
+            "--url",
+            "https://custom.example.com/mcp",
+            "--transport",
+            "sse",
+            "--token-key",
+            "custom.token",
+        ])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(output.status.success(), "Command should succeed");
+
+    let content = fs::read_to_string(&config_path).unwrap();
+    assert!(content.contains("custom-proxy"), "Should contain proxy name");
+    assert!(
+        content.contains("https://custom.example.com/mcp"),
+        "Should contain URL"
+    );
+    assert!(content.contains("sse"), "Should contain transport");
+    assert!(content.contains("custom.token"), "Should contain token key");
+}
+
+#[test]
+fn test_proxy_add_fails_without_force_if_exists() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    // Create config with existing proxy
+    let existing_config = r#"
+[[proxy_mcp_servers]]
+name = "existing"
+url = "https://old.example.com/mcp"
+transport = "sse"
+"#;
+    fs::write(&config_path, existing_config).unwrap();
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "proxy",
+            "add",
+            "existing",
+            "--url",
+            "https://new.example.com/mcp",
+        ])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(
+        !output.status.success(),
+        "Command should fail without --force"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("already exists") || stderr.contains("--force"),
+        "Should mention proxy exists or suggest --force"
+    );
+}
+
+#[test]
+fn test_proxy_add_with_force_overwrites() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    // Create config with existing proxy
+    let existing_config = r#"
+[[proxy_mcp_servers]]
+name = "existing"
+url = "https://old.example.com/mcp"
+transport = "sse"
+"#;
+    fs::write(&config_path, existing_config).unwrap();
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "proxy",
+            "add",
+            "existing",
+            "--url",
+            "https://new.example.com/mcp",
+            "--force",
+        ])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "Command should succeed with --force");
+    assert!(
+        stdout.contains("Overwriting"),
+        "Should mention overwriting"
+    );
+
+    let content = fs::read_to_string(&config_path).unwrap();
+    assert!(
+        content.contains("https://new.example.com/mcp"),
+        "Should contain new URL"
+    );
+    assert!(
+        !content.contains("https://old.example.com/mcp"),
+        "Should not contain old URL"
+    );
+}
+
+#[test]
+fn test_proxy_remove() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    // Create config with proxy
+    let existing_config = r#"
+[[proxy_mcp_servers]]
+name = "to-remove"
+url = "https://example.com/mcp"
+transport = "sse"
+"#;
+    fs::write(&config_path, existing_config).unwrap();
+
+    let output = Command::new(devboy_bin())
+        .args(["proxy", "remove", "to-remove"])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        stdout.contains("Removed proxy 'to-remove'"),
+        "Should confirm removal"
+    );
+
+    let content = fs::read_to_string(&config_path).unwrap();
+    assert!(
+        !content.contains("to-remove"),
+        "Should not contain removed proxy"
+    );
+}
+
+#[test]
+fn test_proxy_remove_nonexistent_fails() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    // Create empty config
+    fs::write(&config_path, "").unwrap();
+
+    let output = Command::new(devboy_bin())
+        .args(["proxy", "remove", "nonexistent"])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(
+        !output.status.success(),
+        "Command should fail for nonexistent proxy"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not found"),
+        "Should indicate proxy not found"
+    );
+}
