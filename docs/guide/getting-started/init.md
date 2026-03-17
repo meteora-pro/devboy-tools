@@ -37,6 +37,12 @@ This automatically detects your Git provider from the `origin` remote and create
 | `--force` | `-f` | Overwrite existing config (creates timestamped backup) |
 | `--claude` | | Register devboy as MCP server in Claude Code |
 | `--context` | `-c` | Specify context name (default: directory name) |
+| `--proxy` | | Add MCP proxy server URL |
+| `--proxy-name` | | Proxy server name (default: "proxy", requires `--proxy`) |
+| `--proxy-transport` | | Transport type: "streamable-http" or "sse" (default: "streamable-http", requires `--proxy`) |
+| `--proxy-token` | | Proxy token value (stored in keychain automatically, requires `--proxy`) |
+| `--proxy-token-key` | | Custom keychain key for token (default: "proxy.{name}.token", requires `--proxy`) |
+| `--proxy-auth-type` | | Auth type: "bearer", "api_key", or "none" (default: "bearer" if token, else "none") |
 
 ## Examples
 
@@ -79,6 +85,29 @@ devboy init --context production
 ```
 
 Creates configuration with context named "production" instead of the directory name.
+
+### Initialize with MCP proxy server
+
+```bash
+devboy init --yes \
+  --proxy "https://mcp.example.com/api" \
+  --proxy-name my-server \
+  --proxy-token "your-token-here"
+```
+
+This creates configuration with both the auto-detected Git provider and a proxy connection. The token is automatically stored in keychain as `proxy.my-server.token`.
+
+You can also use a custom token key:
+
+```bash
+devboy init --yes \
+  --proxy "https://mcp.example.com/api" \
+  --proxy-name my-server \
+  --proxy-token "your-token-here" \
+  --proxy-token-key "my.custom.key"
+```
+
+See [MCP proxy](../configuration/proxy) for more details on proxy configuration.
 
 ## Auto-detection
 
