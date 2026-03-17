@@ -835,14 +835,33 @@ fn register_claude_mcp_direct() -> Result<()> {
     let mut claude_config: serde_json::Value = if claude_config_path.exists() {
         let content = std::fs::read_to_string(&claude_config_path)
             .context("Failed to read ~/.claude.json")?;
-        serde_json::from_str(&content).context("Failed to parse ~/.claude.json")?
+        let parsed: serde_json::Value =
+            serde_json::from_str(&content).context("Failed to parse ~/.claude.json")?;
+
+        // Ensure root is an object
+        if !parsed.is_object() {
+            anyhow::bail!(
+                "~/.claude.json exists but is not a JSON object. \
+                 Please fix it manually or delete it."
+            );
+        }
+        parsed
     } else {
         serde_json::json!({})
     };
 
-    // Ensure mcpServers object exists
-    if claude_config.get("mcpServers").is_none() {
-        claude_config["mcpServers"] = serde_json::json!({});
+    // Ensure mcpServers is an object (or create it)
+    match claude_config.get("mcpServers") {
+        Some(servers) if !servers.is_object() => {
+            anyhow::bail!(
+                "~/.claude.json has 'mcpServers' but it's not an object. \
+                 Please fix it manually."
+            );
+        }
+        None => {
+            claude_config["mcpServers"] = serde_json::json!({});
+        }
+        _ => {}
     }
 
     // Add devboy server

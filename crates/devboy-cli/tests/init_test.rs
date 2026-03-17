@@ -19,7 +19,10 @@ fn devboy_bin() -> std::path::PathBuf {
     let mut path = std::env::current_exe().unwrap();
     path.pop(); // Remove test binary name
     path.pop(); // Remove deps
-    path.push("devboy");
+
+    // Handle platform-specific executable name (e.g., devboy.exe on Windows)
+    let bin_name = format!("devboy{}", std::env::consts::EXE_SUFFIX);
+    path.push(bin_name);
     path
 }
 
@@ -28,18 +31,30 @@ fn create_temp_git_repo(remote_url: &str) -> TempDir {
     let temp_dir = TempDir::new().unwrap();
 
     // Initialize git repo
-    Command::new("git")
+    let init_output = Command::new("git")
         .args(["init"])
         .current_dir(temp_dir.path())
         .output()
-        .expect("Failed to init git repo");
+        .expect("Failed to spawn git init");
+
+    assert!(
+        init_output.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&init_output.stderr)
+    );
 
     // Add remote
-    Command::new("git")
+    let remote_output = Command::new("git")
         .args(["remote", "add", "origin", remote_url])
         .current_dir(temp_dir.path())
         .output()
-        .expect("Failed to add git remote");
+        .expect("Failed to spawn git remote add");
+
+    assert!(
+        remote_output.status.success(),
+        "git remote add failed: {}",
+        String::from_utf8_lossy(&remote_output.stderr)
+    );
 
     temp_dir
 }
@@ -263,11 +278,17 @@ fn test_init_no_git_remote_creates_empty_config() {
     let temp_dir = TempDir::new().unwrap();
 
     // Initialize git repo without remote
-    Command::new("git")
+    let init_output = Command::new("git")
         .args(["init"])
         .current_dir(temp_dir.path())
         .output()
-        .expect("Failed to init git repo");
+        .expect("Failed to spawn git init");
+
+    assert!(
+        init_output.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&init_output.stderr)
+    );
 
     let output = Command::new(devboy_bin())
         .args(["init", "--yes"])
