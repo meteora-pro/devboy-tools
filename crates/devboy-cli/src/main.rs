@@ -414,19 +414,24 @@ async fn handle_init_command(
 
     // Add proxy configuration if provided
     if let Some(url) = proxy_url {
-        let name = proxy_name.clone().unwrap_or_else(|| "proxy".to_string());
+        let name = proxy_name.unwrap_or_else(|| "proxy".to_string());
         let transport = proxy_transport.unwrap_or_else(|| "streamable-http".to_string());
 
         // Determine token key: use provided or generate default
         let token_key = if proxy_token.is_some() || proxy_token_key.is_some() {
             Some(
-                proxy_token_key
-                    .clone()
-                    .unwrap_or_else(|| format!("proxy.{}.token", name)),
+                proxy_token_key.unwrap_or_else(|| format!("proxy.{}.token", name)),
             )
         } else {
             None
         };
+
+        // Add token to tokens list if provided (before moving token_key)
+        if let Some(token_value) = proxy_token {
+            // token_key is guaranteed to be Some here since proxy_token.is_some()
+            let key = token_key.clone().unwrap();
+            options.tokens.push((key, token_value));
+        }
 
         // Determine auth type
         let auth_type = proxy_auth_type.unwrap_or_else(|| {
@@ -445,13 +450,6 @@ async fn handle_init_command(
             tool_prefix: None,
             transport,
         });
-
-        // Add token to tokens list if provided
-        if let Some(token_value) = proxy_token {
-            let key = proxy_token_key
-                .unwrap_or_else(|| format!("proxy.{}.token", proxy_name.unwrap_or_else(|| "proxy".to_string())));
-            options.tokens.push((key, token_value));
-        }
     }
 
     // Build configuration
@@ -1670,17 +1668,11 @@ fn handle_proxy_add(
     let (mut config, config_path) = load_runtime_config()?;
 
     // Check if proxy with same name exists
-    let existing_idx = config
-        .proxy_mcp_servers
-        .iter()
-        .position(|p| p.name == name);
+    let existing_idx = config.proxy_mcp_servers.iter().position(|p| p.name == name);
 
     if let Some(idx) = existing_idx {
         if !force {
-            anyhow::bail!(
-                "Proxy '{}' already exists. Use --force to overwrite.",
-                name
-            );
+            anyhow::bail!("Proxy '{}' already exists. Use --force to overwrite.", name);
         }
         // Remove existing proxy
         config.proxy_mcp_servers.remove(idx);
