@@ -6,7 +6,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use devboy_clickup::ClickUpClient;
 use devboy_core::{
     BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, GitHubConfig, GitLabConfig,
@@ -23,6 +23,48 @@ use devboy_mcp::{
 use devboy_storage::{CredentialStore, KeychainStore, MemoryStore};
 use dialoguer::{Confirm, Input, MultiSelect, Password};
 use tracing_subscriber::EnvFilter;
+
+/// Proxy transport type for MCP servers.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum TransportType {
+    /// Modern HTTP POST-based transport with mcp-session-id header
+    #[value(name = "streamable-http")]
+    StreamableHttp,
+    /// Legacy MCP transport using GET for SSE stream, POST for requests
+    #[value(name = "sse")]
+    Sse,
+}
+
+impl TransportType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            TransportType::StreamableHttp => "streamable-http",
+            TransportType::Sse => "sse",
+        }
+    }
+}
+
+/// Authentication type for proxy servers.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum AuthType {
+    /// Bearer token authentication
+    Bearer,
+    /// API key authentication
+    #[value(name = "api_key")]
+    ApiKey,
+    /// No authentication
+    None,
+}
+
+impl AuthType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            AuthType::Bearer => "bearer",
+            AuthType::ApiKey => "api_key",
+            AuthType::None => "none",
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "devboy")]
@@ -68,9 +110,9 @@ enum Commands {
         #[arg(long, requires = "proxy")]
         proxy_name: Option<String>,
 
-        /// Proxy transport type: streamable-http or sse (default: streamable-http)
-        #[arg(long, requires = "proxy")]
-        proxy_transport: Option<String>,
+        /// Proxy transport type (default: streamable-http)
+        #[arg(long, requires = "proxy", value_enum)]
+        proxy_transport: Option<TransportType>,
 
         /// Keychain key for proxy token (e.g., "proxy.token")
         #[arg(long, requires = "proxy")]
@@ -80,9 +122,9 @@ enum Commands {
         #[arg(long, requires = "proxy")]
         proxy_token: Option<String>,
 
-        /// Proxy auth type: bearer, api_key, or none (default: bearer if token provided, else none)
-        #[arg(long, requires = "proxy")]
-        proxy_auth_type: Option<String>,
+        /// Proxy auth type (default: bearer if token provided, else none)
+        #[arg(long, requires = "proxy", value_enum)]
+        proxy_auth_type: Option<AuthType>,
     },
 
     /// Start the MCP server (stdio mode for AI assistants)
@@ -183,9 +225,9 @@ enum ProxyCommands {
         #[arg(long)]
         url: String,
 
-        /// Transport type: streamable-http or sse (default: streamable-http)
-        #[arg(long, default_value = "streamable-http")]
-        transport: String,
+        /// Transport type (default: streamable-http)
+        #[arg(long, default_value = "streamable-http", value_enum)]
+        transport: TransportType,
 
         /// Keychain key for proxy token (e.g., "proxy.token")
         #[arg(long)]
@@ -195,9 +237,9 @@ enum ProxyCommands {
         #[arg(long)]
         token: Option<String>,
 
-        /// Auth type: bearer, api_key, or none (default: bearer if token provided, else none)
-        #[arg(long)]
-        auth_type: Option<String>,
+        /// Auth type (default: bearer if token provided, else none)
+        #[arg(long, value_enum)]
+        auth_type: Option<AuthType>,
 
         /// Overwrite existing proxy with same name
         #[arg(short, long)]
@@ -265,11 +307,20 @@ enum ToolsCommands {
 
 /// Environment variable to skip keychain operations (for CI testing).
 /// When set to "1" or "true", uses in-memory store instead of OS keychain.
+/// Only affects init and proxy-add commands to prevent token loss in production.
 const SKIP_KEYCHAIN_ENV: &str = "DEVBOY_SKIP_KEYCHAIN";
 
-/// Get credential store, using MemoryStore if DEVBOY_SKIP_KEYCHAIN is set.
-/// This allows integration tests to run without OS keychain access.
+/// Get credential store using OS keychain.
+/// This is the default store for all production code paths.
 fn get_credential_store() -> Box<dyn CredentialStore> {
+    Box::new(KeychainStore::new())
+}
+
+/// Get credential store for init/proxy-add commands.
+/// Uses MemoryStore if DEVBOY_SKIP_KEYCHAIN is set, allowing CI tests to run
+/// without OS keychain access. This is intentionally limited to init/proxy-add
+/// paths to prevent accidental token loss in production usage.
+fn get_credential_store_for_init() -> Box<dyn CredentialStore> {
     if std::env::var(SKIP_KEYCHAIN_ENV)
         .map(|v| v == "1" || v.to_lowercase() == "true")
         .unwrap_or(false)
@@ -392,10 +443,10 @@ async fn handle_init_command(
     context_name: Option<String>,
     proxy_url: Option<String>,
     proxy_name: Option<String>,
-    proxy_transport: Option<String>,
+    proxy_transport: Option<TransportType>,
     proxy_token_key: Option<String>,
     proxy_token: Option<String>,
-    proxy_auth_type: Option<String>,
+    proxy_auth_type: Option<AuthType>,
 ) -> Result<()> {
     let config_path = PathBuf::from(INIT_CONFIG_FILE);
     let is_tty = io::stdin().is_terminal();
@@ -433,7 +484,10 @@ async fn handle_init_command(
     // Add proxy configuration if provided
     if let Some(url) = proxy_url {
         let name = proxy_name.unwrap_or_else(|| "proxy".to_string());
-        let transport = proxy_transport.unwrap_or_else(|| "streamable-http".to_string());
+        let transport = proxy_transport
+            .unwrap_or(TransportType::StreamableHttp)
+            .as_str()
+            .to_string();
 
         // Determine token key: use provided or generate default
         let token_key = if proxy_token.is_some() || proxy_token_key.is_some() {
@@ -450,13 +504,15 @@ async fn handle_init_command(
         }
 
         // Determine auth type
-        let auth_type = proxy_auth_type.unwrap_or_else(|| {
-            if token_key.is_some() {
-                "bearer".to_string()
-            } else {
-                "none".to_string()
-            }
-        });
+        let auth_type = proxy_auth_type
+            .map(|a| a.as_str().to_string())
+            .unwrap_or_else(|| {
+                if token_key.is_some() {
+                    AuthType::Bearer.as_str().to_string()
+                } else {
+                    AuthType::None.as_str().to_string()
+                }
+            });
 
         options.proxy = Some(ProxyMcpServerConfig {
             name,
@@ -510,7 +566,7 @@ async fn handle_init_command(
 
     // Store tokens in keychain
     if !options.tokens.is_empty() {
-        let store = get_credential_store();
+        let store = get_credential_store_for_init();
         for (key, value) in &options.tokens {
             store
                 .store(key, value)
@@ -784,7 +840,7 @@ fn configure_jira_interactive() -> Result<JiraConfig> {
 
 fn prompt_token(provider_name: &str, key_name: &str) -> Result<Option<String>> {
     // Check if token already exists
-    let store = get_credential_store();
+    let store = get_credential_store_for_init();
     if store.exists(key_name) {
         let overwrite = Confirm::new()
             .with_prompt(format!(
@@ -1587,10 +1643,10 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
             return handle_proxy_add(
                 name,
                 url,
-                transport,
+                *transport,
                 token_key.clone(),
                 token.clone(),
-                auth_type.clone(),
+                *auth_type,
                 *force,
             );
         }
@@ -1676,10 +1732,10 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
 fn handle_proxy_add(
     name: &str,
     url: &str,
-    transport: &str,
+    transport: TransportType,
     token_key: Option<String>,
     token: Option<String>,
-    auth_type: Option<String>,
+    auth_type: Option<AuthType>,
     force: bool,
 ) -> Result<()> {
     let (mut config, config_path) = load_runtime_config()?;
@@ -1704,13 +1760,17 @@ fn handle_proxy_add(
     };
 
     // Determine auth type
-    let final_auth_type = auth_type.unwrap_or_else(|| {
-        if final_token_key.is_some() {
-            "bearer".to_string()
-        } else {
-            "none".to_string()
-        }
-    });
+    let final_auth_type = auth_type
+        .map(|a| a.as_str().to_string())
+        .unwrap_or_else(|| {
+            if final_token_key.is_some() {
+                AuthType::Bearer.as_str().to_string()
+            } else {
+                AuthType::None.as_str().to_string()
+            }
+        });
+
+    let transport_str = transport.as_str();
 
     // Add new proxy
     let proxy = ProxyMcpServerConfig {
@@ -1719,7 +1779,7 @@ fn handle_proxy_add(
         auth_type: final_auth_type.clone(),
         token_key: final_token_key.clone(),
         tool_prefix: None,
-        transport: transport.to_string(),
+        transport: transport_str.to_string(),
     };
 
     config.proxy_mcp_servers.push(proxy);
@@ -1730,7 +1790,7 @@ fn handle_proxy_add(
     // Store token in keychain if provided
     if let Some(token_value) = token {
         let key = final_token_key.as_ref().unwrap();
-        let store = get_credential_store();
+        let store = get_credential_store_for_init();
         store
             .store(key, &token_value)
             .with_context(|| format!("Failed to store token in keychain as '{}'", key))?;
@@ -1738,7 +1798,7 @@ fn handle_proxy_add(
     }
 
     println!("Added proxy '{}' -> {}", name, url);
-    println!("  transport: {}", transport);
+    println!("  transport: {}", transport_str);
     println!("  auth_type: {}", final_auth_type);
     if let Some(key) = &final_token_key {
         println!("  token_key: {}", key);
