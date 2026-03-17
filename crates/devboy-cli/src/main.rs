@@ -11,6 +11,7 @@ use devboy_clickup::ClickUpClient;
 use devboy_core::{
     BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, GitHubConfig, GitLabConfig,
     IssueFilter, IssueProvider, JiraConfig, MergeRequestProvider, MrFilter, Provider,
+    ProxyMcpServerConfig,
 };
 use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
@@ -58,6 +59,22 @@ enum Commands {
         /// Context name for the configuration
         #[arg(short, long)]
         context: Option<String>,
+
+        /// Add MCP proxy server URL
+        #[arg(long)]
+        proxy: Option<String>,
+
+        /// Proxy server name (default: "proxy")
+        #[arg(long, requires = "proxy")]
+        proxy_name: Option<String>,
+
+        /// Proxy transport type: streamable-http or sse (default: streamable-http)
+        #[arg(long, requires = "proxy")]
+        proxy_transport: Option<String>,
+
+        /// Keychain key for proxy token (e.g., "proxy.token")
+        #[arg(long, requires = "proxy")]
+        proxy_token_key: Option<String>,
     },
 
     /// Start the MCP server (stdio mode for AI assistants)
@@ -149,12 +166,41 @@ enum ConfigCommands {
 
 #[derive(Subcommand)]
 enum ProxyCommands {
+    /// Add a new proxy server configuration
+    Add {
+        /// Proxy server name
+        name: String,
+
+        /// Proxy server URL
+        #[arg(long)]
+        url: String,
+
+        /// Transport type: streamable-http or sse (default: streamable-http)
+        #[arg(long, default_value = "streamable-http")]
+        transport: String,
+
+        /// Keychain key for proxy token (e.g., "proxy.token")
+        #[arg(long)]
+        token_key: Option<String>,
+
+        /// Overwrite existing proxy with same name
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Remove a proxy server configuration
+    Remove {
+        /// Proxy server name to remove
+        name: String,
+    },
+
     /// List available tools from all upstream proxy servers
     Tools {
         /// Show tool descriptions
         #[arg(long)]
         descriptions: bool,
     },
+
     /// Call a tool on an upstream proxy server
     Call {
         /// Tool name (e.g., devboy-cloud__get_issues)
@@ -221,8 +267,23 @@ async fn main() -> Result<()> {
             force,
             claude,
             context,
+            proxy,
+            proxy_name,
+            proxy_transport,
+            proxy_token_key,
         }) => {
-            handle_init_command(yes, dry_run, force, claude, context).await?;
+            handle_init_command(
+                yes,
+                dry_run,
+                force,
+                claude,
+                context,
+                proxy,
+                proxy_name,
+                proxy_transport,
+                proxy_token_key,
+            )
+            .await?;
         }
 
         Some(Commands::Mcp) => {
@@ -282,6 +343,7 @@ struct InitOptions {
     clickup: Option<ClickUpConfig>,
     jira: Option<JiraConfig>,
     tokens: Vec<(String, String)>, // (key, value) pairs for keychain
+    proxy: Option<ProxyMcpServerConfig>,
 }
 
 async fn handle_init_command(
@@ -290,6 +352,10 @@ async fn handle_init_command(
     force: bool,
     claude: bool,
     context_name: Option<String>,
+    proxy_url: Option<String>,
+    proxy_name: Option<String>,
+    proxy_transport: Option<String>,
+    proxy_token_key: Option<String>,
 ) -> Result<()> {
     let config_path = PathBuf::from(INIT_CONFIG_FILE);
     let is_tty = io::stdin().is_terminal();
@@ -318,11 +384,29 @@ async fn handle_init_command(
     }
 
     // Collect options
-    let options = if yes {
+    let mut options = if yes {
         collect_options_auto(context_name)?
     } else {
         collect_options_interactive(context_name)?
     };
+
+    // Add proxy configuration if provided
+    if let Some(url) = proxy_url {
+        let name = proxy_name.unwrap_or_else(|| "proxy".to_string());
+        let transport = proxy_transport.unwrap_or_else(|| "streamable-http".to_string());
+        options.proxy = Some(ProxyMcpServerConfig {
+            name,
+            url,
+            auth_type: if proxy_token_key.is_some() {
+                "bearer".to_string()
+            } else {
+                "none".to_string()
+            },
+            token_key: proxy_token_key,
+            tool_prefix: None,
+            transport,
+        });
+    }
 
     // Build configuration
     let config = build_config(&options);
@@ -788,6 +872,11 @@ fn build_config(options: &InitOptions) -> Config {
             jira: options.jira.clone(),
         };
         config.contexts.insert(context_name, context);
+    }
+
+    // Add proxy configuration if provided
+    if let Some(proxy) = &options.proxy {
+        config.proxy_mcp_servers.push(proxy.clone());
     }
 
     config
@@ -1423,12 +1512,31 @@ async fn handle_mcp_command() -> Result<()> {
 // =============================================================================
 
 async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
+    // Handle Add and Remove commands first (they don't require existing config)
+    match &command {
+        ProxyCommands::Add {
+            name,
+            url,
+            transport,
+            token_key,
+            force,
+        } => {
+            return handle_proxy_add(name, url, transport, token_key.clone(), *force);
+        }
+        ProxyCommands::Remove { name } => {
+            return handle_proxy_remove(name);
+        }
+        _ => {}
+    }
+
     let (config, _) = load_runtime_config()?;
     let store = KeychainStore::new();
 
     if config.proxy_mcp_servers.is_empty() {
         println!("No proxy MCP servers configured.");
-        println!("Add to config.toml:");
+        println!("Add using: devboy proxy add <name> --url <url>");
+        println!();
+        println!("Or add to .devboy.toml:");
         println!();
         println!("  [[proxy_mcp_servers]]");
         println!("  name = \"my-server\"");
@@ -1445,6 +1553,7 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
     }
 
     match command {
+        ProxyCommands::Add { .. } | ProxyCommands::Remove { .. } => unreachable!(),
         ProxyCommands::Tools { descriptions } => {
             proxy_manager
                 .fetch_all_tools()
@@ -1488,6 +1597,82 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
             }
         }
     }
+
+    Ok(())
+}
+
+/// Add a new proxy server configuration.
+fn handle_proxy_add(
+    name: &str,
+    url: &str,
+    transport: &str,
+    token_key: Option<String>,
+    force: bool,
+) -> Result<()> {
+    let (mut config, config_path) = load_runtime_config()?;
+
+    // Check if proxy with same name exists
+    let existing_idx = config
+        .proxy_mcp_servers
+        .iter()
+        .position(|p| p.name == name);
+
+    if let Some(idx) = existing_idx {
+        if !force {
+            anyhow::bail!(
+                "Proxy '{}' already exists. Use --force to overwrite.",
+                name
+            );
+        }
+        // Remove existing proxy
+        config.proxy_mcp_servers.remove(idx);
+        println!("Overwriting existing proxy '{}'", name);
+    }
+
+    // Add new proxy
+    let proxy = ProxyMcpServerConfig {
+        name: name.to_string(),
+        url: url.to_string(),
+        auth_type: if token_key.is_some() {
+            "bearer".to_string()
+        } else {
+            "none".to_string()
+        },
+        token_key,
+        tool_prefix: None,
+        transport: transport.to_string(),
+    };
+
+    config.proxy_mcp_servers.push(proxy);
+    config
+        .save_to(&config_path)
+        .context("Failed to save config")?;
+
+    println!("Added proxy '{}' -> {}", name, url);
+    println!("  transport: {}", transport);
+    println!();
+    println!("Config saved to: {}", config_path.display());
+
+    Ok(())
+}
+
+/// Remove a proxy server configuration.
+fn handle_proxy_remove(name: &str) -> Result<()> {
+    let (mut config, config_path) = load_runtime_config()?;
+
+    let original_len = config.proxy_mcp_servers.len();
+    config.proxy_mcp_servers.retain(|p| p.name != name);
+
+    if config.proxy_mcp_servers.len() == original_len {
+        anyhow::bail!("Proxy '{}' not found in configuration.", name);
+    }
+
+    config
+        .save_to(&config_path)
+        .context("Failed to save config")?;
+
+    println!("Removed proxy '{}'", name);
+    println!("Config saved to: {}", config_path.display());
 
     Ok(())
 }
@@ -2212,5 +2397,90 @@ mod tests {
         assert!(ctx.gitlab.is_some());
         assert!(ctx.clickup.is_none());
         assert!(ctx.jira.is_none());
+    }
+
+    // ==========================================================================
+    // Proxy configuration tests
+    // ==========================================================================
+
+    #[test]
+    fn test_build_config_with_proxy() {
+        let options = InitOptions {
+            context_name: Some("test".to_string()),
+            proxy: Some(ProxyMcpServerConfig {
+                name: "my-proxy".to_string(),
+                url: "https://example.com/mcp".to_string(),
+                auth_type: "bearer".to_string(),
+                token_key: Some("proxy.token".to_string()),
+                tool_prefix: None,
+                transport: "streamable-http".to_string(),
+            }),
+            ..Default::default()
+        };
+
+        let config = build_config(&options);
+
+        assert_eq!(config.proxy_mcp_servers.len(), 1);
+        let proxy = &config.proxy_mcp_servers[0];
+        assert_eq!(proxy.name, "my-proxy");
+        assert_eq!(proxy.url, "https://example.com/mcp");
+        assert_eq!(proxy.auth_type, "bearer");
+        assert_eq!(proxy.token_key, Some("proxy.token".to_string()));
+        assert_eq!(proxy.transport, "streamable-http");
+    }
+
+    #[test]
+    fn test_build_config_with_proxy_no_token() {
+        let options = InitOptions {
+            proxy: Some(ProxyMcpServerConfig {
+                name: "proxy".to_string(),
+                url: "https://example.com/mcp".to_string(),
+                auth_type: "none".to_string(),
+                token_key: None,
+                tool_prefix: None,
+                transport: "sse".to_string(),
+            }),
+            ..Default::default()
+        };
+
+        let config = build_config(&options);
+
+        assert_eq!(config.proxy_mcp_servers.len(), 1);
+        let proxy = &config.proxy_mcp_servers[0];
+        assert_eq!(proxy.auth_type, "none");
+        assert!(proxy.token_key.is_none());
+        assert_eq!(proxy.transport, "sse");
+    }
+
+    #[test]
+    fn test_build_config_with_github_and_proxy() {
+        let options = InitOptions {
+            context_name: Some("combined".to_string()),
+            github: Some(GitHubConfig {
+                owner: "owner".to_string(),
+                repo: "repo".to_string(),
+                base_url: None,
+            }),
+            proxy: Some(ProxyMcpServerConfig {
+                name: "devboy-cloud".to_string(),
+                url: "https://app.devboy.pro/api/mcp".to_string(),
+                auth_type: "bearer".to_string(),
+                token_key: Some("devboy.token".to_string()),
+                tool_prefix: None,
+                transport: "streamable-http".to_string(),
+            }),
+            ..Default::default()
+        };
+
+        let config = build_config(&options);
+
+        // Check context with GitHub
+        assert!(config.contexts.contains_key("combined"));
+        let ctx = config.contexts.get("combined").unwrap();
+        assert!(ctx.github.is_some());
+
+        // Check proxy
+        assert_eq!(config.proxy_mcp_servers.len(), 1);
+        assert_eq!(config.proxy_mcp_servers[0].name, "devboy-cloud");
     }
 }

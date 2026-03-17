@@ -2,6 +2,32 @@
 
 DevBoy can proxy tool calls to upstream MCP servers, exposing their tools alongside its own. This lets you combine tools from multiple MCP servers into a single endpoint.
 
+## Quick setup
+
+The fastest way to add a proxy server:
+
+```bash
+# Add proxy server
+devboy proxy add devboy-cloud \
+  --url "https://app.devboy.pro/api/mcp?name=my-project" \
+  --token-key devboy.token
+
+# Store the token securely
+devboy config set-secret devboy.token <YOUR_TOKEN>
+
+# Verify available tools
+devboy proxy tools
+```
+
+Or during project initialization:
+
+```bash
+devboy init --yes \
+  --proxy "https://app.devboy.pro/api/mcp?name=my-project" \
+  --proxy-name devboy-cloud \
+  --proxy-token-key devboy.token
+```
+
 ## Use case
 
 You have a remote MCP server (e.g. DevBoy Cloud) with additional tools (knowledge base, meeting notes, messengers). Instead of configuring multiple MCP servers in your AI assistant, you configure DevBoy to proxy them all through one connection.
@@ -66,6 +92,37 @@ tool_prefix = "internal"
 3. When a proxied tool is called, DevBoy strips the prefix and forwards the request to the matching upstream server.
 
 ## CLI commands
+
+### Add a proxy server
+
+Add a new proxy server without editing the config file manually:
+
+```bash
+# Basic usage
+devboy proxy add my-server --url "https://example.com/mcp"
+
+# With all options
+devboy proxy add devboy-cloud \
+  --url "https://app.devboy.pro/api/mcp?name=my-project" \
+  --transport streamable-http \
+  --token-key devboy-cloud.token
+
+# Overwrite existing proxy
+devboy proxy add my-server --url "https://new.example.com/mcp" --force
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--url` | (required) | Proxy server URL |
+| `--transport` | `streamable-http` | Transport type: `streamable-http` or `sse` |
+| `--token-key` | — | Keychain key for auth token |
+| `--force` | `false` | Overwrite existing proxy with same name |
+
+### Remove a proxy server
+
+```bash
+devboy proxy remove my-server
+```
 
 ### List proxied tools
 
