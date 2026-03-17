@@ -419,9 +419,7 @@ async fn handle_init_command(
 
         // Determine token key: use provided or generate default
         let token_key = if proxy_token.is_some() || proxy_token_key.is_some() {
-            Some(
-                proxy_token_key.unwrap_or_else(|| format!("proxy.{}.token", name)),
-            )
+            Some(proxy_token_key.unwrap_or_else(|| format!("proxy.{}.token", name)))
         } else {
             None
         };
