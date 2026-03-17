@@ -818,7 +818,9 @@ fn test_init_with_claude_and_proxy_name_uses_custom_name() {
             "my-custom-server",
             "--claude",
         ])
+        // Set HOME for Unix and USERPROFILE for Windows
         .env("HOME", fake_home.path())
+        .env("USERPROFILE", fake_home.path())
         // Skip keychain operations in CI
         .env("DEVBOY_SKIP_KEYCHAIN", "1")
         .current_dir(temp_dir.path())
@@ -826,11 +828,6 @@ fn test_init_with_claude_and_proxy_name_uses_custom_name() {
         .expect("Failed to execute command");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // The command should succeed (or at least attempt to register)
-    // Note: The actual Claude registration might fail if claude CLI is not installed
-    // But we can verify the output mentions the custom server name
 
     // Check that config file was created
     assert!(config_path.exists(), "Config file should be created");
@@ -842,16 +839,12 @@ fn test_init_with_claude_and_proxy_name_uses_custom_name() {
         "Config should contain custom proxy name"
     );
 
-    // Check that the output mentions registering with the custom name
-    // (either success or failure message should include the name)
-    let combined_output = format!("{}{}", stdout, stderr);
+    // Verify the output contains the custom server name (not generic messages)
+    // This ensures the --proxy-name flag is actually being used
     assert!(
-        combined_output.contains("my-custom-server")
-            || combined_output.contains("Registering")
-            || combined_output.contains("Claude"),
-        "Output should mention Claude registration: stdout={}, stderr={}",
-        stdout,
-        stderr
+        stdout.contains("my-custom-server"),
+        "Output should contain the custom server name 'my-custom-server': {}",
+        stdout
     );
 }
 
@@ -865,26 +858,24 @@ fn test_init_with_claude_without_proxy_uses_default_name() {
 
     let output = Command::new(devboy_bin())
         .args(["init", "--yes", "--claude"])
+        // Set HOME for Unix and USERPROFILE for Windows
         .env("HOME", fake_home.path())
+        .env("USERPROFILE", fake_home.path())
         .current_dir(temp_dir.path())
         .output()
         .expect("Failed to execute command");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Check that config file was created
     assert!(config_path.exists(), "Config file should be created");
 
-    // The default name should be "devboy" when no proxy is configured
-    let combined_output = format!("{}{}", stdout, stderr);
+    // Verify the output contains "devboy" as the server name
+    // The message format is: "Registering 'devboy' MCP server in Claude Code..."
     assert!(
-        combined_output.contains("devboy")
-            || combined_output.contains("Registering")
-            || combined_output.contains("Claude"),
-        "Output should mention Claude registration with default name: stdout={}, stderr={}",
-        stdout,
-        stderr
+        stdout.contains("'devboy'") || stdout.contains("\"devboy\""),
+        "Output should contain 'devboy' as the default server name: {}",
+        stdout
     );
 }
 
@@ -906,7 +897,9 @@ fn test_init_with_claude_creates_claude_json_with_custom_name() {
             "custom-mcp-server",
             "--claude",
         ])
+        // Set HOME for Unix and USERPROFILE for Windows
         .env("HOME", fake_home.path())
+        .env("USERPROFILE", fake_home.path())
         .env("DEVBOY_SKIP_KEYCHAIN", "1")
         .current_dir(temp_dir.path())
         .output()
@@ -914,7 +907,14 @@ fn test_init_with_claude_creates_claude_json_with_custom_name() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Check if Claude registration succeeded
+    // Verify output contains the custom server name
+    assert!(
+        stdout.contains("custom-mcp-server"),
+        "Output should contain custom server name: {}",
+        stdout
+    );
+
+    // Check if Claude registration succeeded via direct config edit
     if claude_json_path.exists() {
         let claude_content = fs::read_to_string(&claude_json_path).unwrap();
         let claude_config: serde_json::Value = serde_json::from_str(&claude_content).unwrap();
