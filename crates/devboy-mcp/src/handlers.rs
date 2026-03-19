@@ -335,6 +335,14 @@ define_tools! {
                     "type": "string",
                     "description": "MR/PR key (e.g., 'pr#123')"
                 },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of discussions to return (default: 20)"
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Number of discussions to skip for pagination (default: 0)"
+                },
                 "format": {
                     "type": "string",
                     "enum": ["markdown", "compact", "json"],
@@ -869,9 +877,38 @@ impl ToolHandler {
         for provider in &self.providers {
             match provider.get_discussions(&params.key).await {
                 Ok(discussions) => {
-                    let pipeline = self.create_pipeline(&params.format);
-                    return match pipeline.transform_discussions(discussions) {
-                        Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
+                    let offset = params.offset.unwrap_or(0);
+                    let limit = params.limit.unwrap_or(self.pipeline_config.max_items);
+                    let total = discussions.len();
+                    let paged_discussions: Vec<_> =
+                        discussions.into_iter().skip(offset).take(limit).collect();
+                    let included = paged_discussions.len();
+
+                    let pipeline =
+                        self.create_pipeline_with_max_items(&params.format, included.max(limit));
+                    return match pipeline.transform_discussions(paged_discussions) {
+                        Ok(mut output) => {
+                            if self.pipeline_config.include_hints && offset + included < total {
+                                let remaining = total - offset - included;
+                                let next_offset = offset + included;
+                                let start = if included == 0 { 0 } else { offset + 1 };
+                                let end = offset + included;
+                                let pagination_hint = format!(
+                                    "📊 Showing {}-{} of {} discussions. {} more available. Use `offset={}` and `limit={}` for next page.",
+                                    start, end, total, remaining, next_offset, limit
+                                );
+
+                                output.truncated = true;
+                                output.total_count = Some(total);
+                                output.included_count = included;
+                                output.agent_hint = Some(match output.agent_hint.take() {
+                                    Some(existing) => format!("{}\n{}", existing, pagination_hint),
+                                    None => pagination_hint,
+                                });
+                            }
+
+                            ToolCallResult::text(output.to_string_with_hints())
+                        }
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
                     };
                 }
@@ -1064,6 +1101,14 @@ impl ToolHandler {
     }
 
     fn create_pipeline(&self, format: &Option<String>) -> Pipeline {
+        self.create_pipeline_with_max_items(format, self.pipeline_config.max_items)
+    }
+
+    fn create_pipeline_with_max_items(
+        &self,
+        format: &Option<String>,
+        max_items: usize,
+    ) -> Pipeline {
         let output_format = match format.as_deref() {
             Some("json") => OutputFormat::Json,
             Some("compact") => OutputFormat::Compact,
@@ -1071,6 +1116,7 @@ impl ToolHandler {
         };
 
         Pipeline::with_config(PipelineConfig {
+            max_items,
             format: output_format,
             ..self.pipeline_config.clone()
         })
@@ -1152,6 +1198,8 @@ struct GetMergeRequestParams {
 #[derive(Debug, Serialize, Deserialize)]
 struct GetMergeRequestDiscussionsParams {
     key: String,
+    limit: Option<usize>,
+    offset: Option<usize>,
     format: Option<String>,
 }
 
@@ -1235,6 +1283,37 @@ mod tests {
                     updated_at: Some("2024-01-02T00:00:00Z".to_string()),
                     draft: false,
                 }],
+            }
+        }
+    }
+
+    struct ManyDiscussionsProvider {
+        base: MockProvider,
+        discussions: Vec<Discussion>,
+    }
+
+    impl ManyDiscussionsProvider {
+        fn new(count: usize) -> Self {
+            let discussions = (1..=count)
+                .map(|i| Discussion {
+                    id: i.to_string(),
+                    resolved: false,
+                    resolved_by: None,
+                    comments: vec![Comment {
+                        id: i.to_string(),
+                        body: format!("Review comment {}", i),
+                        author: None,
+                        created_at: None,
+                        updated_at: None,
+                        position: None,
+                    }],
+                    position: None,
+                })
+                .collect();
+
+            Self {
+                base: MockProvider::new(),
+                discussions,
             }
         }
     }
@@ -1371,6 +1450,89 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl IssueProvider for ManyDiscussionsProvider {
+        async fn get_issues(&self, filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
+            self.base.get_issues(filter).await
+        }
+
+        async fn get_issue(&self, key: &str) -> devboy_core::Result<Issue> {
+            self.base.get_issue(key).await
+        }
+
+        async fn create_issue(&self, input: CreateIssueInput) -> devboy_core::Result<Issue> {
+            self.base.create_issue(input).await
+        }
+
+        async fn update_issue(
+            &self,
+            key: &str,
+            input: UpdateIssueInput,
+        ) -> devboy_core::Result<Issue> {
+            self.base.update_issue(key, input).await
+        }
+
+        async fn get_comments(&self, issue_key: &str) -> devboy_core::Result<Vec<Comment>> {
+            self.base.get_comments(issue_key).await
+        }
+
+        async fn add_comment(&self, issue_key: &str, body: &str) -> devboy_core::Result<Comment> {
+            IssueProvider::add_comment(&self.base, issue_key, body).await
+        }
+
+        fn provider_name(&self) -> &'static str {
+            IssueProvider::provider_name(&self.base)
+        }
+    }
+
+    #[async_trait]
+    impl MergeRequestProvider for ManyDiscussionsProvider {
+        async fn get_merge_requests(
+            &self,
+            filter: MrFilter,
+        ) -> devboy_core::Result<Vec<MergeRequest>> {
+            self.base.get_merge_requests(filter).await
+        }
+
+        async fn get_merge_request(&self, key: &str) -> devboy_core::Result<MergeRequest> {
+            self.base.get_merge_request(key).await
+        }
+
+        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<Vec<Discussion>> {
+            Ok(self.discussions.clone())
+        }
+
+        async fn get_diffs(&self, mr_key: &str) -> devboy_core::Result<Vec<FileDiff>> {
+            self.base.get_diffs(mr_key).await
+        }
+
+        async fn add_comment(
+            &self,
+            mr_key: &str,
+            input: CreateCommentInput,
+        ) -> devboy_core::Result<Comment> {
+            MergeRequestProvider::add_comment(&self.base, mr_key, input).await
+        }
+
+        async fn create_merge_request(
+            &self,
+            input: CreateMergeRequestInput,
+        ) -> devboy_core::Result<MergeRequest> {
+            self.base.create_merge_request(input).await
+        }
+
+        fn provider_name(&self) -> &'static str {
+            MergeRequestProvider::provider_name(&self.base)
+        }
+    }
+
+    #[async_trait]
+    impl Provider for ManyDiscussionsProvider {
+        async fn get_current_user(&self) -> devboy_core::Result<User> {
+            self.base.get_current_user().await
+        }
+    }
+
     #[tokio::test]
     async fn test_get_issues_handler() {
         let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
@@ -1423,6 +1585,54 @@ mod tests {
             .await;
 
         assert!(result.is_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_supports_pagination() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(23)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "offset": 20,
+            "limit": 5,
+            "format": "json"
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Review comment 21"));
+        assert!(content.contains("Review comment 23"));
+        assert!(!content.contains("Review comment 1"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_includes_next_page_hint() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(26)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "offset": 20,
+            "limit": 5,
+            "format": "json"
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("offset=25"));
+        assert!(content.contains("limit=5"));
+        assert!(content.contains("Showing 21-25 of 26 discussions"));
     }
 
     #[tokio::test]
