@@ -1323,7 +1323,7 @@ fn handle_context_command(command: ContextCommands) -> Result<()> {
 // =============================================================================
 
 async fn handle_issues_command(state: &str, limit: u32) -> Result<()> {
-    let config = Config::load().context("Failed to load config")?;
+    let (config, _) = load_runtime_config()?;
     let store = get_credential_store();
 
     if let Some(gh) = &config.github {
@@ -1372,7 +1372,7 @@ async fn handle_issues_command(state: &str, limit: u32) -> Result<()> {
 // =============================================================================
 
 async fn handle_mrs_command(state: &str, limit: u32) -> Result<()> {
-    let config = Config::load().context("Failed to load config")?;
+    let (config, _) = load_runtime_config()?;
     let store = get_credential_store();
 
     if let Some(gh) = &config.github {
@@ -1426,7 +1426,7 @@ async fn handle_mrs_command(state: &str, limit: u32) -> Result<()> {
 // =============================================================================
 
 async fn handle_test_command(provider: &str) -> Result<()> {
-    let config = Config::load().context("Failed to load config")?;
+    let (config, _) = load_runtime_config()?;
     let store = get_credential_store();
 
     match provider {
