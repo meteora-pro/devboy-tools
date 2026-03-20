@@ -282,12 +282,13 @@ const DEFAULT_ENV_PREFIX: &str = "DEVBOY";
 ///
 /// The key is converted to an environment variable name:
 /// - Converted to uppercase
-/// - Dots (`.`) and slashes (`/`) replaced with underscores (`_`)
+/// - Dots (`.`), slashes (`/`), and dashes (`-`) replaced with underscores (`_`)
 /// - Prefixed with `DEVBOY_` by default
 ///
 /// Examples:
 /// - `github.token` → `DEVBOY_GITHUB_TOKEN` (then `GITHUB_TOKEN` as fallback)
 /// - `contexts.dashboard.github.token` → `DEVBOY_CONTEXTS_DASHBOARD_GITHUB_TOKEN`
+/// - `devboy-cloud.token` → `DEVBOY_DEVBOY_CLOUD_TOKEN`
 ///
 /// # Example
 ///
@@ -499,19 +500,27 @@ impl std::fmt::Debug for ChainStore {
 
 impl CredentialStore for ChainStore {
     fn store(&self, key: &str, value: &str) -> Result<()> {
-        // Find first writable store
+        // Try each writable and available store in order
+        let mut last_error: Option<Error> = None;
         for store in &self.stores {
-            if store.is_writable() {
-                return store.store(key, value);
+            if store.is_writable() && store.is_available() {
+                match store.store(key, value) {
+                    Ok(()) => return Ok(()),
+                    Err(e) => {
+                        debug!(key = key, error = %e, "Store write failed, trying next");
+                        last_error = Some(e);
+                    }
+                }
             }
         }
-        Err(Error::Storage(
-            "No writable credential store available in chain".to_string(),
-        ))
+        Err(last_error.unwrap_or_else(|| {
+            Error::Storage("No writable credential store available in chain".to_string())
+        }))
     }
 
     fn get(&self, key: &str) -> Result<Option<String>> {
-        // Try each store in order
+        // Try each store in order, tracking errors
+        let mut last_error: Option<Error> = None;
         for store in &self.stores {
             match store.get(key) {
                 Ok(Some(value)) => return Ok(Some(value)),
@@ -519,11 +528,16 @@ impl CredentialStore for ChainStore {
                 Err(e) => {
                     // Log error but continue to next store
                     debug!(key = key, error = %e, "Store returned error, trying next");
-                    continue;
+                    last_error = Some(e);
                 }
             }
         }
-        Ok(None)
+        // If all stores returned errors, propagate the last one
+        if let Some(e) = last_error {
+            Err(e)
+        } else {
+            Ok(None)
+        }
     }
 
     fn delete(&self, key: &str) -> Result<()> {

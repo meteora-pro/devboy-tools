@@ -256,19 +256,6 @@ fn test_default_chain_is_available() {
     assert!(chain.is_available());
 }
 
-#[test]
-fn test_default_chain_is_writable() {
-    let chain = ChainStore::default_chain();
-
-    // Default chain includes keychain which is writable
-    // (on macOS/Windows/Linux with secret service)
-    // This may fail in some CI environments, which is expected
-    let writable = chain.is_writable();
-
-    // Just log the result, don't assert since it depends on environment
-    println!("Default chain is_writable: {}", writable);
-}
-
 // =============================================================================
 // Real-world Scenario Tests
 // =============================================================================
