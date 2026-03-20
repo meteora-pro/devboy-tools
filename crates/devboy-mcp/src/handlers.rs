@@ -1598,6 +1598,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_many_discussions_provider_forwards_merge_request_methods() {
+        let provider = ManyDiscussionsProvider::new(2);
+
+        let merge_requests = provider
+            .get_merge_requests(MrFilter::default())
+            .await
+            .expect("merge requests should be forwarded");
+        assert_eq!(merge_requests.len(), 1);
+        assert_eq!(merge_requests[0].key, "pr#1");
+
+        let merge_request = provider
+            .get_merge_request("pr#1")
+            .await
+            .expect("single merge request should be forwarded");
+        assert_eq!(merge_request.key, "pr#1");
+
+        let discussions = provider
+            .get_discussions("pr#1")
+            .await
+            .expect("custom discussions should be returned");
+        assert_eq!(discussions.len(), 2);
+        assert_eq!(discussions[0].comments[0].body, "Review comment 1");
+
+        let diffs = provider
+            .get_diffs("pr#1")
+            .await
+            .expect("diffs should be forwarded");
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].file_path, "src/main.rs");
+    }
+
+    #[tokio::test]
     async fn test_get_merge_request_discussions_handler_supports_pagination() {
         let provider = Arc::new(ManyDiscussionsProvider::new(23)) as Arc<dyn Provider>;
         let handler = ToolHandler::new(vec![provider]);
