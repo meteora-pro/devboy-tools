@@ -6,6 +6,11 @@
   },
   {
     "type": "file",
+    "name": "environment-variables",
+    "label": "Environment variables"
+  },
+  {
+    "type": "file",
     "name": "contexts",
     "label": "Contexts (Multi-Project)"
   },
