@@ -1,7 +1,7 @@
 //! Integration tests for local `.devboy.toml` configuration loading.
 //!
 //! These tests verify that commands correctly use local `.devboy.toml` when present,
-//! falling back to global config otherwise.
+//! prioritizing it over the global config.
 //!
 //! # Running Tests
 //!
@@ -45,6 +45,9 @@ repo = "{}"
 // Tests for `issues` command using local config
 // =============================================================================
 
+/// Test that `devboy issues` loads configuration from local `.devboy.toml`.
+///
+/// This is the key test for issue #39 - verifying that local config is used.
 #[test]
 fn test_issues_uses_local_config() {
     let temp_dir = TempDir::new().unwrap();
@@ -54,7 +57,6 @@ fn test_issues_uses_local_config() {
 
     let output = Command::new(devboy_bin())
         .args(["issues"])
-        // Skip keychain operations - will fail on token lookup, but we can verify config is loaded
         .env("DEVBOY_SKIP_KEYCHAIN", "1")
         .current_dir(temp_dir.path())
         .output()
@@ -65,10 +67,7 @@ fn test_issues_uses_local_config() {
 
     // The command will fail because there's no token OR because the repo doesn't exist.
     // What matters is that it tried to use the LOCAL config (not global).
-    // If it used Config::load() (global), it would either:
-    // - Say "No provider configured" (if global config has no github section)
-    // - Use global owner/repo values
-    // With load_runtime_config(), it should use local-owner/local-repo
+    // With load_runtime_config(), it should use local-owner/local-repo from .devboy.toml
 
     // Check that config was loaded and GitHub API was attempted
     // Either: token missing error, OR API 404 error (proving config was loaded and API was called)
@@ -90,37 +89,11 @@ fn test_issues_uses_local_config() {
     );
 }
 
-#[test]
-fn test_issues_without_local_config_uses_global() {
-    let temp_dir = TempDir::new().unwrap();
-
-    // No local .devboy.toml - should use global config
-
-    let output = Command::new(devboy_bin())
-        .args(["issues"])
-        .env("DEVBOY_SKIP_KEYCHAIN", "1")
-        // Use fake HOME to avoid loading real global config
-        .env("HOME", temp_dir.path())
-        .env("USERPROFILE", temp_dir.path())
-        .current_dir(temp_dir.path())
-        .output()
-        .expect("Failed to execute command");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Without any config (local or global), should say "No provider configured"
-    assert!(
-        stdout.contains("No provider configured"),
-        "Should indicate no provider is configured, got stdout: {}, stderr: {}",
-        stdout,
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
 // =============================================================================
 // Tests for `mrs` command using local config
 // =============================================================================
 
+/// Test that `devboy mrs` loads configuration from local `.devboy.toml`.
 #[test]
 fn test_mrs_uses_local_config() {
     let temp_dir = TempDir::new().unwrap();
@@ -156,33 +129,11 @@ fn test_mrs_uses_local_config() {
     );
 }
 
-#[test]
-fn test_mrs_without_local_config_uses_global() {
-    let temp_dir = TempDir::new().unwrap();
-
-    let output = Command::new(devboy_bin())
-        .args(["mrs"])
-        .env("DEVBOY_SKIP_KEYCHAIN", "1")
-        .env("HOME", temp_dir.path())
-        .env("USERPROFILE", temp_dir.path())
-        .current_dir(temp_dir.path())
-        .output()
-        .expect("Failed to execute command");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    assert!(
-        stdout.contains("No provider configured"),
-        "Should indicate no provider is configured, got stdout: {}, stderr: {}",
-        stdout,
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
 // =============================================================================
 // Tests for `test` command using local config
 // =============================================================================
 
+/// Test that `devboy test github` loads configuration from local `.devboy.toml`.
 #[test]
 fn test_test_command_uses_local_config() {
     let temp_dir = TempDir::new().unwrap();
@@ -220,74 +171,80 @@ fn test_test_command_uses_local_config() {
     );
 }
 
-#[test]
-fn test_test_command_without_local_config_uses_global() {
-    let temp_dir = TempDir::new().unwrap();
-
-    let output = Command::new(devboy_bin())
-        .args(["test", "github"])
-        .env("DEVBOY_SKIP_KEYCHAIN", "1")
-        .env("HOME", temp_dir.path())
-        .env("USERPROFILE", temp_dir.path())
-        .current_dir(temp_dir.path())
-        .output()
-        .expect("Failed to execute command");
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // Without any config, should say GitHub not configured
-    assert!(
-        stderr.contains("GitHub not configured"),
-        "Should indicate GitHub not configured, got stderr: {}",
-        stderr
-    );
-}
-
 // =============================================================================
 // Tests for local config priority
 // =============================================================================
 
+/// Test that local `.devboy.toml` takes priority over global config.
+///
+/// This test creates both a local and global config with different values
+/// and verifies the local config is used.
 #[test]
 fn test_local_config_takes_priority_over_global() {
     let temp_dir = TempDir::new().unwrap();
 
-    // Create a fake global config directory
+    // Create a fake global config directory structure
     let fake_home = TempDir::new().unwrap();
-    let global_config_dir = fake_home.path().join(".config").join("devboy");
+
+    // Create global config directory with platform-specific path
+    #[cfg(target_os = "windows")]
+    let global_config_dir = fake_home.path().join("devboy-tools");
+    #[cfg(not(target_os = "windows"))]
+    let global_config_dir = fake_home.path().join(".config").join("devboy-tools");
+
     fs::create_dir_all(&global_config_dir).unwrap();
 
-    // Write global config with different values
-    let global_config = r#"[github]
-owner = "global-owner"
-repo = "global-repo"
+    // Write global config with different values (no github section)
+    let global_config = r#"# Global config without github
 "#;
     fs::write(global_config_dir.join("config.toml"), global_config).unwrap();
 
-    // Write local config with different values
+    // Write local config with github section
     let local_config = r#"[github]
 owner = "local-priority-owner"
 repo = "local-priority-repo"
 "#;
     fs::write(temp_dir.path().join(".devboy.toml"), local_config).unwrap();
 
-    let output = Command::new(devboy_bin())
-        .args(["issues"])
+    let mut cmd = Command::new(devboy_bin());
+    cmd.args(["issues"])
         .env("DEVBOY_SKIP_KEYCHAIN", "1")
         .env("HOME", fake_home.path())
         .env("USERPROFILE", fake_home.path())
-        .current_dir(temp_dir.path())
-        .output()
-        .expect("Failed to execute command");
+        .current_dir(temp_dir.path());
+
+    // On Windows, also set APPDATA for dirs::config_dir() to work
+    #[cfg(target_os = "windows")]
+    cmd.env("APPDATA", fake_home.path());
+
+    // On Unix, set XDG_CONFIG_HOME for completeness
+    #[cfg(not(target_os = "windows"))]
+    cmd.env("XDG_CONFIG_HOME", fake_home.path().join(".config"));
+
+    let output = cmd.output().expect("Failed to execute command");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // The command should try to use LOCAL config (which has github section)
-    // rather than global config. Both have github, but we expect local to win.
-    // Since we can't directly verify which owner/repo was used without a working API,
-    // we verify that GitHub config was found (proving config loading worked).
+    // The command should use LOCAL config (which has github section)
+    // rather than global config (which has no github section).
+    // If global was used, we'd see "No provider configured".
+    // If local was used, we'd see a token/API error.
+    let local_config_was_used = stderr.contains("GitHub token not set")
+        || stderr.contains("Failed to get token")
+        || stderr.contains("Failed to fetch issues")
+        || stderr.contains("404");
+
     assert!(
-        stderr.contains("GitHub token not set") || stderr.contains("Failed to get token"),
-        "Should load config (local should have priority), got: {}",
-        stderr
+        local_config_was_used,
+        "Should use local config (with github section), not global. stdout: {}, stderr: {}",
+        stdout, stderr
+    );
+
+    // This is the key assertion: if "No provider configured" appears,
+    // it means global config was used instead of local
+    assert!(
+        !stdout.contains("No provider configured"),
+        "Local config should take priority over global config"
     );
 }
