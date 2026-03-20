@@ -1636,6 +1636,111 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_uses_default_pagination() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(26)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]).with_pipeline_config(PipelineConfig {
+            max_chars: 20_000,
+            ..Default::default()
+        });
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "format": "json"
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Review comment 1"));
+        assert!(content.contains("Review comment 20"));
+        assert!(!content.contains("Review comment 21"));
+        assert!(content.contains("offset=20"));
+        assert!(content.contains("limit=20"));
+        assert!(content.contains("Showing 1-20 of 26 discussions"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_omits_next_page_hint_on_last_page() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(25)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "offset": 20,
+            "limit": 5,
+            "format": "json"
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Review comment 21"));
+        assert!(content.contains("Review comment 25"));
+        assert!(!content.contains("offset=25"));
+        assert!(!content.contains("Showing 21-25 of 25 discussions"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_supports_offset_past_end() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(5)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "offset": 10,
+            "limit": 5,
+            "format": "json"
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("[]"));
+        assert!(!content.contains("offset=10"));
+        assert!(!content.contains("Review comment 1"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_skips_hints_when_disabled() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(26)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]).with_pipeline_config(PipelineConfig {
+            include_hints: false,
+            ..Default::default()
+        });
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "offset": 20,
+            "limit": 5,
+            "format": "json"
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Review comment 21"));
+        assert!(content.contains("Review comment 25"));
+        assert!(!content.contains("offset=25"));
+        assert!(!content.contains("Showing 21-25 of 26 discussions"));
+    }
+
+    #[tokio::test]
     async fn test_get_merge_request_diffs_handler() {
         let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
         let handler = ToolHandler::new(vec![provider]);
