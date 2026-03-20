@@ -10,7 +10,7 @@ Fast and efficient Open Source MCP server written in Rust. Designed for coding a
 
 | | Others | DevBoy |
 |-|--------|--------|
-| **Privacy** | Cloud-based credentials | Local OS keychain |
+| **Privacy** | Cloud-based credentials | Local OS keychain + env vars for CI |
 | **Focus** | All projects at once | Context-based project isolation |
 | **Context** | Static tool descriptions | Dynamic per-project prompts |
 | **Efficiency** | Raw JSON (~2000 tokens) | Optimized output (~100 tokens) |
@@ -100,6 +100,28 @@ Download binary from [Releases](https://github.com/meteora-pro/devboy-tools/rele
 ```
 
 Tokens are stored securely in OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service).
+
+### Alternative: Environment Variables (CI/CD)
+
+For CI/CD pipelines and containerized environments where keychain is unavailable, use environment variables:
+
+```bash
+# With DEVBOY_ prefix (recommended)
+export DEVBOY_GITHUB_TOKEN=ghp_xxx
+export DEVBOY_GITLAB_TOKEN=glpat-xxx
+export DEVBOY_CLICKUP_TOKEN=pk_xxx
+export DEVBOY_JIRA_TOKEN=xxx
+
+# Or without prefix (compatible with other tools)
+export GITHUB_TOKEN=ghp_xxx
+export GITLAB_TOKEN=glpat-xxx
+```
+
+**Credential Resolution Order:**
+1. Environment variables (`DEVBOY_{PROVIDER}_TOKEN`, then `{PROVIDER}_TOKEN`)
+2. OS Keychain
+
+This allows seamless use in GitHub Actions, GitLab CI, Docker, and cloud workspaces.
 
 ### 2. Verify Connection
 
