@@ -20,7 +20,7 @@ use devboy_mcp::{
     JsonRpcRequest, McpProxyClient, McpServer, ProxyManager, ProxyTransport, RequestId,
     JSONRPC_VERSION, KNOWN_BUILTIN_TOOLS,
 };
-use devboy_storage::{CredentialStore, KeychainStore, MemoryStore};
+use devboy_storage::{ChainStore, CredentialStore};
 use dialoguer::{Confirm, Input, MultiSelect, Password};
 use tracing_subscriber::EnvFilter;
 
@@ -314,24 +314,35 @@ enum ToolsCommands {
 /// Only affects init and proxy-add commands to prevent token loss in production.
 const SKIP_KEYCHAIN_ENV: &str = "DEVBOY_SKIP_KEYCHAIN";
 
-/// Get credential store using OS keychain.
-/// This is the default store for all production code paths.
+/// Get credential store using the default chain.
+///
+/// The chain resolves credentials in this order:
+/// 1. Environment variables (`DEVBOY_{PROVIDER}_TOKEN`, then `{PROVIDER}_TOKEN`)
+/// 2. OS Keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service)
+///
+/// This allows CI/CD pipelines to use environment variables while local development
+/// uses the keychain seamlessly.
 fn get_credential_store() -> Box<dyn CredentialStore> {
-    Box::new(KeychainStore::new())
+    Box::new(ChainStore::default_chain())
 }
 
 /// Get credential store for init/proxy-add commands.
-/// Uses MemoryStore if DEVBOY_SKIP_KEYCHAIN is set, allowing CI tests to run
+///
+/// Uses MemoryStore if `DEVBOY_SKIP_KEYCHAIN` is set, allowing CI tests to run
 /// without OS keychain access. This is intentionally limited to init/proxy-add
 /// paths to prevent accidental token loss in production usage.
+///
+/// Otherwise, uses the default chain (env vars -> keychain).
 fn get_credential_store_for_init() -> Box<dyn CredentialStore> {
     if std::env::var(SKIP_KEYCHAIN_ENV)
         .map(|v| v == "1" || v.to_lowercase() == "true")
         .unwrap_or(false)
     {
-        Box::new(MemoryStore::new())
+        // CI mode: env vars + memory (no keychain at all)
+        Box::new(ChainStore::ci_chain())
     } else {
-        Box::new(KeychainStore::new())
+        // Normal mode: env vars -> keychain
+        Box::new(ChainStore::default_chain())
     }
 }
 
