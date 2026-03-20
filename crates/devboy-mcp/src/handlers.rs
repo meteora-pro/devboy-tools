@@ -337,11 +337,14 @@ define_tools! {
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of discussions to return (default: 20)"
+                    "description": "Maximum number of discussions to return (default: 20)",
+                    "minimum": 1,
+                    "maximum": 100
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "Number of discussions to skip for pagination (default: 0)"
+                    "description": "Number of discussions to skip for pagination (default: 0)",
+                    "minimum": 0
                 },
                 "format": {
                     "type": "string",
@@ -874,6 +877,14 @@ impl ToolHandler {
             return ToolCallResult::error("No providers configured".to_string());
         }
 
+        if let Some(limit) = params.limit {
+            if limit == 0 || limit > 100 {
+                return ToolCallResult::error(
+                    "Invalid parameters: limit must be between 1 and 100".to_string(),
+                );
+            }
+        }
+
         for provider in &self.providers {
             match provider.get_discussions(&params.key).await {
                 Ok(discussions) => {
@@ -884,8 +895,7 @@ impl ToolHandler {
                         discussions.into_iter().skip(offset).take(limit).collect();
                     let included = paged_discussions.len();
 
-                    let pipeline =
-                        self.create_pipeline_with_max_items(&params.format, included.max(limit));
+                    let pipeline = self.create_pipeline_with_max_items(&params.format, limit);
                     return match pipeline.transform_discussions(paged_discussions) {
                         Ok(mut output) => {
                             if self.pipeline_config.include_hints && offset + included < total {
@@ -1664,6 +1674,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_uses_custom_configured_max_items() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(10)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]).with_pipeline_config(PipelineConfig {
+            max_items: 3,
+            max_chars: 20_000,
+            ..Default::default()
+        });
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "format": "json"
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Review comment 1"));
+        assert!(content.contains("Review comment 3"));
+        assert!(!content.contains("Review comment 4"));
+        assert!(content.contains("offset=3"));
+        assert!(content.contains("limit=3"));
+        assert!(content.contains("Showing 1-3 of 10 discussions"));
+    }
+
+    #[tokio::test]
     async fn test_get_merge_request_discussions_handler_omits_next_page_hint_on_last_page() {
         let provider = Arc::new(ManyDiscussionsProvider::new(25)) as Arc<dyn Provider>;
         let handler = ToolHandler::new(vec![provider]);
@@ -1741,6 +1780,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_rejects_zero_limit() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(26)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "limit": 0
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("limit must be between 1 and 100"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_rejects_limit_above_maximum() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(26)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "limit": 101
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("limit must be between 1 and 100"));
+    }
+
+    #[tokio::test]
     async fn test_get_merge_request_diffs_handler() {
         let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
         let handler = ToolHandler::new(vec![provider]);
@@ -1778,6 +1857,33 @@ mod tests {
 
         // 6 issue tools + 6 MR tools = 12 total
         assert_eq!(tools.len(), 12);
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_tool_schema_includes_pagination_bounds() {
+        let handler = ToolHandler::new(vec![]);
+        let tool = handler
+            .available_tools()
+            .into_iter()
+            .find(|tool| tool.name == "get_merge_request_discussions")
+            .expect("tool should exist");
+
+        let limit = &tool.input_schema["properties"]["limit"];
+        assert_eq!(limit["type"], serde_json::json!("integer"));
+        assert_eq!(limit["minimum"], serde_json::json!(1));
+        assert_eq!(limit["maximum"], serde_json::json!(100));
+        assert_eq!(
+            limit["description"],
+            serde_json::json!("Maximum number of discussions to return (default: 20)")
+        );
+
+        let offset = &tool.input_schema["properties"]["offset"];
+        assert_eq!(offset["type"], serde_json::json!("integer"));
+        assert_eq!(offset["minimum"], serde_json::json!(0));
+        assert_eq!(
+            offset["description"],
+            serde_json::json!("Number of discussions to skip for pagination (default: 0)")
+        );
     }
 
     #[tokio::test]
