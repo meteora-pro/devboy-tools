@@ -257,7 +257,10 @@ impl McpServer {
     }
 
     /// Handle tools/list request.
-    fn handle_tools_list(&self, id: RequestId) -> JsonRpcResponse {
+    ///
+    /// Returns the list of available tools filtered by configured providers.
+    /// This method is public to allow integration testing.
+    pub fn handle_tools_list(&self, id: RequestId) -> JsonRpcResponse {
         let providers = self.active_providers();
         let handler = ToolHandler::new(providers.clone());
         let mut tools = handler.available_tools();
