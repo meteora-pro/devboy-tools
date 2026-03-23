@@ -150,36 +150,56 @@ fn extract_zip(data: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Replace the current binary with new content.
+///
+/// - **Unix**: writes to a temp file and performs an atomic rename.
+/// - **Windows**: writes the new binary next to the current one, then spawns
+///   a helper `cmd.exe` process that waits for this process to exit and
+///   replaces the executable. This is necessary because Windows locks running
+///   executables, preventing in-place replacement.
 fn replace_binary(new_binary: &[u8]) -> Result<PathBuf> {
     let current_exe = env::current_exe().context("Failed to get current executable path")?;
     let current_exe = current_exe.canonicalize().unwrap_or(current_exe);
 
-    if cfg!(unix) {
-        // On Unix: write to temp file, then atomic rename
-        let temp_path = current_exe.with_extension("new");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
 
+        let temp_path = current_exe.with_extension("new");
+        fs::write(&temp_path, new_binary).context("Failed to write new binary")?;
+        fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o755))
+            .context("Failed to set executable permissions")?;
+        fs::rename(&temp_path, &current_exe).context("Failed to replace binary (atomic rename)")?;
+    }
+
+    #[cfg(windows)]
+    {
+        let temp_path = current_exe.with_extension("new.exe");
         fs::write(&temp_path, new_binary).context("Failed to write new binary")?;
 
-        // Set executable permissions
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o755))
-                .context("Failed to set executable permissions")?;
-        }
+        // Spawn a helper process that waits for us to exit, then moves the
+        // new binary over the old one and cleans up.
+        let current_str = current_exe.to_string_lossy();
+        let temp_str = temp_path.to_string_lossy();
 
-        fs::rename(&temp_path, &current_exe).context("Failed to replace binary (atomic rename)")?;
-    } else {
-        // On Windows: rename current to .old, write new, schedule cleanup
-        let old_path = current_exe.with_extension("old.exe");
-        let _ = fs::remove_file(&old_path); // Clean up previous .old if exists
-        fs::rename(&current_exe, &old_path).context("Failed to move current binary aside")?;
+        // ping localhost is a classic Windows trick to sleep without `timeout`
+        // (which requires a console). 3 pings ≈ 2 seconds.
+        let script = format!(
+            "ping 127.0.0.1 -n 3 >nul & move /Y \"{}\" \"{}\"",
+            temp_str, current_str,
+        );
 
-        if let Err(e) = fs::write(&current_exe, new_binary) {
-            // Try to restore the original
-            let _ = fs::rename(&old_path, &current_exe);
-            return Err(e).context("Failed to write new binary");
-        }
+        std::process::Command::new("cmd")
+            .args(["/C", &script])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .context("Failed to spawn helper process for binary replacement")?;
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        bail!("Self-update is not supported on this platform. Download the binary manually from GitHub Releases.");
     }
 
     Ok(current_exe)
@@ -281,6 +301,11 @@ pub async fn run_upgrade(check_only: bool) -> Result<()> {
         current_version,
         latest_version,
         path.display()
+    );
+
+    #[cfg(windows)]
+    println!(
+        "\n\x1b[33mNote: The binary will be replaced in a few seconds after this process exits.\x1b[0m"
     );
 
     Ok(())
