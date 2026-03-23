@@ -62,9 +62,6 @@ jobs:
       GITLAB_URL: ${{ secrets.GITLAB_URL }}
       GITLAB_PROJECT_ID: ${{ secrets.GITLAB_PROJECT_ID }}
       GITHUB_TEST_TOKEN: ${{ secrets.GH_TEST_TOKEN }}
-      # GITHUB_TOKEN is auto-provided by GitHub Actions (5000 req/hr)
-      # Used by upgrade tests to avoid GitHub API rate limits
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -141,7 +138,6 @@ jobs:
       GITLAB_URL: ${{ secrets.GITLAB_URL }}
       GITLAB_PROJECT_ID: ${{ secrets.GITLAB_PROJECT_ID }}
       GITHUB_TEST_TOKEN: ${{ secrets.GH_TEST_TOKEN }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
