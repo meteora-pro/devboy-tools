@@ -12,7 +12,7 @@ use devboy_core::{BuiltinToolsConfig, Provider};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::handlers::ToolHandler;
+use crate::handlers::{ToolCategory, ToolHandler};
 use crate::protocol::{
     InitializeParams, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, RequestId,
     ServerCapabilities, ServerInfo, ToolCallParams, ToolsCapability, ToolsListResult, MCP_VERSION,
@@ -125,6 +125,25 @@ impl McpServer {
             .get("default")
             .map(Vec::as_slice)
             .unwrap_or(&[])
+    }
+
+    /// Check if the active context has any providers configured.
+    ///
+    /// Since all providers implement both `IssueProvider` and `MergeRequestProvider` traits,
+    /// having at least one provider means both issue and MR tools are available.
+    fn has_providers(&self) -> bool {
+        !self.active_providers().is_empty()
+    }
+
+    /// Check if a tool category is available based on configured providers.
+    fn is_category_available(&self, category: ToolCategory) -> bool {
+        match category {
+            // All providers support issues (GitLab, GitHub, ClickUp, Jira)
+            ToolCategory::Issues => self.has_providers(),
+            // GitLab and GitHub support MRs; ClickUp/Jira return ProviderUnsupported
+            // but still implement the trait, so we check for any provider
+            ToolCategory::MergeRequests => self.has_providers(),
+        }
     }
 
     /// Run the MCP server main loop.
@@ -260,6 +279,16 @@ impl McpServer {
     fn handle_tools_list(&self, id: RequestId) -> JsonRpcResponse {
         let handler = ToolHandler::new(self.active_providers());
         let mut tools = handler.available_tools();
+
+        // Filter tools based on available providers (dynamic filtering).
+        // This prevents exposing tools that would always fail due to missing providers.
+        tools.retain(|t| {
+            t.category
+                .map(|cat| self.is_category_available(cat))
+                .unwrap_or(true) // Tools without category are always available
+        });
+
+        // Context management tools are always available
         tools.push(crate::protocol::ToolDefinition {
             name: "list_contexts".to_string(),
             description: "List configured contexts and indicate the active context.".to_string(),
@@ -267,6 +296,7 @@ impl McpServer {
                 "type": "object",
                 "properties": {}
             }),
+            category: None,
         });
         tools.push(crate::protocol::ToolDefinition {
             name: "use_context".to_string(),
@@ -278,6 +308,7 @@ impl McpServer {
                     "name": { "type": "string", "description": "Context name to activate" }
                 }
             }),
+            category: None,
         });
         tools.push(crate::protocol::ToolDefinition {
             name: "get_current_context".to_string(),
@@ -286,9 +317,10 @@ impl McpServer {
                 "type": "object",
                 "properties": {}
             }),
+            category: None,
         });
 
-        // Filter built-in tools based on config
+        // Filter built-in tools based on config (static filtering)
         if !self.builtin_tools_config.is_empty() {
             tools.retain(|t| self.builtin_tools_config.is_tool_allowed(&t.name));
         }
@@ -412,6 +444,86 @@ mod tests {
     use super::*;
     use crate::protocol::{RequestId, ToolCallResult, ToolResultContent, JSONRPC_VERSION};
 
+    use async_trait::async_trait;
+    use devboy_core::{
+        Comment, CreateCommentInput, CreateIssueInput, Discussion, FileDiff, Issue, IssueFilter,
+        IssueProvider, MergeRequest, MergeRequestProvider, MrFilter, UpdateIssueInput, User,
+    };
+
+    /// Test provider for unit tests.
+    struct TestProvider;
+
+    #[async_trait]
+    impl IssueProvider for TestProvider {
+        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
+            Ok(vec![])
+        }
+        async fn get_issue(&self, _key: &str) -> devboy_core::Result<Issue> {
+            Err(devboy_core::Error::NotFound("not found".into()))
+        }
+        async fn create_issue(&self, _input: CreateIssueInput) -> devboy_core::Result<Issue> {
+            Err(devboy_core::Error::NotFound("not found".into()))
+        }
+        async fn update_issue(
+            &self,
+            _key: &str,
+            _input: UpdateIssueInput,
+        ) -> devboy_core::Result<Issue> {
+            Err(devboy_core::Error::NotFound("not found".into()))
+        }
+        async fn get_comments(&self, _issue_key: &str) -> devboy_core::Result<Vec<Comment>> {
+            Ok(vec![])
+        }
+        async fn add_comment(&self, _issue_key: &str, _body: &str) -> devboy_core::Result<Comment> {
+            Err(devboy_core::Error::NotFound("not found".into()))
+        }
+        fn provider_name(&self) -> &'static str {
+            "test"
+        }
+    }
+
+    #[async_trait]
+    impl MergeRequestProvider for TestProvider {
+        async fn get_merge_requests(
+            &self,
+            _filter: MrFilter,
+        ) -> devboy_core::Result<Vec<MergeRequest>> {
+            Ok(vec![])
+        }
+        async fn get_merge_request(&self, _key: &str) -> devboy_core::Result<MergeRequest> {
+            Err(devboy_core::Error::NotFound("not found".into()))
+        }
+        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<Vec<Discussion>> {
+            Ok(vec![])
+        }
+        async fn get_diffs(&self, _mr_key: &str) -> devboy_core::Result<Vec<FileDiff>> {
+            Ok(vec![])
+        }
+        async fn add_comment(
+            &self,
+            _mr_key: &str,
+            _input: CreateCommentInput,
+        ) -> devboy_core::Result<Comment> {
+            Err(devboy_core::Error::NotFound("not found".into()))
+        }
+        fn provider_name(&self) -> &'static str {
+            "test"
+        }
+    }
+
+    #[async_trait]
+    impl Provider for TestProvider {
+        async fn get_current_user(&self) -> devboy_core::Result<User> {
+            Ok(User {
+                id: "1".to_string(),
+                username: "test".to_string(),
+                name: None,
+                email: None,
+                avatar_url: None,
+            })
+        }
+    }
+
     #[test]
     fn test_server_creation() {
         let server = McpServer::new();
@@ -447,14 +559,37 @@ mod tests {
     }
 
     #[test]
-    fn test_tools_list() {
+    fn test_tools_list_without_providers() {
+        // Without providers, only context management tools should be available
         let server = McpServer::new();
 
         let resp = server.handle_tools_list(RequestId::Number(1));
 
         assert!(resp.result.is_some());
         let result: ToolsListResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+
+        // Context tools are always available
+        assert!(result.tools.iter().any(|t| t.name == "list_contexts"));
+        assert!(result.tools.iter().any(|t| t.name == "use_context"));
+        assert!(result.tools.iter().any(|t| t.name == "get_current_context"));
+
+        // Issue and MR tools should NOT be available without providers
+        assert!(!result.tools.iter().any(|t| t.name == "get_issues"));
+        assert!(!result.tools.iter().any(|t| t.name == "get_merge_requests"));
+    }
+
+    #[test]
+    fn test_tools_list_with_provider() {
+        let mut server = McpServer::new();
+        server.add_provider(Arc::new(TestProvider));
+
+        let resp = server.handle_tools_list(RequestId::Number(1));
+
+        assert!(resp.result.is_some());
+        let result: ToolsListResult = serde_json::from_value(resp.result.unwrap()).unwrap();
         assert!(!result.tools.is_empty());
+
+        // With a provider, all tools should be available
         assert!(result.tools.iter().any(|t| t.name == "get_issues"));
         assert!(result.tools.iter().any(|t| t.name == "get_merge_requests"));
         assert!(result.tools.iter().any(|t| t.name == "list_contexts"));
@@ -503,90 +638,6 @@ mod tests {
 
     #[test]
     fn test_add_provider_and_providers() {
-        use async_trait::async_trait;
-        use devboy_core::{
-            Comment, CreateCommentInput, CreateIssueInput, Discussion, FileDiff, Issue,
-            IssueFilter, IssueProvider, MergeRequest, MergeRequestProvider, MrFilter,
-            UpdateIssueInput, User,
-        };
-
-        struct TestProvider;
-
-        #[async_trait]
-        impl IssueProvider for TestProvider {
-            async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
-                Ok(vec![])
-            }
-            async fn get_issue(&self, _key: &str) -> devboy_core::Result<Issue> {
-                Err(devboy_core::Error::NotFound("not found".into()))
-            }
-            async fn create_issue(&self, _input: CreateIssueInput) -> devboy_core::Result<Issue> {
-                Err(devboy_core::Error::NotFound("not found".into()))
-            }
-            async fn update_issue(
-                &self,
-                _key: &str,
-                _input: UpdateIssueInput,
-            ) -> devboy_core::Result<Issue> {
-                Err(devboy_core::Error::NotFound("not found".into()))
-            }
-            async fn get_comments(&self, _issue_key: &str) -> devboy_core::Result<Vec<Comment>> {
-                Ok(vec![])
-            }
-            async fn add_comment(
-                &self,
-                _issue_key: &str,
-                _body: &str,
-            ) -> devboy_core::Result<Comment> {
-                Err(devboy_core::Error::NotFound("not found".into()))
-            }
-            fn provider_name(&self) -> &'static str {
-                "test"
-            }
-        }
-
-        #[async_trait]
-        impl MergeRequestProvider for TestProvider {
-            async fn get_merge_requests(
-                &self,
-                _filter: MrFilter,
-            ) -> devboy_core::Result<Vec<MergeRequest>> {
-                Ok(vec![])
-            }
-            async fn get_merge_request(&self, _key: &str) -> devboy_core::Result<MergeRequest> {
-                Err(devboy_core::Error::NotFound("not found".into()))
-            }
-            async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<Vec<Discussion>> {
-                Ok(vec![])
-            }
-            async fn get_diffs(&self, _mr_key: &str) -> devboy_core::Result<Vec<FileDiff>> {
-                Ok(vec![])
-            }
-            async fn add_comment(
-                &self,
-                _mr_key: &str,
-                _input: CreateCommentInput,
-            ) -> devboy_core::Result<Comment> {
-                Err(devboy_core::Error::NotFound("not found".into()))
-            }
-            fn provider_name(&self) -> &'static str {
-                "test"
-            }
-        }
-
-        #[async_trait]
-        impl Provider for TestProvider {
-            async fn get_current_user(&self) -> devboy_core::Result<User> {
-                Ok(User {
-                    id: "1".to_string(),
-                    username: "test".to_string(),
-                    name: None,
-                    email: None,
-                    avatar_url: None,
-                })
-            }
-        }
-
         let mut server = McpServer::new();
         assert!(server.providers().is_empty());
 
@@ -865,6 +916,8 @@ mod tests {
     #[test]
     fn test_tools_list_includes_proxy_tools() {
         let mut server = McpServer::new();
+        // Add a provider so tools are available
+        server.add_provider(Arc::new(TestProvider));
 
         // Create a ProxyManager and manually simulate fetched tools
         // by checking that the server returns proxy tools in tools/list.
@@ -897,6 +950,8 @@ mod tests {
     #[test]
     fn test_builtin_tools_disabled_filters_tools_list() {
         let mut server = McpServer::new();
+        // Add a provider so tools are available
+        server.add_provider(Arc::new(TestProvider));
         server
             .set_builtin_tools_config(BuiltinToolsConfig {
                 disabled: vec!["get_issues".to_string(), "create_issue".to_string()],

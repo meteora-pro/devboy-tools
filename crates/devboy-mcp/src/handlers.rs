@@ -10,6 +10,15 @@
 
 use std::sync::Arc;
 
+/// Tool category for filtering based on provider availability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolCategory {
+    /// Tools that require an issue provider (GitLab, GitHub, ClickUp, Jira).
+    Issues,
+    /// Tools that require a merge request provider (GitLab, GitHub).
+    MergeRequests,
+}
+
 use devboy_core::{
     CodePosition, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, IssueFilter,
     IssueProvider, MergeRequestProvider, MrFilter, Provider, UpdateIssueInput,
@@ -22,17 +31,18 @@ use crate::protocol::{ToolCallResult, ToolDefinition};
 
 /// Defines the complete tool registry in one place.
 ///
-/// For each provider tool: name, description, JSON schema, and handler method.
+/// For each provider tool: name, category, description, JSON schema, and handler method.
 /// Context management tools only need name (handled by McpServer, not ToolHandler).
 ///
 /// Generates:
 /// - `KNOWN_BUILTIN_TOOLS` — all tool names (provider + context)
-/// - `ToolHandler::available_tools()` — tool definitions with schemas
+/// - `ToolHandler::available_tools()` — tool definitions with schemas and categories
 /// - `ToolHandler::execute()` — match routing to handler methods
 macro_rules! define_tools {
     (
         $(
             $name:literal => $handler:ident {
+                category: $category:expr,
                 description: $desc:literal,
                 schema: $schema:tt
             }
@@ -55,6 +65,7 @@ macro_rules! define_tools {
                             name: $name.to_string(),
                             description: $desc.to_string(),
                             input_schema: serde_json::json!($schema),
+                            category: Some($category),
                         },
                     )+
                 ]
@@ -77,6 +88,7 @@ define_tools! {
     // =====================================================================
 
     "get_issues" => handle_get_issues {
+        category: ToolCategory::Issues,
         description: "Get issues from configured providers (GitLab, GitHub, ClickUp). Returns a list of issues with filters.",
         schema: {
             "type": "object",
@@ -135,6 +147,7 @@ define_tools! {
     },
 
     "get_issue" => handle_get_issue {
+        category: ToolCategory::Issues,
         description: "Get a single issue by key (e.g., 'gh#123', 'gitlab#456', 'CU-abc', 'DEV-42', 'jira#PROJ-123'). Returns full issue details.",
         schema: {
             "type": "object",
@@ -154,6 +167,7 @@ define_tools! {
     },
 
     "get_issue_comments" => handle_get_issue_comments {
+        category: ToolCategory::Issues,
         description: "Get comments for an issue. Returns all comments with author and timestamp.",
         schema: {
             "type": "object",
@@ -173,6 +187,7 @@ define_tools! {
     },
 
     "create_issue" => handle_create_issue {
+        category: ToolCategory::Issues,
         description: "Create a new issue in the configured provider.",
         schema: {
             "type": "object",
@@ -206,6 +221,7 @@ define_tools! {
     },
 
     "update_issue" => handle_update_issue {
+        category: ToolCategory::Issues,
         description: "Update an existing issue. Only provided fields will be changed.",
         schema: {
             "type": "object",
@@ -243,6 +259,7 @@ define_tools! {
     },
 
     "add_issue_comment" => handle_add_issue_comment {
+        category: ToolCategory::Issues,
         description: "Add a comment to an issue.",
         schema: {
             "type": "object",
@@ -265,6 +282,7 @@ define_tools! {
     // =====================================================================
 
     "get_merge_requests" => handle_get_merge_requests {
+        category: ToolCategory::MergeRequests,
         description: "Get merge requests / pull requests from configured providers.",
         schema: {
             "type": "object",
@@ -307,6 +325,7 @@ define_tools! {
     },
 
     "get_merge_request" => handle_get_merge_request {
+        category: ToolCategory::MergeRequests,
         description: "Get a single merge request / pull request by key (e.g., 'pr#123', 'mr#456').",
         schema: {
             "type": "object",
@@ -326,6 +345,7 @@ define_tools! {
     },
 
     "get_merge_request_discussions" => handle_get_merge_request_discussions {
+        category: ToolCategory::MergeRequests,
         description: "Get discussions/review comments for a merge request. Includes code review threads with positions.",
         schema: {
             "type": "object",
@@ -356,6 +376,7 @@ define_tools! {
     },
 
     "get_merge_request_diffs" => handle_get_merge_request_diffs {
+        category: ToolCategory::MergeRequests,
         description: "Get file diffs for a merge request. Shows changed files with additions/deletions.",
         schema: {
             "type": "object",
@@ -375,6 +396,7 @@ define_tools! {
     },
 
     "create_merge_request" => handle_create_merge_request {
+        category: ToolCategory::MergeRequests,
         description: "Create a new merge request (GitLab) or pull request (GitHub).",
         schema: {
             "type": "object",
@@ -420,6 +442,7 @@ define_tools! {
     },
 
     "create_merge_request_comment" => handle_create_merge_request_comment {
+        category: ToolCategory::MergeRequests,
         description: "Add a comment to a merge request. Can be a general comment or an inline code review comment.",
         schema: {
             "type": "object",
