@@ -107,10 +107,12 @@ fn test_upgrade_appears_in_main_help() {
 
 #[test]
 fn test_update_check_suppressed_in_ci() {
-    // Run any command with CI=true — should not produce update notice on stderr
+    // Use `config path` — a real subcommand that goes through main() and triggers update check.
+    // With CI=true the update check should be suppressed.
     let output = Command::new(devboy_bin())
-        .args(["--help"])
+        .args(["config", "path"])
         .env("CI", "true")
+        .env("DEVBOY_SKIP_KEYCHAIN", "1")
         .output()
         .expect("Failed to execute command");
 
@@ -126,10 +128,11 @@ fn test_update_check_suppressed_in_ci() {
 
 #[test]
 fn test_update_check_suppressed_with_env_var() {
-    // Run any command with DEVBOY_NO_UPDATE_CHECK=1
+    // Use `config path` — a real subcommand that goes through main() and triggers update check.
     let output = Command::new(devboy_bin())
-        .args(["--help"])
+        .args(["config", "path"])
         .env("DEVBOY_NO_UPDATE_CHECK", "1")
+        .env("DEVBOY_SKIP_KEYCHAIN", "1")
         .output()
         .expect("Failed to execute command");
 
