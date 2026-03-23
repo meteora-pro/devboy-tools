@@ -1,5 +1,8 @@
 //! DevBoy CLI - Command-line interface for devboy-tools.
 
+mod update_check;
+mod upgrade;
+
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process::Command;
@@ -188,6 +191,13 @@ enum Commands {
     Tools {
         #[command(subcommand)]
         command: Option<ToolsCommands>,
+    },
+
+    /// Upgrade devboy to the latest version
+    Upgrade {
+        /// Only check for updates, don't install
+        #[arg(long)]
+        check: bool,
     },
 }
 
@@ -379,6 +389,14 @@ async fn main() -> Result<()> {
 
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
+    // Run update check for interactive commands (skip for mcp, upgrade, and no-command)
+    match &cli.command {
+        Some(Commands::Mcp { .. }) | Some(Commands::Upgrade { .. }) | None => {}
+        _ => {
+            update_check::check_and_notify().await;
+        }
+    }
+
     match cli.command {
         Some(Commands::Init {
             yes,
@@ -441,6 +459,10 @@ async fn main() -> Result<()> {
 
         Some(Commands::Tools { command }) => {
             handle_tools_command(command).await?;
+        }
+
+        Some(Commands::Upgrade { check }) => {
+            upgrade::run_upgrade(check).await?;
         }
 
         None => {
