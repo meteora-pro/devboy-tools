@@ -132,7 +132,11 @@ enum Commands {
     },
 
     /// Start the MCP server (stdio mode for AI assistants)
-    Mcp,
+    Mcp {
+        /// Skip loading config file, use only environment variables
+        #[arg(long)]
+        no_config: bool,
+    },
 
     /// Configuration management
     Config {
@@ -311,39 +315,55 @@ enum ToolsCommands {
 
 /// Environment variable to skip keychain operations (for CI testing).
 /// When set to "1" or "true", uses in-memory store instead of OS keychain.
-/// Only affects init and proxy-add commands to prevent token loss in production.
 const SKIP_KEYCHAIN_ENV: &str = "DEVBOY_SKIP_KEYCHAIN";
 
-/// Get credential store using the default chain.
+/// Environment variable to skip loading config file.
+/// When set to "1" or "true", MCP server uses only environment variables.
+const NO_CONFIG_ENV: &str = "DEVBOY_NO_CONFIG";
+
+/// Get credential store using the appropriate chain.
 ///
-/// The chain resolves credentials in this order:
+/// When `DEVBOY_SKIP_KEYCHAIN=1` is set:
+/// - Uses CI chain (env vars + memory, no keychain access)
+///
+/// Otherwise uses the default chain which resolves credentials in this order:
 /// 1. Environment variables (`DEVBOY_{PROVIDER}_TOKEN`, then `{PROVIDER}_TOKEN`)
 /// 2. OS Keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service)
 ///
 /// This allows CI/CD pipelines to use environment variables while local development
 /// uses the keychain seamlessly.
 fn get_credential_store() -> Box<dyn CredentialStore> {
-    Box::new(ChainStore::default_chain())
+    if is_skip_keychain_enabled() {
+        tracing::info!("Using CI credential chain (env vars only, keychain disabled)");
+        Box::new(ChainStore::ci_chain())
+    } else {
+        tracing::debug!("Using default credential chain (env vars -> keychain)");
+        Box::new(ChainStore::default_chain())
+    }
+}
+
+/// Check if keychain should be skipped (for CI/containers).
+fn is_skip_keychain_enabled() -> bool {
+    env_is_truthy(SKIP_KEYCHAIN_ENV)
+}
+
+/// Check if config file should be skipped.
+fn is_no_config_enabled() -> bool {
+    env_is_truthy(NO_CONFIG_ENV)
+}
+
+/// Check if an environment variable is set to a truthy value ("1" or "true").
+fn env_is_truthy(name: &str) -> bool {
+    std::env::var(name)
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false)
 }
 
 /// Get credential store for init/proxy-add commands.
 ///
-/// Uses MemoryStore if `DEVBOY_SKIP_KEYCHAIN` is set, allowing CI tests to run
-/// without OS keychain access. This is intentionally limited to init/proxy-add
-/// paths to prevent accidental token loss in production usage.
-///
-/// Otherwise, uses the default chain (env vars -> keychain).
+/// Same as `get_credential_store()` - uses CI chain when `DEVBOY_SKIP_KEYCHAIN=1`.
 fn get_credential_store_for_init() -> Box<dyn CredentialStore> {
-    if std::env::var(SKIP_KEYCHAIN_ENV)
-        .map(|v| v == "1" || v.to_lowercase() == "true")
-        .unwrap_or(false)
-    {
-        // CI mode: env vars + memory (no keychain at all)
-        Box::new(ChainStore::ci_chain())
-    } else {
-        // Normal mode: env vars -> keychain
-        Box::new(ChainStore::default_chain())
-    }
+    get_credential_store()
 }
 
 #[tokio::main]
@@ -391,8 +411,8 @@ async fn main() -> Result<()> {
             .await?;
         }
 
-        Some(Commands::Mcp) => {
-            handle_mcp_command().await?;
+        Some(Commands::Mcp { no_config }) => {
+            handle_mcp_command(no_config).await?;
         }
 
         Some(Commands::Config { command }) => {
@@ -1613,65 +1633,77 @@ async fn handle_test_command(provider: &str) -> Result<()> {
 // MCP Command
 // =============================================================================
 
-async fn handle_mcp_command() -> Result<()> {
-    let (config, config_path) = load_runtime_config()?;
+async fn handle_mcp_command(no_config: bool) -> Result<()> {
     let store = get_credential_store();
-
     let mut server = McpServer::new();
 
-    // Apply built-in tools filtering config.
-    if !config.builtin_tools.is_empty() {
-        config.builtin_tools.warn_unknown_tools(KNOWN_BUILTIN_TOOLS);
-        server
-            .set_builtin_tools_config(config.builtin_tools.clone())
-            .context("Invalid builtin_tools configuration")?;
-    }
+    // Load config unless --no-config flag or DEVBOY_NO_CONFIG=1 is set
+    let skip_config = no_config || is_no_config_enabled();
+    let config = if skip_config {
+        tracing::info!("Running in env-only mode, skipping config file");
+        Config::default()
+    } else {
+        let (cfg, config_path) = load_runtime_config()?;
+        tracing::debug!("Config loaded from: {}", config_path.display());
+
+        // Apply built-in tools filtering config.
+        if !cfg.builtin_tools.is_empty() {
+            cfg.builtin_tools.warn_unknown_tools(KNOWN_BUILTIN_TOOLS);
+            server
+                .set_builtin_tools_config(cfg.builtin_tools.clone())
+                .context("Invalid builtin_tools configuration")?;
+        }
+
+        cfg
+    };
 
     let mut any_provider_added = false;
 
-    // Add configured named contexts.
-    for (context_name, context) in &config.contexts {
-        server.ensure_context(context_name);
-        any_provider_added |=
-            add_context_providers(&mut server, store.as_ref(), context_name, context);
-    }
-
-    // Backward-compatible implicit default context from top-level provider fields.
-    // Skip when explicit `contexts.default` exists to match Config::get_context precedence.
-    if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME) {
-        if let Some(default_context) = config.legacy_default_context() {
-            any_provider_added |= add_context_providers(
-                &mut server,
-                store.as_ref(),
-                Config::DEFAULT_CONTEXT_NAME,
-                &default_context,
-            );
+    // Add configured named contexts (skip if no_config).
+    if !skip_config {
+        for (context_name, context) in &config.contexts {
+            server.ensure_context(context_name);
+            any_provider_added |=
+                add_context_providers(&mut server, store.as_ref(), context_name, context);
         }
-    }
 
-    // Set active context (if configured and valid).
-    if let Some(active) = config.resolve_active_context_name() {
-        if let Err(e) = server.set_active_context(&active) {
-            tracing::warn!("Could not set active context '{}': {}", active, e);
-        } else {
-            tracing::info!("Active context: {}", active);
-        }
-    }
-
-    // Connect to upstream MCP proxy servers (if configured).
-    if !config.proxy_mcp_servers.is_empty() {
-        let mut proxy_manager = build_proxy_manager(&config, store.as_ref()).await;
-        if !proxy_manager.is_empty() {
-            if let Err(e) = proxy_manager.fetch_all_tools().await {
-                tracing::warn!("Failed to fetch proxy tools: {}", e);
+        // Backward-compatible implicit default context from top-level provider fields.
+        if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME) {
+            if let Some(default_context) = config.legacy_default_context() {
+                any_provider_added |= add_context_providers(
+                    &mut server,
+                    store.as_ref(),
+                    Config::DEFAULT_CONTEXT_NAME,
+                    &default_context,
+                );
             }
-            server.set_proxy_manager(proxy_manager);
+        }
+
+        // Set active context (if configured and valid).
+        if let Some(active) = config.resolve_active_context_name() {
+            if let Err(e) = server.set_active_context(&active) {
+                tracing::warn!("Could not set active context '{}': {}", active, e);
+            } else {
+                tracing::info!("Active context: {}", active);
+            }
         }
     }
 
-    if !any_provider_added {
+    // Connect to upstream MCP proxy servers (from config and/or env vars).
+    let mut proxy_manager = build_proxy_manager(&config, store.as_ref()).await;
+
+    // Also check for env-only proxies (DEVBOY_*_URL without config entry)
+    add_env_only_proxies(&mut proxy_manager, &config, store.as_ref()).await;
+
+    if !proxy_manager.is_empty() {
+        if let Err(e) = proxy_manager.fetch_all_tools().await {
+            tracing::warn!("Failed to fetch proxy tools: {}", e);
+        }
+        server.set_proxy_manager(proxy_manager);
+    }
+
+    if !any_provider_added && !skip_config {
         tracing::warn!("No providers configured. MCP server will have limited functionality.");
-        tracing::info!("Config source: {}", config_path.display());
         tracing::info!("Configure GitHub: devboy config set github.owner <owner>");
     }
 
@@ -1895,11 +1927,15 @@ async fn build_proxy_manager(config: &Config, store: &dyn CredentialStore) -> Pr
             .as_deref()
             .and_then(|key| store.get(key).ok().flatten());
 
+        // Check for URL override from environment variable
+        // Pattern: DEVBOY_{NAME}_URL (e.g., DEVBOY_DEVBOY_CLOUD_URL)
+        let url = get_proxy_url_from_env(&proxy_cfg.name).unwrap_or_else(|| proxy_cfg.url.clone());
+
         let transport = ProxyTransport::parse(&proxy_cfg.transport);
 
         match McpProxyClient::connect(
             &proxy_cfg.name,
-            &proxy_cfg.url,
+            &url,
             proxy_cfg.tool_prefix.as_deref(),
             token.as_deref(),
             &proxy_cfg.auth_type,
@@ -1911,7 +1947,7 @@ async fn build_proxy_manager(config: &Config, store: &dyn CredentialStore) -> Pr
                 tracing::info!(
                     "Connected to upstream MCP server '{}' at {}",
                     proxy_cfg.name,
-                    proxy_cfg.url
+                    url
                 );
                 proxy_manager.add_client(client);
             }
@@ -1925,6 +1961,94 @@ async fn build_proxy_manager(config: &Config, store: &dyn CredentialStore) -> Pr
         }
     }
     proxy_manager
+}
+
+/// Get proxy URL from environment variable.
+///
+/// Checks for `DEVBOY_{NAME}_URL` where name is uppercased with
+/// dots, slashes, and dashes replaced by underscores.
+///
+/// Example: proxy name "devboy-cloud" -> `DEVBOY_DEVBOY_CLOUD_URL`
+fn get_proxy_url_from_env(name: &str) -> Option<String> {
+    let env_name = format!(
+        "DEVBOY_{}_URL",
+        name.to_uppercase().replace(['.', '/', '-'], "_")
+    );
+    std::env::var(&env_name).ok().filter(|s| !s.is_empty())
+}
+
+/// Scan environment for proxy definitions not in config.
+///
+/// Looks for `DEVBOY_*_URL` variables and creates proxies for them
+/// if they don't already exist in the config.
+///
+/// Example:
+/// - `DEVBOY_DEVBOY_CLOUD_URL=https://...` creates proxy named "devboy-cloud"
+/// - `DEVBOY_DEVBOY_CLOUD_TOKEN=xxx` provides the token
+async fn add_env_only_proxies(
+    proxy_manager: &mut ProxyManager,
+    config: &Config,
+    store: &dyn CredentialStore,
+) {
+    // Collect existing proxy names from config
+    let existing_names: std::collections::HashSet<_> = config
+        .proxy_mcp_servers
+        .iter()
+        .map(|p| p.name.to_lowercase().replace(['.', '/', '-'], "_"))
+        .collect();
+
+    // Scan environment for DEVBOY_*_URL patterns
+    for (key, url) in std::env::vars() {
+        if let Some(name) = key
+            .strip_prefix("DEVBOY_")
+            .and_then(|s| s.strip_suffix("_URL"))
+        {
+            // Convert env name back to proxy name (lowercase, underscores to dashes)
+            let proxy_name = name.to_lowercase().replace('_', "-");
+            let normalized = name.to_lowercase();
+
+            // Skip if already configured
+            if existing_names.contains(&normalized) {
+                tracing::debug!("Proxy '{}' already in config, env URL ignored", proxy_name);
+                continue;
+            }
+
+            // Get token from store (will check env vars via ChainStore)
+            let token_key = format!("{}.token", proxy_name);
+            let token = store.get(&token_key).ok().flatten();
+
+            tracing::info!(
+                "Found env-only proxy '{}' from {} (token: {})",
+                proxy_name,
+                key,
+                if token.is_some() { "found" } else { "none" }
+            );
+
+            // Connect to the proxy
+            match McpProxyClient::connect(
+                &proxy_name,
+                &url,
+                None, // no tool prefix override
+                token.as_deref(),
+                "bearer", // default auth type
+                ProxyTransport::StreamableHttp,
+            )
+            .await
+            {
+                Ok(client) => {
+                    tracing::info!("Connected to env-only proxy '{}' at {}", proxy_name, url);
+                    proxy_manager.add_client(client);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to connect to env-only proxy '{}': {}",
+                        proxy_name,
+                        e
+                    );
+                }
+            }
+        }
+    }
 }
 
 fn get_token_for_context(

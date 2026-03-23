@@ -2,7 +2,7 @@
 
 DevBoy supports environment variables as an alternative to OS keychain for credential storage. This enables seamless use in CI/CD pipelines, containerized environments, and cloud workspaces where keychain access may be unavailable.
 
-## Credential Resolution Order
+## Credential resolution order
 
 When resolving credentials, DevBoy checks sources in this order:
 
@@ -13,9 +13,9 @@ When resolving credentials, DevBoy checks sources in this order:
 
 This means environment variables **always take priority** over keychain values, allowing you to override credentials in CI/CD without modifying your local setup.
 
-## Supported Environment Variables
+## Supported environment variables
 
-### Provider Tokens
+### Provider tokens
 
 | Provider | Prefixed Variable | Unprefixed Fallback |
 |----------|-------------------|---------------------|
@@ -24,7 +24,7 @@ This means environment variables **always take priority** over keychain values, 
 | **ClickUp** | `DEVBOY_CLICKUP_TOKEN` | `CLICKUP_TOKEN` |
 | **Jira** | `DEVBOY_JIRA_TOKEN` | `JIRA_TOKEN` |
 
-### Context-Scoped Tokens
+### Context-scoped tokens
 
 For multi-context setups, you can set tokens per context:
 
@@ -34,7 +34,7 @@ For multi-context setups, you can set tokens per context:
 | `dashboard` context, GitLab | `DEVBOY_CONTEXTS_DASHBOARD_GITLAB_TOKEN` |
 | `prod` context, GitHub | `DEVBOY_CONTEXTS_PROD_GITHUB_TOKEN` |
 
-### Proxy Server Tokens
+### Proxy server tokens
 
 For upstream MCP server proxies:
 
@@ -43,7 +43,18 @@ For upstream MCP server proxies:
 | `devboy-cloud` | `DEVBOY_DEVBOY_CLOUD_TOKEN` |
 | `my-server` | `DEVBOY_MY_SERVER_TOKEN` |
 
-## Key to Environment Variable Mapping
+### Proxy server URLs
+
+You can also define proxy URLs via environment variables (no config file needed):
+
+| Proxy Name | Variable |
+|------------|----------|
+| `devboy-cloud` | `DEVBOY_DEVBOY_CLOUD_URL` |
+| `my-server` | `DEVBOY_MY_SERVER_URL` |
+
+When both URL and TOKEN are set, DevBoy automatically creates the proxy connection without any config file.
+
+## Key to environment variable mapping
 
 DevBoy converts credential keys to environment variable names using these rules:
 
@@ -61,7 +72,7 @@ DevBoy converts credential keys to environment variable names using these rules:
 | `contexts.dashboard.github.token` | `DEVBOY_CONTEXTS_DASHBOARD_GITHUB_TOKEN` | `CONTEXTS_DASHBOARD_GITHUB_TOKEN` |
 | `devboy-cloud.token` | `DEVBOY_DEVBOY_CLOUD_TOKEN` | `DEVBOY_CLOUD_TOKEN` |
 
-## CI/CD Examples
+## CI/CD examples
 
 ### GitHub Actions
 
@@ -154,7 +165,31 @@ spec:
               key: gitlab-token
 ```
 
-## Multiple Contexts with Environment Variables
+### Claude Code / Claude Desktop
+
+Add to `~/.claude/claude_desktop_config.json` or project `.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "devboy": {
+      "command": "devboy",
+      "args": ["mcp"],
+      "env": {
+        "DEVBOY_SKIP_KEYCHAIN": "1",
+        "DEVBOY_NO_CONFIG": "1",
+        "DEVBOY_DEVBOY_CLOUD_URL": "https://app.devboy.pro/api/mcp?name=my-project",
+        "DEVBOY_DEVBOY_CLOUD_TOKEN": "your-token"
+      }
+    }
+  }
+}
+```
+
+> **Note:** Use `"command": "devboy"` if installed globally via `npm install -g @devboy-tools/cli`,
+> or specify the full path like `"/path/to/devboy"` for local builds.
+
+## Multiple contexts with environment variables
 
 When using multiple contexts, you can set different tokens for each:
 
@@ -178,7 +213,7 @@ Resolution for `staging` context (no context-specific var):
 2. `DEVBOY_GITHUB_TOKEN` (found, used)
 3. ~~Keychain~~ (skipped)
 
-## Special Environment Variables
+## Special environment variables
 
 ### DEVBOY_SKIP_KEYCHAIN
 
@@ -189,11 +224,52 @@ export DEVBOY_SKIP_KEYCHAIN=1
 ```
 
 When set to `1` or `true`:
-- `devboy init` uses in-memory storage instead of keychain
+- Disables OS keychain access completely
 - Tokens are only read from environment variables
-- Write operations (`set-secret`) go to memory (not persisted)
+- Write operations go to in-memory storage (not persisted)
 
-## Security Best Practices
+### DEVBOY_NO_CONFIG
+
+Skip loading the config file, use only environment variables:
+
+```bash
+export DEVBOY_NO_CONFIG=1
+```
+
+When set to `1` or `true`:
+- Config file (`config.toml`) is not loaded
+- All providers and proxies must be defined via environment variables
+- Useful for pure env-only deployments (Docker, Kubernetes, CI)
+
+Alternatively, use the `--no-config` CLI flag:
+
+```bash
+devboy mcp --no-config
+```
+
+### Full env-only mode
+
+For completely config-free operation, combine both:
+
+```bash
+export DEVBOY_SKIP_KEYCHAIN=1
+export DEVBOY_NO_CONFIG=1
+export DEVBOY_DEVBOY_CLOUD_URL="https://app.devboy.pro/api/mcp?name=my-project"
+export DEVBOY_DEVBOY_CLOUD_TOKEN="my-token"
+
+devboy mcp
+```
+
+Or as a one-liner:
+
+```bash
+DEVBOY_SKIP_KEYCHAIN=1 DEVBOY_NO_CONFIG=1 \
+  DEVBOY_DEVBOY_CLOUD_URL="https://..." \
+  DEVBOY_DEVBOY_CLOUD_TOKEN="..." \
+  devboy mcp
+```
+
+## Security best practices
 
 1. **Never commit tokens** to version control
 2. **Use CI/CD secrets** (GitHub Secrets, GitLab CI Variables, etc.)
@@ -217,7 +293,7 @@ echo $GITHUB_TOKEN
 RUST_LOG=debug devboy test github
 ```
 
-### Keychain vs Environment Variable Priority
+### Keychain vs environment variable priority
 
 Environment variables **always** take priority. If you have a token in both keychain and env var, the env var value is used.
 
