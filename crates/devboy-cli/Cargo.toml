@@ -20,15 +20,20 @@ devboy-gitlab = { path = "../plugins/api/gitlab" }
 devboy-clickup = { path = "../plugins/api/clickup" }
 devboy-jira = { path = "../plugins/api/jira" }
 tokio.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 clap.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
+reqwest.workspace = true
 dialoguer = "0.11"
 chrono = "0.4"
 toml.workspace = true
 dirs.workspace = true
+flate2 = "1.1"
+tar = "0.4"
+zip = "8.4"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
