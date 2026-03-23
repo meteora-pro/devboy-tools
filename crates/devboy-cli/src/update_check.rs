@@ -251,9 +251,9 @@ pub fn is_newer_version(current: &str, latest: &str) -> bool {
 
 /// Run the update check and print a notice if a newer version is available.
 ///
-/// This should be called early in main() for non-upgrade commands.
-/// It's designed to be non-blocking — uses cached results when available,
-/// and performs an async HTTP request only when the cache is stale.
+/// This should be called early in `main()` for non-upgrade commands.
+/// Uses cached results when available. When the cache is stale, performs
+/// an async HTTP request which can take up to `REQUEST_TIMEOUT` (5s).
 pub async fn check_and_notify() {
     if should_skip_check() {
         return;
@@ -413,7 +413,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs()
-            - (1 * 60 * 60);
+            - (60 * 60);
 
         let cache = VersionCache {
             latest_version: "2.0.0".to_string(),

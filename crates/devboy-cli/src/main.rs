@@ -389,13 +389,12 @@ async fn main() -> Result<()> {
 
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
-    // Run update check for interactive commands (skip for mcp, upgrade, and no-command)
-    match &cli.command {
-        Some(Commands::Mcp { .. }) | Some(Commands::Upgrade { .. }) | None => {}
-        _ => {
-            update_check::check_and_notify().await;
-        }
-    }
+    // Run update check in background for interactive commands (skip for mcp, upgrade, and no-command).
+    // Spawned as a background task to avoid blocking CLI startup on network calls.
+    let update_check_handle = match &cli.command {
+        Some(Commands::Mcp { .. }) | Some(Commands::Upgrade { .. }) | None => None,
+        _ => Some(tokio::spawn(update_check::check_and_notify())),
+    };
 
     match cli.command {
         Some(Commands::Init {
@@ -469,6 +468,11 @@ async fn main() -> Result<()> {
             println!("DevBoy - AI-powered development tools");
             println!("Run with --help for usage information");
         }
+    }
+
+    // Wait for background update check to finish so the notification can print
+    if let Some(handle) = update_check_handle {
+        let _ = handle.await;
     }
 
     Ok(())
