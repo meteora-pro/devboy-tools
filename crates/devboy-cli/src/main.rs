@@ -2336,6 +2336,13 @@ async fn add_env_only_proxies(
             .strip_prefix("DEVBOY_")
             .and_then(|s| s.strip_suffix("_URL"))
         {
+            // Skip context/provider base URL variables like DEVBOY_CONTEXTS_<CTX>_GITHUB_URL
+            // These are for provider configuration, not proxy servers
+            if name.starts_with("CONTEXTS_") {
+                tracing::debug!("Ignoring context provider URL '{}' (not a proxy)", key);
+                continue;
+            }
+
             // Convert env name back to proxy name (lowercase, underscores to dashes)
             let proxy_name = name.to_lowercase().replace('_', "-");
             let normalized = name.to_lowercase();
