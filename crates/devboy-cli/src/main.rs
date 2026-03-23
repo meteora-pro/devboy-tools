@@ -1185,14 +1185,22 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
         }
 
         ConfigCommands::Get { key } => {
-            // First try config file
+            // First try config file (only for standard provider.field keys)
             let config = Config::load().context("Failed to load config")?;
-            if let Some(value) = config.get(&key).context("Failed to get config value")? {
-                println!("{}", value);
-                return Ok(());
+            match config.get(&key) {
+                Ok(Some(value)) => {
+                    println!("{}", value);
+                    return Ok(());
+                }
+                Ok(None) => {
+                    // Key format is valid but value not found, continue to keychain
+                }
+                Err(_) => {
+                    // Key format doesn't match provider.field, skip config and try keychain
+                }
             }
 
-            // Then try keychain
+            // Then try keychain (supports arbitrary key formats)
             let store = get_credential_store();
             if let Some(value) = store.get(&key).ok().flatten() {
                 println!("{} (from keychain)", mask_secret(&value));
