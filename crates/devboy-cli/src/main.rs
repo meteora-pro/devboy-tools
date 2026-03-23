@@ -1,5 +1,8 @@
 //! DevBoy CLI - Command-line interface for devboy-tools.
 
+mod update_check;
+mod upgrade;
+
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process::Command;
@@ -188,6 +191,13 @@ enum Commands {
     Tools {
         #[command(subcommand)]
         command: Option<ToolsCommands>,
+    },
+
+    /// Upgrade devboy to the latest version
+    Upgrade {
+        /// Only check for updates, don't install
+        #[arg(long)]
+        check: bool,
     },
 }
 
@@ -379,6 +389,13 @@ async fn main() -> Result<()> {
 
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
+    // Run update check in background for interactive commands (skip for mcp, upgrade, and no-command).
+    // Spawned as a background task to avoid blocking CLI startup on network calls.
+    let update_check_handle = match &cli.command {
+        Some(Commands::Mcp { .. }) | Some(Commands::Upgrade { .. }) | None => None,
+        _ => Some(tokio::spawn(update_check::check_and_notify())),
+    };
+
     match cli.command {
         Some(Commands::Init {
             yes,
@@ -443,10 +460,19 @@ async fn main() -> Result<()> {
             handle_tools_command(command).await?;
         }
 
+        Some(Commands::Upgrade { check }) => {
+            upgrade::run_upgrade(check).await?;
+        }
+
         None => {
             println!("DevBoy - AI-powered development tools");
             println!("Run with --help for usage information");
         }
+    }
+
+    // Wait for background update check to finish so the notification can print
+    if let Some(handle) = update_check_handle {
+        let _ = handle.await;
     }
 
     Ok(())
