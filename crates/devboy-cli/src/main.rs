@@ -1,5 +1,7 @@
 //! DevBoy CLI - Command-line interface for devboy-tools.
 
+mod doctor;
+
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process::Command;
@@ -185,6 +187,9 @@ enum Commands {
         #[command(subcommand)]
         command: Option<ToolsCommands>,
     },
+
+    /// Run diagnostic checks for the local DevBoy setup
+    Doctor,
 }
 
 #[derive(Subcommand)]
@@ -410,6 +415,11 @@ async fn main() -> Result<()> {
 
         Some(Commands::Tools { command }) => {
             handle_tools_command(command).await?;
+        }
+
+        Some(Commands::Doctor) => {
+            let exit_code = doctor::handle_doctor_command(cli.verbose).await?;
+            std::process::exit(exit_code);
         }
 
         None => {
