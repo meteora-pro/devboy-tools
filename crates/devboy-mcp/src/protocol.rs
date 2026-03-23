@@ -223,6 +223,9 @@ pub struct ToolDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    /// Tool category for filtering (not serialized to JSON).
+    #[serde(skip)]
+    pub category: Option<crate::handlers::ToolCategory>,
 }
 
 /// Tools list response.
