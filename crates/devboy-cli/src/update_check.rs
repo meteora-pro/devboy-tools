@@ -27,12 +27,13 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const NO_UPDATE_CHECK_ENV: &str = "DEVBOY_NO_UPDATE_CHECK";
 
 /// Cached version check result.
-#[derive(Debug, Serialize, Deserialize)]
-struct VersionCache {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(PartialEq))]
+pub(crate) struct VersionCache {
     /// Latest version from GitHub (without 'v' prefix).
-    latest_version: String,
+    pub(crate) latest_version: String,
     /// Unix timestamp when the check was performed.
-    checked_at: u64,
+    pub(crate) checked_at: u64,
 }
 
 /// Detected installation method.
@@ -142,10 +143,9 @@ fn cache_path() -> Option<PathBuf> {
     dirs::cache_dir().map(|d| d.join("devboy-tools").join("version-check.json"))
 }
 
-/// Read cached version check result.
-fn read_cache() -> Option<VersionCache> {
-    let path = cache_path()?;
-    let content = fs::read_to_string(&path).ok()?;
+/// Read cached version check result from the given path.
+pub(crate) fn read_cache_from(path: &std::path::Path) -> Option<VersionCache> {
+    let content = fs::read_to_string(path).ok()?;
     let cache: VersionCache = serde_json::from_str(&content).ok()?;
 
     // Check if cache is still fresh
@@ -158,12 +158,14 @@ fn read_cache() -> Option<VersionCache> {
     }
 }
 
-/// Write version check result to cache.
-fn write_cache(latest_version: &str) {
-    let Some(path) = cache_path() else {
-        return;
-    };
+/// Read cached version check result from the default cache path.
+fn read_cache() -> Option<VersionCache> {
+    let path = cache_path()?;
+    read_cache_from(&path)
+}
 
+/// Write version check result to the given path.
+pub(crate) fn write_cache_to(path: &std::path::Path, latest_version: &str) {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -178,8 +180,16 @@ fn write_cache(latest_version: &str) {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let _ = fs::write(&path, content);
+        let _ = fs::write(path, content);
     }
+}
+
+/// Write version check result to the default cache path.
+fn write_cache(latest_version: &str) {
+    let Some(path) = cache_path() else {
+        return;
+    };
+    write_cache_to(&path, latest_version);
 }
 
 /// Fetch the latest version from GitHub Releases API.
@@ -281,6 +291,7 @@ pub async fn check_and_notify() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn test_is_newer_version() {
@@ -303,6 +314,18 @@ mod tests {
         assert!(!is_newer_version("invalid", "0.9.0"));
         assert!(!is_newer_version("0.9.0", "invalid"));
         assert!(!is_newer_version("0.9", "0.10.0"));
+    }
+
+    #[test]
+    fn test_is_newer_version_major_bump() {
+        assert!(is_newer_version("1.9.9", "2.0.0"));
+        assert!(!is_newer_version("2.0.0", "1.9.9"));
+    }
+
+    #[test]
+    fn test_is_newer_version_equal() {
+        assert!(!is_newer_version("1.0.0", "1.0.0"));
+        assert!(!is_newer_version("0.0.0", "0.0.0"));
     }
 
     #[test]
@@ -334,5 +357,145 @@ mod tests {
         assert!(InstallMethod::Pnpm.is_managed());
         assert!(InstallMethod::Yarn.is_managed());
         assert!(!InstallMethod::Standalone.is_managed());
+    }
+
+    #[test]
+    fn test_install_method_name() {
+        assert_eq!(InstallMethod::Npm.name(), "npm");
+        assert_eq!(InstallMethod::Pnpm.name(), "pnpm");
+        assert_eq!(InstallMethod::Yarn.name(), "yarn");
+        assert_eq!(InstallMethod::Standalone.name(), "standalone");
+    }
+
+    #[test]
+    fn test_cache_write_and_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_file = dir.path().join("version-check.json");
+
+        write_cache_to(&cache_file, "1.2.3");
+
+        let cache = read_cache_from(&cache_file);
+        assert!(cache.is_some(), "Cache should be readable after write");
+        let cache = cache.unwrap();
+        assert_eq!(cache.latest_version, "1.2.3");
+    }
+
+    #[test]
+    fn test_cache_expired() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_file = dir.path().join("version-check.json");
+
+        // Write a cache entry with a timestamp from 25 hours ago
+        let expired_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - (25 * 60 * 60);
+
+        let cache = VersionCache {
+            latest_version: "1.2.3".to_string(),
+            checked_at: expired_time,
+        };
+        let content = serde_json::to_string(&cache).unwrap();
+        fs::write(&cache_file, content).unwrap();
+
+        let result = read_cache_from(&cache_file);
+        assert!(result.is_none(), "Expired cache should return None");
+    }
+
+    #[test]
+    fn test_cache_fresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_file = dir.path().join("version-check.json");
+
+        // Write a cache entry from 1 hour ago (within 24h TTL)
+        let fresh_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - (1 * 60 * 60);
+
+        let cache = VersionCache {
+            latest_version: "2.0.0".to_string(),
+            checked_at: fresh_time,
+        };
+        let content = serde_json::to_string(&cache).unwrap();
+        fs::write(&cache_file, content).unwrap();
+
+        let result = read_cache_from(&cache_file);
+        assert!(result.is_some(), "Fresh cache should be returned");
+        assert_eq!(result.unwrap().latest_version, "2.0.0");
+    }
+
+    #[test]
+    fn test_cache_nonexistent_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_file = dir.path().join("nonexistent.json");
+
+        let result = read_cache_from(&cache_file);
+        assert!(
+            result.is_none(),
+            "Nonexistent cache file should return None"
+        );
+    }
+
+    #[test]
+    fn test_cache_invalid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_file = dir.path().join("version-check.json");
+
+        fs::write(&cache_file, "not valid json").unwrap();
+
+        let result = read_cache_from(&cache_file);
+        assert!(result.is_none(), "Invalid JSON should return None");
+    }
+
+    #[test]
+    fn test_cache_creates_parent_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_file = dir
+            .path()
+            .join("nested")
+            .join("deep")
+            .join("version-check.json");
+
+        write_cache_to(&cache_file, "3.0.0");
+
+        assert!(
+            cache_file.exists(),
+            "Cache file should be created with parent dirs"
+        );
+        let cache = read_cache_from(&cache_file);
+        assert!(cache.is_some());
+        assert_eq!(cache.unwrap().latest_version, "3.0.0");
+    }
+
+    #[test]
+    fn test_version_cache_serialization_roundtrip() {
+        let cache = VersionCache {
+            latest_version: "1.2.3".to_string(),
+            checked_at: 1700000000,
+        };
+
+        let json = serde_json::to_string(&cache).unwrap();
+        let deserialized: VersionCache = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(cache, deserialized);
+    }
+
+    #[test]
+    fn test_cache_path_is_some() {
+        // On any platform with a home directory, cache_path should return Some
+        let path = cache_path();
+        assert!(
+            path.is_some(),
+            "cache_path() should return Some on this platform"
+        );
+        let path = path.unwrap();
+        assert!(
+            path.to_string_lossy().contains("devboy-tools"),
+            "Cache path should contain 'devboy-tools': {:?}",
+            path
+        );
     }
 }

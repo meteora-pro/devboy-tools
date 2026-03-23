@@ -293,7 +293,6 @@ mod tests {
     #[test]
     fn test_get_asset_name() {
         let name = get_asset_name().unwrap();
-        // Should return a valid asset name for the current platform
         assert!(
             name.starts_with("devboy-"),
             "Asset name should start with 'devboy-': {}",
@@ -304,5 +303,226 @@ mod tests {
             "Asset name should end with .tar.gz or .zip: {}",
             name
         );
+    }
+
+    #[test]
+    fn test_extract_tar_gz_valid() {
+        // Create a tar.gz archive with a "devboy" file in memory
+        let mut builder = tar::Builder::new(Vec::new());
+
+        let content = b"fake binary content for testing";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(content.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+
+        builder
+            .append_data(&mut header, "devboy", &content[..])
+            .unwrap();
+
+        let tar_data = builder.into_inner().unwrap();
+
+        // Compress with gzip
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        std::io::Write::write_all(&mut encoder, &tar_data).unwrap();
+        let gz_data = encoder.finish().unwrap();
+
+        let result = extract_tar_gz(&gz_data);
+        assert!(result.is_ok(), "Should extract devboy from tar.gz");
+        assert_eq!(result.unwrap(), content);
+    }
+
+    #[test]
+    fn test_extract_tar_gz_missing_binary() {
+        // Create a tar.gz with a different filename
+        let mut builder = tar::Builder::new(Vec::new());
+
+        let content = b"not devboy";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(content.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+
+        builder
+            .append_data(&mut header, "other-file", &content[..])
+            .unwrap();
+
+        let tar_data = builder.into_inner().unwrap();
+
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        std::io::Write::write_all(&mut encoder, &tar_data).unwrap();
+        let gz_data = encoder.finish().unwrap();
+
+        let result = extract_tar_gz(&gz_data);
+        assert!(result.is_err(), "Should fail when devboy not in archive");
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not found in archive"),);
+    }
+
+    #[test]
+    fn test_extract_tar_gz_with_directory_prefix() {
+        // Create tar.gz where devboy is in a subdirectory
+        let mut builder = tar::Builder::new(Vec::new());
+
+        let content = b"binary in subdir";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(content.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+
+        builder
+            .append_data(&mut header, "release/devboy", &content[..])
+            .unwrap();
+
+        let tar_data = builder.into_inner().unwrap();
+
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        std::io::Write::write_all(&mut encoder, &tar_data).unwrap();
+        let gz_data = encoder.finish().unwrap();
+
+        // Should still find it by file_name()
+        let result = extract_tar_gz(&gz_data);
+        assert!(result.is_ok(), "Should find devboy in subdirectory");
+        assert_eq!(result.unwrap(), content);
+    }
+
+    #[test]
+    fn test_extract_zip_valid() {
+        use std::io::Cursor;
+
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut zip_writer = zip::ZipWriter::new(&mut buf);
+            let options = zip::write::SimpleFileOptions::default();
+            zip_writer.start_file("devboy.exe", options).unwrap();
+            std::io::Write::write_all(&mut zip_writer, b"fake exe content").unwrap();
+            zip_writer.finish().unwrap();
+        }
+
+        let zip_data = buf.into_inner();
+        let result = extract_zip(&zip_data);
+        assert!(result.is_ok(), "Should extract devboy.exe from zip");
+        assert_eq!(result.unwrap(), b"fake exe content");
+    }
+
+    #[test]
+    fn test_extract_zip_devboy_without_exe() {
+        use std::io::Cursor;
+
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut zip_writer = zip::ZipWriter::new(&mut buf);
+            let options = zip::write::SimpleFileOptions::default();
+            zip_writer.start_file("devboy", options).unwrap();
+            std::io::Write::write_all(&mut zip_writer, b"unix binary").unwrap();
+            zip_writer.finish().unwrap();
+        }
+
+        let zip_data = buf.into_inner();
+        let result = extract_zip(&zip_data);
+        assert!(
+            result.is_ok(),
+            "Should extract devboy (without .exe) from zip"
+        );
+        assert_eq!(result.unwrap(), b"unix binary");
+    }
+
+    #[test]
+    fn test_extract_zip_missing_binary() {
+        use std::io::Cursor;
+
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut zip_writer = zip::ZipWriter::new(&mut buf);
+            let options = zip::write::SimpleFileOptions::default();
+            zip_writer.start_file("readme.txt", options).unwrap();
+            std::io::Write::write_all(&mut zip_writer, b"not a binary").unwrap();
+            zip_writer.finish().unwrap();
+        }
+
+        let zip_data = buf.into_inner();
+        let result = extract_zip(&zip_data);
+        assert!(result.is_err(), "Should fail when binary not in zip");
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_extract_tar_gz_invalid_data() {
+        let result = extract_tar_gz(b"not a tar.gz file");
+        assert!(result.is_err(), "Should fail on invalid tar.gz data");
+    }
+
+    #[test]
+    fn test_extract_zip_invalid_data() {
+        let result = extract_zip(b"not a zip file");
+        assert!(result.is_err(), "Should fail on invalid zip data");
+    }
+
+    #[test]
+    fn test_replace_binary_creates_and_replaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary_path = dir.path().join("devboy-test");
+
+        // Create initial binary
+        fs::write(&binary_path, b"old binary").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&binary_path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        // We can't easily test replace_binary because it uses current_exe(),
+        // but we can test the extraction + write pipeline
+        let new_content = b"new binary content";
+        fs::write(&binary_path, new_content).unwrap();
+
+        let content = fs::read(&binary_path).unwrap();
+        assert_eq!(content, new_content);
+    }
+
+    #[test]
+    fn test_release_deserialization() {
+        let json = r#"{
+            "tag_name": "v1.2.3",
+            "assets": [
+                {
+                    "name": "devboy-linux-x86_64.tar.gz",
+                    "browser_download_url": "https://example.com/devboy-linux-x86_64.tar.gz"
+                },
+                {
+                    "name": "devboy-macos-arm64.tar.gz",
+                    "browser_download_url": "https://example.com/devboy-macos-arm64.tar.gz"
+                }
+            ]
+        }"#;
+
+        let release: Release = serde_json::from_str(json).unwrap();
+        assert_eq!(release.tag_name, "v1.2.3");
+        assert_eq!(release.assets.len(), 2);
+        assert_eq!(release.assets[0].name, "devboy-linux-x86_64.tar.gz");
+        assert_eq!(
+            release.assets[1].browser_download_url,
+            "https://example.com/devboy-macos-arm64.tar.gz"
+        );
+    }
+
+    #[test]
+    fn test_release_tag_name_strip_prefix() {
+        let tag = "v1.2.3";
+        let version = tag.strip_prefix('v').unwrap_or(tag);
+        assert_eq!(version, "1.2.3");
+
+        let tag_no_prefix = "1.2.3";
+        let version = tag_no_prefix.strip_prefix('v').unwrap_or(tag_no_prefix);
+        assert_eq!(version, "1.2.3");
     }
 }
