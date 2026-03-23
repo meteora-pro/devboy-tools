@@ -192,6 +192,20 @@ fn write_cache(latest_version: &str) {
     write_cache_to(&path, latest_version);
 }
 
+/// Build a GitHub API request with optional authentication.
+///
+/// Uses `GITHUB_TOKEN` or `GH_TOKEN` env var for authentication if available,
+/// which increases the rate limit from 60 to 5000 requests/hour.
+fn github_api_request(client: &reqwest::Client, url: &str) -> reqwest::RequestBuilder {
+    let mut req = client.get(url);
+    if let Ok(token) = env::var("GITHUB_TOKEN").or_else(|_| env::var("GH_TOKEN")) {
+        if !token.is_empty() {
+            req = req.bearer_auth(token);
+        }
+    }
+    req
+}
+
 /// Fetch the latest version from GitHub Releases API.
 async fn fetch_latest_version() -> Option<String> {
     let url = format!(
@@ -205,7 +219,7 @@ async fn fetch_latest_version() -> Option<String> {
         .build()
         .ok()?;
 
-    let response = client.get(&url).send().await.ok()?;
+    let response = github_api_request(&client, &url).send().await.ok()?;
 
     if !response.status().is_success() {
         return None;
