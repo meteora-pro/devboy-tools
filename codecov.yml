@@ -14,4 +14,3 @@ comment:
 
 ignore:
   - "crates/devboy-cli/src/main.rs"
-  - "**/tests/**"
