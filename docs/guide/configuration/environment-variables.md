@@ -189,9 +189,104 @@ Add to `~/.claude/claude_desktop_config.json` or project `.claude/settings.json`
 > **Note:** Use `"command": "devboy"` if installed globally via `npm install -g @devboy-tools/cli`,
 > or specify the full path like `"/path/to/devboy"` for local builds.
 
-## Multiple contexts with environment variables
+## Full context configuration via environment variables
 
-When using multiple contexts, you can set different tokens for each:
+You can define entire contexts (including provider settings) purely through environment variables, without any config file. This is useful for CI/CD, Docker, and Kubernetes deployments.
+
+### Pattern
+
+```
+DEVBOY_CONTEXTS_{CONTEXT}_{PROVIDER}_{FIELD}
+```
+
+### Supported fields
+
+| Provider | Required Fields | Optional Fields |
+|----------|-----------------|-----------------|
+| **GitHub** | `OWNER`, `REPO` | `BASE_URL` |
+| **GitLab** | `PROJECT_ID` | `URL` (default: https://gitlab.com) |
+| **ClickUp** | `LIST_ID` | `TEAM_ID` |
+| **Jira** | `URL`, `PROJECT_KEY`, `EMAIL` | — |
+
+### Examples
+
+**GitHub context:**
+```bash
+export DEVBOY_CONTEXTS_PROD_GITHUB_OWNER="company"
+export DEVBOY_CONTEXTS_PROD_GITHUB_REPO="production-app"
+export DEVBOY_CONTEXTS_PROD_GITHUB_TOKEN="ghp_xxx"
+```
+
+**GitLab context:**
+```bash
+export DEVBOY_CONTEXTS_STAGING_GITLAB_URL="https://gitlab.example.com"
+export DEVBOY_CONTEXTS_STAGING_GITLAB_PROJECT_ID="company/staging-app"
+export DEVBOY_CONTEXTS_STAGING_GITLAB_TOKEN="glpat-xxx"
+```
+
+**ClickUp context:**
+```bash
+export DEVBOY_CONTEXTS_TASKS_CLICKUP_LIST_ID="abc123"
+export DEVBOY_CONTEXTS_TASKS_CLICKUP_TEAM_ID="team456"
+export DEVBOY_CONTEXTS_TASKS_CLICKUP_TOKEN="pk_xxx"
+```
+
+**Jira context:**
+```bash
+export DEVBOY_CONTEXTS_JIRA_PROJ_JIRA_URL="https://company.atlassian.net"
+export DEVBOY_CONTEXTS_JIRA_PROJ_JIRA_PROJECT_KEY="PROJ"
+export DEVBOY_CONTEXTS_JIRA_PROJ_JIRA_EMAIL="user@company.com"
+export DEVBOY_CONTEXTS_JIRA_PROJ_JIRA_TOKEN="xxx"
+```
+
+**Multiple providers in one context:**
+```bash
+# Context with both GitHub and GitLab
+export DEVBOY_CONTEXTS_MYAPP_GITHUB_OWNER="company"
+export DEVBOY_CONTEXTS_MYAPP_GITHUB_REPO="my-app"
+export DEVBOY_CONTEXTS_MYAPP_GITHUB_TOKEN="ghp_xxx"
+export DEVBOY_CONTEXTS_MYAPP_GITLAB_PROJECT_ID="123"
+export DEVBOY_CONTEXTS_MYAPP_GITLAB_TOKEN="glpat-xxx"
+```
+
+### Complete env-only setup
+
+Run DevBoy MCP with contexts defined entirely via environment:
+
+```bash
+# Disable config and keychain
+export DEVBOY_SKIP_KEYCHAIN=1
+export DEVBOY_NO_CONFIG=1
+
+# Define context
+export DEVBOY_CONTEXTS_PROD_GITHUB_OWNER="company"
+export DEVBOY_CONTEXTS_PROD_GITHUB_REPO="app"
+export DEVBOY_CONTEXTS_PROD_GITHUB_TOKEN="ghp_xxx"
+
+# Run MCP
+devboy mcp
+```
+
+Or as a one-liner:
+
+```bash
+DEVBOY_SKIP_KEYCHAIN=1 DEVBOY_NO_CONFIG=1 \
+  DEVBOY_CONTEXTS_PROD_GITHUB_OWNER="company" \
+  DEVBOY_CONTEXTS_PROD_GITHUB_REPO="app" \
+  DEVBOY_CONTEXTS_PROD_GITHUB_TOKEN="ghp_xxx" \
+  devboy mcp
+```
+
+### Context naming
+
+Context names are converted from `UPPERCASE_WITH_UNDERSCORES` to `lowercase-with-dashes`:
+- `PROD` → `prod`
+- `MY_PROJECT` → `my-project`
+- `DEV_TEAM_ALPHA` → `dev-team-alpha`
+
+## Context-scoped tokens (with config file)
+
+When using contexts defined in config file, you can still set tokens per context via environment:
 
 ```bash
 # Default/global tokens
