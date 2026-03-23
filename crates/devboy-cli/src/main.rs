@@ -1689,6 +1689,9 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
         }
     }
 
+    // Also check for env-only contexts (DEVBOY_CONTEXTS_*_* without config entry)
+    any_provider_added |= add_env_only_contexts(&mut server, &config, store.as_ref());
+
     // Connect to upstream MCP proxy servers (from config and/or env vars).
     let mut proxy_manager = build_proxy_manager(&config, store.as_ref()).await;
 
@@ -1975,6 +1978,336 @@ fn get_proxy_url_from_env(name: &str) -> Option<String> {
         name.to_uppercase().replace(['.', '/', '-'], "_")
     );
     std::env::var(&env_name).ok().filter(|s| !s.is_empty())
+}
+
+/// Scan environment for context definitions not in config.
+///
+/// Looks for `DEVBOY_CONTEXTS_{NAME}_{PROVIDER}_{FIELD}` patterns and creates
+/// contexts with providers for them if they don't already exist in the config.
+///
+/// Supported patterns:
+/// - `DEVBOY_CONTEXTS_{NAME}_GITHUB_OWNER` + `_REPO` -> GitHub provider
+/// - `DEVBOY_CONTEXTS_{NAME}_GITLAB_URL` + `_PROJECT_ID` -> GitLab provider
+/// - `DEVBOY_CONTEXTS_{NAME}_CLICKUP_LIST_ID` -> ClickUp provider
+/// - `DEVBOY_CONTEXTS_{NAME}_JIRA_URL` + `_PROJECT_KEY` + `_EMAIL` -> Jira provider
+///
+/// Tokens are resolved via the credential store (which checks env vars first).
+///
+/// Example:
+/// ```bash
+/// DEVBOY_CONTEXTS_PROD_GITHUB_OWNER=company
+/// DEVBOY_CONTEXTS_PROD_GITHUB_REPO=app
+/// DEVBOY_CONTEXTS_PROD_GITHUB_TOKEN=ghp_xxx
+/// ```
+fn add_env_only_contexts(
+    server: &mut McpServer,
+    config: &Config,
+    store: &dyn CredentialStore,
+) -> bool {
+    let mut any_added = false;
+
+    // Collect existing context names from config
+    let existing_contexts: std::collections::HashSet<_> =
+        config.contexts.keys().map(|s| s.to_lowercase()).collect();
+
+    // Also check for legacy default context
+    let has_legacy_default = config.legacy_default_context().is_some();
+
+    // Scan environment for context patterns
+    // We need to group env vars by context name first
+    let mut env_contexts: std::collections::HashMap<String, EnvContextBuilder> =
+        std::collections::HashMap::new();
+
+    for (key, value) in std::env::vars() {
+        if let Some(rest) = key.strip_prefix("DEVBOY_CONTEXTS_") {
+            // Parse pattern: {CONTEXT}_{PROVIDER}_{FIELD}
+            // e.g., PROD_GITHUB_OWNER, MY_PROJECT_GITLAB_URL
+            if let Some((context_name, provider, field)) = parse_context_env_key(rest) {
+                let builder = env_contexts
+                    .entry(context_name.clone())
+                    .or_insert_with(|| EnvContextBuilder::new(context_name.clone()));
+
+                builder.set_field(&provider, &field, value);
+            }
+        }
+    }
+
+    // Now create contexts from collected env vars
+    for (context_name, builder) in env_contexts {
+        let normalized = context_name.to_lowercase();
+
+        // Skip if already in config
+        if existing_contexts.contains(&normalized) {
+            tracing::debug!(
+                "Context '{}' already in config, env vars ignored",
+                context_name
+            );
+            continue;
+        }
+
+        // Skip default if legacy config exists
+        if normalized == "default" && has_legacy_default {
+            tracing::debug!("Context 'default' has legacy config, env vars ignored");
+            continue;
+        }
+
+        // Build and add context
+        if let Some(context) = builder.build() {
+            let display_name = context_name.to_lowercase().replace('_', "-");
+            server.ensure_context(&display_name);
+
+            let added =
+                add_context_providers_from_env(server, store, &display_name, &context, &builder);
+            if added {
+                tracing::info!(
+                    "Created env-only context '{}' from environment",
+                    display_name
+                );
+                any_added = true;
+            }
+        }
+    }
+
+    any_added
+}
+
+/// Parse context env key into (context_name, provider, field).
+///
+/// Examples:
+/// - "PROD_GITHUB_OWNER" -> ("PROD", "GITHUB", "OWNER")
+/// - "MY_PROJECT_GITLAB_URL" -> ("MY_PROJECT", "GITLAB", "URL")
+fn parse_context_env_key(key: &str) -> Option<(String, String, String)> {
+    // Known provider prefixes (in order of specificity)
+    let providers = ["GITHUB", "GITLAB", "CLICKUP", "JIRA"];
+
+    for provider in providers {
+        // Look for _PROVIDER_ in the key
+        let provider_marker = format!("_{}_", provider);
+        if let Some(pos) = key.find(&provider_marker) {
+            let context_name = &key[..pos];
+            let field = &key[pos + provider_marker.len()..];
+            if !context_name.is_empty() && !field.is_empty() {
+                return Some((
+                    context_name.to_string(),
+                    provider.to_string(),
+                    field.to_string(),
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Builder for collecting context configuration from env vars.
+#[derive(Default)]
+struct EnvContextBuilder {
+    name: String,
+    // GitHub
+    github_owner: Option<String>,
+    github_repo: Option<String>,
+    github_base_url: Option<String>,
+    // GitLab
+    gitlab_url: Option<String>,
+    gitlab_project_id: Option<String>,
+    // ClickUp
+    clickup_list_id: Option<String>,
+    clickup_team_id: Option<String>,
+    // Jira
+    jira_url: Option<String>,
+    jira_project_key: Option<String>,
+    jira_email: Option<String>,
+}
+
+impl EnvContextBuilder {
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            ..Default::default()
+        }
+    }
+
+    fn set_field(&mut self, provider: &str, field: &str, value: String) {
+        match (provider, field) {
+            // GitHub
+            ("GITHUB", "OWNER") => self.github_owner = Some(value),
+            ("GITHUB", "REPO") => self.github_repo = Some(value),
+            ("GITHUB", "BASE_URL") | ("GITHUB", "URL") => self.github_base_url = Some(value),
+            // GitLab
+            ("GITLAB", "URL") => self.gitlab_url = Some(value),
+            ("GITLAB", "PROJECT_ID") | ("GITLAB", "PROJECT") => {
+                self.gitlab_project_id = Some(value)
+            }
+            // ClickUp
+            ("CLICKUP", "LIST_ID") | ("CLICKUP", "LIST") => self.clickup_list_id = Some(value),
+            ("CLICKUP", "TEAM_ID") | ("CLICKUP", "TEAM") => self.clickup_team_id = Some(value),
+            // Jira
+            ("JIRA", "URL") => self.jira_url = Some(value),
+            ("JIRA", "PROJECT_KEY") | ("JIRA", "PROJECT") => self.jira_project_key = Some(value),
+            ("JIRA", "EMAIL") => self.jira_email = Some(value),
+            // Unknown fields are silently ignored
+            _ => {
+                tracing::debug!(
+                    "Unknown env field for context '{}': {}_{}_{}",
+                    self.name,
+                    self.name,
+                    provider,
+                    field
+                );
+            }
+        }
+    }
+
+    fn build(&self) -> Option<ContextConfig> {
+        let github = if self.github_owner.is_some() && self.github_repo.is_some() {
+            Some(GitHubConfig {
+                owner: self.github_owner.clone().unwrap(),
+                repo: self.github_repo.clone().unwrap(),
+                base_url: self.github_base_url.clone(),
+            })
+        } else {
+            None
+        };
+
+        let gitlab = if self.gitlab_project_id.is_some() {
+            Some(GitLabConfig {
+                url: self
+                    .gitlab_url
+                    .clone()
+                    .unwrap_or_else(|| "https://gitlab.com".to_string()),
+                project_id: self.gitlab_project_id.clone().unwrap(),
+            })
+        } else {
+            None
+        };
+
+        let clickup = if self.clickup_list_id.is_some() {
+            Some(ClickUpConfig {
+                list_id: self.clickup_list_id.clone().unwrap(),
+                team_id: self.clickup_team_id.clone(),
+            })
+        } else {
+            None
+        };
+
+        let jira = if self.jira_url.is_some()
+            && self.jira_project_key.is_some()
+            && self.jira_email.is_some()
+        {
+            Some(JiraConfig {
+                url: self.jira_url.clone().unwrap(),
+                project_key: self.jira_project_key.clone().unwrap(),
+                email: self.jira_email.clone().unwrap(),
+            })
+        } else {
+            None
+        };
+
+        let context = ContextConfig {
+            github,
+            gitlab,
+            clickup,
+            jira,
+        };
+
+        if context.has_any_provider() {
+            Some(context)
+        } else {
+            None
+        }
+    }
+}
+
+/// Add providers to context from env-only configuration.
+///
+/// Similar to `add_context_providers` but logs different messages.
+fn add_context_providers_from_env(
+    server: &mut McpServer,
+    store: &dyn CredentialStore,
+    context_name: &str,
+    context: &ContextConfig,
+    _builder: &EnvContextBuilder,
+) -> bool {
+    let mut added = false;
+
+    if let Some(gh) = &context.github {
+        if let Some(token) = get_token_for_context(store, context_name, "github") {
+            let client = GitHubClient::new(&gh.owner, &gh.repo, token);
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added GitHub provider to env-only context '{}': {}/{}",
+                context_name,
+                gh.owner,
+                gh.repo
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "GitHub configured via env for context '{}' but no token found",
+                context_name
+            );
+        }
+    }
+
+    if let Some(gl) = &context.gitlab {
+        if let Some(token) = get_token_for_context(store, context_name, "gitlab") {
+            let client = GitLabClient::with_base_url(&gl.url, &gl.project_id, token);
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added GitLab provider to env-only context '{}': {} (project {})",
+                context_name,
+                gl.url,
+                gl.project_id
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "GitLab configured via env for context '{}' but no token found",
+                context_name
+            );
+        }
+    }
+
+    if let Some(cu) = &context.clickup {
+        if let Some(token) = get_token_for_context(store, context_name, "clickup") {
+            let mut client = ClickUpClient::new(&cu.list_id, token);
+            if let Some(team_id) = &cu.team_id {
+                client = client.with_team_id(team_id);
+            }
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added ClickUp provider to env-only context '{}': list {}",
+                context_name,
+                cu.list_id
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "ClickUp configured via env for context '{}' but no token found",
+                context_name
+            );
+        }
+    }
+
+    if let Some(jira) = &context.jira {
+        if let Some(token) = get_token_for_context(store, context_name, "jira") {
+            let client = JiraClient::new(&jira.url, &jira.project_key, &jira.email, token);
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added Jira provider to env-only context '{}': {} (project {})",
+                context_name,
+                jira.url,
+                jira.project_key
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "Jira configured via env for context '{}' but no token found",
+                context_name
+            );
+        }
+    }
+
+    added
 }
 
 /// Scan environment for proxy definitions not in config.
@@ -2954,5 +3287,219 @@ mod tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not an object"));
+    }
+
+    // ==========================================================================
+    // Env-only context tests
+    // ==========================================================================
+
+    #[test]
+    fn test_parse_context_env_key_github() {
+        let result = parse_context_env_key("PROD_GITHUB_OWNER");
+        assert_eq!(
+            result,
+            Some((
+                "PROD".to_string(),
+                "GITHUB".to_string(),
+                "OWNER".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_context_env_key_gitlab() {
+        let result = parse_context_env_key("MY_PROJECT_GITLAB_PROJECT_ID");
+        assert_eq!(
+            result,
+            Some((
+                "MY_PROJECT".to_string(),
+                "GITLAB".to_string(),
+                "PROJECT_ID".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_context_env_key_clickup() {
+        let result = parse_context_env_key("DEV_CLICKUP_LIST_ID");
+        assert_eq!(
+            result,
+            Some((
+                "DEV".to_string(),
+                "CLICKUP".to_string(),
+                "LIST_ID".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_context_env_key_jira() {
+        let result = parse_context_env_key("STAGING_JIRA_URL");
+        assert_eq!(
+            result,
+            Some(("STAGING".to_string(), "JIRA".to_string(), "URL".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_context_env_key_invalid() {
+        assert_eq!(parse_context_env_key("INVALID_KEY"), None);
+        assert_eq!(parse_context_env_key("GITHUB_OWNER"), None); // Missing context name
+        assert_eq!(parse_context_env_key("PROD_GITHUB_"), None); // Missing field
+        assert_eq!(parse_context_env_key("_GITHUB_OWNER"), None); // Missing context name
+    }
+
+    #[test]
+    fn test_env_context_builder_github() {
+        let mut builder = EnvContextBuilder::new("TEST".to_string());
+        builder.set_field("GITHUB", "OWNER", "my-org".to_string());
+        builder.set_field("GITHUB", "REPO", "my-repo".to_string());
+
+        let context = builder.build().unwrap();
+        let gh = context.github.unwrap();
+        assert_eq!(gh.owner, "my-org");
+        assert_eq!(gh.repo, "my-repo");
+        assert!(gh.base_url.is_none());
+    }
+
+    #[test]
+    fn test_env_context_builder_github_with_base_url() {
+        let mut builder = EnvContextBuilder::new("TEST".to_string());
+        builder.set_field("GITHUB", "OWNER", "my-org".to_string());
+        builder.set_field("GITHUB", "REPO", "my-repo".to_string());
+        builder.set_field(
+            "GITHUB",
+            "BASE_URL",
+            "https://github.example.com".to_string(),
+        );
+
+        let context = builder.build().unwrap();
+        let gh = context.github.unwrap();
+        assert_eq!(gh.base_url, Some("https://github.example.com".to_string()));
+    }
+
+    #[test]
+    fn test_env_context_builder_gitlab() {
+        let mut builder = EnvContextBuilder::new("TEST".to_string());
+        builder.set_field("GITLAB", "PROJECT_ID", "123".to_string());
+
+        let context = builder.build().unwrap();
+        let gl = context.gitlab.unwrap();
+        assert_eq!(gl.project_id, "123");
+        assert_eq!(gl.url, "https://gitlab.com"); // default
+    }
+
+    #[test]
+    fn test_env_context_builder_gitlab_with_url() {
+        let mut builder = EnvContextBuilder::new("TEST".to_string());
+        builder.set_field("GITLAB", "URL", "https://gitlab.example.com".to_string());
+        builder.set_field("GITLAB", "PROJECT_ID", "owner/repo".to_string());
+
+        let context = builder.build().unwrap();
+        let gl = context.gitlab.unwrap();
+        assert_eq!(gl.url, "https://gitlab.example.com");
+        assert_eq!(gl.project_id, "owner/repo");
+    }
+
+    #[test]
+    fn test_env_context_builder_clickup() {
+        let mut builder = EnvContextBuilder::new("TEST".to_string());
+        builder.set_field("CLICKUP", "LIST_ID", "abc123".to_string());
+
+        let context = builder.build().unwrap();
+        let cu = context.clickup.unwrap();
+        assert_eq!(cu.list_id, "abc123");
+        assert!(cu.team_id.is_none());
+    }
+
+    #[test]
+    fn test_env_context_builder_clickup_with_team() {
+        let mut builder = EnvContextBuilder::new("TEST".to_string());
+        builder.set_field("CLICKUP", "LIST_ID", "abc123".to_string());
+        builder.set_field("CLICKUP", "TEAM_ID", "team456".to_string());
+
+        let context = builder.build().unwrap();
+        let cu = context.clickup.unwrap();
+        assert_eq!(cu.list_id, "abc123");
+        assert_eq!(cu.team_id, Some("team456".to_string()));
+    }
+
+    #[test]
+    fn test_env_context_builder_jira() {
+        let mut builder = EnvContextBuilder::new("TEST".to_string());
+        builder.set_field("JIRA", "URL", "https://jira.example.com".to_string());
+        builder.set_field("JIRA", "PROJECT_KEY", "PROJ".to_string());
+        builder.set_field("JIRA", "EMAIL", "user@example.com".to_string());
+
+        let context = builder.build().unwrap();
+        let jira = context.jira.unwrap();
+        assert_eq!(jira.url, "https://jira.example.com");
+        assert_eq!(jira.project_key, "PROJ");
+        assert_eq!(jira.email, "user@example.com");
+    }
+
+    #[test]
+    fn test_env_context_builder_jira_incomplete() {
+        let mut builder = EnvContextBuilder::new("TEST".to_string());
+        builder.set_field("JIRA", "URL", "https://jira.example.com".to_string());
+        // Missing project_key and email
+
+        let context = builder.build();
+        // Should return None because Jira requires all three fields
+        assert!(context.is_none() || context.as_ref().map(|c| c.jira.is_none()).unwrap_or(true));
+    }
+
+    #[test]
+    fn test_env_context_builder_github_incomplete() {
+        let mut builder = EnvContextBuilder::new("TEST".to_string());
+        builder.set_field("GITHUB", "OWNER", "my-org".to_string());
+        // Missing repo
+
+        let context = builder.build();
+        // Should return None because GitHub requires both owner and repo
+        assert!(context.is_none() || context.as_ref().map(|c| c.github.is_none()).unwrap_or(true));
+    }
+
+    #[test]
+    fn test_env_context_builder_empty() {
+        let builder = EnvContextBuilder::new("TEST".to_string());
+        let context = builder.build();
+        assert!(context.is_none());
+    }
+
+    #[test]
+    fn test_env_context_builder_multiple_providers() {
+        let mut builder = EnvContextBuilder::new("TEST".to_string());
+        builder.set_field("GITHUB", "OWNER", "my-org".to_string());
+        builder.set_field("GITHUB", "REPO", "my-repo".to_string());
+        builder.set_field("GITLAB", "PROJECT_ID", "123".to_string());
+
+        let context = builder.build().unwrap();
+        assert!(context.github.is_some());
+        assert!(context.gitlab.is_some());
+        assert!(context.clickup.is_none());
+        assert!(context.jira.is_none());
+    }
+
+    #[test]
+    fn test_env_context_builder_aliases() {
+        // Test that PROJECT alias works for GITLAB
+        let mut builder = EnvContextBuilder::new("TEST".to_string());
+        builder.set_field("GITLAB", "PROJECT", "owner/repo".to_string());
+
+        let context = builder.build().unwrap();
+        let gl = context.gitlab.unwrap();
+        assert_eq!(gl.project_id, "owner/repo");
+    }
+
+    #[test]
+    fn test_env_context_builder_list_alias() {
+        // Test that LIST alias works for CLICKUP
+        let mut builder = EnvContextBuilder::new("TEST".to_string());
+        builder.set_field("CLICKUP", "LIST", "abc123".to_string());
+
+        let context = builder.build().unwrap();
+        let cu = context.clickup.unwrap();
+        assert_eq!(cu.list_id, "abc123");
     }
 }
