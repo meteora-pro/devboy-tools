@@ -63,7 +63,10 @@ fn test_context_github_token_resolution() {
 #[test]
 fn test_context_gitlab_token_resolution() {
     let mut guard = EnvGuard::new();
-    guard.set("DEVBOY_CONTEXTS_INTEG_STAGING_GITLAB_TOKEN", "glpat_staging");
+    guard.set(
+        "DEVBOY_CONTEXTS_INTEG_STAGING_GITLAB_TOKEN",
+        "glpat_staging",
+    );
 
     let store = EnvVarStore::new();
     let result = store.get("contexts.integ-staging.gitlab.token").unwrap();
@@ -74,7 +77,10 @@ fn test_context_gitlab_token_resolution() {
 #[test]
 fn test_context_clickup_token_resolution() {
     let mut guard = EnvGuard::new();
-    guard.set("DEVBOY_CONTEXTS_INTEG_TASKS_CLICKUP_TOKEN", "pk_tasks_token");
+    guard.set(
+        "DEVBOY_CONTEXTS_INTEG_TASKS_CLICKUP_TOKEN",
+        "pk_tasks_token",
+    );
 
     let store = EnvVarStore::new();
     let result = store.get("contexts.integ-tasks.clickup.token").unwrap();
@@ -131,7 +137,10 @@ fn test_context_single_word_name() {
 fn test_context_specific_token_over_global() {
     let mut guard = EnvGuard::new();
     // Set both context-specific and global tokens
-    guard.set("DEVBOY_CONTEXTS_INTEG_PRIO_GITHUB_TOKEN", "ghp_context_specific");
+    guard.set(
+        "DEVBOY_CONTEXTS_INTEG_PRIO_GITHUB_TOKEN",
+        "ghp_context_specific",
+    );
     guard.set("DEVBOY_GITHUB_TOKEN", "ghp_global");
 
     let chain = ChainStore::default_chain();
@@ -339,7 +348,10 @@ fn test_scenario_kubernetes_secrets() {
     let mut guard = EnvGuard::new();
     // Simulate Kubernetes environment with secrets mounted as env vars
     guard.set("DEVBOY_CONTEXTS_INTEG_K8S_PROD_GITHUB_TOKEN", "ghp_k8s");
-    guard.set("DEVBOY_CONTEXTS_INTEG_K8S_STAGING_GITHUB_TOKEN", "ghp_k8s_staging");
+    guard.set(
+        "DEVBOY_CONTEXTS_INTEG_K8S_STAGING_GITHUB_TOKEN",
+        "ghp_k8s_staging",
+    );
 
     let chain = ChainStore::ci_chain();
 
@@ -349,7 +361,9 @@ fn test_scenario_kubernetes_secrets() {
         Some("ghp_k8s".to_string())
     );
     assert_eq!(
-        chain.get("contexts.integ-k8s-staging.github.token").unwrap(),
+        chain
+            .get("contexts.integ-k8s-staging.github.token")
+            .unwrap(),
         Some("ghp_k8s_staging".to_string())
     );
 }
@@ -358,9 +372,18 @@ fn test_scenario_kubernetes_secrets() {
 fn test_scenario_github_actions_matrix() {
     let mut guard = EnvGuard::new();
     // Simulate GitHub Actions matrix build with different contexts
-    guard.set("DEVBOY_CONTEXTS_INTEG_GHA_NODE16_GITHUB_TOKEN", "ghp_node16");
-    guard.set("DEVBOY_CONTEXTS_INTEG_GHA_NODE18_GITHUB_TOKEN", "ghp_node18");
-    guard.set("DEVBOY_CONTEXTS_INTEG_GHA_NODE20_GITHUB_TOKEN", "ghp_node20");
+    guard.set(
+        "DEVBOY_CONTEXTS_INTEG_GHA_NODE16_GITHUB_TOKEN",
+        "ghp_node16",
+    );
+    guard.set(
+        "DEVBOY_CONTEXTS_INTEG_GHA_NODE18_GITHUB_TOKEN",
+        "ghp_node18",
+    );
+    guard.set(
+        "DEVBOY_CONTEXTS_INTEG_GHA_NODE20_GITHUB_TOKEN",
+        "ghp_node20",
+    );
 
     let chain = ChainStore::ci_chain();
 
