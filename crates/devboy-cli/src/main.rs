@@ -1185,7 +1185,8 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
         }
 
         ConfigCommands::Get { key } => {
-            // First try config file (only for standard provider.field keys)
+            // First try config file for standard "provider.field" keys (e.g., "github.owner").
+            // Falls back to keychain for any other key format (e.g., "proxy.server_name.token").
             let config = Config::load().context("Failed to load config")?;
             match config.get(&key) {
                 Ok(Some(value)) => {
@@ -1196,11 +1197,11 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
                     // Key format is valid but value not found, continue to keychain
                 }
                 Err(_) => {
-                    // Key format doesn't match provider.field, skip config and try keychain
+                    // Key format doesn't match "provider.field", fall back to keychain
                 }
             }
 
-            // Then try keychain (supports arbitrary key formats)
+            // Then try keychain (supports arbitrary key formats like "proxy.name.field")
             let store = get_credential_store();
             if let Some(value) = store.get(&key).ok().flatten() {
                 println!("{} (from keychain)", mask_secret(&value));

@@ -127,25 +127,6 @@ impl McpServer {
             .unwrap_or(&[])
     }
 
-    /// Check if the active context has any providers configured.
-    ///
-    /// Since all providers implement both `IssueProvider` and `MergeRequestProvider` traits,
-    /// having at least one provider means both issue and MR tools are available.
-    fn has_providers(&self) -> bool {
-        !self.active_providers().is_empty()
-    }
-
-    /// Check if a tool category is available based on configured providers.
-    fn is_category_available(&self, category: ToolCategory) -> bool {
-        match category {
-            // All providers support issues (GitLab, GitHub, ClickUp, Jira)
-            ToolCategory::Issues => self.has_providers(),
-            // GitLab and GitHub support MRs; ClickUp/Jira return ProviderUnsupported
-            // but still implement the trait, so we check for any provider
-            ToolCategory::MergeRequests => self.has_providers(),
-        }
-    }
-
     /// Run the MCP server main loop.
     pub async fn run(&mut self) -> devboy_core::Result<()> {
         tracing::info!(
@@ -277,14 +258,28 @@ impl McpServer {
 
     /// Handle tools/list request.
     fn handle_tools_list(&self, id: RequestId) -> JsonRpcResponse {
-        let handler = ToolHandler::new(self.active_providers());
+        let providers = self.active_providers();
+        let handler = ToolHandler::new(providers.clone());
         let mut tools = handler.available_tools();
+
+        // Pre-compute category availability to avoid repeated provider lookups.
+        use devboy_core::IssueProvider;
+        let has_issue_providers = !providers.is_empty();
+        let has_mr_providers = providers.iter().any(|p| {
+            matches!(
+                IssueProvider::provider_name(p.as_ref()),
+                "github" | "gitlab"
+            )
+        });
 
         // Filter tools based on available providers (dynamic filtering).
         // This prevents exposing tools that would always fail due to missing providers.
         tools.retain(|t| {
             t.category
-                .map(|cat| self.is_category_available(cat))
+                .map(|cat| match cat {
+                    ToolCategory::Issues => has_issue_providers,
+                    ToolCategory::MergeRequests => has_mr_providers,
+                })
                 .unwrap_or(true) // Tools without category are always available
         });
 
@@ -450,7 +445,83 @@ mod tests {
         IssueProvider, MergeRequest, MergeRequestProvider, MrFilter, UpdateIssueInput, User,
     };
 
-    /// Test provider for unit tests.
+    /// Macro to generate test provider implementations.
+    macro_rules! impl_test_provider {
+        ($name:ident, $provider_name:literal) => {
+            struct $name;
+
+            #[async_trait]
+            impl IssueProvider for $name {
+                async fn get_issues(
+                    &self,
+                    _filter: IssueFilter,
+                ) -> devboy_core::Result<Vec<Issue>> {
+                    Ok(vec![])
+                }
+                async fn get_issue(&self, _key: &str) -> devboy_core::Result<Issue> {
+                    Err(devboy_core::Error::NotFound("not found".into()))
+                }
+                async fn create_issue(
+                    &self,
+                    _input: CreateIssueInput,
+                ) -> devboy_core::Result<Issue> {
+                    Err(devboy_core::Error::NotFound("not found".into()))
+                }
+                async fn update_issue(
+                    &self,
+                    _key: &str,
+                    _input: UpdateIssueInput,
+                ) -> devboy_core::Result<Issue> {
+                    Err(devboy_core::Error::NotFound("not found".into()))
+                }
+                async fn get_comments(
+                    &self,
+                    _issue_key: &str,
+                ) -> devboy_core::Result<Vec<Comment>> {
+                    Ok(vec![])
+                }
+                async fn add_comment(
+                    &self,
+                    _issue_key: &str,
+                    _body: &str,
+                ) -> devboy_core::Result<Comment> {
+                    Err(devboy_core::Error::NotFound("not found".into()))
+                }
+                fn provider_name(&self) -> &'static str {
+                    $provider_name
+                }
+            }
+
+            #[async_trait]
+            impl MergeRequestProvider for $name {
+                fn provider_name(&self) -> &'static str {
+                    $provider_name
+                }
+                // Use default implementations that return ProviderUnsupported
+            }
+
+            #[async_trait]
+            impl Provider for $name {
+                async fn get_current_user(&self) -> devboy_core::Result<User> {
+                    Ok(User {
+                        id: "1".to_string(),
+                        username: $provider_name.to_string(),
+                        name: None,
+                        email: None,
+                        avatar_url: None,
+                    })
+                }
+            }
+        };
+    }
+
+    // Issue-only provider (like ClickUp/Jira) - MR tools should NOT be available
+    impl_test_provider!(IssueOnlyTestProvider, "clickup");
+
+    // GitLab provider - both issue and MR tools should be available
+    impl_test_provider!(GitLabTestProvider, "gitlab");
+
+    /// Legacy test provider for backwards compatibility with existing tests.
     struct TestProvider;
 
     #[async_trait]
@@ -478,7 +549,7 @@ mod tests {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
         fn provider_name(&self) -> &'static str {
-            "test"
+            "github" // Changed from "test" to "github" for MR tools to work
         }
     }
 
@@ -507,7 +578,7 @@ mod tests {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
         fn provider_name(&self) -> &'static str {
-            "test"
+            "github" // Changed from "test" to "github" for MR tools to work
         }
     }
 
@@ -1043,5 +1114,53 @@ mod tests {
         let resp = server.handle_request(req).await;
         assert!(resp.error.is_none());
         assert!(resp.result.is_some());
+    }
+
+    #[test]
+    fn test_tools_list_with_issue_only_provider() {
+        // Issue-only provider (ClickUp/Jira) should enable issue tools
+        // but NOT merge request tools.
+        let mut server = McpServer::new();
+        server.add_provider(Arc::new(IssueOnlyTestProvider));
+
+        let resp = server.handle_tools_list(RequestId::Number(1));
+        assert!(resp.result.is_some());
+        let result: ToolsListResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+
+        // Issue tools should be available
+        assert!(result.tools.iter().any(|t| t.name == "get_issues"));
+        assert!(result.tools.iter().any(|t| t.name == "get_issue"));
+        assert!(result.tools.iter().any(|t| t.name == "create_issue"));
+
+        // MR tools should NOT be available (ClickUp doesn't support MRs)
+        assert!(!result.tools.iter().any(|t| t.name == "get_merge_requests"));
+        assert!(!result.tools.iter().any(|t| t.name == "get_merge_request"));
+        assert!(!result
+            .tools
+            .iter()
+            .any(|t| t.name == "get_merge_request_diffs"));
+
+        // Context tools are always available
+        assert!(result.tools.iter().any(|t| t.name == "list_contexts"));
+        assert!(result.tools.iter().any(|t| t.name == "use_context"));
+        assert!(result.tools.iter().any(|t| t.name == "get_current_context"));
+    }
+
+    #[test]
+    fn test_tools_list_with_gitlab_provider() {
+        // GitLab provider should enable both issue AND MR tools.
+        let mut server = McpServer::new();
+        server.add_provider(Arc::new(GitLabTestProvider));
+
+        let resp = server.handle_tools_list(RequestId::Number(1));
+        assert!(resp.result.is_some());
+        let result: ToolsListResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+
+        // Issue tools should be available
+        assert!(result.tools.iter().any(|t| t.name == "get_issues"));
+
+        // MR tools should also be available for GitLab
+        assert!(result.tools.iter().any(|t| t.name == "get_merge_requests"));
+        assert!(result.tools.iter().any(|t| t.name == "get_merge_request"));
     }
 }
