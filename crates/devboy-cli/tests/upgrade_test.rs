@@ -3,9 +3,9 @@
 //! These tests verify the upgrade command behavior including help output,
 //! check-only mode, and package manager detection.
 //!
-//! Tests that require network access (GitHub API) tolerate failures gracefully —
-//! they only assert on the output when the command succeeds, and skip assertions
-//! when the API is unreachable or rate-limited.
+//! Tests that call the GitHub API use `GITHUB_TOKEN` env var for authentication
+//! when available (5000 req/hr vs 60 req/hr unauthenticated). If the API is
+//! unreachable or rate-limited, these tests skip gracefully instead of failing.
 //!
 //! # Running Tests
 //!
@@ -26,6 +26,37 @@ fn devboy_bin() -> std::path::PathBuf {
     path
 }
 
+/// Run `devboy upgrade --check` and return the output.
+/// Passes through GITHUB_TOKEN for authenticated API access.
+fn run_upgrade_check() -> std::process::Output {
+    let mut cmd = Command::new(devboy_bin());
+    cmd.args(["upgrade", "--check"]);
+
+    // Forward GITHUB_TOKEN if available for authenticated API access
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        cmd.env("GITHUB_TOKEN", token);
+    } else if let Ok(token) = std::env::var("GH_TOKEN") {
+        cmd.env("GH_TOKEN", token);
+    }
+
+    cmd.output().expect("Failed to execute command")
+}
+
+/// Check if a command failure is due to GitHub API rate limiting or network issues.
+fn is_api_unavailable(output: &std::process::Output) -> bool {
+    if output.status.success() {
+        return false;
+    }
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    combined.contains("rate limit")
+        || combined.contains("GitHub API returned status")
+        || combined.contains("Failed to fetch release info")
+}
+
 #[test]
 fn test_upgrade_help() {
     let output = Command::new(devboy_bin())
@@ -42,28 +73,20 @@ fn test_upgrade_help() {
 
 #[test]
 fn test_upgrade_check_shows_current_version() {
-    let output = Command::new(devboy_bin())
-        .args(["upgrade", "--check"])
-        .output()
-        .expect("Failed to execute command");
+    let output = run_upgrade_check();
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // If the command failed due to network issues (rate limit, no connectivity),
-    // that's acceptable in CI — skip the assertion.
-    if !output.status.success() {
-        let combined = format!("{}{}", stdout, stderr);
-        if combined.contains("rate limit") || combined.contains("GitHub API returned status") {
-            eprintln!("Skipping test: GitHub API unavailable (rate limit or network error)");
-            return;
-        }
-        panic!(
-            "Command failed unexpectedly.\nstdout: {}\nstderr: {}",
-            stdout, stderr
-        );
+    if is_api_unavailable(&output) {
+        eprintln!("Skipping: GitHub API unavailable");
+        return;
     }
 
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "Command failed.\nstdout: {}\nstderr: {}",
+        stdout,
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(
         stdout.contains("Current version:"),
         "Expected 'Current version:' in output, got: {}",
@@ -73,25 +96,20 @@ fn test_upgrade_check_shows_current_version() {
 
 #[test]
 fn test_upgrade_check_outputs_version_info() {
-    let output = Command::new(devboy_bin())
-        .args(["upgrade", "--check"])
-        .output()
-        .expect("Failed to execute command");
+    let output = run_upgrade_check();
+
+    if is_api_unavailable(&output) {
+        eprintln!("Skipping: GitHub API unavailable");
+        return;
+    }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    if !output.status.success() {
-        let combined = format!("{}{}", stdout, stderr);
-        if combined.contains("rate limit") || combined.contains("GitHub API returned status") {
-            eprintln!("Skipping test: GitHub API unavailable (rate limit or network error)");
-            return;
-        }
-        panic!(
-            "Command failed unexpectedly.\nstdout: {}\nstderr: {}",
-            stdout, stderr
-        );
-    }
+    assert!(
+        output.status.success(),
+        "Command failed.\nstdout: {}\nstderr: {}",
+        stdout,
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Should either say "already running the latest" or "New version available"
     assert!(
@@ -103,26 +121,29 @@ fn test_upgrade_check_outputs_version_info() {
 
 #[test]
 fn test_upgrade_detects_npm_install_when_node_modules_in_path() {
-    let output = Command::new(devboy_bin())
-        .args(["upgrade", "--check"])
-        .env("npm_config_user_agent", "pnpm/9.0.0 node/22.0.0")
-        .output()
-        .expect("Failed to execute command");
+    let mut cmd = Command::new(devboy_bin());
+    cmd.args(["upgrade", "--check"])
+        .env("npm_config_user_agent", "pnpm/9.0.0 node/22.0.0");
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    if !output.status.success() {
-        let combined = format!("{}{}", stdout, stderr);
-        if combined.contains("rate limit") || combined.contains("GitHub API returned status") {
-            eprintln!("Skipping test: GitHub API unavailable (rate limit or network error)");
-            return;
-        }
-        panic!(
-            "Command failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+    // Forward GITHUB_TOKEN if available
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        cmd.env("GITHUB_TOKEN", token);
+    } else if let Ok(token) = std::env::var("GH_TOKEN") {
+        cmd.env("GH_TOKEN", token);
     }
+
+    let output = cmd.output().expect("Failed to execute command");
+
+    if is_api_unavailable(&output) {
+        eprintln!("Skipping: GitHub API unavailable");
+        return;
+    }
+
+    assert!(
+        output.status.success(),
+        "Command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
