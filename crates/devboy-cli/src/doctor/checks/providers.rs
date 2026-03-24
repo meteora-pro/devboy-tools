@@ -780,9 +780,52 @@ impl DiagnosticCheck for JiraApiCheck {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::doctor::DiagnosticContext;
+    use devboy_core::{ClickUpConfig, Config, ContextConfig, Error, GitHubConfig, GitLabConfig, JiraConfig};
+    use devboy_storage::{CredentialStore, MemoryStore};
     use httpmock::Method::GET;
     use httpmock::MockServer;
     use reqwest::header::HeaderValue;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    #[derive(Debug)]
+    struct FailingStore;
+
+    impl CredentialStore for FailingStore {
+        fn store(&self, _key: &str, _value: &str) -> devboy_core::Result<()> {
+            Err(Error::Storage("store failed".to_string()))
+        }
+
+        fn get(&self, _key: &str) -> devboy_core::Result<Option<String>> {
+            Err(Error::Storage("provider store unavailable".to_string()))
+        }
+
+        fn delete(&self, _key: &str) -> devboy_core::Result<()> {
+            Err(Error::Storage("delete failed".to_string()))
+        }
+    }
+
+    fn context_with_provider(store: Arc<dyn CredentialStore>, context: ContextConfig) -> DiagnosticContext {
+        let mut contexts = BTreeMap::new();
+        contexts.insert("workspace".to_string(), context);
+
+        DiagnosticContext {
+            config: Some(Config {
+                contexts,
+                active_context: Some("workspace".to_string()),
+                ..Default::default()
+            }),
+            config_path: Some(PathBuf::from("config.toml")),
+            config_exists: true,
+            config_source: "test",
+            config_path_error: None,
+            config_load_error: None,
+            credential_store: store,
+            verbose: true,
+        }
+    }
 
     #[tokio::test]
     async fn github_connectivity_collects_user_and_rate_limit() {
@@ -817,6 +860,379 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn github_connectivity_returns_authentication_error() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/user");
+            then.status(401).body("bad token");
+        });
+
+        let error = github_connectivity(
+            &GitHubConfig {
+                owner: "o".to_string(),
+                repo: "r".to_string(),
+                base_url: Some(server.base_url()),
+            },
+            "bad-token",
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error, "authentication failed: bad token");
+    }
+
+    #[tokio::test]
+    async fn github_connectivity_reports_invalid_payload() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/user");
+            then.status(200).body("not-json");
+        });
+
+        let error = github_connectivity(
+            &GitHubConfig {
+                owner: "o".to_string(),
+                repo: "r".to_string(),
+                base_url: Some(server.base_url()),
+            },
+            "ghp_token_12345678901234567890",
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.contains("Invalid GitHub response"));
+    }
+
+    #[tokio::test]
+    async fn gitlab_connectivity_collects_identity_and_rate_limits() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/api/v4/user");
+            then.status(200)
+                .header("ratelimit-limit", "600")
+                .header("ratelimit-remaining", "599")
+                .json_body(json!({
+                    "username": "gitlab-user",
+                    "name": "GitLab User",
+                    "email": "gitlab@example.com"
+                }));
+        });
+
+        let outcome = gitlab_connectivity(
+            &GitLabConfig {
+                url: server.base_url(),
+                project_id: "group/project".to_string(),
+            },
+            "glpat-12345678901234567890",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.user.unwrap().username, "gitlab-user");
+        assert_eq!(
+            outcome.rate_limit.unwrap().remaining.as_deref(),
+            Some("599")
+        );
+    }
+
+    #[tokio::test]
+    async fn jira_connectivity_supports_self_hosted_basic_auth() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/2/myself")
+                .header("authorization", "Basic dXNlcjp0b2tlbg==");
+            then.status(200).json_body(json!({
+                "name": "jira-user",
+                "displayName": "Jira User",
+                "emailAddress": "jira@example.com"
+            }));
+        });
+
+        let outcome = jira_connectivity(
+            &JiraConfig {
+                url: server.base_url(),
+                project_key: "PROJ".to_string(),
+                email: "jira@example.com".to_string(),
+            },
+            "user:token",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.user.unwrap().username, "jira-user");
+    }
+
+    #[tokio::test]
+    async fn jira_connectivity_falls_back_to_account_id() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/rest/api/2/myself");
+            then.status(200).json_body(json!({
+                "name": "",
+                "displayName": "Jira User",
+                "account_id": "acct-123"
+            }));
+        });
+
+        let outcome = jira_connectivity(
+            &JiraConfig {
+                url: server.base_url(),
+                project_key: "PROJ".to_string(),
+                email: "jira@example.com".to_string(),
+            },
+            "bearer-token-value",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.user.unwrap().username, "acct-123");
+    }
+
+    #[tokio::test]
+    async fn run_provider_check_covers_all_generic_paths() {
+        let ctx_without_config = DiagnosticContext {
+            config: None,
+            config_path: Some(PathBuf::from("config.toml")),
+            config_exists: true,
+            config_source: "test",
+            config_path_error: None,
+            config_load_error: None,
+            credential_store: Arc::new(MemoryStore::new()),
+            verbose: true,
+        };
+
+        let skipped_result = run_provider_check(
+            &GitHubApiCheck,
+            &ctx_without_config,
+            "github",
+            true,
+            async { Ok(ConnectivityOutcome { message: "ok".to_string(), user: None, rate_limit: None }) },
+        )
+        .await;
+        assert_eq!(skipped_result.status, CheckStatus::Skipped);
+
+        let no_active_ctx = DiagnosticContext {
+            config: Some(Config::default()),
+            ..ctx_without_config
+        };
+        let skipped_result = run_provider_check(
+            &GitHubApiCheck,
+            &no_active_ctx,
+            "github",
+            true,
+            async { Ok(ConnectivityOutcome { message: "ok".to_string(), user: None, rate_limit: None }) },
+        )
+        .await;
+        assert_eq!(skipped_result.status, CheckStatus::Skipped);
+
+        let configured_ctx = context_with_provider(
+            Arc::new(MemoryStore::new()),
+            ContextConfig {
+                github: Some(GitHubConfig {
+                    owner: "o".to_string(),
+                    repo: "r".to_string(),
+                    base_url: None,
+                }),
+                ..Default::default()
+            },
+        );
+        let skipped_result = run_provider_check(
+            &GitHubApiCheck,
+            &configured_ctx,
+            "github",
+            false,
+            async { Ok(ConnectivityOutcome { message: "ok".to_string(), user: None, rate_limit: None }) },
+        )
+        .await;
+        assert_eq!(skipped_result.status, CheckStatus::Skipped);
+
+        let missing_secret = run_provider_check(
+            &GitHubApiCheck,
+            &configured_ctx,
+            "github",
+            true,
+            async { Ok(ConnectivityOutcome { message: "ok".to_string(), user: None, rate_limit: None }) },
+        )
+        .await;
+        assert_eq!(missing_secret.status, CheckStatus::Skipped);
+
+        let store_error_ctx = context_with_provider(
+            Arc::new(FailingStore),
+            ContextConfig {
+                github: Some(GitHubConfig {
+                    owner: "o".to_string(),
+                    repo: "r".to_string(),
+                    base_url: None,
+                }),
+                ..Default::default()
+            },
+        );
+        let error_result = run_provider_check(
+            &GitHubApiCheck,
+            &store_error_ctx,
+            "github",
+            true,
+            async { Ok(ConnectivityOutcome { message: "ok".to_string(), user: None, rate_limit: None }) },
+        )
+        .await;
+        assert_eq!(error_result.status, CheckStatus::Error);
+
+        let success_ctx = context_with_provider(
+            Arc::new(MemoryStore::with_credentials([(
+                "contexts.workspace.github.token".to_string(),
+                "ghp_12345678901234567890".to_string(),
+            )])),
+            ContextConfig {
+                github: Some(GitHubConfig {
+                    owner: "o".to_string(),
+                    repo: "r".to_string(),
+                    base_url: None,
+                }),
+                ..Default::default()
+            },
+        );
+        let success_result = run_provider_check(
+            &GitHubApiCheck,
+            &success_ctx,
+            "github",
+            true,
+            async {
+                Ok(ConnectivityOutcome {
+                    message: "connected".to_string(),
+                    user: Some(ProviderIdentity {
+                        username: "octocat".to_string(),
+                        name: Some("Octo Cat".to_string()),
+                        email: None,
+                    }),
+                    rate_limit: Some(RateLimitInfo {
+                        limit: Some("5000".to_string()),
+                        remaining: Some("4999".to_string()),
+                        reset: None,
+                        used: None,
+                        resource: None,
+                    }),
+                })
+            },
+        )
+        .await;
+        assert_eq!(success_result.status, CheckStatus::Pass);
+        assert_eq!(success_result.details.unwrap()["token_source"], "context");
+
+        let failure_result = run_provider_check(
+            &GitHubApiCheck,
+            &success_ctx,
+            "github",
+            true,
+            async { Err("boom".to_string()) },
+        )
+        .await;
+        assert_eq!(failure_result.status, CheckStatus::Error);
+        assert_eq!(failure_result.details.unwrap()["error"], "boom");
+    }
+
+    #[tokio::test]
+    async fn provider_run_methods_cover_skip_success_and_store_error_paths() {
+        let no_active = DiagnosticContext {
+            config: Some(Config::default()),
+            config_path: Some(PathBuf::from("config.toml")),
+            config_exists: true,
+            config_source: "test",
+            config_path_error: None,
+            config_load_error: None,
+            credential_store: Arc::new(MemoryStore::new()),
+            verbose: true,
+        };
+        assert_eq!(GitHubApiCheck.run(&no_active).await.status, CheckStatus::Skipped);
+
+        let github_server = MockServer::start();
+        github_server.mock(|when, then| {
+            when.method(GET).path("/user");
+            then.status(200).json_body(json!({
+                "login": "octocat",
+                "name": "The Octocat",
+                "email": "octo@example.com"
+            }));
+        });
+        let github_ctx = context_with_provider(
+            Arc::new(MemoryStore::with_credentials([(
+                "contexts.workspace.github.token".to_string(),
+                "ghp_12345678901234567890".to_string(),
+            )])),
+            ContextConfig {
+                github: Some(GitHubConfig {
+                    owner: "o".to_string(),
+                    repo: "r".to_string(),
+                    base_url: Some(github_server.base_url()),
+                }),
+                ..Default::default()
+            },
+        );
+        assert_eq!(GitHubApiCheck.run(&github_ctx).await.status, CheckStatus::Pass);
+
+        let gitlab_server = MockServer::start();
+        gitlab_server.mock(|when, then| {
+            when.method(GET).path("/api/v4/user");
+            then.status(200).json_body(json!({
+                "username": "gitlab-user",
+                "name": "GitLab User"
+            }));
+        });
+        let gitlab_ctx = context_with_provider(
+            Arc::new(MemoryStore::with_credentials([(
+                "contexts.workspace.gitlab.token".to_string(),
+                "glpat-12345678901234567890".to_string(),
+            )])),
+            ContextConfig {
+                gitlab: Some(GitLabConfig {
+                    url: gitlab_server.base_url(),
+                    project_id: "group/project".to_string(),
+                }),
+                ..Default::default()
+            },
+        );
+        assert_eq!(GitLabApiCheck.run(&gitlab_ctx).await.status, CheckStatus::Pass);
+
+        let jira_server = MockServer::start();
+        jira_server.mock(|when, then| {
+            when.method(GET).path("/rest/api/2/myself");
+            then.status(200).json_body(json!({
+                "name": "jira-user",
+                "displayName": "Jira User"
+            }));
+        });
+        let jira_ctx = context_with_provider(
+            Arc::new(MemoryStore::with_credentials([(
+                "contexts.workspace.jira.token".to_string(),
+                "user:token".to_string(),
+            )])),
+            ContextConfig {
+                jira: Some(JiraConfig {
+                    url: jira_server.base_url(),
+                    project_key: "PROJ".to_string(),
+                    email: "jira@example.com".to_string(),
+                }),
+                ..Default::default()
+            },
+        );
+        assert_eq!(JiraApiCheck.run(&jira_ctx).await.status, CheckStatus::Pass);
+
+        let clickup_error_ctx = context_with_provider(
+            Arc::new(FailingStore),
+            ContextConfig {
+                clickup: Some(ClickUpConfig {
+                    list_id: "123".to_string(),
+                    team_id: None,
+                }),
+                ..Default::default()
+            },
+        );
+        let clickup_result = ClickUpApiCheck.run(&clickup_error_ctx).await;
+        assert_eq!(clickup_result.status, CheckStatus::Error);
+        assert!(clickup_result.message.contains("Could not read clickup credentials"));
+    }
+
     #[test]
     fn jira_base64_encoder_matches_expected() {
         assert_eq!(base64_encode("user:token"), "dXNlcjp0b2tlbg==");
@@ -831,5 +1247,64 @@ mod tests {
         let info = rate_limit_from_headers(&headers, "gitlab").unwrap();
         assert_eq!(info.limit.as_deref(), Some("600"));
         assert_eq!(info.remaining.as_deref(), Some("598"));
+    }
+
+    #[test]
+    fn helper_functions_cover_parsing_and_serialization_paths() {
+        let mut github_headers = HeaderMap::new();
+        github_headers.insert("x-ratelimit-limit", HeaderValue::from_static("5000"));
+        github_headers.insert("x-ratelimit-resource", HeaderValue::from_static("core"));
+        let info = rate_limit_from_headers(&github_headers, "github").unwrap();
+        assert_eq!(info.to_json()["resource"], "core");
+        assert!(!info.is_empty());
+
+        let mut jira_headers = HeaderMap::new();
+        jira_headers.insert("x-ratelimit-limit", HeaderValue::from_static("100"));
+        jira_headers.insert("x-ratelimit-nearlimit", HeaderValue::from_static("false"));
+        assert_eq!(
+            rate_limit_from_headers(&jira_headers, "jira").unwrap().to_json()["used"],
+            "false"
+        );
+        assert!(rate_limit_from_headers(&HeaderMap::new(), "unknown").is_none());
+
+        let identity = ProviderIdentity {
+            username: "user".to_string(),
+            name: Some("User".to_string()),
+            email: Some("user@example.com".to_string()),
+        };
+        let details = connectivity_details(
+            "github",
+            "workspace",
+            "contexts.workspace.github.token",
+            "context",
+            &ConnectivityOutcome {
+                message: "connected".to_string(),
+                user: Some(identity),
+                rate_limit: Some(info),
+            },
+        );
+        assert_eq!(details["provider"], "github");
+        assert_eq!(details["user"]["username"], "user");
+
+        assert_eq!(
+            parse_error(reqwest::StatusCode::UNAUTHORIZED, "bad".to_string()).1,
+            "authentication failed: bad"
+        );
+        assert_eq!(
+            parse_error(reqwest::StatusCode::TOO_MANY_REQUESTS, "".to_string()).1,
+            "rate limit exceeded: Too Many Requests"
+        );
+        assert_eq!(
+            parse_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "boom".to_string()).1,
+            "server error: boom"
+        );
+        assert_eq!(
+            parse_error(reqwest::StatusCode::BAD_REQUEST, "".to_string()).1,
+            "request failed: Bad Request"
+        );
+
+        let skipped_result = skipped(&GitHubApiCheck, "skip me");
+        assert_eq!(skipped_result.status, CheckStatus::Skipped);
+        assert_eq!(skipped_result.message, "skip me");
     }
 }

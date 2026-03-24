@@ -60,3 +60,122 @@ pub(super) fn resolve_secret(
         Err(error) => Err(error.to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use devboy_core::{Config, ContextConfig, Error, GitHubConfig};
+    use devboy_storage::{CredentialStore, MemoryStore};
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    #[derive(Debug)]
+    struct FailingStore;
+
+    impl CredentialStore for FailingStore {
+        fn store(&self, _key: &str, _value: &str) -> devboy_core::Result<()> {
+            Err(Error::Storage("store failed".to_string()))
+        }
+
+        fn get(&self, _key: &str) -> devboy_core::Result<Option<String>> {
+            Err(Error::Storage("secret backend unavailable".to_string()))
+        }
+
+        fn delete(&self, _key: &str) -> devboy_core::Result<()> {
+            Err(Error::Storage("delete failed".to_string()))
+        }
+    }
+
+    fn context_with_store(store: Arc<dyn CredentialStore>, config: Config) -> DiagnosticContext {
+        DiagnosticContext {
+            config: Some(config),
+            config_path: Some(PathBuf::from("config.toml")),
+            config_exists: true,
+            config_source: "test",
+            config_path_error: None,
+            config_load_error: None,
+            credential_store: store,
+            verbose: false,
+        }
+    }
+
+    fn config_with_active_context() -> Config {
+        let mut contexts = BTreeMap::new();
+        contexts.insert(
+            "workspace".to_string(),
+            ContextConfig {
+                github: Some(GitHubConfig {
+                    owner: "owner".to_string(),
+                    repo: "repo".to_string(),
+                    base_url: None,
+                }),
+                ..Default::default()
+            },
+        );
+
+        Config {
+            contexts,
+            active_context: Some("workspace".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn resolve_active_provider_context_returns_active_context() {
+        let active = resolve_active_provider_context(&config_with_active_context()).unwrap();
+
+        assert_eq!(active.name, "workspace");
+        assert!(active.config.github.is_some());
+    }
+
+    #[test]
+    fn resolve_active_provider_context_returns_none_when_missing() {
+        assert!(resolve_active_provider_context(&Config::default()).is_none());
+    }
+
+    #[test]
+    fn resolve_secret_prefers_context_then_global_then_none() {
+        let ctx = context_with_store(
+            Arc::new(MemoryStore::with_credentials([
+                (
+                    "contexts.workspace.github.token".to_string(),
+                    "context-secret".to_string(),
+                ),
+                ("github.token".to_string(), "global-secret".to_string()),
+            ])),
+            config_with_active_context(),
+        );
+
+        let context_secret = resolve_secret(&ctx, Some("workspace"), "github").unwrap().unwrap();
+        assert_eq!(context_secret.source, "context");
+        assert_eq!(context_secret.value, "context-secret");
+
+        let global_ctx = context_with_store(
+            Arc::new(MemoryStore::with_credentials([(
+                "github.token".to_string(),
+                "global-secret".to_string(),
+            )])),
+            config_with_active_context(),
+        );
+        let global_secret = resolve_secret(&global_ctx, Some("workspace"), "github")
+            .unwrap()
+            .unwrap();
+        assert_eq!(global_secret.source, "global");
+        assert_eq!(global_secret.key, "github.token");
+
+        let missing_ctx = context_with_store(Arc::new(MemoryStore::new()), config_with_active_context());
+        assert!(resolve_secret(&missing_ctx, Some("workspace"), "github")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn resolve_secret_propagates_store_errors() {
+        let ctx = context_with_store(Arc::new(FailingStore), config_with_active_context());
+
+        let error = resolve_secret(&ctx, Some("workspace"), "github").unwrap_err();
+
+        assert_eq!(error, "Storage error: secret backend unavailable");
+    }
+}

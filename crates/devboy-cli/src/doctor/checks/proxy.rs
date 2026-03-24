@@ -326,12 +326,29 @@ async fn probe_proxy_server(
 mod tests {
     use super::*;
     use crate::doctor::DiagnosticContext;
-    use devboy_core::{Config, ProxyMcpServerConfig};
-    use devboy_storage::MemoryStore;
+    use devboy_core::{Config, Error, ProxyMcpServerConfig};
+    use devboy_storage::{CredentialStore, MemoryStore};
     use httpmock::Method::POST;
     use httpmock::MockServer;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[derive(Debug)]
+    struct FailingStore;
+
+    impl CredentialStore for FailingStore {
+        fn store(&self, _key: &str, _value: &str) -> devboy_core::Result<()> {
+            Err(Error::Storage("store failed".to_string()))
+        }
+
+        fn get(&self, _key: &str) -> devboy_core::Result<Option<String>> {
+            Err(Error::Storage("proxy store unavailable".to_string()))
+        }
+
+        fn delete(&self, _key: &str) -> devboy_core::Result<()> {
+            Err(Error::Storage("delete failed".to_string()))
+        }
+    }
 
     fn context_with_proxy(config: Config, store: MemoryStore, verbose: bool) -> DiagnosticContext {
         DiagnosticContext {
@@ -382,6 +399,36 @@ mod tests {
         });
     }
 
+    fn setup_empty_streamable_http_proxy(server: &MockServer) {
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"initialize""#);
+            then.status(200)
+                .header("mcp-session-id", "sess-1")
+                .json_body(json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "serverInfo": { "name": "mock", "version": "1.0" }
+                    }
+                }));
+        });
+
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"tools/list""#);
+            then.status(200).json_body(json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": { "tools": [] }
+            }));
+        });
+    }
+
     #[tokio::test]
     async fn proxy_servers_check_passes_for_reachable_proxy() {
         let server = MockServer::start();
@@ -407,6 +454,26 @@ mod tests {
         assert_eq!(result.status, CheckStatus::Pass);
         let details = result.details.unwrap();
         assert_eq!(details["servers"][0]["tools_count"], 1);
+    }
+
+    #[tokio::test]
+    async fn proxy_servers_check_skips_without_config_or_servers() {
+        let no_config_ctx = DiagnosticContext {
+            config: None,
+            config_path: Some(PathBuf::from("config.toml")),
+            config_exists: true,
+            config_source: "test",
+            config_path_error: None,
+            config_load_error: None,
+            credential_store: Arc::new(MemoryStore::new()),
+            verbose: true,
+        };
+        assert_eq!(ProxyServersCheck.run(&no_config_ctx).await.status, CheckStatus::Skipped);
+
+        let empty_ctx = context_with_proxy(Config::default(), MemoryStore::new(), true);
+        let result = ProxyServersCheck.run(&empty_ctx).await;
+        assert_eq!(result.status, CheckStatus::Skipped);
+        assert!(result.message.contains("no proxy MCP servers"));
     }
 
     #[tokio::test]
@@ -457,5 +524,153 @@ mod tests {
         assert_eq!(result.status, CheckStatus::Error);
         let details = result.details.unwrap();
         assert_eq!(details["servers"][0]["message"], "Invalid transport 'grpc'");
+    }
+
+    #[tokio::test]
+    async fn proxy_servers_check_warns_when_proxy_has_no_tools() {
+        let server = MockServer::start();
+        setup_empty_streamable_http_proxy(&server);
+
+        let ctx = context_with_proxy(
+            Config {
+                proxy_mcp_servers: vec![ProxyMcpServerConfig {
+                    name: "cloud".to_string(),
+                    url: format!("{}/mcp", server.base_url()),
+                    auth_type: "none".to_string(),
+                    token_key: None,
+                    tool_prefix: None,
+                    transport: "streamable-http".to_string(),
+                }],
+                ..Default::default()
+            },
+            MemoryStore::new(),
+            true,
+        );
+
+        let result = ProxyServersCheck.run(&ctx).await;
+        assert_eq!(result.status, CheckStatus::Warning);
+        assert!(result.message.contains("1 warning"));
+    }
+
+    #[tokio::test]
+    async fn probe_proxy_server_covers_auth_and_store_errors() {
+        let ctx = DiagnosticContext {
+            config: Some(Config::default()),
+            config_path: Some(PathBuf::from("config.toml")),
+            config_exists: true,
+            config_source: "test",
+            config_path_error: None,
+            config_load_error: None,
+            credential_store: Arc::new(FailingStore),
+            verbose: true,
+        };
+
+        let invalid_auth = probe_proxy_server(
+            &ctx,
+            &ProxyMcpServerConfig {
+                name: "cloud".to_string(),
+                url: "https://example.com/mcp".to_string(),
+                auth_type: "basic".to_string(),
+                token_key: None,
+                tool_prefix: None,
+                transport: "streamable-http".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(invalid_auth.status, CheckStatus::Error);
+        assert_eq!(invalid_auth.detail["message"], "Invalid auth_type 'basic'");
+
+        let missing_key = probe_proxy_server(
+            &ctx,
+            &ProxyMcpServerConfig {
+                name: "cloud".to_string(),
+                url: "https://example.com/mcp".to_string(),
+                auth_type: "bearer".to_string(),
+                token_key: None,
+                tool_prefix: None,
+                transport: "streamable-http".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(missing_key.status, CheckStatus::Error);
+        assert_eq!(missing_key.detail["message"], "Missing token_key for authenticated proxy");
+
+        let store_error = probe_proxy_server(
+            &ctx,
+            &ProxyMcpServerConfig {
+                name: "cloud".to_string(),
+                url: "https://example.com/mcp".to_string(),
+                auth_type: "bearer".to_string(),
+                token_key: Some("proxy.cloud.token".to_string()),
+                tool_prefix: None,
+                transport: "streamable-http".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(store_error.status, CheckStatus::Error);
+        assert_eq!(store_error.detail["message"], "Storage error: proxy store unavailable");
+    }
+
+    #[tokio::test]
+    async fn probe_proxy_server_reports_connection_failures() {
+        let ctx = DiagnosticContext {
+            config: Some(Config::default()),
+            config_path: Some(PathBuf::from("config.toml")),
+            config_exists: true,
+            config_source: "test",
+            config_path_error: None,
+            config_load_error: None,
+            credential_store: Arc::new(MemoryStore::with_credentials([(
+                "proxy.cloud.token".to_string(),
+                "secret".to_string(),
+            )])),
+            verbose: true,
+        };
+
+        let result = probe_proxy_server(
+            &ctx,
+            &ProxyMcpServerConfig {
+                name: "cloud".to_string(),
+                url: "http://127.0.0.1:9/mcp".to_string(),
+                auth_type: "bearer".to_string(),
+                token_key: Some("proxy.cloud.token".to_string()),
+                tool_prefix: None,
+                transport: "streamable-http".to_string(),
+            },
+        )
+        .await;
+
+        assert_eq!(result.status, CheckStatus::Error);
+        assert!(result.detail["message"].as_str().unwrap().contains("connectivity failed"));
+    }
+
+    #[test]
+    fn proxy_helpers_cover_normalization_and_classification() {
+        assert_eq!(normalized_auth_type("bearer"), Some("bearer"));
+        assert_eq!(normalized_auth_type("none"), Some("none"));
+        assert_eq!(normalized_auth_type("weird"), None);
+
+        assert!(matches!(
+            normalized_transport("http"),
+            Some(ProxyTransport::StreamableHttp)
+        ));
+        assert!(matches!(
+            normalized_transport("sse"),
+            Some(ProxyTransport::Sse)
+        ));
+        assert!(normalized_transport("grpc").is_none());
+
+        assert_eq!(
+            classify_proxy_error("HTTP 401 unauthorized"),
+            "authentication failed: HTTP 401 unauthorized"
+        );
+        assert_eq!(
+            classify_proxy_error("socket closed"),
+            "connectivity failed: socket closed"
+        );
+
+        let skipped_result = skipped(&ProxyServersCheck, "skip");
+        assert_eq!(skipped_result.status, CheckStatus::Skipped);
+        assert_eq!(skipped_result.message, "skip");
     }
 }
