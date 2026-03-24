@@ -6,7 +6,9 @@ use self::checks::credentials::{
     ClickUpTokenCheck, GitHubTokenCheck, GitLabTokenCheck, JiraTokenCheck,
 };
 use self::checks::environment::{ConfigDirCheck, CredentialStoreCheck, OsSupportCheck};
+use self::checks::mcp::McpToolsCheck;
 use self::checks::providers::{ClickUpApiCheck, GitHubApiCheck, GitLabApiCheck, JiraApiCheck};
+use self::checks::proxy::ProxyServersCheck;
 use self::output::console::{print_report, summarize};
 use crate::get_credential_store;
 use anyhow::Result;
@@ -119,6 +121,8 @@ impl CheckRegistry {
         registry.register(Box::new(GitLabApiCheck));
         registry.register(Box::new(ClickUpApiCheck));
         registry.register(Box::new(JiraApiCheck));
+        registry.register(Box::new(McpToolsCheck));
+        registry.register(Box::new(ProxyServersCheck));
         registry
     }
 
