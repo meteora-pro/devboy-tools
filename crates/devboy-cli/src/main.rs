@@ -24,6 +24,7 @@ use devboy_mcp::{
 };
 use devboy_storage::{CredentialStore, KeychainStore, MemoryStore};
 use dialoguer::{Confirm, Input, MultiSelect, Password};
+use doctor::{DoctorOptions, OutputFormat};
 use tracing_subscriber::EnvFilter;
 
 /// Proxy transport type for MCP servers.
@@ -189,7 +190,34 @@ enum Commands {
     },
 
     /// Run diagnostic checks for the local DevBoy setup
-    Doctor,
+    Doctor {
+        /// Output machine-readable JSON
+        #[arg(long, value_enum)]
+        format: Option<DoctorOutputFormat>,
+
+        /// List available check IDs and exit
+        #[arg(long)]
+        list_checks: bool,
+
+        /// Run only the specified check IDs (comma-delimited or repeated)
+        #[arg(long, value_delimiter = ',')]
+        checks: Vec<String>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DoctorOutputFormat {
+    Console,
+    Json,
+}
+
+impl From<DoctorOutputFormat> for OutputFormat {
+    fn from(value: DoctorOutputFormat) -> Self {
+        match value {
+            DoctorOutputFormat::Console => OutputFormat::Console,
+            DoctorOutputFormat::Json => OutputFormat::Json,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -417,8 +445,18 @@ async fn main() -> Result<()> {
             handle_tools_command(command).await?;
         }
 
-        Some(Commands::Doctor) => {
-            let exit_code = doctor::handle_doctor_command(cli.verbose).await?;
+        Some(Commands::Doctor {
+            format,
+            list_checks,
+            checks,
+        }) => {
+            let exit_code = doctor::handle_doctor_command(DoctorOptions {
+                verbose: cli.verbose,
+                output_format: format.map(Into::into),
+                list_checks,
+                checks,
+            })
+            .await?;
             std::process::exit(exit_code);
         }
 
