@@ -27,6 +27,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+reqwest.workspace = true
 dialoguer = "0.11"
 chrono = "0.4"
 toml.workspace = true
@@ -36,4 +37,5 @@ dirs.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tempfile.workspace = true
 serde_json.workspace = true
+httpmock.workspace = true
 devboy-pipeline = { path = "../plugins/pipeline" }
