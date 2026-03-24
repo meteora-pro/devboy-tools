@@ -1,4 +1,4 @@
-use crate::doctor::{CheckResult, CheckStatus};
+use crate::doctor::{CheckDescriptor, CheckResult, CheckStatus};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -60,6 +60,27 @@ pub fn print_report(results: &[CheckResult], verbose: bool) {
         "Summary: {} error(s), {} warning(s), {} passed, {} skipped",
         summary.errors, summary.warnings, summary.passed, summary.skipped
     );
+}
+
+pub fn print_check_list(checks: &[CheckDescriptor]) {
+    println!("Available doctor checks");
+    println!("=======================");
+
+    let mut grouped: BTreeMap<&str, Vec<&CheckDescriptor>> = BTreeMap::new();
+    for check in checks {
+        grouped
+            .entry(check.category.as_str())
+            .or_default()
+            .push(check);
+    }
+
+    for (category, items) in grouped {
+        println!();
+        println!("{category}");
+        for check in items {
+            println!("  {} - {}", check.id, check.name);
+        }
+    }
 }
 
 fn print_details(value: &Value, indent: usize) {

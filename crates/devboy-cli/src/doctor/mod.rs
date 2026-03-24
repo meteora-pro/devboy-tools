@@ -9,7 +9,8 @@ use self::checks::environment::{ConfigDirCheck, CredentialStoreCheck, OsSupportC
 use self::checks::mcp::McpToolsCheck;
 use self::checks::providers::{ClickUpApiCheck, GitHubApiCheck, GitLabApiCheck, JiraApiCheck};
 use self::checks::proxy::ProxyServersCheck;
-use self::output::console::{print_report, summarize};
+use self::output::console::{print_check_list, print_report, summarize};
+use self::output::json::print_json_report;
 use crate::get_credential_store;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -17,6 +18,7 @@ use devboy_core::Config;
 use devboy_storage::CredentialStore;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -39,6 +41,35 @@ pub enum CheckStatus {
     Warning,
     Error,
     Skipped,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CheckSummary {
+    pub passed: usize,
+    pub warnings: usize,
+    pub errors: usize,
+    pub skipped: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CheckDescriptor {
+    pub id: String,
+    pub category: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    Console,
+    Json,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DoctorOptions {
+    pub verbose: bool,
+    pub output_format: Option<OutputFormat>,
+    pub list_checks: bool,
+    pub checks: Vec<String>,
 }
 
 #[async_trait]
@@ -130,6 +161,45 @@ impl CheckRegistry {
         self.checks.push(check);
     }
 
+    pub fn list(&self) -> Vec<CheckDescriptor> {
+        self.checks
+            .iter()
+            .map(|check| CheckDescriptor {
+                id: check.id().to_string(),
+                category: check.category().to_string(),
+                name: check.name().to_string(),
+            })
+            .collect()
+    }
+
+    pub fn validate_filter<'a>(&self, requested: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+        let available: BTreeSet<_> = self.checks.iter().map(|check| check.id()).collect();
+        requested
+            .into_iter()
+            .filter(|id| !available.contains(*id))
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    pub async fn run_filtered(
+        &self,
+        ctx: &DiagnosticContext,
+        selected_ids: &[String],
+    ) -> Vec<CheckResult> {
+        if selected_ids.is_empty() {
+            return self.run_all(ctx).await;
+        }
+
+        let selected: BTreeSet<_> = selected_ids.iter().map(String::as_str).collect();
+        let mut results = Vec::with_capacity(selected.len());
+        for check in &self.checks {
+            if selected.contains(check.id()) {
+                results.push(check.run(ctx).await);
+            }
+        }
+        results
+    }
+
     pub async fn run_all(&self, ctx: &DiagnosticContext) -> Vec<CheckResult> {
         let mut results = Vec::with_capacity(self.checks.len());
         for check in &self.checks {
@@ -139,23 +209,63 @@ impl CheckRegistry {
     }
 }
 
-pub async fn handle_doctor_command(verbose: bool) -> Result<i32> {
-    let ctx = DiagnosticContext::load(verbose);
-    let registry = CheckRegistry::new();
-    let results = registry.run_all(&ctx).await;
+pub fn summarize_results(results: &[CheckResult]) -> CheckSummary {
+    let summary = summarize(results);
+    CheckSummary {
+        passed: summary.passed,
+        warnings: summary.warnings,
+        errors: summary.errors,
+        skipped: summary.skipped,
+    }
+}
 
-    print_report(&results, verbose);
-
-    let summary = summarize(&results);
-    let exit_code = if summary.errors > 0 {
+pub fn exit_code_for_summary(summary: &CheckSummary) -> i32 {
+    if summary.errors > 0 {
         2
     } else if summary.warnings > 0 {
         1
     } else {
         0
-    };
+    }
+}
 
-    Ok(exit_code)
+pub async fn handle_doctor_command(options: DoctorOptions) -> Result<i32> {
+    let registry = CheckRegistry::new();
+
+    if options.list_checks {
+        let checks = registry.list();
+        if matches!(options.output_format, Some(OutputFormat::Json)) {
+            print_json_report(&checks)?;
+        } else {
+            print_check_list(&checks);
+        }
+        return Ok(0);
+    }
+
+    let unknown_checks = registry.validate_filter(options.checks.iter().map(String::as_str));
+    if !unknown_checks.is_empty() {
+        anyhow::bail!(
+            "Unknown doctor check(s): {}. Use `devboy doctor --list-checks` to see available IDs.",
+            unknown_checks.join(", ")
+        );
+    }
+
+    let ctx = DiagnosticContext::load(options.verbose);
+    let results = registry.run_filtered(&ctx, &options.checks).await;
+    let summary = summarize_results(&results);
+
+    if matches!(options.output_format, Some(OutputFormat::Json)) {
+        print_json_report(
+            &(serde_json::json!({
+                "results": results,
+                "summary": summary,
+            })),
+        )?;
+    } else {
+        print_report(&results, options.verbose);
+    }
+
+    Ok(exit_code_for_summary(&summary))
 }
 
 #[cfg(test)]
@@ -241,6 +351,56 @@ mod tests {
         let ctx = test_context(None, None, false, None);
         let result = CredentialStoreCheck.run(&ctx).await;
         assert_eq!(result.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn exit_code_prefers_errors_over_warnings() {
+        let summary = CheckSummary {
+            passed: 1,
+            warnings: 2,
+            errors: 1,
+            skipped: 0,
+        };
+
+        assert_eq!(exit_code_for_summary(&summary), 2);
+    }
+
+    #[test]
+    fn exit_code_returns_warning_when_no_errors_exist() {
+        let summary = CheckSummary {
+            passed: 3,
+            warnings: 1,
+            errors: 0,
+            skipped: 0,
+        };
+
+        assert_eq!(exit_code_for_summary(&summary), 1);
+    }
+
+    #[test]
+    fn registry_can_list_and_validate_checks() {
+        let registry = CheckRegistry::new();
+        let checks = registry.list();
+
+        assert!(!checks.is_empty());
+        assert!(checks.iter().any(|check| check.id == "config.exists"));
+        assert_eq!(
+            registry.validate_filter(["config.exists", "missing.check"]),
+            vec!["missing.check".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn registry_runs_only_selected_checks() {
+        let registry = CheckRegistry::new();
+        let ctx = test_context(None, Some(PathBuf::from("missing.toml")), false, None);
+
+        let results = registry
+            .run_filtered(&ctx, &["config.exists".to_string()])
+            .await;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "config.exists");
     }
 
     #[test]
