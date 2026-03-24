@@ -341,25 +341,32 @@ impl DiagnosticCheck for JiraTokenCheck {
 mod tests {
     use super::*;
     use crate::doctor::DiagnosticContext;
-    use devboy_core::{Config, ContextConfig, GitHubConfig};
-    use devboy_storage::MemoryStore;
+    use devboy_core::{ClickUpConfig, Config, ContextConfig, Error, GitHubConfig, GitLabConfig, JiraConfig};
+    use devboy_storage::{CredentialStore, MemoryStore};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    fn context_with_store(store: MemoryStore) -> DiagnosticContext {
+    #[derive(Debug)]
+    struct FailingStore;
+
+    impl CredentialStore for FailingStore {
+        fn store(&self, _key: &str, _value: &str) -> devboy_core::Result<()> {
+            Err(Error::Storage("store failed".to_string()))
+        }
+
+        fn get(&self, _key: &str) -> devboy_core::Result<Option<String>> {
+            Err(Error::Storage("credential backend unavailable".to_string()))
+        }
+
+        fn delete(&self, _key: &str) -> devboy_core::Result<()> {
+            Err(Error::Storage("delete failed".to_string()))
+        }
+    }
+
+    fn context_with_store(store: Arc<dyn CredentialStore>, context: ContextConfig) -> DiagnosticContext {
         let mut contexts = BTreeMap::new();
-        contexts.insert(
-            "workspace".to_string(),
-            ContextConfig {
-                github: Some(GitHubConfig {
-                    owner: "owner".to_string(),
-                    repo: "repo".to_string(),
-                    base_url: None,
-                }),
-                ..Default::default()
-            },
-        );
+        contexts.insert("workspace".to_string(), context);
 
         DiagnosticContext {
             config: Some(Config {
@@ -372,14 +379,25 @@ mod tests {
             config_source: "test",
             config_path_error: None,
             config_load_error: None,
-            credential_store: Arc::new(store),
+            credential_store: store,
             verbose: true,
+        }
+    }
+
+    fn github_context() -> ContextConfig {
+        ContextConfig {
+            github: Some(GitHubConfig {
+                owner: "owner".to_string(),
+                repo: "repo".to_string(),
+                base_url: None,
+            }),
+            ..Default::default()
         }
     }
 
     #[tokio::test]
     async fn github_token_check_prefers_context_secret() {
-        let store = MemoryStore::with_credentials([
+        let store = Arc::new(MemoryStore::with_credentials([
             (
                 "contexts.workspace.github.token".to_string(),
                 "ghp_context_token_1234567890".to_string(),
@@ -388,8 +406,8 @@ mod tests {
                 "github.token".to_string(),
                 "ghp_global_token_1234567890".to_string(),
             ),
-        ]);
-        let ctx = context_with_store(store);
+        ]));
+        let ctx = context_with_store(store, github_context());
 
         let result = GitHubTokenCheck.run(&ctx).await;
 
@@ -401,7 +419,7 @@ mod tests {
 
     #[tokio::test]
     async fn github_token_check_errors_when_missing() {
-        let ctx = context_with_store(MemoryStore::new());
+        let ctx = context_with_store(Arc::new(MemoryStore::new()), github_context());
 
         let result = GitHubTokenCheck.run(&ctx).await;
 
@@ -409,6 +427,133 @@ mod tests {
         assert_eq!(
             result.fix_command.as_deref(),
             Some("devboy config set-secret contexts.workspace.github.token <TOKEN>")
+        );
+    }
+
+    #[tokio::test]
+    async fn github_token_check_warns_for_suspicious_global_token() {
+        let store = Arc::new(MemoryStore::with_credentials([(
+            "github.token".to_string(),
+            "token-without-known-prefix-but-long".to_string(),
+        )]));
+        let ctx = context_with_store(store, github_context());
+
+        let result = GitHubTokenCheck.run(&ctx).await;
+
+        assert_eq!(result.status, CheckStatus::Warning);
+        assert_eq!(result.details.unwrap()["token_source"], "global");
+    }
+
+    #[tokio::test]
+    async fn gitlab_token_check_passes_for_recognized_token() {
+        let store = Arc::new(MemoryStore::with_credentials([(
+            "contexts.workspace.gitlab.token".to_string(),
+            "glpat-12345678901234567890".to_string(),
+        )]));
+        let ctx = context_with_store(
+            store,
+            ContextConfig {
+                gitlab: Some(GitLabConfig {
+                    url: "https://gitlab.example.com".to_string(),
+                    project_id: "group/project".to_string(),
+                }),
+                ..Default::default()
+            },
+        );
+
+        let result = GitLabTokenCheck.run(&ctx).await;
+
+        assert_eq!(result.status, CheckStatus::Pass);
+        assert_eq!(result.details.unwrap()["provider"], "gitlab");
+    }
+
+    #[tokio::test]
+    async fn clickup_token_check_warns_for_short_token() {
+        let store = Arc::new(MemoryStore::with_credentials([(
+            "contexts.workspace.clickup.token".to_string(),
+            "short-token".to_string(),
+        )]));
+        let ctx = context_with_store(
+            store,
+            ContextConfig {
+                clickup: Some(ClickUpConfig {
+                    list_id: "123".to_string(),
+                    team_id: None,
+                }),
+                ..Default::default()
+            },
+        );
+
+        let result = ClickUpTokenCheck.run(&ctx).await;
+
+        assert_eq!(result.status, CheckStatus::Warning);
+        assert!(result.message.contains("format looks unusual"));
+    }
+
+    #[tokio::test]
+    async fn jira_token_check_passes_for_credential_pair() {
+        let store = Arc::new(MemoryStore::with_credentials([(
+            "contexts.workspace.jira.token".to_string(),
+            "user:token".to_string(),
+        )]));
+        let ctx = context_with_store(
+            store,
+            ContextConfig {
+                jira: Some(JiraConfig {
+                    url: "https://jira.example.com".to_string(),
+                    project_key: "PROJ".to_string(),
+                    email: "jira@example.com".to_string(),
+                }),
+                ..Default::default()
+            },
+        );
+
+        let result = JiraTokenCheck.run(&ctx).await;
+
+        assert_eq!(result.status, CheckStatus::Pass);
+        assert_eq!(result.details.unwrap()["provider"], "jira");
+    }
+
+    #[tokio::test]
+    async fn provider_token_checks_skip_when_provider_not_configured() {
+        let ctx = context_with_store(Arc::new(MemoryStore::new()), ContextConfig::default());
+
+        let result = GitLabTokenCheck.run(&ctx).await;
+
+        assert_eq!(result.status, CheckStatus::Skipped);
+        assert!(result.message.contains("not configured"));
+    }
+
+    #[tokio::test]
+    async fn provider_token_checks_skip_when_active_context_is_missing() {
+        let ctx = DiagnosticContext {
+            config: Some(Config::default()),
+            config_path: Some(PathBuf::from("config.toml")),
+            config_exists: true,
+            config_source: "test",
+            config_path_error: None,
+            config_load_error: None,
+            credential_store: Arc::new(MemoryStore::new()),
+            verbose: true,
+        };
+
+        let result = GitHubTokenCheck.run(&ctx).await;
+
+        assert_eq!(result.status, CheckStatus::Skipped);
+        assert!(result.message.contains("no active context"));
+    }
+
+    #[tokio::test]
+    async fn provider_token_checks_error_when_store_fails() {
+        let ctx = context_with_store(Arc::new(FailingStore), github_context());
+
+        let result = GitHubTokenCheck.run(&ctx).await;
+
+        assert_eq!(result.status, CheckStatus::Error);
+        assert!(result.message.contains("Could not read GitHub token"));
+        assert_eq!(
+            result.details.unwrap()["error"],
+            "Storage error: credential backend unavailable"
         );
     }
 
@@ -429,6 +574,22 @@ mod tests {
         assert!(matches!(
             validate_jira_token("token"),
             TokenFormat::Suspicious(_)
+        ));
+        assert!(matches!(
+            validate_github_token("ghp_12345678901234567890"),
+            TokenFormat::Recognized
+        ));
+        assert!(matches!(
+            validate_gitlab_token("glpat-12345678901234567890"),
+            TokenFormat::Recognized
+        ));
+        assert!(matches!(
+            validate_clickup_token("123456789012345678901234"),
+            TokenFormat::Recognized
+        ));
+        assert!(matches!(
+            validate_jira_token("1234567890123456"),
+            TokenFormat::Recognized
         ));
     }
 }

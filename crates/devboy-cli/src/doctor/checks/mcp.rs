@@ -166,4 +166,73 @@ mod tests {
         let details = result.details.unwrap();
         assert_eq!(details["unknown_tools"][0], "missing_tool");
     }
+
+    #[tokio::test]
+    async fn mcp_tools_check_skips_without_config() {
+        let ctx = DiagnosticContext {
+            config: None,
+            config_path: Some(PathBuf::from("config.toml")),
+            config_exists: true,
+            config_source: "test",
+            config_path_error: None,
+            config_load_error: None,
+            credential_store: Arc::new(MemoryStore::new()),
+            verbose: true,
+        };
+
+        let result = McpToolsCheck.run(&ctx).await;
+
+        assert_eq!(result.status, CheckStatus::Skipped);
+        assert!(result.message.contains("config could not be loaded"));
+    }
+
+    #[tokio::test]
+    async fn mcp_tools_check_errors_for_invalid_configuration() {
+        let ctx = test_context(
+            Config {
+                builtin_tools: BuiltinToolsConfig {
+                    disabled: vec!["get_issues".to_string()],
+                    enabled: vec!["get_issues".to_string()],
+                },
+                ..Default::default()
+            },
+            true,
+        );
+
+        let result = McpToolsCheck.run(&ctx).await;
+
+        assert_eq!(result.status, CheckStatus::Error);
+        assert!(result.message.contains("invalid"));
+    }
+
+    #[tokio::test]
+    async fn mcp_tools_check_reports_valid_whitelist_and_blacklist() {
+        let whitelist = test_context(
+            Config {
+                builtin_tools: BuiltinToolsConfig {
+                    disabled: vec![],
+                    enabled: vec!["get_issues".to_string()],
+                },
+                ..Default::default()
+            },
+            true,
+        );
+        let whitelist_result = McpToolsCheck.run(&whitelist).await;
+        assert_eq!(whitelist_result.status, CheckStatus::Pass);
+        assert!(whitelist_result.message.contains("whitelist"));
+
+        let blacklist = test_context(
+            Config {
+                builtin_tools: BuiltinToolsConfig {
+                    disabled: vec!["get_issues".to_string()],
+                    enabled: vec![],
+                },
+                ..Default::default()
+            },
+            true,
+        );
+        let blacklist_result = McpToolsCheck.run(&blacklist).await;
+        assert_eq!(blacklist_result.status, CheckStatus::Pass);
+        assert!(blacklist_result.message.contains("blacklist"));
+    }
 }
