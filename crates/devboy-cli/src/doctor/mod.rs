@@ -2,7 +2,11 @@ mod checks;
 mod output;
 
 use self::checks::config::{ActiveContextCheck, ConfigExistsCheck, ConfigValidTomlCheck};
+use self::checks::credentials::{
+    ClickUpTokenCheck, GitHubTokenCheck, GitLabTokenCheck, JiraTokenCheck,
+};
 use self::checks::environment::{ConfigDirCheck, CredentialStoreCheck, OsSupportCheck};
+use self::checks::providers::{ClickUpApiCheck, GitHubApiCheck, GitLabApiCheck, JiraApiCheck};
 use self::output::console::{print_report, summarize};
 use crate::get_credential_store;
 use anyhow::Result;
@@ -107,6 +111,14 @@ impl CheckRegistry {
         registry.register(Box::new(ConfigExistsCheck));
         registry.register(Box::new(ConfigValidTomlCheck));
         registry.register(Box::new(ActiveContextCheck));
+        registry.register(Box::new(GitHubTokenCheck));
+        registry.register(Box::new(GitLabTokenCheck));
+        registry.register(Box::new(ClickUpTokenCheck));
+        registry.register(Box::new(JiraTokenCheck));
+        registry.register(Box::new(GitHubApiCheck));
+        registry.register(Box::new(GitLabApiCheck));
+        registry.register(Box::new(ClickUpApiCheck));
+        registry.register(Box::new(JiraApiCheck));
         registry
     }
 
