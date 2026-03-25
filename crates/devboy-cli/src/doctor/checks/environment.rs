@@ -112,6 +112,46 @@ impl DiagnosticCheck for ConfigDirCheck {
     }
 }
 
+#[async_trait]
+impl DiagnosticCheck for CredentialStoreCheck {
+    fn id(&self) -> &'static str {
+        "environment.credential_store"
+    }
+
+    fn name(&self) -> &'static str {
+        "Credential store available"
+    }
+
+    fn category(&self) -> &'static str {
+        "Environment"
+    }
+
+    async fn run(&self, ctx: &DiagnosticContext) -> CheckResult {
+        match ctx.credential_store.get("__devboy_doctor_probe__") {
+            Ok(_) => CheckResult {
+                id: self.id().to_string(),
+                category: self.category().to_string(),
+                name: self.name().to_string(),
+                status: CheckStatus::Pass,
+                message: "Credential store available".to_string(),
+                details: ctx.verbose.then(|| json!({ "backend": "os-keychain" })),
+                fix_command: None,
+                fix_url: None,
+            },
+            Err(error) => CheckResult {
+                id: self.id().to_string(),
+                category: self.category().to_string(),
+                name: self.name().to_string(),
+                status: CheckStatus::Error,
+                message: format!("Credential store unavailable: {error}"),
+                details: ctx.verbose.then(|| json!({ "error": error.to_string() })),
+                fix_command: None,
+                fix_url: None,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,45 +260,5 @@ mod tests {
             result.details.unwrap()["error"],
             "Storage error: store unavailable"
         );
-    }
-}
-
-#[async_trait]
-impl DiagnosticCheck for CredentialStoreCheck {
-    fn id(&self) -> &'static str {
-        "environment.credential_store"
-    }
-
-    fn name(&self) -> &'static str {
-        "Credential store available"
-    }
-
-    fn category(&self) -> &'static str {
-        "Environment"
-    }
-
-    async fn run(&self, ctx: &DiagnosticContext) -> CheckResult {
-        match ctx.credential_store.get("__devboy_doctor_probe__") {
-            Ok(_) => CheckResult {
-                id: self.id().to_string(),
-                category: self.category().to_string(),
-                name: self.name().to_string(),
-                status: CheckStatus::Pass,
-                message: "Credential store available".to_string(),
-                details: ctx.verbose.then(|| json!({ "backend": "os-keychain" })),
-                fix_command: None,
-                fix_url: None,
-            },
-            Err(error) => CheckResult {
-                id: self.id().to_string(),
-                category: self.category().to_string(),
-                name: self.name().to_string(),
-                status: CheckStatus::Error,
-                message: format!("Credential store unavailable: {error}"),
-                details: ctx.verbose.then(|| json!({ "error": error.to_string() })),
-                fix_command: None,
-                fix_url: None,
-            },
-        }
     }
 }
