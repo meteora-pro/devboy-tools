@@ -273,12 +273,21 @@ mod tests {
 
     #[tokio::test]
     async fn config_valid_toml_check_skips_when_config_missing() {
-        let ctx = test_context(None, Some(PathBuf::from("missing.toml")), false, None, None, false);
+        let ctx = test_context(
+            None,
+            Some(PathBuf::from("missing.toml")),
+            false,
+            None,
+            None,
+            false,
+        );
 
         let result = ConfigValidTomlCheck.run(&ctx).await;
 
         assert_eq!(result.status, CheckStatus::Skipped);
-        assert!(result.message.contains("Skipped because no config file was found"));
+        assert!(result
+            .message
+            .contains("Skipped because no config file was found"));
     }
 
     #[tokio::test]
@@ -300,7 +309,14 @@ mod tests {
 
     #[tokio::test]
     async fn config_valid_toml_check_errors_when_load_fails_without_parse_error() {
-        let ctx = test_context(None, Some(PathBuf::from("config.toml")), true, None, None, false);
+        let ctx = test_context(
+            None,
+            Some(PathBuf::from("config.toml")),
+            true,
+            None,
+            None,
+            false,
+        );
 
         let result = ConfigValidTomlCheck.run(&ctx).await;
 
@@ -310,7 +326,14 @@ mod tests {
 
     #[tokio::test]
     async fn active_context_check_skips_when_config_missing() {
-        let ctx = test_context(None, Some(PathBuf::from("config.toml")), true, None, None, false);
+        let ctx = test_context(
+            None,
+            Some(PathBuf::from("config.toml")),
+            true,
+            None,
+            None,
+            false,
+        );
 
         let result = ActiveContextCheck.run(&ctx).await;
 
@@ -319,13 +342,26 @@ mod tests {
 
     #[tokio::test]
     async fn active_context_check_warns_when_no_context_resolves() {
-        let ctx = test_context(Some(Config::default()), Some(PathBuf::from("config.toml")), true, None, None, true);
+        let ctx = test_context(
+            Some(Config::default()),
+            Some(PathBuf::from("config.toml")),
+            true,
+            None,
+            None,
+            true,
+        );
 
         let result = ActiveContextCheck.run(&ctx).await;
 
         assert_eq!(result.status, CheckStatus::Warning);
         assert_eq!(result.fix_command.as_deref(), Some("devboy init"));
-        assert_eq!(result.details.unwrap()["contexts"].as_array().unwrap().len(), 0);
+        assert_eq!(
+            result.details.unwrap()["contexts"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
     }
 
     #[tokio::test]

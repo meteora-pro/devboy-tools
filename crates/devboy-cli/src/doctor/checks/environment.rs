@@ -7,7 +7,11 @@ pub struct OsSupportCheck;
 pub struct ConfigDirCheck;
 pub struct CredentialStoreCheck;
 
-fn os_support_result(check: &dyn DiagnosticCheck, ctx: &DiagnosticContext, os: &str) -> CheckResult {
+fn os_support_result(
+    check: &dyn DiagnosticCheck,
+    ctx: &DiagnosticContext,
+    os: &str,
+) -> CheckResult {
     let supported = matches!(os, "windows" | "macos" | "linux");
 
     CheckResult {
@@ -212,7 +216,10 @@ mod tests {
 
         assert_eq!(result.status, CheckStatus::Error);
         assert!(result.message.contains("store unavailable"));
-        assert_eq!(result.details.unwrap()["error"], "Storage error: store unavailable");
+        assert_eq!(
+            result.details.unwrap()["error"],
+            "Storage error: store unavailable"
+        );
     }
 }
 

@@ -147,7 +147,9 @@ mod tests {
             config_with_active_context(),
         );
 
-        let context_secret = resolve_secret(&ctx, Some("workspace"), "github").unwrap().unwrap();
+        let context_secret = resolve_secret(&ctx, Some("workspace"), "github")
+            .unwrap()
+            .unwrap();
         assert_eq!(context_secret.source, "context");
         assert_eq!(context_secret.value, "context-secret");
 
@@ -164,7 +166,8 @@ mod tests {
         assert_eq!(global_secret.source, "global");
         assert_eq!(global_secret.key, "github.token");
 
-        let missing_ctx = context_with_store(Arc::new(MemoryStore::new()), config_with_active_context());
+        let missing_ctx =
+            context_with_store(Arc::new(MemoryStore::new()), config_with_active_context());
         assert!(resolve_secret(&missing_ctx, Some("workspace"), "github")
             .unwrap()
             .is_none());

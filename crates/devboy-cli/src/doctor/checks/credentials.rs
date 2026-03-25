@@ -341,7 +341,9 @@ impl DiagnosticCheck for JiraTokenCheck {
 mod tests {
     use super::*;
     use crate::doctor::DiagnosticContext;
-    use devboy_core::{ClickUpConfig, Config, ContextConfig, Error, GitHubConfig, GitLabConfig, JiraConfig};
+    use devboy_core::{
+        ClickUpConfig, Config, ContextConfig, Error, GitHubConfig, GitLabConfig, JiraConfig,
+    };
     use devboy_storage::{CredentialStore, MemoryStore};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -364,7 +366,10 @@ mod tests {
         }
     }
 
-    fn context_with_store(store: Arc<dyn CredentialStore>, context: ContextConfig) -> DiagnosticContext {
+    fn context_with_store(
+        store: Arc<dyn CredentialStore>,
+        context: ContextConfig,
+    ) -> DiagnosticContext {
         let mut contexts = BTreeMap::new();
         contexts.insert("workspace".to_string(), context);
 

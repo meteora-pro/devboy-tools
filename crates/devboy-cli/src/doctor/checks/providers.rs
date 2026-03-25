@@ -781,7 +781,9 @@ impl DiagnosticCheck for JiraApiCheck {
 mod tests {
     use super::*;
     use crate::doctor::DiagnosticContext;
-    use devboy_core::{ClickUpConfig, Config, ContextConfig, Error, GitHubConfig, GitLabConfig, JiraConfig};
+    use devboy_core::{
+        ClickUpConfig, Config, ContextConfig, Error, GitHubConfig, GitLabConfig, JiraConfig,
+    };
     use devboy_storage::{CredentialStore, MemoryStore};
     use httpmock::Method::GET;
     use httpmock::MockServer;
@@ -807,7 +809,10 @@ mod tests {
         }
     }
 
-    fn context_with_provider(store: Arc<dyn CredentialStore>, context: ContextConfig) -> DiagnosticContext {
+    fn context_with_provider(
+        store: Arc<dyn CredentialStore>,
+        context: ContextConfig,
+    ) -> DiagnosticContext {
         let mut contexts = BTreeMap::new();
         contexts.insert("workspace".to_string(), context);
 
@@ -1008,7 +1013,13 @@ mod tests {
             &ctx_without_config,
             "github",
             true,
-            async { Ok(ConnectivityOutcome { message: "ok".to_string(), user: None, rate_limit: None }) },
+            async {
+                Ok(ConnectivityOutcome {
+                    message: "ok".to_string(),
+                    user: None,
+                    rate_limit: None,
+                })
+            },
         )
         .await;
         assert_eq!(skipped_result.status, CheckStatus::Skipped);
@@ -1017,14 +1028,15 @@ mod tests {
             config: Some(Config::default()),
             ..ctx_without_config
         };
-        let skipped_result = run_provider_check(
-            &GitHubApiCheck,
-            &no_active_ctx,
-            "github",
-            true,
-            async { Ok(ConnectivityOutcome { message: "ok".to_string(), user: None, rate_limit: None }) },
-        )
-        .await;
+        let skipped_result =
+            run_provider_check(&GitHubApiCheck, &no_active_ctx, "github", true, async {
+                Ok(ConnectivityOutcome {
+                    message: "ok".to_string(),
+                    user: None,
+                    rate_limit: None,
+                })
+            })
+            .await;
         assert_eq!(skipped_result.status, CheckStatus::Skipped);
 
         let configured_ctx = context_with_provider(
@@ -1038,24 +1050,26 @@ mod tests {
                 ..Default::default()
             },
         );
-        let skipped_result = run_provider_check(
-            &GitHubApiCheck,
-            &configured_ctx,
-            "github",
-            false,
-            async { Ok(ConnectivityOutcome { message: "ok".to_string(), user: None, rate_limit: None }) },
-        )
-        .await;
+        let skipped_result =
+            run_provider_check(&GitHubApiCheck, &configured_ctx, "github", false, async {
+                Ok(ConnectivityOutcome {
+                    message: "ok".to_string(),
+                    user: None,
+                    rate_limit: None,
+                })
+            })
+            .await;
         assert_eq!(skipped_result.status, CheckStatus::Skipped);
 
-        let missing_secret = run_provider_check(
-            &GitHubApiCheck,
-            &configured_ctx,
-            "github",
-            true,
-            async { Ok(ConnectivityOutcome { message: "ok".to_string(), user: None, rate_limit: None }) },
-        )
-        .await;
+        let missing_secret =
+            run_provider_check(&GitHubApiCheck, &configured_ctx, "github", true, async {
+                Ok(ConnectivityOutcome {
+                    message: "ok".to_string(),
+                    user: None,
+                    rate_limit: None,
+                })
+            })
+            .await;
         assert_eq!(missing_secret.status, CheckStatus::Skipped);
 
         let store_error_ctx = context_with_provider(
@@ -1069,14 +1083,15 @@ mod tests {
                 ..Default::default()
             },
         );
-        let error_result = run_provider_check(
-            &GitHubApiCheck,
-            &store_error_ctx,
-            "github",
-            true,
-            async { Ok(ConnectivityOutcome { message: "ok".to_string(), user: None, rate_limit: None }) },
-        )
-        .await;
+        let error_result =
+            run_provider_check(&GitHubApiCheck, &store_error_ctx, "github", true, async {
+                Ok(ConnectivityOutcome {
+                    message: "ok".to_string(),
+                    user: None,
+                    rate_limit: None,
+                })
+            })
+            .await;
         assert_eq!(error_result.status, CheckStatus::Error);
 
         let success_ctx = context_with_provider(
@@ -1093,12 +1108,8 @@ mod tests {
                 ..Default::default()
             },
         );
-        let success_result = run_provider_check(
-            &GitHubApiCheck,
-            &success_ctx,
-            "github",
-            true,
-            async {
+        let success_result =
+            run_provider_check(&GitHubApiCheck, &success_ctx, "github", true, async {
                 Ok(ConnectivityOutcome {
                     message: "connected".to_string(),
                     user: Some(ProviderIdentity {
@@ -1114,20 +1125,16 @@ mod tests {
                         resource: None,
                     }),
                 })
-            },
-        )
-        .await;
+            })
+            .await;
         assert_eq!(success_result.status, CheckStatus::Pass);
         assert_eq!(success_result.details.unwrap()["token_source"], "context");
 
-        let failure_result = run_provider_check(
-            &GitHubApiCheck,
-            &success_ctx,
-            "github",
-            true,
-            async { Err("boom".to_string()) },
-        )
-        .await;
+        let failure_result =
+            run_provider_check(&GitHubApiCheck, &success_ctx, "github", true, async {
+                Err("boom".to_string())
+            })
+            .await;
         assert_eq!(failure_result.status, CheckStatus::Error);
         assert_eq!(failure_result.details.unwrap()["error"], "boom");
     }
@@ -1144,7 +1151,10 @@ mod tests {
             credential_store: Arc::new(MemoryStore::new()),
             verbose: true,
         };
-        assert_eq!(GitHubApiCheck.run(&no_active).await.status, CheckStatus::Skipped);
+        assert_eq!(
+            GitHubApiCheck.run(&no_active).await.status,
+            CheckStatus::Skipped
+        );
 
         let github_server = MockServer::start();
         github_server.mock(|when, then| {
@@ -1169,7 +1179,10 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(GitHubApiCheck.run(&github_ctx).await.status, CheckStatus::Pass);
+        assert_eq!(
+            GitHubApiCheck.run(&github_ctx).await.status,
+            CheckStatus::Pass
+        );
 
         let gitlab_server = MockServer::start();
         gitlab_server.mock(|when, then| {
@@ -1192,7 +1205,10 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(GitLabApiCheck.run(&gitlab_ctx).await.status, CheckStatus::Pass);
+        assert_eq!(
+            GitLabApiCheck.run(&gitlab_ctx).await.status,
+            CheckStatus::Pass
+        );
 
         let jira_server = MockServer::start();
         jira_server.mock(|when, then| {
@@ -1230,7 +1246,9 @@ mod tests {
         );
         let clickup_result = ClickUpApiCheck.run(&clickup_error_ctx).await;
         assert_eq!(clickup_result.status, CheckStatus::Error);
-        assert!(clickup_result.message.contains("Could not read clickup credentials"));
+        assert!(clickup_result
+            .message
+            .contains("Could not read clickup credentials"));
     }
 
     #[test]
@@ -1262,7 +1280,9 @@ mod tests {
         jira_headers.insert("x-ratelimit-limit", HeaderValue::from_static("100"));
         jira_headers.insert("x-ratelimit-nearlimit", HeaderValue::from_static("false"));
         assert_eq!(
-            rate_limit_from_headers(&jira_headers, "jira").unwrap().to_json()["used"],
+            rate_limit_from_headers(&jira_headers, "jira")
+                .unwrap()
+                .to_json()["used"],
             "false"
         );
         assert!(rate_limit_from_headers(&HeaderMap::new(), "unknown").is_none());
@@ -1295,7 +1315,11 @@ mod tests {
             "rate limit exceeded: Too Many Requests"
         );
         assert_eq!(
-            parse_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "boom".to_string()).1,
+            parse_error(
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                "boom".to_string()
+            )
+            .1,
             "server error: boom"
         );
         assert_eq!(
