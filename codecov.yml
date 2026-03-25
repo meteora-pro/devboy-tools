@@ -7,6 +7,10 @@ coverage:
     patch:
       default:
         target: 90%
+        # Patch coverage is informational - shows status but doesn't block PRs.
+        # Integration tests in tests/ add lines to diff that can't be covered
+        # (test code is not instrumented), which can unfairly lower patch coverage.
+        informational: true
 
 comment:
   layout: "header, diff, files"

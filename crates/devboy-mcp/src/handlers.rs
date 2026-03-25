@@ -10,6 +10,15 @@
 
 use std::sync::Arc;
 
+/// Tool category for filtering based on provider availability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolCategory {
+    /// Tools that require an issue provider (GitLab, GitHub, ClickUp, Jira).
+    Issues,
+    /// Tools that require a merge request provider (GitLab, GitHub).
+    MergeRequests,
+}
+
 use devboy_core::{
     CodePosition, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, IssueFilter,
     IssueProvider, MergeRequestProvider, MrFilter, Provider, UpdateIssueInput,
@@ -22,17 +31,18 @@ use crate::protocol::{ToolCallResult, ToolDefinition};
 
 /// Defines the complete tool registry in one place.
 ///
-/// For each provider tool: name, description, JSON schema, and handler method.
+/// For each provider tool: name, category, description, JSON schema, and handler method.
 /// Context management tools only need name (handled by McpServer, not ToolHandler).
 ///
 /// Generates:
 /// - `KNOWN_BUILTIN_TOOLS` — all tool names (provider + context)
-/// - `ToolHandler::available_tools()` — tool definitions with schemas
+/// - `ToolHandler::available_tools()` — tool definitions with schemas and categories
 /// - `ToolHandler::execute()` — match routing to handler methods
 macro_rules! define_tools {
     (
         $(
             $name:literal => $handler:ident {
+                category: $category:expr,
                 description: $desc:literal,
                 schema: $schema:tt
             }
@@ -55,6 +65,7 @@ macro_rules! define_tools {
                             name: $name.to_string(),
                             description: $desc.to_string(),
                             input_schema: serde_json::json!($schema),
+                            category: Some($category),
                         },
                     )+
                 ]
@@ -77,6 +88,7 @@ define_tools! {
     // =====================================================================
 
     "get_issues" => handle_get_issues {
+        category: ToolCategory::Issues,
         description: "Get issues from configured providers (GitLab, GitHub, ClickUp). Returns a list of issues with filters.",
         schema: {
             "type": "object",
@@ -135,6 +147,7 @@ define_tools! {
     },
 
     "get_issue" => handle_get_issue {
+        category: ToolCategory::Issues,
         description: "Get a single issue by key (e.g., 'gh#123', 'gitlab#456', 'CU-abc', 'DEV-42', 'jira#PROJ-123'). Returns full issue details.",
         schema: {
             "type": "object",
@@ -154,6 +167,7 @@ define_tools! {
     },
 
     "get_issue_comments" => handle_get_issue_comments {
+        category: ToolCategory::Issues,
         description: "Get comments for an issue. Returns all comments with author and timestamp.",
         schema: {
             "type": "object",
@@ -173,6 +187,7 @@ define_tools! {
     },
 
     "create_issue" => handle_create_issue {
+        category: ToolCategory::Issues,
         description: "Create a new issue in the configured provider.",
         schema: {
             "type": "object",
@@ -206,6 +221,7 @@ define_tools! {
     },
 
     "update_issue" => handle_update_issue {
+        category: ToolCategory::Issues,
         description: "Update an existing issue. Only provided fields will be changed.",
         schema: {
             "type": "object",
@@ -243,6 +259,7 @@ define_tools! {
     },
 
     "add_issue_comment" => handle_add_issue_comment {
+        category: ToolCategory::Issues,
         description: "Add a comment to an issue.",
         schema: {
             "type": "object",
@@ -265,6 +282,7 @@ define_tools! {
     // =====================================================================
 
     "get_merge_requests" => handle_get_merge_requests {
+        category: ToolCategory::MergeRequests,
         description: "Get merge requests / pull requests from configured providers.",
         schema: {
             "type": "object",
@@ -307,6 +325,7 @@ define_tools! {
     },
 
     "get_merge_request" => handle_get_merge_request {
+        category: ToolCategory::MergeRequests,
         description: "Get a single merge request / pull request by key (e.g., 'pr#123', 'mr#456').",
         schema: {
             "type": "object",
@@ -326,6 +345,7 @@ define_tools! {
     },
 
     "get_merge_request_discussions" => handle_get_merge_request_discussions {
+        category: ToolCategory::MergeRequests,
         description: "Get discussions/review comments for a merge request. Includes code review threads with positions.",
         schema: {
             "type": "object",
@@ -334,6 +354,17 @@ define_tools! {
                 "key": {
                     "type": "string",
                     "description": "MR/PR key (e.g., 'pr#123')"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of discussions to return (default: 20)",
+                    "minimum": 1,
+                    "maximum": 100
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Number of discussions to skip for pagination (default: 0)",
+                    "minimum": 0
                 },
                 "format": {
                     "type": "string",
@@ -345,6 +376,7 @@ define_tools! {
     },
 
     "get_merge_request_diffs" => handle_get_merge_request_diffs {
+        category: ToolCategory::MergeRequests,
         description: "Get file diffs for a merge request. Shows changed files with additions/deletions.",
         schema: {
             "type": "object",
@@ -364,6 +396,7 @@ define_tools! {
     },
 
     "create_merge_request" => handle_create_merge_request {
+        category: ToolCategory::MergeRequests,
         description: "Create a new merge request (GitLab) or pull request (GitHub).",
         schema: {
             "type": "object",
@@ -409,6 +442,7 @@ define_tools! {
     },
 
     "create_merge_request_comment" => handle_create_merge_request_comment {
+        category: ToolCategory::MergeRequests,
         description: "Add a comment to a merge request. Can be a general comment or an inline code review comment.",
         schema: {
             "type": "object",
@@ -866,12 +900,48 @@ impl ToolHandler {
             return ToolCallResult::error("No providers configured".to_string());
         }
 
+        if let Some(limit) = params.limit {
+            if limit == 0 || limit > 100 {
+                return ToolCallResult::error(
+                    "Invalid parameters: limit must be between 1 and 100".to_string(),
+                );
+            }
+        }
+
         for provider in &self.providers {
             match provider.get_discussions(&params.key).await {
                 Ok(discussions) => {
-                    let pipeline = self.create_pipeline(&params.format);
-                    return match pipeline.transform_discussions(discussions) {
-                        Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
+                    let offset = params.offset.unwrap_or(0);
+                    let limit = params.limit.unwrap_or(self.pipeline_config.max_items);
+                    let total = discussions.len();
+                    let paged_discussions: Vec<_> =
+                        discussions.into_iter().skip(offset).take(limit).collect();
+                    let included = paged_discussions.len();
+
+                    let pipeline = self.create_pipeline_with_max_items(&params.format, limit);
+                    return match pipeline.transform_discussions(paged_discussions) {
+                        Ok(mut output) => {
+                            if self.pipeline_config.include_hints && offset + included < total {
+                                let remaining = total - offset - included;
+                                let next_offset = offset + included;
+                                let start = if included == 0 { 0 } else { offset + 1 };
+                                let end = offset + included;
+                                let pagination_hint = format!(
+                                    "📊 Showing {}-{} of {} discussions. {} more available. Use `offset={}` and `limit={}` for next page.",
+                                    start, end, total, remaining, next_offset, limit
+                                );
+
+                                output.truncated = true;
+                                output.total_count = Some(total);
+                                output.included_count = included;
+                                output.agent_hint = Some(match output.agent_hint.take() {
+                                    Some(existing) => format!("{}\n{}", existing, pagination_hint),
+                                    None => pagination_hint,
+                                });
+                            }
+
+                            ToolCallResult::text(output.to_string_with_hints())
+                        }
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
                     };
                 }
@@ -1064,6 +1134,14 @@ impl ToolHandler {
     }
 
     fn create_pipeline(&self, format: &Option<String>) -> Pipeline {
+        self.create_pipeline_with_max_items(format, self.pipeline_config.max_items)
+    }
+
+    fn create_pipeline_with_max_items(
+        &self,
+        format: &Option<String>,
+        max_items: usize,
+    ) -> Pipeline {
         let output_format = match format.as_deref() {
             Some("json") => OutputFormat::Json,
             Some("compact") => OutputFormat::Compact,
@@ -1071,6 +1149,7 @@ impl ToolHandler {
         };
 
         Pipeline::with_config(PipelineConfig {
+            max_items,
             format: output_format,
             ..self.pipeline_config.clone()
         })
@@ -1152,6 +1231,8 @@ struct GetMergeRequestParams {
 #[derive(Debug, Serialize, Deserialize)]
 struct GetMergeRequestDiscussionsParams {
     key: String,
+    limit: Option<usize>,
+    offset: Option<usize>,
     format: Option<String>,
 }
 
@@ -1235,6 +1316,37 @@ mod tests {
                     updated_at: Some("2024-01-02T00:00:00Z".to_string()),
                     draft: false,
                 }],
+            }
+        }
+    }
+
+    struct ManyDiscussionsProvider {
+        base: MockProvider,
+        discussions: Vec<Discussion>,
+    }
+
+    impl ManyDiscussionsProvider {
+        fn new(count: usize) -> Self {
+            let discussions = (1..=count)
+                .map(|i| Discussion {
+                    id: i.to_string(),
+                    resolved: false,
+                    resolved_by: None,
+                    comments: vec![Comment {
+                        id: i.to_string(),
+                        body: format!("Review comment {}", i),
+                        author: None,
+                        created_at: None,
+                        updated_at: None,
+                        position: None,
+                    }],
+                    position: None,
+                })
+                .collect();
+
+            Self {
+                base: MockProvider::new(),
+                discussions,
             }
         }
     }
@@ -1371,6 +1483,89 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl IssueProvider for ManyDiscussionsProvider {
+        async fn get_issues(&self, filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
+            self.base.get_issues(filter).await
+        }
+
+        async fn get_issue(&self, key: &str) -> devboy_core::Result<Issue> {
+            self.base.get_issue(key).await
+        }
+
+        async fn create_issue(&self, input: CreateIssueInput) -> devboy_core::Result<Issue> {
+            self.base.create_issue(input).await
+        }
+
+        async fn update_issue(
+            &self,
+            key: &str,
+            input: UpdateIssueInput,
+        ) -> devboy_core::Result<Issue> {
+            self.base.update_issue(key, input).await
+        }
+
+        async fn get_comments(&self, issue_key: &str) -> devboy_core::Result<Vec<Comment>> {
+            self.base.get_comments(issue_key).await
+        }
+
+        async fn add_comment(&self, issue_key: &str, body: &str) -> devboy_core::Result<Comment> {
+            IssueProvider::add_comment(&self.base, issue_key, body).await
+        }
+
+        fn provider_name(&self) -> &'static str {
+            IssueProvider::provider_name(&self.base)
+        }
+    }
+
+    #[async_trait]
+    impl MergeRequestProvider for ManyDiscussionsProvider {
+        async fn get_merge_requests(
+            &self,
+            filter: MrFilter,
+        ) -> devboy_core::Result<Vec<MergeRequest>> {
+            self.base.get_merge_requests(filter).await
+        }
+
+        async fn get_merge_request(&self, key: &str) -> devboy_core::Result<MergeRequest> {
+            self.base.get_merge_request(key).await
+        }
+
+        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<Vec<Discussion>> {
+            Ok(self.discussions.clone())
+        }
+
+        async fn get_diffs(&self, mr_key: &str) -> devboy_core::Result<Vec<FileDiff>> {
+            self.base.get_diffs(mr_key).await
+        }
+
+        async fn add_comment(
+            &self,
+            mr_key: &str,
+            input: CreateCommentInput,
+        ) -> devboy_core::Result<Comment> {
+            MergeRequestProvider::add_comment(&self.base, mr_key, input).await
+        }
+
+        async fn create_merge_request(
+            &self,
+            input: CreateMergeRequestInput,
+        ) -> devboy_core::Result<MergeRequest> {
+            self.base.create_merge_request(input).await
+        }
+
+        fn provider_name(&self) -> &'static str {
+            MergeRequestProvider::provider_name(&self.base)
+        }
+    }
+
+    #[async_trait]
+    impl Provider for ManyDiscussionsProvider {
+        async fn get_current_user(&self) -> devboy_core::Result<User> {
+            self.base.get_current_user().await
+        }
+    }
+
     #[tokio::test]
     async fn test_get_issues_handler() {
         let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
@@ -1426,6 +1621,260 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_many_discussions_provider_forwards_merge_request_methods() {
+        let provider = ManyDiscussionsProvider::new(2);
+
+        let merge_requests = provider
+            .get_merge_requests(MrFilter::default())
+            .await
+            .expect("merge requests should be forwarded");
+        assert_eq!(merge_requests.len(), 1);
+        assert_eq!(merge_requests[0].key, "pr#1");
+
+        let merge_request = provider
+            .get_merge_request("pr#1")
+            .await
+            .expect("single merge request should be forwarded");
+        assert_eq!(merge_request.key, "pr#1");
+
+        let discussions = provider
+            .get_discussions("pr#1")
+            .await
+            .expect("custom discussions should be returned");
+        assert_eq!(discussions.len(), 2);
+        assert_eq!(discussions[0].comments[0].body, "Review comment 1");
+
+        let diffs = provider
+            .get_diffs("pr#1")
+            .await
+            .expect("diffs should be forwarded");
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].file_path, "src/main.rs");
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_supports_pagination() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(23)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "offset": 20,
+            "limit": 5,
+            "format": "json"
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Review comment 21"));
+        assert!(content.contains("Review comment 23"));
+        assert!(!content.contains("Review comment 1"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_includes_next_page_hint() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(26)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "offset": 20,
+            "limit": 5,
+            "format": "json"
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("offset=25"));
+        assert!(content.contains("limit=5"));
+        assert!(content.contains("Showing 21-25 of 26 discussions"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_uses_default_pagination() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(26)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]).with_pipeline_config(PipelineConfig {
+            max_chars: 20_000,
+            ..Default::default()
+        });
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "format": "json"
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Review comment 1"));
+        assert!(content.contains("Review comment 20"));
+        assert!(!content.contains("Review comment 21"));
+        assert!(content.contains("offset=20"));
+        assert!(content.contains("limit=20"));
+        assert!(content.contains("Showing 1-20 of 26 discussions"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_uses_custom_configured_max_items() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(10)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]).with_pipeline_config(PipelineConfig {
+            max_items: 3,
+            max_chars: 20_000,
+            ..Default::default()
+        });
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "format": "json"
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Review comment 1"));
+        assert!(content.contains("Review comment 3"));
+        assert!(!content.contains("Review comment 4"));
+        assert!(content.contains("offset=3"));
+        assert!(content.contains("limit=3"));
+        assert!(content.contains("Showing 1-3 of 10 discussions"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_omits_next_page_hint_on_last_page() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(25)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "offset": 20,
+            "limit": 5,
+            "format": "json"
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Review comment 21"));
+        assert!(content.contains("Review comment 25"));
+        assert!(!content.contains("offset=25"));
+        assert!(!content.contains("Showing 21-25 of 25 discussions"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_supports_offset_past_end() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(5)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "offset": 10,
+            "limit": 5,
+            "format": "json"
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("[]"));
+        assert!(!content.contains("offset=10"));
+        assert!(!content.contains("Review comment 1"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_skips_hints_when_disabled() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(26)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]).with_pipeline_config(PipelineConfig {
+            include_hints: false,
+            ..Default::default()
+        });
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "offset": 20,
+            "limit": 5,
+            "format": "json"
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Review comment 21"));
+        assert!(content.contains("Review comment 25"));
+        assert!(!content.contains("offset=25"));
+        assert!(!content.contains("Showing 21-25 of 26 discussions"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_rejects_zero_limit() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(26)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "limit": 0
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("limit must be between 1 and 100"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_handler_rejects_limit_above_maximum() {
+        let provider = Arc::new(ManyDiscussionsProvider::new(26)) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "limit": 101
+        });
+        let result = handler
+            .execute("get_merge_request_discussions", Some(args))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("limit must be between 1 and 100"));
+    }
+
+    #[tokio::test]
     async fn test_get_merge_request_diffs_handler() {
         let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
         let handler = ToolHandler::new(vec![provider]);
@@ -1463,6 +1912,33 @@ mod tests {
 
         // 6 issue tools + 6 MR tools = 12 total
         assert_eq!(tools.len(), 12);
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_request_discussions_tool_schema_includes_pagination_bounds() {
+        let handler = ToolHandler::new(vec![]);
+        let tool = handler
+            .available_tools()
+            .into_iter()
+            .find(|tool| tool.name == "get_merge_request_discussions")
+            .expect("tool should exist");
+
+        let limit = &tool.input_schema["properties"]["limit"];
+        assert_eq!(limit["type"], serde_json::json!("integer"));
+        assert_eq!(limit["minimum"], serde_json::json!(1));
+        assert_eq!(limit["maximum"], serde_json::json!(100));
+        assert_eq!(
+            limit["description"],
+            serde_json::json!("Maximum number of discussions to return (default: 20)")
+        );
+
+        let offset = &tool.input_schema["properties"]["offset"];
+        assert_eq!(offset["type"], serde_json::json!("integer"));
+        assert_eq!(offset["minimum"], serde_json::json!(0));
+        assert_eq!(
+            offset["description"],
+            serde_json::json!("Number of discussions to skip for pagination (default: 0)")
+        );
     }
 
     #[tokio::test]

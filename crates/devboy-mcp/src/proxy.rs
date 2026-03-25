@@ -409,6 +409,7 @@ impl McpProxyClient {
                 name: format!("{}__{}", self.tool_prefix, t.name),
                 description: format!("[{}] {}", self.name, t.description),
                 input_schema: t.input_schema.clone(),
+                category: None, // Proxy tools don't have a category (always available)
             })
             .collect()
     }
