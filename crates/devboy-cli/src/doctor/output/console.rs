@@ -55,7 +55,12 @@ fn write_report<W: Write>(
             writeln!(writer)?;
             writeln!(writer, "{category}")?;
             for result in checks {
-                writeln!(writer, "  {} {}", status_label(result.status), result.message)?;
+                writeln!(
+                    writer,
+                    "  {} {}",
+                    status_label(result.status),
+                    result.message
+                )?;
 
                 if let Some(fix_command) = &result.fix_command {
                     writeln!(writer, "     Run: {fix_command}")?;
@@ -75,7 +80,12 @@ fn write_report<W: Write>(
         writeln!(writer)?;
         writeln!(writer, "{category}")?;
         for result in checks {
-            writeln!(writer, "  {} {}", status_label(result.status), result.message)?;
+            writeln!(
+                writer,
+                "  {} {}",
+                status_label(result.status),
+                result.message
+            )?;
 
             if let Some(fix_command) = &result.fix_command {
                 writeln!(writer, "     Run: {fix_command}")?;
@@ -267,7 +277,13 @@ mod tests {
         let mut buffer = Vec::new();
         let version = sample_version(false, None);
 
-        write_report(&mut buffer, &version, &[sample_result(CheckStatus::Pass)], false).unwrap();
+        write_report(
+            &mut buffer,
+            &version,
+            &[sample_result(CheckStatus::Pass)],
+            false,
+        )
+        .unwrap();
         let output = String::from_utf8(buffer).unwrap();
 
         assert!(output.contains("Current: 0.10.0"));

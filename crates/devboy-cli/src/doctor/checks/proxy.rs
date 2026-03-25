@@ -468,7 +468,10 @@ mod tests {
             credential_store: Arc::new(MemoryStore::new()),
             verbose: true,
         };
-        assert_eq!(ProxyServersCheck.run(&no_config_ctx).await.status, CheckStatus::Skipped);
+        assert_eq!(
+            ProxyServersCheck.run(&no_config_ctx).await.status,
+            CheckStatus::Skipped
+        );
 
         let empty_ctx = context_with_proxy(Config::default(), MemoryStore::new(), true);
         let result = ProxyServersCheck.run(&empty_ctx).await;
@@ -593,7 +596,10 @@ mod tests {
         )
         .await;
         assert_eq!(missing_key.status, CheckStatus::Error);
-        assert_eq!(missing_key.detail["message"], "Missing token_key for authenticated proxy");
+        assert_eq!(
+            missing_key.detail["message"],
+            "Missing token_key for authenticated proxy"
+        );
 
         let store_error = probe_proxy_server(
             &ctx,
@@ -608,7 +614,10 @@ mod tests {
         )
         .await;
         assert_eq!(store_error.status, CheckStatus::Error);
-        assert_eq!(store_error.detail["message"], "Storage error: proxy store unavailable");
+        assert_eq!(
+            store_error.detail["message"],
+            "Storage error: proxy store unavailable"
+        );
     }
 
     #[tokio::test]
@@ -641,7 +650,10 @@ mod tests {
         .await;
 
         assert_eq!(result.status, CheckStatus::Error);
-        assert!(result.detail["message"].as_str().unwrap().contains("connectivity failed"));
+        assert!(result.detail["message"]
+            .as_str()
+            .unwrap()
+            .contains("connectivity failed"));
     }
 
     #[test]

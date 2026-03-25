@@ -321,7 +321,6 @@ pub async fn check_and_notify() {
     };
 
     if version_status.update_available {
-
         let _ = writeln!(
             io::stderr(),
             "\n\x1b[33m⚠ A new version of devboy is available: {} → {}\x1b[0m\n  \
