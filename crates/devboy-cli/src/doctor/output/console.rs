@@ -1,11 +1,13 @@
 use crate::doctor::{CheckDescriptor, CheckResult, CheckStatus};
+use crate::update_check::VersionStatus;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 
-pub fn print_report(results: &[CheckResult], verbose: bool) {
+pub fn print_report(version: &VersionStatus, results: &[CheckResult], verbose: bool) {
     let mut stdout = io::stdout();
-    write_report(&mut stdout, results, verbose).expect("writing doctor report to stdout should succeed");
+    write_report(&mut stdout, version, results, verbose)
+        .expect("writing doctor report to stdout should succeed");
 }
 
 pub fn print_check_list(checks: &[CheckDescriptor]) {
@@ -14,9 +16,31 @@ pub fn print_check_list(checks: &[CheckDescriptor]) {
         .expect("writing doctor check list to stdout should succeed");
 }
 
-fn write_report<W: Write>(writer: &mut W, results: &[CheckResult], verbose: bool) -> io::Result<()> {
+fn write_report<W: Write>(
+    writer: &mut W,
+    version: &VersionStatus,
+    results: &[CheckResult],
+    verbose: bool,
+) -> io::Result<()> {
     writeln!(writer, "DevBoy Doctor - Diagnostic Report")?;
     writeln!(writer, "=================================")?;
+    writeln!(writer)?;
+    writeln!(writer, "Version")?;
+    writeln!(writer, "  Current: {}", version.current_version)?;
+
+    if version.update_available {
+        if let Some(latest_version) = &version.latest_version {
+            writeln!(writer, "  Latest: {}", latest_version)?;
+        }
+        writeln!(writer, "  Status: Update available")?;
+        writeln!(writer, "  Update with: {}", version.update_command)?;
+    } else if let Some(latest_version) = &version.latest_version {
+        writeln!(writer, "  Latest: {}", latest_version)?;
+        writeln!(writer, "  Status: Up to date")?;
+    } else {
+        writeln!(writer, "  Latest: unavailable")?;
+        writeln!(writer, "  Status: Unable to check")?;
+    }
 
     let mut result_groups: BTreeMap<&str, Vec<&CheckResult>> = BTreeMap::new();
     for result in results {
@@ -178,6 +202,7 @@ pub fn summarize(results: &[CheckResult]) -> Summary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::update_check::VersionStatus;
     use serde_json::json;
 
     fn sample_result(status: CheckStatus) -> CheckResult {
@@ -196,9 +221,20 @@ mod tests {
         }
     }
 
+    fn sample_version(update_available: bool, latest_version: Option<&str>) -> VersionStatus {
+        VersionStatus {
+            current_version: "0.10.0".to_string(),
+            latest_version: latest_version.map(ToString::to_string),
+            update_available,
+            install_method: "standalone".to_string(),
+            update_command: "devboy upgrade".to_string(),
+        }
+    }
+
     #[test]
     fn write_report_renders_verbose_output() {
         let mut buffer = Vec::new();
+        let version = sample_version(true, Some("0.11.0"));
         let results = vec![
             CheckResult {
                 category: "Environment".to_string(),
@@ -207,10 +243,15 @@ mod tests {
             sample_result(CheckStatus::Warning),
         ];
 
-        write_report(&mut buffer, &results, true).unwrap();
+        write_report(&mut buffer, &version, &results, true).unwrap();
         let output = String::from_utf8(buffer).unwrap();
 
         assert!(output.contains("DevBoy Doctor - Diagnostic Report"));
+        assert!(output.contains("Version"));
+        assert!(output.contains("Current: 0.10.0"));
+        assert!(output.contains("Latest: 0.11.0"));
+        assert!(output.contains("Status: Update available"));
+        assert!(output.contains("Update with: devboy upgrade"));
         assert!(output.contains("Environment"));
         assert!(output.contains("Configuration"));
         assert!(output.contains("[PASS] Config file found"));
@@ -219,6 +260,19 @@ mod tests {
         assert!(output.contains("Check: config.exists"));
         assert!(output.contains("nested: true"));
         assert!(output.contains("Summary: 0 error(s), 1 warning(s), 1 passed, 0 skipped"));
+    }
+
+    #[test]
+    fn write_report_shows_unavailable_latest_version() {
+        let mut buffer = Vec::new();
+        let version = sample_version(false, None);
+
+        write_report(&mut buffer, &version, &[sample_result(CheckStatus::Pass)], false).unwrap();
+        let output = String::from_utf8(buffer).unwrap();
+
+        assert!(output.contains("Current: 0.10.0"));
+        assert!(output.contains("Latest: unavailable"));
+        assert!(output.contains("Status: Unable to check"));
     }
 
     #[test]

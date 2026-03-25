@@ -12,6 +12,7 @@ use self::checks::proxy::ProxyServersCheck;
 use self::output::console::{print_check_list, print_report, summarize};
 use self::output::json::print_json_report;
 use crate::get_credential_store;
+use crate::update_check::resolve_version_status;
 use anyhow::Result;
 use async_trait::async_trait;
 use devboy_core::Config;
@@ -253,16 +254,18 @@ pub async fn handle_doctor_command(options: DoctorOptions) -> Result<i32> {
     let ctx = DiagnosticContext::load(options.verbose);
     let results = registry.run_filtered(&ctx, &options.checks).await;
     let summary = summarize_results(&results);
+    let version = resolve_version_status().await;
 
     if matches!(options.output_format, Some(OutputFormat::Json)) {
         print_json_report(
             &(serde_json::json!({
+                "version": version,
                 "results": results,
                 "summary": summary,
             })),
         )?;
     } else {
-        print_report(&results, options.verbose);
+        print_report(&version, &results, options.verbose);
     }
 
     Ok(exit_code_for_summary(&summary))
