@@ -32,6 +32,9 @@ dialoguer = "0.11"
 chrono = "0.4"
 toml.workspace = true
 dirs.workspace = true
+flate2 = "1.1"
+tar = "0.4"
+zip = "8.4"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
