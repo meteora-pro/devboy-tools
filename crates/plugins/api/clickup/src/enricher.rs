@@ -364,4 +364,63 @@ mod tests {
         let rl = custom_fields.iter().find(|f| f["id"] == "uuid-2").unwrap();
         assert_eq!(rl["value"], 1); // Medium = orderindex 1
     }
+
+    #[test]
+    fn test_clickup_enricher_transform_args_skips_non_create() {
+        let enricher = ClickUpSchemaEnricher::new(sample_metadata());
+        let mut args = json!({"cf_story_points": 5});
+        enricher.transform_args("get_issues", &mut args);
+        // Should not transform — only create/update
+        assert!(args.get("cf_story_points").is_some());
+    }
+
+    #[test]
+    fn test_clickup_enricher_transform_args_no_custom_fields() {
+        let enricher = ClickUpSchemaEnricher::new(sample_metadata());
+        let mut args = json!({"title": "Test"});
+        enricher.transform_args("create_issue", &mut args);
+        // No cf_* → no customFields key
+        assert!(args.get("customFields").is_none());
+    }
+
+    #[test]
+    fn test_clickup_enricher_link_types() {
+        let enricher = ClickUpSchemaEnricher::new(sample_metadata());
+        let mut schema = ToolSchema {
+            properties: serde_json::Map::new(),
+            required: vec![],
+        };
+        enricher.enrich_schema("link_issues", &mut schema);
+        let lt = schema.properties.get("link_type").unwrap();
+        assert_eq!(
+            lt["enum"],
+            json!(["blocks", "blocked_by", "relates_to", "subtask"])
+        );
+    }
+
+    #[test]
+    fn test_clickup_enricher_empty_metadata() {
+        let enricher = ClickUpSchemaEnricher::new(ClickUpMetadata {
+            statuses: vec![],
+            custom_fields: vec![],
+        });
+        let mut schema = ToolSchema::from_json(&json!({
+            "type": "object",
+            "properties": {
+                "customFields": { "type": "object" }
+            }
+        }));
+        enricher.enrich_schema("create_issue", &mut schema);
+        // customFields removed, no cf_* added
+        assert!(!schema.properties.contains_key("customFields"));
+        assert!(schema.properties.contains_key("priority")); // always added
+    }
+
+    #[test]
+    fn test_clickup_enricher_priority_default() {
+        let enricher = ClickUpSchemaEnricher::new(sample_metadata());
+        let mut args = json!({"title": "Test", "priority": "unknown_value"});
+        enricher.transform_args("create_issue", &mut args);
+        assert_eq!(args["priority"], 3); // default to normal
+    }
 }

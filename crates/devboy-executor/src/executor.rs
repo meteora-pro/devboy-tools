@@ -852,8 +852,63 @@ mod tests {
 
         let mut executor = Executor::new();
         executor.add_enricher(Box::new(TestEnricher));
-        // Can't easily test full execute() without real provider,
-        // but we verify enricher is stored
         assert_eq!(executor.enrichers.len(), 1);
+    }
+
+    // --- Pipeline dispatch tests ---
+
+    #[tokio::test]
+    async fn test_dispatch_get_pipeline_unsupported() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"branch": "main"});
+        let result = dispatch_tool("get_pipeline", &args, &provider).await;
+        // MockProvider doesn't implement get_pipeline → ProviderUnsupported
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_job_logs_unsupported() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"jobId": "123"});
+        let result = dispatch_tool("get_job_logs", &args, &provider).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_pipeline_with_mr_key() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"mrKey": "pr#1", "includeFailedLogs": false});
+        let result = dispatch_tool("get_pipeline", &args, &provider).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_job_logs_with_pattern() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"jobId": "123", "pattern": "ERROR", "context": 3});
+        let result = dispatch_tool("get_job_logs", &args, &provider).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_job_logs_paginated() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"jobId": "123", "offset": 10, "limit": 50});
+        let result = dispatch_tool("get_job_logs", &args, &provider).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_job_logs_full() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"jobId": "123", "full": true});
+        let result = dispatch_tool("get_job_logs", &args, &provider).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_executor_default() {
+        let executor = Executor::default();
+        assert!(executor.enrichers.is_empty());
     }
 }

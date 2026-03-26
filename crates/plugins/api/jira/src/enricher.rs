@@ -89,7 +89,8 @@ impl ToolEnricher for JiraSchemaEnricher {
         if tool_name == "link_issues" {
             let link_types = self.metadata.all_link_types();
             if !link_types.is_empty() {
-                schema.set_enum("link_type", &link_types);
+                let values: Vec<&str> = link_types.iter().map(|s| s.as_str()).collect();
+                schema.add_enum_param("link_type", &values, "Issue link type");
             }
         }
 
@@ -380,5 +381,92 @@ mod tests {
         // customFields NOT replaced (multi-project)
         assert!(schema.properties.contains_key("customFields"));
         assert!(!schema.properties.contains_key("cf_story_points"));
+    }
+
+    #[test]
+    fn test_jira_enricher_transform_args_skips_non_create() {
+        let enricher = JiraSchemaEnricher::new(single_project_metadata());
+        let mut args = json!({"priority": "urgent"});
+        enricher.transform_args("get_issues", &mut args);
+        // Should not transform priority for get_issues
+        assert_eq!(args["priority"], "urgent");
+    }
+
+    #[test]
+    fn test_jira_enricher_transform_args_normal_priority() {
+        let enricher = JiraSchemaEnricher::new(single_project_metadata());
+        let mut args = json!({"title": "T", "priority": "normal"});
+        enricher.transform_args("create_issue", &mut args);
+        assert_eq!(args["priority"], "Medium");
+    }
+
+    #[test]
+    fn test_jira_enricher_transform_args_non_alias_priority() {
+        let enricher = JiraSchemaEnricher::new(single_project_metadata());
+        let mut args = json!({"title": "T", "priority": "Highest"});
+        enricher.transform_args("create_issue", &mut args);
+        assert_eq!(args["priority"], "Highest"); // pass-through
+    }
+
+    #[test]
+    fn test_jira_enricher_multi_project_no_cf_transform() {
+        let mut meta = single_project_metadata();
+        meta.projects.insert(
+            "INFRA".into(),
+            JiraProjectMetadata {
+                issue_types: vec![],
+                priorities: vec![],
+                components: vec![],
+                link_types: vec![],
+                custom_fields: vec![],
+            },
+        );
+        let enricher = JiraSchemaEnricher::new(meta);
+        let mut args = json!({"title": "T", "cf_story_points": 5});
+        enricher.transform_args("create_issue", &mut args);
+        // Multi-project: cf_* NOT transformed
+        assert!(args.get("cf_story_points").is_some());
+        assert!(args.get("customFields").is_none());
+    }
+
+    #[test]
+    fn test_jira_enricher_components_enum() {
+        let enricher = JiraSchemaEnricher::new(single_project_metadata());
+        let mut schema = ToolSchema::from_json(&json!({
+            "type": "object",
+            "properties": {
+                "components": { "type": "array" }
+            }
+        }));
+        enricher.enrich_schema("create_issue", &mut schema);
+        let comp = schema.properties.get("components").unwrap();
+        assert_eq!(comp["enum"], json!(["API", "Frontend"]));
+    }
+
+    #[test]
+    fn test_jira_enricher_link_types() {
+        let enricher = JiraSchemaEnricher::new(single_project_metadata());
+        let mut schema = ToolSchema {
+            properties: serde_json::Map::new(),
+            required: vec![],
+        };
+        enricher.enrich_schema("link_issues", &mut schema);
+        let lt = schema.properties.get("link_type").unwrap();
+        assert_eq!(lt["enum"], json!(["Blocks"]));
+    }
+
+    #[test]
+    fn test_jira_enricher_get_issues_removes_state_category() {
+        let enricher = JiraSchemaEnricher::new(single_project_metadata());
+        let mut schema = ToolSchema::from_json(&json!({
+            "type": "object",
+            "properties": {
+                "state": { "type": "string" },
+                "stateCategory": { "type": "string" }
+            }
+        }));
+        enricher.enrich_schema("get_issues", &mut schema);
+        assert!(!schema.properties.contains_key("stateCategory"));
+        assert!(schema.properties.contains_key("state"));
     }
 }
