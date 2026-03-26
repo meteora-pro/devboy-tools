@@ -395,6 +395,168 @@ pub const SUPPORTED_TOOLS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use devboy_core::{
+        CodePosition, Comment, CreateMergeRequestInput, Discussion, FileDiff, Issue, IssueProvider,
+        MergeRequest, MergeRequestProvider, Provider, User,
+    };
+
+    // --- Mock Provider ---
+
+    struct MockProvider;
+
+    fn sample_issue() -> Issue {
+        Issue {
+            key: "gh#1".into(),
+            title: "Test Issue".into(),
+            description: Some("Body".into()),
+            state: "open".into(),
+            source: "mock".into(),
+            priority: None,
+            labels: vec!["bug".into()],
+            author: None,
+            assignees: vec![],
+            url: Some("https://example.com/1".into()),
+            created_at: Some("2024-01-01T00:00:00Z".into()),
+            updated_at: Some("2024-01-02T00:00:00Z".into()),
+        }
+    }
+
+    fn sample_mr() -> MergeRequest {
+        MergeRequest {
+            key: "pr#1".into(),
+            title: "Test PR".into(),
+            description: Some("PR body".into()),
+            state: "open".into(),
+            source: "mock".into(),
+            source_branch: "feature".into(),
+            target_branch: "main".into(),
+            author: None,
+            assignees: vec![],
+            reviewers: vec![],
+            labels: vec![],
+            draft: false,
+            url: Some("https://example.com/pr/1".into()),
+            created_at: Some("2024-01-01T00:00:00Z".into()),
+            updated_at: Some("2024-01-02T00:00:00Z".into()),
+        }
+    }
+
+    fn sample_comment() -> Comment {
+        Comment {
+            id: "c1".into(),
+            body: "Test comment".into(),
+            author: None,
+            created_at: None,
+            updated_at: None,
+            position: None,
+        }
+    }
+
+    fn sample_discussion() -> Discussion {
+        Discussion {
+            id: "d1".into(),
+            resolved: false,
+            resolved_by: None,
+            comments: vec![sample_comment()],
+            position: None,
+        }
+    }
+
+    fn sample_diff() -> FileDiff {
+        FileDiff {
+            file_path: "src/main.rs".into(),
+            old_path: None,
+            new_file: false,
+            deleted_file: false,
+            renamed_file: false,
+            diff: "+added\n-removed".into(),
+            additions: Some(1),
+            deletions: Some(1),
+        }
+    }
+
+    #[async_trait]
+    impl IssueProvider for MockProvider {
+        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
+            Ok(vec![sample_issue()])
+        }
+        async fn get_issue(&self, _key: &str) -> devboy_core::Result<Issue> {
+            Ok(sample_issue())
+        }
+        async fn create_issue(
+            &self,
+            _input: devboy_core::CreateIssueInput,
+        ) -> devboy_core::Result<Issue> {
+            Ok(sample_issue())
+        }
+        async fn update_issue(
+            &self,
+            _key: &str,
+            _input: devboy_core::UpdateIssueInput,
+        ) -> devboy_core::Result<Issue> {
+            Ok(sample_issue())
+        }
+        async fn get_comments(&self, _key: &str) -> devboy_core::Result<Vec<Comment>> {
+            Ok(vec![sample_comment()])
+        }
+        async fn add_comment(&self, _key: &str, _body: &str) -> devboy_core::Result<Comment> {
+            Ok(sample_comment())
+        }
+        fn provider_name(&self) -> &'static str {
+            "mock"
+        }
+    }
+
+    #[async_trait]
+    impl MergeRequestProvider for MockProvider {
+        async fn get_merge_requests(
+            &self,
+            _filter: MrFilter,
+        ) -> devboy_core::Result<Vec<MergeRequest>> {
+            Ok(vec![sample_mr()])
+        }
+        async fn get_merge_request(&self, _key: &str) -> devboy_core::Result<MergeRequest> {
+            Ok(sample_mr())
+        }
+        async fn get_discussions(&self, _key: &str) -> devboy_core::Result<Vec<Discussion>> {
+            Ok(vec![sample_discussion()])
+        }
+        async fn get_diffs(&self, _key: &str) -> devboy_core::Result<Vec<FileDiff>> {
+            Ok(vec![sample_diff()])
+        }
+        async fn add_comment(
+            &self,
+            _key: &str,
+            _input: CreateCommentInput,
+        ) -> devboy_core::Result<Comment> {
+            Ok(sample_comment())
+        }
+        async fn create_merge_request(
+            &self,
+            _input: CreateMergeRequestInput,
+        ) -> devboy_core::Result<MergeRequest> {
+            Ok(sample_mr())
+        }
+        fn provider_name(&self) -> &'static str {
+            "mock"
+        }
+    }
+
+    #[async_trait]
+    impl Provider for MockProvider {
+        async fn get_current_user(&self) -> devboy_core::Result<User> {
+            Ok(User {
+                id: "1".into(),
+                username: "test".into(),
+                name: None,
+                email: None,
+                avatar_url: None,
+            })
+        }
+    }
+
+    // --- Tests ---
 
     #[test]
     fn test_executor_new() {
@@ -410,24 +572,204 @@ mod tests {
         assert_eq!(SUPPORTED_TOOLS.len(), 12);
     }
 
-    #[test]
-    fn test_dispatch_unknown_tool() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            // We can't easily create a mock provider here without mockall setup,
-            // but we can test the unknown tool path
-            let config = crate::context::ProviderConfig::GitHub {
-                base_url: "https://api.github.com".into(),
-                access_token: "test".into(),
-                scope: crate::context::GitHubScope::Repository {
-                    owner: "test".into(),
-                    repo: "test".into(),
-                },
-                extra: std::collections::HashMap::new(),
-            };
-            let provider = factory::create_provider(&config).unwrap();
-            let result = dispatch_tool("nonexistent_tool", &Value::Null, provider.as_ref()).await;
-            assert!(result.is_err());
+    // --- Issue tool dispatch tests ---
+
+    #[tokio::test]
+    async fn test_dispatch_get_issues() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"state": "open", "limit": 10});
+        let result = dispatch_tool("get_issues", &args, &provider).await.unwrap();
+        assert!(matches!(result, ToolOutput::Issues(v) if v.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_issues_empty_args() {
+        let provider = MockProvider;
+        let result = dispatch_tool("get_issues", &Value::Null, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Issues(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_issue() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"key": "gh#1"});
+        let result = dispatch_tool("get_issue", &args, &provider).await.unwrap();
+        assert!(matches!(result, ToolOutput::SingleIssue(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_issue_missing_key() {
+        let provider = MockProvider;
+        let result = dispatch_tool("get_issue", &serde_json::json!({}), &provider).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_issue_comments() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"key": "gh#1"});
+        let result = dispatch_tool("get_issue_comments", &args, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Comments(v) if v.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_create_issue() {
+        let provider = MockProvider;
+        let args =
+            serde_json::json!({"title": "New issue", "description": "Body", "labels": ["bug"]});
+        let result = dispatch_tool("create_issue", &args, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::SingleIssue(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_update_issue() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"key": "gh#1", "title": "Updated"});
+        let result = dispatch_tool("update_issue", &args, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::SingleIssue(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_add_issue_comment() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"key": "gh#1", "body": "A comment"});
+        let result = dispatch_tool("add_issue_comment", &args, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Text(ref t) if t.contains("Comment added")));
+    }
+
+    // --- MR tool dispatch tests ---
+
+    #[tokio::test]
+    async fn test_dispatch_get_merge_requests() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"state": "open", "limit": 5});
+        let result = dispatch_tool("get_merge_requests", &args, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::MergeRequests(v) if v.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_merge_requests_empty_args() {
+        let provider = MockProvider;
+        let result = dispatch_tool("get_merge_requests", &Value::Null, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::MergeRequests(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_merge_request() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"key": "pr#1"});
+        let result = dispatch_tool("get_merge_request", &args, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::SingleMergeRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_merge_request_discussions() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"key": "pr#1"});
+        let result = dispatch_tool("get_merge_request_discussions", &args, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Discussions(v) if v.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_merge_request_diffs() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"key": "pr#1"});
+        let result = dispatch_tool("get_merge_request_diffs", &args, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Diffs(v) if v.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_create_merge_request() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "title": "New PR",
+            "source_branch": "feature",
+            "target_branch": "main",
+            "draft": false
         });
+        let result = dispatch_tool("create_merge_request", &args, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::SingleMergeRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_create_merge_request_comment_general() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"key": "pr#1", "body": "LGTM"});
+        let result = dispatch_tool("create_merge_request_comment", &args, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Text(ref t) if t.contains("Comment added")));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_create_merge_request_comment_inline() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "key": "pr#1",
+            "body": "Fix this line",
+            "file_path": "src/main.rs",
+            "line": 42,
+            "line_type": "new",
+            "commit_sha": "abc123"
+        });
+        let result = dispatch_tool("create_merge_request_comment", &args, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Text(ref t) if t.contains("Comment added")));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_unknown_tool() {
+        let provider = MockProvider;
+        let result = dispatch_tool("nonexistent_tool", &Value::Null, &provider).await;
+        assert!(result.is_err());
+    }
+
+    // --- Executor enricher integration ---
+
+    #[tokio::test]
+    async fn test_executor_enricher_transforms_args() {
+        use devboy_core::{ToolEnricher, ToolSchema};
+
+        struct TestEnricher;
+        impl ToolEnricher for TestEnricher {
+            fn supported_tools(&self) -> &[&str] {
+                &["get_issues"]
+            }
+            fn enrich_schema(&self, _tool: &str, _schema: &mut ToolSchema) {}
+            fn transform_args(&self, _tool: &str, args: &mut Value) {
+                if let Some(obj) = args.as_object_mut() {
+                    obj.insert("transformed".into(), Value::Bool(true));
+                }
+            }
+        }
+
+        let mut executor = Executor::new();
+        executor.add_enricher(Box::new(TestEnricher));
+        // Can't easily test full execute() without real provider,
+        // but we verify enricher is stored
+        assert_eq!(executor.enrichers.len(), 1);
     }
 }

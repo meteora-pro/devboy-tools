@@ -56,22 +56,78 @@ impl ToolOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use devboy_core::{Comment, Discussion, FileDiff, Issue, MergeRequest};
 
-    #[test]
-    fn test_tool_output_item_count() {
-        let output = ToolOutput::Issues(vec![]);
-        assert_eq!(output.item_count(), 0);
+    fn issue() -> Issue {
+        Issue {
+            key: "gh#1".into(),
+            title: "T".into(),
+            description: None,
+            state: "open".into(),
+            source: "mock".into(),
+            priority: None,
+            labels: vec![],
+            author: None,
+            assignees: vec![],
+            url: None,
+            created_at: None,
+            updated_at: None,
+        }
+    }
 
-        let output = ToolOutput::Text("hello".into());
-        assert_eq!(output.item_count(), 1);
+    fn mr() -> MergeRequest {
+        MergeRequest {
+            key: "pr#1".into(),
+            title: "T".into(),
+            description: None,
+            state: "open".into(),
+            source: "mock".into(),
+            source_branch: "f".into(),
+            target_branch: "m".into(),
+            author: None,
+            assignees: vec![],
+            reviewers: vec![],
+            labels: vec![],
+            draft: false,
+            url: None,
+            created_at: None,
+            updated_at: None,
+        }
     }
 
     #[test]
-    fn test_tool_output_type_name() {
-        let output = ToolOutput::MergeRequests(vec![]);
-        assert_eq!(output.type_name(), "merge_requests");
+    fn test_item_count_all_variants() {
+        assert_eq!(ToolOutput::Issues(vec![issue(), issue()]).item_count(), 2);
+        assert_eq!(ToolOutput::MergeRequests(vec![]).item_count(), 0);
+        assert_eq!(ToolOutput::SingleIssue(Box::new(issue())).item_count(), 1);
+        assert_eq!(
+            ToolOutput::SingleMergeRequest(Box::new(mr())).item_count(),
+            1
+        );
+        assert_eq!(ToolOutput::Discussions(vec![]).item_count(), 0);
+        assert_eq!(ToolOutput::Diffs(vec![]).item_count(), 0);
+        assert_eq!(ToolOutput::Comments(vec![]).item_count(), 0);
+        assert_eq!(ToolOutput::Text("x".into()).item_count(), 1);
+    }
 
-        let output = ToolOutput::Text("ok".into());
-        assert_eq!(output.type_name(), "text");
+    #[test]
+    fn test_type_name_all_variants() {
+        assert_eq!(ToolOutput::Issues(vec![]).type_name(), "issues");
+        assert_eq!(
+            ToolOutput::MergeRequests(vec![]).type_name(),
+            "merge_requests"
+        );
+        assert_eq!(
+            ToolOutput::SingleIssue(Box::new(issue())).type_name(),
+            "issue"
+        );
+        assert_eq!(
+            ToolOutput::SingleMergeRequest(Box::new(mr())).type_name(),
+            "merge_request"
+        );
+        assert_eq!(ToolOutput::Discussions(vec![]).type_name(), "discussions");
+        assert_eq!(ToolOutput::Diffs(vec![]).type_name(), "diffs");
+        assert_eq!(ToolOutput::Comments(vec![]).type_name(), "comments");
+        assert_eq!(ToolOutput::Text("x".into()).type_name(), "text");
     }
 }
