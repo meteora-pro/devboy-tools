@@ -49,9 +49,10 @@ pub mod output;
 // Re-export main types at crate root
 pub use context::{
     AdditionalContext, ClickUpScope, GitHubScope, GitLabScope, JiraScope, ProviderConfig,
-    ProxyConfig,
+    ProviderMetadata, ProxyConfig,
 };
-pub use enricher::{sanitize_field_name, PipelineFormatEnricher, ToolEnricher, ToolSchema};
+pub use devboy_core::{sanitize_field_name, ToolEnricher, ToolSchema};
+pub use enricher::PipelineFormatEnricher;
 pub use executor::{Executor, SUPPORTED_TOOLS};
 pub use format::{execute_and_format, format_output};
 pub use output::ToolOutput;
