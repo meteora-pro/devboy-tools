@@ -4,6 +4,7 @@ resolver = "2"
 members = [
     "crates/devboy-core",
     "crates/devboy-storage",
+    "crates/devboy-executor",
     "crates/devboy-mcp",
     "crates/devboy-cli",
     # API plugins
