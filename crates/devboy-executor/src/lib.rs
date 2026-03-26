@@ -29,6 +29,7 @@
 //!         extra: HashMap::new(),
 //!     },
 //!     proxy: None,
+//!     metadata: None,
 //!     extra: HashMap::new(),
 //! };
 //!

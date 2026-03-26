@@ -5,9 +5,13 @@
 //! `ProviderUnsupported` errors.
 
 mod client;
+pub mod enricher;
+pub mod metadata;
 mod types;
 
 pub use client::ClickUpClient;
+pub use enricher::ClickUpSchemaEnricher;
+pub use metadata::ClickUpMetadata;
 pub use types::*;
 
 /// Default ClickUp API URL.
