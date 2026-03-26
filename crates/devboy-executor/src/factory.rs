@@ -1,6 +1,8 @@
-use devboy_core::{Error, Provider, Result};
+use devboy_core::{Error, Provider, Result, ToolEnricher};
 
-use crate::context::{ClickUpScope, GitHubScope, GitLabScope, JiraScope, ProviderConfig};
+use crate::context::{
+    ClickUpScope, GitHubScope, GitLabScope, JiraScope, ProviderConfig, ProviderMetadata,
+};
 
 /// Create a provider instance from a typed `ProviderConfig`.
 ///
@@ -90,6 +92,37 @@ pub fn create_provider(config: &ProviderConfig) -> Result<Box<dyn Provider>> {
         ProviderConfig::Custom { name, .. } => Err(Error::ProviderNotFound(format!(
             "custom provider '{name}' not yet supported"
         ))),
+    }
+}
+
+/// Create the matching enricher for a provider.
+///
+/// Static providers (GitLab, GitHub) always return an enricher.
+/// Dynamic providers (ClickUp, Jira) require metadata — returns None if missing.
+///
+/// The metadata `data` field is deserialized to provider-specific types.
+pub fn create_enricher(
+    config: &ProviderConfig,
+    metadata: Option<&ProviderMetadata>,
+) -> Option<Box<dyn ToolEnricher>> {
+    match config {
+        ProviderConfig::GitLab { .. } => Some(Box::new(devboy_gitlab::GitLabSchemaEnricher)),
+        ProviderConfig::GitHub { .. } => Some(Box::new(devboy_github::GitHubSchemaEnricher)),
+        ProviderConfig::ClickUp { .. } => {
+            let meta = metadata?;
+            let clickup_meta: devboy_clickup::ClickUpMetadata =
+                serde_json::from_value(meta.data.clone()).ok()?;
+            Some(Box::new(devboy_clickup::ClickUpSchemaEnricher::new(
+                clickup_meta,
+            )))
+        }
+        ProviderConfig::Jira { .. } => {
+            let meta = metadata?;
+            let jira_meta: devboy_jira::JiraMetadata =
+                serde_json::from_value(meta.data.clone()).ok()?;
+            Some(Box::new(devboy_jira::JiraSchemaEnricher::new(jira_meta)))
+        }
+        ProviderConfig::Custom { .. } => None,
     }
 }
 
@@ -192,5 +225,81 @@ mod tests {
         };
         let result = create_provider(&config);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_enricher_gitlab_static() {
+        let config = ProviderConfig::GitLab {
+            base_url: "https://gitlab.com".into(),
+            access_token: "token".into(),
+            scope: GitLabScope::Project { id: "123".into() },
+            extra: HashMap::new(),
+        };
+        let enricher = create_enricher(&config, None);
+        assert!(enricher.is_some());
+    }
+
+    #[test]
+    fn test_create_enricher_github_static() {
+        let config = ProviderConfig::GitHub {
+            base_url: "https://api.github.com".into(),
+            access_token: "token".into(),
+            scope: GitHubScope::Repository {
+                owner: "test".into(),
+                repo: "test".into(),
+            },
+            extra: HashMap::new(),
+        };
+        let enricher = create_enricher(&config, None);
+        assert!(enricher.is_some());
+    }
+
+    #[test]
+    fn test_create_enricher_clickup_needs_metadata() {
+        let config = ProviderConfig::ClickUp {
+            access_token: "token".into(),
+            scope: ClickUpScope::List {
+                id: "list1".into(),
+                team_id: None,
+            },
+            extra: HashMap::new(),
+        };
+        // No metadata → None
+        assert!(create_enricher(&config, None).is_none());
+
+        // With metadata → Some
+        let meta = ProviderMetadata::new(serde_json::json!({
+            "statuses": [{ "name": "To Do" }],
+            "custom_fields": []
+        }));
+        assert!(create_enricher(&config, Some(&meta)).is_some());
+    }
+
+    #[test]
+    fn test_create_enricher_jira_needs_metadata() {
+        let config = ProviderConfig::Jira {
+            base_url: "https://test.atlassian.net".into(),
+            access_token: "token".into(),
+            email: "test@test.com".into(),
+            scope: JiraScope::Project { key: "PROJ".into() },
+            extra: HashMap::new(),
+        };
+        // No metadata → None
+        assert!(create_enricher(&config, None).is_none());
+
+        // With metadata → Some
+        let meta = ProviderMetadata::new(serde_json::json!({
+            "flavor": "cloud",
+            "projects": {
+                "PROJ": {
+                    "issue_types": [],
+                    "priorities": [],
+                    "components": [],
+                    "link_types": [],
+                    "custom_fields": []
+                }
+            }
+        }));
+        assert!(create_enricher(&config, Some(&meta)).is_some());
     }
 }
