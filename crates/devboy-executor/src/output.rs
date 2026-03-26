@@ -56,7 +56,7 @@ impl ToolOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use devboy_core::{Comment, Discussion, FileDiff, Issue, MergeRequest};
+    use devboy_core::{Issue, MergeRequest};
 
     fn issue() -> Issue {
         Issue {
