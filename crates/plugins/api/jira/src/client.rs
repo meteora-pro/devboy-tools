@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use devboy_core::{
     Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, MergeRequestProvider,
-    Provider, Result, UpdateIssueInput, User,
+    PipelineProvider, Provider, Result, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
@@ -1019,6 +1019,13 @@ impl IssueProvider for JiraClient {
 
 #[async_trait]
 impl MergeRequestProvider for JiraClient {
+    fn provider_name(&self) -> &'static str {
+        "jira"
+    }
+}
+
+#[async_trait]
+impl PipelineProvider for JiraClient {
     fn provider_name(&self) -> &'static str {
         "jira"
     }

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use devboy_core::{
     CodePosition, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
     Discussion, Error, FileDiff, Issue, IssueFilter, IssueProvider, MergeRequest,
-    MergeRequestProvider, MrFilter, Provider, Result, UpdateIssueInput, User,
+    MergeRequestProvider, MrFilter, PipelineProvider, Provider, Result, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
@@ -657,6 +657,14 @@ impl MergeRequestProvider for GitLabClient {
     fn provider_name(&self) -> &'static str {
         "gitlab"
     }
+}
+
+#[async_trait]
+impl PipelineProvider for GitLabClient {
+    fn provider_name(&self) -> &'static str {
+        "gitlab"
+    }
+    // TODO: implement get_pipeline and get_job_logs for GitLab Pipelines API
 }
 
 #[async_trait]

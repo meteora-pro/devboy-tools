@@ -67,8 +67,89 @@ pub fn format_output(
             let result = pipeline.transform_comments(comments)?;
             Ok(result.to_string_with_hints())
         }
+        ToolOutput::Pipeline(info) => Ok(format_pipeline(&info)),
+        ToolOutput::JobLog(log) => Ok(format_job_log(&log)),
         ToolOutput::Text(text) => Ok(text),
     }
+}
+
+/// Format pipeline status as markdown.
+fn format_pipeline(info: &devboy_core::PipelineInfo) -> String {
+    let status_icon = match info.status {
+        devboy_core::PipelineStatus::Success => "✅",
+        devboy_core::PipelineStatus::Failed => "❌",
+        devboy_core::PipelineStatus::Running => "🔄",
+        devboy_core::PipelineStatus::Pending => "⏳",
+        devboy_core::PipelineStatus::Canceled => "🚫",
+        _ => "❓",
+    };
+
+    let mut output = format!(
+        "# Pipeline {}\n\n{} **Status:** {} | **Ref:** `{}` | **SHA:** `{}`",
+        info.id,
+        status_icon,
+        info.status.as_str(),
+        info.reference,
+        &info.sha[..7.min(info.sha.len())]
+    );
+
+    if let Some(url) = &info.url {
+        output.push_str(&format!("\n🔗 {url}"));
+    }
+
+    if let Some(duration) = info.duration {
+        output.push_str(&format!("\n⏱️ Duration: {}s", duration));
+    }
+
+    // Summary
+    let s = &info.summary;
+    output.push_str(&format!(
+        "\n\n**Summary:** {} total | ✅ {} | ❌ {} | 🔄 {} | ⏳ {} | 🚫 {} | ⏭️ {}",
+        s.total, s.success, s.failed, s.running, s.pending, s.canceled, s.skipped
+    ));
+
+    // Stages/jobs
+    for stage in &info.stages {
+        output.push_str(&format!("\n\n## {}\n", stage.name));
+        for job in &stage.jobs {
+            let job_icon = match job.status {
+                devboy_core::PipelineStatus::Success => "✅",
+                devboy_core::PipelineStatus::Failed => "❌",
+                devboy_core::PipelineStatus::Running => "🔄",
+                devboy_core::PipelineStatus::Pending => "⏳",
+                _ => "❓",
+            };
+            let dur = job.duration.map(|d| format!(" ({d}s)")).unwrap_or_default();
+            output.push_str(&format!("\n{} **{}**{}", job_icon, job.name, dur));
+            if let Some(url) = &job.url {
+                output.push_str(&format!(" — [logs]({url})"));
+            }
+        }
+    }
+
+    // Failed jobs with errors
+    if !info.failed_jobs.is_empty() {
+        output.push_str("\n\n## Failed Jobs\n");
+        for fj in &info.failed_jobs {
+            output.push_str(&format!("\n### ❌ {} (job {})\n", fj.name, fj.id));
+            if let Some(snippet) = &fj.error_snippet {
+                output.push_str(&format!("\n```\n{snippet}\n```\n"));
+            }
+        }
+    }
+
+    output
+}
+
+/// Format job log output as markdown.
+fn format_job_log(log: &devboy_core::JobLogOutput) -> String {
+    let mut output = format!("# Job Log ({})\n\n", log.job_id);
+    output.push_str(&format!("**Mode:** {}", log.mode));
+    if let Some(total) = log.total_lines {
+        output.push_str(&format!(" | **Total lines:** {total}"));
+    }
+    output.push_str(&format!("\n\n```\n{}\n```", log.content));
+    output
 }
 
 /// Convenience: execute a tool and format the output in one call.

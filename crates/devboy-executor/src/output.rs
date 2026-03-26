@@ -1,4 +1,4 @@
-use devboy_core::{Comment, Discussion, FileDiff, Issue, MergeRequest};
+use devboy_core::{Comment, Discussion, FileDiff, Issue, JobLogOutput, MergeRequest, PipelineInfo};
 
 /// Typed result of tool execution.
 ///
@@ -21,6 +21,10 @@ pub enum ToolOutput {
     SingleIssue(Box<Issue>),
     /// Comments on an issue or merge request
     Comments(Vec<Comment>),
+    /// CI/CD pipeline status with jobs
+    Pipeline(Box<PipelineInfo>),
+    /// Job log output
+    JobLog(Box<JobLogOutput>),
     /// Plain text result (e.g., "Comment created successfully")
     Text(String),
 }
@@ -34,7 +38,11 @@ impl ToolOutput {
             Self::Diffs(v) => v.len(),
             Self::Issues(v) => v.len(),
             Self::Comments(v) => v.len(),
-            Self::SingleMergeRequest(_) | Self::SingleIssue(_) | Self::Text(_) => 1,
+            Self::SingleMergeRequest(_)
+            | Self::SingleIssue(_)
+            | Self::Pipeline(_)
+            | Self::JobLog(_)
+            | Self::Text(_) => 1,
         }
     }
 
@@ -48,6 +56,8 @@ impl ToolOutput {
             Self::Issues(_) => "issues",
             Self::SingleIssue(_) => "issue",
             Self::Comments(_) => "comments",
+            Self::Pipeline(_) => "pipeline",
+            Self::JobLog(_) => "job_log",
             Self::Text(_) => "text",
         }
     }
@@ -107,6 +117,33 @@ mod tests {
         assert_eq!(ToolOutput::Discussions(vec![]).item_count(), 0);
         assert_eq!(ToolOutput::Diffs(vec![]).item_count(), 0);
         assert_eq!(ToolOutput::Comments(vec![]).item_count(), 0);
+        assert_eq!(
+            ToolOutput::Pipeline(Box::new(devboy_core::PipelineInfo {
+                id: "1".into(),
+                status: devboy_core::PipelineStatus::Success,
+                reference: "main".into(),
+                sha: "abc".into(),
+                url: None,
+                duration: None,
+                coverage: None,
+                summary: devboy_core::PipelineSummary::default(),
+                stages: vec![],
+                failed_jobs: vec![],
+            }))
+            .item_count(),
+            1
+        );
+        assert_eq!(
+            ToolOutput::JobLog(Box::new(devboy_core::JobLogOutput {
+                job_id: "1".into(),
+                job_name: None,
+                content: "log".into(),
+                mode: "smart".into(),
+                total_lines: None,
+            }))
+            .item_count(),
+            1
+        );
         assert_eq!(ToolOutput::Text("x".into()).item_count(), 1);
     }
 
@@ -128,6 +165,33 @@ mod tests {
         assert_eq!(ToolOutput::Discussions(vec![]).type_name(), "discussions");
         assert_eq!(ToolOutput::Diffs(vec![]).type_name(), "diffs");
         assert_eq!(ToolOutput::Comments(vec![]).type_name(), "comments");
+        assert_eq!(
+            ToolOutput::Pipeline(Box::new(devboy_core::PipelineInfo {
+                id: "1".into(),
+                status: devboy_core::PipelineStatus::Success,
+                reference: "main".into(),
+                sha: "abc".into(),
+                url: None,
+                duration: None,
+                coverage: None,
+                summary: devboy_core::PipelineSummary::default(),
+                stages: vec![],
+                failed_jobs: vec![],
+            }))
+            .type_name(),
+            "pipeline"
+        );
+        assert_eq!(
+            ToolOutput::JobLog(Box::new(devboy_core::JobLogOutput {
+                job_id: "1".into(),
+                job_name: None,
+                content: "log".into(),
+                mode: "smart".into(),
+                total_lines: None,
+            }))
+            .type_name(),
+            "job_log"
+        );
         assert_eq!(ToolOutput::Text("x".into()).type_name(), "text");
     }
 }

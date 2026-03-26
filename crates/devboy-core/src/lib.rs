@@ -32,13 +32,14 @@ pub mod types;
 pub use error::{Error, Result};
 
 // Re-export provider traits
-pub use provider::{IssueProvider, MergeRequestProvider, Provider};
+pub use provider::{IssueProvider, MergeRequestProvider, PipelineProvider, Provider};
 
 // Re-export all types
 pub use types::{
     CodePosition, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
-    Discussion, FileDiff, Issue, IssueFilter, MergeRequest, MrFilter, Pagination, UpdateIssueInput,
-    User,
+    Discussion, FailedJob, FileDiff, GetPipelineInput, Issue, IssueFilter, JobLogMode,
+    JobLogOptions, JobLogOutput, MergeRequest, MrFilter, Pagination, PipelineInfo, PipelineJob,
+    PipelineStage, PipelineStatus, PipelineSummary, UpdateIssueInput, User,
 };
 
 // Re-export enricher traits and utilities

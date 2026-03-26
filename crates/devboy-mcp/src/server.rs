@@ -510,6 +510,14 @@ mod tests {
     }
 
     #[async_trait]
+    #[async_trait]
+    impl devboy_core::PipelineProvider for TestProvider {
+        fn provider_name(&self) -> &'static str {
+            "test"
+        }
+    }
+
+    #[async_trait]
     impl Provider for TestProvider {
         async fn get_current_user(&self) -> devboy_core::Result<User> {
             Ok(User {
@@ -1081,6 +1089,14 @@ mod tests {
             "clickup"
         }
         // Default implementations return ProviderUnsupported
+    }
+
+    #[async_trait]
+    #[async_trait]
+    impl devboy_core::PipelineProvider for IssueOnlyTestProvider {
+        fn provider_name(&self) -> &'static str {
+            "test"
+        }
     }
 
     #[async_trait]
