@@ -397,7 +397,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use devboy_core::{
-        CodePosition, Comment, CreateMergeRequestInput, Discussion, FileDiff, Issue, IssueProvider,
+        Comment, CreateMergeRequestInput, Discussion, FileDiff, Issue, IssueProvider,
         MergeRequest, MergeRequestProvider, Provider, User,
     };
 
