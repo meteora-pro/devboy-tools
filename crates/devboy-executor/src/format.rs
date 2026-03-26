@@ -332,4 +332,62 @@ mod tests {
         let result = format_output(output, Some("compact"), Some(config)).unwrap();
         assert!(result.contains("gh#1"));
     }
+
+    #[test]
+    fn test_format_pipeline() {
+        let output = ToolOutput::Pipeline(Box::new(devboy_core::PipelineInfo {
+            id: "100".into(),
+            status: devboy_core::PipelineStatus::Failed,
+            reference: "main".into(),
+            sha: "abc123def".into(),
+            url: Some("https://example.com/pipeline/100".into()),
+            duration: Some(120),
+            coverage: Some(85.5),
+            summary: devboy_core::PipelineSummary {
+                total: 3,
+                success: 2,
+                failed: 1,
+                ..Default::default()
+            },
+            stages: vec![devboy_core::PipelineStage {
+                name: "build".into(),
+                jobs: vec![devboy_core::PipelineJob {
+                    id: "1".into(),
+                    name: "compile".into(),
+                    status: devboy_core::PipelineStatus::Success,
+                    url: None,
+                    duration: Some(30),
+                }],
+            }],
+            failed_jobs: vec![devboy_core::FailedJob {
+                id: "2".into(),
+                name: "test".into(),
+                url: None,
+                error_snippet: Some("error: test failed".into()),
+            }],
+        }));
+        let result = format_output(output, None, None).unwrap();
+        assert!(result.contains("Pipeline 100"));
+        assert!(result.contains("failed"));
+        assert!(result.contains("main"));
+        assert!(result.contains("120s"));
+        assert!(result.contains("compile"));
+        assert!(result.contains("error: test failed"));
+    }
+
+    #[test]
+    fn test_format_job_log() {
+        let output = ToolOutput::JobLog(Box::new(devboy_core::JobLogOutput {
+            job_id: "202".into(),
+            job_name: Some("test".into()),
+            content: "error: assertion failed\nat src/test.rs:42".into(),
+            mode: "smart".into(),
+            total_lines: Some(100),
+        }));
+        let result = format_output(output, None, None).unwrap();
+        assert!(result.contains("Job Log"));
+        assert!(result.contains("202"));
+        assert!(result.contains("smart"));
+        assert!(result.contains("assertion failed"));
+    }
 }

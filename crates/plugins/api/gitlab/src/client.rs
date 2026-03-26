@@ -1929,5 +1929,244 @@ mod tests {
             assert!(result.is_err());
             assert!(matches!(result.unwrap_err(), Error::Unauthorized(_)));
         }
+
+        // =====================================================================
+        // Pipeline tests
+        // =====================================================================
+
+        #[tokio::test]
+        async fn test_get_pipeline_by_branch() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/v4/projects/123/pipelines")
+                    .query_param("ref", "main");
+                then.status(200).json_body(serde_json::json!([{
+                    "id": 500,
+                    "status": "failed",
+                    "ref": "main",
+                    "sha": "abc123",
+                    "web_url": "https://gitlab.com/project/-/pipelines/500",
+                    "duration": 120,
+                    "coverage": "85.5"
+                }]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/v4/projects/123/pipelines/500/jobs");
+                then.status(200).json_body(serde_json::json!([
+                    {
+                        "id": 601,
+                        "name": "build",
+                        "status": "success",
+                        "stage": "build",
+                        "web_url": "https://gitlab.com/project/-/jobs/601",
+                        "duration": 30.0
+                    },
+                    {
+                        "id": 602,
+                        "name": "test",
+                        "status": "failed",
+                        "stage": "test",
+                        "web_url": "https://gitlab.com/project/-/jobs/602",
+                        "duration": 90.0
+                    }
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/api/v4/projects/123/jobs/602/trace");
+                then.status(200)
+                    .body("Running tests...\nerror: assertion failed\nDone.\n");
+            });
+
+            let client = create_test_client(&server);
+            let input = devboy_core::GetPipelineInput {
+                branch: Some("main".into()),
+                mr_key: None,
+                include_failed_logs: true,
+            };
+
+            let result = client.get_pipeline(input).await.unwrap();
+
+            assert_eq!(result.id, "500");
+            assert_eq!(result.status, PipelineStatus::Failed);
+            assert_eq!(result.reference, "main");
+            assert_eq!(result.duration, Some(120));
+            assert_eq!(result.coverage, Some(85.5));
+            assert_eq!(result.summary.total, 2);
+            assert_eq!(result.summary.success, 1);
+            assert_eq!(result.summary.failed, 1);
+            assert_eq!(result.stages.len(), 2); // build + test
+            assert_eq!(result.failed_jobs.len(), 1);
+            assert_eq!(result.failed_jobs[0].name, "test");
+            assert!(result.failed_jobs[0]
+                .error_snippet
+                .as_ref()
+                .unwrap()
+                .contains("assertion failed"));
+        }
+
+        #[tokio::test]
+        async fn test_get_pipeline_by_mr_key() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/v4/projects/123/merge_requests/42/pipelines");
+                then.status(200).json_body(serde_json::json!([{
+                    "id": 501,
+                    "status": "success",
+                    "ref": "feat/test",
+                    "sha": "def456",
+                    "web_url": null,
+                    "duration": 60,
+                    "coverage": null
+                }]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/v4/projects/123/pipelines/501/jobs");
+                then.status(200).json_body(serde_json::json!([{
+                    "id": 701,
+                    "name": "lint",
+                    "status": "success",
+                    "stage": "verify",
+                    "duration": 15.0
+                }]));
+            });
+
+            let client = create_test_client(&server);
+            let input = devboy_core::GetPipelineInput {
+                branch: None,
+                mr_key: Some("mr#42".into()),
+                include_failed_logs: false,
+            };
+
+            let result = client.get_pipeline(input).await.unwrap();
+            assert_eq!(result.id, "501");
+            assert_eq!(result.status, PipelineStatus::Success);
+            assert_eq!(result.summary.total, 1);
+            assert_eq!(result.summary.success, 1);
+        }
+
+        #[tokio::test]
+        async fn test_get_job_logs_smart() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/v4/projects/123/jobs/602/trace");
+                then.status(200)
+                    .body("Step 1\nStep 2\nerror[E0308]: mismatched types\n  --> src/main.rs:10\nStep 5\n");
+            });
+
+            let client = create_test_client(&server);
+            let options = devboy_core::JobLogOptions {
+                mode: devboy_core::JobLogMode::Smart,
+            };
+
+            let result = client.get_job_logs("602", options).await.unwrap();
+            assert_eq!(result.mode, "smart");
+            assert!(result.content.contains("mismatched types"));
+        }
+
+        #[tokio::test]
+        async fn test_get_job_logs_search() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/api/v4/projects/123/jobs/602/trace");
+                then.status(200)
+                    .body("Line 1\nLine 2\nFAILED: test_foo\nLine 4\n");
+            });
+
+            let client = create_test_client(&server);
+            let options = devboy_core::JobLogOptions {
+                mode: devboy_core::JobLogMode::Search {
+                    pattern: "FAILED".into(),
+                    context: 1,
+                    max_matches: 5,
+                },
+            };
+
+            let result = client.get_job_logs("602", options).await.unwrap();
+            assert_eq!(result.mode, "search");
+            assert!(result.content.contains("FAILED: test_foo"));
+        }
+
+        #[tokio::test]
+        async fn test_get_job_logs_paginated() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/api/v4/projects/123/jobs/602/trace");
+                then.status(200).body("L1\nL2\nL3\nL4\nL5\n");
+            });
+
+            let client = create_test_client(&server);
+            let options = devboy_core::JobLogOptions {
+                mode: devboy_core::JobLogMode::Paginated {
+                    offset: 2,
+                    limit: 2,
+                },
+            };
+
+            let result = client.get_job_logs("602", options).await.unwrap();
+            assert_eq!(result.mode, "paginated");
+            assert!(result.content.contains("L3"));
+            assert!(result.content.contains("L4"));
+            assert!(!result.content.contains("L1"));
+        }
+    }
+
+    // =========================================================================
+    // Pipeline utility unit tests
+    // =========================================================================
+
+    #[test]
+    fn test_map_gl_pipeline_status() {
+        assert_eq!(map_gl_pipeline_status("success"), PipelineStatus::Success);
+        assert_eq!(map_gl_pipeline_status("failed"), PipelineStatus::Failed);
+        assert_eq!(map_gl_pipeline_status("running"), PipelineStatus::Running);
+        assert_eq!(map_gl_pipeline_status("pending"), PipelineStatus::Pending);
+        assert_eq!(map_gl_pipeline_status("canceled"), PipelineStatus::Canceled);
+        assert_eq!(map_gl_pipeline_status("skipped"), PipelineStatus::Skipped);
+        assert_eq!(map_gl_pipeline_status("manual"), PipelineStatus::Pending);
+        assert_eq!(map_gl_pipeline_status("unknown"), PipelineStatus::Unknown);
+    }
+
+    #[test]
+    fn test_strip_ansi_gitlab() {
+        assert_eq!(strip_ansi("\x1b[0K\x1b[32;1mRunning\x1b[0m"), "Running");
+        assert_eq!(strip_ansi("plain text"), "plain text");
+    }
+
+    #[test]
+    fn test_extract_errors_gitlab() {
+        let log = "section_start:build\nCompiling...\nerror: build failed\nsection_end:build\n";
+        let result = extract_errors(log, 10).unwrap();
+        assert!(result.contains("build failed"));
+    }
+
+    #[test]
+    fn test_extract_section() {
+        let log = "before\nsection_start:1234:build_script\ncompiling...\ndone\nsection_end:1234:build_script\nafter\n";
+        let result = extract_section(log, "build_script").unwrap();
+        assert!(result.contains("compiling"));
+        assert!(result.contains("done"));
+        assert!(!result.contains("before"));
+        assert!(!result.contains("after"));
+    }
+
+    #[test]
+    fn test_list_sections() {
+        let log = "section_start:111:prepare_script\nstuff\nsection_end:111:prepare_script\nsection_start:222:build_script\nmore\nsection_end:222:build_script\n";
+        let sections = list_sections(log);
+        assert!(sections.contains(&"prepare_script".to_string()));
+        assert!(sections.contains(&"build_script".to_string()));
     }
 }

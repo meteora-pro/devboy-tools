@@ -2271,5 +2271,296 @@ mod tests {
             assert_eq!(user.username, "testuser");
             assert_eq!(user.name, Some("Test User".to_string()));
         }
+
+        // =====================================================================
+        // Pipeline tests
+        // =====================================================================
+
+        fn sample_workflow_run_json() -> serde_json::Value {
+            serde_json::json!({
+                "id": 100,
+                "name": "CI",
+                "status": "completed",
+                "conclusion": "failure",
+                "head_branch": "feat/test",
+                "head_sha": "abc123def456",
+                "html_url": "https://github.com/owner/repo/actions/runs/100",
+                "run_started_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-01T00:01:00Z"
+            })
+        }
+
+        fn sample_jobs_json() -> serde_json::Value {
+            serde_json::json!({
+                "jobs": [
+                    {
+                        "id": 201,
+                        "name": "Build",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "html_url": "https://github.com/owner/repo/actions/runs/100/job/201",
+                        "started_at": "2024-01-01T00:00:00Z",
+                        "completed_at": "2024-01-01T00:00:30Z"
+                    },
+                    {
+                        "id": 202,
+                        "name": "Test",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "html_url": "https://github.com/owner/repo/actions/runs/100/job/202",
+                        "started_at": "2024-01-01T00:00:00Z",
+                        "completed_at": "2024-01-01T00:00:45Z"
+                    }
+                ]
+            })
+        }
+
+        #[tokio::test]
+        async fn test_get_pipeline_by_branch() {
+            let server = MockServer::start();
+
+            // Mock: completed runs for branch
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/actions/runs")
+                    .query_param("branch", "main")
+                    .query_param("status", "completed");
+                then.status(200).json_body(serde_json::json!({
+                    "workflow_runs": [sample_workflow_run_json()]
+                }));
+            });
+
+            // Mock: in-progress runs (empty)
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/actions/runs")
+                    .query_param("status", "in_progress");
+                then.status(200)
+                    .json_body(serde_json::json!({ "workflow_runs": [] }));
+            });
+
+            // Mock: jobs
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/actions/runs/100/jobs");
+                then.status(200).json_body(sample_jobs_json());
+            });
+
+            // Mock: failed job log
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/actions/jobs/202/logs");
+                then.status(200)
+                    .body("Step 1\nerror: test failed\nStep 3\n");
+            });
+
+            let client = create_test_client(&server);
+            let input = devboy_core::GetPipelineInput {
+                branch: Some("main".into()),
+                mr_key: None,
+                include_failed_logs: true,
+            };
+
+            let result = client.get_pipeline(input).await.unwrap();
+
+            assert_eq!(result.id, "100");
+            assert_eq!(result.status, PipelineStatus::Failed);
+            assert_eq!(result.reference, "main");
+            assert_eq!(result.summary.total, 2);
+            assert_eq!(result.summary.success, 1);
+            assert_eq!(result.summary.failed, 1);
+            assert_eq!(result.stages.len(), 1);
+            assert_eq!(result.stages[0].name, "CI");
+            assert_eq!(result.stages[0].jobs.len(), 2);
+            assert_eq!(result.failed_jobs.len(), 1);
+            assert_eq!(result.failed_jobs[0].name, "Test");
+            assert!(result.failed_jobs[0].error_snippet.is_some());
+        }
+
+        #[tokio::test]
+        async fn test_get_pipeline_by_mr_key() {
+            let server = MockServer::start();
+
+            // Mock: get PR to resolve branch
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/pulls/42");
+                then.status(200).json_body(sample_pr_json());
+            });
+
+            // Mock: completed runs
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/actions/runs")
+                    .query_param("status", "completed");
+                then.status(200).json_body(serde_json::json!({
+                    "workflow_runs": [sample_workflow_run_json()]
+                }));
+            });
+
+            // Mock: in-progress runs
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/actions/runs")
+                    .query_param("status", "in_progress");
+                then.status(200)
+                    .json_body(serde_json::json!({ "workflow_runs": [] }));
+            });
+
+            // Mock: jobs
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/actions/runs/100/jobs");
+                then.status(200).json_body(sample_jobs_json());
+            });
+
+            let client = create_test_client(&server);
+            let input = devboy_core::GetPipelineInput {
+                branch: None,
+                mr_key: Some("pr#42".into()),
+                include_failed_logs: false,
+            };
+
+            let result = client.get_pipeline(input).await.unwrap();
+            assert_eq!(result.id, "100");
+        }
+
+        #[tokio::test]
+        async fn test_get_job_logs_smart_mode() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/actions/jobs/202/logs");
+                then.status(200)
+                    .body("Building...\nCompiling...\nerror: cannot find module 'foo'\nDone.\n");
+            });
+
+            let client = create_test_client(&server);
+            let options = devboy_core::JobLogOptions {
+                mode: devboy_core::JobLogMode::Smart,
+            };
+
+            let result = client.get_job_logs("202", options).await.unwrap();
+            assert_eq!(result.job_id, "202");
+            assert_eq!(result.mode, "smart");
+            assert!(result.content.contains("cannot find module"));
+        }
+
+        #[tokio::test]
+        async fn test_get_job_logs_search_mode() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/actions/jobs/202/logs");
+                then.status(200)
+                    .body("Line 1\nLine 2\nERROR: something broke\nLine 4\nLine 5\n");
+            });
+
+            let client = create_test_client(&server);
+            let options = devboy_core::JobLogOptions {
+                mode: devboy_core::JobLogMode::Search {
+                    pattern: "ERROR".into(),
+                    context: 1,
+                    max_matches: 5,
+                },
+            };
+
+            let result = client.get_job_logs("202", options).await.unwrap();
+            assert_eq!(result.mode, "search");
+            assert!(result.content.contains("ERROR: something broke"));
+            assert!(result.content.contains("Match at line 3"));
+        }
+
+        #[tokio::test]
+        async fn test_get_job_logs_paginated_mode() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/actions/jobs/202/logs");
+                then.status(200)
+                    .body("Line 1\nLine 2\nLine 3\nLine 4\nLine 5\n");
+            });
+
+            let client = create_test_client(&server);
+            let options = devboy_core::JobLogOptions {
+                mode: devboy_core::JobLogMode::Paginated {
+                    offset: 1,
+                    limit: 2,
+                },
+            };
+
+            let result = client.get_job_logs("202", options).await.unwrap();
+            assert_eq!(result.mode, "paginated");
+            assert!(result.content.contains("Line 2"));
+            assert!(result.content.contains("Line 3"));
+            assert!(!result.content.contains("Line 1"));
+            assert!(!result.content.contains("Line 4"));
+        }
+    }
+
+    // =========================================================================
+    // Pipeline utility unit tests
+    // =========================================================================
+
+    #[test]
+    fn test_map_gh_status() {
+        assert_eq!(
+            map_gh_status(Some("completed"), Some("success")),
+            PipelineStatus::Success
+        );
+        assert_eq!(
+            map_gh_status(Some("completed"), Some("failure")),
+            PipelineStatus::Failed
+        );
+        assert_eq!(
+            map_gh_status(Some("in_progress"), None),
+            PipelineStatus::Running
+        );
+        assert_eq!(map_gh_status(Some("queued"), None), PipelineStatus::Pending);
+        assert_eq!(
+            map_gh_status(Some("completed"), Some("cancelled")),
+            PipelineStatus::Canceled
+        );
+        assert_eq!(map_gh_status(None, None), PipelineStatus::Unknown);
+    }
+
+    #[test]
+    fn test_strip_ansi() {
+        assert_eq!(strip_ansi("\x1b[31merror\x1b[0m"), "error");
+        assert_eq!(strip_ansi("no ansi here"), "no ansi here");
+        assert_eq!(strip_ansi("\x1b[1m\x1b[32mgreen\x1b[0m"), "green");
+    }
+
+    #[test]
+    fn test_extract_errors_finds_patterns() {
+        let log = "Step 1: build\nStep 2: test\nerror: test failed at line 42\nStep 4: done\n";
+        let result = extract_errors(log, 10).unwrap();
+        assert!(result.contains("error: test failed"));
+    }
+
+    #[test]
+    fn test_extract_errors_fallback_to_tail() {
+        let log = "Line 1\nLine 2\nLine 3\n";
+        let result = extract_errors(log, 10).unwrap();
+        assert!(result.contains("Line 3"));
+    }
+
+    #[test]
+    fn test_extract_errors_empty_log() {
+        assert!(extract_errors("", 10).is_none());
+    }
+
+    #[test]
+    fn test_estimate_duration() {
+        let d = estimate_duration(Some("2024-01-01T00:00:00Z"), Some("2024-01-01T00:01:30Z"));
+        assert_eq!(d, Some(90));
+    }
+
+    #[test]
+    fn test_estimate_duration_invalid() {
+        assert!(estimate_duration(None, Some("2024-01-01T00:00:00Z")).is_none());
+        assert!(estimate_duration(Some("not-a-date"), Some("2024-01-01T00:00:00Z")).is_none());
     }
 }
