@@ -8,7 +8,8 @@ use async_trait::async_trait;
 use crate::error::{Error, Result};
 use crate::types::{
     Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Discussion, FileDiff,
-    Issue, IssueFilter, MergeRequest, MrFilter, UpdateIssueInput, User,
+    GetPipelineInput, Issue, IssueFilter, JobLogOptions, JobLogOutput, MergeRequest, MrFilter,
+    PipelineInfo, UpdateIssueInput, User,
 };
 
 /// Provider for working with issues.
@@ -97,11 +98,37 @@ pub trait MergeRequestProvider: Send + Sync {
     }
 }
 
-/// Combined provider trait for services that support both issues and merge requests.
+/// Provider for CI/CD pipeline status and job logs.
+///
+/// Implemented by GitLab (Pipelines API) and GitHub (Actions API).
+/// All methods have default implementations returning `ProviderUnsupported`.
+#[async_trait]
+pub trait PipelineProvider: Send + Sync {
+    /// Get the provider name for logging.
+    fn provider_name(&self) -> &'static str;
+
+    /// Get pipeline status for a branch or MR/PR.
+    async fn get_pipeline(&self, _input: GetPipelineInput) -> Result<PipelineInfo> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_pipeline".to_string(),
+        })
+    }
+
+    /// Get job logs with search, pagination, or smart extraction.
+    async fn get_job_logs(&self, _job_id: &str, _options: JobLogOptions) -> Result<JobLogOutput> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_job_logs".to_string(),
+        })
+    }
+}
+
+/// Combined provider trait for services that support issues, merge requests, and pipelines.
 ///
 /// This is implemented by GitLab and GitHub providers.
 #[async_trait]
-pub trait Provider: IssueProvider + MergeRequestProvider {
+pub trait Provider: IssueProvider + MergeRequestProvider + PipelineProvider {
     /// Get the current authenticated user.
     async fn get_current_user(&self) -> Result<User>;
 }

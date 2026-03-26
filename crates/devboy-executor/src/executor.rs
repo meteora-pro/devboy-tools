@@ -1,6 +1,7 @@
 use devboy_core::{
-    CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Error, IssueFilter,
-    MergeRequestProvider, MrFilter, Result, UpdateIssueInput,
+    CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Error, GetPipelineInput,
+    IssueFilter, JobLogMode, JobLogOptions, MergeRequestProvider, MrFilter, PipelineProvider,
+    Result, UpdateIssueInput,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -105,6 +106,10 @@ async fn dispatch_tool(
         "create_merge_request_comment" => {
             execute_create_merge_request_comment(provider, args).await
         }
+
+        // Pipeline tools
+        "get_pipeline" => execute_get_pipeline(provider, args).await,
+        "get_job_logs" => execute_get_job_logs(provider, args).await,
 
         _ => Err(Error::NotFound(format!("unknown tool: {tool}"))),
     }
@@ -376,6 +381,75 @@ async fn execute_create_merge_request_comment(
     )))
 }
 
+// --- Pipeline tool handlers ---
+
+#[derive(Deserialize, Default)]
+struct GetPipelineParams {
+    branch: Option<String>,
+    #[serde(rename = "mrKey")]
+    mr_key: Option<String>,
+    #[serde(rename = "includeFailedLogs")]
+    include_failed_logs: Option<bool>,
+}
+
+async fn execute_get_pipeline(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetPipelineParams = serde_json::from_value(args.clone()).unwrap_or_default();
+    let input = GetPipelineInput {
+        branch: params.branch,
+        mr_key: params.mr_key,
+        include_failed_logs: params.include_failed_logs.unwrap_or(true),
+    };
+    let pipeline = PipelineProvider::get_pipeline(provider, input).await?;
+    Ok(ToolOutput::Pipeline(Box::new(pipeline)))
+}
+
+#[derive(Deserialize)]
+struct GetJobLogsParams {
+    #[serde(rename = "jobId")]
+    job_id: String,
+    pattern: Option<String>,
+    context: Option<usize>,
+    #[serde(rename = "maxMatches")]
+    max_matches: Option<usize>,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    full: Option<bool>,
+}
+
+async fn execute_get_job_logs(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetJobLogsParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid get_job_logs params: {e}")))?;
+
+    let mode = if let Some(pattern) = params.pattern {
+        JobLogMode::Search {
+            pattern,
+            context: params.context.unwrap_or(5),
+            max_matches: params.max_matches.unwrap_or(20),
+        }
+    } else if let Some(true) = params.full {
+        JobLogMode::Full {
+            max_lines: params.limit.unwrap_or(10000),
+        }
+    } else if params.offset.is_some() || params.limit.is_some() {
+        JobLogMode::Paginated {
+            offset: params.offset.unwrap_or(0),
+            limit: params.limit.unwrap_or(200),
+        }
+    } else {
+        JobLogMode::Smart
+    };
+
+    let options = JobLogOptions { mode };
+    let log_output = PipelineProvider::get_job_logs(provider, &params.job_id, options).await?;
+    Ok(ToolOutput::JobLog(Box::new(log_output)))
+}
+
 /// List of all tool names supported by the executor.
 pub const SUPPORTED_TOOLS: &[&str] = &[
     "get_issues",
@@ -390,6 +464,8 @@ pub const SUPPORTED_TOOLS: &[&str] = &[
     "get_merge_request_diffs",
     "create_merge_request",
     "create_merge_request_comment",
+    "get_pipeline",
+    "get_job_logs",
 ];
 
 #[cfg(test)]
@@ -397,8 +473,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use devboy_core::{
-        Comment, CreateMergeRequestInput, Discussion, FileDiff, Issue, IssueProvider,
-        MergeRequest, MergeRequestProvider, Provider, User,
+        Comment, CreateMergeRequestInput, Discussion, FileDiff, Issue, IssueProvider, MergeRequest,
+        MergeRequestProvider, Provider, User,
     };
 
     // --- Mock Provider ---
@@ -544,6 +620,14 @@ mod tests {
     }
 
     #[async_trait]
+    #[async_trait]
+    impl devboy_core::PipelineProvider for MockProvider {
+        fn provider_name(&self) -> &'static str {
+            "mock"
+        }
+    }
+
+    #[async_trait]
     impl Provider for MockProvider {
         async fn get_current_user(&self) -> devboy_core::Result<User> {
             Ok(User {
@@ -569,7 +653,7 @@ mod tests {
         assert!(SUPPORTED_TOOLS.contains(&"get_issues"));
         assert!(SUPPORTED_TOOLS.contains(&"get_merge_requests"));
         assert!(SUPPORTED_TOOLS.contains(&"create_merge_request_comment"));
-        assert_eq!(SUPPORTED_TOOLS.len(), 12);
+        assert_eq!(SUPPORTED_TOOLS.len(), 14);
     }
 
     // --- Issue tool dispatch tests ---

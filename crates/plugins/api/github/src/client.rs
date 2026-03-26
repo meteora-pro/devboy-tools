@@ -3,9 +3,12 @@
 use async_trait::async_trait;
 use devboy_core::{
     CodePosition, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
-    Discussion, Error, FileDiff, Issue, IssueFilter, IssueProvider, MergeRequest,
-    MergeRequestProvider, MrFilter, Provider, Result, UpdateIssueInput, User,
+    Discussion, Error, FailedJob, FileDiff, GetPipelineInput, Issue, IssueFilter, IssueProvider,
+    JobLogMode, JobLogOptions, JobLogOutput, MergeRequest, MergeRequestProvider, MrFilter,
+    PipelineInfo, PipelineJob, PipelineProvider, PipelineStage, PipelineStatus, PipelineSummary,
+    Provider, Result, UpdateIssueInput, User,
 };
+use serde::Deserialize;
 use tracing::{debug, warn};
 
 use crate::types::{
@@ -695,6 +698,370 @@ impl MergeRequestProvider for GitHubClient {
 
     fn provider_name(&self) -> &'static str {
         "github"
+    }
+}
+
+// =============================================================================
+// Pipeline Provider (GitHub Actions)
+// =============================================================================
+
+/// GitHub Actions workflow run.
+#[derive(Debug, Deserialize)]
+struct GhWorkflowRun {
+    id: u64,
+    name: Option<String>,
+    status: Option<String>,
+    conclusion: Option<String>,
+    #[allow(dead_code)]
+    head_branch: Option<String>,
+    head_sha: String,
+    html_url: String,
+    run_started_at: Option<String>,
+    updated_at: Option<String>,
+}
+
+/// GitHub Actions workflow runs list.
+#[derive(Debug, Deserialize)]
+struct GhWorkflowRuns {
+    workflow_runs: Vec<GhWorkflowRun>,
+}
+
+/// GitHub Actions job.
+#[derive(Debug, Deserialize)]
+struct GhJob {
+    id: u64,
+    name: String,
+    status: Option<String>,
+    conclusion: Option<String>,
+    html_url: Option<String>,
+    started_at: Option<String>,
+    completed_at: Option<String>,
+}
+
+/// GitHub Actions jobs list.
+#[derive(Debug, Deserialize)]
+struct GhJobs {
+    jobs: Vec<GhJob>,
+}
+
+fn map_gh_status(status: Option<&str>, conclusion: Option<&str>) -> PipelineStatus {
+    match (status, conclusion) {
+        (Some("completed"), Some("success")) => PipelineStatus::Success,
+        (Some("completed"), Some("failure")) => PipelineStatus::Failed,
+        (Some("completed"), Some("cancelled")) => PipelineStatus::Canceled,
+        (Some("completed"), Some("skipped")) => PipelineStatus::Skipped,
+        (Some("in_progress"), _) => PipelineStatus::Running,
+        (Some("queued"), _) | (Some("waiting"), _) => PipelineStatus::Pending,
+        _ => PipelineStatus::Unknown,
+    }
+}
+
+fn estimate_duration(started: Option<&str>, completed: Option<&str>) -> Option<u64> {
+    let start = started?.parse::<chrono::DateTime<chrono::Utc>>().ok()?;
+    let end = completed?.parse::<chrono::DateTime<chrono::Utc>>().ok()?;
+    Some(
+        end.signed_duration_since(start)
+            .num_seconds()
+            .unsigned_abs(),
+    )
+}
+
+/// Strip ANSI escape codes from log text.
+fn strip_ansi(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            // Skip until 'm' (SGR) or letter
+            while let Some(&next) = chars.peek() {
+                chars.next();
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// Extract error lines from job log using common patterns.
+fn extract_errors(log: &str, max_lines: usize) -> Option<String> {
+    let patterns = [
+        "error[",
+        "error:",
+        "FAILED",
+        "Error:",
+        "panic",
+        "FATAL",
+        "AssertionError",
+        "TypeError",
+        "Cannot find",
+        "not found",
+        "exit code",
+    ];
+    let lines: Vec<&str> = log.lines().collect();
+    let mut error_lines: Vec<String> = Vec::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        let stripped = strip_ansi(line);
+        if patterns.iter().any(|p| stripped.contains(p)) {
+            // Add context: 2 lines before + match + 2 lines after
+            let start = i.saturating_sub(2);
+            let end = (i + 3).min(lines.len());
+            for ctx_line_raw in &lines[start..end] {
+                let ctx_line = strip_ansi(ctx_line_raw).trim().to_string();
+                if !ctx_line.is_empty() && !error_lines.contains(&ctx_line) {
+                    error_lines.push(ctx_line);
+                }
+            }
+            if error_lines.len() >= max_lines {
+                break;
+            }
+        }
+    }
+
+    if error_lines.is_empty() {
+        // Fallback: last 10 non-empty lines
+        let tail: Vec<String> = lines
+            .iter()
+            .rev()
+            .filter_map(|l| {
+                let s = strip_ansi(l).trim().to_string();
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
+            })
+            .take(10)
+            .collect();
+        if tail.is_empty() {
+            None
+        } else {
+            Some(tail.into_iter().rev().collect::<Vec<_>>().join("\n"))
+        }
+    } else {
+        Some(error_lines.join("\n"))
+    }
+}
+
+#[async_trait]
+impl PipelineProvider for GitHubClient {
+    fn provider_name(&self) -> &'static str {
+        "github"
+    }
+
+    async fn get_pipeline(&self, input: GetPipelineInput) -> Result<PipelineInfo> {
+        // Resolve which branch to query
+        let branch = if let Some(ref mr_key) = input.mr_key {
+            // pr#123 → get PR head branch
+            let number = parse_pr_key(mr_key)?;
+            let pr_url = self.repo_url(&format!("/pulls/{number}"));
+            let pr: GitHubPullRequest = self.get(&pr_url).await?;
+            pr.head.ref_name
+        } else if let Some(ref branch) = input.branch {
+            branch.clone()
+        } else {
+            // Default: main branch
+            "main".to_string()
+        };
+
+        // Get latest workflow run for this branch
+        let runs_url = self.repo_url(&format!(
+            "/actions/runs?branch={}&per_page=1&status=completed",
+            urlencoding::encode(&branch)
+        ));
+        let runs: GhWorkflowRuns = self.get(&runs_url).await?;
+
+        // Also check in-progress runs
+        let active_runs_url = self.repo_url(&format!(
+            "/actions/runs?branch={}&per_page=1&status=in_progress",
+            urlencoding::encode(&branch)
+        ));
+        let active_runs: GhWorkflowRuns =
+            self.get(&active_runs_url).await.unwrap_or(GhWorkflowRuns {
+                workflow_runs: vec![],
+            });
+
+        // Pick the most recent run (prefer in-progress over completed)
+        let run = active_runs
+            .workflow_runs
+            .into_iter()
+            .chain(runs.workflow_runs)
+            .next()
+            .ok_or_else(|| {
+                Error::NotFound(format!("No workflow runs found for branch '{branch}'"))
+            })?;
+
+        let run_status = map_gh_status(run.status.as_deref(), run.conclusion.as_deref());
+
+        // Get jobs for this run
+        let jobs_url = self.repo_url(&format!("/actions/runs/{}/jobs?per_page=100", run.id));
+        let gh_jobs: GhJobs = self.get(&jobs_url).await?;
+
+        // Build summary
+        let mut summary = PipelineSummary {
+            total: gh_jobs.jobs.len() as u32,
+            ..Default::default()
+        };
+
+        // Group jobs by workflow name (use run name as single stage)
+        let mut jobs: Vec<PipelineJob> = Vec::new();
+        let mut failed_job_ids: Vec<(u64, String)> = Vec::new();
+
+        for job in &gh_jobs.jobs {
+            let status = map_gh_status(job.status.as_deref(), job.conclusion.as_deref());
+            match status {
+                PipelineStatus::Success => summary.success += 1,
+                PipelineStatus::Failed => {
+                    summary.failed += 1;
+                    failed_job_ids.push((job.id, job.name.clone()));
+                }
+                PipelineStatus::Running => summary.running += 1,
+                PipelineStatus::Pending => summary.pending += 1,
+                PipelineStatus::Canceled => summary.canceled += 1,
+                PipelineStatus::Skipped => summary.skipped += 1,
+                PipelineStatus::Unknown => {}
+            }
+
+            let duration =
+                estimate_duration(job.started_at.as_deref(), job.completed_at.as_deref());
+
+            jobs.push(PipelineJob {
+                id: job.id.to_string(),
+                name: job.name.clone(),
+                status,
+                url: job.html_url.clone(),
+                duration,
+            });
+        }
+
+        // Fetch error snippets for failed jobs (max 5)
+        let mut failed_jobs: Vec<FailedJob> = Vec::new();
+        if input.include_failed_logs {
+            for (job_id, job_name) in failed_job_ids.iter().take(5) {
+                let log_url = self.repo_url(&format!("/actions/jobs/{job_id}/logs"));
+                let error_snippet = match self.request(reqwest::Method::GET, &log_url).send().await
+                {
+                    Ok(resp) if resp.status().is_success() => {
+                        let log_text = resp.text().await.unwrap_or_default();
+                        extract_errors(&log_text, 20)
+                    }
+                    _ => None,
+                };
+                failed_jobs.push(FailedJob {
+                    id: job_id.to_string(),
+                    name: job_name.clone(),
+                    url: None,
+                    error_snippet,
+                });
+            }
+        }
+
+        let duration = estimate_duration(run.run_started_at.as_deref(), run.updated_at.as_deref());
+
+        let stage_name = run.name.unwrap_or_else(|| "CI".to_string());
+
+        Ok(PipelineInfo {
+            id: run.id.to_string(),
+            status: run_status,
+            reference: branch,
+            sha: run.head_sha,
+            url: Some(run.html_url),
+            duration,
+            coverage: None,
+            summary,
+            stages: vec![PipelineStage {
+                name: stage_name,
+                jobs,
+            }],
+            failed_jobs,
+        })
+    }
+
+    async fn get_job_logs(&self, job_id: &str, options: JobLogOptions) -> Result<JobLogOutput> {
+        let log_url = self.repo_url(&format!("/actions/jobs/{job_id}/logs"));
+        let resp = self
+            .request(reqwest::Method::GET, &log_url)
+            .send()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            return Err(Error::from_status(
+                resp.status().as_u16(),
+                format!("Failed to fetch job logs for job {job_id}"),
+            ));
+        }
+
+        let raw_log = resp
+            .text()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?;
+        let log = strip_ansi(&raw_log);
+        let lines: Vec<&str> = log.lines().collect();
+        let total_lines = lines.len();
+
+        let (content, mode_name) = match options.mode {
+            JobLogMode::Smart => {
+                let extracted = extract_errors(&log, 30).unwrap_or_else(|| {
+                    lines
+                        .iter()
+                        .rev()
+                        .take(20)
+                        .copied()
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                });
+                (extracted, "smart")
+            }
+            JobLogMode::Search {
+                ref pattern,
+                context,
+                max_matches,
+            } => {
+                let re = regex::Regex::new(pattern)
+                    .unwrap_or_else(|_| regex::Regex::new(&regex::escape(pattern)).unwrap());
+                let mut matches = Vec::new();
+                for (i, line) in lines.iter().enumerate() {
+                    if re.is_match(line) {
+                        let start = i.saturating_sub(context);
+                        let end = (i + context + 1).min(total_lines);
+                        matches.push(format!("--- Match at line {} ---", i + 1));
+                        for (j, ctx_line) in lines[start..end].iter().enumerate() {
+                            let line_num = start + j;
+                            let marker = if line_num == i { ">>>" } else { "   " };
+                            matches.push(format!("{} {}: {}", marker, line_num + 1, ctx_line));
+                        }
+                        if matches.len() / (context * 2 + 2) >= max_matches {
+                            break;
+                        }
+                    }
+                }
+                (matches.join("\n"), "search")
+            }
+            JobLogMode::Paginated { offset, limit } => {
+                let page: Vec<&str> = lines.iter().skip(offset).take(limit).copied().collect();
+                (page.join("\n"), "paginated")
+            }
+            JobLogMode::Full { max_lines } => {
+                let truncated: Vec<&str> = lines.iter().take(max_lines).copied().collect();
+                (truncated.join("\n"), "full")
+            }
+        };
+
+        Ok(JobLogOutput {
+            job_id: job_id.to_string(),
+            job_name: None,
+            content,
+            mode: mode_name.to_string(),
+            total_lines: Some(total_lines),
+        })
     }
 }
 
