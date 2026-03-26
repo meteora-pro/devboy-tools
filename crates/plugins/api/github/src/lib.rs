@@ -4,9 +4,11 @@
 //! pull requests, and other GitHub-specific functionality.
 
 mod client;
+pub mod enricher;
 mod types;
 
 pub use client::GitHubClient;
+pub use enricher::GitHubSchemaEnricher;
 pub use types::*;
 
 /// Default GitHub API URL.
