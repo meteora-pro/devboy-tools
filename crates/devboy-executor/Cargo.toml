@@ -1,6 +1,6 @@
 [package]
-name = "devboy-mcp"
-description = "MCP (Model Context Protocol) server for devboy-tools"
+name = "devboy-executor"
+description = "Tool execution engine with provider factory, enrichment pipeline, and typed output"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,22 +9,18 @@ authors.workspace = true
 
 [dependencies]
 devboy-core = { path = "../devboy-core" }
-devboy-executor = { path = "../devboy-executor" }
 devboy-gitlab = { path = "../plugins/api/gitlab" }
 devboy-github = { path = "../plugins/api/github" }
 devboy-clickup = { path = "../plugins/api/clickup" }
-devboy-storage = { path = "../devboy-storage" }
+devboy-jira = { path = "../plugins/api/jira" }
 devboy-pipeline = { path = "../plugins/pipeline" }
+
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+async-trait.workspace = true
 tracing.workspace = true
-reqwest.workspace = true
-reqwest-eventsource.workspace = true
-futures.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true
-async-trait.workspace = true
-httpmock.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["test-util"] }
