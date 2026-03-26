@@ -3000,4 +3000,96 @@ mod tests {
         };
         assert!(content.contains("Failed to create issue"));
     }
+
+    // =========================================================================
+    // Pipeline handler tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_get_pipeline_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+        let result = handler.execute("get_pipeline", None).await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_pipeline_provider_unsupported() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let args = serde_json::json!({"branch": "main"});
+        let result = handler.execute("get_pipeline", Some(args)).await;
+        // MockProvider returns ProviderUnsupported for pipeline
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_job_logs_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+        let args = serde_json::json!({"jobId": "123"});
+        let result = handler.execute("get_job_logs", Some(args)).await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_job_logs_missing_params() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let result = handler.execute("get_job_logs", None).await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_job_logs_provider_unsupported() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let args = serde_json::json!({"jobId": "123"});
+        let result = handler.execute("get_job_logs", Some(args)).await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_job_logs_with_pattern() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let args = serde_json::json!({"jobId": "123", "pattern": "ERROR"});
+        let result = handler.execute("get_job_logs", Some(args)).await;
+        assert_eq!(result.is_error, Some(true)); // unsupported
+    }
+
+    #[tokio::test]
+    async fn test_get_job_logs_paginated() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let args = serde_json::json!({"jobId": "123", "offset": 10, "limit": 50});
+        let result = handler.execute("get_job_logs", Some(args)).await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_job_logs_full() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let args = serde_json::json!({"jobId": "123", "full": true});
+        let result = handler.execute("get_job_logs", Some(args)).await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_pipeline_with_mr_key() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let args = serde_json::json!({"mrKey": "pr#1"});
+        let result = handler.execute("get_pipeline", Some(args)).await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_pipeline_default_params() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let result = handler
+            .execute("get_pipeline", Some(serde_json::json!({})))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+    }
 }
