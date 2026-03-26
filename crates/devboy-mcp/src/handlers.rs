@@ -1668,7 +1668,6 @@ mod tests {
     }
 
     #[async_trait]
-    #[async_trait]
     impl devboy_core::PipelineProvider for MockProvider {
         fn provider_name(&self) -> &'static str {
             "test"
@@ -1764,7 +1763,6 @@ mod tests {
         }
     }
 
-    #[async_trait]
     #[async_trait]
     impl devboy_core::PipelineProvider for ManyDiscussionsProvider {
         fn provider_name(&self) -> &'static str {
@@ -2779,7 +2777,6 @@ mod tests {
         }
     }
 
-    #[async_trait]
     #[async_trait]
     impl devboy_core::PipelineProvider for FailingProvider {
         fn provider_name(&self) -> &'static str {

@@ -510,7 +510,6 @@ mod tests {
     }
 
     #[async_trait]
-    #[async_trait]
     impl devboy_core::PipelineProvider for TestProvider {
         fn provider_name(&self) -> &'static str {
             "test"
@@ -1091,7 +1090,6 @@ mod tests {
         // Default implementations return ProviderUnsupported
     }
 
-    #[async_trait]
     #[async_trait]
     impl devboy_core::PipelineProvider for IssueOnlyTestProvider {
         fn provider_name(&self) -> &'static str {

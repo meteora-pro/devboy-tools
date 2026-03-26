@@ -76,7 +76,6 @@ impl MergeRequestProvider for ClickUpTestProvider {
 }
 
 #[async_trait]
-#[async_trait]
 impl devboy_core::PipelineProvider for ClickUpTestProvider {
     fn provider_name(&self) -> &'static str {
         "test"
@@ -186,7 +185,6 @@ impl MergeRequestProvider for GitLabTestProvider {
     }
 }
 
-#[async_trait]
 #[async_trait]
 impl devboy_core::PipelineProvider for GitLabTestProvider {
     fn provider_name(&self) -> &'static str {
