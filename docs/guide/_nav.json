@@ -15,6 +15,11 @@
     "activeMatch": "/configuration/proxy"
   },
   {
+    "text": "Architecture",
+    "link": "/architecture/",
+    "activeMatch": "/architecture/"
+  },
+  {
     "text": "Integrations",
     "link": "/integrations/github",
     "activeMatch": "/integrations/"
