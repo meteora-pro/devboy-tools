@@ -101,17 +101,40 @@ pub struct ProxyConfig {
     pub token: Option<String>,
 }
 
+/// Provider-specific metadata for dynamic schema enrichment.
+///
+/// Static providers (GitLab, GitHub) don't need metadata.
+/// Dynamic providers (ClickUp, Jira) receive metadata from external sources
+/// (e.g., DB in cloud mode, API in CLI mode) to populate enum values and custom fields.
+///
+/// Metadata is passed as `serde_json::Value` to avoid coupling devboy-executor
+/// to provider crate types. Each provider enricher deserializes its own metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderMetadata {
+    /// Raw metadata value — provider enricher will deserialize this.
+    pub data: serde_json::Value,
+}
+
+impl ProviderMetadata {
+    pub fn new(data: serde_json::Value) -> Self {
+        Self { data }
+    }
+}
+
 /// Runtime context passed to the executor for each tool call.
 ///
 /// Contains everything needed to create a provider and execute a tool:
 /// - `provider` — typed connection config with scope
 /// - `proxy` — optional proxy for self-hosted instances
+/// - `metadata` — optional provider metadata for dynamic enrichment
 /// - `extra` — cross-cutting concerns (tracing, feature flags, caller metadata)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdditionalContext {
     pub provider: ProviderConfig,
     #[serde(default)]
     pub proxy: Option<ProxyConfig>,
+    #[serde(default)]
+    pub metadata: Option<ProviderMetadata>,
     #[serde(default)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -164,6 +187,7 @@ mod tests {
                 extra: HashMap::new(),
             },
             proxy: None,
+            metadata: None,
             extra: HashMap::new(),
         };
         let json = serde_json::to_string(&ctx).unwrap();

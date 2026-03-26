@@ -23,6 +23,7 @@
 //! ```
 
 pub mod config;
+pub mod enricher;
 pub mod error;
 pub mod provider;
 pub mod types;
@@ -39,6 +40,9 @@ pub use types::{
     Discussion, FileDiff, Issue, IssueFilter, MergeRequest, MrFilter, Pagination, UpdateIssueInput,
     User,
 };
+
+// Re-export enricher traits and utilities
+pub use enricher::{sanitize_field_name, ToolEnricher, ToolSchema};
 
 // Re-export config types
 pub use config::{

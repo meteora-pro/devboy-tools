@@ -7,9 +7,9 @@ use serde_json::Value;
 use tracing::debug;
 
 use crate::context::AdditionalContext;
-use crate::enricher::ToolEnricher;
 use crate::factory;
 use crate::output::ToolOutput;
+use devboy_core::ToolEnricher;
 
 /// Tool execution engine.
 ///
@@ -65,14 +65,7 @@ impl Executor {
         let provider = factory::create_provider(&ctx.provider)?;
 
         // Dispatch to tool handler
-        let mut output = dispatch_tool(tool, &args, provider.as_ref()).await?;
-
-        // Post-execute: enrichers transform output
-        for enricher in &self.enrichers {
-            if enricher.supported_tools().contains(&tool) {
-                enricher.transform_output(tool, &mut output);
-            }
-        }
+        let output = dispatch_tool(tool, &args, provider.as_ref()).await?;
 
         Ok(output)
     }
