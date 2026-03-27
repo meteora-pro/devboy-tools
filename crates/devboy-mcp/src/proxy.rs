@@ -313,21 +313,17 @@ impl McpProxyClient {
             }
         }
 
-        let response = request
-            .json(&req)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::error!(
-                    "POST to {} failed: {} (is_timeout={}, is_connect={}, is_request={})",
-                    self.post_url,
-                    e,
-                    e.is_timeout(),
-                    e.is_connect(),
-                    e.is_request(),
-                );
-                devboy_core::Error::Http(format!("POST failed: {}", e))
-            })?;
+        let response = request.json(&req).send().await.map_err(|e| {
+            tracing::error!(
+                "POST to {} failed: {} (is_timeout={}, is_connect={}, is_request={})",
+                self.post_url,
+                e,
+                e.is_timeout(),
+                e.is_connect(),
+                e.is_request(),
+            );
+            devboy_core::Error::Http(format!("POST failed: {}", e))
+        })?;
 
         // Extract session ID from response headers (set during initialize)
         if method == "initialize" {
@@ -395,9 +391,7 @@ impl McpProxyClient {
         use futures::TryStreamExt;
         use tokio::io::AsyncBufReadExt;
 
-        let stream = response
-            .bytes_stream()
-            .map_err(std::io::Error::other);
+        let stream = response.bytes_stream().map_err(std::io::Error::other);
         let reader = tokio_util::io::StreamReader::new(stream);
         let mut lines = tokio::io::BufReader::new(reader).lines();
 
