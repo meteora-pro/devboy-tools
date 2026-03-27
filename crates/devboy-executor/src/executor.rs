@@ -1,7 +1,7 @@
 use devboy_core::{
     CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Error, GetPipelineInput,
-    IssueFilter, JobLogMode, JobLogOptions, MergeRequestProvider, MrFilter, PipelineProvider,
-    Result, UpdateIssueInput,
+    GetUsersOptions, IssueFilter, IssueProvider, JobLogMode, JobLogOptions, MergeRequestProvider,
+    MrFilter, PipelineProvider, Result, UpdateIssueInput,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -110,6 +110,16 @@ async fn dispatch_tool(
         // Pipeline tools
         "get_pipeline" => execute_get_pipeline(provider, args).await,
         "get_job_logs" => execute_get_job_logs(provider, args).await,
+
+        // Status / user / link tools
+        "get_available_statuses" => execute_get_available_statuses(provider).await,
+        "get_users" => execute_get_users(provider, args).await,
+        "link_issues" => execute_link_issues(provider, args).await,
+
+        // Epic tools (issue-based with "epic" label convention)
+        "get_epics" => execute_get_epics(provider, args).await,
+        "create_epic" => execute_create_epic(provider, args).await,
+        "update_epic" => execute_update_epic(provider, args).await,
 
         _ => Err(Error::NotFound(format!("unknown tool: {tool}"))),
     }
@@ -450,6 +460,151 @@ async fn execute_get_job_logs(
     Ok(ToolOutput::JobLog(Box::new(log_output)))
 }
 
+// --- Status / User / Link tool handlers ---
+
+async fn execute_get_available_statuses(
+    provider: &dyn devboy_core::Provider,
+) -> Result<ToolOutput> {
+    let statuses = IssueProvider::get_statuses(provider).await?;
+    Ok(ToolOutput::Statuses(statuses))
+}
+
+#[derive(Deserialize, Default)]
+struct GetUsersParams {
+    user_id: Option<String>,
+    project_key: Option<String>,
+    search: Option<String>,
+    include_inactive: Option<bool>,
+    start_at: Option<u32>,
+    max_results: Option<u32>,
+}
+
+async fn execute_get_users(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetUsersParams = serde_json::from_value(args.clone()).unwrap_or_default();
+    let options = GetUsersOptions {
+        user_id: params.user_id,
+        project_key: params.project_key,
+        search: params.search,
+        include_inactive: params.include_inactive,
+        start_at: params.start_at,
+        max_results: params.max_results,
+    };
+    let users = IssueProvider::get_users(provider, options).await?;
+    Ok(ToolOutput::Users(users))
+}
+
+#[derive(Deserialize)]
+struct LinkIssuesParams {
+    source_key: String,
+    target_key: String,
+    link_type: String,
+}
+
+async fn execute_link_issues(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: LinkIssuesParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid link_issues params: {e}")))?;
+    IssueProvider::link_issues(
+        provider,
+        &params.source_key,
+        &params.target_key,
+        &params.link_type,
+    )
+    .await?;
+    Ok(ToolOutput::Text(format!(
+        "Linked {} -> {} (type: {})",
+        params.source_key, params.target_key, params.link_type
+    )))
+}
+
+// --- Epic tool handlers ---
+
+#[derive(Deserialize, Default)]
+struct GetEpicsParams {
+    state: Option<String>,
+    search: Option<String>,
+    assignee: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+async fn execute_get_epics(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetEpicsParams = serde_json::from_value(args.clone()).unwrap_or_default();
+    let filter = IssueFilter {
+        state: params.state,
+        search: params.search,
+        labels: Some(vec!["epic".to_string()]),
+        assignee: params.assignee,
+        limit: params.limit.or(Some(20)),
+        offset: params.offset,
+        sort_by: None,
+        sort_order: None,
+    };
+    let issues = provider.get_issues(filter).await?;
+    Ok(ToolOutput::Issues(issues))
+}
+
+#[derive(Deserialize)]
+struct CreateEpicParams {
+    title: String,
+    description: Option<String>,
+    #[serde(default)]
+    labels: Vec<String>,
+    #[serde(default)]
+    assignees: Vec<String>,
+    priority: Option<String>,
+}
+
+async fn execute_create_epic(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: CreateEpicParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid create_epic params: {e}")))?;
+
+    // Ensure "epic" label is included
+    let mut labels = params.labels;
+    if !labels.iter().any(|l| l.eq_ignore_ascii_case("epic")) {
+        labels.push("epic".to_string());
+    }
+
+    let input = CreateIssueInput {
+        title: params.title,
+        description: params.description,
+        labels,
+        assignees: params.assignees,
+        priority: params.priority,
+    };
+    let issue = provider.create_issue(input).await?;
+    Ok(ToolOutput::SingleIssue(Box::new(issue)))
+}
+
+async fn execute_update_epic(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: UpdateIssueParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid update_epic params: {e}")))?;
+    let input = UpdateIssueInput {
+        title: params.title,
+        description: params.description,
+        state: params.state,
+        labels: params.labels,
+        assignees: params.assignees,
+        priority: params.priority,
+    };
+    let issue = provider.update_issue(&params.key, input).await?;
+    Ok(ToolOutput::SingleIssue(Box::new(issue)))
+}
+
 /// List of all tool names supported by the executor.
 pub const SUPPORTED_TOOLS: &[&str] = &[
     "get_issues",
@@ -466,6 +621,12 @@ pub const SUPPORTED_TOOLS: &[&str] = &[
     "create_merge_request_comment",
     "get_pipeline",
     "get_job_logs",
+    "get_available_statuses",
+    "get_users",
+    "link_issues",
+    "get_epics",
+    "create_epic",
+    "update_epic",
 ];
 
 #[cfg(test)]
@@ -652,7 +813,7 @@ mod tests {
         assert!(SUPPORTED_TOOLS.contains(&"get_issues"));
         assert!(SUPPORTED_TOOLS.contains(&"get_merge_requests"));
         assert!(SUPPORTED_TOOLS.contains(&"create_merge_request_comment"));
-        assert_eq!(SUPPORTED_TOOLS.len(), 14);
+        assert_eq!(SUPPORTED_TOOLS.len(), 20);
     }
 
     // --- Issue tool dispatch tests ---
@@ -909,5 +1070,82 @@ mod tests {
     fn test_executor_default() {
         let executor = Executor::default();
         assert!(executor.enrichers.is_empty());
+    }
+
+    // --- Status / User / Link / Epic dispatch tests ---
+
+    #[tokio::test]
+    async fn test_dispatch_get_available_statuses() {
+        let provider = MockProvider;
+        let result = dispatch_tool("get_available_statuses", &Value::Null, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Statuses(v) if v.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_users_unsupported() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"search": "test"});
+        let result = dispatch_tool("get_users", &args, &provider).await;
+        // MockProvider uses default impl which returns ProviderUnsupported
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_link_issues_unsupported() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "source_key": "gh#1",
+            "target_key": "gh#2",
+            "link_type": "blocks"
+        });
+        let result = dispatch_tool("link_issues", &args, &provider).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_epics() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"state": "open", "limit": 10});
+        let result = dispatch_tool("get_epics", &args, &provider).await.unwrap();
+        assert!(matches!(result, ToolOutput::Issues(v) if v.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_epics_empty_args() {
+        let provider = MockProvider;
+        let result = dispatch_tool("get_epics", &Value::Null, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Issues(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_create_epic() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"title": "New Epic", "description": "Epic description"});
+        let result = dispatch_tool("create_epic", &args, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::SingleIssue(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_update_epic() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"key": "gh#1", "title": "Updated Epic"});
+        let result = dispatch_tool("update_epic", &args, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::SingleIssue(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_link_issues_missing_params() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"source_key": "gh#1"});
+        let result = dispatch_tool("link_issues", &args, &provider).await;
+        assert!(result.is_err());
     }
 }

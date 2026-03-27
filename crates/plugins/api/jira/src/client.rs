@@ -5,17 +5,18 @@
 
 use async_trait::async_trait;
 use devboy_core::{
-    Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, MergeRequestProvider,
-    PipelineProvider, Provider, Result, UpdateIssueInput, User,
+    Comment, CreateIssueInput, Error, GetUsersOptions, Issue, IssueFilter, IssueProvider,
+    IssueStatus, MergeRequestProvider, PipelineProvider, Provider, Result, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
 use crate::types::{
-    AddCommentPayload, CreateIssueFields, CreateIssuePayload, CreateIssueResponse, IssueType,
-    JiraCloudSearchResponse, JiraComment, JiraCommentsResponse, JiraIssue, JiraIssueTypeStatuses,
-    JiraPriority, JiraProjectStatus, JiraSearchResponse, JiraStatus, JiraTransition,
-    JiraTransitionsResponse, JiraUser, PriorityName, ProjectKey, TransitionId, TransitionPayload,
-    UpdateIssueFields, UpdateIssuePayload,
+    AddCommentPayload, CreateIssueFields, CreateIssueLinkPayload, CreateIssuePayload,
+    CreateIssueResponse, IssueKeyRef, IssueLinkTypeName, IssueType, JiraCloudSearchResponse,
+    JiraComment, JiraCommentsResponse, JiraIssue, JiraIssueTypeStatuses, JiraPriority,
+    JiraProjectStatus, JiraSearchResponse, JiraStatus, JiraTransition, JiraTransitionsResponse,
+    JiraUser, PriorityName, ProjectKey, TransitionId, TransitionPayload, UpdateIssueFields,
+    UpdateIssuePayload,
 };
 
 /// Jira deployment flavor.
@@ -142,6 +143,32 @@ impl JiraClient {
             .map_err(|e| Error::Http(e.to_string()))?;
 
         self.handle_response(response).await
+    }
+
+    /// Make an authenticated POST request that returns no body (201/204).
+    async fn post_no_content<B: serde::Serialize>(&self, url: &str, body: &B) -> Result<()> {
+        debug!(url = url, "Jira POST (no content) request");
+
+        let response = self
+            .request(reqwest::Method::POST, url)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let status_code = status.as_u16();
+            let message = response.text().await.unwrap_or_default();
+            warn!(
+                status = status_code,
+                message = message,
+                "Jira API error response"
+            );
+            return Err(Error::from_status(status_code, message));
+        }
+
+        Ok(())
     }
 
     /// Make an authenticated PUT request (Jira PUT returns 204 No Content).
@@ -1010,6 +1037,99 @@ impl IssueProvider for JiraClient {
         let url = format!("{}/issue/{}/comment", self.base_url, jira_key);
         let jira_comment: JiraComment = self.post(&url, &payload).await?;
         Ok(map_comment(&jira_comment, self.flavor))
+    }
+
+    async fn get_statuses(&self) -> Result<Vec<IssueStatus>> {
+        let project_statuses = self.get_project_statuses().await?;
+
+        let statuses = project_statuses
+            .iter()
+            .enumerate()
+            .map(|(idx, s)| {
+                let category = s
+                    .status_category
+                    .as_ref()
+                    .map(|sc| match sc.key.as_str() {
+                        "new" => "open".to_string(),
+                        "indeterminate" => "in_progress".to_string(),
+                        "done" => "done".to_string(),
+                        other => other.to_string(),
+                    })
+                    .unwrap_or_else(|| "custom".to_string());
+
+                IssueStatus {
+                    id: s.id.clone().unwrap_or_else(|| s.name.clone()),
+                    name: s.name.clone(),
+                    category,
+                    color: None,
+                    order: Some(idx as u32),
+                }
+            })
+            .collect();
+
+        Ok(statuses)
+    }
+
+    async fn get_users(&self, options: GetUsersOptions) -> Result<Vec<User>> {
+        let start_at = options.start_at.unwrap_or(0);
+        let max_results = options.max_results.unwrap_or(50);
+
+        // Use assignable search if project_key is provided, otherwise generic user search
+        let url = if let Some(ref project_key) = options.project_key {
+            format!(
+                "{}/user/assignable/search?project={}&startAt={}&maxResults={}",
+                self.base_url, project_key, start_at, max_results
+            )
+        } else {
+            let query = options.search.as_deref().unwrap_or("");
+            format!(
+                "{}/user/search?query={}&startAt={}&maxResults={}",
+                self.base_url, query, start_at, max_results
+            )
+        };
+
+        let jira_users: Vec<JiraUser> = self.get(&url).await?;
+
+        let users = jira_users
+            .iter()
+            .map(|u| map_user(Some(u)).unwrap_or_default())
+            .collect();
+
+        Ok(users)
+    }
+
+    async fn link_issues(&self, source_key: &str, target_key: &str, link_type: &str) -> Result<()> {
+        let source_jira_key = parse_jira_key(source_key).to_string();
+        let target_jira_key = parse_jira_key(target_key).to_string();
+
+        let link_type_name = match link_type {
+            "blocks" => "Blocks",
+            "blocked_by" => "Blocks", // reversed direction
+            "relates_to" => "Relates",
+            "duplicates" => "Duplicate",
+            "clones" => "Cloners",
+            other => other,
+        };
+
+        // For "blocked_by", swap source and target so the direction is correct
+        let (outward_key, inward_key) = if link_type == "blocked_by" {
+            (target_jira_key, source_jira_key)
+        } else {
+            (source_jira_key, target_jira_key)
+        };
+
+        let payload = CreateIssueLinkPayload {
+            link_type: IssueLinkTypeName {
+                name: link_type_name.to_string(),
+            },
+            outward_issue: IssueKeyRef { key: outward_key },
+            inward_issue: IssueKeyRef { key: inward_key },
+        };
+
+        let url = format!("{}/issueLink", self.base_url);
+        self.post_no_content(&url, &payload).await?;
+
+        Ok(())
     }
 
     fn provider_name(&self) -> &'static str {

@@ -321,3 +321,34 @@ pub struct JiraProjectStatus {
     #[serde(default)]
     pub status_category: Option<JiraStatusCategory>,
 }
+
+// =============================================================================
+// Issue Link types
+// =============================================================================
+
+/// Request body for creating an issue link.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateIssueLinkPayload {
+    /// Link type
+    #[serde(rename = "type")]
+    pub link_type: IssueLinkTypeName,
+    /// Inward issue (target)
+    pub inward_issue: IssueKeyRef,
+    /// Outward issue (source)
+    pub outward_issue: IssueKeyRef,
+}
+
+/// Issue link type name reference.
+#[derive(Debug, Clone, Serialize)]
+pub struct IssueLinkTypeName {
+    /// Link type name (e.g., "Blocks", "Relates")
+    pub name: String,
+}
+
+/// Issue key reference for linking.
+#[derive(Debug, Clone, Serialize)]
+pub struct IssueKeyRef {
+    /// Issue key (e.g., "PROJ-123")
+    pub key: String,
+}

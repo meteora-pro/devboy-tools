@@ -37,9 +37,10 @@ pub use provider::{IssueProvider, MergeRequestProvider, PipelineProvider, Provid
 // Re-export all types
 pub use types::{
     CodePosition, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
-    Discussion, FailedJob, FileDiff, GetPipelineInput, Issue, IssueFilter, JobLogMode,
-    JobLogOptions, JobLogOutput, MergeRequest, MrFilter, Pagination, PipelineInfo, PipelineJob,
-    PipelineStage, PipelineStatus, PipelineSummary, UpdateIssueInput, User,
+    Discussion, FailedJob, FileDiff, GetPipelineInput, GetUsersOptions, Issue, IssueFilter,
+    IssueStatus, JobLogMode, JobLogOptions, JobLogOutput, MergeRequest, MrFilter, Pagination,
+    PipelineInfo, PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, Release,
+    ReleaseAsset, UpdateIssueInput, User,
 };
 
 // Re-export enricher traits and utilities
