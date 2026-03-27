@@ -26,6 +26,7 @@ pub mod config;
 pub mod enricher;
 pub mod error;
 pub mod provider;
+pub mod tool_category;
 pub mod types;
 
 // Re-export error types
@@ -45,6 +46,7 @@ pub use types::{
 
 // Re-export enricher traits and utilities
 pub use enricher::{sanitize_field_name, PropertySchema, ToolEnricher, ToolSchema};
+pub use tool_category::ToolCategory;
 
 // Re-export config types
 pub use config::{

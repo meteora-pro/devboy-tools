@@ -2,7 +2,7 @@
 //!
 //! Removes parameters not supported by GitLab and adds GitLab-specific enums.
 
-use devboy_core::{ToolEnricher, ToolSchema};
+use devboy_core::{ToolCategory, ToolEnricher, ToolSchema};
 use serde_json::Value;
 
 /// Static schema enricher for GitLab provider.
@@ -19,18 +19,6 @@ pub struct GitLabSchemaEnricher;
 
 const ISSUE_TOOLS: &[&str] = &["create_issue", "update_issue", "get_issues", "link_issues"];
 
-const ALL_TOOLS: &[&str] = &[
-    "create_issue",
-    "update_issue",
-    "get_issues",
-    "link_issues",
-    "get_merge_requests",
-    "get_merge_request_discussions",
-    "get_merge_request_diffs",
-    "create_merge_request",
-    "create_merge_request_comment",
-];
-
 /// Parameters to remove from issue tools.
 const ISSUE_REMOVE_PARAMS: &[&str] = &[
     "priority",
@@ -45,22 +33,9 @@ const ISSUE_REMOVE_PARAMS: &[&str] = &[
 /// Parameters to remove from get_issues specifically.
 const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery", "stateCategory"];
 
-/// Tools not supported by GitLab (no epics via API, no users search, statuses are binary).
-const GITLAB_UNSUPPORTED: &[&str] = &[
-    "get_epics",
-    "create_epic",
-    "update_epic",
-    "get_users",
-    "get_available_statuses",
-];
-
 impl ToolEnricher for GitLabSchemaEnricher {
-    fn supported_tools(&self) -> &[&str] {
-        ALL_TOOLS
-    }
-
-    fn unsupported_tools(&self) -> &[&str] {
-        GITLAB_UNSUPPORTED
+    fn supported_categories(&self) -> &[ToolCategory] {
+        &[ToolCategory::IssueTracker, ToolCategory::GitRepository]
     }
 
     fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema) {

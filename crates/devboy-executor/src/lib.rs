@@ -46,6 +46,7 @@ pub mod executor;
 pub mod factory;
 pub mod format;
 pub mod output;
+pub mod tools;
 
 // Re-export main types at crate root
 pub use context::{
@@ -58,3 +59,4 @@ pub use executor::{Executor, SUPPORTED_TOOLS};
 pub use factory::create_enricher;
 pub use format::{execute_and_format, format_output};
 pub use output::ToolOutput;
+pub use tools::ToolDefinition;

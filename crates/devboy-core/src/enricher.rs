@@ -8,18 +8,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+use crate::tool_category::ToolCategory;
+
 /// Trait for plugins that dynamically modify tool schemas and transform arguments.
 ///
 /// Enrichers are executed in registration order by the `Executor`.
+/// Each enricher declares which tool categories it supports — only tools
+/// from those categories will be enriched and shown in `list_tools()`.
 pub trait ToolEnricher: Send + Sync {
-    /// Which tools this enricher applies to.
-    fn supported_tools(&self) -> &[&str];
-
-    /// Tools to completely remove from listing (provider doesn't support them).
-    /// These tools won't appear in tools/list — saves LLM tokens.
-    fn unsupported_tools(&self) -> &[&str] {
-        &[]
-    }
+    /// Which tool categories this provider/enricher supports.
+    /// Tools from other categories won't be shown when this enricher is active.
+    fn supported_categories(&self) -> &[ToolCategory];
 
     /// Modify the tool schema during `tools/list`.
     fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema);
