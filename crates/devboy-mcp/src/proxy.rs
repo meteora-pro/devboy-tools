@@ -83,7 +83,8 @@ impl McpProxyClient {
 
         let http_client = reqwest::Client::builder()
             .default_headers(headers.clone())
-            .timeout(Duration::from_secs(120))
+            .timeout(Duration::from_secs(60))
+            .pool_max_idle_per_host(0)
             .build()
             .map_err(|e| devboy_core::Error::Http(format!("Failed to build HTTP client: {}", e)))?;
 
