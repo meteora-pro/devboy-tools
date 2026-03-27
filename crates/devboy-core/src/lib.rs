@@ -44,7 +44,7 @@ pub use types::{
 };
 
 // Re-export enricher traits and utilities
-pub use enricher::{sanitize_field_name, ToolEnricher, ToolSchema};
+pub use enricher::{sanitize_field_name, PropertySchema, ToolEnricher, ToolSchema};
 
 // Re-export config types
 pub use config::{

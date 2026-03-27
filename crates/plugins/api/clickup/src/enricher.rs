@@ -260,21 +260,29 @@ mod tests {
         enricher.enrich_schema("get_issues", &mut schema);
 
         let status = schema.properties.get("status").unwrap();
-        assert_eq!(status["enum"], json!(["To Do", "In Progress", "Done"]));
+        assert_eq!(
+            status.enum_values,
+            Some(vec!["To Do".into(), "In Progress".into(), "Done".into()])
+        );
     }
 
     #[test]
     fn test_clickup_enricher_adds_priority_enum() {
         let enricher = ClickUpSchemaEnricher::new(sample_metadata());
-        let mut schema = ToolSchema {
-            properties: serde_json::Map::new(),
-            required: vec![],
-        };
+        let mut schema = ToolSchema::new();
 
         enricher.enrich_schema("create_issue", &mut schema);
 
         let priority = schema.properties.get("priority").unwrap();
-        assert_eq!(priority["enum"], json!(["urgent", "high", "normal", "low"]));
+        assert_eq!(
+            priority.enum_values,
+            Some(vec![
+                "urgent".into(),
+                "high".into(),
+                "normal".into(),
+                "low".into()
+            ])
+        );
     }
 
     #[test]
@@ -298,10 +306,13 @@ mod tests {
         assert!(schema.properties.contains_key("cf_risk_level"));
 
         let risk = schema.properties.get("cf_risk_level").unwrap();
-        assert_eq!(risk["enum"], json!(["Low", "Medium", "High"]));
+        assert_eq!(
+            risk.enum_values,
+            Some(vec!["Low".into(), "Medium".into(), "High".into()])
+        );
 
         let points = schema.properties.get("cf_story_points").unwrap();
-        assert_eq!(points["type"], "number");
+        assert_eq!(points.schema_type, "number");
     }
 
     #[test]
@@ -386,15 +397,17 @@ mod tests {
     #[test]
     fn test_clickup_enricher_link_types() {
         let enricher = ClickUpSchemaEnricher::new(sample_metadata());
-        let mut schema = ToolSchema {
-            properties: serde_json::Map::new(),
-            required: vec![],
-        };
+        let mut schema = ToolSchema::new();
         enricher.enrich_schema("link_issues", &mut schema);
         let lt = schema.properties.get("link_type").unwrap();
         assert_eq!(
-            lt["enum"],
-            json!(["blocks", "blocked_by", "relates_to", "subtask"])
+            lt.enum_values,
+            Some(vec![
+                "blocks".into(),
+                "blocked_by".into(),
+                "relates_to".into(),
+                "subtask".into()
+            ])
         );
     }
 

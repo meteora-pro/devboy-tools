@@ -44,8 +44,6 @@ impl ToolEnricher for PipelineFormatEnricher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
     #[test]
     fn test_pipeline_format_enricher() {
         let enricher = PipelineFormatEnricher;
@@ -53,13 +51,13 @@ mod tests {
         assert!(enricher.supported_tools().contains(&"get_issues"));
         assert!(enricher.supported_tools().contains(&"get_merge_requests"));
 
-        let mut schema = ToolSchema {
-            properties: serde_json::Map::new(),
-            required: vec![],
-        };
+        let mut schema = ToolSchema::new();
         enricher.enrich_schema("get_issues", &mut schema);
 
         let format = schema.properties.get("format").unwrap();
-        assert_eq!(format["enum"], json!(["markdown", "compact", "json"]));
+        assert_eq!(
+            format.enum_values,
+            Some(vec!["markdown".into(), "compact".into(), "json".into()])
+        );
     }
 }

@@ -113,17 +113,18 @@ mod tests {
     #[test]
     fn test_gitlab_enricher_adds_link_types() {
         let enricher = GitLabSchemaEnricher;
-        let mut schema = ToolSchema {
-            properties: serde_json::Map::new(),
-            required: vec![],
-        };
+        let mut schema = ToolSchema::new();
 
         enricher.enrich_schema("link_issues", &mut schema);
 
         let link_type = schema.properties.get("link_type").unwrap();
         assert_eq!(
-            link_type["enum"],
-            json!(["relates_to", "blocks", "is_blocked_by"])
+            link_type.enum_values,
+            Some(vec![
+                "relates_to".into(),
+                "blocks".into(),
+                "is_blocked_by".into()
+            ])
         );
     }
 
