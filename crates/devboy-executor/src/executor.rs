@@ -63,7 +63,7 @@ impl Executor {
         );
 
         // Create provider from context
-        let provider = factory::create_provider(&ctx.provider)?;
+        let provider = factory::create_provider(&ctx.provider, ctx.proxy.as_ref())?;
 
         // Dispatch to tool handler
         let output = dispatch_tool(tool, &args, provider.as_ref()).await?;
