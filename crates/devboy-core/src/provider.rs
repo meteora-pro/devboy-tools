@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use crate::error::{Error, Result};
 use crate::types::{
     Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Discussion, FileDiff,
-    GetPipelineInput, Issue, IssueFilter, JobLogOptions, JobLogOutput, MergeRequest, MrFilter,
-    PipelineInfo, UpdateIssueInput, User,
+    GetPipelineInput, GetUsersOptions, Issue, IssueFilter, IssueStatus, JobLogOptions,
+    JobLogOutput, MergeRequest, MrFilter, PipelineInfo, Release, UpdateIssueInput, User,
 };
 
 /// Provider for working with issues.
@@ -34,6 +34,33 @@ pub trait IssueProvider: Send + Sync {
 
     /// Add a comment to an issue.
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment>;
+
+    /// Get available statuses for the issue tracker.
+    /// Returns empty vec if not supported (GitLab/GitHub return hardcoded states).
+    async fn get_statuses(&self) -> Result<Vec<IssueStatus>> {
+        Ok(vec![])
+    }
+
+    /// Link two issues together.
+    async fn link_issues(
+        &self,
+        _source_key: &str,
+        _target_key: &str,
+        _link_type: &str,
+    ) -> Result<()> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "link_issues".to_string(),
+        })
+    }
+
+    /// Get users from the issue tracker (Jira only).
+    async fn get_users(&self, _options: GetUsersOptions) -> Result<Vec<User>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_users".to_string(),
+        })
+    }
 
     /// Get the provider name for logging (e.g., "gitlab", "github").
     fn provider_name(&self) -> &'static str;
@@ -94,6 +121,14 @@ pub trait MergeRequestProvider: Send + Sync {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "create_merge_request".to_string(),
+        })
+    }
+
+    /// Get releases/tags for the repository.
+    async fn get_releases(&self) -> Result<Vec<Release>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_releases".to_string(),
         })
     }
 }

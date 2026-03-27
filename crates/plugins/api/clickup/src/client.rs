@@ -2,8 +2,8 @@
 
 use async_trait::async_trait;
 use devboy_core::{
-    Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, MergeRequestProvider,
-    PipelineProvider, Provider, Result, UpdateIssueInput, User,
+    Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, IssueStatus,
+    MergeRequestProvider, PipelineProvider, Provider, Result, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
@@ -179,6 +179,17 @@ impl ClickUpClient {
                     status_type, self.list_id
                 ))
             })
+    }
+
+    /// Resolve a task key to its raw ClickUp task ID.
+    /// For `CU-{id}` keys, strips the prefix.
+    /// For custom IDs (e.g., `DEV-42`), returns as-is (ClickUp dependency API accepts custom IDs).
+    fn resolve_task_id(&self, key: &str) -> Result<String> {
+        if let Some(raw_id) = key.strip_prefix("CU-") {
+            Ok(raw_id.to_string())
+        } else {
+            Ok(key.to_string())
+        }
     }
 
     /// Build the URL for accessing a task by key.
@@ -568,6 +579,62 @@ impl IssueProvider for ClickUpClient {
             updated_at: None,
             position: None,
         })
+    }
+
+    async fn get_statuses(&self) -> Result<Vec<IssueStatus>> {
+        let url = format!("{}/list/{}", self.base_url, self.list_id);
+        let list_info: ClickUpListInfo = self.get(&url).await?;
+
+        let statuses = list_info
+            .statuses
+            .iter()
+            .enumerate()
+            .map(|(idx, s)| {
+                let category = match s.status_type.as_deref() {
+                    Some("open") => "open".to_string(),
+                    Some("closed") | Some("done") => "done".to_string(),
+                    Some("custom") => "in_progress".to_string(),
+                    _ => "custom".to_string(),
+                };
+                IssueStatus {
+                    id: s.status.clone(),
+                    name: s.status.clone(),
+                    category,
+                    color: s.color.clone(),
+                    order: s.orderindex.or(Some(idx as u32)),
+                }
+            })
+            .collect();
+
+        Ok(statuses)
+    }
+
+    async fn link_issues(&self, source_key: &str, target_key: &str, link_type: &str) -> Result<()> {
+        let source_id = self.resolve_task_id(source_key)?;
+        let target_id = self.resolve_task_id(target_key)?;
+
+        match link_type {
+            "blocks" => {
+                // source blocks target → target depends_on source
+                let url = format!("{}/task/{}/dependency", self.base_url, target_id);
+                let body = serde_json::json!({ "depends_on": source_id });
+                let _: serde_json::Value = self.post(&url, &body).await?;
+            }
+            "blocked_by" => {
+                // source is blocked by target → source depends_on target
+                let url = format!("{}/task/{}/dependency", self.base_url, source_id);
+                let body = serde_json::json!({ "depends_on": target_id });
+                let _: serde_json::Value = self.post(&url, &body).await?;
+            }
+            _ => {
+                // Link tasks (non-dependency relationship)
+                let url = format!("{}/task/{}/link/{}", self.base_url, source_id, target_id);
+                let body = serde_json::json!({});
+                let _: serde_json::Value = self.post(&url, &body).await?;
+            }
+        }
+
+        Ok(())
     }
 
     fn provider_name(&self) -> &'static str {

@@ -1,4 +1,7 @@
-use devboy_core::{Comment, Discussion, FileDiff, Issue, JobLogOutput, MergeRequest, PipelineInfo};
+use devboy_core::{
+    Comment, Discussion, FileDiff, Issue, IssueStatus, JobLogOutput, MergeRequest, PipelineInfo,
+    User,
+};
 
 /// Typed result of tool execution.
 ///
@@ -25,6 +28,10 @@ pub enum ToolOutput {
     Pipeline(Box<PipelineInfo>),
     /// Job log output
     JobLog(Box<JobLogOutput>),
+    /// Available issue statuses
+    Statuses(Vec<IssueStatus>),
+    /// List of users
+    Users(Vec<User>),
     /// Plain text result (e.g., "Comment created successfully")
     Text(String),
 }
@@ -38,6 +45,8 @@ impl ToolOutput {
             Self::Diffs(v) => v.len(),
             Self::Issues(v) => v.len(),
             Self::Comments(v) => v.len(),
+            Self::Statuses(v) => v.len(),
+            Self::Users(v) => v.len(),
             Self::SingleMergeRequest(_)
             | Self::SingleIssue(_)
             | Self::Pipeline(_)
@@ -58,6 +67,8 @@ impl ToolOutput {
             Self::Comments(_) => "comments",
             Self::Pipeline(_) => "pipeline",
             Self::JobLog(_) => "job_log",
+            Self::Statuses(_) => "statuses",
+            Self::Users(_) => "users",
             Self::Text(_) => "text",
         }
     }
@@ -66,7 +77,7 @@ impl ToolOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use devboy_core::{Issue, MergeRequest};
+    use devboy_core::{Issue, IssueStatus, MergeRequest, User};
 
     fn issue() -> Issue {
         Issue {
@@ -144,6 +155,30 @@ mod tests {
             .item_count(),
             1
         );
+        assert_eq!(
+            ToolOutput::Statuses(vec![IssueStatus {
+                id: "1".into(),
+                name: "Open".into(),
+                category: "open".into(),
+                color: None,
+                order: None,
+            }])
+            .item_count(),
+            1
+        );
+        assert_eq!(ToolOutput::Statuses(vec![]).item_count(), 0);
+        assert_eq!(
+            ToolOutput::Users(vec![User {
+                id: "1".into(),
+                username: "test".into(),
+                name: None,
+                email: None,
+                avatar_url: None,
+            }])
+            .item_count(),
+            1
+        );
+        assert_eq!(ToolOutput::Users(vec![]).item_count(), 0);
         assert_eq!(ToolOutput::Text("x".into()).item_count(), 1);
     }
 
@@ -192,6 +227,8 @@ mod tests {
             .type_name(),
             "job_log"
         );
+        assert_eq!(ToolOutput::Statuses(vec![]).type_name(), "statuses");
+        assert_eq!(ToolOutput::Users(vec![]).type_name(), "users");
         assert_eq!(ToolOutput::Text("x".into()).type_name(), "text");
     }
 }

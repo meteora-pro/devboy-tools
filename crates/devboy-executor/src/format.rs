@@ -69,8 +69,57 @@ pub fn format_output(
         }
         ToolOutput::Pipeline(info) => Ok(format_pipeline(&info)),
         ToolOutput::JobLog(log) => Ok(format_job_log(&log)),
+        ToolOutput::Statuses(statuses) => Ok(format_statuses(&statuses)),
+        ToolOutput::Users(users) => Ok(format_users(&users)),
         ToolOutput::Text(text) => Ok(text),
     }
+}
+
+/// Format issue statuses as a markdown table.
+fn format_statuses(statuses: &[devboy_core::IssueStatus]) -> String {
+    if statuses.is_empty() {
+        return "No statuses found.".to_string();
+    }
+
+    let mut output = String::from("# Available Statuses\n\n");
+    output.push_str("| ID | Name | Category | Color | Order |\n");
+    output.push_str("|---|---|---|---|---|\n");
+
+    for s in statuses {
+        let color = s.color.as_deref().unwrap_or("-");
+        let order = s
+            .order
+            .map(|o| o.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        output.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            s.id, s.name, s.category, color, order
+        ));
+    }
+
+    output
+}
+
+/// Format users as a markdown table.
+fn format_users(users: &[devboy_core::User]) -> String {
+    if users.is_empty() {
+        return "No users found.".to_string();
+    }
+
+    let mut output = String::from("# Users\n\n");
+    output.push_str("| ID | Username | Name | Email |\n");
+    output.push_str("|---|---|---|---|\n");
+
+    for u in users {
+        let name = u.name.as_deref().unwrap_or("-");
+        let email = u.email.as_deref().unwrap_or("-");
+        output.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            u.id, u.username, name, email
+        ));
+    }
+
+    output
 }
 
 /// Format pipeline status as markdown.

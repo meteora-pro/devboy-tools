@@ -331,6 +331,63 @@ mod tests {
 }
 
 // =============================================================================
+// Issue Status
+// =============================================================================
+
+/// Available status in an issue tracker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueStatus {
+    pub id: String,
+    pub name: String,
+    /// Normalized category for cross-provider compatibility.
+    pub category: String,
+    pub color: Option<String>,
+    pub order: Option<u32>,
+}
+
+/// Options for get_users.
+#[derive(Debug, Clone, Default)]
+pub struct GetUsersOptions {
+    pub user_id: Option<String>,
+    pub project_key: Option<String>,
+    pub search: Option<String>,
+    pub include_inactive: Option<bool>,
+    pub start_at: Option<u32>,
+    pub max_results: Option<u32>,
+}
+
+// =============================================================================
+// Releases
+// =============================================================================
+
+/// A release/tag from a git repository.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Release {
+    pub id: String,
+    pub key: String,
+    pub tag_name: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub source: String,
+    pub url: Option<String>,
+    pub author: Option<User>,
+    pub is_draft: Option<bool>,
+    pub is_prerelease: Option<bool>,
+    pub assets: Vec<ReleaseAsset>,
+    pub created_at: Option<String>,
+    pub published_at: Option<String>,
+}
+
+/// Asset attached to a release.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReleaseAsset {
+    pub name: String,
+    pub url: String,
+    pub size: Option<u64>,
+    pub download_count: Option<u64>,
+}
+
+// =============================================================================
 // Pipeline / CI
 // =============================================================================
 

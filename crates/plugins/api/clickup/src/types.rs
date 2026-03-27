@@ -115,12 +115,30 @@ pub struct ClickUpListStatus {
     pub status: String,
     #[serde(default, rename = "type")]
     pub status_type: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub orderindex: Option<u32>,
 }
 
 /// Partial response from GET /list/{list_id} (only statuses needed).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClickUpListInfo {
     pub statuses: Vec<ClickUpListStatus>,
+}
+
+/// Response from POST /task/{task_id}/dependency.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClickUpDependencyResponse {
+    #[serde(default)]
+    pub dependency: Option<serde_json::Value>,
+}
+
+/// Response from POST /task/{task_id}/link/{other_task_id}.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClickUpLinkResponse {
+    #[serde(default)]
+    pub link: Option<serde_json::Value>,
 }
 
 // =============================================================================
