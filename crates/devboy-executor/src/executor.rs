@@ -498,8 +498,11 @@ async fn execute_get_users(
 
 #[derive(Deserialize)]
 struct LinkIssuesParams {
+    #[serde(alias = "sourceIssueKey", alias = "issueKey1")]
     source_key: String,
+    #[serde(alias = "targetIssueKey", alias = "issueKey2")]
     target_key: String,
+    #[serde(alias = "linkType")]
     link_type: String,
 }
 
