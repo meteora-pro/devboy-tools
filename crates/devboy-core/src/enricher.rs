@@ -3,13 +3,10 @@
 //! This module defines the `ToolEnricher` trait and `ToolSchema` struct
 //! that enable dynamic modification of MCP tool schemas. Provider crates
 //! implement `ToolEnricher` to adapt tool schemas to their capabilities.
-//!
-//! Three categories of enrichers use the same trait:
-//! 1. **Provider enrichers** — adapt tools to provider capabilities
-//! 2. **Pipeline enrichers** — add output control parameters
-//! 3. **Custom enrichers** — third-party plugins
 
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashMap;
 
 /// Trait for plugins that dynamically modify tool schemas and transform arguments.
 ///
@@ -18,6 +15,12 @@ pub trait ToolEnricher: Send + Sync {
     /// Which tools this enricher applies to.
     fn supported_tools(&self) -> &[&str];
 
+    /// Tools to completely remove from listing (provider doesn't support them).
+    /// These tools won't appear in tools/list — saves LLM tokens.
+    fn unsupported_tools(&self) -> &[&str] {
+        &[]
+    }
+
     /// Modify the tool schema during `tools/list`.
     fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema);
 
@@ -25,77 +28,204 @@ pub trait ToolEnricher: Send + Sync {
     fn transform_args(&self, tool_name: &str, args: &mut Value);
 }
 
-/// Mutable wrapper around a JSON Schema for a tool's input parameters.
+/// JSON Schema property definition for a tool parameter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PropertySchema {
+    /// JSON Schema type: "string", "number", "integer", "boolean", "array", "object"
+    #[serde(rename = "type")]
+    pub schema_type: String,
+
+    /// Human-readable description of this parameter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    /// Allowed values (enum constraint).
+    #[serde(rename = "enum", skip_serializing_if = "Option::is_none")]
+    pub enum_values: Option<Vec<String>>,
+
+    /// Default value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<Value>,
+
+    /// Minimum value (for number/integer).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimum: Option<f64>,
+
+    /// Maximum value (for number/integer).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum: Option<f64>,
+
+    /// Items schema (for array type).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<Box<PropertySchema>>,
+
+    /// Marker that this field was added/modified by an enricher.
+    #[serde(rename = "x-enriched", skip_serializing_if = "Option::is_none")]
+    pub enriched: Option<bool>,
+}
+
+impl PropertySchema {
+    /// Create a string property.
+    pub fn string(description: &str) -> Self {
+        Self {
+            schema_type: "string".into(),
+            description: Some(description.into()),
+            ..Default::default()
+        }
+    }
+
+    /// Create a string property with enum values.
+    pub fn string_enum(values: &[&str], description: &str) -> Self {
+        Self {
+            schema_type: "string".into(),
+            description: Some(description.into()),
+            enum_values: Some(values.iter().map(|s| s.to_string()).collect()),
+            enriched: Some(true),
+            ..Default::default()
+        }
+    }
+
+    /// Create a number property.
+    pub fn number(description: &str) -> Self {
+        Self {
+            schema_type: "number".into(),
+            description: Some(description.into()),
+            ..Default::default()
+        }
+    }
+
+    /// Create an integer property with optional min/max.
+    pub fn integer(description: &str, min: Option<f64>, max: Option<f64>) -> Self {
+        Self {
+            schema_type: "integer".into(),
+            description: Some(description.into()),
+            minimum: min,
+            maximum: max,
+            ..Default::default()
+        }
+    }
+
+    /// Create a boolean property.
+    pub fn boolean(description: &str) -> Self {
+        Self {
+            schema_type: "boolean".into(),
+            description: Some(description.into()),
+            ..Default::default()
+        }
+    }
+
+    /// Create an array property with items schema.
+    pub fn array(items: PropertySchema, description: &str) -> Self {
+        Self {
+            schema_type: "array".into(),
+            description: Some(description.into()),
+            items: Some(Box::new(items)),
+            ..Default::default()
+        }
+    }
+}
+
+impl Default for PropertySchema {
+    fn default() -> Self {
+        Self {
+            schema_type: "string".into(),
+            description: None,
+            enum_values: None,
+            default: None,
+            minimum: None,
+            maximum: None,
+            items: None,
+            enriched: None,
+        }
+    }
+}
+
+/// Tool input schema with typed property definitions.
 ///
-/// Provides convenience methods for common enrichment operations.
-/// Prefer enum strings over free-form strings to help LLMs.
-#[derive(Debug, Clone)]
+/// Represents a JSON Schema `{ type: "object", properties: {...}, required: [...] }`.
+/// Uses `PropertySchema` for type-safe parameter definitions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSchema {
-    pub properties: serde_json::Map<String, Value>,
+    /// Parameter definitions keyed by parameter name.
+    pub properties: HashMap<String, PropertySchema>,
+    /// List of required parameter names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required: Vec<String>,
 }
 
 impl ToolSchema {
-    /// Create from a JSON Schema value.
-    pub fn from_json(schema: &Value) -> Self {
-        let properties = schema
-            .get("properties")
-            .and_then(|p| p.as_object())
-            .cloned()
-            .unwrap_or_default();
-        let required = schema
-            .get("required")
-            .and_then(|r| r.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
+    /// Create an empty schema.
+    pub fn new() -> Self {
         Self {
-            properties,
-            required,
+            properties: HashMap::new(),
+            required: Vec::new(),
         }
     }
 
-    /// Convert back to a JSON Schema value.
+    /// Create from a JSON Schema value (for backward compatibility).
+    pub fn from_json(schema: &Value) -> Self {
+        serde_json::from_value::<ToolSchema>(schema.clone()).unwrap_or_else(|_| {
+            // Fallback: manual parsing for non-standard JSON
+            let properties = schema
+                .get("properties")
+                .and_then(|p| {
+                    serde_json::from_value::<HashMap<String, PropertySchema>>(p.clone()).ok()
+                })
+                .unwrap_or_default();
+            let required = schema
+                .get("required")
+                .and_then(|r| r.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Self {
+                properties,
+                required,
+            }
+        })
+    }
+
+    /// Convert to a JSON Schema value.
     pub fn to_json(&self) -> Value {
-        let mut schema = json!({
+        let mut schema = serde_json::json!({
             "type": "object",
-            "properties": Value::Object(self.properties.clone()),
+            "properties": self.properties,
         });
         if !self.required.is_empty() {
-            schema["required"] = json!(self.required);
+            schema["required"] = serde_json::json!(self.required);
         }
         schema
     }
 
-    /// Add a string parameter with enum values (preferred over free-form strings).
+    /// Add a string parameter with enum values.
     pub fn add_enum_param(&mut self, name: &str, values: &[&str], description: &str) {
         self.properties.insert(
-            name.to_string(),
-            json!({
-                "type": "string",
-                "enum": values,
-                "description": description,
-                "x-enriched": true,
-            }),
+            name.into(),
+            PropertySchema::string_enum(values, description),
         );
     }
 
     /// Set enum values on an existing parameter.
     pub fn set_enum(&mut self, param: &str, values: &[String]) {
         if let Some(prop) = self.properties.get_mut(param) {
-            if let Some(obj) = prop.as_object_mut() {
-                obj.insert("enum".into(), json!(values));
-                obj.insert("x-enriched".into(), json!(true));
-            }
+            prop.enum_values = Some(values.to_vec());
+            prop.enriched = Some(true);
         }
     }
 
-    /// Add a parameter with a full JSON Schema definition.
+    /// Add a typed property.
+    pub fn add_property(&mut self, name: &str, prop: PropertySchema) {
+        self.properties.insert(name.into(), prop);
+    }
+
+    /// Add a parameter with a raw JSON Schema value (backward compat).
     pub fn add_param(&mut self, name: &str, schema: Value) {
-        self.properties.insert(name.to_string(), schema);
+        if let Ok(prop) = serde_json::from_value::<PropertySchema>(schema) {
+            self.properties.insert(name.into(), prop);
+        }
     }
 
     /// Remove parameters not supported by the current provider.
@@ -110,7 +240,7 @@ impl ToolSchema {
     pub fn set_required(&mut self, param: &str, required: bool) {
         if required {
             if !self.required.contains(&param.to_string()) {
-                self.required.push(param.to_string());
+                self.required.push(param.into());
             }
         } else {
             self.required.retain(|r| r != param);
@@ -120,19 +250,21 @@ impl ToolSchema {
     /// Update a parameter's description.
     pub fn set_description(&mut self, param: &str, desc: &str) {
         if let Some(prop) = self.properties.get_mut(param) {
-            if let Some(obj) = prop.as_object_mut() {
-                obj.insert("description".into(), json!(desc));
-            }
+            prop.description = Some(desc.into());
         }
     }
 
     /// Set a default value for a parameter.
     pub fn set_default(&mut self, param: &str, value: Value) {
         if let Some(prop) = self.properties.get_mut(param) {
-            if let Some(obj) = prop.as_object_mut() {
-                obj.insert("default".into(), value);
-            }
+            prop.default = Some(value);
         }
+    }
+}
+
+impl Default for ToolSchema {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -173,23 +305,51 @@ mod tests {
             "cf_my_custom_field"
         );
         assert_eq!(sanitize_field_name("simple"), "cf_simple");
+        // Non-ASCII becomes underscore
+        assert_eq!(sanitize_field_name("Приоритет"), "cf_");
+    }
+
+    #[test]
+    fn test_property_schema_constructors() {
+        let s = PropertySchema::string("A description");
+        assert_eq!(s.schema_type, "string");
+        assert_eq!(s.description.as_deref(), Some("A description"));
+
+        let e = PropertySchema::string_enum(&["a", "b"], "Pick one");
+        assert_eq!(e.enum_values, Some(vec!["a".to_string(), "b".to_string()]));
+        assert_eq!(e.enriched, Some(true));
+
+        let n = PropertySchema::number("Count");
+        assert_eq!(n.schema_type, "number");
+
+        let i = PropertySchema::integer("Limit", Some(1.0), Some(100.0));
+        assert_eq!(i.minimum, Some(1.0));
+        assert_eq!(i.maximum, Some(100.0));
+
+        let b = PropertySchema::boolean("Flag");
+        assert_eq!(b.schema_type, "boolean");
+
+        let a = PropertySchema::array(PropertySchema::string("item"), "List");
+        assert_eq!(a.schema_type, "array");
+        assert!(a.items.is_some());
     }
 
     #[test]
     fn test_tool_schema_add_enum_param() {
-        let mut schema = ToolSchema {
-            properties: serde_json::Map::new(),
-            required: vec![],
-        };
+        let mut schema = ToolSchema::new();
         schema.add_enum_param("status", &["open", "closed"], "Issue status");
         let prop = schema.properties.get("status").unwrap();
-        assert_eq!(prop["type"], "string");
-        assert_eq!(prop["enum"], json!(["open", "closed"]));
+        assert_eq!(prop.schema_type, "string");
+        assert_eq!(
+            prop.enum_values,
+            Some(vec!["open".to_string(), "closed".to_string()])
+        );
+        assert_eq!(prop.enriched, Some(true));
     }
 
     #[test]
     fn test_tool_schema_remove_params() {
-        let mut schema = ToolSchema::from_json(&json!({
+        let mut schema = ToolSchema::from_json(&serde_json::json!({
             "type": "object",
             "properties": {
                 "title": { "type": "string" },
@@ -204,14 +364,125 @@ mod tests {
 
     #[test]
     fn test_tool_schema_roundtrip() {
-        let original = json!({
+        let mut schema = ToolSchema::new();
+        schema.add_property("title", PropertySchema::string("Title"));
+        schema.set_required("title", true);
+
+        let json = schema.to_json();
+        assert_eq!(json["properties"]["title"]["type"], "string");
+        assert_eq!(json["required"], serde_json::json!(["title"]));
+
+        let restored = ToolSchema::from_json(&json);
+        assert!(restored.properties.contains_key("title"));
+        assert_eq!(restored.required, vec!["title"]);
+    }
+
+    #[test]
+    fn test_tool_schema_set_enum() {
+        let mut schema = ToolSchema::new();
+        schema.add_property("state", PropertySchema::string("Filter by state"));
+        schema.set_enum(
+            "state",
+            &["opened".into(), "closed".into(), "merged".into()],
+        );
+        let state = schema.properties.get("state").unwrap();
+        assert_eq!(
+            state.enum_values,
+            Some(vec![
+                "opened".to_string(),
+                "closed".to_string(),
+                "merged".to_string()
+            ])
+        );
+        assert_eq!(state.enriched, Some(true));
+        // Original description preserved
+        assert_eq!(state.description.as_deref(), Some("Filter by state"));
+    }
+
+    #[test]
+    fn test_tool_schema_set_required() {
+        let mut schema = ToolSchema::new();
+        schema.required = vec!["title".into()];
+
+        schema.set_required("description", true);
+        assert_eq!(schema.required, vec!["title", "description"]);
+
+        schema.set_required("title", false);
+        assert_eq!(schema.required, vec!["description"]);
+
+        // Idempotent
+        schema.set_required("description", true);
+        assert_eq!(schema.required, vec!["description"]);
+    }
+
+    #[test]
+    fn test_tool_schema_set_default() {
+        let mut schema = ToolSchema::new();
+        schema.add_property("limit", PropertySchema::integer("Max results", None, None));
+        schema.set_default("limit", serde_json::json!(20));
+        assert_eq!(
+            schema.properties.get("limit").unwrap().default,
+            Some(serde_json::json!(20))
+        );
+    }
+
+    #[test]
+    fn test_tool_schema_add_param_from_json() {
+        let mut schema = ToolSchema::new();
+        schema.add_param(
+            "cf_risk",
+            serde_json::json!({
+                "type": "string",
+                "enum": ["Low", "Medium", "High"],
+                "description": "Risk level",
+                "x-enriched": true,
+            }),
+        );
+        let prop = schema.properties.get("cf_risk").unwrap();
+        assert_eq!(prop.schema_type, "string");
+        assert_eq!(
+            prop.enum_values,
+            Some(vec![
+                "Low".to_string(),
+                "Medium".to_string(),
+                "High".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn test_from_json_backward_compat() {
+        let json = serde_json::json!({
             "type": "object",
-            "properties": { "title": { "type": "string" } },
-            "required": ["title"],
+            "properties": {
+                "state": {
+                    "type": "string",
+                    "enum": ["open", "closed"],
+                    "description": "Issue state"
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                }
+            },
+            "required": ["state"]
         });
-        let schema = ToolSchema::from_json(&original);
-        let result = schema.to_json();
-        assert_eq!(result["properties"]["title"]["type"], "string");
-        assert_eq!(result["required"], json!(["title"]));
+
+        let schema = ToolSchema::from_json(&json);
+        assert_eq!(schema.properties.len(), 2);
+        assert_eq!(schema.required, vec!["state"]);
+
+        let state = schema.properties.get("state").unwrap();
+        assert_eq!(state.schema_type, "string");
+        assert_eq!(
+            state.enum_values,
+            Some(vec!["open".to_string(), "closed".to_string()])
+        );
+
+        let limit = schema.properties.get("limit").unwrap();
+        assert_eq!(limit.schema_type, "integer");
+        assert_eq!(limit.minimum, Some(1.0));
+        assert_eq!(limit.maximum, Some(100.0));
     }
 }

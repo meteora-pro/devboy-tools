@@ -298,12 +298,17 @@ mod tests {
 
         assert!(!schema.properties.contains_key("projectId"));
         assert_eq!(
-            schema.properties["issueType"]["enum"],
-            json!(["Bug", "Task"]) // sorted, no Sub-task
+            schema.properties["issueType"].enum_values,
+            Some(vec!["Bug".into(), "Task".into()]) // sorted, no Sub-task
         );
         assert_eq!(
-            schema.properties["priority"]["enum"],
-            json!(["High", "Highest", "Low", "Medium"]) // sorted
+            schema.properties["priority"].enum_values,
+            Some(vec![
+                "High".into(),
+                "Highest".into(),
+                "Low".into(),
+                "Medium".into()
+            ]) // sorted
         );
     }
 
@@ -321,7 +326,7 @@ mod tests {
 
         assert!(!schema.properties.contains_key("customFields"));
         assert!(schema.properties.contains_key("cf_story_points"));
-        assert_eq!(schema.properties["cf_story_points"]["type"], "number");
+        assert_eq!(schema.properties["cf_story_points"].schema_type, "number");
     }
 
     #[test]
@@ -374,9 +379,9 @@ mod tests {
 
         // projectId kept as enum
         assert!(schema.properties.contains_key("projectId"));
-        let project_enum = schema.properties["projectId"]["enum"].as_array().unwrap();
-        assert!(project_enum.contains(&json!("PROJ")));
-        assert!(project_enum.contains(&json!("INFRA")));
+        let project_enum = schema.properties["projectId"].enum_values.as_ref().unwrap();
+        assert!(project_enum.contains(&"PROJ".to_string()));
+        assert!(project_enum.contains(&"INFRA".to_string()));
 
         // customFields NOT replaced (multi-project)
         assert!(schema.properties.contains_key("customFields"));
@@ -440,19 +445,19 @@ mod tests {
         }));
         enricher.enrich_schema("create_issue", &mut schema);
         let comp = schema.properties.get("components").unwrap();
-        assert_eq!(comp["enum"], json!(["API", "Frontend"]));
+        assert_eq!(
+            comp.enum_values,
+            Some(vec!["API".into(), "Frontend".into()])
+        );
     }
 
     #[test]
     fn test_jira_enricher_link_types() {
         let enricher = JiraSchemaEnricher::new(single_project_metadata());
-        let mut schema = ToolSchema {
-            properties: serde_json::Map::new(),
-            required: vec![],
-        };
+        let mut schema = ToolSchema::new();
         enricher.enrich_schema("link_issues", &mut schema);
         let lt = schema.properties.get("link_type").unwrap();
-        assert_eq!(lt["enum"], json!(["Blocks"]));
+        assert_eq!(lt.enum_values, Some(vec!["Blocks".into()]));
     }
 
     #[test]
