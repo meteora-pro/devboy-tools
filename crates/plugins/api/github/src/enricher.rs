@@ -46,9 +46,23 @@ const ISSUE_REMOVE_PARAMS: &[&str] = &[
 /// Parameters to remove from get_issues specifically.
 const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery", "stateCategory"];
 
+/// Tools not supported by GitHub (no epics, no users, no issue linking).
+const GITHUB_UNSUPPORTED: &[&str] = &[
+    "get_epics",
+    "create_epic",
+    "update_epic",
+    "get_users",
+    "link_issues",
+    "get_available_statuses",
+];
+
 impl ToolEnricher for GitHubSchemaEnricher {
     fn supported_tools(&self) -> &[&str] {
         ALL_TOOLS
+    }
+
+    fn unsupported_tools(&self) -> &[&str] {
+        GITHUB_UNSUPPORTED
     }
 
     fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema) {

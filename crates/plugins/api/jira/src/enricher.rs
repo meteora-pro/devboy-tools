@@ -26,9 +26,28 @@ const ISSUE_TOOLS: &[&str] = &["create_issue", "update_issue", "get_issues", "li
 const REMOVE_PARAMS: &[&str] = &["points"];
 const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["stateCategory"];
 
+/// Tools not supported by Jira (no MR/PR, no pipelines, no epics).
+const JIRA_UNSUPPORTED: &[&str] = &[
+    "get_merge_requests",
+    "get_merge_request",
+    "get_merge_request_discussions",
+    "get_merge_request_diffs",
+    "create_merge_request",
+    "create_merge_request_comment",
+    "get_pipeline",
+    "get_job_logs",
+    "get_epics",
+    "create_epic",
+    "update_epic",
+];
+
 impl ToolEnricher for JiraSchemaEnricher {
     fn supported_tools(&self) -> &[&str] {
         ISSUE_TOOLS
+    }
+
+    fn unsupported_tools(&self) -> &[&str] {
+        JIRA_UNSUPPORTED
     }
 
     fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema) {

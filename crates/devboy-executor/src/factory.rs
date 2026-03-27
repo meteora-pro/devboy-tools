@@ -2,6 +2,7 @@ use devboy_core::{Error, Provider, Result, ToolEnricher};
 
 use crate::context::{
     ClickUpScope, GitHubScope, GitLabScope, JiraScope, ProviderConfig, ProviderMetadata,
+    ProxyConfig,
 };
 
 /// Create a provider instance from a typed `ProviderConfig`.
@@ -13,7 +14,10 @@ use crate::context::{
 ///
 /// Group, Organization, and Global scopes are not yet implemented.
 /// They will be added when cross-project queries are needed.
-pub fn create_provider(config: &ProviderConfig) -> Result<Box<dyn Provider>> {
+pub fn create_provider(
+    config: &ProviderConfig,
+    proxy: Option<&ProxyConfig>,
+) -> Result<Box<dyn Provider>> {
     match config {
         ProviderConfig::GitLab {
             base_url,
@@ -21,9 +25,21 @@ pub fn create_provider(config: &ProviderConfig) -> Result<Box<dyn Provider>> {
             scope,
             ..
         } => match scope {
-            GitLabScope::Project { id } => Ok(Box::new(
-                devboy_gitlab::GitLabClient::with_base_url(base_url, id, access_token),
-            )),
+            GitLabScope::Project { id } => {
+                // If proxy configured, use proxy URL instead of base_url
+                // and add X-Proxy-Token header
+                let (effective_url, proxy_token) = if let Some(proxy) = proxy {
+                    (proxy.url.as_str(), proxy.token.as_deref())
+                } else {
+                    (base_url.as_str(), None)
+                };
+                let mut client =
+                    devboy_gitlab::GitLabClient::with_base_url(effective_url, id, access_token);
+                if let Some(token) = proxy_token {
+                    client = client.with_proxy_token(token);
+                }
+                Ok(Box::new(client))
+            }
             GitLabScope::Group { id } => Err(Error::ProviderUnsupported {
                 provider: "gitlab".into(),
                 operation: format!("group scope (group_id: {id}) not yet implemented"),
@@ -141,7 +157,7 @@ mod tests {
             scope: GitLabScope::Project { id: "12345".into() },
             extra: HashMap::new(),
         };
-        let provider = create_provider(&config);
+        let provider = create_provider(&config, None);
         assert!(provider.is_ok());
         assert_eq!(
             IssueProvider::provider_name(provider.unwrap().as_ref()),
@@ -160,7 +176,7 @@ mod tests {
             },
             extra: HashMap::new(),
         };
-        let provider = create_provider(&config);
+        let provider = create_provider(&config, None);
         assert!(provider.is_ok());
         assert_eq!(
             IssueProvider::provider_name(provider.unwrap().as_ref()),
@@ -178,7 +194,7 @@ mod tests {
             },
             extra: HashMap::new(),
         };
-        let provider = create_provider(&config);
+        let provider = create_provider(&config, None);
         assert!(provider.is_ok());
         assert_eq!(
             IssueProvider::provider_name(provider.unwrap().as_ref()),
@@ -195,7 +211,7 @@ mod tests {
             scope: JiraScope::Project { key: "PROJ".into() },
             extra: HashMap::new(),
         };
-        let provider = create_provider(&config);
+        let provider = create_provider(&config, None);
         assert!(provider.is_ok());
         assert_eq!(
             IssueProvider::provider_name(provider.unwrap().as_ref()),
@@ -209,7 +225,7 @@ mod tests {
             name: "my-plugin".into(),
             config: HashMap::new(),
         };
-        let result = create_provider(&config);
+        let result = create_provider(&config, None);
         assert!(result.is_err());
     }
 
@@ -223,7 +239,7 @@ mod tests {
             },
             extra: HashMap::new(),
         };
-        let result = create_provider(&config);
+        let result = create_provider(&config, None);
         assert!(result.is_err());
     }
 

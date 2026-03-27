@@ -36,9 +36,26 @@ const REMOVE_PARAMS: &[&str] = &["issueType", "components", "projectId"];
 /// Parameters to remove from get_issues.
 const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery", "stateCategory"];
 
+/// Tools not supported by ClickUp (no MR/PR, no pipelines, no users search).
+const CLICKUP_UNSUPPORTED: &[&str] = &[
+    "get_merge_requests",
+    "get_merge_request",
+    "get_merge_request_discussions",
+    "get_merge_request_diffs",
+    "create_merge_request",
+    "create_merge_request_comment",
+    "get_pipeline",
+    "get_job_logs",
+    "get_users",
+];
+
 impl ToolEnricher for ClickUpSchemaEnricher {
     fn supported_tools(&self) -> &[&str] {
         ISSUE_TOOLS
+    }
+
+    fn unsupported_tools(&self) -> &[&str] {
+        CLICKUP_UNSUPPORTED
     }
 
     fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema) {

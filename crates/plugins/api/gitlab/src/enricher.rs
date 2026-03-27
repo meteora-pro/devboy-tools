@@ -45,9 +45,22 @@ const ISSUE_REMOVE_PARAMS: &[&str] = &[
 /// Parameters to remove from get_issues specifically.
 const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery", "stateCategory"];
 
+/// Tools not supported by GitLab (no epics via API, no users search, statuses are binary).
+const GITLAB_UNSUPPORTED: &[&str] = &[
+    "get_epics",
+    "create_epic",
+    "update_epic",
+    "get_users",
+    "get_available_statuses",
+];
+
 impl ToolEnricher for GitLabSchemaEnricher {
     fn supported_tools(&self) -> &[&str] {
         ALL_TOOLS
+    }
+
+    fn unsupported_tools(&self) -> &[&str] {
+        GITLAB_UNSUPPORTED
     }
 
     fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema) {

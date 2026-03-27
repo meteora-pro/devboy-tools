@@ -22,6 +22,7 @@ pub struct GitLabClient {
     base_url: String,
     project_id: String,
     token: String,
+    proxy_token: Option<String>,
     client: reqwest::Client,
 }
 
@@ -41,15 +42,28 @@ impl GitLabClient {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             project_id: project_id.into(),
             token: token.into(),
+            proxy_token: None,
             client: reqwest::Client::new(),
         }
     }
 
-    /// Build request with common headers.
+    /// Set proxy token for self-hosted GitLab behind a reverse proxy.
+    /// Adds `X-Proxy-Token` header to all requests.
+    pub fn with_proxy_token(mut self, token: &str) -> Self {
+        self.proxy_token = Some(token.to_string());
+        self
+    }
+
+    /// Build request with common headers (+ proxy token if configured).
     fn request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
-        self.client
+        let mut req = self
+            .client
             .request(method, url)
-            .header("PRIVATE-TOKEN", &self.token)
+            .header("PRIVATE-TOKEN", &self.token);
+        if let Some(proxy_token) = &self.proxy_token {
+            req = req.header("X-Proxy-Token", proxy_token);
+        }
+        req
     }
 
     /// Get the project API URL for a given endpoint.
