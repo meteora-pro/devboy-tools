@@ -996,10 +996,29 @@ impl PipelineProvider for GitHubClient {
             ));
         }
 
-        let raw_log = resp
-            .text()
-            .await
-            .map_err(|e| Error::Network(e.to_string()))?;
+        // GitHub may return plain text or redirect to ZIP.
+        // Check Content-Type to detect binary/ZIP responses.
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+
+        let raw_log = if content_type.contains("application/zip")
+            || content_type.contains("application/octet-stream")
+        {
+            // Binary/ZIP response — return error message instead of garbled output
+            return Err(Error::InvalidData(
+                "Job logs returned as ZIP archive. This typically happens for large logs. \
+                 Try using pattern search mode to find specific errors."
+                    .to_string(),
+            ));
+        } else {
+            resp.text()
+                .await
+                .map_err(|e| Error::Network(e.to_string()))?
+        };
         let log = strip_ansi(&raw_log);
         let lines: Vec<&str> = log.lines().collect();
         let total_lines = lines.len();

@@ -36,9 +36,12 @@ pub trait IssueProvider: Send + Sync {
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment>;
 
     /// Get available statuses for the issue tracker.
-    /// Returns empty vec if not supported (GitLab/GitHub return hardcoded states).
+    /// Default returns ProviderUnsupported — override in providers that support statuses.
     async fn get_statuses(&self) -> Result<Vec<IssueStatus>> {
-        Ok(vec![])
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_statuses".to_string(),
+        })
     }
 
     /// Link two issues together.
