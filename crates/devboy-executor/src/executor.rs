@@ -436,20 +436,23 @@ async fn execute_get_job_logs(
     let params: GetJobLogsParams = serde_json::from_value(args.clone())
         .map_err(|e| Error::InvalidData(format!("invalid get_job_logs params: {e}")))?;
 
+    // Clamp limit to max 1000 as declared in schema
+    let clamped_limit = params.limit.map(|l| l.min(1000));
+
     let mode = if let Some(pattern) = params.pattern {
         JobLogMode::Search {
             pattern,
-            context: params.context.unwrap_or(5),
-            max_matches: params.max_matches.unwrap_or(20),
+            context: params.context.unwrap_or(5).min(50),
+            max_matches: params.max_matches.unwrap_or(20).min(100),
         }
     } else if let Some(true) = params.full {
         JobLogMode::Full {
-            max_lines: params.limit.unwrap_or(10000),
+            max_lines: clamped_limit.unwrap_or(1000),
         }
-    } else if params.offset.is_some() || params.limit.is_some() {
+    } else if params.offset.is_some() || clamped_limit.is_some() {
         JobLogMode::Paginated {
             offset: params.offset.unwrap_or(0),
-            limit: params.limit.unwrap_or(200),
+            limit: clamped_limit.unwrap_or(200),
         }
     } else {
         JobLogMode::Smart
@@ -1078,12 +1081,11 @@ mod tests {
     // --- Status / User / Link / Epic dispatch tests ---
 
     #[tokio::test]
-    async fn test_dispatch_get_available_statuses() {
+    async fn test_dispatch_get_available_statuses_unsupported() {
         let provider = MockProvider;
-        let result = dispatch_tool("get_available_statuses", &Value::Null, &provider)
-            .await
-            .unwrap();
-        assert!(matches!(result, ToolOutput::Statuses(v) if v.is_empty()));
+        let result = dispatch_tool("get_available_statuses", &Value::Null, &provider).await;
+        // MockProvider returns ProviderUnsupported for get_statuses
+        assert!(result.is_err());
     }
 
     #[tokio::test]

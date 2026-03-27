@@ -145,7 +145,7 @@ pub fn sanitize_field_name(name: &str) -> String {
     let sanitized: String = name
         .chars()
         .map(|c| {
-            if c.is_alphanumeric() {
+            if c.is_ascii_alphanumeric() {
                 c.to_ascii_lowercase()
             } else {
                 '_'

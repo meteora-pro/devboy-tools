@@ -62,14 +62,9 @@ impl ToolEnricher for GitHubSchemaEnricher {
             schema.remove_params(GET_ISSUES_REMOVE_PARAMS);
         }
 
-        // link_issues is not supported by GitHub API
+        // link_issues is not supported by GitHub API — will be filtered by unsupported_tools()
         if tool_name == "link_issues" {
-            // Remove all params — tool will return "not supported" message
-            schema.remove_params(&["target_key", "link_type"]);
-            schema.set_description(
-                "link_issues",
-                "Not supported by GitHub API. Use #123 mention syntax in issue body instead.",
-            );
+            schema.remove_params(&["source_key", "target_key", "link_type"]);
         }
     }
 
