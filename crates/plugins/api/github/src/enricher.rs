@@ -2,7 +2,7 @@
 //!
 //! Removes parameters not supported by GitHub and adjusts GitHub-specific behavior.
 
-use devboy_core::{ToolEnricher, ToolSchema};
+use devboy_core::{ToolCategory, ToolEnricher, ToolSchema};
 use serde_json::Value;
 
 /// Static schema enricher for GitHub provider.
@@ -20,18 +20,6 @@ pub struct GitHubSchemaEnricher;
 
 const ISSUE_TOOLS: &[&str] = &["create_issue", "update_issue", "get_issues"];
 
-const ALL_TOOLS: &[&str] = &[
-    "create_issue",
-    "update_issue",
-    "get_issues",
-    "link_issues",
-    "get_merge_requests",
-    "get_merge_request_discussions",
-    "get_merge_request_diffs",
-    "create_merge_request",
-    "create_merge_request_comment",
-];
-
 /// Parameters to remove from issue tools.
 const ISSUE_REMOVE_PARAMS: &[&str] = &[
     "priority",
@@ -46,23 +34,9 @@ const ISSUE_REMOVE_PARAMS: &[&str] = &[
 /// Parameters to remove from get_issues specifically.
 const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery", "stateCategory"];
 
-/// Tools not supported by GitHub (no epics, no users, no issue linking).
-const GITHUB_UNSUPPORTED: &[&str] = &[
-    "get_epics",
-    "create_epic",
-    "update_epic",
-    "get_users",
-    "link_issues",
-    "get_available_statuses",
-];
-
 impl ToolEnricher for GitHubSchemaEnricher {
-    fn supported_tools(&self) -> &[&str] {
-        ALL_TOOLS
-    }
-
-    fn unsupported_tools(&self) -> &[&str] {
-        GITHUB_UNSUPPORTED
+    fn supported_categories(&self) -> &[ToolCategory] {
+        &[ToolCategory::IssueTracker, ToolCategory::GitRepository]
     }
 
     fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema) {

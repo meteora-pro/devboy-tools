@@ -3,7 +3,7 @@
 //! Dynamic enricher that uses list metadata to populate enum values
 //! and generate custom field parameters.
 
-use devboy_core::{sanitize_field_name, ToolEnricher, ToolSchema};
+use devboy_core::{sanitize_field_name, ToolCategory, ToolEnricher, ToolSchema};
 use serde_json::{json, Value};
 
 use crate::metadata::{ClickUpFieldType, ClickUpMetadata};
@@ -28,34 +28,15 @@ impl ClickUpSchemaEnricher {
     }
 }
 
-const ISSUE_TOOLS: &[&str] = &["create_issue", "update_issue", "get_issues", "link_issues"];
-
 /// Parameters to remove from ClickUp issue tools.
 const REMOVE_PARAMS: &[&str] = &["issueType", "components", "projectId"];
 
 /// Parameters to remove from get_issues.
 const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery", "stateCategory"];
 
-/// Tools not supported by ClickUp (no MR/PR, no pipelines, no users search).
-const CLICKUP_UNSUPPORTED: &[&str] = &[
-    "get_merge_requests",
-    "get_merge_request",
-    "get_merge_request_discussions",
-    "get_merge_request_diffs",
-    "create_merge_request",
-    "create_merge_request_comment",
-    "get_pipeline",
-    "get_job_logs",
-    "get_users",
-];
-
 impl ToolEnricher for ClickUpSchemaEnricher {
-    fn supported_tools(&self) -> &[&str] {
-        ISSUE_TOOLS
-    }
-
-    fn unsupported_tools(&self) -> &[&str] {
-        CLICKUP_UNSUPPORTED
+    fn supported_categories(&self) -> &[ToolCategory] {
+        &[ToolCategory::IssueTracker, ToolCategory::Epics]
     }
 
     fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema) {

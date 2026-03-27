@@ -4,7 +4,7 @@
 //! so that provider crates can implement enrichers without depending
 //! on the executor. This module provides built-in enrichers.
 
-use devboy_core::{ToolEnricher, ToolSchema};
+use devboy_core::{ToolCategory, ToolEnricher, ToolSchema};
 use serde_json::Value;
 
 // Re-export core enricher types for convenience
@@ -24,16 +24,18 @@ const LIST_TOOLS: &[&str] = &[
 ];
 
 impl ToolEnricher for PipelineFormatEnricher {
-    fn supported_tools(&self) -> &[&str] {
-        LIST_TOOLS
+    fn supported_categories(&self) -> &[ToolCategory] {
+        &[ToolCategory::IssueTracker, ToolCategory::GitRepository]
     }
 
-    fn enrich_schema(&self, _tool_name: &str, schema: &mut ToolSchema) {
-        schema.add_enum_param(
-            "format",
-            &["markdown", "compact", "json"],
-            "Output format. Default: markdown",
-        );
+    fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema) {
+        if LIST_TOOLS.contains(&tool_name) {
+            schema.add_enum_param(
+                "format",
+                &["markdown", "compact", "json"],
+                "Output format. Default: markdown",
+            );
+        }
     }
 
     fn transform_args(&self, _tool_name: &str, _args: &mut Value) {
@@ -48,8 +50,12 @@ mod tests {
     fn test_pipeline_format_enricher() {
         let enricher = PipelineFormatEnricher;
 
-        assert!(enricher.supported_tools().contains(&"get_issues"));
-        assert!(enricher.supported_tools().contains(&"get_merge_requests"));
+        assert!(enricher
+            .supported_categories()
+            .contains(&ToolCategory::IssueTracker));
+        assert!(enricher
+            .supported_categories()
+            .contains(&ToolCategory::GitRepository));
 
         let mut schema = ToolSchema::new();
         enricher.enrich_schema("get_issues", &mut schema);

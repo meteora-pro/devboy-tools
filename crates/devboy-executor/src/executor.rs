@@ -33,6 +33,37 @@ impl Executor {
         self.enrichers.push(enricher);
     }
 
+    /// List available tools with enriched schemas.
+    ///
+    /// 1. Starts with base tool definitions
+    /// 2. Keeps only tools whose category is supported by at least one enricher
+    /// 3. Applies schema enrichment from enrichers that support each tool's category
+    pub fn list_tools(&self) -> Vec<crate::tools::ToolDefinition> {
+        let mut tools = crate::tools::base_tool_definitions();
+
+        // Collect all supported categories from enrichers
+        let supported_categories: std::collections::HashSet<devboy_core::ToolCategory> = self
+            .enrichers
+            .iter()
+            .flat_map(|e| e.supported_categories().iter().copied())
+            .collect();
+
+        // Keep only tools whose category is supported
+        tools.retain(|t| supported_categories.contains(&t.category));
+
+        // Apply schema enrichment from enrichers that support each tool's category
+        for enricher in &self.enrichers {
+            let cats = enricher.supported_categories();
+            for tool in &mut tools {
+                if cats.contains(&tool.category) {
+                    enricher.enrich_schema(&tool.name, &mut tool.input_schema);
+                }
+            }
+        }
+
+        tools
+    }
+
     /// Execute a tool with the given arguments and context.
     ///
     /// Flow:
@@ -50,9 +81,16 @@ impl Executor {
         let mut args = args;
 
         // Pre-execute: enrichers transform args
+        // Look up tool category from base definitions for matching
+        let tool_category = crate::tools::base_tool_definitions()
+            .iter()
+            .find(|t| t.name == tool)
+            .map(|t| t.category);
         for enricher in &self.enrichers {
-            if enricher.supported_tools().contains(&tool) {
-                enricher.transform_args(tool, &mut args);
+            if let Some(cat) = tool_category {
+                if enricher.supported_categories().contains(&cat) {
+                    enricher.transform_args(tool, &mut args);
+                }
             }
         }
 
@@ -1005,8 +1043,8 @@ mod tests {
 
         struct TestEnricher;
         impl ToolEnricher for TestEnricher {
-            fn supported_tools(&self) -> &[&str] {
-                &["get_issues"]
+            fn supported_categories(&self) -> &[devboy_core::ToolCategory] {
+                &[devboy_core::ToolCategory::IssueTracker]
             }
             fn enrich_schema(&self, _tool: &str, _schema: &mut ToolSchema) {}
             fn transform_args(&self, _tool: &str, args: &mut Value) {
