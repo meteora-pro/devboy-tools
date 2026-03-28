@@ -2805,6 +2805,161 @@ async fn handle_tools_call(name: &str, args: &str) -> Result<()> {
     Ok(())
 }
 
+// =============================================================================
+// Benchmark Command
+// =============================================================================
+
+async fn run_benchmark(
+    owner: &str,
+    repo: &str,
+    budget: usize,
+    limit: u32,
+    token: Option<&str>,
+) -> Result<()> {
+    println!("Format Pipeline Benchmark");
+    println!("{}", "=".repeat(65));
+    println!("Source:   github.com/{}/{}", owner, repo);
+    println!("Budget:   {} tokens", budget);
+    println!();
+
+    // Use provided token, env var, or empty (for public repos)
+    let gh_token = token
+        .map(|t| t.to_string())
+        .or_else(|| std::env::var("GITHUB_TOKEN").ok())
+        .unwrap_or_default();
+
+    if gh_token.is_empty() {
+        println!("Note: No GITHUB_TOKEN set. Set it for higher rate limits.\n");
+    }
+
+    let client = devboy_github::GitHubClient::new(owner, repo, &gh_token);
+
+    // Fetch issues
+    println!("Fetching issues...");
+    let filter = IssueFilter {
+        state: Some("all".into()),
+        limit: Some(limit),
+        ..Default::default()
+    };
+    let issues = client.get_issues(filter).await?;
+    if !issues.is_empty() {
+        print_comparison("Issues", &issues, budget)?;
+    } else {
+        println!("  No issues found.");
+    }
+
+    // Fetch MRs/PRs
+    println!("\nFetching pull requests...");
+    let mr_filter = devboy_core::MrFilter {
+        state: Some("all".into()),
+        limit: Some(limit),
+        ..Default::default()
+    };
+    let mrs = client.get_merge_requests(mr_filter).await?;
+    if !mrs.is_empty() {
+        print_comparison("Pull Requests", &mrs, budget)?;
+    } else {
+        println!("  No pull requests found.");
+    }
+
+    // Fetch diffs from first open PR
+    let open_mrs: Vec<_> = mrs.iter().filter(|m| m.state == "open").collect();
+    if let Some(mr) = open_mrs.first() {
+        println!("\nFetching diffs for {}...", mr.key);
+        match client.get_diffs(&mr.key).await {
+            Ok(diffs) if !diffs.is_empty() => {
+                print_comparison("Diffs", &diffs, budget)?;
+            }
+            Ok(_) => println!("  No diffs in this PR."),
+            Err(e) => println!("  Failed to fetch diffs: {}", e),
+        }
+    }
+
+    println!("\n{}", "=".repeat(65));
+    Ok(())
+}
+
+fn print_comparison<T: serde::Serialize>(label: &str, items: &Vec<T>, budget: usize) -> Result<()> {
+    use devboy_format_pipeline::token_counter::estimate_tokens;
+    use std::time::Instant;
+
+    // Warm up and measure JSON encoding (average of N runs)
+    const RUNS: u32 = 100;
+    let start = Instant::now();
+    let mut json = String::new();
+    for _ in 0..RUNS {
+        json = serde_json::to_string_pretty(&items)?;
+    }
+    let json_us = start.elapsed().as_micros() / RUNS as u128;
+
+    // Measure TOON encoding
+    let start = Instant::now();
+    let mut toon_out = String::new();
+    for _ in 0..RUNS {
+        toon_out = devboy_format_pipeline::toon::encode_value(&items)?;
+    }
+    let toon_us = start.elapsed().as_micros() / RUNS as u128;
+
+    let json_tokens = estimate_tokens(&json);
+    let toon_tokens = estimate_tokens(&toon_out);
+    let savings = calc_savings(json_tokens, toon_tokens);
+
+    let json_pages = json_tokens.div_ceil(budget);
+    let toon_pages = toon_tokens.div_ceil(budget);
+
+    println!("  {} ({} items):", label, items.len());
+    println!(
+        "    {:<15} {:>8} tokens {:>8} chars {:>3} pages  {:>6}us",
+        "JSON",
+        json_tokens,
+        json.len(),
+        json_pages,
+        json_us
+    );
+    println!(
+        "    {:<15} {:>8} tokens {:>8} chars {:>3} pages  {:>6}us  ({:.0}% savings)",
+        "TOON",
+        toon_tokens,
+        toon_out.len(),
+        toon_pages,
+        toon_us,
+        savings
+    );
+
+    if toon_pages < json_pages {
+        println!(
+            "    -> TOON saves {} pages ({} vs {})",
+            json_pages - toon_pages,
+            toon_pages,
+            json_pages
+        );
+    }
+
+    let cpu_overhead = if json_us > 0 {
+        ((toon_us as f64 / json_us as f64) - 1.0) * 100.0
+    } else {
+        0.0
+    };
+
+    // Estimate memory: JSON output size + TOON output size (heap strings)
+    let json_mem = json.capacity();
+    let toon_mem = toon_out.capacity();
+
+    println!(
+        "    -> CPU: JSON {}us vs TOON {}us ({:+.0}%), Memory: JSON {} vs TOON {} bytes",
+        json_us, toon_us, cpu_overhead, json_mem, toon_mem
+    );
+
+    Ok(())
+}
+
+fn calc_savings(json_tokens: usize, toon_tokens: usize) -> f64 {
+    if json_tokens == 0 {
+        return 0.0;
+    }
+    (1.0 - toon_tokens as f64 / json_tokens as f64) * 100.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3588,159 +3743,4 @@ mod tests {
         let cu = context.clickup.unwrap();
         assert_eq!(cu.list_id, "abc123");
     }
-}
-
-// =============================================================================
-// Benchmark Command
-// =============================================================================
-
-async fn run_benchmark(
-    owner: &str,
-    repo: &str,
-    budget: usize,
-    limit: u32,
-    token: Option<&str>,
-) -> Result<()> {
-    println!("Format Pipeline Benchmark");
-    println!("{}", "=".repeat(65));
-    println!("Source:   github.com/{}/{}", owner, repo);
-    println!("Budget:   {} tokens", budget);
-    println!();
-
-    // Use provided token, env var, or empty (for public repos)
-    let gh_token = token
-        .map(|t| t.to_string())
-        .or_else(|| std::env::var("GITHUB_TOKEN").ok())
-        .unwrap_or_default();
-
-    if gh_token.is_empty() {
-        println!("Note: No GITHUB_TOKEN set. Set it for higher rate limits.\n");
-    }
-
-    let client = devboy_github::GitHubClient::new(owner, repo, &gh_token);
-
-    // Fetch issues
-    println!("Fetching issues...");
-    let filter = IssueFilter {
-        state: Some("all".into()),
-        limit: Some(limit),
-        ..Default::default()
-    };
-    let issues = client.get_issues(filter).await?;
-    if !issues.is_empty() {
-        print_comparison("Issues", &issues, budget)?;
-    } else {
-        println!("  No issues found.");
-    }
-
-    // Fetch MRs/PRs
-    println!("\nFetching pull requests...");
-    let mr_filter = devboy_core::MrFilter {
-        state: Some("all".into()),
-        limit: Some(limit),
-        ..Default::default()
-    };
-    let mrs = client.get_merge_requests(mr_filter).await?;
-    if !mrs.is_empty() {
-        print_comparison("Pull Requests", &mrs, budget)?;
-    } else {
-        println!("  No pull requests found.");
-    }
-
-    // Fetch diffs from first open PR
-    let open_mrs: Vec<_> = mrs.iter().filter(|m| m.state == "open").collect();
-    if let Some(mr) = open_mrs.first() {
-        println!("\nFetching diffs for {}...", mr.key);
-        match client.get_diffs(&mr.key).await {
-            Ok(diffs) if !diffs.is_empty() => {
-                print_comparison("Diffs", &diffs, budget)?;
-            }
-            Ok(_) => println!("  No diffs in this PR."),
-            Err(e) => println!("  Failed to fetch diffs: {}", e),
-        }
-    }
-
-    println!("\n{}", "=".repeat(65));
-    Ok(())
-}
-
-fn print_comparison<T: serde::Serialize>(label: &str, items: &Vec<T>, budget: usize) -> Result<()> {
-    use devboy_format_pipeline::token_counter::estimate_tokens;
-    use std::time::Instant;
-
-    // Warm up and measure JSON encoding (average of N runs)
-    const RUNS: u32 = 100;
-    let start = Instant::now();
-    let mut json = String::new();
-    for _ in 0..RUNS {
-        json = serde_json::to_string_pretty(&items)?;
-    }
-    let json_us = start.elapsed().as_micros() / RUNS as u128;
-
-    // Measure TOON encoding
-    let start = Instant::now();
-    let mut toon_out = String::new();
-    for _ in 0..RUNS {
-        toon_out = devboy_format_pipeline::toon::encode_value(&items)?;
-    }
-    let toon_us = start.elapsed().as_micros() / RUNS as u128;
-
-    let json_tokens = estimate_tokens(&json);
-    let toon_tokens = estimate_tokens(&toon_out);
-    let savings = calc_savings(json_tokens, toon_tokens);
-
-    let json_pages = json_tokens.div_ceil(budget);
-    let toon_pages = toon_tokens.div_ceil(budget);
-
-    println!("  {} ({} items):", label, items.len());
-    println!(
-        "    {:<15} {:>8} tokens {:>8} chars {:>3} pages  {:>6}us",
-        "JSON",
-        json_tokens,
-        json.len(),
-        json_pages,
-        json_us
-    );
-    println!(
-        "    {:<15} {:>8} tokens {:>8} chars {:>3} pages  {:>6}us  ({:.0}% savings)",
-        "TOON",
-        toon_tokens,
-        toon_out.len(),
-        toon_pages,
-        toon_us,
-        savings
-    );
-
-    if toon_pages < json_pages {
-        println!(
-            "    -> TOON saves {} pages ({} vs {})",
-            json_pages - toon_pages,
-            toon_pages,
-            json_pages
-        );
-    }
-
-    let cpu_overhead = if json_us > 0 {
-        ((toon_us as f64 / json_us as f64) - 1.0) * 100.0
-    } else {
-        0.0
-    };
-
-    // Estimate memory: JSON output size + TOON output size (heap strings)
-    let json_mem = json.capacity();
-    let toon_mem = toon_out.capacity();
-
-    println!(
-        "    -> CPU: JSON {}us vs TOON {}us ({:+.0}%), Memory: JSON {} vs TOON {} bytes",
-        json_us, toon_us, cpu_overhead, json_mem, toon_mem
-    );
-
-    Ok(())
-}
-
-fn calc_savings(json_tokens: usize, toon_tokens: usize) -> f64 {
-    if json_tokens == 0 {
-        return 0.0;
-    }
-    (1.0 - toon_tokens as f64 / json_tokens as f64) * 100.0
 }

@@ -266,8 +266,8 @@ fn bench_token_savings_report(c: &mut Criterion) {
                 };
 
                 let budget = 8000usize;
-                let json_pages = (json_tokens + budget - 1) / budget;
-                let toon_pages = (toon_tokens + budget - 1) / budget;
+                let json_pages = json_tokens.div_ceil(budget);
+                let toon_pages = toon_tokens.div_ceil(budget);
 
                 println!(
                     "{:<15} JSON: {:>6} tok ({} pgs) | TOON: {:>6} tok ({} pgs) | Min: {:>6} tok | Savings: {:.0}%",
