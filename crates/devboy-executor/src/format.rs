@@ -260,7 +260,11 @@ fn format_meeting_transcript(transcript: &devboy_core::MeetingTranscript) -> Str
     ));
 
     for s in &transcript.sentences {
-        let fallback = format!("Speaker {}", s.speaker_id);
+        let fallback = if s.speaker_id.is_empty() {
+            "Unknown speaker".to_string()
+        } else {
+            format!("Speaker {}", s.speaker_id)
+        };
         let speaker = s.speaker_name.as_deref().unwrap_or(&fallback);
         let time = format_time(s.start_time);
         output.push_str(&format!("[{time}] {speaker}: {}\n", s.text));

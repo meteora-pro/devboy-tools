@@ -322,14 +322,17 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "search_meeting_notes".into(),
-            description: "Search across meetings by keywords, topics, or action items.".into(),
+            description: "Search across meetings by keywords, topics, or action items, with optional filters (date range, participants, host).".into(),
             category: ToolCategory::MeetingNotes,
             input_schema: {
                 let mut s = ToolSchema::new();
                 s.add_property("query", PropertySchema::string("Search query"));
                 s.add_property("from_date", PropertySchema::string("Filter from date (ISO 8601)"));
                 s.add_property("to_date", PropertySchema::string("Filter to date (ISO 8601)"));
+                s.add_property("participants", PropertySchema::array(PropertySchema::string("email"), "Filter by participant email addresses"));
+                s.add_property("host_email", PropertySchema::string("Filter by host email"));
                 s.add_property("limit", PropertySchema::integer("Maximum number of results (default: 50)", Some(1.0), Some(50.0)));
+                s.add_property("offset", PropertySchema::integer("Number of results to skip (default: 0)", Some(0.0), None));
                 s.set_required("query", true);
                 s
             },

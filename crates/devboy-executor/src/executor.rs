@@ -231,7 +231,10 @@ struct SearchMeetingNotesParams {
     query: String,
     from_date: Option<String>,
     to_date: Option<String>,
+    participants: Option<Vec<String>>,
+    host_email: Option<String>,
     limit: Option<u32>,
+    offset: Option<u32>,
 }
 
 async fn execute_search_meeting_notes(
@@ -244,8 +247,10 @@ async fn execute_search_meeting_notes(
         keyword: None,
         from_date: params.from_date,
         to_date: params.to_date,
+        participants: params.participants,
+        host_email: params.host_email,
         limit: params.limit,
-        ..Default::default()
+        skip: params.offset,
     };
     let meetings = provider.search_meetings(&params.query, filter).await?;
     Ok(ToolOutput::MeetingNotes(meetings))

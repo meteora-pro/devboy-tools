@@ -326,14 +326,18 @@ fn parse_array_or_string(value: &Value) -> Vec<String> {
         Value::String(s) => s
             .lines()
             .map(|line| {
-                line.trim()
+                let trimmed = line.trim();
+                // Strip bullet prefixes, then normalize whitespace before stripping bold
+                let stripped = trimmed
                     .trim_start_matches('-')
                     .trim_start_matches('*')
-                    .trim_start_matches("**")
-                    .trim_end_matches("**")
-                    .trim_start_matches("## ")
                     .trim()
-                    .to_string()
+                    .trim_start_matches("## ")
+                    .trim();
+                // Strip bold markers (**text**)
+                let stripped = stripped.strip_prefix("**").unwrap_or(stripped);
+                let stripped = stripped.strip_suffix("**").unwrap_or(stripped);
+                stripped.trim().to_string()
             })
             .filter(|s| !s.is_empty())
             .collect(),

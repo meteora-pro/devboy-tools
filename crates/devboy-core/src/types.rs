@@ -544,7 +544,7 @@ pub struct MeetingNote {
     pub host_email: Option<String>,
     /// Organizer email
     pub organizer_email: Option<String>,
-    /// Participant emails
+    /// Participant identifiers (emails, names, or display names depending on provider)
     pub participants: Vec<String>,
     /// Speaker names
     pub speakers: Vec<MeetingSpeaker>,
