@@ -114,9 +114,7 @@ impl FirefliesClient {
 
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(Error::Unauthorized(
-                "Invalid Fireflies API key".to_string(),
-            ));
+            return Err(Error::Unauthorized("Invalid Fireflies API key".to_string()));
         }
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
@@ -139,9 +137,9 @@ impl FirefliesClient {
             });
         }
 
-        gql_response.data.ok_or_else(|| Error::InvalidData(
-            "Fireflies API returned no data".to_string(),
-        ))
+        gql_response
+            .data
+            .ok_or_else(|| Error::InvalidData("Fireflies API returned no data".to_string()))
     }
 }
 
@@ -154,7 +152,11 @@ impl MeetingNotesProvider for FirefliesClient {
     async fn get_meetings(&self, filter: MeetingFilter) -> Result<Vec<MeetingNote>> {
         let variables = build_filter_variables(&filter);
         let data: TranscriptsData = self.graphql(GET_TRANSCRIPTS_QUERY, variables).await?;
-        Ok(data.transcripts.into_iter().map(convert_transcript).collect())
+        Ok(data
+            .transcripts
+            .into_iter()
+            .map(convert_transcript)
+            .collect())
     }
 
     async fn get_transcript(&self, meeting_id: &str) -> Result<MeetingTranscript> {
@@ -208,7 +210,11 @@ impl MeetingNotesProvider for FirefliesClient {
             obj.insert("keyword".into(), Value::String(query.to_string()));
         }
         let data: TranscriptsData = self.graphql(GET_TRANSCRIPTS_QUERY, variables).await?;
-        Ok(data.transcripts.into_iter().map(convert_transcript).collect())
+        Ok(data
+            .transcripts
+            .into_iter()
+            .map(convert_transcript)
+            .collect())
     }
 }
 
@@ -231,7 +237,12 @@ fn build_filter_variables(filter: &MeetingFilter) -> Value {
     if let Some(ref participants) = filter.participants {
         vars.insert(
             "participants".into(),
-            Value::Array(participants.iter().map(|p| Value::String(p.clone())).collect()),
+            Value::Array(
+                participants
+                    .iter()
+                    .map(|p| Value::String(p.clone()))
+                    .collect(),
+            ),
         );
     }
     vars.insert(
@@ -281,8 +292,7 @@ fn convert_transcript(t: FirefliesTranscript) -> MeetingNote {
         .map(parse_array_or_string)
         .unwrap_or_default();
     let meeting_type = summary_ref.and_then(|s| s.meeting_type.clone());
-    let summary_text = summary_ref
-        .and_then(|s| s.overview.clone().or(s.short_summary.clone()));
+    let summary_text = summary_ref.and_then(|s| s.overview.clone().or(s.short_summary.clone()));
 
     MeetingNote {
         id: t.id,
@@ -377,5 +387,143 @@ mod tests {
 
         let note = convert_transcript(t);
         assert_eq!(note.duration_seconds, Some(2730)); // 45.5 * 60 = 2730
+    }
+
+    #[test]
+    fn test_convert_transcript_with_attendees_and_speakers() {
+        let t = FirefliesTranscript {
+            id: "m-123".into(),
+            title: Some("Sprint Planning".into()),
+            date: None,
+            duration: None,
+            host_email: Some("host@example.com".into()),
+            organizer_email: Some("org@example.com".into()),
+            meeting_attendees: Some(vec![
+                FirefliesAttendee {
+                    display_name: None,
+                    email: Some("alice@example.com".into()),
+                    name: None,
+                },
+                FirefliesAttendee {
+                    display_name: Some("Bob".into()),
+                    email: None,
+                    name: None,
+                },
+            ]),
+            speakers: Some(vec![
+                FirefliesSpeaker {
+                    id: Some("1".into()),
+                    name: Some("Alice".into()),
+                },
+                FirefliesSpeaker {
+                    id: Some("2".into()),
+                    name: Some("Bob".into()),
+                },
+            ]),
+            transcript_url: None,
+            audio_url: None,
+            video_url: None,
+            meeting_link: None,
+            summary: Some(FirefliesSummary {
+                keywords: Some(json!(["rust", "migration"])),
+                action_items: Some(json!("- Review PR\n- Update docs")),
+                topics_discussed: None,
+                meeting_type: Some("planning".into()),
+                overview: Some("Team discussed migration plan.".into()),
+                short_summary: None,
+            }),
+            sentences: None,
+        };
+
+        let note = convert_transcript(t);
+        assert_eq!(note.id, "m-123");
+        assert_eq!(note.title, "Sprint Planning");
+        assert_eq!(note.host_email, Some("host@example.com".into()));
+        assert_eq!(
+            note.participants,
+            vec!["alice@example.com".to_string(), "Bob".to_string()]
+        );
+        assert_eq!(note.speakers.len(), 2);
+        assert_eq!(note.speakers[0].name, "Alice");
+        assert_eq!(note.keywords, vec!["rust", "migration"]);
+        assert_eq!(note.action_items, vec!["Review PR", "Update docs"]);
+        assert_eq!(note.meeting_type, Some("planning".into()));
+        assert_eq!(note.summary, Some("Team discussed migration plan.".into()));
+    }
+
+    #[test]
+    fn test_convert_transcript_no_duration() {
+        let t = FirefliesTranscript {
+            id: "no-dur".into(),
+            title: None,
+            date: None,
+            duration: None,
+            host_email: None,
+            organizer_email: None,
+            meeting_attendees: None,
+            speakers: None,
+            transcript_url: None,
+            audio_url: None,
+            video_url: None,
+            meeting_link: None,
+            summary: None,
+            sentences: None,
+        };
+
+        let note = convert_transcript(t);
+        assert_eq!(note.duration_seconds, None);
+        assert!(note.title.is_empty());
+    }
+
+    #[test]
+    fn test_parse_array_or_string_with_empty_array() {
+        let val = json!([]);
+        let result = parse_array_or_string(&val);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_array_or_string_filters_empty_strings() {
+        let val = json!(["item1", "", "item2"]);
+        let result = parse_array_or_string(&val);
+        assert_eq!(result, vec!["item1", "item2"]);
+    }
+
+    #[test]
+    fn test_build_filter_variables_empty() {
+        let filter = MeetingFilter::default();
+        let vars = build_filter_variables(&filter);
+        let obj = vars.as_object().unwrap();
+        assert_eq!(obj.get("limit").unwrap(), &json!(50));
+        assert!(obj.get("keyword").is_none());
+        assert!(obj.get("fromDate").is_none());
+    }
+
+    #[test]
+    fn test_build_filter_variables_full() {
+        let filter = MeetingFilter {
+            keyword: Some("sprint".into()),
+            from_date: Some("2025-01-01".into()),
+            to_date: Some("2025-12-31".into()),
+            participants: Some(vec!["alice@ex.com".into()]),
+            host_email: Some("host@ex.com".into()),
+            limit: Some(10),
+            skip: Some(5),
+        };
+        let vars = build_filter_variables(&filter);
+        let obj = vars.as_object().unwrap();
+        assert_eq!(obj["keyword"], json!("sprint"));
+        assert_eq!(obj["fromDate"], json!("2025-01-01"));
+        assert_eq!(obj["toDate"], json!("2025-12-31"));
+        assert_eq!(obj["host_email"], json!("host@ex.com"));
+        assert_eq!(obj["participants"], json!(["alice@ex.com"]));
+        assert_eq!(obj["limit"], json!(10));
+        assert_eq!(obj["skip"], json!(5));
+    }
+
+    #[test]
+    fn test_fireflies_client_new() {
+        let client = FirefliesClient::new("test-key");
+        assert_eq!(client.provider_name(), "fireflies");
     }
 }

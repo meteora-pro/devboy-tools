@@ -1,8 +1,8 @@
 use devboy_core::{
     CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Error, GetPipelineInput,
     GetUsersOptions, IssueFilter, IssueProvider, JobLogMode, JobLogOptions, MeetingFilter,
-    MeetingNotesProvider, MergeRequestProvider, MrFilter, PipelineProvider, Result,
-    ToolCategory, UpdateIssueInput,
+    MeetingNotesProvider, MergeRequestProvider, MrFilter, PipelineProvider, Result, ToolCategory,
+    UpdateIssueInput,
 };
 use serde::Deserialize;
 use serde_json::Value;
