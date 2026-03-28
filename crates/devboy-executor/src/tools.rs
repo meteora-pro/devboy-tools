@@ -293,6 +293,47 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s
             },
         },
+        // Meeting notes tools
+        ToolDefinition {
+            name: "get_meeting_notes".into(),
+            description: "Get meeting notes and transcripts with optional filters (date range, participants, host).".into(),
+            category: ToolCategory::MeetingNotes,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("from_date", PropertySchema::string("Filter from date (ISO 8601, e.g., '2025-01-01T00:00:00Z')"));
+                s.add_property("to_date", PropertySchema::string("Filter to date (ISO 8601)"));
+                s.add_property("participants", PropertySchema::array(PropertySchema::string("email"), "Filter by participant email addresses"));
+                s.add_property("host_email", PropertySchema::string("Filter by host email"));
+                s.add_property("limit", PropertySchema::integer("Maximum number of results (default: 50)", Some(1.0), Some(50.0)));
+                s.add_property("offset", PropertySchema::integer("Number of results to skip (default: 0)", Some(0.0), None));
+                s
+            },
+        },
+        ToolDefinition {
+            name: "get_meeting_transcript".into(),
+            description: "Get the full transcript for a meeting. Returns speaker-attributed sentences with timestamps.".into(),
+            category: ToolCategory::MeetingNotes,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("meeting_id", PropertySchema::string("Meeting ID from get_meeting_notes"));
+                s.set_required("meeting_id", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "search_meeting_notes".into(),
+            description: "Search across meetings by keywords, topics, or action items.".into(),
+            category: ToolCategory::MeetingNotes,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("query", PropertySchema::string("Search query"));
+                s.add_property("from_date", PropertySchema::string("Filter from date (ISO 8601)"));
+                s.add_property("to_date", PropertySchema::string("Filter to date (ISO 8601)"));
+                s.add_property("limit", PropertySchema::integer("Maximum number of results (default: 50)", Some(1.0), Some(50.0)));
+                s.set_required("query", true);
+                s
+            },
+        },
     ]
 }
 
@@ -303,7 +344,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 20);
+        assert_eq!(tools.len(), 23);
     }
 
     #[test]
@@ -340,6 +381,11 @@ mod tests {
             "get_job_logs",
         ];
         let epics_tools = ["get_epics", "create_epic", "update_epic"];
+        let meeting_notes_tools = [
+            "get_meeting_notes",
+            "get_meeting_transcript",
+            "search_meeting_notes",
+        ];
 
         for tool in &tools {
             if issue_tracker_tools.contains(&tool.name.as_str()) {
@@ -361,6 +407,13 @@ mod tests {
                     tool.category,
                     ToolCategory::Epics,
                     "tool {} should be Epics",
+                    tool.name
+                );
+            } else if meeting_notes_tools.contains(&tool.name.as_str()) {
+                assert_eq!(
+                    tool.category,
+                    ToolCategory::MeetingNotes,
+                    "tool {} should be MeetingNotes",
                     tool.name
                 );
             } else {

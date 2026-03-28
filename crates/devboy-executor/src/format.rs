@@ -151,6 +151,10 @@ pub fn format_output(
         ToolOutput::JobLog(log) => Ok(text_result(format_job_log(&log))),
         ToolOutput::Statuses(statuses) => Ok(text_result(format_statuses(&statuses))),
         ToolOutput::Users(users) => Ok(text_result(format_users(&users))),
+        ToolOutput::MeetingNotes(meetings) => Ok(text_result(format_meeting_notes(&meetings))),
+        ToolOutput::MeetingTranscript(transcript) => {
+            Ok(text_result(format_meeting_transcript(&transcript)))
+        }
         ToolOutput::Text(text) => Ok(text_result(text)),
     }
 }
@@ -200,6 +204,79 @@ fn format_users(users: &[devboy_core::User]) -> String {
     }
 
     output
+}
+
+/// Format meeting notes as markdown.
+fn format_meeting_notes(meetings: &[devboy_core::MeetingNote]) -> String {
+    if meetings.is_empty() {
+        return "No meeting notes found.".to_string();
+    }
+
+    let mut output = format!("# Meeting Notes ({} results)\n\n", meetings.len());
+
+    for m in meetings {
+        output.push_str(&format!("## {}\n", m.title));
+        if let Some(ref date) = m.meeting_date {
+            output.push_str(&format!("**Date:** {date}\n"));
+        }
+        if let Some(secs) = m.duration_seconds {
+            let mins = secs / 60;
+            output.push_str(&format!("**Duration:** {mins} min\n"));
+        }
+        if let Some(ref host) = m.host_email {
+            output.push_str(&format!("**Host:** {host}\n"));
+        }
+        if !m.participants.is_empty() {
+            output.push_str(&format!("**Participants:** {}\n", m.participants.join(", ")));
+        }
+        if let Some(ref summary) = m.summary {
+            output.push_str(&format!("\n{summary}\n"));
+        }
+        if !m.action_items.is_empty() {
+            output.push_str("\n**Action Items:**\n");
+            for item in &m.action_items {
+                output.push_str(&format!("- {item}\n"));
+            }
+        }
+        if !m.keywords.is_empty() {
+            output.push_str(&format!("**Keywords:** {}\n", m.keywords.join(", ")));
+        }
+        output.push('\n');
+    }
+
+    output
+}
+
+/// Format a meeting transcript as compact text.
+fn format_meeting_transcript(transcript: &devboy_core::MeetingTranscript) -> String {
+    let title = transcript.title.as_deref().unwrap_or("Meeting Transcript");
+    let mut output = format!("# {title}\n\n");
+    output.push_str(&format!(
+        "Showing {} sentences\n\n",
+        transcript.sentences.len()
+    ));
+
+    for s in &transcript.sentences {
+        let fallback = format!("Speaker {}", s.speaker_id);
+        let speaker = s.speaker_name.as_deref().unwrap_or(&fallback);
+        let time = format_time(s.start_time);
+        output.push_str(&format!("[{time}] {speaker}: {}\n", s.text));
+    }
+
+    output
+}
+
+/// Format seconds as [MM:SS] or [HH:MM:SS].
+fn format_time(seconds: f64) -> String {
+    let total_secs = seconds as u64;
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let secs = total_secs % 60;
+    if hours > 0 {
+        format!("{hours:02}:{minutes:02}:{secs:02}")
+    } else {
+        format!("{minutes:02}:{secs:02}")
+    }
 }
 
 /// Format pipeline status as markdown.

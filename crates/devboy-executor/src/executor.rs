@@ -1,7 +1,8 @@
 use devboy_core::{
     CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Error, GetPipelineInput,
-    GetUsersOptions, IssueFilter, IssueProvider, JobLogMode, JobLogOptions, MergeRequestProvider,
-    MrFilter, PipelineProvider, Result, UpdateIssueInput,
+    GetUsersOptions, IssueFilter, IssueProvider, JobLogMode, JobLogOptions, MeetingFilter,
+    MeetingNotesProvider, MergeRequestProvider, MrFilter, PipelineProvider, Result,
+    ToolCategory, UpdateIssueInput,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -100,11 +101,14 @@ impl Executor {
             "executing tool"
         );
 
-        // Create provider from context
-        let provider = factory::create_provider(&ctx.provider, ctx.proxy.as_ref())?;
-
-        // Dispatch to tool handler
-        let output = dispatch_tool(tool, &args, provider.as_ref()).await?;
+        // Dispatch based on tool category
+        let output = if tool_category == Some(ToolCategory::MeetingNotes) {
+            let provider = factory::create_meeting_notes_provider(&ctx.provider)?;
+            dispatch_meeting_tool(tool, &args, provider.as_ref()).await?
+        } else {
+            let provider = factory::create_provider(&ctx.provider, ctx.proxy.as_ref())?;
+            dispatch_tool(tool, &args, provider.as_ref()).await?
+        };
 
         Ok(output)
     }
@@ -161,6 +165,90 @@ async fn dispatch_tool(
 
         _ => Err(Error::NotFound(format!("unknown tool: {tool}"))),
     }
+}
+
+/// Dispatch a meeting notes tool call.
+async fn dispatch_meeting_tool(
+    tool: &str,
+    args: &Value,
+    provider: &dyn MeetingNotesProvider,
+) -> Result<ToolOutput> {
+    match tool {
+        "get_meeting_notes" => execute_get_meeting_notes(provider, args).await,
+        "get_meeting_transcript" => execute_get_meeting_transcript(provider, args).await,
+        "search_meeting_notes" => execute_search_meeting_notes(provider, args).await,
+        _ => Err(Error::NotFound(format!("unknown meeting tool: {tool}"))),
+    }
+}
+
+// --- Meeting notes tool handlers ---
+
+#[derive(Deserialize, Default)]
+struct GetMeetingNotesParams {
+    from_date: Option<String>,
+    to_date: Option<String>,
+    participants: Option<Vec<String>>,
+    host_email: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+async fn execute_get_meeting_notes(
+    provider: &dyn MeetingNotesProvider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetMeetingNotesParams = serde_json::from_value(args.clone()).unwrap_or_default();
+    let filter = MeetingFilter {
+        keyword: None,
+        from_date: params.from_date,
+        to_date: params.to_date,
+        participants: params.participants,
+        host_email: params.host_email,
+        limit: params.limit,
+        skip: params.offset,
+    };
+    let meetings = provider.get_meetings(filter).await?;
+    Ok(ToolOutput::MeetingNotes(meetings))
+}
+
+#[derive(Deserialize)]
+struct GetMeetingTranscriptParams {
+    meeting_id: String,
+}
+
+async fn execute_get_meeting_transcript(
+    provider: &dyn MeetingNotesProvider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetMeetingTranscriptParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid params: {e}")))?;
+    let transcript = provider.get_transcript(&params.meeting_id).await?;
+    Ok(ToolOutput::MeetingTranscript(Box::new(transcript)))
+}
+
+#[derive(Deserialize)]
+struct SearchMeetingNotesParams {
+    query: String,
+    from_date: Option<String>,
+    to_date: Option<String>,
+    limit: Option<u32>,
+}
+
+async fn execute_search_meeting_notes(
+    provider: &dyn MeetingNotesProvider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: SearchMeetingNotesParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid params: {e}")))?;
+    let filter = MeetingFilter {
+        keyword: None,
+        from_date: params.from_date,
+        to_date: params.to_date,
+        limit: params.limit,
+        ..Default::default()
+    };
+    let meetings = provider.search_meetings(&params.query, filter).await?;
+    Ok(ToolOutput::MeetingNotes(meetings))
 }
 
 // --- Issue tool handlers ---

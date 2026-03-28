@@ -1,4 +1,4 @@
-use devboy_core::{Error, Provider, Result, ToolEnricher};
+use devboy_core::{Error, MeetingNotesProvider, Provider, Result, ToolEnricher};
 
 use crate::context::{
     ClickUpScope, GitHubScope, GitLabScope, JiraScope, ProviderConfig, ProviderMetadata,
@@ -107,9 +107,32 @@ pub fn create_provider(
             }),
         },
 
+        ProviderConfig::Fireflies { .. } => Err(Error::ProviderUnsupported {
+            provider: "fireflies".into(),
+            operation: "Fireflies is a MeetingNotesProvider, not a Provider. Use create_meeting_notes_provider() instead.".into(),
+        }),
+
         ProviderConfig::Custom { name, .. } => Err(Error::ProviderNotFound(format!(
             "custom provider '{name}' not yet supported"
         ))),
+    }
+}
+
+/// Create a meeting notes provider from config.
+///
+/// Separate from `create_provider()` because meeting notes providers
+/// implement `MeetingNotesProvider`, not `Provider`.
+pub fn create_meeting_notes_provider(
+    config: &ProviderConfig,
+) -> Result<Box<dyn MeetingNotesProvider>> {
+    match config {
+        ProviderConfig::Fireflies { api_key, .. } => {
+            Ok(Box::new(devboy_fireflies::FirefliesClient::new(api_key)))
+        }
+        other => Err(Error::ProviderUnsupported {
+            provider: other.provider_name().into(),
+            operation: "not a meeting notes provider".into(),
+        }),
     }
 }
 
@@ -139,6 +162,9 @@ pub fn create_enricher(
             let jira_meta: devboy_jira::JiraMetadata =
                 serde_json::from_value(meta.data.clone()).ok()?;
             Some(Box::new(devboy_jira::JiraSchemaEnricher::new(jira_meta)))
+        }
+        ProviderConfig::Fireflies { .. } => {
+            Some(Box::new(devboy_fireflies::FirefliesSchemaEnricher))
         }
         ProviderConfig::Custom { .. } => None,
     }

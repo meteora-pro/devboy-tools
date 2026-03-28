@@ -1,0 +1,13 @@
+[package]
+name = "devboy-fireflies"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+devboy-core = { path = "../../../devboy-core" }
+reqwest.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
