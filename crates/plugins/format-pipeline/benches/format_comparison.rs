@@ -239,9 +239,9 @@ fn bench_token_savings_report(c: &mut Criterion) {
     // Not a real benchmark — prints a comparison report
     c.bench_function("token_savings_report", |b| {
         b.iter(|| {
-            println!("\n{'='*60}");
+            println!("\n{}", "=".repeat(60));
             println!("Format Comparison Report (budget=8000 tokens)");
-            println!("{'='*60}\n");
+            println!("{}\n", "=".repeat(60));
 
             let configs: Vec<(&str, usize)> = vec![
                 ("Issues (5)", 5),
