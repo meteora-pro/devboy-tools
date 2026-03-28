@@ -222,6 +222,36 @@ enum Commands {
         #[arg(long)]
         token: Option<String>,
     },
+
+    /// Format JSON from stdin through the TOON pipeline (pipe mode)
+    ///
+    /// Usage: cat issues.json | devboy format-pipeline
+    #[command(name = "format-pipeline")]
+    FormatPipeline {
+        /// Data type: issues, merge_requests, diffs, comments, discussions (auto-detected if omitted)
+        #[arg(short = 't', long, value_name = "TYPE")]
+        data_type: Option<String>,
+
+        /// Token budget (default: 8000)
+        #[arg(short, long, default_value = "8000")]
+        budget: usize,
+
+        /// Trimming strategy: element_count, cascading, size_proportional, thread_level, head_tail, default
+        #[arg(short, long)]
+        strategy: Option<String>,
+
+        /// Trim level: full, standard, minimal (default: full)
+        #[arg(short, long, default_value = "full")]
+        level: String,
+
+        /// Output format: toon, json (default: toon)
+        #[arg(short, long, default_value = "toon")]
+        format: String,
+
+        /// Print token savings stats to stderr
+        #[arg(long)]
+        stats: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -418,6 +448,7 @@ async fn main() -> Result<()> {
         Some(Commands::Mcp { .. })
         | Some(Commands::Upgrade { .. })
         | Some(Commands::Benchmark { .. })
+        | Some(Commands::FormatPipeline { .. })
         | None => None,
         _ => Some(tokio::spawn(update_check::check_and_notify())),
     };
@@ -498,6 +529,24 @@ async fn main() -> Result<()> {
             token,
         }) => {
             run_benchmark(&owner, &repo, budget, limit, token.as_deref()).await?;
+        }
+
+        Some(Commands::FormatPipeline {
+            data_type,
+            budget,
+            strategy,
+            level,
+            format,
+            stats,
+        }) => {
+            run_format_pipeline(
+                data_type.as_deref(),
+                budget,
+                strategy.as_deref(),
+                &level,
+                &format,
+                stats,
+            )?;
         }
 
         None => {
@@ -2988,6 +3037,157 @@ fn calc_savings(json_tokens: usize, toon_tokens: usize) -> f64 {
         return 0.0;
     }
     (1.0 - toon_tokens as f64 / json_tokens as f64) * 100.0
+}
+
+// =============================================================================
+// Format Pipeline (pipe mode)
+// =============================================================================
+
+fn run_format_pipeline(
+    data_type: Option<&str>,
+    budget: usize,
+    strategy: Option<&str>,
+    level: &str,
+    format: &str,
+    stats: bool,
+) -> Result<()> {
+    use devboy_format_pipeline::budget::{self, BudgetConfig};
+    use devboy_format_pipeline::strategy::TrimStrategyKind;
+    use devboy_format_pipeline::token_counter::estimate_tokens;
+    use devboy_format_pipeline::toon::{self, TrimLevel};
+    use std::io::Read;
+
+    // Read JSON from stdin
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .context("Failed to read from stdin")?;
+
+    let input = input.trim();
+    if input.is_empty() {
+        anyhow::bail!("Empty input. Pipe JSON data through stdin.");
+    }
+
+    // Parse JSON
+    let json_value: serde_json::Value =
+        serde_json::from_str(input).context("Invalid JSON input")?;
+
+    // Detect data type
+    let detected_type = data_type.unwrap_or_else(|| detect_data_type(&json_value));
+
+    // Parse trim level
+    let trim_level = match level {
+        "standard" => TrimLevel::Standard,
+        "minimal" => TrimLevel::Minimal,
+        _ => TrimLevel::Full,
+    };
+
+    // Parse strategy
+    let strategy_kind = strategy
+        .and_then(TrimStrategyKind::parse)
+        .unwrap_or(match detected_type {
+            "issues" => TrimStrategyKind::ElementCount,
+            "merge_requests" => TrimStrategyKind::ElementCount,
+            "diffs" => TrimStrategyKind::SizeProportional,
+            "comments" => TrimStrategyKind::Cascading,
+            "discussions" => TrimStrategyKind::ThreadLevel,
+            _ => TrimStrategyKind::Default,
+        });
+
+    // Calculate JSON stats for comparison
+    let json_tokens = estimate_tokens(input);
+
+    // Format output
+    let output = if format == "json" {
+        serde_json::to_string_pretty(&json_value)?
+    } else {
+        match detected_type {
+            "issues" => {
+                let issues: Vec<devboy_core::Issue> = serde_json::from_value(json_value)?;
+                let budget_config = BudgetConfig {
+                    budget_tokens: budget,
+                    ..Default::default()
+                };
+                let result = budget::process_issues(&issues, strategy_kind, &budget_config)?;
+                result.content
+            }
+            "merge_requests" => {
+                let mrs: Vec<devboy_core::MergeRequest> = serde_json::from_value(json_value)?;
+                toon::encode_merge_requests(&mrs, trim_level)?
+            }
+            "diffs" => {
+                let diffs: Vec<devboy_core::FileDiff> = serde_json::from_value(json_value)?;
+                toon::encode_diffs(&diffs)?
+            }
+            "comments" => {
+                let comments: Vec<devboy_core::Comment> = serde_json::from_value(json_value)?;
+                toon::encode_comments(&comments)?
+            }
+            "discussions" => {
+                let discussions: Vec<devboy_core::Discussion> = serde_json::from_value(json_value)?;
+                toon::encode_discussions(&discussions)?
+            }
+            _ => toon::encode_value(&json_value)?,
+        }
+    };
+
+    let output_tokens = estimate_tokens(&output);
+
+    // Print output to stdout
+    println!("{output}");
+
+    // Print stats to stderr
+    if stats {
+        let savings = if json_tokens > 0 {
+            (1.0 - output_tokens as f64 / json_tokens as f64) * 100.0
+        } else {
+            0.0
+        };
+        eprintln!("--- Format Pipeline Stats ---");
+        eprintln!("Type:     {detected_type}");
+        eprintln!("Strategy: {}", strategy_kind.as_str());
+        eprintln!("Level:    {level}");
+        eprintln!("Budget:   {budget} tokens");
+        eprintln!("Input:    {} tokens ({} chars)", json_tokens, input.len());
+        eprintln!(
+            "Output:   {} tokens ({} chars)",
+            output_tokens,
+            output.len()
+        );
+        eprintln!("Savings:  {savings:.1}%");
+        eprintln!(
+            "Pages:    {} (JSON would need {})",
+            output_tokens.div_ceil(budget),
+            json_tokens.div_ceil(budget)
+        );
+    }
+
+    Ok(())
+}
+
+/// Auto-detect data type from JSON structure.
+fn detect_data_type(value: &serde_json::Value) -> &'static str {
+    if let Some(arr) = value.as_array()
+        && let Some(first) = arr.first()
+        && let Some(obj) = first.as_object()
+    {
+        if obj.contains_key("diff") && obj.contains_key("file_path") {
+            return "diffs";
+        }
+        if obj.contains_key("resolved") && obj.contains_key("comments") {
+            return "discussions";
+        }
+        if obj.contains_key("source_branch") && obj.contains_key("target_branch") {
+            return "merge_requests";
+        }
+        if obj.contains_key("key") && obj.contains_key("title") {
+            return "issues";
+        }
+        if obj.contains_key("body") && obj.contains_key("author") {
+            return "comments";
+        }
+    }
+    "unknown"
 }
 
 #[cfg(test)]
