@@ -1138,7 +1138,7 @@ mod tests {
             ContextConfig {
                 github: Some(GitHubConfig {
                     owner: "meteora-pro".to_string(),
-                    repo: "dev-boy-monorepo".to_string(),
+                    repo: "my-project".to_string(),
                     base_url: None,
                 }),
                 clickup: Some(ClickUpConfig {
