@@ -1,21 +1,21 @@
-//! Greedy fractional — для деревьев 100-999 узлов.
+//! Greedy fractional — for trees with 100-999 nodes.
 //!
-//! Сортирует элементы по information density (value/weight) в убывающем порядке
-//! и жадно добавляет элементы пока бюджет позволяет.
+//! Sorts elements by information density (value/weight) in descending order
+//! and greedily adds elements while the budget allows.
 //!
-//! Гарантия: ≥ 63% оптимума, на практике ~90%+.
-//! Сложность: O(n log n) из-за сортировки.
+//! Guarantee: >= 63% of optimum, in practice ~90%+.
+//! Complexity: O(n log n) due to sorting.
 
 use crate::tree::TrimNode;
 
-/// Решить задачу обрезки жадным алгоритмом по плотности.
+/// Solve the trimming problem with a greedy density-based algorithm.
 pub fn solve(tree: &mut TrimNode, budget: usize) {
     let n = tree.children.len();
     if n == 0 {
         return;
     }
 
-    // Рассчитываем (index, weight, density) для каждого child
+    // Calculate (index, weight, density) for each child
     let mut items: Vec<(usize, usize, f64)> = tree
         .children
         .iter()
@@ -28,14 +28,14 @@ pub fn solve(tree: &mut TrimNode, budget: usize) {
         })
         .collect();
 
-    // Сортируем по density (убывание), при равной density — по weight (возрастание)
+    // Sort by density (descending), with equal density — by weight (ascending)
     items.sort_by(|a, b| {
         b.2.partial_cmp(&a.2)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(a.1.cmp(&b.1))
     });
 
-    // Жадно включаем элементы
+    // Greedily include elements
     let mut remaining = budget;
     let mut included_set = vec![false; n];
 
@@ -46,7 +46,7 @@ pub fn solve(tree: &mut TrimNode, budget: usize) {
         }
     }
 
-    // Помечаем excluded
+    // Mark excluded nodes
     for (i, child) in tree.children.iter_mut().enumerate() {
         if !included_set[i] {
             exclude_subtree(child);

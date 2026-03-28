@@ -1,19 +1,19 @@
-//! Tree Knapsack DP — точный оптимум для деревьев < 100 узлов.
+//! Tree Knapsack DP — exact optimum for trees with < 100 nodes.
 //!
-//! Реализация алгоритма Cho & Shaw (1997):
-//! maximize Σ p(v) для v ∈ S
-//! subject to: Σ w(v) ≤ B; S — связное поддерево с корнем
+//! Implementation of the Cho & Shaw (1997) algorithm:
+//! maximize Σ p(v) for v ∈ S
+//! subject to: Σ w(v) ≤ B; S — connected subtree rooted at root
 //!
-//! Сложность: O(n × B) где n — количество узлов, B — бюджет.
+//! Complexity: O(n × B) where n — number of nodes, B — budget.
 
 use crate::tree::TrimNode;
 
-/// Решить задачу Tree Knapsack точным DP.
+/// Solve the Tree Knapsack problem with exact DP.
 ///
-/// Помечает excluded узлы как `included = false`.
+/// Marks excluded nodes as `included = false`.
 pub fn solve(tree: &mut TrimNode, budget: usize) {
-    // Собираем children корня — это наши "предметы" (с поддеревьями)
-    // Для children корня используем 0-1 knapsack по поддеревьям
+    // Collect root's children — these are our "items" (with subtrees)
+    // For root's children we use 0-1 knapsack over subtrees
     let n = tree.children.len();
     if n == 0 {
         return;
@@ -70,7 +70,7 @@ pub fn solve(tree: &mut TrimNode, budget: usize) {
         }
     }
 
-    // Помечаем excluded
+    // Mark excluded nodes
     for (i, child) in tree.children.iter_mut().enumerate() {
         if !included_set[i] {
             exclude_subtree(child);
@@ -122,9 +122,9 @@ mod tests {
         let mut tree = make_items(&[(10, 1.0), (20, 2.0), (30, 3.0)]);
         solve(&mut tree, 35);
 
-        // Budget 35: лучше взять (10, 1.0) + (20, 2.0) = weight 30, value 30.0
-        // или (30, 3.0) = weight 30, value 90.0
-        // Knapsack должен выбрать (30, 3.0)
+        // Budget 35: better to take (10, 1.0) + (20, 2.0) = weight 30, value 30.0
+        // or (30, 3.0) = weight 30, value 90.0
+        // Knapsack should select (30, 3.0)
         assert!(tree.total_weight() <= 35);
         assert!(tree.included_items_count() >= 1);
     }
@@ -133,7 +133,7 @@ mod tests {
     fn test_knapsack_all_fit() {
         let mut tree = make_items(&[(10, 1.0), (20, 1.0)]);
         solve(&mut tree, 100);
-        // Все влезают
+        // All items fit
         assert_eq!(tree.included_items_count(), 2);
     }
 
@@ -141,7 +141,7 @@ mod tests {
     fn test_knapsack_nothing_fits() {
         let mut tree = make_items(&[(100, 1.0), (200, 2.0)]);
         solve(&mut tree, 5);
-        // Ничего не влезает
+        // Nothing fits
         assert_eq!(tree.included_items_count(), 0);
     }
 
@@ -153,7 +153,7 @@ mod tests {
         let mut tree = make_items(&[(50, 0.5), (10, 0.8), (10, 0.9)]);
         solve(&mut tree, 25);
 
-        // Должен выбрать items 1+2 (weight=20, value=17) vs item 0 (weight=50, не влезает)
+        // Should select items 1+2 (weight=20, value=17) vs item 0 (weight=50, doesn't fit)
         let included = tree.included_item_indices();
         assert!(included.contains(&1));
         assert!(included.contains(&2));

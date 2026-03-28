@@ -59,7 +59,7 @@ mod tests {
         let budget = 8000;
         let chars = tokens_to_chars(budget);
         let back = estimate_tokens(&"x".repeat(chars));
-        // Должно быть примерно равно бюджету (±1 из-за округления)
+        // Should be approximately equal to the budget (±1 due to rounding)
         assert!((back as i64 - budget as i64).unsigned_abs() <= 1);
     }
 

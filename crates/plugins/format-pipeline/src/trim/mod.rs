@@ -1,10 +1,10 @@
-//! Алгоритмы обрезки дерева по бюджету.
+//! Tree trimming algorithms by budget.
 //!
-//! Выбор алгоритма зависит от размера дерева:
-//! - < 100 nodes: Tree Knapsack DP (точный оптимум)
-//! - 100-999: Greedy fractional (≥ 63% оптимума, ~90%+ на практике)
-//! - 1000-9999: Hierarchical WFQ (пропорционально справедливый)
-//! - ≥ 10000: Head+Tail linear (эвристика для логов)
+//! Algorithm selection depends on tree size:
+//! - < 100 nodes: Tree Knapsack DP (exact optimum)
+//! - 100-999: Greedy fractional (>= 63% of optimum, ~90%+ in practice)
+//! - 1000-9999: Hierarchical WFQ (proportionally fair)
+//! - >= 10000: Head+Tail linear (heuristic for logs)
 
 pub mod greedy;
 pub mod head_tail;
@@ -13,12 +13,12 @@ pub mod wfq;
 
 use crate::tree::TrimNode;
 
-/// Обрезать дерево по бюджету, автоматически выбрав оптимальный алгоритм.
+/// Trim the tree to fit the budget, automatically selecting the optimal algorithm.
 ///
-/// Budget — максимальный вес (в токенах) результирующего included поддерева.
-/// После вызова, excluded узлы имеют `included = false`.
+/// Budget is the maximum weight (in tokens) of the resulting included subtree.
+/// After the call, excluded nodes have `included = false`.
 pub fn trim(tree: &mut TrimNode, budget: usize) {
-    // Если уже влезает — ничего не делаем
+    // If it already fits — do nothing
     if tree.total_weight() <= budget {
         return;
     }
@@ -60,7 +60,7 @@ mod tests {
         let budget = 250;
         trim(&mut tree, budget);
         assert!(tree.total_weight() <= budget);
-        // Должен сохранить хотя бы один элемент
+        // Should keep at least one element
         assert!(tree.included_items_count() >= 1);
     }
 
@@ -68,7 +68,7 @@ mod tests {
     fn test_trim_prefers_high_value() {
         let mut tree = make_tree(&[100, 100, 100], &[0.1, 0.9, 0.5]);
         trim(&mut tree, 150);
-        // Item с value 0.9 (index 1) должен быть included
+        // Item with value 0.9 (index 1) should be included
         let included = tree.included_item_indices();
         assert!(included.contains(&1), "High-value item should be kept");
     }
