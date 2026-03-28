@@ -20,8 +20,8 @@ use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
 use devboy_jira::JiraClient;
 use devboy_mcp::{
-    JsonRpcRequest, McpProxyClient, McpServer, ProxyManager, ProxyTransport, RequestId,
-    JSONRPC_VERSION, KNOWN_BUILTIN_TOOLS,
+    JSONRPC_VERSION, JsonRpcRequest, KNOWN_BUILTIN_TOOLS, McpProxyClient, McpServer, ProxyManager,
+    ProxyTransport, RequestId,
 };
 use devboy_storage::{ChainStore, CredentialStore};
 use dialoguer::{Confirm, Input, MultiSelect, Password};
@@ -198,6 +198,29 @@ enum Commands {
         /// Only check for updates, don't install
         #[arg(long)]
         check: bool,
+    },
+
+    /// Benchmark format pipeline on real open-source project data (JSON vs TOON)
+    Benchmark {
+        /// GitHub owner (e.g., "kubernetes")
+        #[arg(short, long, default_value = "facebook")]
+        owner: String,
+
+        /// GitHub repo (e.g., "kubernetes")
+        #[arg(short, long, default_value = "react")]
+        repo: String,
+
+        /// Token budget (default: 8000)
+        #[arg(short, long, default_value = "8000")]
+        budget: usize,
+
+        /// Maximum issues to fetch (default: 30)
+        #[arg(short = 'n', long, default_value = "30")]
+        limit: u32,
+
+        /// GitHub token (optional, for higher rate limits). Set GITHUB_TOKEN env var.
+        #[arg(long)]
+        token: Option<String>,
     },
 }
 
@@ -392,7 +415,10 @@ async fn main() -> Result<()> {
     // Run update check in background for interactive commands (skip for mcp, upgrade, and no-command).
     // Spawned as a background task to avoid blocking CLI startup on network calls.
     let update_check_handle = match &cli.command {
-        Some(Commands::Mcp { .. }) | Some(Commands::Upgrade { .. }) | None => None,
+        Some(Commands::Mcp { .. })
+        | Some(Commands::Upgrade { .. })
+        | Some(Commands::Benchmark { .. })
+        | None => None,
         _ => Some(tokio::spawn(update_check::check_and_notify())),
     };
 
@@ -462,6 +488,16 @@ async fn main() -> Result<()> {
 
         Some(Commands::Upgrade { check }) => {
             upgrade::run_upgrade(check).await?;
+        }
+
+        Some(Commands::Benchmark {
+            owner,
+            repo,
+            budget,
+            limit,
+            token,
+        }) => {
+            run_benchmark(&owner, &repo, budget, limit, token.as_deref()).await?;
         }
 
         None => {
@@ -1590,7 +1626,9 @@ async fn handle_test_command(provider: &str) -> Result<()> {
                 println!("  Team ID: {}", team_id);
             } else {
                 println!("  Team ID: (not set)");
-                println!("  Hint: Set team_id for custom task IDs (e.g., DEV-42) and better integration:");
+                println!(
+                    "  Hint: Set team_id for custom task IDs (e.g., DEV-42) and better integration:"
+                );
                 println!("    devboy config set clickup.team_id <team_id>");
             }
 
@@ -1703,15 +1741,15 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
         }
 
         // Backward-compatible implicit default context from top-level provider fields.
-        if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME) {
-            if let Some(default_context) = config.legacy_default_context() {
-                any_provider_added |= add_context_providers(
-                    &mut server,
-                    store.as_ref(),
-                    Config::DEFAULT_CONTEXT_NAME,
-                    &default_context,
-                );
-            }
+        if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME)
+            && let Some(default_context) = config.legacy_default_context()
+        {
+            any_provider_added |= add_context_providers(
+                &mut server,
+                store.as_ref(),
+                Config::DEFAULT_CONTEXT_NAME,
+                &default_context,
+            );
         }
 
         // Set active context (if configured and valid).
@@ -2728,15 +2766,15 @@ async fn handle_tools_call(name: &str, args: &str) -> Result<()> {
         server.ensure_context(context_name);
         add_context_providers(&mut server, store.as_ref(), context_name, context);
     }
-    if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME) {
-        if let Some(default_context) = config.legacy_default_context() {
-            add_context_providers(
-                &mut server,
-                store.as_ref(),
-                Config::DEFAULT_CONTEXT_NAME,
-                &default_context,
-            );
-        }
+    if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME)
+        && let Some(default_context) = config.legacy_default_context()
+    {
+        add_context_providers(
+            &mut server,
+            store.as_ref(),
+            Config::DEFAULT_CONTEXT_NAME,
+            &default_context,
+        );
     }
     if let Some(active) = config.resolve_active_context_name() {
         let _ = server.set_active_context(&active);
@@ -2818,10 +2856,12 @@ mod tests {
 
         let result = apply_tools_disable(&mut config, &names);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("whitelist (enabled) mode is active"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("whitelist (enabled) mode is active")
+        );
     }
 
     // -- enable tests --
@@ -2860,10 +2900,12 @@ mod tests {
 
         let result = apply_tools_enable(&mut config, &names);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("whitelist (enabled) mode is active"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("whitelist (enabled) mode is active")
+        );
     }
 
     // -- reset tests --
@@ -3315,10 +3357,12 @@ mod tests {
         let result = register_claude_mcp_to_test_path("devboy", tmp_dir.path());
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not a JSON object"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not a JSON object")
+        );
     }
 
     #[test]
@@ -3544,4 +3588,159 @@ mod tests {
         let cu = context.clickup.unwrap();
         assert_eq!(cu.list_id, "abc123");
     }
+}
+
+// =============================================================================
+// Benchmark Command
+// =============================================================================
+
+async fn run_benchmark(
+    owner: &str,
+    repo: &str,
+    budget: usize,
+    limit: u32,
+    token: Option<&str>,
+) -> Result<()> {
+    println!("Format Pipeline Benchmark");
+    println!("{}", "=".repeat(65));
+    println!("Source:   github.com/{}/{}", owner, repo);
+    println!("Budget:   {} tokens", budget);
+    println!();
+
+    // Use provided token, env var, or empty (for public repos)
+    let gh_token = token
+        .map(|t| t.to_string())
+        .or_else(|| std::env::var("GITHUB_TOKEN").ok())
+        .unwrap_or_default();
+
+    if gh_token.is_empty() {
+        println!("Note: No GITHUB_TOKEN set. Set it for higher rate limits.\n");
+    }
+
+    let client = devboy_github::GitHubClient::new(owner, repo, &gh_token);
+
+    // Fetch issues
+    println!("Fetching issues...");
+    let filter = IssueFilter {
+        state: Some("all".into()),
+        limit: Some(limit),
+        ..Default::default()
+    };
+    let issues = client.get_issues(filter).await?;
+    if !issues.is_empty() {
+        print_comparison("Issues", &issues, budget)?;
+    } else {
+        println!("  No issues found.");
+    }
+
+    // Fetch MRs/PRs
+    println!("\nFetching pull requests...");
+    let mr_filter = devboy_core::MrFilter {
+        state: Some("all".into()),
+        limit: Some(limit),
+        ..Default::default()
+    };
+    let mrs = client.get_merge_requests(mr_filter).await?;
+    if !mrs.is_empty() {
+        print_comparison("Pull Requests", &mrs, budget)?;
+    } else {
+        println!("  No pull requests found.");
+    }
+
+    // Fetch diffs from first open PR
+    let open_mrs: Vec<_> = mrs.iter().filter(|m| m.state == "open").collect();
+    if let Some(mr) = open_mrs.first() {
+        println!("\nFetching diffs for {}...", mr.key);
+        match client.get_diffs(&mr.key).await {
+            Ok(diffs) if !diffs.is_empty() => {
+                print_comparison("Diffs", &diffs, budget)?;
+            }
+            Ok(_) => println!("  No diffs in this PR."),
+            Err(e) => println!("  Failed to fetch diffs: {}", e),
+        }
+    }
+
+    println!("\n{}", "=".repeat(65));
+    Ok(())
+}
+
+fn print_comparison<T: serde::Serialize>(label: &str, items: &Vec<T>, budget: usize) -> Result<()> {
+    use devboy_format_pipeline::token_counter::estimate_tokens;
+    use std::time::Instant;
+
+    // Warm up and measure JSON encoding (average of N runs)
+    const RUNS: u32 = 100;
+    let start = Instant::now();
+    let mut json = String::new();
+    for _ in 0..RUNS {
+        json = serde_json::to_string_pretty(&items)?;
+    }
+    let json_us = start.elapsed().as_micros() / RUNS as u128;
+
+    // Measure TOON encoding
+    let start = Instant::now();
+    let mut toon_out = String::new();
+    for _ in 0..RUNS {
+        toon_out = devboy_format_pipeline::toon::encode_value(&items)?;
+    }
+    let toon_us = start.elapsed().as_micros() / RUNS as u128;
+
+    let json_tokens = estimate_tokens(&json);
+    let toon_tokens = estimate_tokens(&toon_out);
+    let savings = calc_savings(json_tokens, toon_tokens);
+
+    let json_pages = json_tokens.div_ceil(budget);
+    let toon_pages = toon_tokens.div_ceil(budget);
+
+    println!("  {} ({} items):", label, items.len());
+    println!(
+        "    {:<15} {:>8} tokens {:>8} chars {:>3} pages  {:>6}us",
+        "JSON",
+        json_tokens,
+        json.len(),
+        json_pages,
+        json_us
+    );
+    println!(
+        "    {:<15} {:>8} tokens {:>8} chars {:>3} pages  {:>6}us  ({:.0}% savings)",
+        "TOON",
+        toon_tokens,
+        toon_out.len(),
+        toon_pages,
+        toon_us,
+        savings
+    );
+
+    if toon_pages < json_pages {
+        println!(
+            "    -> TOON saves {} pages ({} vs {})",
+            json_pages - toon_pages,
+            toon_pages,
+            json_pages
+        );
+    }
+
+    let cpu_overhead = if json_us > 0 {
+        ((toon_us as f64 / json_us as f64) - 1.0) * 100.0
+    } else {
+        0.0
+    };
+
+    // Estimate memory: JSON output size + TOON output size (heap strings)
+    let json_mem = json.capacity();
+    let toon_mem = toon_out.capacity();
+
+    println!(
+        "    -> CPU: JSON {}us vs TOON {}us ({:+.0}%), Memory: JSON {} vs TOON {} bytes",
+        json_us, toon_us, cpu_overhead, json_mem, toon_mem
+    );
+
+    Ok(())
+}
+
+fn calc_savings(json_tokens: usize, toon_tokens: usize) -> f64 {
+    if json_tokens == 0 {
+        return 0.0;
+    }
+    (1.0 - toon_tokens as f64 / json_tokens as f64) * 100.0
 }

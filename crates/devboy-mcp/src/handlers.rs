@@ -23,7 +23,7 @@ use devboy_core::{
     CodePosition, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, IssueFilter,
     IssueProvider, MergeRequestProvider, MrFilter, Provider, UpdateIssueInput,
 };
-use devboy_pipeline::{OutputFormat, Pipeline, PipelineConfig};
+use devboy_format_pipeline::{OutputFormat, Pipeline, PipelineConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -124,8 +124,8 @@ define_tools! {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "compact", "json"],
-                    "description": "Output format (default: markdown)"
+                    "enum": ["toon", "json"],
+                    "description": "Output format (default: toon)"
                 },
                 "provider": {
                     "type": "string",
@@ -159,8 +159,8 @@ define_tools! {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "compact", "json"],
-                    "description": "Output format (default: markdown)"
+                    "enum": ["toon", "json"],
+                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -179,8 +179,8 @@ define_tools! {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "compact", "json"],
-                    "description": "Output format (default: markdown)"
+                    "enum": ["toon", "json"],
+                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -317,8 +317,8 @@ define_tools! {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "compact", "json"],
-                    "description": "Output format (default: markdown)"
+                    "enum": ["toon", "json"],
+                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -337,8 +337,8 @@ define_tools! {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "compact", "json"],
-                    "description": "Output format (default: markdown)"
+                    "enum": ["toon", "json"],
+                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -368,8 +368,8 @@ define_tools! {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "compact", "json"],
-                    "description": "Output format (default: markdown)"
+                    "enum": ["toon", "json"],
+                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -388,8 +388,8 @@ define_tools! {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "compact", "json"],
-                    "description": "Output format (default: markdown)"
+                    "enum": ["toon", "json"],
+                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -828,7 +828,7 @@ impl ToolHandler {
                 Err(e) => return ToolCallResult::error(format!("Invalid parameters: {}", e)),
             },
             None => {
-                return ToolCallResult::error("Missing required parameters: key, body".to_string())
+                return ToolCallResult::error("Missing required parameters: key, body".to_string());
             }
         };
 
@@ -965,12 +965,12 @@ impl ToolHandler {
             return ToolCallResult::error("No providers configured".to_string());
         }
 
-        if let Some(limit) = params.limit {
-            if limit == 0 || limit > 100 {
-                return ToolCallResult::error(
-                    "Invalid parameters: limit must be between 1 and 100".to_string(),
-                );
-            }
+        if let Some(limit) = params.limit
+            && (limit == 0 || limit > 100)
+        {
+            return ToolCallResult::error(
+                "Invalid parameters: limit must be between 1 and 100".to_string(),
+            );
         }
 
         for provider in &self.providers {
@@ -1069,7 +1069,7 @@ impl ToolHandler {
             None => {
                 return ToolCallResult::error(
                     "Missing required parameters: title, source_branch, target_branch".to_string(),
-                )
+                );
             }
         };
 
@@ -1141,7 +1141,7 @@ impl ToolHandler {
                 Err(e) => return ToolCallResult::error(format!("Invalid parameters: {}", e)),
             },
             None => {
-                return ToolCallResult::error("Missing required parameters: key, body".to_string())
+                return ToolCallResult::error("Missing required parameters: key, body".to_string());
             }
         };
 
@@ -1216,6 +1216,7 @@ impl ToolHandler {
                     return match devboy_executor::format_output(
                         output,
                         params.format.as_deref(),
+                        Some("get_pipeline"),
                         None,
                     ) {
                         Ok(text) => ToolCallResult::text(text),
@@ -1279,7 +1280,12 @@ impl ToolHandler {
             {
                 Ok(log) => {
                     let output = devboy_executor::ToolOutput::JobLog(Box::new(log));
-                    return match devboy_executor::format_output(output, None, None) {
+                    return match devboy_executor::format_output(
+                        output,
+                        None,
+                        Some("get_job_logs"),
+                        None,
+                    ) {
                         Ok(text) => ToolCallResult::text(text),
                         Err(e) => ToolCallResult::error(format!("Format error: {}", e)),
                     };
@@ -1318,8 +1324,7 @@ impl ToolHandler {
     ) -> Pipeline {
         let output_format = match format.as_deref() {
             Some("json") => OutputFormat::Json,
-            Some("compact") => OutputFormat::Compact,
-            _ => OutputFormat::Markdown,
+            _ => OutputFormat::Toon,
         };
 
         Pipeline::with_config(PipelineConfig {
@@ -2517,11 +2522,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_issues_with_format_compact() {
+    async fn test_get_issues_with_format_toon() {
         let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
         let handler = ToolHandler::new(vec![provider]);
 
-        let args = serde_json::json!({"format": "compact"});
+        let args = serde_json::json!({"format": "toon"});
         let result = handler.execute("get_issues", Some(args)).await;
 
         assert!(result.is_error.is_none());
@@ -2538,7 +2543,7 @@ mod tests {
         let pipeline = handler.create_pipeline(&Some("json".to_string()));
         assert!(pipeline.transform_issues(vec![]).is_ok());
 
-        let pipeline = handler.create_pipeline(&Some("compact".to_string()));
+        let pipeline = handler.create_pipeline(&Some("toon".to_string()));
         assert!(pipeline.transform_issues(vec![]).is_ok());
 
         let pipeline = handler.create_pipeline(&None);
@@ -2548,14 +2553,14 @@ mod tests {
     #[tokio::test]
     async fn test_with_pipeline_config() {
         let _handler = ToolHandler::new(vec![]).with_pipeline_config(PipelineConfig {
-            format: OutputFormat::Compact,
+            format: OutputFormat::Toon,
             ..Default::default()
         });
 
         // The default format from config should be used as base
         let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
         let handler = ToolHandler::new(vec![provider]).with_pipeline_config(PipelineConfig {
-            format: OutputFormat::Compact,
+            format: OutputFormat::Toon,
             ..Default::default()
         });
 

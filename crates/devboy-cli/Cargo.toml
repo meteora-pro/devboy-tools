@@ -19,6 +19,7 @@ devboy-github = { path = "../plugins/api/github" }
 devboy-gitlab = { path = "../plugins/api/gitlab" }
 devboy-clickup = { path = "../plugins/api/clickup" }
 devboy-jira = { path = "../plugins/api/jira" }
+devboy-format-pipeline = { path = "../plugins/format-pipeline" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -38,7 +39,10 @@ zip = "8.4"
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tempfile.workspace = true
+temp-env = { version = "0.3", features = ["async_closure"] }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-devboy-pipeline = { path = "../plugins/pipeline" }
+
+[lints]
+workspace = true

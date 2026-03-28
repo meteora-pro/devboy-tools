@@ -13,15 +13,18 @@ members = [
     "crates/plugins/api/clickup",
     "crates/plugins/api/jira",
     # Pipeline plugins
-    "crates/plugins/pipeline",
+    "crates/plugins/format-pipeline",
 ]
 
 [workspace.package]
 version = "0.11.0"
-edition = "2021"
+edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/meteora-pro/devboy-tools"
 authors = ["Meteora <dev@meteora.pro>"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
 
 [workspace.dependencies]
 # Async runtime
@@ -61,3 +64,8 @@ mockall = "0.13"
 insta = { version = "1.41", features = ["json", "yaml"] }
 httpmock = "0.8"
 tempfile = "3.15"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

@@ -10,12 +10,12 @@ use devboy_core::{
 };
 use tracing::{debug, warn};
 
+use crate::DEFAULT_GITLAB_URL;
 use crate::types::{
     CreateDiscussionRequest, CreateIssueRequest, CreateMergeRequestRequest, CreateNoteRequest,
     DiscussionPosition, GitLabDiff, GitLabDiscussion, GitLabIssue, GitLabMergeRequest,
     GitLabMergeRequestChanges, GitLabNote, GitLabNotePosition, GitLabUser, UpdateIssueRequest,
 };
-use crate::DEFAULT_GITLAB_URL;
 
 /// GitLab API client.
 pub struct GitLabClient {
@@ -370,10 +370,10 @@ impl IssueProvider for GitLabClient {
             params.push(format!("search={}", search));
         }
 
-        if let Some(labels) = &filter.labels {
-            if !labels.is_empty() {
-                params.push(format!("labels={}", labels.join(",")));
-            }
+        if let Some(labels) = &filter.labels
+            && !labels.is_empty()
+        {
+            params.push(format!("labels={}", labels.join(",")));
         }
 
         if let Some(assignee) = &filter.assignee {
@@ -520,10 +520,10 @@ impl MergeRequestProvider for GitLabClient {
             params.push(format!("author_username={}", author));
         }
 
-        if let Some(labels) = &filter.labels {
-            if !labels.is_empty() {
-                params.push(format!("labels={}", labels.join(",")));
-            }
+        if let Some(labels) = &filter.labels
+            && !labels.is_empty()
+        {
+            params.push(format!("labels={}", labels.join(",")));
         }
 
         if let Some(limit) = filter.limit {
@@ -781,11 +781,7 @@ fn extract_errors(log: &str, max_lines: usize) -> Option<String> {
             .rev()
             .filter_map(|l| {
                 let s = strip_ansi(l).trim().to_string();
-                if s.is_empty() {
-                    None
-                } else {
-                    Some(s)
-                }
+                if s.is_empty() { None } else { Some(s) }
             })
             .take(10)
             .collect();
@@ -2021,11 +2017,13 @@ mod tests {
             assert_eq!(result.stages.len(), 2); // build + test
             assert_eq!(result.failed_jobs.len(), 1);
             assert_eq!(result.failed_jobs[0].name, "test");
-            assert!(result.failed_jobs[0]
-                .error_snippet
-                .as_ref()
-                .unwrap()
-                .contains("assertion failed"));
+            assert!(
+                result.failed_jobs[0]
+                    .error_snippet
+                    .as_ref()
+                    .unwrap()
+                    .contains("assertion failed")
+            );
         }
 
         #[tokio::test]

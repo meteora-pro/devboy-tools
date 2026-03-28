@@ -1,0 +1,28 @@
+[package]
+name = "devboy-format-pipeline"
+description = "Format pipeline for devboy-tools - TOON encoding, tree-based budget trimming, cursor pagination"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+devboy-core = { path = "../../devboy-core" }
+toon-format = { version = "0.4", default-features = false }
+anyhow.workspace = true
+base64 = "0.22"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[[bench]]
+name = "format_comparison"
+harness = false
+
+[lints]
+workspace = true

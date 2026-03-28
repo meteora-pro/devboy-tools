@@ -45,11 +45,11 @@ pub use types::{
 };
 
 // Re-export enricher traits and utilities
-pub use enricher::{sanitize_field_name, PropertySchema, ToolEnricher, ToolSchema};
+pub use enricher::{PropertySchema, ToolEnricher, ToolSchema, sanitize_field_name};
 pub use tool_category::ToolCategory;
 
 // Re-export config types
 pub use config::{
-    BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, GitHubConfig, GitLabConfig,
-    JiraConfig, ProxyMcpServerConfig,
+    BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, FormatPipelineConfig, GitHubConfig,
+    GitLabConfig, JiraConfig, ProxyMatchingConfig, ProxyMcpServerConfig,
 };

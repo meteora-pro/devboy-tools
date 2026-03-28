@@ -22,3 +22,6 @@ urlencoding = "2"
 mockall.workspace = true
 httpmock.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

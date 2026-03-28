@@ -1,27 +1,36 @@
-//! Pipeline plugins for output transformation and optimization.
+//! Format pipeline for tool output transformation.
 //!
-//! This crate provides plugins to transform tool outputs before returning them to the LLM:
+//! Formats tool responses into an optimal format for LLM:
 //!
-//! - **Truncation**: Limit output size with pagination hints for the agent
-//! - **Markdown**: Convert JSON to Markdown for token savings (~50-70% reduction)
+//! - **TOON** (default): Token-Oriented Object Notation -- saves 39-90% of tokens
+//! - **JSON**: for programmatic processing
+//! - **Truncation**: size limiting with pagination hints
 //!
 //! # Example
 //!
 //! ```ignore
-//! use devboy_pipeline::{Pipeline, TruncationPlugin, MarkdownPlugin};
+//! use devboy_format_pipeline::{Pipeline, PipelineConfig, OutputFormat};
 //! use devboy_core::Issue;
 //!
-//! let pipeline = Pipeline::new()
-//!     .add(TruncationPlugin::new(10, 1000))  // max 10 items, 1000 chars
-//!     .add(MarkdownPlugin::new());
+//! let pipeline = Pipeline::with_config(PipelineConfig {
+//!     format: OutputFormat::Toon,
+//!     max_items: 20,
+//!     ..Default::default()
+//! });
 //!
 //! let output = pipeline.transform_issues(issues)?;
+//! println!("{}", output.to_string_with_hints());
 //! ```
 
-pub mod markdown;
+pub mod budget;
+pub mod pagination;
+pub mod strategy;
+pub mod token_counter;
+pub mod toon;
+pub mod tree;
+pub mod trim;
 pub mod truncation;
 
-pub use markdown::MarkdownPlugin;
 pub use truncation::TruncationPlugin;
 
 use devboy_core::{Comment, Discussion, FileDiff, Issue, MergeRequest, Result};
@@ -31,7 +40,7 @@ use devboy_core::{Comment, Discussion, FileDiff, Issue, MergeRequest, Result};
 /// Contains the transformed data and metadata about truncation/pagination.
 #[derive(Debug, Clone)]
 pub struct TransformOutput {
-    /// The transformed output (Markdown or JSON string)
+    /// The transformed output (TOON or JSON string)
     pub content: String,
     /// Whether the output was truncated
     pub truncated: bool,
@@ -41,6 +50,8 @@ pub struct TransformOutput {
     pub included_count: usize,
     /// Hint for the agent about hidden content
     pub agent_hint: Option<String>,
+    /// Cursor for fetching the next page (if overflow exists)
+    pub page_cursor: Option<String>,
 }
 
 impl TransformOutput {
@@ -52,6 +63,7 @@ impl TransformOutput {
             total_count: None,
             included_count: 0,
             agent_hint: None,
+            page_cursor: None,
         }
     }
 
@@ -89,6 +101,8 @@ pub struct PipelineConfig {
     pub format: OutputFormat,
     /// Whether to include agent hints about truncation
     pub include_hints: bool,
+    /// Page cursor from a previous request (for pagination)
+    pub page_cursor: Option<String>,
 }
 
 impl Default for PipelineConfig {
@@ -98,8 +112,9 @@ impl Default for PipelineConfig {
             max_chars: 100_000,
             max_chars_per_item: 10_000,
             max_description_len: 10_000,
-            format: OutputFormat::Markdown,
+            format: OutputFormat::Toon,
             include_hints: true,
+            page_cursor: None,
         }
     }
 }
@@ -107,12 +122,10 @@ impl Default for PipelineConfig {
 /// Output format for transformations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
-    /// JSON format (verbose, ~2000 tokens for typical output)
+    /// TOON format (default) -- token-optimized, saves 39-90% vs JSON
+    Toon,
+    /// JSON format -- for programmatic processing
     Json,
-    /// Markdown format (compact, ~100-500 tokens)
-    Markdown,
-    /// Compact text format (minimal, ~50-200 tokens)
-    Compact,
 }
 
 /// Pipeline for chaining output transformations.
@@ -133,14 +146,6 @@ impl Pipeline {
         Self { config }
     }
 
-    /// Build MarkdownConfig from PipelineConfig.
-    fn markdown_config(&self) -> markdown::MarkdownConfig {
-        markdown::MarkdownConfig {
-            max_description_len: self.config.max_description_len,
-            ..markdown::MarkdownConfig::default()
-        }
-    }
-
     /// Transform a list of issues.
     pub fn transform_issues(&self, issues: Vec<Issue>) -> Result<TransformOutput> {
         let total = issues.len();
@@ -149,10 +154,7 @@ impl Pipeline {
 
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_issues)?,
-            OutputFormat::Markdown => {
-                markdown::issues_to_markdown_with_config(&truncated_issues, &self.markdown_config())
-            }
-            OutputFormat::Compact => markdown::issues_to_compact(&truncated_issues),
+            OutputFormat::Toon => toon::encode_issues(&truncated_issues, toon::TrimLevel::Full)?,
         };
 
         let mut output = TransformOutput::new(content);
@@ -174,11 +176,9 @@ impl Pipeline {
 
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_mrs)?,
-            OutputFormat::Markdown => markdown::merge_requests_to_markdown_with_config(
-                &truncated_mrs,
-                &self.markdown_config(),
-            ),
-            OutputFormat::Compact => markdown::merge_requests_to_compact(&truncated_mrs),
+            OutputFormat::Toon => {
+                toon::encode_merge_requests(&truncated_mrs, toon::TrimLevel::Full)?
+            }
         };
 
         let mut output = TransformOutput::new(content);
@@ -210,8 +210,7 @@ impl Pipeline {
 
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_diffs)?,
-            OutputFormat::Markdown => markdown::diffs_to_markdown(&truncated_diffs),
-            OutputFormat::Compact => markdown::diffs_to_compact(&truncated_diffs),
+            OutputFormat::Toon => toon::encode_diffs(&truncated_diffs)?,
         };
 
         let mut output = TransformOutput::new(content);
@@ -233,8 +232,7 @@ impl Pipeline {
 
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_comments)?,
-            OutputFormat::Markdown => markdown::comments_to_markdown(&truncated_comments),
-            OutputFormat::Compact => markdown::comments_to_compact(&truncated_comments),
+            OutputFormat::Toon => toon::encode_comments(&truncated_comments)?,
         };
 
         let mut output = TransformOutput::new(content);
@@ -256,8 +254,7 @@ impl Pipeline {
 
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_discussions)?,
-            OutputFormat::Markdown => markdown::discussions_to_markdown(&truncated_discussions),
-            OutputFormat::Compact => markdown::discussions_to_compact(&truncated_discussions),
+            OutputFormat::Toon => toon::encode_discussions(&truncated_discussions)?,
         };
 
         let mut output = TransformOutput::new(content);
@@ -283,7 +280,7 @@ impl Pipeline {
             if !output.truncated {
                 output.truncated = true;
                 output.agent_hint = Some(format!(
-                    "⚠️ Output truncated to {} chars. Use pagination or filters to get more specific results.",
+                    "Output truncated to {} chars. Use pagination or filters to get more specific results.",
                     self.config.max_chars
                 ));
             }
@@ -307,7 +304,7 @@ impl Pipeline {
             .unwrap_or_default();
 
         format!(
-            "📊 Showing {}/{} {}. {} more available.{} You can use `offset` and `limit` parameters for pagination.",
+            "Showing {}/{} {}. {} more available.{} You can use `offset` and `limit` parameters for pagination.",
             included, total, item_type, remaining, tool_hint
         )
     }
@@ -347,103 +344,6 @@ mod tests {
                 updated_at: Some("2024-01-02T00:00:00Z".to_string()),
             })
             .collect()
-    }
-
-    #[test]
-    fn test_pipeline_truncates_items() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            max_items: 5,
-            max_chars: 10000,
-            ..Default::default()
-        });
-
-        let issues = sample_issues();
-        let output = pipeline.transform_issues(issues).unwrap();
-
-        assert!(output.truncated);
-        assert_eq!(output.total_count, Some(25));
-        assert_eq!(output.included_count, 5);
-        assert!(output.agent_hint.is_some());
-    }
-
-    #[test]
-    fn test_pipeline_no_truncation_when_under_limit() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            max_items: 50,
-            max_chars: 100000,
-            ..Default::default()
-        });
-
-        let issues: Vec<Issue> = sample_issues().into_iter().take(5).collect();
-        let output = pipeline.transform_issues(issues).unwrap();
-
-        assert!(!output.truncated);
-        assert!(output.agent_hint.is_none());
-    }
-
-    #[test]
-    fn test_markdown_format() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            format: OutputFormat::Markdown,
-            max_items: 3,
-            max_chars: 10000,
-            ..Default::default()
-        });
-
-        let issues: Vec<Issue> = sample_issues().into_iter().take(3).collect();
-        let output = pipeline.transform_issues(issues).unwrap();
-
-        assert!(output.content.contains("## gh#1"));
-        assert!(output.content.contains("**State:**"));
-    }
-
-    #[test]
-    fn test_compact_format() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            format: OutputFormat::Compact,
-            max_items: 3,
-            max_chars: 10000,
-            ..Default::default()
-        });
-
-        let issues: Vec<Issue> = sample_issues().into_iter().take(3).collect();
-        let output = pipeline.transform_issues(issues).unwrap();
-
-        // Compact format should be shorter than markdown
-        assert!(output.content.contains("gh#1"));
-        assert!(!output.content.contains("##")); // No markdown headers
-    }
-
-    #[test]
-    fn test_json_format() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            format: OutputFormat::Json,
-            max_items: 2,
-            max_chars: 10000,
-            ..Default::default()
-        });
-
-        let issues: Vec<Issue> = sample_issues().into_iter().take(2).collect();
-        let output = pipeline.transform_issues(issues).unwrap();
-
-        // Should be valid JSON
-        let parsed: Vec<Issue> = serde_json::from_str(&output.content).unwrap();
-        assert_eq!(parsed.len(), 2);
-    }
-
-    #[test]
-    fn test_char_limit_applied() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            max_items: 100,
-            max_chars: 100, // Very small limit
-            ..Default::default()
-        });
-
-        let issues = sample_issues();
-        let output = pipeline.transform_issues(issues).unwrap();
-
-        assert!(output.content.len() <= 100);
-        assert!(output.truncated);
     }
 
     fn sample_merge_requests() -> Vec<MergeRequest> {
@@ -518,12 +418,64 @@ mod tests {
             .collect()
     }
 
+    // --- Pipeline truncation ---
+
     #[test]
-    fn test_transform_merge_requests_markdown() {
+    fn test_pipeline_truncates_items() {
         let pipeline = Pipeline::with_config(PipelineConfig {
-            format: OutputFormat::Markdown,
+            max_items: 5,
+            max_chars: 100_000,
+            ..Default::default()
+        });
+
+        let issues = sample_issues();
+        let output = pipeline.transform_issues(issues).unwrap();
+
+        assert!(output.truncated);
+        assert_eq!(output.total_count, Some(25));
+        assert_eq!(output.included_count, 5);
+        assert!(output.agent_hint.is_some());
+    }
+
+    #[test]
+    fn test_pipeline_no_truncation_when_under_limit() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            max_items: 50,
+            max_chars: 100_000,
+            ..Default::default()
+        });
+
+        let issues: Vec<Issue> = sample_issues().into_iter().take(5).collect();
+        let output = pipeline.transform_issues(issues).unwrap();
+
+        assert!(!output.truncated);
+        assert!(output.agent_hint.is_none());
+    }
+
+    // --- Toon format ---
+
+    #[test]
+    fn test_toon_format_issues() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Toon,
             max_items: 3,
-            max_chars: 10000,
+            max_chars: 100_000,
+            ..Default::default()
+        });
+
+        let issues: Vec<Issue> = sample_issues().into_iter().take(3).collect();
+        let output = pipeline.transform_issues(issues).unwrap();
+
+        assert!(output.content.contains("gh#1"));
+        assert!(output.content.contains("Issue 1"));
+    }
+
+    #[test]
+    fn test_toon_format_merge_requests() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Toon,
+            max_items: 3,
+            max_chars: 100_000,
             ..Default::default()
         });
 
@@ -537,43 +489,11 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_merge_requests_json() {
+    fn test_toon_format_diffs() {
         let pipeline = Pipeline::with_config(PipelineConfig {
-            format: OutputFormat::Json,
-            max_items: 2,
-            max_chars: 10000,
-            ..Default::default()
-        });
-
-        let mrs: Vec<MergeRequest> = sample_merge_requests().into_iter().take(2).collect();
-        let output = pipeline.transform_merge_requests(mrs).unwrap();
-
-        let parsed: Vec<MergeRequest> = serde_json::from_str(&output.content).unwrap();
-        assert_eq!(parsed.len(), 2);
-    }
-
-    #[test]
-    fn test_transform_merge_requests_compact() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            format: OutputFormat::Compact,
-            max_items: 2,
-            max_chars: 10000,
-            ..Default::default()
-        });
-
-        let mrs: Vec<MergeRequest> = sample_merge_requests().into_iter().take(2).collect();
-        let output = pipeline.transform_merge_requests(mrs).unwrap();
-
-        assert!(output.content.contains("mr#1"));
-        assert!(!output.truncated);
-    }
-
-    #[test]
-    fn test_transform_diffs_markdown() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            format: OutputFormat::Markdown,
+            format: OutputFormat::Toon,
             max_items: 3,
-            max_chars: 10000,
+            max_chars: 100_000,
             ..Default::default()
         });
 
@@ -583,47 +503,14 @@ mod tests {
         assert!(output.content.contains("src/file_1.rs"));
         assert!(output.truncated);
         assert_eq!(output.included_count, 3);
-        assert!(output.agent_hint.unwrap().contains("get_diffs"));
     }
 
     #[test]
-    fn test_transform_diffs_json() {
+    fn test_toon_format_comments() {
         let pipeline = Pipeline::with_config(PipelineConfig {
-            format: OutputFormat::Json,
-            max_items: 2,
-            max_chars: 10000,
-            ..Default::default()
-        });
-
-        let diffs: Vec<FileDiff> = sample_diffs().into_iter().take(2).collect();
-        let output = pipeline.transform_diffs(diffs).unwrap();
-
-        let parsed: Vec<FileDiff> = serde_json::from_str(&output.content).unwrap();
-        assert_eq!(parsed.len(), 2);
-    }
-
-    #[test]
-    fn test_transform_diffs_compact() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            format: OutputFormat::Compact,
-            max_items: 10,
-            max_chars: 10000,
-            ..Default::default()
-        });
-
-        let diffs: Vec<FileDiff> = sample_diffs().into_iter().take(2).collect();
-        let output = pipeline.transform_diffs(diffs).unwrap();
-
-        assert!(output.content.contains("src/file_1.rs"));
-        assert!(!output.truncated);
-    }
-
-    #[test]
-    fn test_transform_comments_markdown() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            format: OutputFormat::Markdown,
+            format: OutputFormat::Toon,
             max_items: 3,
-            max_chars: 10000,
+            max_chars: 100_000,
             ..Default::default()
         });
 
@@ -636,42 +523,11 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_comments_json() {
+    fn test_toon_format_discussions() {
         let pipeline = Pipeline::with_config(PipelineConfig {
-            format: OutputFormat::Json,
-            max_items: 2,
-            max_chars: 10000,
-            ..Default::default()
-        });
-
-        let comments: Vec<Comment> = sample_comments().into_iter().take(2).collect();
-        let output = pipeline.transform_comments(comments).unwrap();
-
-        let parsed: Vec<Comment> = serde_json::from_str(&output.content).unwrap();
-        assert_eq!(parsed.len(), 2);
-    }
-
-    #[test]
-    fn test_transform_comments_compact() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            format: OutputFormat::Compact,
-            max_items: 10,
-            max_chars: 10000,
-            ..Default::default()
-        });
-
-        let comments: Vec<Comment> = sample_comments().into_iter().take(2).collect();
-        let output = pipeline.transform_comments(comments).unwrap();
-
-        assert!(output.content.contains("Comment body 1"));
-    }
-
-    #[test]
-    fn test_transform_discussions_markdown() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            format: OutputFormat::Markdown,
+            format: OutputFormat::Toon,
             max_items: 3,
-            max_chars: 10000,
+            max_chars: 100_000,
             ..Default::default()
         });
 
@@ -683,12 +539,78 @@ mod tests {
         assert_eq!(output.included_count, 3);
     }
 
+    // --- JSON format ---
+
     #[test]
-    fn test_transform_discussions_json() {
+    fn test_json_format_issues() {
         let pipeline = Pipeline::with_config(PipelineConfig {
             format: OutputFormat::Json,
             max_items: 2,
-            max_chars: 10000,
+            max_chars: 100_000,
+            ..Default::default()
+        });
+
+        let issues: Vec<Issue> = sample_issues().into_iter().take(2).collect();
+        let output = pipeline.transform_issues(issues).unwrap();
+
+        let parsed: Vec<Issue> = serde_json::from_str(&output.content).unwrap();
+        assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn test_json_format_merge_requests() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_items: 2,
+            max_chars: 100_000,
+            ..Default::default()
+        });
+
+        let mrs: Vec<MergeRequest> = sample_merge_requests().into_iter().take(2).collect();
+        let output = pipeline.transform_merge_requests(mrs).unwrap();
+
+        let parsed: Vec<MergeRequest> = serde_json::from_str(&output.content).unwrap();
+        assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn test_json_format_diffs() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_items: 2,
+            max_chars: 100_000,
+            ..Default::default()
+        });
+
+        let diffs: Vec<FileDiff> = sample_diffs().into_iter().take(2).collect();
+        let output = pipeline.transform_diffs(diffs).unwrap();
+
+        let parsed: Vec<FileDiff> = serde_json::from_str(&output.content).unwrap();
+        assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn test_json_format_comments() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_items: 2,
+            max_chars: 100_000,
+            ..Default::default()
+        });
+
+        let comments: Vec<Comment> = sample_comments().into_iter().take(2).collect();
+        let output = pipeline.transform_comments(comments).unwrap();
+
+        let parsed: Vec<Comment> = serde_json::from_str(&output.content).unwrap();
+        assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn test_json_format_discussions() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_items: 2,
+            max_chars: 100_000,
             ..Default::default()
         });
 
@@ -699,22 +621,7 @@ mod tests {
         assert_eq!(parsed.len(), 2);
     }
 
-    #[test]
-    fn test_transform_discussions_compact() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            format: OutputFormat::Compact,
-            max_items: 10,
-            max_chars: 10000,
-            ..Default::default()
-        });
-
-        let discussions: Vec<Discussion> = sample_discussions().into_iter().take(2).collect();
-        let output = pipeline.transform_discussions(discussions).unwrap();
-
-        // Compact format shows counts, not full content
-        assert!(output.content.contains("#1"));
-        assert!(output.content.contains("replies"));
-    }
+    // --- TransformOutput ---
 
     #[test]
     fn test_transform_output_to_string_with_hints() {
@@ -731,6 +638,29 @@ mod tests {
     }
 
     #[test]
+    fn test_transform_output_with_truncation() {
+        let output =
+            TransformOutput::new("data".into()).with_truncation(100, 10, "90 more items".into());
+        assert!(output.truncated);
+        assert_eq!(output.total_count, Some(100));
+        assert_eq!(output.included_count, 10);
+        assert_eq!(output.agent_hint.as_deref(), Some("90 more items"));
+    }
+
+    // --- PipelineConfig ---
+
+    #[test]
+    fn test_pipeline_config_default_values() {
+        let config = PipelineConfig::default();
+        assert_eq!(config.max_items, 20);
+        assert_eq!(config.max_chars, 100_000);
+        assert_eq!(config.max_chars_per_item, 10_000);
+        assert_eq!(config.max_description_len, 10_000);
+        assert!(matches!(config.format, OutputFormat::Toon));
+        assert!(config.include_hints);
+    }
+
+    #[test]
     fn test_pipeline_default() {
         let pipeline = Pipeline::default();
         let issues: Vec<Issue> = sample_issues().into_iter().take(1).collect();
@@ -742,7 +672,7 @@ mod tests {
     fn test_pipeline_hints_disabled() {
         let pipeline = Pipeline::with_config(PipelineConfig {
             max_items: 2,
-            max_chars: 100000,
+            max_chars: 100_000,
             include_hints: false,
             ..Default::default()
         });
@@ -750,26 +680,27 @@ mod tests {
         let issues = sample_issues();
         let output = pipeline.transform_issues(issues).unwrap();
 
-        // Items truncated but no hint since hints are disabled
         assert_eq!(output.included_count, 2);
         assert!(!output.truncated);
         assert!(output.agent_hint.is_none());
     }
 
-    // --- PipelineConfig::default() values ---
+    // --- Character limit ---
 
     #[test]
-    fn test_pipeline_config_default_values() {
-        let config = PipelineConfig::default();
-        assert_eq!(config.max_items, 20);
-        assert_eq!(config.max_chars, 100_000);
-        assert_eq!(config.max_chars_per_item, 10_000);
-        assert_eq!(config.max_description_len, 10_000);
-        assert!(matches!(config.format, OutputFormat::Markdown));
-        assert!(config.include_hints);
-    }
+    fn test_char_limit_applied() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            max_items: 100,
+            max_chars: 100,
+            ..Default::default()
+        });
 
-    // --- apply_char_limit ---
+        let issues = sample_issues();
+        let output = pipeline.transform_issues(issues).unwrap();
+
+        assert!(output.content.len() <= 100);
+        assert!(output.truncated);
+    }
 
     #[test]
     fn test_apply_char_limit_no_truncation() {
@@ -812,40 +743,24 @@ mod tests {
         let output =
             TransformOutput::new(long_content).with_truncation(50, 5, "existing hint".into());
         let result = pipeline.apply_char_limit(output);
-        // Already truncated, should keep truncated=true but not replace the hint
-        // (since it was already truncated, the code checks `if !output.truncated`)
         assert!(result.truncated);
     }
 
-    // --- markdown_config ---
-
     #[test]
-    fn test_markdown_config_from_pipeline() {
+    fn test_char_limit_triggers_before_item_limit() {
         let pipeline = Pipeline::with_config(PipelineConfig {
-            max_description_len: 500,
+            max_items: 100,
+            max_chars: 50,
             ..Default::default()
         });
-        let md_config = pipeline.markdown_config();
-        assert_eq!(md_config.max_description_len, 500);
-        // Other fields should be defaults
-        assert!(md_config.include_timestamps);
-        assert!(md_config.include_urls);
-        assert!(md_config.include_author);
-    }
 
-    // --- TransformOutput ---
-
-    #[test]
-    fn test_transform_output_with_truncation() {
-        let output =
-            TransformOutput::new("data".into()).with_truncation(100, 10, "90 more items".into());
+        let issues: Vec<Issue> = sample_issues().into_iter().take(3).collect();
+        let output = pipeline.transform_issues(issues).unwrap();
         assert!(output.truncated);
-        assert_eq!(output.total_count, Some(100));
-        assert_eq!(output.included_count, 10);
-        assert_eq!(output.agent_hint.as_deref(), Some("90 more items"));
+        assert!(output.content.len() <= 50);
     }
 
-    // --- create_pagination_hint ---
+    // --- Pagination hints ---
 
     #[test]
     fn test_create_pagination_hint_without_tool() {
@@ -865,22 +780,6 @@ mod tests {
         assert!(hint.contains("20 more"));
         assert!(hint.contains("get_diffs"));
         assert!(hint.contains("offset=10"));
-    }
-
-    // --- Edge cases for char limit vs item limit ---
-
-    #[test]
-    fn test_char_limit_triggers_before_item_limit() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            max_items: 100, // high item limit
-            max_chars: 50,  // very low char limit
-            ..Default::default()
-        });
-
-        let issues: Vec<Issue> = sample_issues().into_iter().take(3).collect();
-        let output = pipeline.transform_issues(issues).unwrap();
-        assert!(output.truncated);
-        assert!(output.content.len() <= 50);
     }
 
     // --- Empty collections ---
@@ -948,7 +847,36 @@ mod tests {
         }];
 
         let output = pipeline.transform_diffs(diffs).unwrap();
-        // The diff content should have been truncated
         assert!(output.content.len() < 1000);
+    }
+
+    // --- TOON smaller than JSON ---
+
+    #[test]
+    fn test_toon_smaller_than_json_for_issues() {
+        let issues: Vec<Issue> = sample_issues().into_iter().take(10).collect();
+
+        let json_pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_items: 100,
+            max_chars: 1_000_000,
+            ..Default::default()
+        });
+        let toon_pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Toon,
+            max_items: 100,
+            max_chars: 1_000_000,
+            ..Default::default()
+        });
+
+        let json_output = json_pipeline.transform_issues(issues.clone()).unwrap();
+        let toon_output = toon_pipeline.transform_issues(issues).unwrap();
+
+        assert!(
+            toon_output.content.len() < json_output.content.len(),
+            "TOON ({}) should be smaller than JSON ({})",
+            toon_output.content.len(),
+            json_output.content.len()
+        );
     }
 }
