@@ -11,12 +11,12 @@ use devboy_core::{
 use serde::Deserialize;
 use tracing::{debug, warn};
 
+use crate::DEFAULT_GITHUB_URL;
 use crate::types::{
     CreateCommentRequest, CreateIssueRequest, CreatePullRequestRequest, CreateReviewCommentRequest,
     GitHubComment, GitHubFile, GitHubIssue, GitHubLabel, GitHubPullRequest, GitHubReview,
     GitHubReviewComment, GitHubUser, UpdateIssueRequest,
 };
-use crate::DEFAULT_GITHUB_URL;
 
 /// GitHub API client.
 pub struct GitHubClient {
@@ -58,11 +58,17 @@ impl GitHubClient {
 
     /// Build request with common headers.
     fn request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
-        self.client
+        let mut builder = self
+            .client
             .request(method, url)
-            .header("Authorization", format!("Bearer {}", self.token))
             .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("X-GitHub-Api-Version", "2022-11-28");
+
+        if !self.token.is_empty() {
+            builder = builder.header("Authorization", format!("Bearer {}", self.token));
+        }
+
+        builder
     }
 
     /// Make an authenticated GET request.
@@ -308,10 +314,10 @@ impl IssueProvider for GitHubClient {
             params.push(format!("state={}", gh_state));
         }
 
-        if let Some(labels) = &filter.labels {
-            if !labels.is_empty() {
-                params.push(format!("labels={}", labels.join(",")));
-            }
+        if let Some(labels) = &filter.labels
+            && !labels.is_empty()
+        {
+            params.push(format!("labels={}", labels.join(",")));
         }
 
         if let Some(assignee) = &filter.assignee {
@@ -530,17 +536,17 @@ impl MergeRequestProvider for GitHubClient {
         // Add reviews as discussions
         for review in &reviews {
             let mut comments = Vec::new();
-            if let Some(body) = &review.body {
-                if !body.is_empty() {
-                    comments.push(Comment {
-                        id: review.id.to_string(),
-                        body: body.clone(),
-                        author: map_user(review.user.as_ref()),
-                        created_at: review.submitted_at.clone(),
-                        updated_at: None,
-                        position: None,
-                    });
-                }
+            if let Some(body) = &review.body
+                && !body.is_empty()
+            {
+                comments.push(Comment {
+                    id: review.id.to_string(),
+                    body: body.clone(),
+                    author: map_user(review.user.as_ref()),
+                    created_at: review.submitted_at.clone(),
+                    updated_at: None,
+                    position: None,
+                });
             }
 
             if !comments.is_empty() || !review.state.is_empty() {
@@ -582,13 +588,13 @@ impl MergeRequestProvider for GitHubClient {
         let pr_url = self.repo_url(&format!("/pulls/{}", number));
         let pr_result: Result<GitHubPullRequest> = self.get(&pr_url).await;
 
-        if let Err(Error::Http(status)) = &pr_result {
-            if status.contains("404") {
-                return Err(Error::InvalidData(format!(
-                    "{} is not a valid pull request (it may be an issue)",
-                    mr_key
-                )));
-            }
+        if let Err(Error::Http(status)) = &pr_result
+            && status.contains("404")
+        {
+            return Err(Error::InvalidData(format!(
+                "{} is not a valid pull request (it may be an issue)",
+                mr_key
+            )));
         }
 
         // Propagate other errors and save PR for later use
@@ -829,11 +835,7 @@ fn extract_errors(log: &str, max_lines: usize) -> Option<String> {
             .rev()
             .filter_map(|l| {
                 let s = strip_ansi(l).trim().to_string();
-                if s.is_empty() {
-                    None
-                } else {
-                    Some(s)
-                }
+                if s.is_empty() { None } else { Some(s) }
             })
             .take(10)
             .collect();

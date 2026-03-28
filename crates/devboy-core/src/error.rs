@@ -200,11 +200,13 @@ mod tests {
         assert!(Error::Timeout.is_retryable());
         assert!(Error::Network("test".into()).is_retryable());
         assert!(Error::RateLimited { retry_after: None }.is_retryable());
-        assert!(Error::ServerError {
-            status: 500,
-            message: "test".into()
-        }
-        .is_retryable());
+        assert!(
+            Error::ServerError {
+                status: 500,
+                message: "test".into()
+            }
+            .is_retryable()
+        );
         assert!(!Error::Unauthorized("test".into()).is_retryable());
         assert!(!Error::NotFound("test".into()).is_retryable());
     }

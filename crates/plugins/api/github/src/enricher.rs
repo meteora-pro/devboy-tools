@@ -58,16 +58,15 @@ impl ToolEnricher for GitHubSchemaEnricher {
 
     fn transform_args(&self, tool_name: &str, args: &mut Value) {
         // Map line_type to GitHub side parameter for code comments
-        if tool_name == "create_merge_request_comment" {
-            if let Some(obj) = args.as_object_mut() {
-                if let Some(line_type) = obj.get("line_type").and_then(|v| v.as_str()) {
-                    let side = match line_type {
-                        "old" => "LEFT",
-                        _ => "RIGHT",
-                    };
-                    obj.insert("side".into(), Value::String(side.into()));
-                }
-            }
+        if tool_name == "create_merge_request_comment"
+            && let Some(obj) = args.as_object_mut()
+            && let Some(line_type) = obj.get("line_type").and_then(|v| v.as_str())
+        {
+            let side = match line_type {
+                "old" => "LEFT",
+                _ => "RIGHT",
+            };
+            obj.insert("side".into(), Value::String(side.into()));
         }
     }
 }

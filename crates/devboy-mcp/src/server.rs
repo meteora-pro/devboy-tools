@@ -14,8 +14,8 @@ use serde_json::Value;
 
 use crate::handlers::{ToolCategory, ToolHandler};
 use crate::protocol::{
-    InitializeParams, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, RequestId,
-    ServerCapabilities, ServerInfo, ToolCallParams, ToolsCapability, ToolsListResult, MCP_VERSION,
+    InitializeParams, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MCP_VERSION,
+    RequestId, ServerCapabilities, ServerInfo, ToolCallParams, ToolsCapability, ToolsListResult,
 };
 use crate::proxy::ProxyManager;
 use crate::transport::{IncomingMessage, StdioTransport};
@@ -141,11 +141,11 @@ impl McpServer {
             match transport.read_message() {
                 Ok(Some(msg)) => {
                     let response = self.handle_message(msg).await;
-                    if let Some(resp) = response {
-                        if let Err(e) = transport.write_response(&resp) {
-                            tracing::error!("Failed to write response: {}", e);
-                            break;
-                        }
+                    if let Some(resp) = response
+                        && let Err(e) = transport.write_response(&resp)
+                    {
+                        tracing::error!("Failed to write response: {}", e);
+                        break;
                     }
                 }
                 Ok(None) => {
@@ -440,7 +440,7 @@ impl Default for McpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{RequestId, ToolCallResult, ToolResultContent, JSONRPC_VERSION};
+    use crate::protocol::{JSONRPC_VERSION, RequestId, ToolCallResult, ToolResultContent};
 
     use async_trait::async_trait;
     use devboy_core::{
@@ -1125,10 +1125,12 @@ mod tests {
 
         // MR tools should NOT be available (ClickUp doesn't support MRs)
         assert!(!result.tools.iter().any(|t| t.name == "get_merge_requests"));
-        assert!(!result
-            .tools
-            .iter()
-            .any(|t| t.name == "get_merge_request_discussions"));
+        assert!(
+            !result
+                .tools
+                .iter()
+                .any(|t| t.name == "get_merge_request_discussions")
+        );
 
         // Context tools should always be available
         assert!(result.tools.iter().any(|t| t.name == "list_contexts"));

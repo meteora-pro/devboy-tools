@@ -20,3 +20,6 @@ tracing.workspace = true
 mockall.workspace = true
 httpmock.workspace = true
 tokio.workspace = true
+
+[lints]
+workspace = true

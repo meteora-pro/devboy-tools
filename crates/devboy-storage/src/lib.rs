@@ -295,19 +295,26 @@ const DEFAULT_ENV_PREFIX: &str = "DEVBOY";
 /// ```ignore
 /// use devboy_storage::{EnvVarStore, CredentialStore};
 ///
-/// // Set environment variable before running
-/// std::env::set_var("DEVBOY_GITHUB_TOKEN", "ghp_xxx");
-///
+/// // Reads from DEVBOY_GITHUB_TOKEN env var (if set)
 /// let store = EnvVarStore::new();
 /// let token = store.get("github.token")?;
-/// assert_eq!(token, Some("ghp_xxx".to_string()));
 /// ```
-#[derive(Debug)]
+/// Function type for reading environment variables.
+/// Defaults to `std::env::var`, but can be replaced in tests.
+type EnvReader = fn(&str) -> std::result::Result<String, std::env::VarError>;
+
+/// Wrapper around `std::env::var` matching the `EnvReader` signature.
+fn read_env_var(key: &str) -> std::result::Result<String, std::env::VarError> {
+    std::env::var(key)
+}
+
 pub struct EnvVarStore {
     /// Prefix for environment variables (e.g., "DEVBOY").
     prefix: String,
     /// Whether to fall back to unprefixed variable names.
     fallback_without_prefix: bool,
+    /// Function to read environment variables (injectable for testing).
+    env_reader: EnvReader,
 }
 
 impl EnvVarStore {
@@ -318,6 +325,7 @@ impl EnvVarStore {
         Self {
             prefix: DEFAULT_ENV_PREFIX.to_string(),
             fallback_without_prefix: true,
+            env_reader: read_env_var,
         }
     }
 
@@ -333,6 +341,7 @@ impl EnvVarStore {
         Self {
             prefix: prefix.into(),
             fallback_without_prefix: true,
+            env_reader: read_env_var,
         }
     }
 
@@ -341,6 +350,13 @@ impl EnvVarStore {
     /// When disabled, only `{PREFIX}_{KEY}` format is checked.
     pub fn without_fallback(mut self) -> Self {
         self.fallback_without_prefix = false;
+        self
+    }
+
+    /// Replace the environment variable reader (for testing).
+    #[cfg(test)]
+    fn with_env_reader(mut self, reader: EnvReader) -> Self {
+        self.env_reader = reader;
         self
     }
 
@@ -363,6 +379,15 @@ impl EnvVarStore {
     }
 }
 
+impl std::fmt::Debug for EnvVarStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EnvVarStore")
+            .field("prefix", &self.prefix)
+            .field("fallback_without_prefix", &self.fallback_without_prefix)
+            .finish()
+    }
+}
+
 impl Default for EnvVarStore {
     fn default() -> Self {
         Self::new()
@@ -380,7 +405,7 @@ impl CredentialStore for EnvVarStore {
     fn get(&self, key: &str) -> Result<Option<String>> {
         // Try prefixed first (e.g., DEVBOY_GITHUB_TOKEN)
         let prefixed = self.prefixed_env_name(key);
-        if let Ok(value) = std::env::var(&prefixed) {
+        if let Ok(value) = (self.env_reader)(&prefixed) {
             debug!(key = key, env_var = %prefixed, "Found credential in environment variable");
             return Ok(Some(value));
         }
@@ -388,7 +413,7 @@ impl CredentialStore for EnvVarStore {
         // Fallback to unprefixed (e.g., GITHUB_TOKEN)
         if self.fallback_without_prefix {
             let unprefixed = self.unprefixed_env_name(key);
-            if let Ok(value) = std::env::var(&unprefixed) {
+            if let Ok(value) = (self.env_reader)(&unprefixed) {
                 debug!(key = key, env_var = %unprefixed, "Found credential in environment variable (unprefixed)");
                 return Ok(Some(value));
             }
@@ -771,68 +796,58 @@ mod tests {
         );
     }
 
+    /// Mock env reader that returns values from a static map.
+    fn mock_env_reader(key: &str) -> std::result::Result<String, std::env::VarError> {
+        match key {
+            "DEVBOY_TEST_TOKEN" => Ok("prefixed-value".into()),
+            "TEST_FALLBACK_TOKEN" => Ok("unprefixed-value".into()),
+            "DEVBOY_TEST_PRIORITY_TOKEN" => Ok("prefixed".into()),
+            "TEST_PRIORITY_TOKEN" => Ok("unprefixed".into()),
+            "TEST_NO_FALLBACK_TOKEN" => Ok("unprefixed-value".into()),
+            "DEVBOY_CHAIN_TEST_TOKEN" => Ok("from-env".into()),
+            _ => Err(std::env::VarError::NotPresent),
+        }
+    }
+
     #[test]
     fn test_env_var_store_get_prefixed() {
-        let store = EnvVarStore::new();
-
-        // Set prefixed env var
-        std::env::set_var("DEVBOY_TEST_TOKEN", "prefixed-value");
+        let store = EnvVarStore::new().with_env_reader(mock_env_reader);
 
         let result = store.get("test.token").unwrap();
         assert_eq!(result, Some("prefixed-value".to_string()));
-
-        // Cleanup
-        std::env::remove_var("DEVBOY_TEST_TOKEN");
     }
 
     #[test]
     fn test_env_var_store_get_unprefixed_fallback() {
-        let store = EnvVarStore::new();
-
-        // Set only unprefixed env var
-        std::env::set_var("TEST_FALLBACK_TOKEN", "unprefixed-value");
+        let store = EnvVarStore::new().with_env_reader(mock_env_reader);
 
         let result = store.get("test.fallback.token").unwrap();
         assert_eq!(result, Some("unprefixed-value".to_string()));
-
-        // Cleanup
-        std::env::remove_var("TEST_FALLBACK_TOKEN");
     }
 
     #[test]
     fn test_env_var_store_prefixed_takes_priority() {
-        let store = EnvVarStore::new();
-
-        // Set both prefixed and unprefixed
-        std::env::set_var("DEVBOY_TEST_PRIORITY_TOKEN", "prefixed");
-        std::env::set_var("TEST_PRIORITY_TOKEN", "unprefixed");
+        let store = EnvVarStore::new().with_env_reader(mock_env_reader);
 
         let result = store.get("test.priority.token").unwrap();
         assert_eq!(result, Some("prefixed".to_string()));
-
-        // Cleanup
-        std::env::remove_var("DEVBOY_TEST_PRIORITY_TOKEN");
-        std::env::remove_var("TEST_PRIORITY_TOKEN");
     }
 
     #[test]
     fn test_env_var_store_no_fallback() {
-        let store = EnvVarStore::new().without_fallback();
-
-        // Set only unprefixed env var
-        std::env::set_var("TEST_NO_FALLBACK_TOKEN", "unprefixed-value");
+        let store = EnvVarStore::new()
+            .without_fallback()
+            .with_env_reader(mock_env_reader);
 
         // Should NOT find it because fallback is disabled
+        // (TEST_NO_FALLBACK_TOKEN exists but only as unprefixed)
         let result = store.get("test.no.fallback.token").unwrap();
         assert_eq!(result, None);
-
-        // Cleanup
-        std::env::remove_var("TEST_NO_FALLBACK_TOKEN");
     }
 
     #[test]
     fn test_env_var_store_not_found() {
-        let store = EnvVarStore::new();
+        let store = EnvVarStore::new().with_env_reader(mock_env_reader);
 
         let result = store.get("nonexistent.key.that.does.not.exist").unwrap();
         assert_eq!(result, None);
@@ -974,8 +989,8 @@ mod tests {
     fn test_chain_store_env_var_priority() {
         // This tests the real use case: env var takes priority over memory
 
-        // Set up env var
-        std::env::set_var("DEVBOY_CHAIN_TEST_TOKEN", "from-env");
+        // Set up env var store with mock reader
+        let env_store = EnvVarStore::new().with_env_reader(mock_env_reader);
 
         // Set up memory store with different value
         let memory = MemoryStore::with_credentials([(
@@ -984,16 +999,13 @@ mod tests {
         )]);
 
         // Chain: env -> memory
-        let chain = ChainStore::new(vec![Box::new(EnvVarStore::new()), Box::new(memory)]);
+        let chain = ChainStore::new(vec![Box::new(env_store), Box::new(memory)]);
 
         // Env var should win
         assert_eq!(
             chain.get("chain.test.token").unwrap(),
             Some("from-env".to_string())
         );
-
-        // Cleanup
-        std::env::remove_var("DEVBOY_CHAIN_TEST_TOKEN");
     }
 
     #[test]

@@ -7,12 +7,12 @@ use devboy_core::{
 };
 use tracing::{debug, warn};
 
+use crate::DEFAULT_CLICKUP_URL;
 use crate::types::{
     ClickUpComment, ClickUpCommentList, ClickUpListInfo, ClickUpPriority, ClickUpTask,
     ClickUpTaskList, ClickUpUser, CreateCommentRequest, CreateCommentResponse, CreateTaskRequest,
     UpdateTaskRequest,
 };
-use crate::DEFAULT_CLICKUP_URL;
 
 /// Maximum number of tasks per page in ClickUp API.
 const PAGE_SIZE: u32 = 100;
@@ -413,10 +413,10 @@ impl IssueProvider for ClickUpClient {
             base_params.push(("order_by", cu_order_by.to_string()));
         }
 
-        if let Some(order) = &filter.sort_order {
-            if order == "asc" {
-                base_params.push(("reverse", "true".to_string()));
-            }
+        if let Some(order) = &filter.sort_order
+            && order == "asc"
+        {
+            base_params.push(("reverse", "true".to_string()));
         }
 
         // Fetch all needed pages
@@ -502,16 +502,16 @@ impl IssueProvider for ClickUpClient {
             for attempt in 1..=3u64 {
                 tokio::time::sleep(std::time::Duration::from_millis(300 * attempt)).await;
                 let fetch_url = format!("{}/task/{}", self.base_url, task_id);
-                if let Ok(fetched) = self.get::<ClickUpTask>(&fetch_url).await {
-                    if fetched.custom_id.is_some() {
-                        debug!(
-                            task_id = task_id,
-                            custom_id = ?fetched.custom_id,
-                            attempt = attempt,
-                            "Got custom_id after retry"
-                        );
-                        return Ok(map_task(&fetched));
-                    }
+                if let Ok(fetched) = self.get::<ClickUpTask>(&fetch_url).await
+                    && fetched.custom_id.is_some()
+                {
+                    debug!(
+                        task_id = task_id,
+                        custom_id = ?fetched.custom_id,
+                        attempt = attempt,
+                        "Got custom_id after retry"
+                    );
+                    return Ok(map_task(&fetched));
                 }
             }
             warn!(

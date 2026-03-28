@@ -89,13 +89,15 @@ pub fn detect_install_method() -> InstallMethod {
     if is_node_modules {
         // Try to detect specific package manager from npm_config_user_agent
         // Format: "npm/10.x.x node/22.x.x ..." or "pnpm/9.x.x ..." or "yarn/4.x.x ..."
-        if let Ok(user_agent) = env::var("npm_config_user_agent") {
-            if user_agent.starts_with("pnpm/") {
-                return InstallMethod::Pnpm;
-            }
-            if user_agent.starts_with("yarn/") {
-                return InstallMethod::Yarn;
-            }
+        if let Ok(user_agent) = env::var("npm_config_user_agent")
+            && user_agent.starts_with("pnpm/")
+        {
+            return InstallMethod::Pnpm;
+        }
+        if let Ok(user_agent) = env::var("npm_config_user_agent")
+            && user_agent.starts_with("yarn/")
+        {
+            return InstallMethod::Yarn;
         }
 
         // Check pnpm global store path pattern as fallback
@@ -198,10 +200,10 @@ fn write_cache(latest_version: &str) {
 /// which increases the rate limit from 60 to 5000 requests/hour.
 fn github_api_request(client: &reqwest::Client, url: &str) -> reqwest::RequestBuilder {
     let mut req = client.get(url);
-    if let Ok(token) = env::var("GITHUB_TOKEN").or_else(|_| env::var("GH_TOKEN")) {
-        if !token.is_empty() {
-            req = req.bearer_auth(token);
-        }
+    if let Ok(token) = env::var("GITHUB_TOKEN").or_else(|_| env::var("GH_TOKEN"))
+        && !token.is_empty()
+    {
+        req = req.bearer_auth(token);
     }
     req
 }
