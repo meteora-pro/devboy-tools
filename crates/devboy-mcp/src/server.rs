@@ -274,6 +274,7 @@ impl McpServer {
                 "github" | "gitlab"
             )
         });
+        let has_meeting_providers = handler.has_meeting_providers();
 
         // Filter tools based on available providers (dynamic filtering).
         // This prevents exposing tools that would always fail due to missing providers.
@@ -282,6 +283,7 @@ impl McpServer {
                 .map(|cat| match cat {
                     ToolCategory::Issues => has_issue_providers,
                     ToolCategory::MergeRequests => has_mr_providers,
+                    ToolCategory::MeetingNotes => has_meeting_providers,
                 })
                 .unwrap_or(true) // Tools without category are always available
         });
