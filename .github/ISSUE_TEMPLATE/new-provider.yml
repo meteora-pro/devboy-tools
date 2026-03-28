@@ -1,0 +1,135 @@
+name: "New Provider Request"
+description: "Request support for a new service provider (issue tracker, messenger, knowledge base, etc.)"
+title: "feat: add [PROVIDER_NAME] provider"
+labels: ["enhancement", "provider"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## New Provider Request
+
+        Use this template to request adding a new service provider to devboy-tools.
+        Please fill in all fields to help us understand the scope and priority.
+
+  - type: input
+    id: provider-name
+    attributes:
+      label: Provider Name
+      description: "Name of the service (e.g., Slack, Confluence, Linear)"
+      placeholder: "e.g., Slack"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Tool Category
+      description: "Which category does this provider belong to?"
+      options:
+        - IssueTracker
+        - GitRepository
+        - Messenger
+        - MeetingNotes
+        - KnowledgeBase
+    validations:
+      required: true
+
+  - type: dropdown
+    id: new-category
+    attributes:
+      label: Is this a new category?
+      description: "Does this provider require adding a new ToolCategory to devboy-core?"
+      options:
+        - "No — category already exists"
+        - "Yes — new category, traits, and unified types needed"
+    validations:
+      required: true
+
+  - type: input
+    id: api-docs-url
+    attributes:
+      label: API Documentation URL
+      description: "Link to the official API documentation"
+      placeholder: "https://api.example.com/docs"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: api-type
+    attributes:
+      label: API Type
+      description: "What type of API does this provider use?"
+      options:
+        - REST
+        - GraphQL
+        - REST + GraphQL
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: auth-methods
+    attributes:
+      label: Authentication Methods
+      description: "Which authentication methods does the API support?"
+      options:
+        - label: API Key / Token
+        - label: Personal Access Token (PAT)
+        - label: OAuth 2.0
+        - label: Basic Auth (email + password/token)
+
+  - type: textarea
+    id: required-tools
+    attributes:
+      label: Required MCP Tools
+      description: |
+        List the MCP tools this provider should support.
+        Use existing tool naming conventions (e.g., `get_issues`, `get_chat_messages`).
+      placeholder: |
+        - `get_issues` — list issues with filters
+        - `get_issue` — get single issue by key
+        - `create_issue` — create a new issue
+        - `update_issue` — update an existing issue
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-cases
+    attributes:
+      label: Use Cases
+      description: |
+        Why is this provider valuable for AI coding agents?
+        Describe real-world scenarios where an agent would benefit from this integration.
+      placeholder: |
+        AI agents need access to [X] because:
+        1. They can read [context] to better understand tasks
+        2. They can [action] to automate workflows
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: provider-specific-notes
+    attributes:
+      label: Provider-Specific Notes
+      description: |
+        Any important details about this provider:
+        - Rate limits
+        - Self-hosted vs Cloud variants
+        - Special authentication flows
+        - Content format considerations (e.g., ADF, Markdown)
+      placeholder: "Optional: any special considerations"
+
+  - type: textarea
+    id: trait-design
+    attributes:
+      label: Trait / Type Design (optional)
+      description: |
+        If you have ideas about the Rust trait interface or unified types,
+        sketch them here. This is optional but helpful for new categories.
+      placeholder: |
+        ```rust
+        #[async_trait]
+        pub trait MyProvider: Send + Sync {
+            async fn get_items(&self, filter: ItemFilter) -> Result<Vec<Item>>;
+        }
+        ```
