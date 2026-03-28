@@ -20,8 +20,9 @@ use crate::types::{
 };
 
 /// Jira deployment flavor.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum JiraFlavor {
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JiraFlavor {
     /// Jira Cloud — API v3, ADF format, accountId-based users
     Cloud,
     /// Jira Self-Hosted / Data Center — API v2, plain text, username-based users
@@ -31,10 +32,14 @@ enum JiraFlavor {
 /// Jira API client.
 pub struct JiraClient {
     base_url: String,
+    /// Original Jira instance URL for generating browse links.
+    /// When proxy is used, base_url points to proxy but instance_url points to real Jira.
+    instance_url: String,
     project_key: String,
     email: String,
     token: String,
     flavor: JiraFlavor,
+    proxy_headers: Option<std::collections::HashMap<String, String>>,
     client: reqwest::Client,
 }
 
@@ -48,18 +53,50 @@ impl JiraClient {
     ) -> Self {
         let url = url.into();
         let flavor = detect_flavor(&url);
+        let instance = url.trim_end_matches('/').to_string();
         let api_base = build_api_base(&url, flavor);
         Self {
             base_url: api_base,
+            instance_url: instance,
             project_key: project_key.into(),
             email: email.into(),
             token: token.into(),
             flavor,
+            proxy_headers: None,
             client: reqwest::Client::builder()
                 .user_agent("devboy-tools")
                 .build()
                 .expect("Failed to create HTTP client"),
         }
+    }
+
+    /// Configure proxy mode with extra headers added to every request.
+    /// When proxy is active, the provider's own auth headers are suppressed —
+    /// the proxy handles authentication.
+    /// Note: `instance_url` is preserved for generating browse links.
+    pub fn with_proxy(mut self, headers: std::collections::HashMap<String, String>) -> Self {
+        self.proxy_headers = Some(headers);
+        self
+    }
+
+    /// Override the instance URL used for generating browse links.
+    /// Useful when proxy URL differs from real Jira instance URL.
+    pub fn with_instance_url(mut self, url: impl Into<String>) -> Self {
+        self.instance_url = url.into().trim_end_matches('/').to_string();
+        self
+    }
+
+    /// Override auto-detected flavor.
+    /// Use when the URL doesn't reflect the actual Jira deployment
+    /// (e.g. proxy URL instead of real Jira URL).
+    pub fn with_flavor(mut self, flavor: JiraFlavor) -> Self {
+        if self.flavor != flavor {
+            // Rebuild API base URL with new flavor
+            let instance_url = instance_url_from_base(&self.base_url);
+            self.base_url = build_api_base(&instance_url, flavor);
+            self.flavor = flavor;
+        }
+        self
     }
 
     /// Create a new Jira client with explicit base URL (for testing with httpmock).
@@ -71,8 +108,10 @@ impl JiraClient {
         token: impl Into<String>,
         flavor: bool, // true = Cloud, false = SelfHosted
     ) -> Self {
+        let url = base_url.into().trim_end_matches('/').to_string();
         Self {
-            base_url: base_url.into().trim_end_matches('/').to_string(),
+            instance_url: url.clone(),
+            base_url: url,
             project_key: project_key.into(),
             email: email.into(),
             token: token.into(),
@@ -81,6 +120,7 @@ impl JiraClient {
             } else {
                 JiraFlavor::SelfHosted
             },
+            proxy_headers: None,
             client: reqwest::Client::builder()
                 .user_agent("devboy-tools")
                 .build()
@@ -88,30 +128,37 @@ impl JiraClient {
         }
     }
 
-    /// Build request with auth header.
+    /// Build request with auth headers.
+    ///
+    /// When proxy is configured, provider's own auth is suppressed and
+    /// proxy headers are added instead. The proxy handles authentication.
     fn request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
-        let builder = self
+        let mut builder = self
             .client
             .request(method, url)
             .header("Content-Type", "application/json");
 
-        match self.flavor {
-            JiraFlavor::Cloud => {
-                // Cloud: Basic auth with email:token
-                let credentials = base64_encode(&format!("{}:{}", self.email, self.token));
-                builder.header("Authorization", format!("Basic {}", credentials))
+        if let Some(headers) = &self.proxy_headers {
+            for (key, value) in headers {
+                builder = builder.header(key.as_str(), value.as_str());
             }
-            JiraFlavor::SelfHosted => {
-                if self.token.contains(':') {
-                    // user:password format — Basic auth
-                    let credentials = base64_encode(&self.token);
+        } else {
+            builder = match self.flavor {
+                JiraFlavor::Cloud => {
+                    let credentials = base64_encode(&format!("{}:{}", self.email, self.token));
                     builder.header("Authorization", format!("Basic {}", credentials))
-                } else {
-                    // Personal Access Token — Bearer auth
-                    builder.header("Authorization", format!("Bearer {}", self.token))
                 }
-            }
+                JiraFlavor::SelfHosted => {
+                    if self.token.contains(':') {
+                        let credentials = base64_encode(&self.token);
+                        builder.header("Authorization", format!("Basic {}", credentials))
+                    } else {
+                        builder.header("Authorization", format!("Bearer {}", self.token))
+                    }
+                }
+            };
         }
+        builder
     }
 
     /// Make an authenticated GET request.
@@ -215,10 +262,32 @@ impl JiraClient {
             return Err(Error::from_status(status_code, message));
         }
 
-        response
-            .json()
+        let body = response
+            .text()
             .await
-            .map_err(|e| Error::InvalidData(format!("Failed to parse response: {}", e)))
+            .map_err(|e| Error::InvalidData(format!("Failed to read response body: {}", e)))?;
+
+        serde_json::from_str::<T>(&body).map_err(|e| {
+            let preview = if body.len() > 500 {
+                format!("{}...(truncated, total {} bytes)", &body[..500], body.len())
+            } else {
+                body.clone()
+            };
+            warn!(
+                error = %e,
+                body_preview = preview,
+                "Failed to parse Jira response"
+            );
+            let preview = if body.len() > 300 {
+                format!("{}...(truncated)", &body[..300])
+            } else {
+                body.clone()
+            };
+            Error::InvalidData(format!(
+                "Failed to parse response: {}. Response preview: {}",
+                e, preview
+            ))
+        })
     }
 
     /// Transition an issue to a new status by finding matching transition.
@@ -804,7 +873,7 @@ impl IssueProvider for JiraClient {
         };
         let jql_with_order = format!("{} ORDER BY {} {}", jql, order_by, order);
 
-        let instance_url = instance_url_from_base(&self.base_url);
+        let instance_url = &self.instance_url;
 
         match self.flavor {
             JiraFlavor::Cloud => {
@@ -902,8 +971,7 @@ impl IssueProvider for JiraClient {
         let jira_key = parse_jira_key(key);
         let url = format!("{}/issue/{}", self.base_url, jira_key);
         let issue: JiraIssue = self.get(&url).await?;
-        let instance_url = instance_url_from_base(&self.base_url);
-        Ok(map_issue(&issue, self.flavor, &instance_url))
+        Ok(map_issue(&issue, self.flavor, &self.instance_url))
     }
 
     async fn create_issue(&self, input: CreateIssueInput) -> Result<Issue> {
@@ -1082,10 +1150,19 @@ impl IssueProvider for JiraClient {
             )
         } else {
             let query = options.search.as_deref().unwrap_or("");
-            format!(
-                "{}/user/search?query={}&startAt={}&maxResults={}",
-                self.base_url, query, start_at, max_results
-            )
+            match self.flavor {
+                JiraFlavor::Cloud => format!(
+                    "{}/user/search?query={}&startAt={}&maxResults={}",
+                    self.base_url, query, start_at, max_results
+                ),
+                JiraFlavor::SelfHosted => format!(
+                    "{}/user/search?username={}&startAt={}&maxResults={}",
+                    self.base_url,
+                    if query.is_empty() { "." } else { query },
+                    start_at,
+                    max_results
+                ),
+            }
         };
 
         let jira_users: Vec<JiraUser> = self.get(&url).await?;

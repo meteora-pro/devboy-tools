@@ -71,6 +71,9 @@ pub enum ProviderConfig {
         access_token: String,
         email: String,
         scope: JiraScope,
+        /// Explicit flavor override. When set, skips auto-detection from URL.
+        /// Important for proxy scenarios where URL doesn't reflect actual Jira deployment.
+        flavor: Option<devboy_jira::JiraFlavor>,
         #[serde(default)]
         extra: HashMap<String, serde_json::Value>,
     },
@@ -95,10 +98,15 @@ impl ProviderConfig {
 }
 
 /// Proxy configuration for providers behind firewalls.
+///
+/// When proxy is configured, `url` replaces the provider's base URL
+/// and `headers` are added to every request (e.g. auth tokens, routing headers).
+/// The provider's own auth headers are suppressed — proxy handles authentication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
     pub url: String,
-    pub token: Option<String>,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
 }
 
 /// Provider-specific metadata for dynamic schema enrichment.

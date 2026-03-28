@@ -79,10 +79,12 @@ impl TransformOutput {
 pub struct PipelineConfig {
     /// Maximum number of items to include in output
     pub max_items: usize,
-    /// Maximum characters for the entire output
+    /// Maximum characters for the entire output (0 = no limit)
     pub max_chars: usize,
     /// Maximum characters per item (e.g., diff content)
     pub max_chars_per_item: usize,
+    /// Maximum description/body length before truncation (only outliers get truncated)
+    pub max_description_len: usize,
     /// Output format
     pub format: OutputFormat,
     /// Whether to include agent hints about truncation
@@ -93,8 +95,9 @@ impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
             max_items: 20,
-            max_chars: 4000,
-            max_chars_per_item: 500,
+            max_chars: 100_000,
+            max_chars_per_item: 10_000,
+            max_description_len: 10_000,
             format: OutputFormat::Markdown,
             include_hints: true,
         }
@@ -130,6 +133,14 @@ impl Pipeline {
         Self { config }
     }
 
+    /// Build MarkdownConfig from PipelineConfig.
+    fn markdown_config(&self) -> markdown::MarkdownConfig {
+        markdown::MarkdownConfig {
+            max_description_len: self.config.max_description_len,
+            ..markdown::MarkdownConfig::default()
+        }
+    }
+
     /// Transform a list of issues.
     pub fn transform_issues(&self, issues: Vec<Issue>) -> Result<TransformOutput> {
         let total = issues.len();
@@ -138,7 +149,7 @@ impl Pipeline {
 
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_issues)?,
-            OutputFormat::Markdown => markdown::issues_to_markdown(&truncated_issues),
+            OutputFormat::Markdown => markdown::issues_to_markdown_with_config(&truncated_issues, &self.markdown_config()),
             OutputFormat::Compact => markdown::issues_to_compact(&truncated_issues),
         };
 
@@ -161,7 +172,7 @@ impl Pipeline {
 
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_mrs)?,
-            OutputFormat::Markdown => markdown::merge_requests_to_markdown(&truncated_mrs),
+            OutputFormat::Markdown => markdown::merge_requests_to_markdown_with_config(&truncated_mrs, &self.markdown_config()),
             OutputFormat::Compact => markdown::merge_requests_to_compact(&truncated_mrs),
         };
 

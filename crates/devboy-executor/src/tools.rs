@@ -6,7 +6,7 @@
 use devboy_core::{PropertySchema, ToolCategory, ToolSchema};
 
 /// A tool definition with name, description, category, and input schema.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ToolDefinition {
     pub name: String,
     pub description: String,
