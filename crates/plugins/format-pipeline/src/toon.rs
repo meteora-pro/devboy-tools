@@ -388,7 +388,7 @@ mod tests {
         let json = serde_json::to_string_pretty(&issues).unwrap();
         let toon = encode_issues(&issues, TrimLevel::Full).unwrap();
 
-        // TOON должен быть компактнее JSON
+        // TOON should be more compact than JSON
         assert!(
             toon.len() < json.len(),
             "TOON ({}) should be smaller than JSON ({})",
@@ -423,7 +423,7 @@ mod tests {
         let full = encode_issues(&issues, TrimLevel::Full).unwrap();
         let minimal = encode_issues(&issues, TrimLevel::Minimal).unwrap();
 
-        // Minimal должен быть значительно меньше Full
+        // Minimal should be significantly smaller than Full
         assert!(
             minimal.len() * 3 < full.len(),
             "Minimal ({}) should be at least 3x smaller than Full ({})",

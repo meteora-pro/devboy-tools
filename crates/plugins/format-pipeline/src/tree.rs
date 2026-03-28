@@ -353,7 +353,7 @@ mod tests {
                 key: format!("gh#{}", i + 1),
                 title: format!("Issue {}", i + 1),
                 description: if i % 2 == 0 {
-                    Some("A".repeat(200)) // длинное description
+                    Some("A".repeat(200)) // long description
                 } else {
                     Some("Short desc".into())
                 },
@@ -444,7 +444,7 @@ mod tests {
         assert_eq!(tree.children.len(), 5);
         assert!(tree.weight == 0); // root has no own weight
 
-        // Каждый child — Item
+        // Each child is an Item
         for (i, child) in tree.children.iter().enumerate() {
             assert_eq!(child.kind, NodeKind::Item { index: i });
             assert!(child.weight > 0);
@@ -457,7 +457,7 @@ mod tests {
         let issues = sample_issues(4);
         let tree = build_issues_tree(&issues);
 
-        // Issues 0, 2 имеют длинное description → Field child
+        // Issues 0, 2 have long description → Field child
         assert!(
             !tree.children[0].children.is_empty(),
             "Issue 0 should have description field"
@@ -476,7 +476,7 @@ mod tests {
         let tree = build_diffs_tree(&diffs);
 
         assert_eq!(tree.children.len(), 3);
-        // Каждый diff имеет diff content как Field child
+        // Each diff has diff content as a Field child
         for child in &tree.children {
             assert_eq!(child.children.len(), 1);
             assert_eq!(
@@ -494,7 +494,7 @@ mod tests {
         let tree = build_comments_tree(&comments);
 
         assert_eq!(tree.children.len(), 5);
-        // Short comments — нет child fields
+        // Short comments — no child fields
         for child in &tree.children {
             assert!(child.children.is_empty());
         }
@@ -506,7 +506,7 @@ mod tests {
         let tree = build_discussions_tree(&discussions);
 
         assert_eq!(tree.children.len(), 3);
-        // Каждая discussion имеет 2 comment children
+        // Each discussion has 2 comment children
         for disc in &tree.children {
             assert_eq!(disc.children.len(), 2);
         }
