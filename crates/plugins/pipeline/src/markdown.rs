@@ -22,7 +22,8 @@ pub struct MarkdownConfig {
     pub include_urls: bool,
     /// Include author information
     pub include_author: bool,
-    /// Maximum description length before truncation
+    /// Maximum description length before truncation.
+    /// Only outliers (>10k) get truncated — normal descriptions (1-5k) pass through.
     pub max_description_len: usize,
 }
 
@@ -32,7 +33,7 @@ impl Default for MarkdownConfig {
             include_timestamps: true,
             include_urls: true,
             include_author: true,
-            max_description_len: 200,
+            max_description_len: 10_000,
         }
     }
 }
@@ -69,6 +70,10 @@ impl Default for MarkdownPlugin {
 
 /// Convert issues to Markdown format.
 pub fn issues_to_markdown(issues: &[Issue]) -> String {
+    issues_to_markdown_with_config(issues, &MarkdownConfig::default())
+}
+
+pub fn issues_to_markdown_with_config(issues: &[Issue], config: &MarkdownConfig) -> String {
     if issues.is_empty() {
         return "No issues found.".to_string();
     }
@@ -77,7 +82,7 @@ pub fn issues_to_markdown(issues: &[Issue]) -> String {
     output.push_str("# Issues\n\n");
 
     for issue in issues {
-        output.push_str(&issue_to_markdown(issue));
+        output.push_str(&issue_to_markdown(issue, config));
         output.push('\n');
     }
 
@@ -85,7 +90,7 @@ pub fn issues_to_markdown(issues: &[Issue]) -> String {
 }
 
 /// Convert a single issue to Markdown.
-fn issue_to_markdown(issue: &Issue) -> String {
+fn issue_to_markdown(issue: &Issue, config: &MarkdownConfig) -> String {
     let mut output = String::new();
 
     // Header with key and title
@@ -123,10 +128,10 @@ fn issue_to_markdown(issue: &Issue) -> String {
         output.push_str(&format!("**Assignees:** {}\n", assignees.join(", ")));
     }
 
-    // Description (truncated)
+    // Description (truncated only for outliers)
     if let Some(desc) = &issue.description {
         if !desc.is_empty() {
-            let truncated = truncate_text(desc, 200);
+            let truncated = truncate_text(desc, config.max_description_len);
             output.push_str(&format!("\n{}\n", truncated));
         }
     }
@@ -165,6 +170,10 @@ pub fn issues_to_compact(issues: &[Issue]) -> String {
 
 /// Convert merge requests to Markdown format.
 pub fn merge_requests_to_markdown(mrs: &[MergeRequest]) -> String {
+    merge_requests_to_markdown_with_config(mrs, &MarkdownConfig::default())
+}
+
+pub fn merge_requests_to_markdown_with_config(mrs: &[MergeRequest], config: &MarkdownConfig) -> String {
     if mrs.is_empty() {
         return "No merge requests found.".to_string();
     }
@@ -173,7 +182,7 @@ pub fn merge_requests_to_markdown(mrs: &[MergeRequest]) -> String {
     output.push_str("# Merge Requests\n\n");
 
     for mr in mrs {
-        output.push_str(&merge_request_to_markdown(mr));
+        output.push_str(&merge_request_to_markdown(mr, config));
         output.push('\n');
     }
 
@@ -181,7 +190,7 @@ pub fn merge_requests_to_markdown(mrs: &[MergeRequest]) -> String {
 }
 
 /// Convert a single merge request to Markdown.
-fn merge_request_to_markdown(mr: &MergeRequest) -> String {
+fn merge_request_to_markdown(mr: &MergeRequest, config: &MarkdownConfig) -> String {
     let mut output = String::new();
 
     // Header with key and title
@@ -230,10 +239,10 @@ fn merge_request_to_markdown(mr: &MergeRequest) -> String {
         output.push_str(&format!("**Reviewers:** {}\n", reviewers.join(", ")));
     }
 
-    // Description (truncated)
+    // Description (truncated only for outliers)
     if let Some(desc) = &mr.description {
         if !desc.is_empty() {
-            let truncated = truncate_text(desc, 200);
+            let truncated = truncate_text(desc, config.max_description_len);
             output.push_str(&format!("\n{}\n", truncated));
         }
     }
@@ -419,7 +428,7 @@ pub fn comments_to_compact(comments: &[Comment]) -> String {
                 .as_ref()
                 .map(|a| format!("@{}", a.username))
                 .unwrap_or_else(|| "unknown".to_string());
-            let body = truncate_text(&c.body, 80);
+            let body = truncate_text(&c.body, 10_000);
             format!("{}: {}", author, body)
         })
         .collect::<Vec<_>>()
@@ -501,15 +510,22 @@ pub fn discussions_to_compact(discussions: &[Discussion]) -> String {
 // ============================================================================
 
 /// Truncate text to max length, adding ellipsis if needed.
+/// Safe for UTF-8: uses char boundaries instead of byte slicing.
 fn truncate_text(text: &str, max_len: usize) -> String {
     if text.len() <= max_len {
         return text.to_string();
     }
 
+    // Find a valid char boundary at or before max_len
+    let mut end = max_len;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+
     // Try to break at word boundary
-    let truncated = &text[..max_len];
+    let truncated = &text[..end];
     if let Some(pos) = truncated.rfind(' ') {
-        if pos > max_len / 2 {
+        if pos > end / 2 {
             return format!("{}...", &text[..pos]);
         }
     }
@@ -941,7 +957,7 @@ mod tests {
     #[test]
     fn test_markdown_plugin_new() {
         let plugin = MarkdownPlugin::new();
-        assert_eq!(plugin.config.max_description_len, 200);
+        assert_eq!(plugin.config.max_description_len, 10_000);
         assert!(plugin.config.include_timestamps);
         assert!(plugin.config.include_urls);
         assert!(plugin.config.include_author);
@@ -962,7 +978,7 @@ mod tests {
     #[test]
     fn test_markdown_plugin_default() {
         let plugin = MarkdownPlugin::default();
-        assert_eq!(plugin.config.max_description_len, 200);
+        assert_eq!(plugin.config.max_description_len, 10_000);
     }
 
     #[test]

@@ -26,18 +26,12 @@ pub fn create_provider(
             ..
         } => match scope {
             GitLabScope::Project { id } => {
-                // If proxy configured, use proxy URL instead of base_url
-                // and add X-Proxy-Token header
-                let (effective_url, proxy_token) = if let Some(proxy) = proxy {
-                    (proxy.url.as_str(), proxy.token.as_deref())
+                let client = if let Some(proxy) = proxy {
+                    devboy_gitlab::GitLabClient::with_base_url(&proxy.url, id, access_token)
+                        .with_proxy(proxy.headers.clone())
                 } else {
-                    (base_url.as_str(), None)
+                    devboy_gitlab::GitLabClient::with_base_url(base_url, id, access_token)
                 };
-                let mut client =
-                    devboy_gitlab::GitLabClient::with_base_url(effective_url, id, access_token);
-                if let Some(token) = proxy_token {
-                    client = client.with_proxy_token(token);
-                }
                 Ok(Box::new(client))
             }
             GitLabScope::Group { id } => Err(Error::ProviderUnsupported {
@@ -88,14 +82,22 @@ pub fn create_provider(
             access_token,
             email,
             scope,
+            flavor,
             ..
         } => match scope {
-            JiraScope::Project { key } => Ok(Box::new(devboy_jira::JiraClient::new(
-                base_url,
-                key,
-                email,
-                access_token,
-            ))),
+            JiraScope::Project { key } => {
+                let mut client = if let Some(proxy) = proxy {
+                    devboy_jira::JiraClient::new(&proxy.url, key, email, access_token)
+                        .with_proxy(proxy.headers.clone())
+                        .with_instance_url(base_url)
+                } else {
+                    devboy_jira::JiraClient::new(base_url, key, email, access_token)
+                };
+                if let Some(f) = flavor {
+                    client = client.with_flavor(*f);
+                }
+                Ok(Box::new(client))
+            }
             JiraScope::MultiProject { keys } => Err(Error::ProviderUnsupported {
                 provider: "jira".into(),
                 operation: format!(

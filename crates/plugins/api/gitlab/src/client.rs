@@ -22,7 +22,7 @@ pub struct GitLabClient {
     base_url: String,
     project_id: String,
     token: String,
-    proxy_token: Option<String>,
+    proxy_headers: Option<std::collections::HashMap<String, String>>,
     client: reqwest::Client,
 }
 
@@ -42,26 +42,31 @@ impl GitLabClient {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             project_id: project_id.into(),
             token: token.into(),
-            proxy_token: None,
+            proxy_headers: None,
             client: reqwest::Client::new(),
         }
     }
 
-    /// Set proxy token for self-hosted GitLab behind a reverse proxy.
-    /// Adds `X-Proxy-Token` header to all requests.
-    pub fn with_proxy_token(mut self, token: &str) -> Self {
-        self.proxy_token = Some(token.to_string());
+    /// Configure proxy mode with extra headers added to every request.
+    /// When proxy is active, the provider's own auth header (`PRIVATE-TOKEN`)
+    /// is suppressed — the proxy handles authentication.
+    pub fn with_proxy(mut self, headers: std::collections::HashMap<String, String>) -> Self {
+        self.proxy_headers = Some(headers);
         self
     }
 
-    /// Build request with common headers (+ proxy token if configured).
+    /// Build request with auth headers.
+    ///
+    /// When proxy is configured, provider's own auth is suppressed and
+    /// proxy headers are added instead. The proxy handles authentication.
     fn request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
-        let mut req = self
-            .client
-            .request(method, url)
-            .header("PRIVATE-TOKEN", &self.token);
-        if let Some(proxy_token) = &self.proxy_token {
-            req = req.header("X-Proxy-Token", proxy_token);
+        let mut req = self.client.request(method, url);
+        if let Some(headers) = &self.proxy_headers {
+            for (key, value) in headers {
+                req = req.header(key.as_str(), value.as_str());
+            }
+        } else {
+            req = req.header("PRIVATE-TOKEN", &self.token);
         }
         req
     }
