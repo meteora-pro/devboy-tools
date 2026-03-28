@@ -1517,7 +1517,10 @@ impl ToolHandler {
         let filter = devboy_core::MeetingFilter {
             from_date: params.from_date,
             to_date: params.to_date,
+            participants: params.participants,
+            host_email: params.host_email,
             limit: params.limit,
+            skip: params.offset,
             ..Default::default()
         };
 
@@ -1736,7 +1739,10 @@ struct SearchMeetingNotesParams {
     query: String,
     from_date: Option<String>,
     to_date: Option<String>,
+    participants: Option<Vec<String>>,
+    host_email: Option<String>,
     limit: Option<u32>,
+    offset: Option<u32>,
 }
 
 // =============================================================================
