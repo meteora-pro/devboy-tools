@@ -17,7 +17,7 @@ crates/
     │   ├── github/       # Client + enricher + types
     │   ├── clickup/      # Client + enricher + metadata + types
     │   └── jira/         # Client + enricher + metadata + types
-    └── pipeline/         # Output formatting (markdown, truncation)
+    └── format-pipeline/  # TOON encoding, budget trimming, pagination
 ```
 
 ## Dependency Graph

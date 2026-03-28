@@ -21,17 +21,17 @@ pub fn truncate_string(s: &str, max_chars: usize) -> String {
     let truncated = &s[..content_limit.min(s.len())];
 
     // Try to break at newline first
-    if let Some(pos) = truncated.rfind('\n') {
-        if pos > content_limit / 2 {
-            return format!("{}...", &s[..pos]);
-        }
+    if let Some(pos) = truncated.rfind('\n')
+        && pos > content_limit / 2
+    {
+        return format!("{}...", &s[..pos]);
     }
 
     // Fall back to word boundary
-    if let Some(pos) = truncated.rfind(' ') {
-        if pos > content_limit / 2 {
-            return format!("{}...", &s[..pos]);
-        }
+    if let Some(pos) = truncated.rfind(' ')
+        && pos > content_limit / 2
+    {
+        return format!("{}...", &s[..pos]);
     }
 
     // Hard truncate if no good boundary found

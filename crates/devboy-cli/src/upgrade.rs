@@ -9,7 +9,7 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 use crate::update_check::{detect_install_method, is_newer_version};
@@ -56,10 +56,10 @@ fn get_asset_name() -> Result<String> {
 /// which increases the rate limit from 60 to 5000 requests/hour.
 fn github_api_request(client: &reqwest::Client, url: &str) -> reqwest::RequestBuilder {
     let mut req = client.get(url);
-    if let Ok(token) = env::var("GITHUB_TOKEN").or_else(|_| env::var("GH_TOKEN")) {
-        if !token.is_empty() {
-            req = req.bearer_auth(token);
-        }
+    if let Ok(token) = env::var("GITHUB_TOKEN").or_else(|_| env::var("GH_TOKEN"))
+        && !token.is_empty()
+    {
+        req = req.bearer_auth(token);
     }
     req
 }
@@ -212,7 +212,9 @@ fn replace_binary(new_binary: &[u8]) -> Result<PathBuf> {
 
     #[cfg(not(any(unix, windows)))]
     {
-        bail!("Self-update is not supported on this platform. Download the binary manually from GitHub Releases.");
+        bail!(
+            "Self-update is not supported on this platform. Download the binary manually from GitHub Releases."
+        );
     }
 
     Ok(current_exe)
@@ -361,8 +363,8 @@ mod tests {
         let tar_data = builder.into_inner().unwrap();
 
         // Compress with gzip
-        use flate2::write::GzEncoder;
         use flate2::Compression;
+        use flate2::write::GzEncoder;
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         std::io::Write::write_all(&mut encoder, &tar_data).unwrap();
         let gz_data = encoder.finish().unwrap();
@@ -389,18 +391,20 @@ mod tests {
 
         let tar_data = builder.into_inner().unwrap();
 
-        use flate2::write::GzEncoder;
         use flate2::Compression;
+        use flate2::write::GzEncoder;
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         std::io::Write::write_all(&mut encoder, &tar_data).unwrap();
         let gz_data = encoder.finish().unwrap();
 
         let result = extract_tar_gz(&gz_data);
         assert!(result.is_err(), "Should fail when devboy not in archive");
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not found in archive"),);
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not found in archive"),
+        );
     }
 
     #[test]
@@ -420,8 +424,8 @@ mod tests {
 
         let tar_data = builder.into_inner().unwrap();
 
-        use flate2::write::GzEncoder;
         use flate2::Compression;
+        use flate2::write::GzEncoder;
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         std::io::Write::write_all(&mut encoder, &tar_data).unwrap();
         let gz_data = encoder.finish().unwrap();

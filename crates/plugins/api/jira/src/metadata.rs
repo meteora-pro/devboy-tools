@@ -139,14 +139,13 @@ impl JiraCustomField {
     pub fn transform_value(&self, value: &serde_json::Value) -> serde_json::Value {
         match self.field_type {
             JiraFieldType::Option => {
-                if let Some(name) = value.as_str() {
-                    if let Some(opt) = self
+                if let Some(name) = value.as_str()
+                    && let Some(opt) = self
                         .options
                         .iter()
                         .find(|o| o.name.eq_ignore_ascii_case(name))
-                    {
-                        return serde_json::json!({ "id": opt.id });
-                    }
+                {
+                    return serde_json::json!({ "id": opt.id });
                 }
                 value.clone()
             }

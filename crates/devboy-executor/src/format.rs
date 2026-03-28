@@ -1,10 +1,10 @@
-//! Format `ToolOutput` to text using the pipeline plugin.
+//! Format `ToolOutput` to text using the format pipeline.
 //!
 //! This module bridges the executor's typed output with the pipeline's
-//! text formatting. The caller can specify output format (markdown, compact, json).
+//! text formatting. Supports TOON (default) and JSON output formats.
 
 use devboy_core::Result;
-use devboy_pipeline::{OutputFormat, Pipeline, PipelineConfig};
+use devboy_format_pipeline::{OutputFormat, Pipeline, PipelineConfig};
 
 use crate::output::ToolOutput;
 
@@ -12,17 +12,18 @@ use crate::output::ToolOutput;
 ///
 /// # Arguments
 /// * `output` — typed result from executor
-/// * `format` — output format string ("markdown", "compact", "json"), defaults to "markdown"
+/// * `format` — output format string ("toon", "json"), defaults to "toon"
+/// * `tool_name` — tool name for strategy resolution (e.g. "get_issues")
 /// * `config` — optional pipeline config override
 pub fn format_output(
     output: ToolOutput,
     format: Option<&str>,
+    _tool_name: Option<&str>,
     config: Option<PipelineConfig>,
 ) -> Result<String> {
     let output_format = match format {
         Some("json") => OutputFormat::Json,
-        Some("compact") => OutputFormat::Compact,
-        _ => OutputFormat::Markdown,
+        _ => OutputFormat::Toon,
     };
 
     let pipeline_config = config.unwrap_or_else(|| PipelineConfig {
@@ -218,7 +219,7 @@ pub async fn execute_and_format(
         .map(String::from);
 
     let output = executor.execute(tool, args, ctx).await?;
-    format_output(output, format.as_deref(), pipeline_config)
+    format_output(output, format.as_deref(), Some(tool), pipeline_config)
 }
 
 #[cfg(test)]
@@ -244,9 +245,9 @@ mod tests {
     }
 
     #[test]
-    fn test_format_issues_markdown() {
+    fn test_format_issues_toon() {
         let output = ToolOutput::Issues(vec![sample_issue()]);
-        let result = format_output(output, Some("markdown"), None).unwrap();
+        let result = format_output(output, Some("toon"), None, None).unwrap();
         assert!(result.contains("gh#1"));
         assert!(result.contains("Test Issue"));
     }
@@ -254,35 +255,35 @@ mod tests {
     #[test]
     fn test_format_issues_json() {
         let output = ToolOutput::Issues(vec![sample_issue()]);
-        let result = format_output(output, Some("json"), None).unwrap();
+        let result = format_output(output, Some("json"), None, None).unwrap();
         assert!(result.contains("gh#1"));
     }
 
     #[test]
-    fn test_format_issues_compact() {
+    fn test_format_issues_toon_explicit() {
         let output = ToolOutput::Issues(vec![sample_issue()]);
-        let result = format_output(output, Some("compact"), None).unwrap();
+        let result = format_output(output, Some("toon"), None, None).unwrap();
         assert!(result.contains("gh#1"));
     }
 
     #[test]
     fn test_format_text_passthrough() {
         let output = ToolOutput::Text("Comment created".into());
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert_eq!(result, "Comment created");
     }
 
     #[test]
-    fn test_format_default_is_markdown() {
+    fn test_format_default_is_toon() {
         let output = ToolOutput::Issues(vec![sample_issue()]);
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert!(result.contains("gh#1"));
     }
 
     #[test]
     fn test_format_single_issue() {
         let output = ToolOutput::SingleIssue(Box::new(sample_issue()));
-        let result = format_output(output, Some("markdown"), None).unwrap();
+        let result = format_output(output, Some("toon"), None, None).unwrap();
         assert!(result.contains("gh#1"));
     }
 
@@ -309,14 +310,14 @@ mod tests {
     #[test]
     fn test_format_merge_requests() {
         let output = ToolOutput::MergeRequests(vec![sample_mr()]);
-        let result = format_output(output, Some("markdown"), None).unwrap();
+        let result = format_output(output, Some("toon"), None, None).unwrap();
         assert!(result.contains("pr#1"));
     }
 
     #[test]
     fn test_format_single_merge_request() {
         let output = ToolOutput::SingleMergeRequest(Box::new(sample_mr()));
-        let result = format_output(output, Some("compact"), None).unwrap();
+        let result = format_output(output, Some("toon"), None, None).unwrap();
         assert!(result.contains("pr#1"));
     }
 
@@ -336,7 +337,7 @@ mod tests {
             }],
             position: None,
         }]);
-        let result = format_output(output, Some("markdown"), None).unwrap();
+        let result = format_output(output, Some("toon"), None, None).unwrap();
         assert!(result.contains("Review comment"));
     }
 
@@ -352,7 +353,7 @@ mod tests {
             additions: Some(1),
             deletions: Some(0),
         }]);
-        let result = format_output(output, Some("markdown"), None).unwrap();
+        let result = format_output(output, Some("toon"), None, None).unwrap();
         assert!(result.contains("src/main.rs"));
     }
 
@@ -366,7 +367,7 @@ mod tests {
             updated_at: None,
             position: None,
         }]);
-        let result = format_output(output, Some("json"), None).unwrap();
+        let result = format_output(output, Some("json"), None, None).unwrap();
         assert!(result.contains("A comment body"));
     }
 
@@ -378,7 +379,7 @@ mod tests {
             max_chars: 500,
             ..PipelineConfig::default()
         };
-        let result = format_output(output, Some("compact"), Some(config)).unwrap();
+        let result = format_output(output, Some("toon"), None, Some(config)).unwrap();
         assert!(result.contains("gh#1"));
     }
 
@@ -415,7 +416,7 @@ mod tests {
                 error_snippet: Some("error: test failed".into()),
             }],
         }));
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert!(result.contains("Pipeline 100"));
         assert!(result.contains("failed"));
         assert!(result.contains("main"));
@@ -433,7 +434,7 @@ mod tests {
             mode: "smart".into(),
             total_lines: Some(100),
         }));
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert!(result.contains("Job Log"));
         assert!(result.contains("202"));
         assert!(result.contains("smart"));
@@ -460,7 +461,7 @@ mod tests {
             stages: vec![],
             failed_jobs: vec![],
         }));
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert!(result.contains("Pipeline 200"));
         assert!(result.contains("success"));
         assert!(result.contains("develop"));
@@ -487,7 +488,7 @@ mod tests {
             stages: vec![],
             failed_jobs: vec![],
         }));
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert!(result.contains("running"));
         assert!(result.contains("https://ci.example.com/301"));
         assert!(result.contains("60s"));
@@ -507,7 +508,7 @@ mod tests {
             stages: vec![],
             failed_jobs: vec![],
         }));
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert!(result.contains("pending"));
     }
 
@@ -525,7 +526,7 @@ mod tests {
             stages: vec![],
             failed_jobs: vec![],
         }));
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert!(result.contains("canceled"));
     }
 
@@ -552,7 +553,7 @@ mod tests {
             }],
             failed_jobs: vec![],
         }));
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert!(result.contains("[logs](https://ci.example.com/jobs/j1)"));
     }
 
@@ -575,7 +576,7 @@ mod tests {
                 error_snippet: None,
             }],
         }));
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert!(result.contains("lint"));
         assert!(result.contains("fj1"));
         assert!(!result.contains("```")); // no code block when no snippet
@@ -601,7 +602,7 @@ mod tests {
                 order: None,
             },
         ]);
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert!(result.contains("Available Statuses"));
         assert!(result.contains("To Do"));
         assert!(result.contains("In Progress"));
@@ -613,7 +614,7 @@ mod tests {
     #[test]
     fn test_format_statuses_empty() {
         let output = ToolOutput::Statuses(vec![]);
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert_eq!(result, "No statuses found.");
     }
 
@@ -637,7 +638,7 @@ mod tests {
                 avatar_url: None,
             },
         ]);
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert!(result.contains("# Users"));
         assert!(result.contains("johndoe"));
         assert!(result.contains("John Doe"));
@@ -649,7 +650,7 @@ mod tests {
     #[test]
     fn test_format_users_empty() {
         let output = ToolOutput::Users(vec![]);
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert_eq!(result, "No users found.");
     }
 
@@ -664,7 +665,7 @@ mod tests {
             mode: "full".into(),
             total_lines: None,
         }));
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert!(result.contains("Job Log (999)"));
         assert!(result.contains("**Mode:** full"));
         assert!(!result.contains("Total lines"));
@@ -676,7 +677,7 @@ mod tests {
     #[test]
     fn test_format_text_empty_string() {
         let output = ToolOutput::Text("".into());
-        let result = format_output(output, None, None).unwrap();
+        let result = format_output(output, None, None, None).unwrap();
         assert_eq!(result, "");
     }
 
@@ -684,7 +685,7 @@ mod tests {
     fn test_format_text_with_json_format_param() {
         // Even with "json" format, Text variant just passes through
         let output = ToolOutput::Text("raw text".into());
-        let result = format_output(output, Some("json"), None).unwrap();
+        let result = format_output(output, Some("json"), None, None).unwrap();
         assert_eq!(result, "raw text");
     }
 }

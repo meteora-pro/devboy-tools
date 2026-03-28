@@ -661,11 +661,7 @@ fn read_description(value: &Option<serde_json::Value>, flavor: JiraFlavor) -> Op
         _ => {
             if flavor == JiraFlavor::Cloud {
                 let text = adf_to_text(value);
-                if text.is_empty() {
-                    None
-                } else {
-                    Some(text)
-                }
+                if text.is_empty() { None } else { Some(text) }
             } else {
                 // Self-hosted v2 shouldn't return ADF, but handle gracefully
                 Some(value.to_string())

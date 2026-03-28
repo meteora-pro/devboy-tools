@@ -379,14 +379,18 @@ mod tests {
             .iter()
             .find(|t| t.name == "create_merge_request")
             .unwrap();
-        assert!(create_mr
-            .input_schema
-            .required
-            .contains(&"title".to_string()));
-        assert!(create_mr
-            .input_schema
-            .required
-            .contains(&"source_branch".to_string()));
+        assert!(
+            create_mr
+                .input_schema
+                .required
+                .contains(&"title".to_string())
+        );
+        assert!(
+            create_mr
+                .input_schema
+                .required
+                .contains(&"source_branch".to_string())
+        );
     }
 
     // --- ToolDefinition serialization ---
@@ -466,14 +470,16 @@ mod tests {
     fn test_link_issues_required_params() {
         let tools = base_tool_definitions();
         let link = tools.iter().find(|t| t.name == "link_issues").unwrap();
-        assert!(link
-            .input_schema
-            .required
-            .contains(&"sourceIssueKey".to_string()));
-        assert!(link
-            .input_schema
-            .required
-            .contains(&"targetIssueKey".to_string()));
+        assert!(
+            link.input_schema
+                .required
+                .contains(&"sourceIssueKey".to_string())
+        );
+        assert!(
+            link.input_schema
+                .required
+                .contains(&"targetIssueKey".to_string())
+        );
         assert!(link.input_schema.required.contains(&"linkType".to_string()));
     }
 

@@ -8,7 +8,7 @@ use devboy_core::{ToolCategory, ToolEnricher, ToolSchema};
 use serde_json::Value;
 
 // Re-export core enricher types for convenience
-pub use devboy_core::{sanitize_field_name, ToolSchema as Schema};
+pub use devboy_core::{ToolSchema as Schema, sanitize_field_name};
 
 /// Pipeline format enricher — adds `format` enum parameter to list tools.
 pub struct PipelineFormatEnricher;
@@ -30,11 +30,7 @@ impl ToolEnricher for PipelineFormatEnricher {
 
     fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema) {
         if LIST_TOOLS.contains(&tool_name) {
-            schema.add_enum_param(
-                "format",
-                &["markdown", "compact", "json"],
-                "Output format. Default: markdown",
-            );
+            schema.add_enum_param("format", &["toon", "json"], "Output format. Default: toon");
         }
     }
 
@@ -50,20 +46,21 @@ mod tests {
     fn test_pipeline_format_enricher() {
         let enricher = PipelineFormatEnricher;
 
-        assert!(enricher
-            .supported_categories()
-            .contains(&ToolCategory::IssueTracker));
-        assert!(enricher
-            .supported_categories()
-            .contains(&ToolCategory::GitRepository));
+        assert!(
+            enricher
+                .supported_categories()
+                .contains(&ToolCategory::IssueTracker)
+        );
+        assert!(
+            enricher
+                .supported_categories()
+                .contains(&ToolCategory::GitRepository)
+        );
 
         let mut schema = ToolSchema::new();
         enricher.enrich_schema("get_issues", &mut schema);
 
         let format = schema.properties.get("format").unwrap();
-        assert_eq!(
-            format.enum_values,
-            Some(vec!["markdown".into(), "compact".into(), "json".into()])
-        );
+        assert_eq!(format.enum_values, Some(vec!["toon".into(), "json".into()]));
     }
 }
