@@ -149,7 +149,9 @@ impl Pipeline {
 
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_issues)?,
-            OutputFormat::Markdown => markdown::issues_to_markdown_with_config(&truncated_issues, &self.markdown_config()),
+            OutputFormat::Markdown => {
+                markdown::issues_to_markdown_with_config(&truncated_issues, &self.markdown_config())
+            }
             OutputFormat::Compact => markdown::issues_to_compact(&truncated_issues),
         };
 
@@ -172,7 +174,10 @@ impl Pipeline {
 
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_mrs)?,
-            OutputFormat::Markdown => markdown::merge_requests_to_markdown_with_config(&truncated_mrs, &self.markdown_config()),
+            OutputFormat::Markdown => markdown::merge_requests_to_markdown_with_config(
+                &truncated_mrs,
+                &self.markdown_config(),
+            ),
             OutputFormat::Compact => markdown::merge_requests_to_compact(&truncated_mrs),
         };
 

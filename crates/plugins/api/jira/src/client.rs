@@ -913,7 +913,7 @@ impl IssueProvider for JiraClient {
                     let page_len = search_resp.issues.len() as u32;
                     for issue in &search_resp.issues {
                         if fetched_count >= offset && all_issues.len() < limit as usize {
-                            all_issues.push(map_issue(issue, self.flavor, &instance_url));
+                            all_issues.push(map_issue(issue, self.flavor, instance_url));
                         }
                         fetched_count += 1;
                     }
@@ -959,7 +959,7 @@ impl IssueProvider for JiraClient {
                 let issues = search_resp
                     .issues
                     .iter()
-                    .map(|i| map_issue(i, self.flavor, &instance_url))
+                    .map(|i| map_issue(i, self.flavor, instance_url))
                     .collect();
 
                 Ok(issues)
