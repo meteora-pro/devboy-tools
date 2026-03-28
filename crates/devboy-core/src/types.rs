@@ -524,3 +524,98 @@ pub struct JobLogOutput {
     pub mode: String,
     pub total_lines: Option<usize>,
 }
+
+// =============================================================================
+// Meeting Notes
+// =============================================================================
+
+/// Represents a meeting note / transcript summary.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct MeetingNote {
+    /// Unique identifier from the provider
+    pub id: String,
+    /// Meeting title
+    pub title: String,
+    /// Meeting date (ISO 8601)
+    pub meeting_date: Option<String>,
+    /// Duration in seconds
+    pub duration_seconds: Option<u64>,
+    /// Host email
+    pub host_email: Option<String>,
+    /// Organizer email
+    pub organizer_email: Option<String>,
+    /// Participant emails
+    pub participants: Vec<String>,
+    /// Speaker names
+    pub speakers: Vec<MeetingSpeaker>,
+    /// AI-extracted action items
+    pub action_items: Vec<String>,
+    /// Keywords / topics
+    pub keywords: Vec<String>,
+    /// Topics discussed
+    pub topics_discussed: Vec<String>,
+    /// Meeting type (e.g., "standup", "planning")
+    pub meeting_type: Option<String>,
+    /// AI summary overview
+    pub summary: Option<String>,
+    /// Transcript URL
+    pub transcript_url: Option<String>,
+    /// Audio recording URL
+    pub audio_url: Option<String>,
+    /// Video recording URL
+    pub video_url: Option<String>,
+    /// Meeting link (e.g., Zoom/Google Meet URL)
+    pub meeting_link: Option<String>,
+}
+
+/// A speaker in a meeting.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct MeetingSpeaker {
+    pub id: String,
+    pub name: String,
+}
+
+/// Full meeting transcript with speaker-attributed sentences.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct MeetingTranscript {
+    /// Meeting ID this transcript belongs to
+    pub meeting_id: String,
+    /// Meeting title
+    pub title: Option<String>,
+    /// Speaker-attributed sentences
+    pub sentences: Vec<TranscriptSentence>,
+}
+
+/// A single sentence in a meeting transcript.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TranscriptSentence {
+    /// Speaker ID (maps to MeetingSpeaker.id)
+    pub speaker_id: String,
+    /// Speaker name (resolved from speakers list)
+    pub speaker_name: Option<String>,
+    /// Sentence text
+    pub text: String,
+    /// Start time in seconds
+    pub start_time: f64,
+    /// End time in seconds
+    pub end_time: f64,
+}
+
+/// Filter for listing meeting notes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MeetingFilter {
+    /// Search keyword
+    pub keyword: Option<String>,
+    /// Filter from date (ISO 8601)
+    pub from_date: Option<String>,
+    /// Filter to date (ISO 8601)
+    pub to_date: Option<String>,
+    /// Filter by participant emails
+    pub participants: Option<Vec<String>>,
+    /// Filter by host email
+    pub host_email: Option<String>,
+    /// Max results
+    pub limit: Option<u32>,
+    /// Skip N results
+    pub skip: Option<u32>,
+}
