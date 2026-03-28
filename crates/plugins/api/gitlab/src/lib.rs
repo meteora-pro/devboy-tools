@@ -4,9 +4,11 @@
 //! merge requests, and other GitLab-specific functionality.
 
 mod client;
+pub mod enricher;
 pub mod types;
 
 pub use client::GitLabClient;
+pub use enricher::GitLabSchemaEnricher;
 pub use types::*;
 
 /// Default GitLab API URL.
