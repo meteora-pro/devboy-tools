@@ -211,6 +211,7 @@ mod tests {
             access_token: "jira-token".into(),
             email: "user@example.com".into(),
             scope: JiraScope::Project { key: "PROJ".into() },
+            flavor: None,
             extra: HashMap::new(),
         };
         let provider = create_provider(&config, None);
@@ -300,6 +301,7 @@ mod tests {
             access_token: "token".into(),
             email: "test@test.com".into(),
             scope: JiraScope::Project { key: "PROJ".into() },
+            flavor: None,
             extra: HashMap::new(),
         };
         // No metadata → None

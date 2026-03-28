@@ -173,7 +173,10 @@ pub fn merge_requests_to_markdown(mrs: &[MergeRequest]) -> String {
     merge_requests_to_markdown_with_config(mrs, &MarkdownConfig::default())
 }
 
-pub fn merge_requests_to_markdown_with_config(mrs: &[MergeRequest], config: &MarkdownConfig) -> String {
+pub fn merge_requests_to_markdown_with_config(
+    mrs: &[MergeRequest],
+    config: &MarkdownConfig,
+) -> String {
     if mrs.is_empty() {
         return "No merge requests found.".to_string();
     }
@@ -578,7 +581,7 @@ mod tests {
     #[test]
     fn test_issue_to_markdown() {
         let issue = sample_issue();
-        let md = issue_to_markdown(&issue);
+        let md = issue_to_markdown(&issue, &MarkdownConfig::default());
 
         assert!(md.contains("## gh#42"));
         assert!(md.contains("Fix the bug"));
@@ -740,7 +743,7 @@ mod tests {
     #[test]
     fn test_merge_request_to_markdown() {
         let mr = sample_mr();
-        let md = merge_request_to_markdown(&mr);
+        let md = merge_request_to_markdown(&mr, &MarkdownConfig::default());
 
         assert!(md.contains("## pr#10"));
         assert!(md.contains("Add new feature"));
@@ -757,7 +760,7 @@ mod tests {
     fn test_merge_request_to_markdown_draft() {
         let mut mr = sample_mr();
         mr.draft = true;
-        let md = merge_request_to_markdown(&mr);
+        let md = merge_request_to_markdown(&mr, &MarkdownConfig::default());
 
         assert!(md.contains("[DRAFT]"));
     }
@@ -1084,7 +1087,7 @@ mod tests {
             updated_at: None,
         };
 
-        let md = issue_to_markdown(&issue);
+        let md = issue_to_markdown(&issue, &MarkdownConfig::default());
         assert!(md.contains("gh#1"));
         assert!(!md.contains("**Priority:**"));
         assert!(!md.contains("**Labels:**"));
@@ -1109,7 +1112,7 @@ mod tests {
             updated_at: None,
         };
 
-        let md = issue_to_markdown(&issue);
+        let md = issue_to_markdown(&issue, &MarkdownConfig::default());
         // Empty description should not add a block
         assert!(!md.contains("\n\n\n"));
     }
@@ -1134,7 +1137,7 @@ mod tests {
             draft: false,
         };
 
-        let md = merge_request_to_markdown(&mr);
+        let md = merge_request_to_markdown(&mr, &MarkdownConfig::default());
         assert!(md.contains("pr#1"));
         assert!(!md.contains("**Labels:**"));
         assert!(!md.contains("**Author:**"));
