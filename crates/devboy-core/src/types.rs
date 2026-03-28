@@ -321,4 +321,206 @@ mod tests {
         assert!(filter.state.is_none());
         assert!(filter.limit.is_none());
     }
+
+    #[test]
+    fn test_pipeline_status_display() {
+        assert_eq!(PipelineStatus::Success.as_str(), "success");
+        assert_eq!(PipelineStatus::Failed.as_str(), "failed");
+        assert_eq!(PipelineStatus::Running.as_str(), "running");
+    }
+}
+
+// =============================================================================
+// Issue Status
+// =============================================================================
+
+/// Available status in an issue tracker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueStatus {
+    pub id: String,
+    pub name: String,
+    /// Normalized category for cross-provider compatibility.
+    pub category: String,
+    pub color: Option<String>,
+    pub order: Option<u32>,
+}
+
+/// Options for get_users.
+#[derive(Debug, Clone, Default)]
+pub struct GetUsersOptions {
+    pub user_id: Option<String>,
+    pub project_key: Option<String>,
+    pub search: Option<String>,
+    pub include_inactive: Option<bool>,
+    pub start_at: Option<u32>,
+    pub max_results: Option<u32>,
+}
+
+// =============================================================================
+// Releases
+// =============================================================================
+
+/// A release/tag from a git repository.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Release {
+    pub id: String,
+    pub key: String,
+    pub tag_name: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub source: String,
+    pub url: Option<String>,
+    pub author: Option<User>,
+    pub is_draft: Option<bool>,
+    pub is_prerelease: Option<bool>,
+    pub assets: Vec<ReleaseAsset>,
+    pub created_at: Option<String>,
+    pub published_at: Option<String>,
+}
+
+/// Asset attached to a release.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReleaseAsset {
+    pub name: String,
+    pub url: String,
+    pub size: Option<u64>,
+    pub download_count: Option<u64>,
+}
+
+// =============================================================================
+// Pipeline / CI
+// =============================================================================
+
+/// CI/CD pipeline status.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineStatus {
+    Success,
+    Failed,
+    Running,
+    Pending,
+    Canceled,
+    Skipped,
+    Unknown,
+}
+
+impl PipelineStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failed => "failed",
+            Self::Running => "running",
+            Self::Pending => "pending",
+            Self::Canceled => "canceled",
+            Self::Skipped => "skipped",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn is_healthy(&self) -> bool {
+        matches!(self, Self::Success)
+    }
+}
+
+/// Summary counts of jobs in a pipeline.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PipelineSummary {
+    pub total: u32,
+    pub success: u32,
+    pub failed: u32,
+    pub running: u32,
+    pub pending: u32,
+    pub canceled: u32,
+    pub skipped: u32,
+}
+
+/// A CI/CD pipeline with jobs grouped by stage/workflow.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineInfo {
+    pub id: String,
+    pub status: PipelineStatus,
+    /// Branch or tag ref.
+    pub reference: String,
+    pub sha: String,
+    pub url: Option<String>,
+    /// Duration in seconds.
+    pub duration: Option<u64>,
+    pub coverage: Option<f64>,
+    pub summary: PipelineSummary,
+    /// Jobs grouped by stage (GitLab) or workflow (GitHub).
+    pub stages: Vec<PipelineStage>,
+    /// Failed jobs with extracted error snippets.
+    pub failed_jobs: Vec<FailedJob>,
+}
+
+/// A stage/workflow in the pipeline containing jobs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineStage {
+    pub name: String,
+    pub jobs: Vec<PipelineJob>,
+}
+
+/// A single job in a pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineJob {
+    pub id: String,
+    pub name: String,
+    pub status: PipelineStatus,
+    pub url: Option<String>,
+    /// Duration in seconds.
+    pub duration: Option<u64>,
+}
+
+/// A failed job with extracted error context.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FailedJob {
+    pub id: String,
+    pub name: String,
+    pub url: Option<String>,
+    /// Extracted error lines from the job log.
+    pub error_snippet: Option<String>,
+}
+
+/// Input for get_pipeline.
+#[derive(Debug, Clone, Default)]
+pub struct GetPipelineInput {
+    /// Branch name (e.g., "main", "feat/DEV-123").
+    pub branch: Option<String>,
+    /// MR/PR key (e.g., "mr#123", "pr#456"). Takes priority over branch.
+    pub mr_key: Option<String>,
+    /// Include smart error extraction for failed jobs.
+    pub include_failed_logs: bool,
+}
+
+/// Options for get_job_logs.
+#[derive(Debug, Clone)]
+pub struct JobLogOptions {
+    pub mode: JobLogMode,
+}
+
+/// Job log retrieval mode.
+#[derive(Debug, Clone)]
+pub enum JobLogMode {
+    /// Automatic smart error extraction.
+    Smart,
+    /// Search with regex/keyword pattern.
+    Search {
+        pattern: String,
+        context: usize,
+        max_matches: usize,
+    },
+    /// Browse specific line range.
+    Paginated { offset: usize, limit: usize },
+    /// Full log (can be large).
+    Full { max_lines: usize },
+}
+
+/// Result of job log retrieval.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobLogOutput {
+    pub job_id: String,
+    pub job_name: Option<String>,
+    pub content: String,
+    pub mode: String,
+    pub total_lines: Option<usize>,
 }

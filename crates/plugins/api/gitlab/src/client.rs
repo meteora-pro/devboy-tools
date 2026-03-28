@@ -3,8 +3,10 @@
 use async_trait::async_trait;
 use devboy_core::{
     CodePosition, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
-    Discussion, Error, FileDiff, Issue, IssueFilter, IssueProvider, MergeRequest,
-    MergeRequestProvider, MrFilter, Provider, Result, UpdateIssueInput, User,
+    Discussion, Error, FailedJob, FileDiff, GetPipelineInput, Issue, IssueFilter, IssueProvider,
+    JobLogMode, JobLogOptions, JobLogOutput, MergeRequest, MergeRequestProvider, MrFilter,
+    PipelineInfo, PipelineJob, PipelineProvider, PipelineStage, PipelineStatus, PipelineSummary,
+    Provider, Result, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
@@ -20,6 +22,7 @@ pub struct GitLabClient {
     base_url: String,
     project_id: String,
     token: String,
+    proxy_headers: Option<std::collections::HashMap<String, String>>,
     client: reqwest::Client,
 }
 
@@ -39,15 +42,33 @@ impl GitLabClient {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             project_id: project_id.into(),
             token: token.into(),
+            proxy_headers: None,
             client: reqwest::Client::new(),
         }
     }
 
-    /// Build request with common headers.
+    /// Configure proxy mode with extra headers added to every request.
+    /// When proxy is active, the provider's own auth header (`PRIVATE-TOKEN`)
+    /// is suppressed — the proxy handles authentication.
+    pub fn with_proxy(mut self, headers: std::collections::HashMap<String, String>) -> Self {
+        self.proxy_headers = Some(headers);
+        self
+    }
+
+    /// Build request with auth headers.
+    ///
+    /// When proxy is configured, provider's own auth is suppressed and
+    /// proxy headers are added instead. The proxy handles authentication.
     fn request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
-        self.client
-            .request(method, url)
-            .header("PRIVATE-TOKEN", &self.token)
+        let mut req = self.client.request(method, url);
+        if let Some(headers) = &self.proxy_headers {
+            for (key, value) in headers {
+                req = req.header(key.as_str(), value.as_str());
+            }
+        } else {
+            req = req.header("PRIVATE-TOKEN", &self.token);
+        }
+        req
     }
 
     /// Get the project API URL for a given endpoint.
@@ -656,6 +677,398 @@ impl MergeRequestProvider for GitLabClient {
 
     fn provider_name(&self) -> &'static str {
         "gitlab"
+    }
+}
+
+// =============================================================================
+// Pipeline Provider (GitLab Pipelines API)
+// =============================================================================
+
+/// GitLab pipeline.
+#[derive(Debug, serde::Deserialize)]
+struct GlPipeline {
+    id: u64,
+    status: String,
+    #[serde(rename = "ref")]
+    ref_name: String,
+    sha: String,
+    web_url: Option<String>,
+    duration: Option<u64>,
+    coverage: Option<String>,
+}
+
+/// GitLab pipeline job.
+#[derive(Debug, serde::Deserialize)]
+struct GlJob {
+    id: u64,
+    name: String,
+    status: String,
+    stage: String,
+    web_url: Option<String>,
+    duration: Option<f64>,
+}
+
+fn map_gl_pipeline_status(status: &str) -> PipelineStatus {
+    match status {
+        "success" => PipelineStatus::Success,
+        "failed" => PipelineStatus::Failed,
+        "running" => PipelineStatus::Running,
+        "pending" | "waiting_for_resource" | "preparing" => PipelineStatus::Pending,
+        "canceled" => PipelineStatus::Canceled,
+        "skipped" => PipelineStatus::Skipped,
+        "manual" => PipelineStatus::Pending,
+        _ => PipelineStatus::Unknown,
+    }
+}
+
+/// Strip ANSI escape codes from text.
+fn strip_ansi(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            while let Some(&next) = chars.peek() {
+                chars.next();
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// Extract error lines from job log using common patterns.
+fn extract_errors(log: &str, max_lines: usize) -> Option<String> {
+    let patterns = [
+        "error[",
+        "error:",
+        "FAILED",
+        "Error:",
+        "panic",
+        "FATAL",
+        "AssertionError",
+        "TypeError",
+        "Cannot find",
+        "not found",
+        "exit code",
+    ];
+    let lines: Vec<&str> = log.lines().collect();
+    let mut error_lines: Vec<String> = Vec::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        let stripped = strip_ansi(line);
+        if patterns.iter().any(|p| stripped.contains(p)) {
+            let start = i.saturating_sub(2);
+            let end = (i + 3).min(lines.len());
+            for ctx_line_raw in &lines[start..end] {
+                let ctx_line = strip_ansi(ctx_line_raw).trim().to_string();
+                if !ctx_line.is_empty() && !error_lines.contains(&ctx_line) {
+                    error_lines.push(ctx_line);
+                }
+            }
+            if error_lines.len() >= max_lines {
+                break;
+            }
+        }
+    }
+
+    if error_lines.is_empty() {
+        let tail: Vec<String> = lines
+            .iter()
+            .rev()
+            .filter_map(|l| {
+                let s = strip_ansi(l).trim().to_string();
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
+            })
+            .take(10)
+            .collect();
+        if tail.is_empty() {
+            None
+        } else {
+            Some(tail.into_iter().rev().collect::<Vec<_>>().join("\n"))
+        }
+    } else {
+        Some(error_lines.join("\n"))
+    }
+}
+
+/// Extract GitLab section content from log.
+#[allow(dead_code)]
+fn extract_section(log: &str, section_name: &str) -> Option<String> {
+    let start_marker = "section_start:";
+    let end_marker = "section_end:";
+    let lines: Vec<&str> = log.lines().collect();
+    let mut in_section = false;
+    let mut section_lines = Vec::new();
+
+    for line in &lines {
+        let stripped = strip_ansi(line);
+        if stripped.contains(start_marker) && stripped.contains(section_name) {
+            in_section = true;
+            continue;
+        }
+        if stripped.contains(end_marker) && stripped.contains(section_name) {
+            break;
+        }
+        if in_section {
+            section_lines.push(strip_ansi(line).trim().to_string());
+        }
+    }
+
+    if section_lines.is_empty() {
+        None
+    } else {
+        Some(section_lines.join("\n"))
+    }
+}
+
+/// List available sections in a GitLab job log.
+#[allow(dead_code)]
+fn list_sections(log: &str) -> Vec<String> {
+    let mut sections = Vec::new();
+    for line in log.lines() {
+        let stripped = strip_ansi(line);
+        if let Some(pos) = stripped.find("section_start:") {
+            // Format: section_start:TIMESTAMP:SECTION_NAME\r...
+            let after = &stripped[pos + "section_start:".len()..];
+            if let Some(colon_pos) = after.find(':') {
+                let name_part = &after[colon_pos + 1..];
+                let name = name_part
+                    .split(['\r', '\n', '\x1b'])
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
+                if !name.is_empty() && !sections.contains(&name) {
+                    sections.push(name);
+                }
+            }
+        }
+    }
+    sections
+}
+
+#[async_trait]
+impl PipelineProvider for GitLabClient {
+    fn provider_name(&self) -> &'static str {
+        "gitlab"
+    }
+
+    async fn get_pipeline(&self, input: GetPipelineInput) -> Result<PipelineInfo> {
+        // Resolve pipeline
+        let pipeline: GlPipeline = if let Some(ref mr_key) = input.mr_key {
+            // MR pipeline: GET /projects/:id/merge_requests/:iid/pipelines
+            let iid = parse_mr_key(mr_key)?;
+            let url = self.project_url(&format!("/merge_requests/{iid}/pipelines?per_page=1"));
+            let pipelines: Vec<GlPipeline> = self.get(&url).await?;
+            pipelines
+                .into_iter()
+                .next()
+                .ok_or_else(|| Error::NotFound(format!("No pipeline found for MR !{iid}")))?
+        } else {
+            let ref_name = input.branch.as_deref().unwrap_or("main");
+            // Branch pipeline: GET /projects/:id/pipelines?ref=BRANCH&per_page=1
+            let url = self.project_url(&format!(
+                "/pipelines?ref={}&per_page=1&order_by=id&sort=desc",
+                urlencoding::encode(ref_name)
+            ));
+            let pipelines: Vec<GlPipeline> = self.get(&url).await?;
+
+            if let Some(p) = pipelines.into_iter().next() {
+                p
+            } else {
+                // Fallback: try MR pipeline for this branch
+                let mrs_url = self.project_url(&format!(
+                    "/merge_requests?source_branch={}&state=opened&per_page=1",
+                    urlencoding::encode(ref_name)
+                ));
+                let mrs: Vec<GitLabMergeRequest> = self.get(&mrs_url).await?;
+                if let Some(mr) = mrs.first() {
+                    let mr_pipes_url = self
+                        .project_url(&format!("/merge_requests/{}/pipelines?per_page=1", mr.iid));
+                    let mr_pipelines: Vec<GlPipeline> = self.get(&mr_pipes_url).await?;
+                    mr_pipelines.into_iter().next().ok_or_else(|| {
+                        Error::NotFound(format!("No pipeline found for branch '{ref_name}'"))
+                    })?
+                } else {
+                    return Err(Error::NotFound(format!(
+                        "No pipeline found for branch '{ref_name}'"
+                    )));
+                }
+            }
+        };
+
+        // Get jobs for pipeline
+        let jobs_url = self.project_url(&format!("/pipelines/{}/jobs?per_page=100", pipeline.id));
+        let gl_jobs: Vec<GlJob> = self.get(&jobs_url).await?;
+
+        // Build summary and group by stage
+        let mut summary = PipelineSummary {
+            total: gl_jobs.len() as u32,
+            ..Default::default()
+        };
+
+        let mut stages_map: std::collections::BTreeMap<String, Vec<PipelineJob>> =
+            std::collections::BTreeMap::new();
+        let mut failed_job_ids: Vec<(u64, String)> = Vec::new();
+
+        for job in &gl_jobs {
+            let status = map_gl_pipeline_status(&job.status);
+            match status {
+                PipelineStatus::Success => summary.success += 1,
+                PipelineStatus::Failed => {
+                    summary.failed += 1;
+                    failed_job_ids.push((job.id, job.name.clone()));
+                }
+                PipelineStatus::Running => summary.running += 1,
+                PipelineStatus::Pending => summary.pending += 1,
+                PipelineStatus::Canceled => summary.canceled += 1,
+                PipelineStatus::Skipped => summary.skipped += 1,
+                PipelineStatus::Unknown => {}
+            }
+
+            stages_map
+                .entry(job.stage.clone())
+                .or_default()
+                .push(PipelineJob {
+                    id: job.id.to_string(),
+                    name: job.name.clone(),
+                    status,
+                    url: job.web_url.clone(),
+                    duration: job.duration.map(|d| d as u64),
+                });
+        }
+
+        let stages: Vec<PipelineStage> = stages_map
+            .into_iter()
+            .map(|(name, jobs)| PipelineStage { name, jobs })
+            .collect();
+
+        // Fetch error snippets for failed jobs (max 5)
+        let mut failed_jobs: Vec<FailedJob> = Vec::new();
+        if input.include_failed_logs {
+            for (job_id, job_name) in failed_job_ids.iter().take(5) {
+                let trace_url = self.project_url(&format!("/jobs/{job_id}/trace"));
+                let error_snippet =
+                    match self.request(reqwest::Method::GET, &trace_url).send().await {
+                        Ok(resp) if resp.status().is_success() => {
+                            let log_text = resp.text().await.unwrap_or_default();
+                            extract_errors(&log_text, 20)
+                        }
+                        _ => None,
+                    };
+                failed_jobs.push(FailedJob {
+                    id: job_id.to_string(),
+                    name: job_name.clone(),
+                    url: None,
+                    error_snippet,
+                });
+            }
+        }
+
+        let coverage = pipeline.coverage.and_then(|c| c.parse::<f64>().ok());
+
+        Ok(PipelineInfo {
+            id: pipeline.id.to_string(),
+            status: map_gl_pipeline_status(&pipeline.status),
+            reference: pipeline.ref_name,
+            sha: pipeline.sha,
+            url: pipeline.web_url,
+            duration: pipeline.duration,
+            coverage,
+            summary,
+            stages,
+            failed_jobs,
+        })
+    }
+
+    async fn get_job_logs(&self, job_id: &str, options: JobLogOptions) -> Result<JobLogOutput> {
+        let trace_url = self.project_url(&format!("/jobs/{job_id}/trace"));
+        let resp = self
+            .request(reqwest::Method::GET, &trace_url)
+            .send()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            return Err(Error::from_status(
+                resp.status().as_u16(),
+                format!("Failed to fetch job logs for job {job_id}"),
+            ));
+        }
+
+        let raw_log = resp
+            .text()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?;
+        let log = strip_ansi(&raw_log);
+        let lines: Vec<&str> = log.lines().collect();
+        let total_lines = lines.len();
+
+        let (content, mode_name) = match options.mode {
+            JobLogMode::Smart => {
+                let extracted = extract_errors(&log, 30).unwrap_or_else(|| {
+                    lines
+                        .iter()
+                        .rev()
+                        .take(20)
+                        .copied()
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                });
+                (extracted, "smart")
+            }
+            JobLogMode::Search {
+                ref pattern,
+                context,
+                max_matches,
+            } => {
+                let re = regex::Regex::new(pattern)
+                    .unwrap_or_else(|_| regex::Regex::new(&regex::escape(pattern)).unwrap());
+                let mut matches = Vec::new();
+                for (i, line) in lines.iter().enumerate() {
+                    if re.is_match(line) {
+                        let start = i.saturating_sub(context);
+                        let end = (i + context + 1).min(total_lines);
+                        matches.push(format!("--- Match at line {} ---", i + 1));
+                        for (j, ctx_line) in lines[start..end].iter().enumerate() {
+                            let line_num = start + j;
+                            let marker = if line_num == i { ">>>" } else { "   " };
+                            matches.push(format!("{} {}: {}", marker, line_num + 1, ctx_line));
+                        }
+                        if matches.len() / (context * 2 + 2) >= max_matches {
+                            break;
+                        }
+                    }
+                }
+                (matches.join("\n"), "search")
+            }
+            JobLogMode::Paginated { offset, limit } => {
+                let page: Vec<&str> = lines.iter().skip(offset).take(limit).copied().collect();
+                (page.join("\n"), "paginated")
+            }
+            JobLogMode::Full { max_lines } => {
+                let truncated: Vec<&str> = lines.iter().take(max_lines).copied().collect();
+                (truncated.join("\n"), "full")
+            }
+        };
+
+        Ok(JobLogOutput {
+            job_id: job_id.to_string(),
+            job_name: None,
+            content,
+            mode: mode_name.to_string(),
+            total_lines: Some(total_lines),
+        })
     }
 }
 
@@ -1535,5 +1948,244 @@ mod tests {
             assert!(result.is_err());
             assert!(matches!(result.unwrap_err(), Error::Unauthorized(_)));
         }
+
+        // =====================================================================
+        // Pipeline tests
+        // =====================================================================
+
+        #[tokio::test]
+        async fn test_get_pipeline_by_branch() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/v4/projects/123/pipelines")
+                    .query_param("ref", "main");
+                then.status(200).json_body(serde_json::json!([{
+                    "id": 500,
+                    "status": "failed",
+                    "ref": "main",
+                    "sha": "abc123",
+                    "web_url": "https://gitlab.com/project/-/pipelines/500",
+                    "duration": 120,
+                    "coverage": "85.5"
+                }]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/v4/projects/123/pipelines/500/jobs");
+                then.status(200).json_body(serde_json::json!([
+                    {
+                        "id": 601,
+                        "name": "build",
+                        "status": "success",
+                        "stage": "build",
+                        "web_url": "https://gitlab.com/project/-/jobs/601",
+                        "duration": 30.0
+                    },
+                    {
+                        "id": 602,
+                        "name": "test",
+                        "status": "failed",
+                        "stage": "test",
+                        "web_url": "https://gitlab.com/project/-/jobs/602",
+                        "duration": 90.0
+                    }
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/api/v4/projects/123/jobs/602/trace");
+                then.status(200)
+                    .body("Running tests...\nerror: assertion failed\nDone.\n");
+            });
+
+            let client = create_test_client(&server);
+            let input = devboy_core::GetPipelineInput {
+                branch: Some("main".into()),
+                mr_key: None,
+                include_failed_logs: true,
+            };
+
+            let result = client.get_pipeline(input).await.unwrap();
+
+            assert_eq!(result.id, "500");
+            assert_eq!(result.status, PipelineStatus::Failed);
+            assert_eq!(result.reference, "main");
+            assert_eq!(result.duration, Some(120));
+            assert_eq!(result.coverage, Some(85.5));
+            assert_eq!(result.summary.total, 2);
+            assert_eq!(result.summary.success, 1);
+            assert_eq!(result.summary.failed, 1);
+            assert_eq!(result.stages.len(), 2); // build + test
+            assert_eq!(result.failed_jobs.len(), 1);
+            assert_eq!(result.failed_jobs[0].name, "test");
+            assert!(result.failed_jobs[0]
+                .error_snippet
+                .as_ref()
+                .unwrap()
+                .contains("assertion failed"));
+        }
+
+        #[tokio::test]
+        async fn test_get_pipeline_by_mr_key() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/v4/projects/123/merge_requests/42/pipelines");
+                then.status(200).json_body(serde_json::json!([{
+                    "id": 501,
+                    "status": "success",
+                    "ref": "feat/test",
+                    "sha": "def456",
+                    "web_url": null,
+                    "duration": 60,
+                    "coverage": null
+                }]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/v4/projects/123/pipelines/501/jobs");
+                then.status(200).json_body(serde_json::json!([{
+                    "id": 701,
+                    "name": "lint",
+                    "status": "success",
+                    "stage": "verify",
+                    "duration": 15.0
+                }]));
+            });
+
+            let client = create_test_client(&server);
+            let input = devboy_core::GetPipelineInput {
+                branch: None,
+                mr_key: Some("mr#42".into()),
+                include_failed_logs: false,
+            };
+
+            let result = client.get_pipeline(input).await.unwrap();
+            assert_eq!(result.id, "501");
+            assert_eq!(result.status, PipelineStatus::Success);
+            assert_eq!(result.summary.total, 1);
+            assert_eq!(result.summary.success, 1);
+        }
+
+        #[tokio::test]
+        async fn test_get_job_logs_smart() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/v4/projects/123/jobs/602/trace");
+                then.status(200)
+                    .body("Step 1\nStep 2\nerror[E0308]: mismatched types\n  --> src/main.rs:10\nStep 5\n");
+            });
+
+            let client = create_test_client(&server);
+            let options = devboy_core::JobLogOptions {
+                mode: devboy_core::JobLogMode::Smart,
+            };
+
+            let result = client.get_job_logs("602", options).await.unwrap();
+            assert_eq!(result.mode, "smart");
+            assert!(result.content.contains("mismatched types"));
+        }
+
+        #[tokio::test]
+        async fn test_get_job_logs_search() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/api/v4/projects/123/jobs/602/trace");
+                then.status(200)
+                    .body("Line 1\nLine 2\nFAILED: test_foo\nLine 4\n");
+            });
+
+            let client = create_test_client(&server);
+            let options = devboy_core::JobLogOptions {
+                mode: devboy_core::JobLogMode::Search {
+                    pattern: "FAILED".into(),
+                    context: 1,
+                    max_matches: 5,
+                },
+            };
+
+            let result = client.get_job_logs("602", options).await.unwrap();
+            assert_eq!(result.mode, "search");
+            assert!(result.content.contains("FAILED: test_foo"));
+        }
+
+        #[tokio::test]
+        async fn test_get_job_logs_paginated() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/api/v4/projects/123/jobs/602/trace");
+                then.status(200).body("L1\nL2\nL3\nL4\nL5\n");
+            });
+
+            let client = create_test_client(&server);
+            let options = devboy_core::JobLogOptions {
+                mode: devboy_core::JobLogMode::Paginated {
+                    offset: 2,
+                    limit: 2,
+                },
+            };
+
+            let result = client.get_job_logs("602", options).await.unwrap();
+            assert_eq!(result.mode, "paginated");
+            assert!(result.content.contains("L3"));
+            assert!(result.content.contains("L4"));
+            assert!(!result.content.contains("L1"));
+        }
+    }
+
+    // =========================================================================
+    // Pipeline utility unit tests
+    // =========================================================================
+
+    #[test]
+    fn test_map_gl_pipeline_status() {
+        assert_eq!(map_gl_pipeline_status("success"), PipelineStatus::Success);
+        assert_eq!(map_gl_pipeline_status("failed"), PipelineStatus::Failed);
+        assert_eq!(map_gl_pipeline_status("running"), PipelineStatus::Running);
+        assert_eq!(map_gl_pipeline_status("pending"), PipelineStatus::Pending);
+        assert_eq!(map_gl_pipeline_status("canceled"), PipelineStatus::Canceled);
+        assert_eq!(map_gl_pipeline_status("skipped"), PipelineStatus::Skipped);
+        assert_eq!(map_gl_pipeline_status("manual"), PipelineStatus::Pending);
+        assert_eq!(map_gl_pipeline_status("unknown"), PipelineStatus::Unknown);
+    }
+
+    #[test]
+    fn test_strip_ansi_gitlab() {
+        assert_eq!(strip_ansi("\x1b[0K\x1b[32;1mRunning\x1b[0m"), "Running");
+        assert_eq!(strip_ansi("plain text"), "plain text");
+    }
+
+    #[test]
+    fn test_extract_errors_gitlab() {
+        let log = "section_start:build\nCompiling...\nerror: build failed\nsection_end:build\n";
+        let result = extract_errors(log, 10).unwrap();
+        assert!(result.contains("build failed"));
+    }
+
+    #[test]
+    fn test_extract_section() {
+        let log = "before\nsection_start:1234:build_script\ncompiling...\ndone\nsection_end:1234:build_script\nafter\n";
+        let result = extract_section(log, "build_script").unwrap();
+        assert!(result.contains("compiling"));
+        assert!(result.contains("done"));
+        assert!(!result.contains("before"));
+        assert!(!result.contains("after"));
+    }
+
+    #[test]
+    fn test_list_sections() {
+        let log = "section_start:111:prepare_script\nstuff\nsection_end:111:prepare_script\nsection_start:222:build_script\nmore\nsection_end:222:build_script\n";
+        let sections = list_sections(log);
+        assert!(sections.contains(&"prepare_script".to_string()));
+        assert!(sections.contains(&"build_script".to_string()));
     }
 }

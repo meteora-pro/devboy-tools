@@ -362,6 +362,13 @@ impl MergeRequestProvider for TestProvider {
     }
 }
 
+#[async_trait]
+impl devboy_core::PipelineProvider for TestProvider {
+    fn provider_name(&self) -> &'static str {
+        "test"
+    }
+}
+
 /// Implement Provider for TestProvider.
 #[async_trait]
 impl Provider for TestProvider {

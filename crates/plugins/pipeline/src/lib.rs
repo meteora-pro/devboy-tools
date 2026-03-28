@@ -79,10 +79,12 @@ impl TransformOutput {
 pub struct PipelineConfig {
     /// Maximum number of items to include in output
     pub max_items: usize,
-    /// Maximum characters for the entire output
+    /// Maximum characters for the entire output (0 = no limit)
     pub max_chars: usize,
     /// Maximum characters per item (e.g., diff content)
     pub max_chars_per_item: usize,
+    /// Maximum description/body length before truncation (only outliers get truncated)
+    pub max_description_len: usize,
     /// Output format
     pub format: OutputFormat,
     /// Whether to include agent hints about truncation
@@ -93,8 +95,9 @@ impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
             max_items: 20,
-            max_chars: 4000,
-            max_chars_per_item: 500,
+            max_chars: 100_000,
+            max_chars_per_item: 10_000,
+            max_description_len: 10_000,
             format: OutputFormat::Markdown,
             include_hints: true,
         }
@@ -130,6 +133,14 @@ impl Pipeline {
         Self { config }
     }
 
+    /// Build MarkdownConfig from PipelineConfig.
+    fn markdown_config(&self) -> markdown::MarkdownConfig {
+        markdown::MarkdownConfig {
+            max_description_len: self.config.max_description_len,
+            ..markdown::MarkdownConfig::default()
+        }
+    }
+
     /// Transform a list of issues.
     pub fn transform_issues(&self, issues: Vec<Issue>) -> Result<TransformOutput> {
         let total = issues.len();
@@ -138,7 +149,9 @@ impl Pipeline {
 
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_issues)?,
-            OutputFormat::Markdown => markdown::issues_to_markdown(&truncated_issues),
+            OutputFormat::Markdown => {
+                markdown::issues_to_markdown_with_config(&truncated_issues, &self.markdown_config())
+            }
             OutputFormat::Compact => markdown::issues_to_compact(&truncated_issues),
         };
 
@@ -161,7 +174,10 @@ impl Pipeline {
 
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_mrs)?,
-            OutputFormat::Markdown => markdown::merge_requests_to_markdown(&truncated_mrs),
+            OutputFormat::Markdown => markdown::merge_requests_to_markdown_with_config(
+                &truncated_mrs,
+                &self.markdown_config(),
+            ),
             OutputFormat::Compact => markdown::merge_requests_to_compact(&truncated_mrs),
         };
 
@@ -738,5 +754,201 @@ mod tests {
         assert_eq!(output.included_count, 2);
         assert!(!output.truncated);
         assert!(output.agent_hint.is_none());
+    }
+
+    // --- PipelineConfig::default() values ---
+
+    #[test]
+    fn test_pipeline_config_default_values() {
+        let config = PipelineConfig::default();
+        assert_eq!(config.max_items, 20);
+        assert_eq!(config.max_chars, 100_000);
+        assert_eq!(config.max_chars_per_item, 10_000);
+        assert_eq!(config.max_description_len, 10_000);
+        assert!(matches!(config.format, OutputFormat::Markdown));
+        assert!(config.include_hints);
+    }
+
+    // --- apply_char_limit ---
+
+    #[test]
+    fn test_apply_char_limit_no_truncation() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            max_chars: 1000,
+            max_items: 50,
+            ..Default::default()
+        });
+        let output = TransformOutput::new("short content".into());
+        let result = pipeline.apply_char_limit(output);
+        assert!(!result.truncated);
+        assert!(result.agent_hint.is_none());
+        assert_eq!(result.content, "short content");
+    }
+
+    #[test]
+    fn test_apply_char_limit_truncates_large_content() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            max_chars: 20,
+            max_items: 50,
+            ..Default::default()
+        });
+        let long_content = "a".repeat(100);
+        let output = TransformOutput::new(long_content);
+        let result = pipeline.apply_char_limit(output);
+        assert!(result.truncated);
+        assert!(result.content.len() <= 20);
+        assert!(result.agent_hint.is_some());
+        assert!(result.agent_hint.unwrap().contains("truncated"));
+    }
+
+    #[test]
+    fn test_apply_char_limit_preserves_existing_truncation() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            max_chars: 10,
+            max_items: 50,
+            ..Default::default()
+        });
+        let long_content = "x".repeat(100);
+        let output =
+            TransformOutput::new(long_content).with_truncation(50, 5, "existing hint".into());
+        let result = pipeline.apply_char_limit(output);
+        // Already truncated, should keep truncated=true but not replace the hint
+        // (since it was already truncated, the code checks `if !output.truncated`)
+        assert!(result.truncated);
+    }
+
+    // --- markdown_config ---
+
+    #[test]
+    fn test_markdown_config_from_pipeline() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            max_description_len: 500,
+            ..Default::default()
+        });
+        let md_config = pipeline.markdown_config();
+        assert_eq!(md_config.max_description_len, 500);
+        // Other fields should be defaults
+        assert!(md_config.include_timestamps);
+        assert!(md_config.include_urls);
+        assert!(md_config.include_author);
+    }
+
+    // --- TransformOutput ---
+
+    #[test]
+    fn test_transform_output_with_truncation() {
+        let output =
+            TransformOutput::new("data".into()).with_truncation(100, 10, "90 more items".into());
+        assert!(output.truncated);
+        assert_eq!(output.total_count, Some(100));
+        assert_eq!(output.included_count, 10);
+        assert_eq!(output.agent_hint.as_deref(), Some("90 more items"));
+    }
+
+    // --- create_pagination_hint ---
+
+    #[test]
+    fn test_create_pagination_hint_without_tool() {
+        let pipeline = Pipeline::new();
+        let hint = pipeline.create_pagination_hint("issues", 50, 20, None);
+        assert!(hint.contains("20/50"));
+        assert!(hint.contains("30 more"));
+        assert!(hint.contains("offset"));
+        assert!(hint.contains("limit"));
+    }
+
+    #[test]
+    fn test_create_pagination_hint_with_tool() {
+        let pipeline = Pipeline::new();
+        let hint = pipeline.create_pagination_hint("diffs", 30, 10, Some("get_diffs"));
+        assert!(hint.contains("10/30"));
+        assert!(hint.contains("20 more"));
+        assert!(hint.contains("get_diffs"));
+        assert!(hint.contains("offset=10"));
+    }
+
+    // --- Edge cases for char limit vs item limit ---
+
+    #[test]
+    fn test_char_limit_triggers_before_item_limit() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            max_items: 100, // high item limit
+            max_chars: 50,  // very low char limit
+            ..Default::default()
+        });
+
+        let issues: Vec<Issue> = sample_issues().into_iter().take(3).collect();
+        let output = pipeline.transform_issues(issues).unwrap();
+        assert!(output.truncated);
+        assert!(output.content.len() <= 50);
+    }
+
+    // --- Empty collections ---
+
+    #[test]
+    fn test_transform_empty_issues() {
+        let pipeline = Pipeline::new();
+        let output = pipeline.transform_issues(vec![]).unwrap();
+        assert!(!output.truncated);
+        assert_eq!(output.included_count, 0);
+    }
+
+    #[test]
+    fn test_transform_empty_merge_requests() {
+        let pipeline = Pipeline::new();
+        let output = pipeline.transform_merge_requests(vec![]).unwrap();
+        assert!(!output.truncated);
+        assert_eq!(output.included_count, 0);
+    }
+
+    #[test]
+    fn test_transform_empty_diffs() {
+        let pipeline = Pipeline::new();
+        let output = pipeline.transform_diffs(vec![]).unwrap();
+        assert!(!output.truncated);
+        assert_eq!(output.included_count, 0);
+    }
+
+    #[test]
+    fn test_transform_empty_comments() {
+        let pipeline = Pipeline::new();
+        let output = pipeline.transform_comments(vec![]).unwrap();
+        assert!(!output.truncated);
+        assert_eq!(output.included_count, 0);
+    }
+
+    #[test]
+    fn test_transform_empty_discussions() {
+        let pipeline = Pipeline::new();
+        let output = pipeline.transform_discussions(vec![]).unwrap();
+        assert!(!output.truncated);
+        assert_eq!(output.included_count, 0);
+    }
+
+    // --- Diff truncation per item ---
+
+    #[test]
+    fn test_diff_content_truncated_per_item() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            max_chars_per_item: 10,
+            max_items: 10,
+            max_chars: 100_000,
+            ..Default::default()
+        });
+
+        let diffs = vec![FileDiff {
+            file_path: "big.rs".into(),
+            old_path: None,
+            new_file: false,
+            deleted_file: false,
+            renamed_file: false,
+            diff: "x".repeat(1000),
+            additions: Some(100),
+            deletions: Some(0),
+        }];
+
+        let output = pipeline.transform_diffs(diffs).unwrap();
+        // The diff content should have been truncated
+        assert!(output.content.len() < 1000);
     }
 }

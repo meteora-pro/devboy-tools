@@ -188,31 +188,79 @@ mod tests {
 ```
 devboy-tools/
 ├── crates/
-│   ├── devboy-core/      # Core abstractions
-│   │   ├── src/
-│   │   │   ├── lib.rs    # Crate entry point
-│   │   │   ├── error.rs  # Error types
-│   │   │   ├── provider.rs # Provider trait
-│   │   │   └── types.rs  # Common types
-│   │   └── Cargo.toml
-│   ├── devboy-storage/   # Credential storage
-│   ├── devboy-gitlab/    # GitLab implementation
-│   ├── devboy-github/    # GitHub implementation
-│   ├── devboy-mcp/       # MCP server
-│   └── devboy-cli/       # CLI binary
+│   ├── devboy-core/          # Core abstractions (Provider, ToolEnricher traits, types)
+│   │   └── src/
+│   │       ├── provider.rs   # IssueProvider, MergeRequestProvider, Provider traits
+│   │       ├── enricher.rs   # ToolEnricher trait, ToolSchema utilities
+│   │       ├── types.rs      # Unified types (Issue, MergeRequest, Discussion, etc.)
+│   │       ├── config.rs     # Configuration management
+│   │       └── error.rs      # Error types
+│   ├── devboy-executor/      # Tool execution engine + enrichment pipeline
+│   │   └── src/
+│   │       ├── executor.rs   # Executor (dispatch tools, run enrichers)
+│   │       ├── context.rs    # AdditionalContext, ProviderConfig, scopes
+│   │       ├── factory.rs    # create_provider(), create_enricher()
+│   │       ├── enricher.rs   # Built-in enrichers (PipelineFormatEnricher)
+│   │       ├── output.rs     # ToolOutput typed enum
+│   │       └── format.rs     # ToolOutput → pipeline text formatting
+│   ├── devboy-storage/       # Credential storage (keychain, env vars)
+│   ├── devboy-mcp/           # MCP server (JSON-RPC over stdio)
+│   ├── devboy-cli/           # CLI binary
+│   └── plugins/
+│       ├── api/
+│       │   ├── gitlab/       # GitLab client + GitLabSchemaEnricher
+│       │   ├── github/       # GitHub client + GitHubSchemaEnricher
+│       │   ├── clickup/      # ClickUp client + enricher + metadata types
+│       │   └── jira/         # Jira client + enricher + metadata types
+│       └── pipeline/         # Output formatting (markdown, truncation)
 ├── .github/
-│   └── workflows/        # CI/CD pipelines
-├── Cargo.toml            # Workspace config
+│   └── workflows/            # CI/CD pipelines
+├── Cargo.toml                # Workspace config
 └── README.md
 ```
 
 ### Adding a New Provider
 
-1. Create a new crate: `crates/devboy-{provider}/`
-2. Implement the `Provider` trait from `devboy-core`
-3. Add integration to `devboy-mcp` and `devboy-cli`
-4. Add tests and documentation
-5. Update README with new provider info
+1. Create a new crate: `crates/plugins/api/{provider}/`
+2. Implement the `Provider` trait from `devboy-core` (client + types)
+3. Implement `ToolEnricher` from `devboy-core` (schema enricher)
+4. Add provider to `devboy-executor/src/factory.rs` (create_provider + create_enricher)
+5. Add tests and documentation
+6. Update README with new provider info
+
+### Adding an Enricher
+
+Enrichers implement the `ToolEnricher` trait from `devboy-core`:
+
+```rust
+use devboy_core::{ToolEnricher, ToolSchema};
+
+pub struct MyEnricher;
+
+impl ToolEnricher for MyEnricher {
+    fn supported_tools(&self) -> &[&str] {
+        &["get_issues", "create_issue"]
+    }
+
+    fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema) {
+        // Add enum params, remove unsupported params, etc.
+        schema.add_enum_param("status", &["open", "closed"], "Issue status");
+    }
+
+    fn transform_args(&self, tool_name: &str, args: &mut serde_json::Value) {
+        // Transform args before provider call (e.g., cf_* → customFields)
+    }
+}
+```
+
+Register enrichers with the Executor:
+
+```rust
+let mut executor = Executor::new();
+executor.add_enricher(Box::new(MyEnricher));
+```
+
+See existing enrichers in `crates/plugins/api/*/src/enricher.rs` for examples.
 
 ## Getting help
 
