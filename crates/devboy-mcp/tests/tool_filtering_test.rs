@@ -233,8 +233,8 @@ const MR_TOOLS: &[&str] = &[
 
 /// Helper to get tool names from server.
 fn get_tool_names(server: &McpServer) -> Vec<String> {
-    use devboy_mcp::protocol::ToolsListResult;
     use devboy_mcp::RequestId;
+    use devboy_mcp::protocol::ToolsListResult;
 
     let resp = server.handle_tools_list(RequestId::Number(1));
     let result: ToolsListResult = serde_json::from_value(resp.result.unwrap()).unwrap();

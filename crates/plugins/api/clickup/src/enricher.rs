@@ -3,8 +3,8 @@
 //! Dynamic enricher that uses list metadata to populate enum values
 //! and generate custom field parameters.
 
-use devboy_core::{sanitize_field_name, ToolCategory, ToolEnricher, ToolSchema};
-use serde_json::{json, Value};
+use devboy_core::{ToolCategory, ToolEnricher, ToolSchema, sanitize_field_name};
+use serde_json::{Value, json};
 
 use crate::metadata::{ClickUpFieldType, ClickUpMetadata};
 
@@ -97,17 +97,17 @@ impl ToolEnricher for ClickUpSchemaEnricher {
         }
 
         // Transform priority name to ClickUp numeric value
-        if let Some(obj) = args.as_object_mut() {
-            if let Some(priority) = obj.get("priority").and_then(|v| v.as_str()) {
-                let numeric = match priority {
-                    "urgent" => 1,
-                    "high" => 2,
-                    "normal" => 3,
-                    "low" => 4,
-                    _ => 3, // default to normal
-                };
-                obj.insert("priority".into(), json!(numeric));
-            }
+        if let Some(obj) = args.as_object_mut()
+            && let Some(priority) = obj.get("priority").and_then(|v| v.as_str())
+        {
+            let numeric = match priority {
+                "urgent" => 1,
+                "high" => 2,
+                "normal" => 3,
+                "low" => 4,
+                _ => 3, // default to normal
+            };
+            obj.insert("priority".into(), json!(numeric));
         }
 
         // Transform cf_* params to customFields array

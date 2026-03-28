@@ -2,8 +2,8 @@
 //!
 //! Dynamic enricher supporting single-project and multi-project configurations.
 
-use devboy_core::{sanitize_field_name, ToolCategory, ToolEnricher, ToolSchema};
-use serde_json::{json, Value};
+use devboy_core::{ToolCategory, ToolEnricher, ToolSchema, sanitize_field_name};
+use serde_json::{Value, json};
 
 use crate::metadata::{JiraFieldType, JiraMetadata};
 
@@ -112,17 +112,17 @@ impl ToolEnricher for JiraSchemaEnricher {
         }
 
         // Transform priority aliases
-        if let Some(obj) = args.as_object_mut() {
-            if let Some(priority) = obj.get("priority").and_then(|v| v.as_str()) {
-                let mapped = match priority {
-                    "urgent" => "Highest",
-                    "high" => "High",
-                    "normal" => "Medium",
-                    "low" => "Low",
-                    other => other,
-                };
-                obj.insert("priority".into(), json!(mapped));
-            }
+        if let Some(obj) = args.as_object_mut()
+            && let Some(priority) = obj.get("priority").and_then(|v| v.as_str())
+        {
+            let mapped = match priority {
+                "urgent" => "Highest",
+                "high" => "High",
+                "normal" => "Medium",
+                "low" => "Low",
+                other => other,
+            };
+            obj.insert("priority".into(), json!(mapped));
         }
 
         // Transform cf_* params to customFields for single-project

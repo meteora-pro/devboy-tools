@@ -4,18 +4,18 @@
 //! - **SSE**: Legacy MCP transport with SSE stream for responses.
 //! - **Streamable HTTP**: POST-based transport with `mcp-session-id` header.
 
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use futures::StreamExt;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest_eventsource::{Event, EventSource};
 use serde_json::Value;
-use tokio::sync::{oneshot, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, oneshot};
 
 use crate::protocol::{
-    JsonRpcRequest, JsonRpcResponse, RequestId, ToolCallResult, ToolDefinition, JSONRPC_VERSION,
+    JSONRPC_VERSION, JsonRpcRequest, JsonRpcResponse, RequestId, ToolCallResult, ToolDefinition,
 };
 
 /// Transport mode for upstream MCP server.
@@ -130,18 +130,17 @@ impl McpProxyClient {
             while let Some(event) = es.next().await {
                 match event {
                     Ok(Event::Message(msg)) => {
-                        if msg.event == "message" {
-                            if let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(&msg.data) {
-                                let id_num = match &resp.id {
-                                    RequestId::Number(n) => *n,
-                                    _ => continue,
-                                };
-                                let mut pending = pending_clone.lock().await;
-                                if let Some(idx) = pending.iter().position(|(id, _)| *id == id_num)
-                                {
-                                    let (_, sender) = pending.remove(idx);
-                                    let _ = sender.send(resp);
-                                }
+                        if msg.event == "message"
+                            && let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(&msg.data)
+                        {
+                            let id_num = match &resp.id {
+                                RequestId::Number(n) => *n,
+                                _ => continue,
+                            };
+                            let mut pending = pending_clone.lock().await;
+                            if let Some(idx) = pending.iter().position(|(id, _)| *id == id_num) {
+                                let (_, sender) = pending.remove(idx);
+                                let _ = sender.send(resp);
                             }
                         }
                     }
@@ -208,12 +207,11 @@ impl McpProxyClient {
                     Ok(Event::Message(msg)) if msg.event == "endpoint" => {
                         let endpoint = msg.data.trim().to_string();
                         // If relative URL, resolve against base
-                        if endpoint.starts_with('/') {
-                            if let Ok(base) = reqwest::Url::parse(base_url) {
-                                if let Ok(resolved) = base.join(&endpoint) {
-                                    return Ok(resolved.to_string());
-                                }
-                            }
+                        if endpoint.starts_with('/')
+                            && let Ok(base) = reqwest::Url::parse(base_url)
+                            && let Ok(resolved) = base.join(&endpoint)
+                        {
+                            return Ok(resolved.to_string());
                         }
                         return Ok(endpoint);
                     }
@@ -326,14 +324,13 @@ impl McpProxyClient {
         })?;
 
         // Extract session ID from response headers (set during initialize)
-        if method == "initialize" {
-            if let Some(sid) = response.headers().get("mcp-session-id") {
-                if let Ok(sid_str) = sid.to_str() {
-                    let mut session = self.session_id.write().await;
-                    *session = Some(sid_str.to_string());
-                    tracing::debug!("Proxy '{}': got session ID", self.name);
-                }
-            }
+        if method == "initialize"
+            && let Some(sid) = response.headers().get("mcp-session-id")
+            && let Ok(sid_str) = sid.to_str()
+        {
+            let mut session = self.session_id.write().await;
+            *session = Some(sid_str.to_string());
+            tracing::debug!("Proxy '{}': got session ID", self.name);
         }
 
         let status = response.status();
@@ -399,23 +396,25 @@ impl McpProxyClient {
 
         tracing::debug!("Starting SSE line reader...");
 
-        let result = tokio::time::timeout(Duration::from_secs(60), async {
+        tokio::time::timeout(Duration::from_secs(60), async {
             while let Ok(Some(line)) = lines.next_line().await {
                 let line = line.trim().to_string();
                 tracing::debug!("SSE line: {}", &line[..line.len().min(100)]);
 
                 if line.is_empty() {
                     // End of SSE event — try to parse collected data
-                    if !current_data.is_empty() {
-                        if let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(&current_data) {
-                            let id_matches = match &resp.id {
-                                RequestId::Number(n) => *n == expected_id,
-                                _ => false,
-                            };
-                            if id_matches {
-                                return Ok(resp);
-                            }
+                    if !current_data.is_empty()
+                        && let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(&current_data)
+                    {
+                        let id_matches = match &resp.id {
+                            RequestId::Number(n) => *n == expected_id,
+                            _ => false,
+                        };
+                        if id_matches {
+                            return Ok(resp);
                         }
+                        current_data.clear();
+                    } else if !current_data.is_empty() {
                         current_data.clear();
                     }
                     continue;
@@ -431,10 +430,10 @@ impl McpProxyClient {
             }
 
             // Try last accumulated data
-            if !current_data.is_empty() {
-                if let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(&current_data) {
-                    return Ok(resp);
-                }
+            if !current_data.is_empty()
+                && let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(&current_data)
+            {
+                return Ok(resp);
             }
 
             Err(devboy_core::Error::Http(
@@ -442,9 +441,7 @@ impl McpProxyClient {
             ))
         })
         .await
-        .map_err(|_| devboy_core::Error::Http("Timeout reading SSE response".to_string()))?;
-
-        result
+        .map_err(|_| devboy_core::Error::Http("Timeout reading SSE response".to_string()))?
     }
 
     /// Send initialize handshake.

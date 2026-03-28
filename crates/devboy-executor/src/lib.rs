@@ -53,7 +53,7 @@ pub use context::{
     AdditionalContext, ClickUpScope, GitHubScope, GitLabScope, JiraScope, ProviderConfig,
     ProviderMetadata, ProxyConfig,
 };
-pub use devboy_core::{sanitize_field_name, ToolEnricher, ToolSchema};
+pub use devboy_core::{ToolEnricher, ToolSchema, sanitize_field_name};
 pub use enricher::PipelineFormatEnricher;
 pub use executor::{Executor, SUPPORTED_TOOLS};
 pub use factory::create_enricher;

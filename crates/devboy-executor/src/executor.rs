@@ -87,10 +87,10 @@ impl Executor {
             .find(|t| t.name == tool)
             .map(|t| t.category);
         for enricher in &self.enrichers {
-            if let Some(cat) = tool_category {
-                if enricher.supported_categories().contains(&cat) {
-                    enricher.transform_args(tool, &mut args);
-                }
+            if let Some(cat) = tool_category
+                && enricher.supported_categories().contains(&cat)
+            {
+                enricher.transform_args(tool, &mut args);
             }
         }
 

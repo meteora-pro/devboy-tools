@@ -13,7 +13,7 @@ devboy-gitlab = { path = "../plugins/api/gitlab" }
 devboy-github = { path = "../plugins/api/github" }
 devboy-clickup = { path = "../plugins/api/clickup" }
 devboy-jira = { path = "../plugins/api/jira" }
-devboy-pipeline = { path = "../plugins/pipeline" }
+devboy-format-pipeline = { path = "../plugins/format-pipeline" }
 
 tokio.workspace = true
 serde.workspace = true
@@ -24,3 +24,6 @@ tracing.workspace = true
 [dev-dependencies]
 mockall.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true
