@@ -1219,7 +1219,7 @@ impl ToolHandler {
                         Some("get_pipeline"),
                         None,
                     ) {
-                        Ok(text) => ToolCallResult::text(text),
+                        Ok(result) => ToolCallResult::text(result.content),
                         Err(e) => ToolCallResult::error(format!("Format error: {}", e)),
                     };
                 }
@@ -1286,7 +1286,7 @@ impl ToolHandler {
                         Some("get_job_logs"),
                         None,
                     ) {
-                        Ok(text) => ToolCallResult::text(text),
+                        Ok(result) => ToolCallResult::text(result.content),
                         Err(e) => ToolCallResult::error(format!("Format error: {}", e)),
                     };
                 }
