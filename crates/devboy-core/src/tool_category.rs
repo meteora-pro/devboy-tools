@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 /// Category of MCP tools — determines which tools are available
 /// based on provider capabilities.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolCategory {
     /// Git repository tools: MR/PR, pipeline, diffs, discussions.
@@ -26,4 +26,15 @@ pub enum ToolCategory {
     /// Release tools: tags, releases, assets.
     /// Providers: GitLab, GitHub
     Releases,
+}
+
+impl std::fmt::Display for ToolCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::GitRepository => write!(f, "Git Repository"),
+            Self::IssueTracker => write!(f, "Issue Tracker"),
+            Self::Epics => write!(f, "Epics"),
+            Self::Releases => write!(f, "Releases"),
+        }
+    }
 }

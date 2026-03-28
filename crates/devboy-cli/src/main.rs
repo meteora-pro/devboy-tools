@@ -344,6 +344,12 @@ enum ToolsCommands {
         #[arg(default_value = "{}")]
         args: String,
     },
+    /// Generate tool documentation (markdown)
+    Docs {
+        /// Output file (default: stdout)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
 }
 
 /// Environment variable to skip keychain operations (for CI testing).
@@ -2582,6 +2588,7 @@ async fn handle_tools_command(command: Option<ToolsCommands>) -> Result<()> {
         Some(ToolsCommands::Enable { names }) => handle_tools_enable(names)?,
         Some(ToolsCommands::Reset) => handle_tools_reset()?,
         Some(ToolsCommands::Call { name, args }) => handle_tools_call(&name, &args).await?,
+        Some(ToolsCommands::Docs { output }) => handle_tools_docs(output.as_deref())?,
     }
     Ok(())
 }
@@ -2803,6 +2810,124 @@ async fn handle_tools_call(name: &str, args: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+// =============================================================================
+// Tools Docs
+// =============================================================================
+
+fn handle_tools_docs(output: Option<&str>) -> Result<()> {
+    use devboy_executor::tools::{base_tool_definitions, known_providers};
+
+    let tools = base_tool_definitions();
+    let providers = known_providers();
+
+    let mut md = String::new();
+    md.push_str("# DevBoy Tools Reference\n\n");
+    md.push_str("Auto-generated from code. Run `devboy tools docs` to regenerate.\n\n");
+
+    // Collect unique categories from actual tool definitions
+    let all_categories: Vec<devboy_core::ToolCategory> = {
+        let mut cats: Vec<_> = tools.iter().map(|t| t.category).collect();
+        cats.sort();
+        cats.dedup();
+        cats
+    };
+
+    // Provider matrix — derived from known_providers()
+    md.push_str("## Provider Support Matrix\n\n");
+    md.push_str("| Provider |");
+    for cat in &all_categories {
+        md.push_str(&format!(" {cat} |"));
+    }
+    md.push('\n');
+    md.push_str("|----------|");
+    for _ in &all_categories {
+        md.push_str(":---:|");
+    }
+    md.push('\n');
+    for provider in &providers {
+        md.push_str(&format!("| **{}** |", provider.name));
+        for cat in &all_categories {
+            if provider.categories.contains(cat) {
+                md.push_str(" ✅ |");
+            } else {
+                md.push_str(" — |");
+            }
+        }
+        md.push('\n');
+    }
+    md.push('\n');
+
+    // Tools grouped by category — providers derived from known_providers()
+    for cat in &all_categories {
+        let cat_tools: Vec<_> = tools.iter().filter(|t| t.category == *cat).collect();
+        if cat_tools.is_empty() {
+            continue;
+        }
+
+        let cat_providers: Vec<&str> = providers
+            .iter()
+            .filter(|p| p.categories.contains(cat))
+            .map(|p| p.name.as_str())
+            .collect();
+
+        md.push_str(&format!("## {cat} Tools\n\n"));
+        md.push_str(&format!("Providers: {}\n\n", cat_providers.join(", ")));
+
+        for tool in &cat_tools {
+            md.push_str(&format!("### `{}`\n\n", tool.name));
+            md.push_str(&format!("{}\n\n", tool.description));
+
+            if !tool.input_schema.properties.is_empty() {
+                md.push_str("| Parameter | Type | Required | Description |\n");
+                md.push_str("|-----------|------|:---:|-------------|\n");
+
+                let mut params: Vec<_> = tool.input_schema.properties.iter().collect();
+                params.sort_by_key(|(name, _)| !tool.input_schema.required.contains(*name));
+
+                for (name, prop) in &params {
+                    let type_str = format_prop_type(prop);
+                    let required = if tool.input_schema.required.contains(*name) {
+                        "✅"
+                    } else {
+                        "—"
+                    };
+                    let desc = prop.description.as_deref().unwrap_or("");
+                    md.push_str(&format!(
+                        "| `{name}` | {type_str} | {required} | {desc} |\n"
+                    ));
+                }
+                md.push('\n');
+            } else {
+                md.push_str("No parameters.\n\n");
+            }
+        }
+    }
+
+    if let Some(path) = output {
+        std::fs::write(path, &md).context(format!("Failed to write to {path}"))?;
+        println!("Documentation written to {path}");
+    } else {
+        print!("{md}");
+    }
+
+    Ok(())
+}
+
+fn format_prop_type(prop: &devboy_core::PropertySchema) -> &'static str {
+    if prop.enum_values.is_some() {
+        "enum"
+    } else if prop.items.is_some() {
+        "array"
+    } else {
+        match prop.schema_type.as_str() {
+            "string" => "string",
+            "integer" | "number" => "number",
+            "boolean" => "boolean",
+            _ => "any",
+        }
+    }
 }
 
 // =============================================================================

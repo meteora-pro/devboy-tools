@@ -296,6 +296,46 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
     ]
 }
 
+/// Provider info for documentation generation.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProviderInfo {
+    pub name: String,
+    pub categories: Vec<ToolCategory>,
+}
+
+/// Get all known providers with their supported categories.
+///
+/// Derived from actual enricher `supported_categories()` implementations.
+pub fn known_providers() -> Vec<ProviderInfo> {
+    let providers: Vec<(&str, Box<dyn devboy_core::ToolEnricher>)> = vec![
+        ("GitHub", Box::new(devboy_github::GitHubSchemaEnricher)),
+        ("GitLab", Box::new(devboy_gitlab::GitLabSchemaEnricher)),
+        // ClickUp and Jira enrichers require metadata, use their known categories
+    ];
+
+    let mut result: Vec<ProviderInfo> = providers
+        .iter()
+        .map(|(name, enricher)| ProviderInfo {
+            name: name.to_string(),
+            categories: enricher.supported_categories().to_vec(),
+        })
+        .collect();
+
+    // ClickUp — supports IssueTracker + Epics (from ClickUpSchemaEnricher)
+    result.push(ProviderInfo {
+        name: "ClickUp".into(),
+        categories: vec![ToolCategory::IssueTracker, ToolCategory::Epics],
+    });
+
+    // Jira — supports IssueTracker (from JiraSchemaEnricher)
+    result.push(ProviderInfo {
+        name: "Jira".into(),
+        categories: vec![ToolCategory::IssueTracker],
+    });
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

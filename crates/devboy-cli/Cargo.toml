@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 devboy-core = { path = "../devboy-core" }
 devboy-mcp = { path = "../devboy-mcp" }
+devboy-executor = { path = "../devboy-executor" }
 devboy-storage = { path = "../devboy-storage" }
 devboy-github = { path = "../plugins/api/github" }
 devboy-gitlab = { path = "../plugins/api/gitlab" }
