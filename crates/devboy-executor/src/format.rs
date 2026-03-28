@@ -227,7 +227,10 @@ fn format_meeting_notes(meetings: &[devboy_core::MeetingNote]) -> String {
             output.push_str(&format!("**Host:** {host}\n"));
         }
         if !m.participants.is_empty() {
-            output.push_str(&format!("**Participants:** {}\n", m.participants.join(", ")));
+            output.push_str(&format!(
+                "**Participants:** {}\n",
+                m.participants.join(", ")
+            ));
         }
         if let Some(ref summary) = m.summary {
             output.push_str(&format!("\n{summary}\n"));

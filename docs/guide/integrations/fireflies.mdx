@@ -1,0 +1,105 @@
+import ConfigExtractor from '../../components/ConfigExtractor';
+
+# Fireflies.ai Integration
+
+DevBoy tools provides integration with [Fireflies.ai](https://fireflies.ai) for accessing meeting transcripts, summaries, and action items through AI assistants. This is the first provider in the **MeetingNotes** category.
+
+## Authentication
+
+Fireflies uses a simple API key for authentication:
+
+| Auth Method | Token Source |
+|-------------|-------------|
+| Bearer Token (API Key) | [Fireflies API Settings](https://app.fireflies.ai/integrations/custom/fireflies) |
+
+## Configuration
+
+### Basic configuration
+
+```bash
+# Store Fireflies API key in OS keychain
+devboy config set-secret fireflies.api_key <your-api-key>
+```
+
+### Configuration file
+
+Settings are stored in `~/.config/devboy-tools/config.toml`:
+
+```toml
+[fireflies]
+# API key is stored in the OS keychain, not in the config file
+```
+
+### Environment variables
+
+```bash
+export FIREFLIES_API_KEY=your-api-key
+```
+
+## Available Tools
+
+### `get_meeting_notes`
+
+List meeting notes with optional filters.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `from_date` | string | Filter from date (ISO 8601) |
+| `to_date` | string | Filter to date (ISO 8601) |
+| `participants` | string[] | Filter by participant emails |
+| `host_email` | string | Filter by host email |
+| `limit` | number | Max results (default: 50, max: 50) |
+| `offset` | number | Skip N results |
+
+**Example:**
+```
+get_meeting_notes from_date="2025-01-01T00:00:00Z" limit=10
+```
+
+### `get_meeting_transcript`
+
+Get the full transcript for a meeting with speaker-attributed, timestamped sentences.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `meeting_id` | string | Yes | Meeting ID from `get_meeting_notes` |
+
+**Example output:**
+```
+# Sprint Planning
+
+Showing 45 sentences
+
+[00:00] Alice: Let's discuss the sprint goals.
+[00:15] Bob: I think we should focus on the API migration.
+[01:30] Alice: Agreed. What about the timeline?
+```
+
+### `search_meeting_notes`
+
+Search across meetings by keywords, topics, or action items.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | Yes | Search keyword |
+| `from_date` | string | No | Filter from date |
+| `to_date` | string | No | Filter to date |
+| `limit` | number | No | Max results (default: 50) |
+
+**Example:**
+```
+search_meeting_notes query="database migration"
+```
+
+## Use Cases
+
+1. **Task Context** — When picking up a task, read meeting transcripts where requirements were discussed.
+2. **Action Item Tracking** — Cross-reference meeting action items with open issues.
+3. **Decision Archaeology** — Search past meetings to understand why technical decisions were made.
+
+## API Reference
+
+- **Endpoint:** `https://api.fireflies.ai/graphql`
+- **Protocol:** GraphQL
+- **Rate Limits:** Standard API rate limits apply
+- **Documentation:** [Fireflies GraphQL API](https://docs.fireflies.ai/graphql-api/overview)

@@ -187,9 +187,6 @@ pub trait MeetingNotesProvider: Send + Sync {
     async fn get_transcript(&self, meeting_id: &str) -> Result<MeetingTranscript>;
 
     /// Search meetings by keyword across titles, action items, keywords, and topics.
-    async fn search_meetings(
-        &self,
-        query: &str,
-        filter: MeetingFilter,
-    ) -> Result<Vec<MeetingNote>>;
+    async fn search_meetings(&self, query: &str, filter: MeetingFilter)
+    -> Result<Vec<MeetingNote>>;
 }

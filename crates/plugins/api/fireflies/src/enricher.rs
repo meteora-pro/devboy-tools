@@ -20,3 +20,27 @@ impl ToolEnricher for FirefliesSchemaEnricher {
         // No argument transformation needed.
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_supported_categories() {
+        let enricher = FirefliesSchemaEnricher;
+        assert_eq!(
+            enricher.supported_categories(),
+            &[ToolCategory::MeetingNotes]
+        );
+    }
+
+    #[test]
+    fn test_enrich_schema_is_noop() {
+        let enricher = FirefliesSchemaEnricher;
+        let mut schema = ToolSchema::new();
+        schema.add_property("test", devboy_core::PropertySchema::string("test field"));
+        let original_len = schema.properties.len();
+        enricher.enrich_schema("get_meeting_notes", &mut schema);
+        assert_eq!(schema.properties.len(), original_len);
+    }
+}
