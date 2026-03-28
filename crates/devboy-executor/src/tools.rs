@@ -388,4 +388,116 @@ mod tests {
             .required
             .contains(&"source_branch".to_string()));
     }
+
+    // --- ToolDefinition serialization ---
+
+    #[test]
+    fn test_tool_definition_serializes_to_json() {
+        let tools = base_tool_definitions();
+        let tool = &tools[0]; // get_issues
+        let json = serde_json::to_string(tool).unwrap();
+
+        assert!(json.contains("\"name\":\"get_issues\""));
+        assert!(json.contains("\"description\""));
+        assert!(json.contains("\"category\""));
+        assert!(json.contains("\"input_schema\""));
+
+        // Should be valid JSON
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["name"], "get_issues");
+    }
+
+    #[test]
+    fn test_all_tool_definitions_serialize() {
+        let tools = base_tool_definitions();
+        for tool in &tools {
+            let json = serde_json::to_string(tool);
+            assert!(
+                json.is_ok(),
+                "tool '{}' failed to serialize: {:?}",
+                tool.name,
+                json.err()
+            );
+        }
+    }
+
+    #[test]
+    fn test_tool_definition_json_contains_properties() {
+        let tools = base_tool_definitions();
+        let get_issues = tools.iter().find(|t| t.name == "get_issues").unwrap();
+        let json = serde_json::to_string_pretty(get_issues).unwrap();
+
+        // get_issues should have state, search, labels, assignee, limit, offset, sort_by, sort_order
+        assert!(json.contains("state"));
+        assert!(json.contains("search"));
+        assert!(json.contains("labels"));
+        assert!(json.contains("assignee"));
+        assert!(json.contains("limit"));
+    }
+
+    #[test]
+    fn test_tool_definition_required_fields_in_json() {
+        let tools = base_tool_definitions();
+        let add_comment = tools
+            .iter()
+            .find(|t| t.name == "add_issue_comment")
+            .unwrap();
+        let json_val: serde_json::Value = serde_json::to_value(add_comment).unwrap();
+
+        let required = json_val["input_schema"]["required"]
+            .as_array()
+            .expect("required should be an array");
+        let required_strs: Vec<&str> = required.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(required_strs.contains(&"key"));
+        assert!(required_strs.contains(&"body"));
+    }
+
+    #[test]
+    fn test_tool_names_are_unique() {
+        let tools = base_tool_definitions();
+        let mut names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        let original_len = names.len();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), original_len, "tool names should all be unique");
+    }
+
+    #[test]
+    fn test_link_issues_required_params() {
+        let tools = base_tool_definitions();
+        let link = tools.iter().find(|t| t.name == "link_issues").unwrap();
+        assert!(link
+            .input_schema
+            .required
+            .contains(&"sourceIssueKey".to_string()));
+        assert!(link
+            .input_schema
+            .required
+            .contains(&"targetIssueKey".to_string()));
+        assert!(link.input_schema.required.contains(&"linkType".to_string()));
+    }
+
+    #[test]
+    fn test_get_available_statuses_has_empty_schema() {
+        let tools = base_tool_definitions();
+        let statuses = tools
+            .iter()
+            .find(|t| t.name == "get_available_statuses")
+            .unwrap();
+        assert!(statuses.input_schema.required.is_empty());
+        assert!(statuses.input_schema.properties.is_empty());
+    }
+
+    #[test]
+    fn test_epic_tools_exist() {
+        let tools = base_tool_definitions();
+        let epic_names: Vec<&str> = tools
+            .iter()
+            .filter(|t| t.category == ToolCategory::Epics)
+            .map(|t| t.name.as_str())
+            .collect();
+        assert!(epic_names.contains(&"get_epics"));
+        assert!(epic_names.contains(&"create_epic"));
+        assert!(epic_names.contains(&"update_epic"));
+    }
 }

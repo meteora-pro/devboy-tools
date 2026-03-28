@@ -439,4 +439,252 @@ mod tests {
         assert!(result.contains("smart"));
         assert!(result.contains("assertion failed"));
     }
+
+    // --- Pipeline formatting ---
+
+    #[test]
+    fn test_format_pipeline_success_status() {
+        let output = ToolOutput::Pipeline(Box::new(devboy_core::PipelineInfo {
+            id: "200".into(),
+            status: devboy_core::PipelineStatus::Success,
+            reference: "develop".into(),
+            sha: "deadbeefcafe".into(),
+            url: None,
+            duration: None,
+            coverage: None,
+            summary: devboy_core::PipelineSummary {
+                total: 5,
+                success: 5,
+                ..Default::default()
+            },
+            stages: vec![],
+            failed_jobs: vec![],
+        }));
+        let result = format_output(output, None, None).unwrap();
+        assert!(result.contains("Pipeline 200"));
+        assert!(result.contains("success"));
+        assert!(result.contains("develop"));
+        assert!(result.contains("deadbee")); // sha truncated to 7
+    }
+
+    #[test]
+    fn test_format_pipeline_running_status() {
+        let output = ToolOutput::Pipeline(Box::new(devboy_core::PipelineInfo {
+            id: "301".into(),
+            status: devboy_core::PipelineStatus::Running,
+            reference: "feature".into(),
+            sha: "1234567890abcdef".into(),
+            url: Some("https://ci.example.com/301".into()),
+            duration: Some(60),
+            coverage: None,
+            summary: devboy_core::PipelineSummary {
+                total: 3,
+                running: 1,
+                success: 1,
+                pending: 1,
+                ..Default::default()
+            },
+            stages: vec![],
+            failed_jobs: vec![],
+        }));
+        let result = format_output(output, None, None).unwrap();
+        assert!(result.contains("running"));
+        assert!(result.contains("https://ci.example.com/301"));
+        assert!(result.contains("60s"));
+    }
+
+    #[test]
+    fn test_format_pipeline_pending_status() {
+        let output = ToolOutput::Pipeline(Box::new(devboy_core::PipelineInfo {
+            id: "302".into(),
+            status: devboy_core::PipelineStatus::Pending,
+            reference: "main".into(),
+            sha: "aabbccdd".into(),
+            url: None,
+            duration: None,
+            coverage: None,
+            summary: Default::default(),
+            stages: vec![],
+            failed_jobs: vec![],
+        }));
+        let result = format_output(output, None, None).unwrap();
+        assert!(result.contains("pending"));
+    }
+
+    #[test]
+    fn test_format_pipeline_canceled_status() {
+        let output = ToolOutput::Pipeline(Box::new(devboy_core::PipelineInfo {
+            id: "303".into(),
+            status: devboy_core::PipelineStatus::Canceled,
+            reference: "main".into(),
+            sha: "1122334455".into(),
+            url: None,
+            duration: None,
+            coverage: None,
+            summary: Default::default(),
+            stages: vec![],
+            failed_jobs: vec![],
+        }));
+        let result = format_output(output, None, None).unwrap();
+        assert!(result.contains("canceled"));
+    }
+
+    #[test]
+    fn test_format_pipeline_with_job_url() {
+        let output = ToolOutput::Pipeline(Box::new(devboy_core::PipelineInfo {
+            id: "400".into(),
+            status: devboy_core::PipelineStatus::Failed,
+            reference: "main".into(),
+            sha: "abcdef1234567".into(),
+            url: None,
+            duration: None,
+            coverage: None,
+            summary: Default::default(),
+            stages: vec![devboy_core::PipelineStage {
+                name: "test".into(),
+                jobs: vec![devboy_core::PipelineJob {
+                    id: "j1".into(),
+                    name: "unit-test".into(),
+                    status: devboy_core::PipelineStatus::Failed,
+                    url: Some("https://ci.example.com/jobs/j1".into()),
+                    duration: None,
+                }],
+            }],
+            failed_jobs: vec![],
+        }));
+        let result = format_output(output, None, None).unwrap();
+        assert!(result.contains("[logs](https://ci.example.com/jobs/j1)"));
+    }
+
+    #[test]
+    fn test_format_pipeline_failed_job_without_snippet() {
+        let output = ToolOutput::Pipeline(Box::new(devboy_core::PipelineInfo {
+            id: "401".into(),
+            status: devboy_core::PipelineStatus::Failed,
+            reference: "main".into(),
+            sha: "abcdef1234567".into(),
+            url: None,
+            duration: None,
+            coverage: None,
+            summary: Default::default(),
+            stages: vec![],
+            failed_jobs: vec![devboy_core::FailedJob {
+                id: "fj1".into(),
+                name: "lint".into(),
+                url: None,
+                error_snippet: None,
+            }],
+        }));
+        let result = format_output(output, None, None).unwrap();
+        assert!(result.contains("lint"));
+        assert!(result.contains("fj1"));
+        assert!(!result.contains("```")); // no code block when no snippet
+    }
+
+    // --- Statuses formatting ---
+
+    #[test]
+    fn test_format_statuses() {
+        let output = ToolOutput::Statuses(vec![
+            devboy_core::IssueStatus {
+                id: "1".into(),
+                name: "To Do".into(),
+                category: "todo".into(),
+                color: Some("#blue".into()),
+                order: Some(0),
+            },
+            devboy_core::IssueStatus {
+                id: "2".into(),
+                name: "In Progress".into(),
+                category: "in_progress".into(),
+                color: None,
+                order: None,
+            },
+        ]);
+        let result = format_output(output, None, None).unwrap();
+        assert!(result.contains("Available Statuses"));
+        assert!(result.contains("To Do"));
+        assert!(result.contains("In Progress"));
+        assert!(result.contains("#blue"));
+        assert!(result.contains("todo"));
+        assert!(result.contains("| - |")); // None values become "-"
+    }
+
+    #[test]
+    fn test_format_statuses_empty() {
+        let output = ToolOutput::Statuses(vec![]);
+        let result = format_output(output, None, None).unwrap();
+        assert_eq!(result, "No statuses found.");
+    }
+
+    // --- Users formatting ---
+
+    #[test]
+    fn test_format_users() {
+        let output = ToolOutput::Users(vec![
+            devboy_core::User {
+                id: "u1".into(),
+                username: "johndoe".into(),
+                name: Some("John Doe".into()),
+                email: Some("john@example.com".into()),
+                avatar_url: None,
+            },
+            devboy_core::User {
+                id: "u2".into(),
+                username: "janesmith".into(),
+                name: None,
+                email: None,
+                avatar_url: None,
+            },
+        ]);
+        let result = format_output(output, None, None).unwrap();
+        assert!(result.contains("# Users"));
+        assert!(result.contains("johndoe"));
+        assert!(result.contains("John Doe"));
+        assert!(result.contains("john@example.com"));
+        assert!(result.contains("janesmith"));
+        assert!(result.contains("| - |")); // None values
+    }
+
+    #[test]
+    fn test_format_users_empty() {
+        let output = ToolOutput::Users(vec![]);
+        let result = format_output(output, None, None).unwrap();
+        assert_eq!(result, "No users found.");
+    }
+
+    // --- JobLog without total_lines ---
+
+    #[test]
+    fn test_format_job_log_no_total_lines() {
+        let output = ToolOutput::JobLog(Box::new(devboy_core::JobLogOutput {
+            job_id: "999".into(),
+            job_name: Some("build".into()),
+            content: "Building...".into(),
+            mode: "full".into(),
+            total_lines: None,
+        }));
+        let result = format_output(output, None, None).unwrap();
+        assert!(result.contains("Job Log (999)"));
+        assert!(result.contains("**Mode:** full"));
+        assert!(!result.contains("Total lines"));
+        assert!(result.contains("Building..."));
+    }
+
+    // --- Text passthrough variations ---
+
+    #[test]
+    fn test_format_text_empty_string() {
+        let output = ToolOutput::Text("".into());
+        let result = format_output(output, None, None).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_format_text_with_json_format_param() {
+        // Even with "json" format, Text variant just passes through
+        let output = ToolOutput::Text("raw text".into());
+        let result = format_output(output, Some("json"), None).unwrap();
+        assert_eq!(result, "raw text");
+    }
 }

@@ -202,4 +202,313 @@ mod tests {
         let deserialized: AdditionalContext = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.provider.provider_name(), "gitlab");
     }
+
+    // --- ProxyConfig serde ---
+
+    #[test]
+    fn test_proxy_config_serialize_deserialize() {
+        let mut headers = HashMap::new();
+        headers.insert("X-Auth-Token".into(), "secret123".into());
+        headers.insert("X-Routing".into(), "internal".into());
+
+        let proxy = ProxyConfig {
+            url: "https://proxy.internal/jira".into(),
+            headers,
+        };
+
+        let json = serde_json::to_string(&proxy).unwrap();
+        let deserialized: ProxyConfig = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.url, "https://proxy.internal/jira");
+        assert_eq!(deserialized.headers.len(), 2);
+        assert_eq!(deserialized.headers["X-Auth-Token"], "secret123");
+        assert_eq!(deserialized.headers["X-Routing"], "internal");
+    }
+
+    #[test]
+    fn test_proxy_config_empty_headers_default() {
+        let json = r#"{"url":"https://proxy.example.com"}"#;
+        let proxy: ProxyConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(proxy.url, "https://proxy.example.com");
+        assert!(proxy.headers.is_empty());
+    }
+
+    // --- JiraFlavor serde ---
+
+    #[test]
+    fn test_jira_flavor_serde_cloud() {
+        let config = ProviderConfig::Jira {
+            base_url: "https://test.atlassian.net".into(),
+            access_token: "tok".into(),
+            email: "a@b.com".into(),
+            scope: JiraScope::Project { key: "TST".into() },
+            flavor: Some(devboy_jira::JiraFlavor::Cloud),
+            extra: HashMap::new(),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"cloud\""));
+
+        let deserialized: ProviderConfig = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ProviderConfig::Jira { flavor, .. } => {
+                assert_eq!(flavor, Some(devboy_jira::JiraFlavor::Cloud));
+            }
+            _ => panic!("expected Jira variant"),
+        }
+    }
+
+    #[test]
+    fn test_jira_flavor_serde_self_hosted() {
+        let config = ProviderConfig::Jira {
+            base_url: "https://jira.mycompany.com".into(),
+            access_token: "tok".into(),
+            email: "a@b.com".into(),
+            scope: JiraScope::Project { key: "INT".into() },
+            flavor: Some(devboy_jira::JiraFlavor::SelfHosted),
+            extra: HashMap::new(),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"self_hosted\""));
+
+        let deserialized: ProviderConfig = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ProviderConfig::Jira { flavor, .. } => {
+                assert_eq!(flavor, Some(devboy_jira::JiraFlavor::SelfHosted));
+            }
+            _ => panic!("expected Jira variant"),
+        }
+    }
+
+    #[test]
+    fn test_jira_flavor_none_roundtrip() {
+        let config = ProviderConfig::Jira {
+            base_url: "https://jira.example.com".into(),
+            access_token: "tok".into(),
+            email: "a@b.com".into(),
+            scope: JiraScope::Project { key: "PRJ".into() },
+            flavor: None,
+            extra: HashMap::new(),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ProviderConfig = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ProviderConfig::Jira { flavor, .. } => assert!(flavor.is_none()),
+            _ => panic!("expected Jira variant"),
+        }
+    }
+
+    // --- ProviderConfig provider_name for remaining variants ---
+
+    #[test]
+    fn test_provider_name_clickup() {
+        let config = ProviderConfig::ClickUp {
+            access_token: "pk_test".into(),
+            scope: ClickUpScope::List {
+                id: "list1".into(),
+                team_id: None,
+            },
+            extra: HashMap::new(),
+        };
+        assert_eq!(config.provider_name(), "clickup");
+    }
+
+    #[test]
+    fn test_provider_name_jira() {
+        let config = ProviderConfig::Jira {
+            base_url: "https://jira.example.com".into(),
+            access_token: "tok".into(),
+            email: "a@b.com".into(),
+            scope: JiraScope::Project { key: "X".into() },
+            flavor: None,
+            extra: HashMap::new(),
+        };
+        assert_eq!(config.provider_name(), "jira");
+    }
+
+    // --- AdditionalContext with proxy and metadata ---
+
+    #[test]
+    fn test_additional_context_with_proxy_roundtrip() {
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".into(), "Bearer xyz".into());
+
+        let ctx = AdditionalContext {
+            provider: ProviderConfig::Jira {
+                base_url: "https://jira.example.com".into(),
+                access_token: "tok".into(),
+                email: "a@b.com".into(),
+                scope: JiraScope::Project { key: "PRJ".into() },
+                flavor: Some(devboy_jira::JiraFlavor::SelfHosted),
+                extra: HashMap::new(),
+            },
+            proxy: Some(ProxyConfig {
+                url: "https://proxy.internal".into(),
+                headers,
+            }),
+            metadata: Some(ProviderMetadata::new(serde_json::json!({"key": "value"}))),
+            extra: {
+                let mut m = HashMap::new();
+                m.insert("trace_id".into(), serde_json::json!("abc-123"));
+                m
+            },
+        };
+
+        let json = serde_json::to_string(&ctx).unwrap();
+        let deserialized: AdditionalContext = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.provider.provider_name(), "jira");
+        assert!(deserialized.proxy.is_some());
+        let proxy = deserialized.proxy.unwrap();
+        assert_eq!(proxy.url, "https://proxy.internal");
+        assert_eq!(proxy.headers["Authorization"], "Bearer xyz");
+        assert!(deserialized.metadata.is_some());
+        assert_eq!(deserialized.extra["trace_id"], serde_json::json!("abc-123"));
+    }
+
+    #[test]
+    fn test_provider_metadata_new() {
+        let data = serde_json::json!({"statuses": [{"name": "Done"}]});
+        let meta = ProviderMetadata::new(data.clone());
+        assert_eq!(meta.data, data);
+    }
+
+    // --- Scope variants serde ---
+
+    #[test]
+    fn test_gitlab_scope_global_serde() {
+        let scope = GitLabScope::Global;
+        let json = serde_json::to_string(&scope).unwrap();
+        let deserialized: GitLabScope = serde_json::from_str(&json).unwrap();
+        assert!(matches!(deserialized, GitLabScope::Global));
+    }
+
+    #[test]
+    fn test_gitlab_scope_group_serde() {
+        let scope = GitLabScope::Group { id: "g42".into() };
+        let json = serde_json::to_string(&scope).unwrap();
+        let deserialized: GitLabScope = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            GitLabScope::Group { id } => assert_eq!(id, "g42"),
+            _ => panic!("expected Group"),
+        }
+    }
+
+    #[test]
+    fn test_github_scope_organization_serde() {
+        let scope = GitHubScope::Organization {
+            name: "myorg".into(),
+        };
+        let json = serde_json::to_string(&scope).unwrap();
+        let deserialized: GitHubScope = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            GitHubScope::Organization { name } => assert_eq!(name, "myorg"),
+            _ => panic!("expected Organization"),
+        }
+    }
+
+    #[test]
+    fn test_github_scope_global_serde() {
+        let scope = GitHubScope::Global;
+        let json = serde_json::to_string(&scope).unwrap();
+        let deserialized: GitHubScope = serde_json::from_str(&json).unwrap();
+        assert!(matches!(deserialized, GitHubScope::Global));
+    }
+
+    #[test]
+    fn test_clickup_scope_list_with_team_id_serde() {
+        let scope = ClickUpScope::List {
+            id: "lst1".into(),
+            team_id: Some("team99".into()),
+        };
+        let json = serde_json::to_string(&scope).unwrap();
+        let deserialized: ClickUpScope = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ClickUpScope::List { id, team_id } => {
+                assert_eq!(id, "lst1");
+                assert_eq!(team_id, Some("team99".into()));
+            }
+        }
+    }
+
+    #[test]
+    fn test_clickup_scope_list_without_team_id_serde() {
+        let scope = ClickUpScope::List {
+            id: "lst2".into(),
+            team_id: None,
+        };
+        let json = serde_json::to_string(&scope).unwrap();
+        let deserialized: ClickUpScope = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ClickUpScope::List { id, team_id } => {
+                assert_eq!(id, "lst2");
+                assert!(team_id.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn test_jira_scope_multi_project_serde() {
+        let scope = JiraScope::MultiProject {
+            keys: vec!["AAA".into(), "BBB".into()],
+        };
+        let json = serde_json::to_string(&scope).unwrap();
+        let deserialized: JiraScope = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            JiraScope::MultiProject { keys } => {
+                assert_eq!(keys, vec!["AAA".to_string(), "BBB".to_string()]);
+            }
+            _ => panic!("expected MultiProject"),
+        }
+    }
+
+    // --- ProviderConfig with extra fields ---
+
+    #[test]
+    fn test_provider_config_with_extra_fields() {
+        let mut extra = HashMap::new();
+        extra.insert("custom_key".into(), serde_json::json!("custom_value"));
+        extra.insert("numeric".into(), serde_json::json!(42));
+
+        let config = ProviderConfig::GitLab {
+            base_url: "https://gitlab.com".into(),
+            access_token: "tok".into(),
+            scope: GitLabScope::Project { id: "1".into() },
+            extra,
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ProviderConfig = serde_json::from_str(&json).unwrap();
+
+        match deserialized {
+            ProviderConfig::GitLab { extra, .. } => {
+                assert_eq!(extra["custom_key"], serde_json::json!("custom_value"));
+                assert_eq!(extra["numeric"], serde_json::json!(42));
+            }
+            _ => panic!("expected GitLab"),
+        }
+    }
+
+    #[test]
+    fn test_custom_provider_config_serde() {
+        let mut config_map = HashMap::new();
+        config_map.insert("endpoint".into(), serde_json::json!("https://custom.api"));
+        config_map.insert("api_key".into(), serde_json::json!("key123"));
+
+        let config = ProviderConfig::Custom {
+            name: "linear".into(),
+            config: config_map,
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ProviderConfig = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.provider_name(), "linear");
+        match deserialized {
+            ProviderConfig::Custom { name, config } => {
+                assert_eq!(name, "linear");
+                assert_eq!(config["endpoint"], serde_json::json!("https://custom.api"));
+            }
+            _ => panic!("expected Custom"),
+        }
+    }
 }
