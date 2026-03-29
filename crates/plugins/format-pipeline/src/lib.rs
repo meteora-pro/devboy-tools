@@ -52,11 +52,19 @@ pub struct TransformOutput {
     pub agent_hint: Option<String>,
     /// Cursor for fetching the next page (if overflow exists)
     pub page_cursor: Option<String>,
+    /// Size of raw input data before formatting (UTF-8 bytes)
+    pub raw_chars: usize,
+    /// Size of formatted output (UTF-8 bytes) — updated after apply_char_limit
+    pub output_chars: usize,
+    /// Size of output BEFORE budget trimming (UTF-8 bytes).
+    /// Set by apply_char_limit when truncation occurs.
+    pub pre_trim_chars: usize,
 }
 
 impl TransformOutput {
     /// Create a new output with content.
     pub fn new(content: String) -> Self {
+        let output_chars = content.len();
         Self {
             content,
             truncated: false,
@@ -64,7 +72,16 @@ impl TransformOutput {
             included_count: 0,
             agent_hint: None,
             page_cursor: None,
+            raw_chars: 0,
+            output_chars,
+            pre_trim_chars: 0,
         }
+    }
+
+    /// Set raw input size (before formatting).
+    pub fn with_raw_chars(mut self, raw_chars: usize) -> Self {
+        self.raw_chars = raw_chars;
+        self
     }
 
     /// Mark output as truncated with a hint.
@@ -152,12 +169,15 @@ impl Pipeline {
         let truncated_issues = self.truncate_items(issues);
         let included = truncated_issues.len();
 
+        let raw_json = serde_json::to_string(&truncated_issues)?;
+        let raw_chars = raw_json.len();
+
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_issues)?,
             OutputFormat::Toon => toon::encode_issues(&truncated_issues, toon::TrimLevel::Full)?,
         };
 
-        let mut output = TransformOutput::new(content);
+        let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
         output.included_count = included;
 
         if included < total && self.config.include_hints {
@@ -174,6 +194,9 @@ impl Pipeline {
         let truncated_mrs = self.truncate_items(mrs);
         let included = truncated_mrs.len();
 
+        let raw_json = serde_json::to_string(&truncated_mrs)?;
+        let raw_chars = raw_json.len();
+
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_mrs)?,
             OutputFormat::Toon => {
@@ -181,7 +204,7 @@ impl Pipeline {
             }
         };
 
-        let mut output = TransformOutput::new(content);
+        let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
         output.included_count = included;
 
         if included < total && self.config.include_hints {
@@ -208,12 +231,15 @@ impl Pipeline {
 
         let included = truncated_diffs.len();
 
+        let raw_json = serde_json::to_string(&truncated_diffs)?;
+        let raw_chars = raw_json.len();
+
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_diffs)?,
             OutputFormat::Toon => toon::encode_diffs(&truncated_diffs)?,
         };
 
-        let mut output = TransformOutput::new(content);
+        let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
         output.included_count = included;
 
         if included < total && self.config.include_hints {
@@ -230,12 +256,15 @@ impl Pipeline {
         let truncated_comments = self.truncate_items(comments);
         let included = truncated_comments.len();
 
+        let raw_json = serde_json::to_string(&truncated_comments)?;
+        let raw_chars = raw_json.len();
+
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_comments)?,
             OutputFormat::Toon => toon::encode_comments(&truncated_comments)?,
         };
 
-        let mut output = TransformOutput::new(content);
+        let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
         output.included_count = included;
 
         if included < total && self.config.include_hints {
@@ -252,12 +281,15 @@ impl Pipeline {
         let truncated_discussions = self.truncate_items(discussions);
         let included = truncated_discussions.len();
 
+        let raw_json = serde_json::to_string(&truncated_discussions)?;
+        let raw_chars = raw_json.len();
+
         let content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&truncated_discussions)?,
             OutputFormat::Toon => toon::encode_discussions(&truncated_discussions)?,
         };
 
-        let mut output = TransformOutput::new(content);
+        let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
         output.included_count = included;
 
         if included < total && self.config.include_hints {
@@ -276,7 +308,9 @@ impl Pipeline {
     /// Apply character limit to output.
     fn apply_char_limit(&self, mut output: TransformOutput) -> TransformOutput {
         if output.content.len() > self.config.max_chars {
+            output.pre_trim_chars = output.output_chars; // save size before trimming
             output.content = truncation::truncate_string(&output.content, self.config.max_chars);
+            output.output_chars = output.content.len();
             if !output.truncated {
                 output.truncated = true;
                 output.agent_hint = Some(format!(

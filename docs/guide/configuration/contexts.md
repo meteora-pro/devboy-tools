@@ -17,7 +17,7 @@ repo = "devboy-tools"
 
 [contexts.dashboard.github]
 owner = "meteora-pro"
-repo = "dev-boy-monorepo"
+repo = "my-project"
 
 [contexts.dashboard.clickup]
 list_id = "abc123"
@@ -108,7 +108,7 @@ repo = "devboy-tools"
 
 [contexts.dashboard.github]
 owner = "meteora-pro"
-repo = "dev-boy-monorepo"
+repo = "my-project"
 
 [contexts.dashboard.gitlab]
 url = "https://gitlab.example.com"
