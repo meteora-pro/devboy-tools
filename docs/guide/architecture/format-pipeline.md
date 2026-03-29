@@ -24,8 +24,23 @@ ToolOutput (typed data)
     ▼
 TransformOutput {
     content: String,        // TOON or JSON
+    raw_chars: usize,       // input size (JSON)
+    output_chars: usize,    // output size (TOON/JSON)
     page_cursor: Option,    // for next page
     agent_hint: Option,     // pagination hint
+}
+    │
+    ▼
+FormatResult {
+    content: String,            // final text
+    metadata: FormatMetadata {
+        raw_chars,              // input JSON size
+        output_chars,           // output size
+        estimated_tokens,       // output_chars * 10 / 35
+        compression_ratio,      // output / raw (< 1.0 = savings)
+        format,                 // "toon" | "json" | "text"
+        truncated,              // budget trimming applied?
+    }
 }
 ```
 
@@ -278,3 +293,39 @@ crates/plugins/format-pipeline/src/
 ├── pagination.rs       # Cursor-based pagination
 └── truncation.rs       # String/diff truncation utilities
 ```
+
+## Metadata & Compression Stats
+
+Every `format_output()` call returns `FormatResult` with metadata:
+
+```rust
+use devboy_executor::{format_output, FormatResult, FormatMetadata};
+
+let result: FormatResult = format_output(output, Some("toon"), Some("get_issues"), None)?;
+
+println!("Content: {} chars", result.content.len());
+println!("Raw JSON: {} chars", result.metadata.raw_chars);
+println!("Output: {} chars", result.metadata.output_chars);
+println!("Tokens: ~{}", result.metadata.estimated_tokens);
+println!("Compression: {:.0}%", (1.0 - result.metadata.compression_ratio) * 100.0);
+println!("Truncated: {}", result.metadata.truncated);
+```
+
+### NAPI Bridge Integration
+
+When using `format_output()` from a NAPI bridge, serialize `FormatResult` as JSON to expose metadata:
+
+```rust
+let result = devboy_executor::format_output(output, format, tool_name, None)?;
+let json = serde_json::json!({
+    "content": result.content,
+    "metadata": result.metadata,
+});
+// Returns: { content: "...", metadata: { raw_chars, output_chars, estimated_tokens, ... } }
+```
+
+> Note: The NAPI `callToolWithMetadata()` function is implemented in the consuming project's NAPI bridge layer, not in this repository.
+
+### Token Estimation
+
+Tokens are estimated as `chars * 10 / 35` (~chars / 3.5), which approximates Claude's tokenizer for mixed English/code content.

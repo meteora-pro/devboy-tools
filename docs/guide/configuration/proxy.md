@@ -29,7 +29,7 @@ The token is automatically stored in keychain as `proxy.my-server.token`.
 
 ## Use case
 
-You have a remote MCP server (e.g. DevBoy Cloud) with additional tools (knowledge base, meeting notes, messengers). Instead of configuring multiple MCP servers in your AI assistant, you configure DevBoy to proxy them all through one connection.
+You have a remote MCP server with additional tools (knowledge base, meeting notes, messengers). Instead of configuring multiple MCP servers in your AI assistant, you configure DevBoy to proxy them all through one connection.
 
 ## Configuration
 
@@ -64,7 +64,7 @@ devboy config set-secret devboy-cloud.token <YOUR_TOKEN>
 ### Transport types
 
 - **`sse`** — Legacy MCP transport. Uses GET for SSE stream, POST for requests. Used by most self-hosted MCP servers.
-- **`streamable-http`** — Modern HTTP POST-based transport with `mcp-session-id` header. Used by DevBoy Cloud and other hosted MCP services.
+- **`streamable-http`** — Modern HTTP POST-based transport with `mcp-session-id` header. Used by hosted MCP services.
 
 ### Multiple servers
 
