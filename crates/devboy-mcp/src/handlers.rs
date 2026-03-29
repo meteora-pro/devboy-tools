@@ -1440,7 +1440,7 @@ impl ToolHandler {
                         Some("get_meeting_notes"),
                         None,
                     ) {
-                        Ok(text) => ToolCallResult::text(text),
+                        Ok(result) => ToolCallResult::text(result.content),
                         Err(e) => ToolCallResult::error(format!("Format error: {e}")),
                     };
                 }
@@ -1481,7 +1481,7 @@ impl ToolHandler {
                         Some("get_meeting_transcript"),
                         None,
                     ) {
-                        Ok(text) => ToolCallResult::text(text),
+                        Ok(result) => ToolCallResult::text(result.content),
                         Err(e) => ToolCallResult::error(format!("Format error: {e}")),
                     };
                 }
@@ -1537,7 +1537,7 @@ impl ToolHandler {
                         Some("search_meeting_notes"),
                         None,
                     ) {
-                        Ok(text) => ToolCallResult::text(text),
+                        Ok(result) => ToolCallResult::text(result.content),
                         Err(e) => ToolCallResult::error(format!("Format error: {e}")),
                     };
                 }
