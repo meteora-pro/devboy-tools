@@ -9,7 +9,8 @@ use crate::error::{Error, Result};
 use crate::types::{
     Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Discussion, FileDiff,
     GetPipelineInput, GetUsersOptions, Issue, IssueFilter, IssueStatus, JobLogOptions,
-    JobLogOutput, MergeRequest, MrFilter, PipelineInfo, Release, UpdateIssueInput, User,
+    JobLogOutput, MeetingFilter, MeetingNote, MeetingTranscript, MergeRequest, MrFilter,
+    PipelineInfo, Release, UpdateIssueInput, User,
 };
 
 /// Provider for working with issues.
@@ -169,4 +170,23 @@ pub trait PipelineProvider: Send + Sync {
 pub trait Provider: IssueProvider + MergeRequestProvider + PipelineProvider {
     /// Get the current authenticated user.
     async fn get_current_user(&self) -> Result<User>;
+}
+
+/// Provider for meeting notes and transcripts.
+///
+/// Implementations include Fireflies.ai.
+#[async_trait]
+pub trait MeetingNotesProvider: Send + Sync {
+    /// Get the provider name for logging (e.g., "fireflies").
+    fn provider_name(&self) -> &'static str;
+
+    /// Get a list of meeting notes with optional filters.
+    async fn get_meetings(&self, filter: MeetingFilter) -> Result<Vec<MeetingNote>>;
+
+    /// Get the full transcript for a meeting.
+    async fn get_transcript(&self, meeting_id: &str) -> Result<MeetingTranscript>;
+
+    /// Search meetings by keyword across titles, action items, keywords, and topics.
+    async fn search_meetings(&self, query: &str, filter: MeetingFilter)
+    -> Result<Vec<MeetingNote>>;
 }

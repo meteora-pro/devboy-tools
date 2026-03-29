@@ -27,6 +27,7 @@ pub struct McpServer {
     initialized: bool,
     proxy_manager: ProxyManager,
     builtin_tools_config: BuiltinToolsConfig,
+    meeting_providers: Vec<Arc<dyn devboy_core::MeetingNotesProvider>>,
 }
 
 impl McpServer {
@@ -40,6 +41,7 @@ impl McpServer {
             initialized: false,
             proxy_manager: ProxyManager::new(),
             builtin_tools_config: BuiltinToolsConfig::default(),
+            meeting_providers: Vec::new(),
         }
     }
 
@@ -58,6 +60,10 @@ impl McpServer {
     /// Set the proxy manager for upstream MCP server connections.
     pub fn set_proxy_manager(&mut self, proxy_manager: ProxyManager) {
         self.proxy_manager = proxy_manager;
+    }
+
+    pub fn add_meeting_provider(&mut self, provider: Arc<dyn devboy_core::MeetingNotesProvider>) {
+        self.meeting_providers.push(provider);
     }
 
     /// Add a provider to the server.
@@ -262,7 +268,8 @@ impl McpServer {
     /// This method is public to allow integration testing.
     pub fn handle_tools_list(&self, id: RequestId) -> JsonRpcResponse {
         let providers = self.active_providers();
-        let handler = ToolHandler::new(providers.clone());
+        let handler = ToolHandler::new(providers.clone())
+            .with_meeting_providers(self.meeting_providers.clone());
         let mut tools = handler.available_tools();
 
         // Pre-compute category availability to avoid repeated provider lookups.
@@ -274,6 +281,7 @@ impl McpServer {
                 "github" | "gitlab"
             )
         });
+        let has_meeting_providers = handler.has_meeting_providers();
 
         // Filter tools based on available providers (dynamic filtering).
         // This prevents exposing tools that would always fail due to missing providers.
@@ -282,6 +290,7 @@ impl McpServer {
                 .map(|cat| match cat {
                     ToolCategory::Issues => has_issue_providers,
                     ToolCategory::MergeRequests => has_mr_providers,
+                    ToolCategory::MeetingNotes => has_meeting_providers,
                 })
                 .unwrap_or(true) // Tools without category are always available
         });
@@ -417,7 +426,8 @@ impl McpServer {
                 {
                     proxy_result
                 } else {
-                    let handler = ToolHandler::new(self.active_providers());
+                    let handler = ToolHandler::new(self.active_providers())
+                        .with_meeting_providers(self.meeting_providers.clone());
                     handler.execute(&params.name, params.arguments).await
                 }
             }

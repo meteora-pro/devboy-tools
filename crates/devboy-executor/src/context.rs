@@ -77,6 +77,12 @@ pub enum ProviderConfig {
         #[serde(default)]
         extra: HashMap<String, serde_json::Value>,
     },
+    /// Fireflies.ai meeting notes provider.
+    Fireflies {
+        api_key: String,
+        #[serde(default)]
+        extra: HashMap<String, serde_json::Value>,
+    },
     /// Fully dynamic variant for community/custom provider plugins.
     Custom {
         name: String,
@@ -92,6 +98,7 @@ impl ProviderConfig {
             Self::GitHub { .. } => "github",
             Self::ClickUp { .. } => "clickup",
             Self::Jira { .. } => "jira",
+            Self::Fireflies { .. } => "fireflies",
             Self::Custom { name, .. } => name,
         }
     }

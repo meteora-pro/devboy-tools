@@ -1,6 +1,6 @@
 use devboy_core::{
-    Comment, Discussion, FileDiff, Issue, IssueStatus, JobLogOutput, MergeRequest, PipelineInfo,
-    User,
+    Comment, Discussion, FileDiff, Issue, IssueStatus, JobLogOutput, MeetingNote,
+    MeetingTranscript, MergeRequest, PipelineInfo, User,
 };
 
 /// Typed result of tool execution.
@@ -32,6 +32,10 @@ pub enum ToolOutput {
     Statuses(Vec<IssueStatus>),
     /// List of users
     Users(Vec<User>),
+    /// List of meeting notes
+    MeetingNotes(Vec<MeetingNote>),
+    /// Single meeting transcript with sentences
+    MeetingTranscript(Box<MeetingTranscript>),
     /// Plain text result (e.g., "Comment created successfully")
     Text(String),
 }
@@ -47,10 +51,12 @@ impl ToolOutput {
             Self::Comments(v) => v.len(),
             Self::Statuses(v) => v.len(),
             Self::Users(v) => v.len(),
+            Self::MeetingNotes(v) => v.len(),
             Self::SingleMergeRequest(_)
             | Self::SingleIssue(_)
             | Self::Pipeline(_)
             | Self::JobLog(_)
+            | Self::MeetingTranscript(_)
             | Self::Text(_) => 1,
         }
     }
@@ -69,6 +75,8 @@ impl ToolOutput {
             Self::JobLog(_) => "job_log",
             Self::Statuses(_) => "statuses",
             Self::Users(_) => "users",
+            Self::MeetingNotes(_) => "meeting_notes",
+            Self::MeetingTranscript(_) => "meeting_transcript",
             Self::Text(_) => "text",
         }
     }
