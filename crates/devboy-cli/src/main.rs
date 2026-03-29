@@ -1106,6 +1106,7 @@ fn build_config(options: &InitOptions) -> Config {
             gitlab: options.gitlab.clone(),
             clickup: options.clickup.clone(),
             jira: options.jira.clone(),
+            fireflies: None,
         };
         config.contexts.insert(context_name, context);
     }
@@ -2280,6 +2281,7 @@ impl EnvContextBuilder {
             gitlab,
             clickup,
             jira,
+            fireflies: None,
         };
 
         if context.has_any_provider() {
@@ -2375,6 +2377,20 @@ fn add_context_providers_from_env(
         } else {
             tracing::warn!(
                 "Jira configured via env for context '{}' but no token found",
+                context_name
+            );
+        }
+    }
+
+    if context.fireflies.is_some() {
+        if let Some(token) = get_token_for_context(store, context_name, "fireflies") {
+            let client = devboy_fireflies::FirefliesClient::new(&token);
+            server.add_meeting_provider(Arc::new(client));
+            tracing::info!("Added Fireflies provider to context '{}'", context_name);
+            added = true;
+        } else {
+            tracing::warn!(
+                "Fireflies configured for context '{}' but no API key found",
                 context_name
             );
         }
@@ -2562,6 +2578,20 @@ fn add_context_providers(
             tracing::warn!(
                 "Jira configured in context '{}' but no token found (tried contexts.{}.jira.token then jira.token)",
                 context_name,
+                context_name
+            );
+        }
+    }
+
+    if context.fireflies.is_some() {
+        if let Some(token) = get_token_for_context(store, context_name, "fireflies") {
+            let client = devboy_fireflies::FirefliesClient::new(&token);
+            server.add_meeting_provider(Arc::new(client));
+            tracing::info!("Added Fireflies provider to context '{}'", context_name);
+            added = true;
+        } else {
+            tracing::warn!(
+                "Fireflies configured for context '{}' but no API key found",
                 context_name
             );
         }

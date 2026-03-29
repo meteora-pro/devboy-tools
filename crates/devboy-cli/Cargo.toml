@@ -19,6 +19,7 @@ devboy-github = { path = "../plugins/api/github" }
 devboy-gitlab = { path = "../plugins/api/gitlab" }
 devboy-clickup = { path = "../plugins/api/clickup" }
 devboy-jira = { path = "../plugins/api/jira" }
+devboy-fireflies = { path = "../plugins/api/fireflies" }
 devboy-format-pipeline = { path = "../plugins/format-pipeline" }
 tokio.workspace = true
 serde.workspace = true

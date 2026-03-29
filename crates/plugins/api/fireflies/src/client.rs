@@ -180,7 +180,14 @@ impl MeetingNotesProvider for FirefliesClient {
                 };
                 let speaker_name = speakers
                     .iter()
-                    .find(|sp| sp.id.as_deref() == Some(&speaker_id))
+                    .find(|sp| {
+                        let sp_id = match &sp.id {
+                            Some(Value::String(v)) => v.clone(),
+                            Some(Value::Number(n)) => n.to_string(),
+                            _ => String::new(),
+                        };
+                        sp_id == speaker_id
+                    })
                     .and_then(|sp| sp.name.clone());
 
                 TranscriptSentence {
@@ -258,6 +265,8 @@ fn build_filter_variables(filter: &MeetingFilter) -> Value {
 
 /// Convert a Fireflies API transcript to a unified MeetingNote.
 fn convert_transcript(t: FirefliesTranscript) -> MeetingNote {
+    let meeting_date = t.date.and_then(|d| parse_date_value(&d));
+
     let participants: Vec<String> = t
         .meeting_attendees
         .unwrap_or_default()
@@ -269,9 +278,16 @@ fn convert_transcript(t: FirefliesTranscript) -> MeetingNote {
         .speakers
         .unwrap_or_default()
         .into_iter()
-        .map(|s| MeetingSpeaker {
-            id: s.id.unwrap_or_default(),
-            name: s.name.unwrap_or_default(),
+        .map(|s| {
+            let id = match &s.id {
+                Some(Value::String(v)) => v.clone(),
+                Some(Value::Number(n)) => n.to_string(),
+                _ => String::new(),
+            };
+            MeetingSpeaker {
+                id,
+                name: s.name.unwrap_or_default(),
+            }
         })
         .collect();
 
@@ -297,7 +313,7 @@ fn convert_transcript(t: FirefliesTranscript) -> MeetingNote {
     MeetingNote {
         id: t.id,
         title: t.title.unwrap_or_default(),
-        meeting_date: t.date,
+        meeting_date,
         duration_seconds,
         host_email: t.host_email,
         organizer_email: t.organizer_email,
@@ -312,6 +328,21 @@ fn convert_transcript(t: FirefliesTranscript) -> MeetingNote {
         audio_url: t.audio_url,
         video_url: t.video_url,
         meeting_link: t.meeting_link,
+    }
+}
+
+/// Parse a date value that can be either an ISO string or Unix timestamp in milliseconds.
+fn parse_date_value(value: &Value) -> Option<String> {
+    match value {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => {
+            // Unix timestamp in milliseconds → ISO 8601 string
+            let ms = n.as_f64()?;
+            let secs = (ms / 1000.0) as i64;
+            let dt = chrono::DateTime::from_timestamp(secs, 0)?;
+            Some(dt.to_rfc3339())
+        }
+        _ => None,
     }
 }
 
@@ -375,7 +406,7 @@ mod tests {
         let t = FirefliesTranscript {
             id: "test-id".into(),
             title: Some("Test Meeting".into()),
-            date: Some("2025-01-15T10:00:00Z".into()),
+            date: Some(Value::String("2025-01-15T10:00:00Z".into())),
             duration: Some(45.5), // 45.5 minutes
             host_email: None,
             organizer_email: None,
