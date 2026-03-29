@@ -184,7 +184,7 @@ pub struct JiraConfig {
 /// Fireflies.ai provider configuration (meeting notes).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FirefliesConfig {
-    // API key is stored in OS keychain (key: "fireflies.api_key")
+    // API key is stored in OS keychain (key: "fireflies.token")
     // No fields needed — config just enables the provider
 }
 

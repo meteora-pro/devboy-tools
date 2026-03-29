@@ -16,7 +16,7 @@ Fireflies uses a simple API key for authentication:
 
 ```bash
 # Store Fireflies API key in OS keychain
-devboy config set-secret fireflies.api_key <your-api-key>
+devboy config set-secret fireflies.token <your-api-key>
 ```
 
 ### Configuration file
@@ -31,7 +31,7 @@ Settings are stored in `~/.config/devboy-tools/config.toml`:
 ### Environment variables
 
 ```bash
-export FIREFLIES_API_KEY=your-api-key
+export DEVBOY_FIREFLIES_TOKEN=your-api-key
 ```
 
 ## Available Tools
@@ -46,8 +46,8 @@ List meeting notes with optional filters.
 | `to_date` | string | Filter to date (ISO 8601) |
 | `participants` | string[] | Filter by participant emails |
 | `host_email` | string | Filter by host email |
-| `limit` | number | Max results (default: 50, max: 50) |
-| `offset` | number | Skip N results |
+| `limit` | integer | Max results (default: 50, max: 50) |
+| `offset` | integer | Skip N results |
 
 **Example:**
 ```
@@ -82,7 +82,10 @@ Search across meetings by keywords, topics, or action items.
 | `query` | string | Yes | Search keyword |
 | `from_date` | string | No | Filter from date |
 | `to_date` | string | No | Filter to date |
-| `limit` | number | No | Max results (default: 50) |
+| `participants` | string[] | No | Filter by participant emails |
+| `host_email` | string | No | Filter by host email |
+| `limit` | integer | No | Max results (default: 50) |
+| `offset` | integer | No | Skip N results |
 
 **Example:**
 ```

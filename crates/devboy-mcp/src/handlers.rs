@@ -623,11 +623,25 @@ define_tools! {
                     "type": "string",
                     "description": "Filter to date (ISO 8601)"
                 },
+                "participants": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Filter by participant email addresses"
+                },
+                "host_email": {
+                    "type": "string",
+                    "description": "Filter by host email"
+                },
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of results (default: 50)",
                     "minimum": 1,
                     "maximum": 50
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Number of results to skip (default: 0)",
+                    "minimum": 0
                 }
             },
             "required": ["query"]
@@ -1430,6 +1444,7 @@ impl ToolHandler {
             skip: params.offset,
         };
 
+        let mut last_error: Option<String> = None;
         for provider in &self.meeting_providers {
             match provider.get_meetings(filter.clone()).await {
                 Ok(meetings) => {
@@ -1450,11 +1465,14 @@ impl ToolHandler {
                         provider.provider_name(),
                         e
                     );
+                    last_error = Some(format!("{}: {}", provider.provider_name(), e));
                 }
             }
         }
 
-        ToolCallResult::error("No meeting notes found".to_string())
+        ToolCallResult::error(
+            last_error.unwrap_or_else(|| "No meeting notes providers configured".to_string()),
+        )
     }
 
     async fn handle_get_meeting_transcript(&self, arguments: Option<Value>) -> ToolCallResult {
@@ -1470,6 +1488,7 @@ impl ToolHandler {
             None => return ToolCallResult::error("meeting_id is required".to_string()),
         };
 
+        let mut last_error: Option<String> = None;
         for provider in &self.meeting_providers {
             match provider.get_transcript(&params.meeting_id).await {
                 Ok(transcript) => {
@@ -1491,14 +1510,14 @@ impl ToolHandler {
                         provider.provider_name(),
                         e
                     );
+                    last_error = Some(format!("{}: {}", provider.provider_name(), e));
                 }
             }
         }
 
-        ToolCallResult::error(format!(
-            "Meeting transcript not found: {}",
-            params.meeting_id
-        ))
+        ToolCallResult::error(
+            last_error.unwrap_or_else(|| "No meeting notes providers configured".to_string()),
+        )
     }
 
     async fn handle_search_meeting_notes(&self, arguments: Option<Value>) -> ToolCallResult {
@@ -1524,6 +1543,7 @@ impl ToolHandler {
             ..Default::default()
         };
 
+        let mut last_error: Option<String> = None;
         for provider in &self.meeting_providers {
             match provider
                 .search_meetings(&params.query, filter.clone())
@@ -1547,11 +1567,14 @@ impl ToolHandler {
                         provider.provider_name(),
                         e
                     );
+                    last_error = Some(format!("{}: {}", provider.provider_name(), e));
                 }
             }
         }
 
-        ToolCallResult::error("No meetings found".to_string())
+        ToolCallResult::error(
+            last_error.unwrap_or_else(|| "No meeting notes providers configured".to_string()),
+        )
     }
 
     // =========================================================================

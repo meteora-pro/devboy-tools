@@ -764,6 +764,9 @@ pub const SUPPORTED_TOOLS: &[&str] = &[
     "get_epics",
     "create_epic",
     "update_epic",
+    "get_meeting_notes",
+    "get_meeting_transcript",
+    "search_meeting_notes",
 ];
 
 #[cfg(test)]
@@ -950,7 +953,10 @@ mod tests {
         assert!(SUPPORTED_TOOLS.contains(&"get_issues"));
         assert!(SUPPORTED_TOOLS.contains(&"get_merge_requests"));
         assert!(SUPPORTED_TOOLS.contains(&"create_merge_request_comment"));
-        assert_eq!(SUPPORTED_TOOLS.len(), 20);
+        assert!(SUPPORTED_TOOLS.contains(&"get_meeting_notes"));
+        assert!(SUPPORTED_TOOLS.contains(&"get_meeting_transcript"));
+        assert!(SUPPORTED_TOOLS.contains(&"search_meeting_notes"));
+        assert_eq!(SUPPORTED_TOOLS.len(), 23);
     }
 
     // --- Issue tool dispatch tests ---
@@ -1282,6 +1288,113 @@ mod tests {
         let provider = MockProvider;
         let args = serde_json::json!({"source_key": "gh#1"});
         let result = dispatch_tool("link_issues", &args, &provider).await;
+        assert!(result.is_err());
+    }
+
+    // --- Mock MeetingNotesProvider tests ---
+
+    struct MockMeetingProvider;
+
+    #[async_trait]
+    impl MeetingNotesProvider for MockMeetingProvider {
+        fn provider_name(&self) -> &'static str {
+            "mock_meetings"
+        }
+
+        async fn get_meetings(
+            &self,
+            _filter: MeetingFilter,
+        ) -> devboy_core::Result<Vec<devboy_core::MeetingNote>> {
+            Ok(vec![devboy_core::MeetingNote {
+                id: "m1".into(),
+                title: "Test Meeting".into(),
+                ..Default::default()
+            }])
+        }
+
+        async fn get_transcript(
+            &self,
+            meeting_id: &str,
+        ) -> devboy_core::Result<devboy_core::MeetingTranscript> {
+            Ok(devboy_core::MeetingTranscript {
+                meeting_id: meeting_id.to_string(),
+                title: Some("Test Transcript".into()),
+                sentences: vec![devboy_core::TranscriptSentence {
+                    speaker_id: "s1".into(),
+                    speaker_name: Some("Alice".into()),
+                    text: "Hello".into(),
+                    start_time: 0.0,
+                    end_time: 1.0,
+                }],
+            })
+        }
+
+        async fn search_meetings(
+            &self,
+            _query: &str,
+            _filter: MeetingFilter,
+        ) -> devboy_core::Result<Vec<devboy_core::MeetingNote>> {
+            Ok(vec![devboy_core::MeetingNote {
+                id: "m2".into(),
+                title: "Search Result Meeting".into(),
+                ..Default::default()
+            }])
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_meeting_notes() {
+        let provider = MockMeetingProvider;
+        let args = serde_json::json!({"from_date": "2025-01-01", "limit": 10});
+        let result = dispatch_meeting_tool("get_meeting_notes", &args, &provider)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::MeetingNotes(meetings) => {
+                assert_eq!(meetings.len(), 1);
+                assert_eq!(meetings[0].title, "Test Meeting");
+            }
+            other => panic!("Expected MeetingNotes, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_meeting_transcript() {
+        let provider = MockMeetingProvider;
+        let args = serde_json::json!({"meeting_id": "m1"});
+        let result = dispatch_meeting_tool("get_meeting_transcript", &args, &provider)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::MeetingTranscript(transcript) => {
+                assert_eq!(transcript.meeting_id, "m1");
+                assert_eq!(transcript.sentences.len(), 1);
+                assert_eq!(transcript.sentences[0].speaker_name, Some("Alice".into()));
+            }
+            other => panic!("Expected MeetingTranscript, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_search_meeting_notes() {
+        let provider = MockMeetingProvider;
+        let args = serde_json::json!({"query": "sprint", "limit": 5});
+        let result = dispatch_meeting_tool("search_meeting_notes", &args, &provider)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::MeetingNotes(meetings) => {
+                assert_eq!(meetings.len(), 1);
+                assert_eq!(meetings[0].title, "Search Result Meeting");
+            }
+            other => panic!("Expected MeetingNotes, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_unknown_meeting_tool() {
+        let provider = MockMeetingProvider;
+        let result = dispatch_meeting_tool("nonexistent_tool", &Value::Null, &provider).await;
         assert!(result.is_err());
     }
 }

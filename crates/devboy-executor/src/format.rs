@@ -925,4 +925,117 @@ mod tests {
             .content;
         assert_eq!(result, "raw text");
     }
+
+    // --- Meeting notes formatting ---
+
+    #[test]
+    fn test_format_meeting_notes() {
+        let meetings = vec![devboy_core::MeetingNote {
+            id: "m1".into(),
+            title: "Sprint Planning".into(),
+            meeting_date: Some("2025-01-15T10:00:00Z".into()),
+            duration_seconds: Some(2700), // 45 min
+            host_email: Some("host@example.com".into()),
+            participants: vec!["alice@example.com".into(), "bob@example.com".into()],
+            action_items: vec!["Review PR #42".into(), "Update docs".into()],
+            keywords: vec!["sprint".into(), "planning".into()],
+            summary: Some("Discussed sprint goals.".into()),
+            ..Default::default()
+        }];
+        let output = ToolOutput::MeetingNotes(meetings);
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(result.contains("Sprint Planning"));
+        assert!(result.contains("2025-01-15T10:00:00Z"));
+        assert!(result.contains("45 min"));
+        assert!(result.contains("host@example.com"));
+        assert!(result.contains("alice@example.com"));
+        assert!(result.contains("Review PR #42"));
+        assert!(result.contains("Update docs"));
+        assert!(result.contains("sprint"));
+        assert!(result.contains("Discussed sprint goals."));
+    }
+
+    #[test]
+    fn test_format_meeting_notes_empty() {
+        let output = ToolOutput::MeetingNotes(vec![]);
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert_eq!(result, "No meeting notes found.");
+    }
+
+    #[test]
+    fn test_format_meeting_transcript() {
+        let transcript = devboy_core::MeetingTranscript {
+            meeting_id: "m1".into(),
+            title: Some("Sprint Planning".into()),
+            sentences: vec![
+                devboy_core::TranscriptSentence {
+                    speaker_id: "s1".into(),
+                    speaker_name: Some("Alice".into()),
+                    text: "Let's start the meeting.".into(),
+                    start_time: 0.0,
+                    end_time: 3.0,
+                },
+                devboy_core::TranscriptSentence {
+                    speaker_id: "s2".into(),
+                    speaker_name: Some("Bob".into()),
+                    text: "Sounds good.".into(),
+                    start_time: 5.0,
+                    end_time: 7.0,
+                },
+            ],
+        };
+        let output = ToolOutput::MeetingTranscript(Box::new(transcript));
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(result.contains("Sprint Planning"));
+        assert!(result.contains("2 sentences"));
+        assert!(result.contains("[00:00] Alice: Let's start the meeting."));
+        assert!(result.contains("[00:05] Bob: Sounds good."));
+    }
+
+    #[test]
+    fn test_format_meeting_transcript_unknown_speaker() {
+        let transcript = devboy_core::MeetingTranscript {
+            meeting_id: "m1".into(),
+            title: None,
+            sentences: vec![devboy_core::TranscriptSentence {
+                speaker_id: "".into(),
+                speaker_name: None,
+                text: "Hello".into(),
+                start_time: 0.0,
+                end_time: 1.0,
+            }],
+        };
+        let output = ToolOutput::MeetingTranscript(Box::new(transcript));
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(result.contains("Meeting Transcript"));
+        assert!(result.contains("Unknown speaker"));
+    }
+
+    // --- format_time edge cases ---
+
+    #[test]
+    fn test_format_time_zero() {
+        assert_eq!(format_time(0.0), "00:00");
+    }
+
+    #[test]
+    fn test_format_time_seconds_only() {
+        assert_eq!(format_time(45.0), "00:45");
+    }
+
+    #[test]
+    fn test_format_time_minutes_and_seconds() {
+        assert_eq!(format_time(125.0), "02:05");
+    }
+
+    #[test]
+    fn test_format_time_hours() {
+        assert_eq!(format_time(3661.0), "01:01:01");
+    }
+
+    #[test]
+    fn test_format_time_fractional_seconds() {
+        // Fractional seconds are truncated
+        assert_eq!(format_time(59.9), "00:59");
+    }
 }

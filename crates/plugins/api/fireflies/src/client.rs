@@ -168,6 +168,18 @@ impl MeetingNotesProvider for FirefliesClient {
         })?;
 
         let speakers = transcript.speakers.as_deref().unwrap_or(&[]);
+        // Build a HashMap for O(1) speaker name lookup instead of O(n) linear scan
+        let speaker_map: std::collections::HashMap<String, String> = speakers
+            .iter()
+            .filter_map(|sp| {
+                let id = match &sp.id {
+                    Some(Value::String(v)) => v.clone(),
+                    Some(Value::Number(n)) => n.to_string(),
+                    _ => return None,
+                };
+                sp.name.as_ref().map(|name| (id, name.clone()))
+            })
+            .collect();
         let sentences = transcript
             .sentences
             .unwrap_or_default()
@@ -178,17 +190,12 @@ impl MeetingNotesProvider for FirefliesClient {
                     Some(Value::Number(n)) => n.to_string(),
                     _ => String::new(),
                 };
-                let speaker_name = speakers
-                    .iter()
-                    .find(|sp| {
-                        let sp_id = match &sp.id {
-                            Some(Value::String(v)) => v.clone(),
-                            Some(Value::Number(n)) => n.to_string(),
-                            _ => String::new(),
-                        };
-                        sp_id == speaker_id
-                    })
-                    .and_then(|sp| sp.name.clone());
+                // Skip speaker lookup when speaker_id is empty
+                let speaker_name = if speaker_id.is_empty() {
+                    None
+                } else {
+                    speaker_map.get(&speaker_id).cloned()
+                };
 
                 TranscriptSentence {
                     speaker_id,
