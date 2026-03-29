@@ -1445,7 +1445,7 @@ impl ToolHandler {
                     };
                 }
                 Err(e) => {
-                    tracing::debug!(
+                    tracing::warn!(
                         "Meeting provider {} failed: {}",
                         provider.provider_name(),
                         e

@@ -31,7 +31,8 @@ pub(crate) struct TranscriptData {
 pub(crate) struct FirefliesTranscript {
     pub id: String,
     pub title: Option<String>,
-    pub date: Option<String>,
+    /// Date — can be ISO string or Unix timestamp in milliseconds.
+    pub date: Option<serde_json::Value>,
     /// Duration in minutes (float) from Fireflies API.
     pub duration: Option<f64>,
     pub host_email: Option<String>,
@@ -56,7 +57,8 @@ pub(crate) struct FirefliesAttendee {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct FirefliesSpeaker {
-    pub id: Option<String>,
+    /// Speaker ID — can be number or string depending on Fireflies API version.
+    pub id: Option<serde_json::Value>,
     pub name: Option<String>,
 }
 

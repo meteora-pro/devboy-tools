@@ -53,6 +53,7 @@ pub use tool_category::ToolCategory;
 
 // Re-export config types
 pub use config::{
-    BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, FormatPipelineConfig, GitHubConfig,
-    GitLabConfig, JiraConfig, ProxyMatchingConfig, ProxyMcpServerConfig,
+    BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, FirefliesConfig,
+    FormatPipelineConfig, GitHubConfig, GitLabConfig, JiraConfig, ProxyMatchingConfig,
+    ProxyMcpServerConfig,
 };
