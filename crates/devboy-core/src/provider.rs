@@ -8,7 +8,9 @@ use async_trait::async_trait;
 use crate::error::{Error, Result};
 use crate::types::{
     Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Discussion, FileDiff,
-    Issue, IssueFilter, MergeRequest, MrFilter, UpdateIssueInput, User,
+    GetPipelineInput, GetUsersOptions, Issue, IssueFilter, IssueStatus, JobLogOptions,
+    JobLogOutput, MeetingFilter, MeetingNote, MeetingTranscript, MergeRequest, MrFilter,
+    PipelineInfo, Release, UpdateIssueInput, User,
 };
 
 /// Provider for working with issues.
@@ -33,6 +35,36 @@ pub trait IssueProvider: Send + Sync {
 
     /// Add a comment to an issue.
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment>;
+
+    /// Get available statuses for the issue tracker.
+    /// Default returns ProviderUnsupported — override in providers that support statuses.
+    async fn get_statuses(&self) -> Result<Vec<IssueStatus>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_statuses".to_string(),
+        })
+    }
+
+    /// Link two issues together.
+    async fn link_issues(
+        &self,
+        _source_key: &str,
+        _target_key: &str,
+        _link_type: &str,
+    ) -> Result<()> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "link_issues".to_string(),
+        })
+    }
+
+    /// Get users from the issue tracker (Jira only).
+    async fn get_users(&self, _options: GetUsersOptions) -> Result<Vec<User>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_users".to_string(),
+        })
+    }
 
     /// Get the provider name for logging (e.g., "gitlab", "github").
     fn provider_name(&self) -> &'static str;
@@ -95,13 +127,66 @@ pub trait MergeRequestProvider: Send + Sync {
             operation: "create_merge_request".to_string(),
         })
     }
+
+    /// Get releases/tags for the repository.
+    async fn get_releases(&self) -> Result<Vec<Release>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_releases".to_string(),
+        })
+    }
 }
 
-/// Combined provider trait for services that support both issues and merge requests.
+/// Provider for CI/CD pipeline status and job logs.
+///
+/// Implemented by GitLab (Pipelines API) and GitHub (Actions API).
+/// All methods have default implementations returning `ProviderUnsupported`.
+#[async_trait]
+pub trait PipelineProvider: Send + Sync {
+    /// Get the provider name for logging.
+    fn provider_name(&self) -> &'static str;
+
+    /// Get pipeline status for a branch or MR/PR.
+    async fn get_pipeline(&self, _input: GetPipelineInput) -> Result<PipelineInfo> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_pipeline".to_string(),
+        })
+    }
+
+    /// Get job logs with search, pagination, or smart extraction.
+    async fn get_job_logs(&self, _job_id: &str, _options: JobLogOptions) -> Result<JobLogOutput> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_job_logs".to_string(),
+        })
+    }
+}
+
+/// Combined provider trait for services that support issues, merge requests, and pipelines.
 ///
 /// This is implemented by GitLab and GitHub providers.
 #[async_trait]
-pub trait Provider: IssueProvider + MergeRequestProvider {
+pub trait Provider: IssueProvider + MergeRequestProvider + PipelineProvider {
     /// Get the current authenticated user.
     async fn get_current_user(&self) -> Result<User>;
+}
+
+/// Provider for meeting notes and transcripts.
+///
+/// Implementations include Fireflies.ai.
+#[async_trait]
+pub trait MeetingNotesProvider: Send + Sync {
+    /// Get the provider name for logging (e.g., "fireflies").
+    fn provider_name(&self) -> &'static str;
+
+    /// Get a list of meeting notes with optional filters.
+    async fn get_meetings(&self, filter: MeetingFilter) -> Result<Vec<MeetingNote>>;
+
+    /// Get the full transcript for a meeting.
+    async fn get_transcript(&self, meeting_id: &str) -> Result<MeetingTranscript>;
+
+    /// Search meetings by keyword across titles, action items, keywords, and topics.
+    async fn search_meetings(&self, query: &str, filter: MeetingFilter)
+    -> Result<Vec<MeetingNote>>;
 }

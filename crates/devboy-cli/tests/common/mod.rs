@@ -165,22 +165,22 @@ mod tests {
 
     #[test]
     fn test_mode_detect_without_token() {
-        // Clean environment
-        env::remove_var("TEST_PROVIDER_TOKEN");
-        let mode = TestMode::detect("test_provider");
-        assert_eq!(mode, TestMode::Replay);
-        assert!(mode.is_replay());
-        assert!(!mode.is_record());
+        temp_env::with_var_unset("TEST_PROVIDER_TOKEN", || {
+            let mode = TestMode::detect("test_provider");
+            assert_eq!(mode, TestMode::Replay);
+            assert!(mode.is_replay());
+            assert!(!mode.is_record());
+        });
     }
 
     #[test]
     fn test_mode_detect_with_token() {
-        env::set_var("TEST_PROVIDER_2_TOKEN", "fake-token");
-        let mode = TestMode::detect("test_provider_2");
-        assert_eq!(mode, TestMode::Record);
-        assert!(mode.is_record());
-        assert!(!mode.is_replay());
-        env::remove_var("TEST_PROVIDER_2_TOKEN");
+        temp_env::with_var("TEST_PROVIDER_2_TOKEN", Some("fake-token"), || {
+            let mode = TestMode::detect("test_provider_2");
+            assert_eq!(mode, TestMode::Record);
+            assert!(mode.is_record());
+            assert!(!mode.is_replay());
+        });
     }
 
     #[test]

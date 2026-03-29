@@ -362,6 +362,13 @@ impl MergeRequestProvider for TestProvider {
     }
 }
 
+#[async_trait]
+impl devboy_core::PipelineProvider for TestProvider {
+    fn provider_name(&self) -> &'static str {
+        "test"
+    }
+}
+
 /// Implement Provider for TestProvider.
 #[async_trait]
 impl Provider for TestProvider {
@@ -377,59 +384,37 @@ impl Provider for TestProvider {
 mod tests {
     use super::*;
 
-    /// Helper to temporarily remove env var and restore it after test.
-    struct EnvGuard {
-        key: String,
-        original: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn remove(key: &str) -> Self {
-            let original = env::var(key).ok();
-            env::remove_var(key);
-            Self {
-                key: key.to_string(),
-                original,
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(val) = &self.original {
-                env::set_var(&self.key, val);
-            }
-        }
-    }
-
     #[tokio::test]
     async fn test_provider_replay_mode() {
         // Temporarily remove token to test replay mode
-        let _guard = EnvGuard::remove("GITHUB_TOKEN");
-        let provider = TestProvider::github();
-        assert!(provider.mode().is_replay());
+        temp_env::with_var_unset("GITHUB_TOKEN", || {
+            let provider = TestProvider::github();
+            assert!(provider.mode().is_replay());
+        });
     }
 
     #[tokio::test]
     async fn test_provider_loads_fixtures_in_replay() {
-        let _guard = EnvGuard::remove("GITHUB_TOKEN");
-        let provider = TestProvider::github();
-
-        let issues = provider.get_issues(IssueFilter::default()).await.unwrap();
-        assert!(!issues.is_empty());
-        assert!(issues[0].key.starts_with("gh#"));
+        temp_env::async_with_vars([("GITHUB_TOKEN", None::<&str>)], async {
+            let provider = TestProvider::github();
+            let issues = provider.get_issues(IssueFilter::default()).await.unwrap();
+            assert!(!issues.is_empty());
+            assert!(issues[0].key.starts_with("gh#"));
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn test_provider_loads_mrs_in_replay() {
-        let _guard = EnvGuard::remove("GITHUB_TOKEN");
-        let provider = TestProvider::github();
-
-        let mrs = provider
-            .get_merge_requests(MrFilter::default())
-            .await
-            .unwrap();
-        assert!(!mrs.is_empty());
-        assert!(mrs[0].key.starts_with("pr#"));
+        temp_env::async_with_vars([("GITHUB_TOKEN", None::<&str>)], async {
+            let provider = TestProvider::github();
+            let mrs = provider
+                .get_merge_requests(MrFilter::default())
+                .await
+                .unwrap();
+            assert!(!mrs.is_empty());
+            assert!(mrs[0].key.starts_with("pr#"));
+        })
+        .await;
     }
 }

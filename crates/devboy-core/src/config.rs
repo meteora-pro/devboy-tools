@@ -27,7 +27,7 @@
 
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use tracing::{debug, info};
 
@@ -60,6 +60,10 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jira: Option<JiraConfig>,
 
+    /// Fireflies.ai configuration (meeting notes)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fireflies: Option<FirefliesConfig>,
+
     /// Named contexts (profiles) configuration.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub contexts: BTreeMap<String, ContextConfig>,
@@ -75,6 +79,10 @@ pub struct Config {
     /// Built-in tools filtering configuration.
     #[serde(default, skip_serializing_if = "BuiltinToolsConfig::is_empty")]
     pub builtin_tools: BuiltinToolsConfig,
+
+    /// Format pipeline configuration (TOON encoding, budget trimming, strategies).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_pipeline: Option<FormatPipelineConfig>,
 }
 
 /// Configuration for an upstream MCP server to proxy.
@@ -124,6 +132,10 @@ pub struct ContextConfig {
     /// Jira configuration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jira: Option<JiraConfig>,
+
+    /// Fireflies.ai configuration (meeting notes)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fireflies: Option<FirefliesConfig>,
 }
 
 /// GitHub provider configuration.
@@ -167,6 +179,13 @@ pub struct JiraConfig {
     pub project_key: String,
     /// User email (required for Jira auth)
     pub email: String,
+}
+
+/// Fireflies.ai provider configuration (meeting notes).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FirefliesConfig {
+    // API key is stored in OS keychain (key: "fireflies.token")
+    // No fields needed — config just enables the provider
 }
 
 /// Configuration for controlling which built-in tools are available.
@@ -224,6 +243,113 @@ impl BuiltinToolsConfig {
             }
         }
     }
+}
+
+// ============================================================================
+// Format Pipeline Config
+// ============================================================================
+
+/// Configuration for the format pipeline (TOON encoding, budget trimming, strategies).
+///
+/// All fields have sensible defaults — the pipeline works out of the box without config.
+///
+/// # Example TOML
+///
+/// ```toml
+/// [format_pipeline]
+/// budget_tokens = 8000
+/// margin = 0.20
+/// max_iterations = 3
+/// default_format = "toon"
+///
+/// [format_pipeline.strategies]
+/// get_issues = "element_count"
+/// "cloud__get_tasks" = "element_count"
+///
+/// [format_pipeline.proxy_matching]
+/// enabled = true
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormatPipelineConfig {
+    /// Maximum token budget per tool response (default: 8000).
+    /// ~6% of a 128K context window.
+    #[serde(default = "default_budget_tokens")]
+    pub budget_tokens: usize,
+
+    /// Safety margin for token estimation inaccuracy (default: 0.20).
+    /// Covers up to 25% deviation in compression ratio after trimming.
+    #[serde(default = "default_margin")]
+    pub margin: f64,
+
+    /// Maximum trim-encode-verify iterations (default: 3).
+    /// 2 is sufficient in 99% of cases; 3 is a safety net.
+    #[serde(default = "default_max_iterations")]
+    pub max_iterations: usize,
+
+    /// Default output format: "toon" or "json" (default: "toon").
+    #[serde(default = "default_format_toon")]
+    pub default_format: String,
+
+    /// Strategy overrides by tool name.
+    /// Keys are tool names (including proxy-prefixed), values are strategy names.
+    /// Available strategies: element_count, cascading, size_proportional,
+    /// thread_level, head_tail, default.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub strategies: HashMap<String, String>,
+
+    /// Proxy tool matching configuration.
+    #[serde(default)]
+    pub proxy_matching: ProxyMatchingConfig,
+}
+
+impl Default for FormatPipelineConfig {
+    fn default() -> Self {
+        Self {
+            budget_tokens: default_budget_tokens(),
+            margin: default_margin(),
+            max_iterations: default_max_iterations(),
+            default_format: default_format_toon(),
+            strategies: HashMap::new(),
+            proxy_matching: ProxyMatchingConfig::default(),
+        }
+    }
+}
+
+fn default_budget_tokens() -> usize {
+    8000
+}
+
+fn default_margin() -> f64 {
+    0.20
+}
+
+fn default_max_iterations() -> usize {
+    3
+}
+
+fn default_format_toon() -> String {
+    "toon".to_string()
+}
+
+/// Proxy tool matching configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyMatchingConfig {
+    /// When true, strip proxy prefix (e.g. `cloud__get_issues` → `get_issues`)
+    /// and look up hardcoded defaults (default: true).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for ProxyMatchingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_gitlab_url() -> String {
@@ -311,6 +437,7 @@ impl Config {
             || self.gitlab.is_some()
             || self.clickup.is_some()
             || self.jira.is_some()
+            || self.fireflies.is_some()
             || self.contexts.values().any(ContextConfig::has_any_provider)
     }
 
@@ -359,10 +486,10 @@ impl Config {
 
     /// Resolve the currently active context name.
     pub fn resolve_active_context_name(&self) -> Option<String> {
-        if let Some(active) = &self.active_context {
-            if self.get_context(active).is_some() {
-                return Some(active.clone());
-            }
+        if let Some(active) = &self.active_context
+            && self.get_context(active).is_some()
+        {
+            return Some(active.clone());
         }
 
         if self.get_context(Self::DEFAULT_CONTEXT_NAME).is_some() {
@@ -388,6 +515,7 @@ impl Config {
             gitlab: self.gitlab.clone(),
             clickup: self.clickup.clone(),
             jira: self.jira.clone(),
+            fireflies: self.fireflies.clone(),
         };
 
         if ctx.has_any_provider() {
@@ -426,7 +554,7 @@ impl Config {
                         return Err(Error::Config(format!(
                             "Unknown GitHub config field: {}",
                             field
-                        )))
+                        )));
                     }
                 }
             }
@@ -442,7 +570,7 @@ impl Config {
                         return Err(Error::Config(format!(
                             "Unknown GitLab config field: {}",
                             field
-                        )))
+                        )));
                     }
                 }
             }
@@ -458,7 +586,7 @@ impl Config {
                         return Err(Error::Config(format!(
                             "Unknown ClickUp config field: {}",
                             field
-                        )))
+                        )));
                     }
                 }
             }
@@ -476,7 +604,7 @@ impl Config {
                         return Err(Error::Config(format!(
                             "Unknown Jira config field: {}",
                             field
-                        )))
+                        )));
                     }
                 }
             }
@@ -569,6 +697,7 @@ impl ContextConfig {
             || self.gitlab.is_some()
             || self.clickup.is_some()
             || self.jira.is_some()
+            || self.fireflies.is_some()
     }
 
     /// Return configured provider names for this context.
@@ -922,10 +1051,12 @@ mod tests {
                 project_key: "k".to_string(),
                 email: "e".to_string(),
             }),
+            fireflies: None,
             contexts: BTreeMap::new(),
             active_context: None,
             proxy_mcp_servers: Vec::new(),
             builtin_tools: BuiltinToolsConfig::default(),
+            format_pipeline: None,
         };
 
         let providers = config.configured_providers();
@@ -999,10 +1130,12 @@ mod tests {
             }),
             clickup: None,
             jira: None,
+            fireflies: None,
             contexts: BTreeMap::new(),
             active_context: None,
             proxy_mcp_servers: Vec::new(),
             builtin_tools: BuiltinToolsConfig::default(),
+            format_pipeline: None,
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -1025,7 +1158,7 @@ mod tests {
             ContextConfig {
                 github: Some(GitHubConfig {
                     owner: "meteora-pro".to_string(),
-                    repo: "dev-boy-monorepo".to_string(),
+                    repo: "my-project".to_string(),
                     base_url: None,
                 }),
                 clickup: Some(ClickUpConfig {

@@ -76,6 +76,13 @@ impl MergeRequestProvider for ClickUpTestProvider {
 }
 
 #[async_trait]
+impl devboy_core::PipelineProvider for ClickUpTestProvider {
+    fn provider_name(&self) -> &'static str {
+        "test"
+    }
+}
+
+#[async_trait]
 impl Provider for ClickUpTestProvider {
     async fn get_current_user(&self) -> Result<User> {
         Ok(User {
@@ -179,6 +186,13 @@ impl MergeRequestProvider for GitLabTestProvider {
 }
 
 #[async_trait]
+impl devboy_core::PipelineProvider for GitLabTestProvider {
+    fn provider_name(&self) -> &'static str {
+        "test"
+    }
+}
+
+#[async_trait]
 impl Provider for GitLabTestProvider {
     async fn get_current_user(&self) -> Result<User> {
         Ok(User {
@@ -219,8 +233,8 @@ const MR_TOOLS: &[&str] = &[
 
 /// Helper to get tool names from server.
 fn get_tool_names(server: &McpServer) -> Vec<String> {
-    use devboy_mcp::protocol::ToolsListResult;
     use devboy_mcp::RequestId;
+    use devboy_mcp::protocol::ToolsListResult;
 
     let resp = server.handle_tools_list(RequestId::Number(1));
     let result: ToolsListResult = serde_json::from_value(resp.result.unwrap()).unwrap();

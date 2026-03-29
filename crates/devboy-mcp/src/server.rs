@@ -14,8 +14,8 @@ use serde_json::Value;
 
 use crate::handlers::{ToolCategory, ToolHandler};
 use crate::protocol::{
-    InitializeParams, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, RequestId,
-    ServerCapabilities, ServerInfo, ToolCallParams, ToolsCapability, ToolsListResult, MCP_VERSION,
+    InitializeParams, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MCP_VERSION,
+    RequestId, ServerCapabilities, ServerInfo, ToolCallParams, ToolsCapability, ToolsListResult,
 };
 use crate::proxy::ProxyManager;
 use crate::transport::{IncomingMessage, StdioTransport};
@@ -27,6 +27,7 @@ pub struct McpServer {
     initialized: bool,
     proxy_manager: ProxyManager,
     builtin_tools_config: BuiltinToolsConfig,
+    meeting_providers: Vec<Arc<dyn devboy_core::MeetingNotesProvider>>,
 }
 
 impl McpServer {
@@ -40,6 +41,7 @@ impl McpServer {
             initialized: false,
             proxy_manager: ProxyManager::new(),
             builtin_tools_config: BuiltinToolsConfig::default(),
+            meeting_providers: Vec::new(),
         }
     }
 
@@ -58,6 +60,10 @@ impl McpServer {
     /// Set the proxy manager for upstream MCP server connections.
     pub fn set_proxy_manager(&mut self, proxy_manager: ProxyManager) {
         self.proxy_manager = proxy_manager;
+    }
+
+    pub fn add_meeting_provider(&mut self, provider: Arc<dyn devboy_core::MeetingNotesProvider>) {
+        self.meeting_providers.push(provider);
     }
 
     /// Add a provider to the server.
@@ -141,11 +147,11 @@ impl McpServer {
             match transport.read_message() {
                 Ok(Some(msg)) => {
                     let response = self.handle_message(msg).await;
-                    if let Some(resp) = response {
-                        if let Err(e) = transport.write_response(&resp) {
-                            tracing::error!("Failed to write response: {}", e);
-                            break;
-                        }
+                    if let Some(resp) = response
+                        && let Err(e) = transport.write_response(&resp)
+                    {
+                        tracing::error!("Failed to write response: {}", e);
+                        break;
                     }
                 }
                 Ok(None) => {
@@ -262,7 +268,8 @@ impl McpServer {
     /// This method is public to allow integration testing.
     pub fn handle_tools_list(&self, id: RequestId) -> JsonRpcResponse {
         let providers = self.active_providers();
-        let handler = ToolHandler::new(providers.clone());
+        let handler = ToolHandler::new(providers.clone())
+            .with_meeting_providers(self.meeting_providers.clone());
         let mut tools = handler.available_tools();
 
         // Pre-compute category availability to avoid repeated provider lookups.
@@ -274,6 +281,7 @@ impl McpServer {
                 "github" | "gitlab"
             )
         });
+        let has_meeting_providers = handler.has_meeting_providers();
 
         // Filter tools based on available providers (dynamic filtering).
         // This prevents exposing tools that would always fail due to missing providers.
@@ -282,6 +290,7 @@ impl McpServer {
                 .map(|cat| match cat {
                     ToolCategory::Issues => has_issue_providers,
                     ToolCategory::MergeRequests => has_mr_providers,
+                    ToolCategory::MeetingNotes => has_meeting_providers,
                 })
                 .unwrap_or(true) // Tools without category are always available
         });
@@ -417,7 +426,8 @@ impl McpServer {
                 {
                     proxy_result
                 } else {
-                    let handler = ToolHandler::new(self.active_providers());
+                    let handler = ToolHandler::new(self.active_providers())
+                        .with_meeting_providers(self.meeting_providers.clone());
                     handler.execute(&params.name, params.arguments).await
                 }
             }
@@ -440,7 +450,7 @@ impl Default for McpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{RequestId, ToolCallResult, ToolResultContent, JSONRPC_VERSION};
+    use crate::protocol::{JSONRPC_VERSION, RequestId, ToolCallResult, ToolResultContent};
 
     use async_trait::async_trait;
     use devboy_core::{
@@ -506,6 +516,13 @@ mod tests {
         }
         fn provider_name(&self) -> &'static str {
             "github" // Changed from "test" to "github" for MR tools to work
+        }
+    }
+
+    #[async_trait]
+    impl devboy_core::PipelineProvider for TestProvider {
+        fn provider_name(&self) -> &'static str {
+            "test"
         }
     }
 
@@ -1084,6 +1101,13 @@ mod tests {
     }
 
     #[async_trait]
+    impl devboy_core::PipelineProvider for IssueOnlyTestProvider {
+        fn provider_name(&self) -> &'static str {
+            "test"
+        }
+    }
+
+    #[async_trait]
     impl Provider for IssueOnlyTestProvider {
         async fn get_current_user(&self) -> devboy_core::Result<User> {
             Ok(User {
@@ -1111,10 +1135,12 @@ mod tests {
 
         // MR tools should NOT be available (ClickUp doesn't support MRs)
         assert!(!result.tools.iter().any(|t| t.name == "get_merge_requests"));
-        assert!(!result
-            .tools
-            .iter()
-            .any(|t| t.name == "get_merge_request_discussions"));
+        assert!(
+            !result
+                .tools
+                .iter()
+                .any(|t| t.name == "get_merge_request_discussions")
+        );
 
         // Context tools should always be available
         assert!(result.tools.iter().any(|t| t.name == "list_contexts"));

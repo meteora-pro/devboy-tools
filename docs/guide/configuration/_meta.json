@@ -23,5 +23,10 @@
     "type": "file",
     "name": "proxy",
     "label": "MCP proxy"
+  },
+  {
+    "type": "file",
+    "name": "format-pipeline",
+    "label": "Format Pipeline"
   }
 ]

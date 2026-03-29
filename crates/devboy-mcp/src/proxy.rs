@@ -4,18 +4,18 @@
 //! - **SSE**: Legacy MCP transport with SSE stream for responses.
 //! - **Streamable HTTP**: POST-based transport with `mcp-session-id` header.
 
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use futures::StreamExt;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest_eventsource::{Event, EventSource};
 use serde_json::Value;
-use tokio::sync::{oneshot, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, oneshot};
 
 use crate::protocol::{
-    JsonRpcRequest, JsonRpcResponse, RequestId, ToolCallResult, ToolDefinition, JSONRPC_VERSION,
+    JSONRPC_VERSION, JsonRpcRequest, JsonRpcResponse, RequestId, ToolCallResult, ToolDefinition,
 };
 
 /// Transport mode for upstream MCP server.
@@ -83,7 +83,8 @@ impl McpProxyClient {
 
         let http_client = reqwest::Client::builder()
             .default_headers(headers.clone())
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(60))
+            .pool_max_idle_per_host(0)
             .build()
             .map_err(|e| devboy_core::Error::Http(format!("Failed to build HTTP client: {}", e)))?;
 
@@ -129,18 +130,17 @@ impl McpProxyClient {
             while let Some(event) = es.next().await {
                 match event {
                     Ok(Event::Message(msg)) => {
-                        if msg.event == "message" {
-                            if let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(&msg.data) {
-                                let id_num = match &resp.id {
-                                    RequestId::Number(n) => *n,
-                                    _ => continue,
-                                };
-                                let mut pending = pending_clone.lock().await;
-                                if let Some(idx) = pending.iter().position(|(id, _)| *id == id_num)
-                                {
-                                    let (_, sender) = pending.remove(idx);
-                                    let _ = sender.send(resp);
-                                }
+                        if msg.event == "message"
+                            && let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(&msg.data)
+                        {
+                            let id_num = match &resp.id {
+                                RequestId::Number(n) => *n,
+                                _ => continue,
+                            };
+                            let mut pending = pending_clone.lock().await;
+                            if let Some(idx) = pending.iter().position(|(id, _)| *id == id_num) {
+                                let (_, sender) = pending.remove(idx);
+                                let _ = sender.send(resp);
                             }
                         }
                     }
@@ -207,12 +207,11 @@ impl McpProxyClient {
                     Ok(Event::Message(msg)) if msg.event == "endpoint" => {
                         let endpoint = msg.data.trim().to_string();
                         // If relative URL, resolve against base
-                        if endpoint.starts_with('/') {
-                            if let Ok(base) = reqwest::Url::parse(base_url) {
-                                if let Ok(resolved) = base.join(&endpoint) {
-                                    return Ok(resolved.to_string());
-                                }
-                            }
+                        if endpoint.starts_with('/')
+                            && let Ok(base) = reqwest::Url::parse(base_url)
+                            && let Ok(resolved) = base.join(&endpoint)
+                        {
+                            return Ok(resolved.to_string());
                         }
                         return Ok(endpoint);
                     }
@@ -312,21 +311,26 @@ impl McpProxyClient {
             }
         }
 
-        let response = request
-            .json(&req)
-            .send()
-            .await
-            .map_err(|e| devboy_core::Error::Http(format!("POST failed: {}", e)))?;
+        let response = request.json(&req).send().await.map_err(|e| {
+            tracing::error!(
+                "POST to {} failed: {} (is_timeout={}, is_connect={}, is_request={})",
+                self.post_url,
+                e,
+                e.is_timeout(),
+                e.is_connect(),
+                e.is_request(),
+            );
+            devboy_core::Error::Http(format!("POST failed: {}", e))
+        })?;
 
         // Extract session ID from response headers (set during initialize)
-        if method == "initialize" {
-            if let Some(sid) = response.headers().get("mcp-session-id") {
-                if let Ok(sid_str) = sid.to_str() {
-                    let mut session = self.session_id.write().await;
-                    *session = Some(sid_str.to_string());
-                    tracing::debug!("Proxy '{}': got session ID", self.name);
-                }
-            }
+        if method == "initialize"
+            && let Some(sid) = response.headers().get("mcp-session-id")
+            && let Ok(sid_str) = sid.to_str()
+        {
+            let mut session = self.session_id.write().await;
+            *session = Some(sid_str.to_string());
+            tracing::debug!("Proxy '{}': got session ID", self.name);
         }
 
         let status = response.status();
@@ -338,10 +342,26 @@ impl McpProxyClient {
             )));
         }
 
-        let resp: JsonRpcResponse = response
-            .json()
-            .await
-            .map_err(|e| devboy_core::Error::Http(format!("Failed to parse response: {}", e)))?;
+        // Check Content-Type: server may respond with JSON or SSE stream
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+
+        let resp = if content_type.contains("text/event-stream") {
+            // Parse SSE stream to extract JSON-RPC response
+            tracing::debug!("Response is SSE stream, parsing events...");
+            self.parse_sse_response(response, id).await?
+        } else {
+            // Direct JSON response
+            tracing::debug!("Response is JSON (content-type: {})", content_type);
+            response
+                .json::<JsonRpcResponse>()
+                .await
+                .map_err(|e| devboy_core::Error::Http(format!("Failed to parse response: {}", e)))?
+        };
 
         // Verify response ID matches request ID
         let expected_id = RequestId::Number(id);
@@ -353,6 +373,75 @@ impl McpProxyClient {
         }
 
         Ok(resp)
+    }
+
+    /// Parse an SSE event stream response to extract the JSON-RPC response.
+    ///
+    /// Streamable HTTP spec allows servers to respond with SSE for long-running
+    /// operations like tool calls. Reads the stream line-by-line instead of
+    /// buffering the entire body (which would hang on open SSE connections).
+    async fn parse_sse_response(
+        &self,
+        response: reqwest::Response,
+        expected_id: i64,
+    ) -> devboy_core::Result<JsonRpcResponse> {
+        use futures::TryStreamExt;
+        use tokio::io::AsyncBufReadExt;
+
+        let stream = response.bytes_stream().map_err(std::io::Error::other);
+        let reader = tokio_util::io::StreamReader::new(stream);
+        let mut lines = tokio::io::BufReader::new(reader).lines();
+
+        let mut current_data = String::new();
+
+        tracing::debug!("Starting SSE line reader...");
+
+        tokio::time::timeout(Duration::from_secs(60), async {
+            while let Ok(Some(line)) = lines.next_line().await {
+                let line = line.trim().to_string();
+                tracing::debug!("SSE line: {}", &line[..line.len().min(100)]);
+
+                if line.is_empty() {
+                    // End of SSE event — try to parse collected data
+                    if !current_data.is_empty()
+                        && let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(&current_data)
+                    {
+                        let id_matches = match &resp.id {
+                            RequestId::Number(n) => *n == expected_id,
+                            _ => false,
+                        };
+                        if id_matches {
+                            return Ok(resp);
+                        }
+                        current_data.clear();
+                    } else if !current_data.is_empty() {
+                        current_data.clear();
+                    }
+                    continue;
+                }
+
+                if let Some(data) = line.strip_prefix("data:") {
+                    let data = data.trim();
+                    if !data.is_empty() {
+                        current_data.push_str(data);
+                    }
+                }
+                // Skip event:, id:, retry: lines
+            }
+
+            // Try last accumulated data
+            if !current_data.is_empty()
+                && let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(&current_data)
+            {
+                return Ok(resp);
+            }
+
+            Err(devboy_core::Error::Http(
+                "No matching JSON-RPC response found in SSE stream".to_string(),
+            ))
+        })
+        .await
+        .map_err(|_| devboy_core::Error::Http("Timeout reading SSE response".to_string()))?
     }
 
     /// Send initialize handshake.

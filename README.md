@@ -37,13 +37,49 @@ One server supports multiple project contexts with instant switching:
 
 Switch contexts via CLI (`devboy context use <name>`) or MCP tools (`use_context`).
 
-### Plugin system
+### Crate Architecture
+
+```
+crates/
+├── devboy-core/          # Traits (Provider, ToolEnricher), types, config
+├── devboy-executor/      # Tool execution engine + enrichment pipeline
+├── devboy-mcp/           # MCP server (JSON-RPC over stdio)
+├── devboy-cli/           # CLI binary
+├── devboy-storage/       # Credential storage (keychain, env vars)
+└── plugins/
+    ├── api/              # Provider integrations
+    │   ├── gitlab/       # Client + GitLabSchemaEnricher
+    │   ├── github/       # Client + GitHubSchemaEnricher
+    │   ├── clickup/      # Client + ClickUpSchemaEnricher + metadata
+    │   └── jira/         # Client + JiraSchemaEnricher + metadata
+    └── pipeline/         # Output formatting (markdown, truncation)
+```
+
+### Executor & Enricher Pipeline
+
+The `devboy-executor` crate separates tool execution from transport (MCP, HTTP, NAPI).
+Each provider crate includes a schema enricher that dynamically adapts tool schemas:
+
+```
+Tool call → Executor
+  1. Enrichers transform args (cf_story_points → customFields)
+  2. Provider factory creates client from ProviderConfig
+  3. Provider executes API calls → typed ToolOutput
+  4. Pipeline formats output → text (markdown/compact/json)
+```
+
+Three enricher categories, same `ToolEnricher` trait:
+- **Provider enrichers** — adapt schemas per provider (remove unsupported params, add custom field `cf_*` params, populate enums from metadata)
+- **Pipeline enrichers** — add output control params (e.g., `format` enum)
+- **Custom enrichers** — third-party plugins
+
+### Plugin System
 
 Tools are dynamic based on project configuration:
 
 ```
 plugins/
-├── api/           # Provider integrations
+├── api/           # Provider integrations (client + enricher per provider)
 │   ├── gitlab/
 │   ├── github/
 │   ├── clickup/
