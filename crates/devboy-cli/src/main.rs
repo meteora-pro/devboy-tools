@@ -21,8 +21,8 @@ use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
 use devboy_jira::JiraClient;
 use devboy_mcp::{
-    JsonRpcRequest, McpProxyClient, McpServer, ProxyManager, ProxyTransport, RequestId,
-    JSONRPC_VERSION, KNOWN_BUILTIN_TOOLS,
+    JSONRPC_VERSION, JsonRpcRequest, KNOWN_BUILTIN_TOOLS, McpProxyClient, McpServer, ProxyManager,
+    ProxyTransport, RequestId,
 };
 use devboy_storage::{ChainStore, CredentialStore};
 use dialoguer::{Confirm, Input, MultiSelect, Password};
@@ -215,6 +215,59 @@ enum Commands {
         /// Only check for updates, don't install
         #[arg(long)]
         check: bool,
+    },
+
+    /// Benchmark format pipeline on real open-source project data (JSON vs TOON)
+    Benchmark {
+        /// GitHub owner (e.g., "kubernetes")
+        #[arg(short, long, default_value = "facebook")]
+        owner: String,
+
+        /// GitHub repo (e.g., "kubernetes")
+        #[arg(short, long, default_value = "react")]
+        repo: String,
+
+        /// Token budget (default: 8000)
+        #[arg(short, long, default_value = "8000")]
+        budget: usize,
+
+        /// Maximum issues to fetch (default: 30)
+        #[arg(short = 'n', long, default_value = "30")]
+        limit: u32,
+
+        /// GitHub token (optional, for higher rate limits). Set GITHUB_TOKEN env var.
+        #[arg(long)]
+        token: Option<String>,
+    },
+
+    /// Format JSON from stdin through the TOON pipeline (pipe mode)
+    ///
+    /// Usage: cat issues.json | devboy format-pipeline
+    #[command(name = "format-pipeline")]
+    FormatPipeline {
+        /// Data type: issues, merge_requests, diffs, comments, discussions (auto-detected if omitted)
+        #[arg(short = 't', long, value_name = "TYPE")]
+        data_type: Option<String>,
+
+        /// Token budget (default: 8000, minimum: 1)
+        #[arg(short, long, default_value = "8000")]
+        budget: usize,
+
+        /// Trimming strategy
+        #[arg(short, long, value_parser = ["element_count", "cascading", "size_proportional", "thread_level", "head_tail", "default"])]
+        strategy: Option<String>,
+
+        /// Trim level
+        #[arg(short, long, default_value = "full", value_parser = ["full", "standard", "minimal"])]
+        level: String,
+
+        /// Output format (JSON mode still applies budget trimming)
+        #[arg(short, long, default_value = "toon", value_parser = ["toon", "json"])]
+        format: String,
+
+        /// Print token savings stats to stderr
+        #[arg(long)]
+        stats: bool,
     },
 }
 
@@ -424,7 +477,11 @@ async fn main() -> Result<()> {
     // Run update check in background for interactive commands (skip for mcp, upgrade, and no-command).
     // Spawned as a background task to avoid blocking CLI startup on network calls.
     let update_check_handle = match &cli.command {
-        Some(Commands::Mcp { .. }) | Some(Commands::Upgrade { .. }) | None => None,
+        Some(Commands::Mcp { .. })
+        | Some(Commands::Upgrade { .. })
+        | Some(Commands::Benchmark { .. })
+        | Some(Commands::FormatPipeline { .. })
+        | None => None,
         _ => Some(tokio::spawn(update_check::check_and_notify())),
     };
 
@@ -509,6 +566,34 @@ async fn main() -> Result<()> {
 
         Some(Commands::Upgrade { check }) => {
             upgrade::run_upgrade(check).await?;
+        }
+
+        Some(Commands::Benchmark {
+            owner,
+            repo,
+            budget,
+            limit,
+            token,
+        }) => {
+            run_benchmark(&owner, &repo, budget, limit, token.as_deref()).await?;
+        }
+
+        Some(Commands::FormatPipeline {
+            data_type,
+            budget,
+            strategy,
+            level,
+            format,
+            stats,
+        }) => {
+            run_format_pipeline(
+                data_type.as_deref(),
+                budget,
+                strategy.as_deref(),
+                &level,
+                &format,
+                stats,
+            )?;
         }
 
         None => {
@@ -1117,6 +1202,7 @@ fn build_config(options: &InitOptions) -> Config {
             gitlab: options.gitlab.clone(),
             clickup: options.clickup.clone(),
             jira: options.jira.clone(),
+            fireflies: None,
         };
         config.contexts.insert(context_name, context);
     }
@@ -1637,7 +1723,9 @@ async fn handle_test_command(provider: &str) -> Result<()> {
                 println!("  Team ID: {}", team_id);
             } else {
                 println!("  Team ID: (not set)");
-                println!("  Hint: Set team_id for custom task IDs (e.g., DEV-42) and better integration:");
+                println!(
+                    "  Hint: Set team_id for custom task IDs (e.g., DEV-42) and better integration:"
+                );
                 println!("    devboy config set clickup.team_id <team_id>");
             }
 
@@ -1750,15 +1838,15 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
         }
 
         // Backward-compatible implicit default context from top-level provider fields.
-        if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME) {
-            if let Some(default_context) = config.legacy_default_context() {
-                any_provider_added |= add_context_providers(
-                    &mut server,
-                    store.as_ref(),
-                    Config::DEFAULT_CONTEXT_NAME,
-                    &default_context,
-                );
-            }
+        if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME)
+            && let Some(default_context) = config.legacy_default_context()
+        {
+            any_provider_added |= add_context_providers(
+                &mut server,
+                store.as_ref(),
+                Config::DEFAULT_CONTEXT_NAME,
+                &default_context,
+            );
         }
 
         // Set active context (if configured and valid).
@@ -2289,6 +2377,7 @@ impl EnvContextBuilder {
             gitlab,
             clickup,
             jira,
+            fireflies: None,
         };
 
         if context.has_any_provider() {
@@ -2384,6 +2473,20 @@ fn add_context_providers_from_env(
         } else {
             tracing::warn!(
                 "Jira configured via env for context '{}' but no token found",
+                context_name
+            );
+        }
+    }
+
+    if context.fireflies.is_some() {
+        if let Some(token) = get_token_for_context(store, context_name, "fireflies") {
+            let client = devboy_fireflies::FirefliesClient::new(&token);
+            server.add_meeting_provider(Arc::new(client));
+            tracing::info!("Added Fireflies provider to context '{}'", context_name);
+            added = true;
+        } else {
+            tracing::warn!(
+                "Fireflies configured for context '{}' but no API key found",
                 context_name
             );
         }
@@ -2571,6 +2674,20 @@ fn add_context_providers(
             tracing::warn!(
                 "Jira configured in context '{}' but no token found (tried contexts.{}.jira.token then jira.token)",
                 context_name,
+                context_name
+            );
+        }
+    }
+
+    if context.fireflies.is_some() {
+        if let Some(token) = get_token_for_context(store, context_name, "fireflies") {
+            let client = devboy_fireflies::FirefliesClient::new(&token);
+            server.add_meeting_provider(Arc::new(client));
+            tracing::info!("Added Fireflies provider to context '{}'", context_name);
+            added = true;
+        } else {
+            tracing::warn!(
+                "Fireflies configured for context '{}' but no API key found",
                 context_name
             );
         }
@@ -2775,15 +2892,15 @@ async fn handle_tools_call(name: &str, args: &str) -> Result<()> {
         server.ensure_context(context_name);
         add_context_providers(&mut server, store.as_ref(), context_name, context);
     }
-    if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME) {
-        if let Some(default_context) = config.legacy_default_context() {
-            add_context_providers(
-                &mut server,
-                store.as_ref(),
-                Config::DEFAULT_CONTEXT_NAME,
-                &default_context,
-            );
-        }
+    if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME)
+        && let Some(default_context) = config.legacy_default_context()
+    {
+        add_context_providers(
+            &mut server,
+            store.as_ref(),
+            Config::DEFAULT_CONTEXT_NAME,
+            &default_context,
+        );
     }
     if let Some(active) = config.resolve_active_context_name() {
         let _ = server.set_active_context(&active);
@@ -2812,6 +2929,357 @@ async fn handle_tools_call(name: &str, args: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+// =============================================================================
+// Benchmark Command
+// =============================================================================
+
+async fn run_benchmark(
+    owner: &str,
+    repo: &str,
+    budget: usize,
+    limit: u32,
+    token: Option<&str>,
+) -> Result<()> {
+    println!("Format Pipeline Benchmark");
+    println!("{}", "=".repeat(65));
+    println!("Source:   github.com/{}/{}", owner, repo);
+    println!("Budget:   {} tokens", budget);
+    println!();
+
+    // Use provided token, env var, or empty (for public repos)
+    let gh_token = token
+        .map(|t| t.to_string())
+        .or_else(|| std::env::var("GITHUB_TOKEN").ok())
+        .unwrap_or_default();
+
+    if gh_token.is_empty() {
+        println!("Note: No GITHUB_TOKEN set. Set it for higher rate limits.\n");
+    }
+
+    let client = devboy_github::GitHubClient::new(owner, repo, &gh_token);
+
+    // Fetch issues
+    println!("Fetching issues...");
+    let filter = IssueFilter {
+        state: Some("all".into()),
+        limit: Some(limit),
+        ..Default::default()
+    };
+    let issues = client.get_issues(filter).await?;
+    if !issues.is_empty() {
+        print_comparison("Issues", &issues, budget)?;
+    } else {
+        println!("  No issues found.");
+    }
+
+    // Fetch MRs/PRs
+    println!("\nFetching pull requests...");
+    let mr_filter = devboy_core::MrFilter {
+        state: Some("all".into()),
+        limit: Some(limit),
+        ..Default::default()
+    };
+    let mrs = client.get_merge_requests(mr_filter).await?;
+    if !mrs.is_empty() {
+        print_comparison("Pull Requests", &mrs, budget)?;
+    } else {
+        println!("  No pull requests found.");
+    }
+
+    // Fetch diffs from first open PR
+    let open_mrs: Vec<_> = mrs.iter().filter(|m| m.state == "open").collect();
+    if let Some(mr) = open_mrs.first() {
+        println!("\nFetching diffs for {}...", mr.key);
+        match client.get_diffs(&mr.key).await {
+            Ok(diffs) if !diffs.is_empty() => {
+                print_comparison("Diffs", &diffs, budget)?;
+            }
+            Ok(_) => println!("  No diffs in this PR."),
+            Err(e) => println!("  Failed to fetch diffs: {}", e),
+        }
+    }
+
+    println!("\n{}", "=".repeat(65));
+    Ok(())
+}
+
+fn print_comparison<T: serde::Serialize>(label: &str, items: &Vec<T>, budget: usize) -> Result<()> {
+    use devboy_format_pipeline::token_counter::estimate_tokens;
+    use std::time::Instant;
+
+    // Warm up and measure JSON encoding (average of N runs)
+    const RUNS: u32 = 100;
+    let start = Instant::now();
+    let mut json = String::new();
+    for _ in 0..RUNS {
+        json = serde_json::to_string_pretty(&items)?;
+    }
+    let json_us = start.elapsed().as_micros() / RUNS as u128;
+
+    // Measure TOON encoding
+    let start = Instant::now();
+    let mut toon_out = String::new();
+    for _ in 0..RUNS {
+        toon_out = devboy_format_pipeline::toon::encode_value(&items)?;
+    }
+    let toon_us = start.elapsed().as_micros() / RUNS as u128;
+
+    let json_tokens = estimate_tokens(&json);
+    let toon_tokens = estimate_tokens(&toon_out);
+    let savings = calc_savings(json_tokens, toon_tokens);
+
+    let json_pages = json_tokens.div_ceil(budget);
+    let toon_pages = toon_tokens.div_ceil(budget);
+
+    println!("  {} ({} items):", label, items.len());
+    println!(
+        "    {:<15} {:>8} tokens {:>8} chars {:>3} pages  {:>6}us",
+        "JSON",
+        json_tokens,
+        json.len(),
+        json_pages,
+        json_us
+    );
+    println!(
+        "    {:<15} {:>8} tokens {:>8} chars {:>3} pages  {:>6}us  ({:.0}% savings)",
+        "TOON",
+        toon_tokens,
+        toon_out.len(),
+        toon_pages,
+        toon_us,
+        savings
+    );
+
+    if toon_pages < json_pages {
+        println!(
+            "    -> TOON saves {} pages ({} vs {})",
+            json_pages - toon_pages,
+            toon_pages,
+            json_pages
+        );
+    }
+
+    let cpu_overhead = if json_us > 0 {
+        ((toon_us as f64 / json_us as f64) - 1.0) * 100.0
+    } else {
+        0.0
+    };
+
+    // Estimate memory: JSON output size + TOON output size (heap strings)
+    let json_mem = json.capacity();
+    let toon_mem = toon_out.capacity();
+
+    println!(
+        "    -> CPU: JSON {}us vs TOON {}us ({:+.0}%), Memory: JSON {} vs TOON {} bytes",
+        json_us, toon_us, cpu_overhead, json_mem, toon_mem
+    );
+
+    Ok(())
+}
+
+fn calc_savings(json_tokens: usize, toon_tokens: usize) -> f64 {
+    if json_tokens == 0 {
+        return 0.0;
+    }
+    (1.0 - toon_tokens as f64 / json_tokens as f64) * 100.0
+}
+
+// =============================================================================
+// Format Pipeline (pipe mode)
+// =============================================================================
+
+fn run_format_pipeline(
+    data_type: Option<&str>,
+    budget: usize,
+    strategy: Option<&str>,
+    level: &str,
+    format: &str,
+    stats: bool,
+) -> Result<()> {
+    use devboy_format_pipeline::budget::{self, BudgetConfig};
+    use devboy_format_pipeline::strategy::TrimStrategyKind;
+    use devboy_format_pipeline::token_counter::estimate_tokens;
+    use devboy_format_pipeline::toon::{self, TrimLevel};
+    use std::io;
+
+    if budget == 0 {
+        anyhow::bail!("Budget must be at least 1 token.");
+    }
+
+    // Parse JSON from stdin (streaming, no full buffering)
+    let stdin = io::stdin();
+    let stdin_lock = stdin.lock();
+    let json_value: serde_json::Value = serde_json::from_reader(stdin_lock).map_err(|err| {
+        if err.is_eof() {
+            anyhow::anyhow!("Empty input. Pipe JSON data through stdin.")
+        } else {
+            anyhow::anyhow!("Invalid JSON input: {err}")
+        }
+    })?;
+
+    // Serialize for token counting (needed for stats comparison)
+    let json_string = serde_json::to_string(&json_value)?;
+    let json_tokens = estimate_tokens(&json_string);
+
+    let detected_type = data_type.unwrap_or_else(|| detect_data_type(&json_value));
+
+    // Validated by clap value_parser
+    let trim_level = match level {
+        "standard" => TrimLevel::Standard,
+        "minimal" => TrimLevel::Minimal,
+        _ => TrimLevel::Full,
+    };
+
+    // Validated by clap value_parser, or auto-detect from type
+    let strategy_kind = strategy
+        .and_then(TrimStrategyKind::parse)
+        .unwrap_or(match detected_type {
+            "issues" => TrimStrategyKind::ElementCount,
+            "merge_requests" => TrimStrategyKind::ElementCount,
+            "diffs" => TrimStrategyKind::SizeProportional,
+            "comments" => TrimStrategyKind::Cascading,
+            "discussions" => TrimStrategyKind::ThreadLevel,
+            _ => TrimStrategyKind::Default,
+        });
+
+    let budget_config = BudgetConfig {
+        budget_tokens: budget,
+        ..Default::default()
+    };
+    let use_toon = format == "toon";
+
+    // Budget trimming applied for ALL types, not just issues.
+    // For issues: full budget pipeline with tree knapsack.
+    // For other types: proportional trimming to fit budget.
+    let output = match detected_type {
+        "issues" => {
+            let issues: Vec<devboy_core::Issue> = serde_json::from_value(json_value)?;
+            let result = budget::process_issues(&issues, strategy_kind, &budget_config)?;
+            if use_toon {
+                result.content
+            } else {
+                let included: Vec<_> = issues.into_iter().take(result.included_items).collect();
+                serde_json::to_string_pretty(&included)?
+            }
+        }
+        "merge_requests" => {
+            let mrs: Vec<devboy_core::MergeRequest> = serde_json::from_value(json_value)?;
+            let trimmed = trim_to_budget(&mrs, budget, |items| {
+                toon::encode_merge_requests(items, trim_level)
+            })?;
+            if use_toon {
+                toon::encode_merge_requests(&trimmed, trim_level)?
+            } else {
+                serde_json::to_string_pretty(&trimmed)?
+            }
+        }
+        "diffs" => {
+            let diffs: Vec<devboy_core::FileDiff> = serde_json::from_value(json_value)?;
+            let trimmed = trim_to_budget(&diffs, budget, toon::encode_diffs)?;
+            if use_toon {
+                toon::encode_diffs(&trimmed)?
+            } else {
+                serde_json::to_string_pretty(&trimmed)?
+            }
+        }
+        "comments" => {
+            let comments: Vec<devboy_core::Comment> = serde_json::from_value(json_value)?;
+            let trimmed = trim_to_budget(&comments, budget, toon::encode_comments)?;
+            if use_toon {
+                toon::encode_comments(&trimmed)?
+            } else {
+                serde_json::to_string_pretty(&trimmed)?
+            }
+        }
+        "discussions" => {
+            let discussions: Vec<devboy_core::Discussion> = serde_json::from_value(json_value)?;
+            let trimmed = trim_to_budget(&discussions, budget, |items| {
+                toon::encode_discussions(items)
+            })?;
+            if use_toon {
+                toon::encode_discussions(&trimmed)?
+            } else {
+                serde_json::to_string_pretty(&trimmed)?
+            }
+        }
+        _ => {
+            if use_toon {
+                toon::encode_value(&json_value)?
+            } else {
+                serde_json::to_string_pretty(&json_value)?
+            }
+        }
+    };
+
+    let output_tokens = estimate_tokens(&output);
+    println!("{output}");
+
+    if stats {
+        let savings = calc_savings(json_tokens, output_tokens);
+        eprintln!("--- Format Pipeline Stats ---");
+        eprintln!("Type:     {detected_type}");
+        eprintln!("Strategy: {}", strategy_kind.as_str());
+        eprintln!("Level:    {level}");
+        eprintln!("Budget:   {budget} tokens");
+        eprintln!(
+            "Input:    {json_tokens} tokens ({} chars)",
+            json_string.len()
+        );
+        eprintln!("Output:   {output_tokens} tokens ({} chars)", output.len());
+        eprintln!("Savings:  {savings:.1}%");
+        eprintln!(
+            "Pages:    {} (JSON would need {})",
+            output_tokens.div_ceil(budget),
+            json_tokens.div_ceil(budget)
+        );
+    }
+
+    Ok(())
+}
+
+/// Trim a slice of items to fit within a token budget.
+/// Uses the provided encoder to estimate tokens, then keeps as many items as fit.
+fn trim_to_budget<T: Clone>(
+    items: &[T],
+    budget: usize,
+    encode: impl Fn(&[T]) -> devboy_core::Result<String>,
+) -> Result<Vec<T>> {
+    let encoded = encode(items)?;
+    let tokens = devboy_format_pipeline::token_counter::estimate_tokens(&encoded);
+    if tokens <= budget {
+        return Ok(items.to_vec());
+    }
+    // Proportional trimming
+    let ratio = budget as f64 / tokens as f64;
+    let keep = ((items.len() as f64 * ratio) as usize).max(1);
+    Ok(items[..keep].to_vec())
+}
+
+/// Auto-detect data type from JSON structure.
+fn detect_data_type(value: &serde_json::Value) -> &'static str {
+    if let Some(arr) = value.as_array()
+        && let Some(first) = arr.first()
+        && let Some(obj) = first.as_object()
+    {
+        if obj.contains_key("diff") && obj.contains_key("file_path") {
+            return "diffs";
+        }
+        if obj.contains_key("resolved") && obj.contains_key("comments") {
+            return "discussions";
+        }
+        if obj.contains_key("source_branch") && obj.contains_key("target_branch") {
+            return "merge_requests";
+        }
+        if obj.contains_key("key") && obj.contains_key("title") {
+            return "issues";
+        }
+        if obj.contains_key("body") && obj.contains_key("author") {
+            return "comments";
+        }
+    }
+    "unknown"
 }
 
 #[cfg(test)]
@@ -2865,10 +3333,12 @@ mod tests {
 
         let result = apply_tools_disable(&mut config, &names);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("whitelist (enabled) mode is active"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("whitelist (enabled) mode is active")
+        );
     }
 
     // -- enable tests --
@@ -2907,10 +3377,12 @@ mod tests {
 
         let result = apply_tools_enable(&mut config, &names);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("whitelist (enabled) mode is active"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("whitelist (enabled) mode is active")
+        );
     }
 
     // -- reset tests --
@@ -3362,10 +3834,12 @@ mod tests {
         let result = register_claude_mcp_to_test_path("devboy", tmp_dir.path());
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not a JSON object"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not a JSON object")
+        );
     }
 
     #[test]
@@ -3590,5 +4064,87 @@ mod tests {
         let context = builder.build().unwrap();
         let cu = context.clickup.unwrap();
         assert_eq!(cu.list_id, "abc123");
+    }
+
+    // =========================================================================
+    // Format Pipeline (pipe mode) tests
+    // =========================================================================
+
+    #[test]
+    fn test_detect_data_type_issues() {
+        let json: serde_json::Value = serde_json::json!([
+            {"key": "gh#1", "title": "Bug", "state": "open"}
+        ]);
+        assert_eq!(detect_data_type(&json), "issues");
+    }
+
+    #[test]
+    fn test_detect_data_type_merge_requests() {
+        let json: serde_json::Value = serde_json::json!([
+            {"key": "pr#1", "title": "Fix", "source_branch": "feat", "target_branch": "main"}
+        ]);
+        assert_eq!(detect_data_type(&json), "merge_requests");
+    }
+
+    #[test]
+    fn test_detect_data_type_diffs() {
+        let json: serde_json::Value = serde_json::json!([
+            {"file_path": "src/main.rs", "diff": "+line"}
+        ]);
+        assert_eq!(detect_data_type(&json), "diffs");
+    }
+
+    #[test]
+    fn test_detect_data_type_discussions() {
+        let json: serde_json::Value = serde_json::json!([
+            {"id": "d1", "resolved": false, "comments": []}
+        ]);
+        assert_eq!(detect_data_type(&json), "discussions");
+    }
+
+    #[test]
+    fn test_detect_data_type_comments() {
+        let json: serde_json::Value = serde_json::json!([
+            {"id": "c1", "body": "LGTM", "author": null}
+        ]);
+        assert_eq!(detect_data_type(&json), "comments");
+    }
+
+    #[test]
+    fn test_detect_data_type_unknown() {
+        let json: serde_json::Value = serde_json::json!({"foo": "bar"});
+        assert_eq!(detect_data_type(&json), "unknown");
+    }
+
+    #[test]
+    fn test_detect_data_type_empty_array() {
+        let json: serde_json::Value = serde_json::json!([]);
+        assert_eq!(detect_data_type(&json), "unknown");
+    }
+
+    #[test]
+    fn test_trim_to_budget_fits() {
+        let items = vec![1, 2, 3];
+        let result = trim_to_budget(&items, 100000, |items| Ok(format!("{:?}", items))).unwrap();
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_trim_to_budget_trims() {
+        let items: Vec<String> = (0..100).map(|i| format!("item_{i}")).collect();
+        let result = trim_to_budget(&items, 10, |items| {
+            // Each item ~7 chars → ~2 tokens. 100 items → 200 tokens
+            Ok(items.join(","))
+        })
+        .unwrap();
+        assert!(result.len() < 100);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_trim_to_budget_keeps_at_least_one() {
+        let items = vec!["a very long string that exceeds budget".to_string()];
+        let result = trim_to_budget(&items, 1, |items| Ok(items.join(","))).unwrap();
+        assert_eq!(result.len(), 1);
     }
 }

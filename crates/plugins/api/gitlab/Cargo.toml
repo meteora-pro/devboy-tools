@@ -15,8 +15,13 @@ serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 tracing.workspace = true
+regex = "1"
+urlencoding = "2"
 
 [dev-dependencies]
 mockall.workspace = true
 httpmock.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

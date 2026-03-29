@@ -15,8 +15,14 @@ serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 tracing.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["serde"] }
+regex = "1"
+urlencoding = "2"
 
 [dev-dependencies]
 mockall.workspace = true
 httpmock.workspace = true
 tokio.workspace = true
+
+[lints]
+workspace = true

@@ -2,17 +2,17 @@
 
 use async_trait::async_trait;
 use devboy_core::{
-    Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, MergeRequestProvider,
-    Provider, Result, UpdateIssueInput, User,
+    Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, IssueStatus,
+    MergeRequestProvider, PipelineProvider, Provider, Result, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
+use crate::DEFAULT_CLICKUP_URL;
 use crate::types::{
     ClickUpComment, ClickUpCommentList, ClickUpListInfo, ClickUpPriority, ClickUpTask,
     ClickUpTaskList, ClickUpUser, CreateCommentRequest, CreateCommentResponse, CreateTaskRequest,
     UpdateTaskRequest,
 };
-use crate::DEFAULT_CLICKUP_URL;
 
 /// Maximum number of tasks per page in ClickUp API.
 const PAGE_SIZE: u32 = 100;
@@ -179,6 +179,17 @@ impl ClickUpClient {
                     status_type, self.list_id
                 ))
             })
+    }
+
+    /// Resolve a task key to its raw ClickUp task ID.
+    /// For `CU-{id}` keys, strips the prefix.
+    /// For custom IDs (e.g., `DEV-42`), returns as-is (ClickUp dependency API accepts custom IDs).
+    fn resolve_task_id(&self, key: &str) -> Result<String> {
+        if let Some(raw_id) = key.strip_prefix("CU-") {
+            Ok(raw_id.to_string())
+        } else {
+            Ok(key.to_string())
+        }
     }
 
     /// Build the URL for accessing a task by key.
@@ -402,10 +413,10 @@ impl IssueProvider for ClickUpClient {
             base_params.push(("order_by", cu_order_by.to_string()));
         }
 
-        if let Some(order) = &filter.sort_order {
-            if order == "asc" {
-                base_params.push(("reverse", "true".to_string()));
-            }
+        if let Some(order) = &filter.sort_order
+            && order == "asc"
+        {
+            base_params.push(("reverse", "true".to_string()));
         }
 
         // Fetch all needed pages
@@ -491,16 +502,16 @@ impl IssueProvider for ClickUpClient {
             for attempt in 1..=3u64 {
                 tokio::time::sleep(std::time::Duration::from_millis(300 * attempt)).await;
                 let fetch_url = format!("{}/task/{}", self.base_url, task_id);
-                if let Ok(fetched) = self.get::<ClickUpTask>(&fetch_url).await {
-                    if fetched.custom_id.is_some() {
-                        debug!(
-                            task_id = task_id,
-                            custom_id = ?fetched.custom_id,
-                            attempt = attempt,
-                            "Got custom_id after retry"
-                        );
-                        return Ok(map_task(&fetched));
-                    }
+                if let Ok(fetched) = self.get::<ClickUpTask>(&fetch_url).await
+                    && fetched.custom_id.is_some()
+                {
+                    debug!(
+                        task_id = task_id,
+                        custom_id = ?fetched.custom_id,
+                        attempt = attempt,
+                        "Got custom_id after retry"
+                    );
+                    return Ok(map_task(&fetched));
                 }
             }
             warn!(
@@ -570,6 +581,62 @@ impl IssueProvider for ClickUpClient {
         })
     }
 
+    async fn get_statuses(&self) -> Result<Vec<IssueStatus>> {
+        let url = format!("{}/list/{}", self.base_url, self.list_id);
+        let list_info: ClickUpListInfo = self.get(&url).await?;
+
+        let statuses = list_info
+            .statuses
+            .iter()
+            .enumerate()
+            .map(|(idx, s)| {
+                let category = match s.status_type.as_deref() {
+                    Some("open") => "open".to_string(),
+                    Some("closed") | Some("done") => "done".to_string(),
+                    Some("custom") => "in_progress".to_string(),
+                    _ => "custom".to_string(),
+                };
+                IssueStatus {
+                    id: s.status.clone(),
+                    name: s.status.clone(),
+                    category,
+                    color: s.color.clone(),
+                    order: s.orderindex.or(Some(idx as u32)),
+                }
+            })
+            .collect();
+
+        Ok(statuses)
+    }
+
+    async fn link_issues(&self, source_key: &str, target_key: &str, link_type: &str) -> Result<()> {
+        let source_id = self.resolve_task_id(source_key)?;
+        let target_id = self.resolve_task_id(target_key)?;
+
+        match link_type {
+            "blocks" => {
+                // source blocks target → target depends_on source
+                let url = format!("{}/task/{}/dependency", self.base_url, target_id);
+                let body = serde_json::json!({ "depends_on": source_id });
+                let _: serde_json::Value = self.post(&url, &body).await?;
+            }
+            "blocked_by" => {
+                // source is blocked by target → source depends_on target
+                let url = format!("{}/task/{}/dependency", self.base_url, source_id);
+                let body = serde_json::json!({ "depends_on": target_id });
+                let _: serde_json::Value = self.post(&url, &body).await?;
+            }
+            _ => {
+                // Link tasks (non-dependency relationship)
+                let url = format!("{}/task/{}/link/{}", self.base_url, source_id, target_id);
+                let body = serde_json::json!({});
+                let _: serde_json::Value = self.post(&url, &body).await?;
+            }
+        }
+
+        Ok(())
+    }
+
     fn provider_name(&self) -> &'static str {
         "clickup"
     }
@@ -577,6 +644,13 @@ impl IssueProvider for ClickUpClient {
 
 #[async_trait]
 impl MergeRequestProvider for ClickUpClient {
+    fn provider_name(&self) -> &'static str {
+        "clickup"
+    }
+}
+
+#[async_trait]
+impl PipelineProvider for ClickUpClient {
     fn provider_name(&self) -> &'static str {
         "clickup"
     }

@@ -17,13 +17,15 @@ pub enum ToolCategory {
     Issues,
     /// Tools that require a merge request provider (GitLab, GitHub).
     MergeRequests,
+    /// Tools that require a meeting notes provider (Fireflies).
+    MeetingNotes,
 }
 
 use devboy_core::{
     CodePosition, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, IssueFilter,
     IssueProvider, MergeRequestProvider, MrFilter, Provider, UpdateIssueInput,
 };
-use devboy_pipeline::{OutputFormat, Pipeline, PipelineConfig};
+use devboy_format_pipeline::{OutputFormat, Pipeline, PipelineConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -124,8 +126,8 @@ define_tools! {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "compact", "json"],
-                    "description": "Output format (default: markdown)"
+                    "enum": ["toon", "json"],
+                    "description": "Output format (default: toon)"
                 },
                 "provider": {
                     "type": "string",
@@ -159,8 +161,8 @@ define_tools! {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "compact", "json"],
-                    "description": "Output format (default: markdown)"
+                    "enum": ["toon", "json"],
+                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -179,8 +181,8 @@ define_tools! {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "compact", "json"],
-                    "description": "Output format (default: markdown)"
+                    "enum": ["toon", "json"],
+                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -317,8 +319,8 @@ define_tools! {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "compact", "json"],
-                    "description": "Output format (default: markdown)"
+                    "enum": ["toon", "json"],
+                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -337,8 +339,8 @@ define_tools! {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "compact", "json"],
-                    "description": "Output format (default: markdown)"
+                    "enum": ["toon", "json"],
+                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -368,8 +370,8 @@ define_tools! {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "compact", "json"],
-                    "description": "Output format (default: markdown)"
+                    "enum": ["toon", "json"],
+                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -388,8 +390,8 @@ define_tools! {
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["markdown", "compact", "json"],
-                    "description": "Output format (default: markdown)"
+                    "enum": ["toon", "json"],
+                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -479,6 +481,171 @@ define_tools! {
                 }
             }
         }
+    },
+
+    // =====================================================================
+    // Pipeline / CI
+    // =====================================================================
+
+    "get_pipeline" => handle_get_pipeline {
+        category: ToolCategory::MergeRequests,
+        description: "Get CI/CD pipeline status for a branch or MR/PR. Returns job statuses grouped by stage/workflow with smart error extraction for failed jobs.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "type": "string",
+                    "description": "Branch name (e.g., 'main', 'feat/DEV-123'). If neither branch nor mrKey provided, uses default branch."
+                },
+                "mrKey": {
+                    "type": "string",
+                    "description": "MR/PR key (e.g., 'mr#123', 'pr#456'). Takes priority over branch."
+                },
+                "includeFailedLogs": {
+                    "type": "boolean",
+                    "description": "Include smart error extraction for failed jobs (default: true)"
+                }
+            }
+        }
+    },
+
+    "get_job_logs" => handle_get_job_logs {
+        category: ToolCategory::MergeRequests,
+        description: "Get detailed CI/CD job logs. Modes: smart (auto error extraction), search (pattern matching), paginated (line range), full (entire log).",
+        schema: {
+            "type": "object",
+            "required": ["jobId"],
+            "properties": {
+                "jobId": {
+                    "type": "string",
+                    "description": "Job ID from get_pipeline response"
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Regex/keyword to search in logs. Returns matches with context."
+                },
+                "context": {
+                    "type": "integer",
+                    "description": "Lines of context around each search match (default: 5)"
+                },
+                "maxMatches": {
+                    "type": "integer",
+                    "description": "Maximum number of search results (default: 20)"
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Start line number for paginated browsing"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of lines to return (default: 200, max: 1000)"
+                },
+                "full": {
+                    "type": "boolean",
+                    "description": "Return entire log (can be very large)"
+                }
+            }
+        }
+    },
+
+    // =====================================================================
+    // Meeting Notes
+    // =====================================================================
+
+    "get_meeting_notes" => handle_get_meeting_notes {
+        category: ToolCategory::MeetingNotes,
+        description: "Get meeting notes and transcripts with optional filters (date range, participants, host).",
+        schema: {
+            "type": "object",
+            "properties": {
+                "from_date": {
+                    "type": "string",
+                    "description": "Filter from date (ISO 8601, e.g., '2025-01-01T00:00:00Z')"
+                },
+                "to_date": {
+                    "type": "string",
+                    "description": "Filter to date (ISO 8601)"
+                },
+                "participants": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Filter by participant email addresses"
+                },
+                "host_email": {
+                    "type": "string",
+                    "description": "Filter by host email"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results (default: 50)",
+                    "minimum": 1,
+                    "maximum": 50
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Number of results to skip (default: 0)",
+                    "minimum": 0
+                }
+            }
+        }
+    },
+
+    "get_meeting_transcript" => handle_get_meeting_transcript {
+        category: ToolCategory::MeetingNotes,
+        description: "Get the full transcript for a meeting. Returns speaker-attributed sentences with timestamps.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "meeting_id": {
+                    "type": "string",
+                    "description": "Meeting ID from get_meeting_notes"
+                }
+            },
+            "required": ["meeting_id"]
+        }
+    },
+
+    "search_meeting_notes" => handle_search_meeting_notes {
+        category: ToolCategory::MeetingNotes,
+        description: "Search across meetings by keywords, topics, or action items.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query"
+                },
+                "from_date": {
+                    "type": "string",
+                    "description": "Filter from date (ISO 8601)"
+                },
+                "to_date": {
+                    "type": "string",
+                    "description": "Filter to date (ISO 8601)"
+                },
+                "participants": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Filter by participant email addresses"
+                },
+                "host_email": {
+                    "type": "string",
+                    "description": "Filter by host email"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results (default: 50)",
+                    "minimum": 1,
+                    "maximum": 50
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Number of results to skip (default: 0)",
+                    "minimum": 0
+                }
+            },
+            "required": ["query"]
+        }
     };
 
     // Context management (handled by McpServer, not ToolHandler)
@@ -493,6 +660,7 @@ fn get_provider_name(provider: &dyn Provider) -> &'static str {
 /// Tool handler that executes tools using providers.
 pub struct ToolHandler {
     providers: Vec<Arc<dyn Provider>>,
+    meeting_providers: Vec<Arc<dyn devboy_core::MeetingNotesProvider>>,
     pipeline_config: PipelineConfig,
 }
 
@@ -501,14 +669,29 @@ impl ToolHandler {
     pub fn new(providers: Vec<Arc<dyn Provider>>) -> Self {
         Self {
             providers,
+            meeting_providers: Vec::new(),
             pipeline_config: PipelineConfig::default(),
         }
+    }
+
+    /// Add meeting notes providers (e.g., Fireflies).
+    pub fn with_meeting_providers(
+        mut self,
+        providers: Vec<Arc<dyn devboy_core::MeetingNotesProvider>>,
+    ) -> Self {
+        self.meeting_providers = providers;
+        self
     }
 
     /// Create with custom pipeline configuration.
     pub fn with_pipeline_config(mut self, config: PipelineConfig) -> Self {
         self.pipeline_config = config;
         self
+    }
+
+    /// Check if meeting notes providers are configured.
+    pub fn has_meeting_providers(&self) -> bool {
+        !self.meeting_providers.is_empty()
     }
 
     // =========================================================================
@@ -763,7 +946,7 @@ impl ToolHandler {
                 Err(e) => return ToolCallResult::error(format!("Invalid parameters: {}", e)),
             },
             None => {
-                return ToolCallResult::error("Missing required parameters: key, body".to_string())
+                return ToolCallResult::error("Missing required parameters: key, body".to_string());
             }
         };
 
@@ -900,12 +1083,12 @@ impl ToolHandler {
             return ToolCallResult::error("No providers configured".to_string());
         }
 
-        if let Some(limit) = params.limit {
-            if limit == 0 || limit > 100 {
-                return ToolCallResult::error(
-                    "Invalid parameters: limit must be between 1 and 100".to_string(),
-                );
-            }
+        if let Some(limit) = params.limit
+            && (limit == 0 || limit > 100)
+        {
+            return ToolCallResult::error(
+                "Invalid parameters: limit must be between 1 and 100".to_string(),
+            );
         }
 
         for provider in &self.providers {
@@ -1004,7 +1187,7 @@ impl ToolHandler {
             None => {
                 return ToolCallResult::error(
                     "Missing required parameters: title, source_branch, target_branch".to_string(),
-                )
+                );
             }
         };
 
@@ -1076,7 +1259,7 @@ impl ToolHandler {
                 Err(e) => return ToolCallResult::error(format!("Invalid parameters: {}", e)),
             },
             None => {
-                return ToolCallResult::error("Missing required parameters: key, body".to_string())
+                return ToolCallResult::error("Missing required parameters: key, body".to_string());
             }
         };
 
@@ -1124,6 +1307,277 @@ impl ToolHandler {
     }
 
     // =========================================================================
+    // PIPELINE HANDLERS
+    // =========================================================================
+
+    async fn handle_get_pipeline(&self, arguments: Option<Value>) -> ToolCallResult {
+        let params: GetPipelineParams = arguments
+            .map(|v| serde_json::from_value(v).unwrap_or_default())
+            .unwrap_or_default();
+
+        if self.providers.is_empty() {
+            return ToolCallResult::error("No providers configured".to_string());
+        }
+
+        let input = devboy_core::GetPipelineInput {
+            branch: params.branch,
+            mr_key: params.mr_key,
+            include_failed_logs: params.include_failed_logs.unwrap_or(true),
+        };
+
+        for provider in &self.providers {
+            match devboy_core::PipelineProvider::get_pipeline(provider.as_ref(), input.clone())
+                .await
+            {
+                Ok(info) => {
+                    let output = devboy_executor::ToolOutput::Pipeline(Box::new(info));
+                    return match devboy_executor::format_output(
+                        output,
+                        params.format.as_deref(),
+                        Some("get_pipeline"),
+                        None,
+                    ) {
+                        Ok(result) => ToolCallResult::text(result.content),
+                        Err(e) => ToolCallResult::error(format!("Format error: {}", e)),
+                    };
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "Provider {} failed: {}",
+                        get_provider_name(provider.as_ref()),
+                        e
+                    );
+                }
+            }
+        }
+
+        ToolCallResult::error("No pipeline found".to_string())
+    }
+
+    async fn handle_get_job_logs(&self, arguments: Option<Value>) -> ToolCallResult {
+        let params: GetJobLogsParams = match arguments {
+            Some(v) => match serde_json::from_value(v) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("Invalid parameters: {}", e)),
+            },
+            None => return ToolCallResult::error("Missing required parameter: jobId".to_string()),
+        };
+
+        if self.providers.is_empty() {
+            return ToolCallResult::error("No providers configured".to_string());
+        }
+
+        let mode = if let Some(ref pattern) = params.pattern {
+            devboy_core::JobLogMode::Search {
+                pattern: pattern.clone(),
+                context: params.context.unwrap_or(5),
+                max_matches: params.max_matches.unwrap_or(20),
+            }
+        } else if params.full.unwrap_or(false) {
+            devboy_core::JobLogMode::Full {
+                max_lines: params.limit.unwrap_or(10000),
+            }
+        } else if params.offset.is_some() || params.limit.is_some() {
+            devboy_core::JobLogMode::Paginated {
+                offset: params.offset.unwrap_or(0),
+                limit: params.limit.unwrap_or(200),
+            }
+        } else {
+            devboy_core::JobLogMode::Smart
+        };
+
+        let options = devboy_core::JobLogOptions { mode };
+
+        for provider in &self.providers {
+            match devboy_core::PipelineProvider::get_job_logs(
+                provider.as_ref(),
+                &params.job_id,
+                options.clone(),
+            )
+            .await
+            {
+                Ok(log) => {
+                    let output = devboy_executor::ToolOutput::JobLog(Box::new(log));
+                    return match devboy_executor::format_output(
+                        output,
+                        None,
+                        Some("get_job_logs"),
+                        None,
+                    ) {
+                        Ok(result) => ToolCallResult::text(result.content),
+                        Err(e) => ToolCallResult::error(format!("Format error: {}", e)),
+                    };
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "Provider {} failed: {}",
+                        get_provider_name(provider.as_ref()),
+                        e
+                    );
+                }
+            }
+        }
+
+        ToolCallResult::error(format!("Job logs not found: {}", params.job_id))
+    }
+
+    // =========================================================================
+    // MEETING NOTES HANDLERS
+    // =========================================================================
+
+    async fn handle_get_meeting_notes(&self, arguments: Option<Value>) -> ToolCallResult {
+        if self.meeting_providers.is_empty() {
+            return ToolCallResult::error("No meeting notes providers configured".to_string());
+        }
+
+        let params: GetMeetingNotesParams = arguments
+            .map(|v| serde_json::from_value(v).unwrap_or_default())
+            .unwrap_or_default();
+
+        let filter = devboy_core::MeetingFilter {
+            keyword: None,
+            from_date: params.from_date,
+            to_date: params.to_date,
+            participants: params.participants,
+            host_email: params.host_email,
+            limit: params.limit,
+            skip: params.offset,
+        };
+
+        let mut last_error: Option<String> = None;
+        for provider in &self.meeting_providers {
+            match provider.get_meetings(filter.clone()).await {
+                Ok(meetings) => {
+                    let output = devboy_executor::ToolOutput::MeetingNotes(meetings);
+                    return match devboy_executor::format_output(
+                        output,
+                        None,
+                        Some("get_meeting_notes"),
+                        None,
+                    ) {
+                        Ok(result) => ToolCallResult::text(result.content),
+                        Err(e) => ToolCallResult::error(format!("Format error: {e}")),
+                    };
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Meeting provider {} failed: {}",
+                        provider.provider_name(),
+                        e
+                    );
+                    last_error = Some(format!("{}: {}", provider.provider_name(), e));
+                }
+            }
+        }
+
+        ToolCallResult::error(
+            last_error.unwrap_or_else(|| "No meeting notes providers configured".to_string()),
+        )
+    }
+
+    async fn handle_get_meeting_transcript(&self, arguments: Option<Value>) -> ToolCallResult {
+        if self.meeting_providers.is_empty() {
+            return ToolCallResult::error("No meeting notes providers configured".to_string());
+        }
+
+        let params: GetMeetingTranscriptParams = match arguments {
+            Some(v) => match serde_json::from_value(v) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("Invalid params: {e}")),
+            },
+            None => return ToolCallResult::error("meeting_id is required".to_string()),
+        };
+
+        let mut last_error: Option<String> = None;
+        for provider in &self.meeting_providers {
+            match provider.get_transcript(&params.meeting_id).await {
+                Ok(transcript) => {
+                    let output =
+                        devboy_executor::ToolOutput::MeetingTranscript(Box::new(transcript));
+                    return match devboy_executor::format_output(
+                        output,
+                        None,
+                        Some("get_meeting_transcript"),
+                        None,
+                    ) {
+                        Ok(result) => ToolCallResult::text(result.content),
+                        Err(e) => ToolCallResult::error(format!("Format error: {e}")),
+                    };
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "Meeting provider {} failed: {}",
+                        provider.provider_name(),
+                        e
+                    );
+                    last_error = Some(format!("{}: {}", provider.provider_name(), e));
+                }
+            }
+        }
+
+        ToolCallResult::error(
+            last_error.unwrap_or_else(|| "No meeting notes providers configured".to_string()),
+        )
+    }
+
+    async fn handle_search_meeting_notes(&self, arguments: Option<Value>) -> ToolCallResult {
+        if self.meeting_providers.is_empty() {
+            return ToolCallResult::error("No meeting notes providers configured".to_string());
+        }
+
+        let params: SearchMeetingNotesParams = match arguments {
+            Some(v) => match serde_json::from_value(v) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("Invalid params: {e}")),
+            },
+            None => return ToolCallResult::error("query is required".to_string()),
+        };
+
+        let filter = devboy_core::MeetingFilter {
+            from_date: params.from_date,
+            to_date: params.to_date,
+            participants: params.participants,
+            host_email: params.host_email,
+            limit: params.limit,
+            skip: params.offset,
+            ..Default::default()
+        };
+
+        let mut last_error: Option<String> = None;
+        for provider in &self.meeting_providers {
+            match provider
+                .search_meetings(&params.query, filter.clone())
+                .await
+            {
+                Ok(meetings) => {
+                    let output = devboy_executor::ToolOutput::MeetingNotes(meetings);
+                    return match devboy_executor::format_output(
+                        output,
+                        None,
+                        Some("search_meeting_notes"),
+                        None,
+                    ) {
+                        Ok(result) => ToolCallResult::text(result.content),
+                        Err(e) => ToolCallResult::error(format!("Format error: {e}")),
+                    };
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "Meeting provider {} failed: {}",
+                        provider.provider_name(),
+                        e
+                    );
+                    last_error = Some(format!("{}: {}", provider.provider_name(), e));
+                }
+            }
+        }
+
+        ToolCallResult::error(
+            last_error.unwrap_or_else(|| "No meeting notes providers configured".to_string()),
+        )
+    }
+
+    // =========================================================================
     // HELPER METHODS
     // =========================================================================
 
@@ -1144,8 +1598,7 @@ impl ToolHandler {
     ) -> Pipeline {
         let output_format = match format.as_deref() {
             Some("json") => OutputFormat::Json,
-            Some("compact") => OutputFormat::Compact,
-            _ => OutputFormat::Markdown,
+            _ => OutputFormat::Toon,
         };
 
         Pipeline::with_config(PipelineConfig {
@@ -1263,6 +1716,56 @@ struct CreateMergeRequestCommentParams {
     line_type: Option<String>,
     commit_sha: Option<String>,
     discussion_id: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct GetPipelineParams {
+    branch: Option<String>,
+    #[serde(rename = "mrKey")]
+    mr_key: Option<String>,
+    #[serde(rename = "includeFailedLogs")]
+    include_failed_logs: Option<bool>,
+    format: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GetJobLogsParams {
+    #[serde(rename = "jobId")]
+    job_id: String,
+    pattern: Option<String>,
+    context: Option<usize>,
+    #[serde(rename = "maxMatches")]
+    max_matches: Option<usize>,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    full: Option<bool>,
+}
+
+// Meeting notes params
+#[derive(serde::Deserialize, Default)]
+struct GetMeetingNotesParams {
+    from_date: Option<String>,
+    to_date: Option<String>,
+    participants: Option<Vec<String>>,
+    host_email: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(serde::Deserialize)]
+struct GetMeetingTranscriptParams {
+    meeting_id: String,
+}
+
+#[derive(serde::Deserialize)]
+struct SearchMeetingNotesParams {
+    query: String,
+    from_date: Option<String>,
+    to_date: Option<String>,
+    participants: Option<Vec<String>>,
+    host_email: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
 }
 
 // =============================================================================
@@ -1471,6 +1974,13 @@ mod tests {
     }
 
     #[async_trait]
+    impl devboy_core::PipelineProvider for MockProvider {
+        fn provider_name(&self) -> &'static str {
+            "test"
+        }
+    }
+
+    #[async_trait]
     impl Provider for MockProvider {
         async fn get_current_user(&self) -> devboy_core::Result<User> {
             Ok(User {
@@ -1556,6 +2066,13 @@ mod tests {
 
         fn provider_name(&self) -> &'static str {
             MergeRequestProvider::provider_name(&self.base)
+        }
+    }
+
+    #[async_trait]
+    impl devboy_core::PipelineProvider for ManyDiscussionsProvider {
+        fn provider_name(&self) -> &'static str {
+            "test"
         }
     }
 
@@ -1910,8 +2427,8 @@ mod tests {
         let handler = ToolHandler::new(vec![]);
         let tools = handler.available_tools();
 
-        // 6 issue tools + 6 MR tools = 12 total
-        assert_eq!(tools.len(), 12);
+        // 6 issue tools + 6 MR tools + 2 pipeline tools + 3 meeting tools = 17 total
+        assert_eq!(tools.len(), 17);
     }
 
     #[tokio::test]
@@ -2306,11 +2823,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_issues_with_format_compact() {
+    async fn test_get_issues_with_format_toon() {
         let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
         let handler = ToolHandler::new(vec![provider]);
 
-        let args = serde_json::json!({"format": "compact"});
+        let args = serde_json::json!({"format": "toon"});
         let result = handler.execute("get_issues", Some(args)).await;
 
         assert!(result.is_error.is_none());
@@ -2327,7 +2844,7 @@ mod tests {
         let pipeline = handler.create_pipeline(&Some("json".to_string()));
         assert!(pipeline.transform_issues(vec![]).is_ok());
 
-        let pipeline = handler.create_pipeline(&Some("compact".to_string()));
+        let pipeline = handler.create_pipeline(&Some("toon".to_string()));
         assert!(pipeline.transform_issues(vec![]).is_ok());
 
         let pipeline = handler.create_pipeline(&None);
@@ -2337,14 +2854,14 @@ mod tests {
     #[tokio::test]
     async fn test_with_pipeline_config() {
         let _handler = ToolHandler::new(vec![]).with_pipeline_config(PipelineConfig {
-            format: OutputFormat::Compact,
+            format: OutputFormat::Toon,
             ..Default::default()
         });
 
         // The default format from config should be used as base
         let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
         let handler = ToolHandler::new(vec![provider]).with_pipeline_config(PipelineConfig {
-            format: OutputFormat::Compact,
+            format: OutputFormat::Toon,
             ..Default::default()
         });
 
@@ -2567,6 +3084,13 @@ mod tests {
     }
 
     #[async_trait]
+    impl devboy_core::PipelineProvider for FailingProvider {
+        fn provider_name(&self) -> &'static str {
+            "test"
+        }
+    }
+
+    #[async_trait]
     impl Provider for FailingProvider {
         async fn get_current_user(&self) -> devboy_core::Result<User> {
             Err(devboy_core::Error::Api {
@@ -2778,5 +3302,97 @@ mod tests {
             crate::protocol::ToolResultContent::Text { text } => text,
         };
         assert!(content.contains("Failed to create issue"));
+    }
+
+    // =========================================================================
+    // Pipeline handler tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_get_pipeline_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+        let result = handler.execute("get_pipeline", None).await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_pipeline_provider_unsupported() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let args = serde_json::json!({"branch": "main"});
+        let result = handler.execute("get_pipeline", Some(args)).await;
+        // MockProvider returns ProviderUnsupported for pipeline
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_job_logs_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+        let args = serde_json::json!({"jobId": "123"});
+        let result = handler.execute("get_job_logs", Some(args)).await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_job_logs_missing_params() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let result = handler.execute("get_job_logs", None).await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_job_logs_provider_unsupported() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let args = serde_json::json!({"jobId": "123"});
+        let result = handler.execute("get_job_logs", Some(args)).await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_job_logs_with_pattern() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let args = serde_json::json!({"jobId": "123", "pattern": "ERROR"});
+        let result = handler.execute("get_job_logs", Some(args)).await;
+        assert_eq!(result.is_error, Some(true)); // unsupported
+    }
+
+    #[tokio::test]
+    async fn test_get_job_logs_paginated() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let args = serde_json::json!({"jobId": "123", "offset": 10, "limit": 50});
+        let result = handler.execute("get_job_logs", Some(args)).await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_job_logs_full() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let args = serde_json::json!({"jobId": "123", "full": true});
+        let result = handler.execute("get_job_logs", Some(args)).await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_pipeline_with_mr_key() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let args = serde_json::json!({"mrKey": "pr#1"});
+        let result = handler.execute("get_pipeline", Some(args)).await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_pipeline_default_params() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+        let result = handler
+            .execute("get_pipeline", Some(serde_json::json!({})))
+            .await;
+        assert_eq!(result.is_error, Some(true));
     }
 }

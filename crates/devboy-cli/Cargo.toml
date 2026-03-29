@@ -19,6 +19,8 @@ devboy-github = { path = "../plugins/api/github" }
 devboy-gitlab = { path = "../plugins/api/gitlab" }
 devboy-clickup = { path = "../plugins/api/clickup" }
 devboy-jira = { path = "../plugins/api/jira" }
+devboy-fireflies = { path = "../plugins/api/fireflies" }
+devboy-format-pipeline = { path = "../plugins/format-pipeline" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -42,3 +44,9 @@ tempfile.workspace = true
 serde_json.workspace = true
 httpmock.workspace = true
 devboy-pipeline = { path = "../plugins/pipeline" }
+temp-env = { version = "0.3", features = ["async_closure"] }
+async-trait.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

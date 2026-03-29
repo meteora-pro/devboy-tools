@@ -6,7 +6,11 @@
 //! `ProviderUnsupported` errors.
 
 mod client;
+pub mod enricher;
+pub mod metadata;
 mod types;
 
-pub use client::JiraClient;
+pub use client::{JiraClient, JiraFlavor};
+pub use enricher::JiraSchemaEnricher;
+pub use metadata::JiraMetadata;
 pub use types::*;
