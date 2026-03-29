@@ -16,6 +16,11 @@
   },
   {
     "type": "file",
+    "name": "doctor",
+    "label": "Doctor command"
+  },
+  {
+    "type": "file",
     "name": "proxy",
     "label": "MCP proxy"
   }
