@@ -43,7 +43,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tempfile.workspace = true
 serde_json.workspace = true
 httpmock.workspace = true
-devboy-pipeline = { path = "../plugins/pipeline" }
+devboy-format-pipeline = { path = "../plugins/format-pipeline" }
 temp-env = { version = "0.3", features = ["async_closure"] }
 async-trait.workspace = true
 serde.workspace = true
