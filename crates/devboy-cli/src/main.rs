@@ -232,20 +232,20 @@ enum Commands {
         #[arg(short = 't', long, value_name = "TYPE")]
         data_type: Option<String>,
 
-        /// Token budget (default: 8000)
+        /// Token budget (default: 8000, minimum: 1)
         #[arg(short, long, default_value = "8000")]
         budget: usize,
 
-        /// Trimming strategy: element_count, cascading, size_proportional, thread_level, head_tail, default
-        #[arg(short, long)]
+        /// Trimming strategy
+        #[arg(short, long, value_parser = ["element_count", "cascading", "size_proportional", "thread_level", "head_tail", "default"])]
         strategy: Option<String>,
 
-        /// Trim level: full, standard, minimal (default: full)
-        #[arg(short, long, default_value = "full")]
+        /// Trim level
+        #[arg(short, long, default_value = "full", value_parser = ["full", "standard", "minimal"])]
         level: String,
 
-        /// Output format: toon, json (default: toon)
-        #[arg(short, long, default_value = "toon")]
+        /// Output format (JSON mode still applies budget trimming)
+        #[arg(short, long, default_value = "toon", value_parser = ["toon", "json"])]
         format: String,
 
         /// Print token savings stats to stderr
@@ -3055,34 +3055,37 @@ fn run_format_pipeline(
     use devboy_format_pipeline::strategy::TrimStrategyKind;
     use devboy_format_pipeline::token_counter::estimate_tokens;
     use devboy_format_pipeline::toon::{self, TrimLevel};
-    use std::io::Read;
+    use std::io;
 
-    // Read JSON from stdin
-    let mut input = String::new();
-    std::io::stdin()
-        .read_to_string(&mut input)
-        .context("Failed to read from stdin")?;
-
-    let input = input.trim();
-    if input.is_empty() {
-        anyhow::bail!("Empty input. Pipe JSON data through stdin.");
+    if budget == 0 {
+        anyhow::bail!("Budget must be at least 1 token.");
     }
 
-    // Parse JSON
-    let json_value: serde_json::Value =
-        serde_json::from_str(input).context("Invalid JSON input")?;
+    // Parse JSON from stdin (streaming, no full buffering)
+    let stdin = io::stdin();
+    let stdin_lock = stdin.lock();
+    let json_value: serde_json::Value = serde_json::from_reader(stdin_lock).map_err(|err| {
+        if err.is_eof() {
+            anyhow::anyhow!("Empty input. Pipe JSON data through stdin.")
+        } else {
+            anyhow::anyhow!("Invalid JSON input: {err}")
+        }
+    })?;
 
-    // Detect data type
+    // Serialize for token counting (needed for stats comparison)
+    let json_string = serde_json::to_string(&json_value)?;
+    let json_tokens = estimate_tokens(&json_string);
+
     let detected_type = data_type.unwrap_or_else(|| detect_data_type(&json_value));
 
-    // Parse trim level
+    // Validated by clap value_parser
     let trim_level = match level {
         "standard" => TrimLevel::Standard,
         "minimal" => TrimLevel::Minimal,
         _ => TrimLevel::Full,
     };
 
-    // Parse strategy
+    // Validated by clap value_parser, or auto-detect from type
     let strategy_kind = strategy
         .and_then(TrimStrategyKind::parse)
         .unwrap_or(match detected_type {
@@ -3094,66 +3097,90 @@ fn run_format_pipeline(
             _ => TrimStrategyKind::Default,
         });
 
-    // Calculate JSON stats for comparison
-    let json_tokens = estimate_tokens(input);
+    let budget_config = BudgetConfig {
+        budget_tokens: budget,
+        ..Default::default()
+    };
+    let use_toon = format == "toon";
 
-    // Format output
-    let output = if format == "json" {
-        serde_json::to_string_pretty(&json_value)?
-    } else {
-        match detected_type {
-            "issues" => {
-                let issues: Vec<devboy_core::Issue> = serde_json::from_value(json_value)?;
-                let budget_config = BudgetConfig {
-                    budget_tokens: budget,
-                    ..Default::default()
-                };
-                let result = budget::process_issues(&issues, strategy_kind, &budget_config)?;
+    // Budget trimming applied for ALL types, not just issues.
+    // For issues: full budget pipeline with tree knapsack.
+    // For other types: proportional trimming to fit budget.
+    let output = match detected_type {
+        "issues" => {
+            let issues: Vec<devboy_core::Issue> = serde_json::from_value(json_value)?;
+            let result = budget::process_issues(&issues, strategy_kind, &budget_config)?;
+            if use_toon {
                 result.content
+            } else {
+                let included: Vec<_> = issues.into_iter().take(result.included_items).collect();
+                serde_json::to_string_pretty(&included)?
             }
-            "merge_requests" => {
-                let mrs: Vec<devboy_core::MergeRequest> = serde_json::from_value(json_value)?;
-                toon::encode_merge_requests(&mrs, trim_level)?
+        }
+        "merge_requests" => {
+            let mrs: Vec<devboy_core::MergeRequest> = serde_json::from_value(json_value)?;
+            let trimmed = trim_to_budget(&mrs, budget, |items| {
+                toon::encode_merge_requests(items, trim_level)
+            })?;
+            if use_toon {
+                toon::encode_merge_requests(&trimmed, trim_level)?
+            } else {
+                serde_json::to_string_pretty(&trimmed)?
             }
-            "diffs" => {
-                let diffs: Vec<devboy_core::FileDiff> = serde_json::from_value(json_value)?;
-                toon::encode_diffs(&diffs)?
+        }
+        "diffs" => {
+            let diffs: Vec<devboy_core::FileDiff> = serde_json::from_value(json_value)?;
+            let trimmed = trim_to_budget(&diffs, budget, toon::encode_diffs)?;
+            if use_toon {
+                toon::encode_diffs(&trimmed)?
+            } else {
+                serde_json::to_string_pretty(&trimmed)?
             }
-            "comments" => {
-                let comments: Vec<devboy_core::Comment> = serde_json::from_value(json_value)?;
-                toon::encode_comments(&comments)?
+        }
+        "comments" => {
+            let comments: Vec<devboy_core::Comment> = serde_json::from_value(json_value)?;
+            let trimmed = trim_to_budget(&comments, budget, toon::encode_comments)?;
+            if use_toon {
+                toon::encode_comments(&trimmed)?
+            } else {
+                serde_json::to_string_pretty(&trimmed)?
             }
-            "discussions" => {
-                let discussions: Vec<devboy_core::Discussion> = serde_json::from_value(json_value)?;
-                toon::encode_discussions(&discussions)?
+        }
+        "discussions" => {
+            let discussions: Vec<devboy_core::Discussion> = serde_json::from_value(json_value)?;
+            let trimmed = trim_to_budget(&discussions, budget, |items| {
+                toon::encode_discussions(items)
+            })?;
+            if use_toon {
+                toon::encode_discussions(&trimmed)?
+            } else {
+                serde_json::to_string_pretty(&trimmed)?
             }
-            _ => toon::encode_value(&json_value)?,
+        }
+        _ => {
+            if use_toon {
+                toon::encode_value(&json_value)?
+            } else {
+                serde_json::to_string_pretty(&json_value)?
+            }
         }
     };
 
     let output_tokens = estimate_tokens(&output);
-
-    // Print output to stdout
     println!("{output}");
 
-    // Print stats to stderr
     if stats {
-        let savings = if json_tokens > 0 {
-            (1.0 - output_tokens as f64 / json_tokens as f64) * 100.0
-        } else {
-            0.0
-        };
+        let savings = calc_savings(json_tokens, output_tokens);
         eprintln!("--- Format Pipeline Stats ---");
         eprintln!("Type:     {detected_type}");
         eprintln!("Strategy: {}", strategy_kind.as_str());
         eprintln!("Level:    {level}");
         eprintln!("Budget:   {budget} tokens");
-        eprintln!("Input:    {} tokens ({} chars)", json_tokens, input.len());
         eprintln!(
-            "Output:   {} tokens ({} chars)",
-            output_tokens,
-            output.len()
+            "Input:    {json_tokens} tokens ({} chars)",
+            json_string.len()
         );
+        eprintln!("Output:   {output_tokens} tokens ({} chars)", output.len());
         eprintln!("Savings:  {savings:.1}%");
         eprintln!(
             "Pages:    {} (JSON would need {})",
@@ -3163,6 +3190,24 @@ fn run_format_pipeline(
     }
 
     Ok(())
+}
+
+/// Trim a slice of items to fit within a token budget.
+/// Uses the provided encoder to estimate tokens, then keeps as many items as fit.
+fn trim_to_budget<T: Clone>(
+    items: &[T],
+    budget: usize,
+    encode: impl Fn(&[T]) -> devboy_core::Result<String>,
+) -> Result<Vec<T>> {
+    let encoded = encode(items)?;
+    let tokens = devboy_format_pipeline::token_counter::estimate_tokens(&encoded);
+    if tokens <= budget {
+        return Ok(items.to_vec());
+    }
+    // Proportional trimming
+    let ratio = budget as f64 / tokens as f64;
+    let keep = ((items.len() as f64 * ratio) as usize).max(1);
+    Ok(items[..keep].to_vec())
 }
 
 /// Auto-detect data type from JSON structure.
@@ -3972,5 +4017,87 @@ mod tests {
         let context = builder.build().unwrap();
         let cu = context.clickup.unwrap();
         assert_eq!(cu.list_id, "abc123");
+    }
+
+    // =========================================================================
+    // Format Pipeline (pipe mode) tests
+    // =========================================================================
+
+    #[test]
+    fn test_detect_data_type_issues() {
+        let json: serde_json::Value = serde_json::json!([
+            {"key": "gh#1", "title": "Bug", "state": "open"}
+        ]);
+        assert_eq!(detect_data_type(&json), "issues");
+    }
+
+    #[test]
+    fn test_detect_data_type_merge_requests() {
+        let json: serde_json::Value = serde_json::json!([
+            {"key": "pr#1", "title": "Fix", "source_branch": "feat", "target_branch": "main"}
+        ]);
+        assert_eq!(detect_data_type(&json), "merge_requests");
+    }
+
+    #[test]
+    fn test_detect_data_type_diffs() {
+        let json: serde_json::Value = serde_json::json!([
+            {"file_path": "src/main.rs", "diff": "+line"}
+        ]);
+        assert_eq!(detect_data_type(&json), "diffs");
+    }
+
+    #[test]
+    fn test_detect_data_type_discussions() {
+        let json: serde_json::Value = serde_json::json!([
+            {"id": "d1", "resolved": false, "comments": []}
+        ]);
+        assert_eq!(detect_data_type(&json), "discussions");
+    }
+
+    #[test]
+    fn test_detect_data_type_comments() {
+        let json: serde_json::Value = serde_json::json!([
+            {"id": "c1", "body": "LGTM", "author": null}
+        ]);
+        assert_eq!(detect_data_type(&json), "comments");
+    }
+
+    #[test]
+    fn test_detect_data_type_unknown() {
+        let json: serde_json::Value = serde_json::json!({"foo": "bar"});
+        assert_eq!(detect_data_type(&json), "unknown");
+    }
+
+    #[test]
+    fn test_detect_data_type_empty_array() {
+        let json: serde_json::Value = serde_json::json!([]);
+        assert_eq!(detect_data_type(&json), "unknown");
+    }
+
+    #[test]
+    fn test_trim_to_budget_fits() {
+        let items = vec![1, 2, 3];
+        let result = trim_to_budget(&items, 100000, |items| Ok(format!("{:?}", items))).unwrap();
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_trim_to_budget_trims() {
+        let items: Vec<String> = (0..100).map(|i| format!("item_{i}")).collect();
+        let result = trim_to_budget(&items, 10, |items| {
+            // Each item ~7 chars → ~2 tokens. 100 items → 200 tokens
+            Ok(items.join(","))
+        })
+        .unwrap();
+        assert!(result.len() < 100);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_trim_to_budget_keeps_at_least_one() {
+        let items = vec!["a very long string that exceeds budget".to_string()];
+        let result = trim_to_budget(&items, 1, |items| Ok(items.join(","))).unwrap();
+        assert_eq!(result.len(), 1);
     }
 }
