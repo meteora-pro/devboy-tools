@@ -17,6 +17,8 @@ pub enum ToolCategory {
     Issues,
     /// Tools that require a merge request provider (GitLab, GitHub).
     MergeRequests,
+    /// Tools that require a meeting notes provider (Fireflies).
+    MeetingNotes,
 }
 
 use devboy_core::{
@@ -544,6 +546,106 @@ define_tools! {
                 }
             }
         }
+    },
+
+    // =====================================================================
+    // Meeting Notes
+    // =====================================================================
+
+    "get_meeting_notes" => handle_get_meeting_notes {
+        category: ToolCategory::MeetingNotes,
+        description: "Get meeting notes and transcripts with optional filters (date range, participants, host).",
+        schema: {
+            "type": "object",
+            "properties": {
+                "from_date": {
+                    "type": "string",
+                    "description": "Filter from date (ISO 8601, e.g., '2025-01-01T00:00:00Z')"
+                },
+                "to_date": {
+                    "type": "string",
+                    "description": "Filter to date (ISO 8601)"
+                },
+                "participants": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Filter by participant email addresses"
+                },
+                "host_email": {
+                    "type": "string",
+                    "description": "Filter by host email"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results (default: 50)",
+                    "minimum": 1,
+                    "maximum": 50
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Number of results to skip (default: 0)",
+                    "minimum": 0
+                }
+            }
+        }
+    },
+
+    "get_meeting_transcript" => handle_get_meeting_transcript {
+        category: ToolCategory::MeetingNotes,
+        description: "Get the full transcript for a meeting. Returns speaker-attributed sentences with timestamps.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "meeting_id": {
+                    "type": "string",
+                    "description": "Meeting ID from get_meeting_notes"
+                }
+            },
+            "required": ["meeting_id"]
+        }
+    },
+
+    "search_meeting_notes" => handle_search_meeting_notes {
+        category: ToolCategory::MeetingNotes,
+        description: "Search across meetings by keywords, topics, or action items.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query"
+                },
+                "from_date": {
+                    "type": "string",
+                    "description": "Filter from date (ISO 8601)"
+                },
+                "to_date": {
+                    "type": "string",
+                    "description": "Filter to date (ISO 8601)"
+                },
+                "participants": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Filter by participant email addresses"
+                },
+                "host_email": {
+                    "type": "string",
+                    "description": "Filter by host email"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results (default: 50)",
+                    "minimum": 1,
+                    "maximum": 50
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Number of results to skip (default: 0)",
+                    "minimum": 0
+                }
+            },
+            "required": ["query"]
+        }
     };
 
     // Context management (handled by McpServer, not ToolHandler)
@@ -558,6 +660,7 @@ fn get_provider_name(provider: &dyn Provider) -> &'static str {
 /// Tool handler that executes tools using providers.
 pub struct ToolHandler {
     providers: Vec<Arc<dyn Provider>>,
+    meeting_providers: Vec<Arc<dyn devboy_core::MeetingNotesProvider>>,
     pipeline_config: PipelineConfig,
 }
 
@@ -566,14 +669,29 @@ impl ToolHandler {
     pub fn new(providers: Vec<Arc<dyn Provider>>) -> Self {
         Self {
             providers,
+            meeting_providers: Vec::new(),
             pipeline_config: PipelineConfig::default(),
         }
+    }
+
+    /// Add meeting notes providers (e.g., Fireflies).
+    pub fn with_meeting_providers(
+        mut self,
+        providers: Vec<Arc<dyn devboy_core::MeetingNotesProvider>>,
+    ) -> Self {
+        self.meeting_providers = providers;
+        self
     }
 
     /// Create with custom pipeline configuration.
     pub fn with_pipeline_config(mut self, config: PipelineConfig) -> Self {
         self.pipeline_config = config;
         self
+    }
+
+    /// Check if meeting notes providers are configured.
+    pub fn has_meeting_providers(&self) -> bool {
+        !self.meeting_providers.is_empty()
     }
 
     // =========================================================================
@@ -1304,6 +1422,162 @@ impl ToolHandler {
     }
 
     // =========================================================================
+    // MEETING NOTES HANDLERS
+    // =========================================================================
+
+    async fn handle_get_meeting_notes(&self, arguments: Option<Value>) -> ToolCallResult {
+        if self.meeting_providers.is_empty() {
+            return ToolCallResult::error("No meeting notes providers configured".to_string());
+        }
+
+        let params: GetMeetingNotesParams = arguments
+            .map(|v| serde_json::from_value(v).unwrap_or_default())
+            .unwrap_or_default();
+
+        let filter = devboy_core::MeetingFilter {
+            keyword: None,
+            from_date: params.from_date,
+            to_date: params.to_date,
+            participants: params.participants,
+            host_email: params.host_email,
+            limit: params.limit,
+            skip: params.offset,
+        };
+
+        let mut last_error: Option<String> = None;
+        for provider in &self.meeting_providers {
+            match provider.get_meetings(filter.clone()).await {
+                Ok(meetings) => {
+                    let output = devboy_executor::ToolOutput::MeetingNotes(meetings);
+                    return match devboy_executor::format_output(
+                        output,
+                        None,
+                        Some("get_meeting_notes"),
+                        None,
+                    ) {
+                        Ok(result) => ToolCallResult::text(result.content),
+                        Err(e) => ToolCallResult::error(format!("Format error: {e}")),
+                    };
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Meeting provider {} failed: {}",
+                        provider.provider_name(),
+                        e
+                    );
+                    last_error = Some(format!("{}: {}", provider.provider_name(), e));
+                }
+            }
+        }
+
+        ToolCallResult::error(
+            last_error.unwrap_or_else(|| "No meeting notes providers configured".to_string()),
+        )
+    }
+
+    async fn handle_get_meeting_transcript(&self, arguments: Option<Value>) -> ToolCallResult {
+        if self.meeting_providers.is_empty() {
+            return ToolCallResult::error("No meeting notes providers configured".to_string());
+        }
+
+        let params: GetMeetingTranscriptParams = match arguments {
+            Some(v) => match serde_json::from_value(v) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("Invalid params: {e}")),
+            },
+            None => return ToolCallResult::error("meeting_id is required".to_string()),
+        };
+
+        let mut last_error: Option<String> = None;
+        for provider in &self.meeting_providers {
+            match provider.get_transcript(&params.meeting_id).await {
+                Ok(transcript) => {
+                    let output =
+                        devboy_executor::ToolOutput::MeetingTranscript(Box::new(transcript));
+                    return match devboy_executor::format_output(
+                        output,
+                        None,
+                        Some("get_meeting_transcript"),
+                        None,
+                    ) {
+                        Ok(result) => ToolCallResult::text(result.content),
+                        Err(e) => ToolCallResult::error(format!("Format error: {e}")),
+                    };
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "Meeting provider {} failed: {}",
+                        provider.provider_name(),
+                        e
+                    );
+                    last_error = Some(format!("{}: {}", provider.provider_name(), e));
+                }
+            }
+        }
+
+        ToolCallResult::error(
+            last_error.unwrap_or_else(|| "No meeting notes providers configured".to_string()),
+        )
+    }
+
+    async fn handle_search_meeting_notes(&self, arguments: Option<Value>) -> ToolCallResult {
+        if self.meeting_providers.is_empty() {
+            return ToolCallResult::error("No meeting notes providers configured".to_string());
+        }
+
+        let params: SearchMeetingNotesParams = match arguments {
+            Some(v) => match serde_json::from_value(v) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("Invalid params: {e}")),
+            },
+            None => return ToolCallResult::error("query is required".to_string()),
+        };
+
+        let filter = devboy_core::MeetingFilter {
+            from_date: params.from_date,
+            to_date: params.to_date,
+            participants: params.participants,
+            host_email: params.host_email,
+            limit: params.limit,
+            skip: params.offset,
+            ..Default::default()
+        };
+
+        let mut last_error: Option<String> = None;
+        for provider in &self.meeting_providers {
+            match provider
+                .search_meetings(&params.query, filter.clone())
+                .await
+            {
+                Ok(meetings) => {
+                    let output = devboy_executor::ToolOutput::MeetingNotes(meetings);
+                    return match devboy_executor::format_output(
+                        output,
+                        None,
+                        Some("search_meeting_notes"),
+                        None,
+                    ) {
+                        Ok(result) => ToolCallResult::text(result.content),
+                        Err(e) => ToolCallResult::error(format!("Format error: {e}")),
+                    };
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "Meeting provider {} failed: {}",
+                        provider.provider_name(),
+                        e
+                    );
+                    last_error = Some(format!("{}: {}", provider.provider_name(), e));
+                }
+            }
+        }
+
+        ToolCallResult::error(
+            last_error.unwrap_or_else(|| "No meeting notes providers configured".to_string()),
+        )
+    }
+
+    // =========================================================================
     // HELPER METHODS
     // =========================================================================
 
@@ -1465,6 +1739,33 @@ struct GetJobLogsParams {
     offset: Option<usize>,
     limit: Option<usize>,
     full: Option<bool>,
+}
+
+// Meeting notes params
+#[derive(serde::Deserialize, Default)]
+struct GetMeetingNotesParams {
+    from_date: Option<String>,
+    to_date: Option<String>,
+    participants: Option<Vec<String>>,
+    host_email: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(serde::Deserialize)]
+struct GetMeetingTranscriptParams {
+    meeting_id: String,
+}
+
+#[derive(serde::Deserialize)]
+struct SearchMeetingNotesParams {
+    query: String,
+    from_date: Option<String>,
+    to_date: Option<String>,
+    participants: Option<Vec<String>>,
+    host_email: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
 }
 
 // =============================================================================
@@ -2126,8 +2427,8 @@ mod tests {
         let handler = ToolHandler::new(vec![]);
         let tools = handler.available_tools();
 
-        // 6 issue tools + 6 MR tools + 2 pipeline tools = 14 total
-        assert_eq!(tools.len(), 14);
+        // 6 issue tools + 6 MR tools + 2 pipeline tools + 3 meeting tools = 17 total
+        assert_eq!(tools.len(), 17);
     }
 
     #[tokio::test]

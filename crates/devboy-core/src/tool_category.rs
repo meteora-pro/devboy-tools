@@ -26,4 +26,8 @@ pub enum ToolCategory {
     /// Release tools: tags, releases, assets.
     /// Providers: GitLab, GitHub
     Releases,
+
+    /// Meeting notes tools: transcripts, summaries, search.
+    /// Providers: Fireflies
+    MeetingNotes,
 }

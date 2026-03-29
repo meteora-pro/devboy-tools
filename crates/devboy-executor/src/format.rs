@@ -151,6 +151,10 @@ pub fn format_output(
         ToolOutput::JobLog(log) => Ok(text_result(format_job_log(&log))),
         ToolOutput::Statuses(statuses) => Ok(text_result(format_statuses(&statuses))),
         ToolOutput::Users(users) => Ok(text_result(format_users(&users))),
+        ToolOutput::MeetingNotes(meetings) => Ok(text_result(format_meeting_notes(&meetings))),
+        ToolOutput::MeetingTranscript(transcript) => {
+            Ok(text_result(format_meeting_transcript(&transcript)))
+        }
         ToolOutput::Text(text) => Ok(text_result(text)),
     }
 }
@@ -200,6 +204,86 @@ fn format_users(users: &[devboy_core::User]) -> String {
     }
 
     output
+}
+
+/// Format meeting notes as markdown.
+fn format_meeting_notes(meetings: &[devboy_core::MeetingNote]) -> String {
+    if meetings.is_empty() {
+        return "No meeting notes found.".to_string();
+    }
+
+    let mut output = format!("# Meeting Notes ({} results)\n\n", meetings.len());
+
+    for m in meetings {
+        output.push_str(&format!("## {}\n", m.title));
+        if let Some(ref date) = m.meeting_date {
+            output.push_str(&format!("**Date:** {date}\n"));
+        }
+        if let Some(secs) = m.duration_seconds {
+            let mins = secs / 60;
+            output.push_str(&format!("**Duration:** {mins} min\n"));
+        }
+        if let Some(ref host) = m.host_email {
+            output.push_str(&format!("**Host:** {host}\n"));
+        }
+        if !m.participants.is_empty() {
+            output.push_str(&format!(
+                "**Participants:** {}\n",
+                m.participants.join(", ")
+            ));
+        }
+        if let Some(ref summary) = m.summary {
+            output.push_str(&format!("\n{summary}\n"));
+        }
+        if !m.action_items.is_empty() {
+            output.push_str("\n**Action Items:**\n");
+            for item in &m.action_items {
+                output.push_str(&format!("- {item}\n"));
+            }
+        }
+        if !m.keywords.is_empty() {
+            output.push_str(&format!("**Keywords:** {}\n", m.keywords.join(", ")));
+        }
+        output.push('\n');
+    }
+
+    output
+}
+
+/// Format a meeting transcript as compact text.
+fn format_meeting_transcript(transcript: &devboy_core::MeetingTranscript) -> String {
+    let title = transcript.title.as_deref().unwrap_or("Meeting Transcript");
+    let mut output = format!("# {title}\n\n");
+    output.push_str(&format!(
+        "Showing {} sentences\n\n",
+        transcript.sentences.len()
+    ));
+
+    for s in &transcript.sentences {
+        let fallback = if s.speaker_id.is_empty() {
+            "Unknown speaker".to_string()
+        } else {
+            format!("Speaker {}", s.speaker_id)
+        };
+        let speaker = s.speaker_name.as_deref().unwrap_or(&fallback);
+        let time = format_time(s.start_time);
+        output.push_str(&format!("[{time}] {speaker}: {}\n", s.text));
+    }
+
+    output
+}
+
+/// Format seconds as [MM:SS] or [HH:MM:SS].
+fn format_time(seconds: f64) -> String {
+    let total_secs = seconds as u64;
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let secs = total_secs % 60;
+    if hours > 0 {
+        format!("{hours:02}:{minutes:02}:{secs:02}")
+    } else {
+        format!("{minutes:02}:{secs:02}")
+    }
 }
 
 /// Format pipeline status as markdown.
@@ -840,5 +924,118 @@ mod tests {
             .unwrap()
             .content;
         assert_eq!(result, "raw text");
+    }
+
+    // --- Meeting notes formatting ---
+
+    #[test]
+    fn test_format_meeting_notes() {
+        let meetings = vec![devboy_core::MeetingNote {
+            id: "m1".into(),
+            title: "Sprint Planning".into(),
+            meeting_date: Some("2025-01-15T10:00:00Z".into()),
+            duration_seconds: Some(2700), // 45 min
+            host_email: Some("host@example.com".into()),
+            participants: vec!["alice@example.com".into(), "bob@example.com".into()],
+            action_items: vec!["Review PR #42".into(), "Update docs".into()],
+            keywords: vec!["sprint".into(), "planning".into()],
+            summary: Some("Discussed sprint goals.".into()),
+            ..Default::default()
+        }];
+        let output = ToolOutput::MeetingNotes(meetings);
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(result.contains("Sprint Planning"));
+        assert!(result.contains("2025-01-15T10:00:00Z"));
+        assert!(result.contains("45 min"));
+        assert!(result.contains("host@example.com"));
+        assert!(result.contains("alice@example.com"));
+        assert!(result.contains("Review PR #42"));
+        assert!(result.contains("Update docs"));
+        assert!(result.contains("sprint"));
+        assert!(result.contains("Discussed sprint goals."));
+    }
+
+    #[test]
+    fn test_format_meeting_notes_empty() {
+        let output = ToolOutput::MeetingNotes(vec![]);
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert_eq!(result, "No meeting notes found.");
+    }
+
+    #[test]
+    fn test_format_meeting_transcript() {
+        let transcript = devboy_core::MeetingTranscript {
+            meeting_id: "m1".into(),
+            title: Some("Sprint Planning".into()),
+            sentences: vec![
+                devboy_core::TranscriptSentence {
+                    speaker_id: "s1".into(),
+                    speaker_name: Some("Alice".into()),
+                    text: "Let's start the meeting.".into(),
+                    start_time: 0.0,
+                    end_time: 3.0,
+                },
+                devboy_core::TranscriptSentence {
+                    speaker_id: "s2".into(),
+                    speaker_name: Some("Bob".into()),
+                    text: "Sounds good.".into(),
+                    start_time: 5.0,
+                    end_time: 7.0,
+                },
+            ],
+        };
+        let output = ToolOutput::MeetingTranscript(Box::new(transcript));
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(result.contains("Sprint Planning"));
+        assert!(result.contains("2 sentences"));
+        assert!(result.contains("[00:00] Alice: Let's start the meeting."));
+        assert!(result.contains("[00:05] Bob: Sounds good."));
+    }
+
+    #[test]
+    fn test_format_meeting_transcript_unknown_speaker() {
+        let transcript = devboy_core::MeetingTranscript {
+            meeting_id: "m1".into(),
+            title: None,
+            sentences: vec![devboy_core::TranscriptSentence {
+                speaker_id: "".into(),
+                speaker_name: None,
+                text: "Hello".into(),
+                start_time: 0.0,
+                end_time: 1.0,
+            }],
+        };
+        let output = ToolOutput::MeetingTranscript(Box::new(transcript));
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(result.contains("Meeting Transcript"));
+        assert!(result.contains("Unknown speaker"));
+    }
+
+    // --- format_time edge cases ---
+
+    #[test]
+    fn test_format_time_zero() {
+        assert_eq!(format_time(0.0), "00:00");
+    }
+
+    #[test]
+    fn test_format_time_seconds_only() {
+        assert_eq!(format_time(45.0), "00:45");
+    }
+
+    #[test]
+    fn test_format_time_minutes_and_seconds() {
+        assert_eq!(format_time(125.0), "02:05");
+    }
+
+    #[test]
+    fn test_format_time_hours() {
+        assert_eq!(format_time(3661.0), "01:01:01");
+    }
+
+    #[test]
+    fn test_format_time_fractional_seconds() {
+        // Fractional seconds are truncated
+        assert_eq!(format_time(59.9), "00:59");
     }
 }

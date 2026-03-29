@@ -18,5 +18,10 @@
     "type": "file",
     "name": "jira",
     "label": "Jira"
+  },
+  {
+    "type": "file",
+    "name": "fireflies",
+    "label": "Fireflies.ai"
   }
 ]

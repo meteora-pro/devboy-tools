@@ -60,6 +60,10 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jira: Option<JiraConfig>,
 
+    /// Fireflies.ai configuration (meeting notes)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fireflies: Option<FirefliesConfig>,
+
     /// Named contexts (profiles) configuration.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub contexts: BTreeMap<String, ContextConfig>,
@@ -128,6 +132,10 @@ pub struct ContextConfig {
     /// Jira configuration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jira: Option<JiraConfig>,
+
+    /// Fireflies.ai configuration (meeting notes)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fireflies: Option<FirefliesConfig>,
 }
 
 /// GitHub provider configuration.
@@ -171,6 +179,13 @@ pub struct JiraConfig {
     pub project_key: String,
     /// User email (required for Jira auth)
     pub email: String,
+}
+
+/// Fireflies.ai provider configuration (meeting notes).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FirefliesConfig {
+    // API key is stored in OS keychain (key: "fireflies.token")
+    // No fields needed — config just enables the provider
 }
 
 /// Configuration for controlling which built-in tools are available.
@@ -422,6 +437,7 @@ impl Config {
             || self.gitlab.is_some()
             || self.clickup.is_some()
             || self.jira.is_some()
+            || self.fireflies.is_some()
             || self.contexts.values().any(ContextConfig::has_any_provider)
     }
 
@@ -499,6 +515,7 @@ impl Config {
             gitlab: self.gitlab.clone(),
             clickup: self.clickup.clone(),
             jira: self.jira.clone(),
+            fireflies: self.fireflies.clone(),
         };
 
         if ctx.has_any_provider() {
@@ -680,6 +697,7 @@ impl ContextConfig {
             || self.gitlab.is_some()
             || self.clickup.is_some()
             || self.jira.is_some()
+            || self.fireflies.is_some()
     }
 
     /// Return configured provider names for this context.
@@ -1033,6 +1051,7 @@ mod tests {
                 project_key: "k".to_string(),
                 email: "e".to_string(),
             }),
+            fireflies: None,
             contexts: BTreeMap::new(),
             active_context: None,
             proxy_mcp_servers: Vec::new(),
@@ -1111,6 +1130,7 @@ mod tests {
             }),
             clickup: None,
             jira: None,
+            fireflies: None,
             contexts: BTreeMap::new(),
             active_context: None,
             proxy_mcp_servers: Vec::new(),

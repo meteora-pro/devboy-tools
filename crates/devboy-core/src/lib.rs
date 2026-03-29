@@ -33,15 +33,18 @@ pub mod types;
 pub use error::{Error, Result};
 
 // Re-export provider traits
-pub use provider::{IssueProvider, MergeRequestProvider, PipelineProvider, Provider};
+pub use provider::{
+    IssueProvider, MeetingNotesProvider, MergeRequestProvider, PipelineProvider, Provider,
+};
 
 // Re-export all types
 pub use types::{
     CodePosition, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
     Discussion, FailedJob, FileDiff, GetPipelineInput, GetUsersOptions, Issue, IssueFilter,
-    IssueStatus, JobLogMode, JobLogOptions, JobLogOutput, MergeRequest, MrFilter, Pagination,
-    PipelineInfo, PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, Release,
-    ReleaseAsset, UpdateIssueInput, User,
+    IssueStatus, JobLogMode, JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote,
+    MeetingSpeaker, MeetingTranscript, MergeRequest, MrFilter, Pagination, PipelineInfo,
+    PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, Release, ReleaseAsset,
+    TranscriptSentence, UpdateIssueInput, User,
 };
 
 // Re-export enricher traits and utilities
@@ -50,6 +53,7 @@ pub use tool_category::ToolCategory;
 
 // Re-export config types
 pub use config::{
-    BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, FormatPipelineConfig, GitHubConfig,
-    GitLabConfig, JiraConfig, ProxyMatchingConfig, ProxyMcpServerConfig,
+    BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, FirefliesConfig,
+    FormatPipelineConfig, GitHubConfig, GitLabConfig, JiraConfig, ProxyMatchingConfig,
+    ProxyMcpServerConfig,
 };
