@@ -42,7 +42,7 @@ pub(super) fn resolve_secret(
                     key: scoped_key,
                     source: "context",
                     value,
-                }))
+                }));
             }
             Ok(None) => {}
             Err(error) => return Err(error.to_string()),
@@ -168,9 +168,11 @@ mod tests {
 
         let missing_ctx =
             context_with_store(Arc::new(MemoryStore::new()), config_with_active_context());
-        assert!(resolve_secret(&missing_ctx, Some("workspace"), "github")
-            .unwrap()
-            .is_none());
+        assert!(
+            resolve_secret(&missing_ctx, Some("workspace"), "github")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

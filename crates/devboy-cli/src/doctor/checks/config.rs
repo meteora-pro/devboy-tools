@@ -285,9 +285,11 @@ mod tests {
         let result = ConfigValidTomlCheck.run(&ctx).await;
 
         assert_eq!(result.status, CheckStatus::Skipped);
-        assert!(result
-            .message
-            .contains("Skipped because no config file was found"));
+        assert!(
+            result
+                .message
+                .contains("Skipped because no config file was found")
+        );
     }
 
     #[tokio::test]

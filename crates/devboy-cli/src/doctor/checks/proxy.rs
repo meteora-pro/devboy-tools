@@ -2,7 +2,7 @@ use crate::doctor::{CheckResult, CheckStatus, DiagnosticCheck, DiagnosticContext
 use async_trait::async_trait;
 use devboy_core::ProxyMcpServerConfig;
 use devboy_mcp::{McpProxyClient, ProxyTransport};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Instant;
 
 pub struct ProxyServersCheck;
@@ -650,10 +650,12 @@ mod tests {
         .await;
 
         assert_eq!(result.status, CheckStatus::Error);
-        assert!(result.detail["message"]
-            .as_str()
-            .unwrap()
-            .contains("connectivity failed"));
+        assert!(
+            result.detail["message"]
+                .as_str()
+                .unwrap()
+                .contains("connectivity failed")
+        );
     }
 
     #[test]
