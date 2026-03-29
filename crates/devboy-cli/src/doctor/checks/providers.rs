@@ -2,10 +2,10 @@ use crate::doctor::checks::{resolve_active_provider_context, resolve_secret};
 use crate::doctor::{CheckResult, CheckStatus, DiagnosticCheck, DiagnosticContext};
 use async_trait::async_trait;
 use devboy_core::{ClickUpConfig, GitHubConfig, GitLabConfig, JiraConfig};
-use reqwest::header::{HeaderMap, ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, USER_AGENT};
 use reqwest::{Client, Method};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Duration;
 
 pub struct GitHubApiCheck;
@@ -444,7 +444,7 @@ async fn run_provider_check(
                     "Skipped because {provider} credentials are missing for context '{}'",
                     active.name
                 ),
-            )
+            );
         }
         Err(error) => {
             return CheckResult {
@@ -458,7 +458,7 @@ async fn run_provider_check(
                     .then(|| json!({ "provider": provider, "error": error })),
                 fix_command: None,
                 fix_url: None,
-            }
+            };
         }
     };
 
@@ -542,7 +542,7 @@ impl DiagnosticCheck for GitHubApiCheck {
                         "Skipped because github credentials are missing for context '{}'",
                         active.name
                     ),
-                )
+                );
             }
             Err(error) => {
                 return CheckResult {
@@ -556,7 +556,7 @@ impl DiagnosticCheck for GitHubApiCheck {
                         .then(|| json!({ "provider": "github", "error": error })),
                     fix_command: None,
                     fix_url: None,
-                }
+                };
             }
         };
 
@@ -613,7 +613,7 @@ impl DiagnosticCheck for GitLabApiCheck {
                         "Skipped because gitlab credentials are missing for context '{}'",
                         active.name
                     ),
-                )
+                );
             }
             Err(error) => {
                 return CheckResult {
@@ -627,7 +627,7 @@ impl DiagnosticCheck for GitLabApiCheck {
                         .then(|| json!({ "provider": "gitlab", "error": error })),
                     fix_command: None,
                     fix_url: None,
-                }
+                };
             }
         };
 
@@ -684,7 +684,7 @@ impl DiagnosticCheck for ClickUpApiCheck {
                         "Skipped because clickup credentials are missing for context '{}'",
                         active.name
                     ),
-                )
+                );
             }
             Err(error) => {
                 return CheckResult {
@@ -698,7 +698,7 @@ impl DiagnosticCheck for ClickUpApiCheck {
                         .then(|| json!({ "provider": "clickup", "error": error })),
                     fix_command: None,
                     fix_url: None,
-                }
+                };
             }
         };
 
@@ -755,7 +755,7 @@ impl DiagnosticCheck for JiraApiCheck {
                         "Skipped because jira credentials are missing for context '{}'",
                         active.name
                     ),
-                )
+                );
             }
             Err(error) => {
                 return CheckResult {
@@ -769,7 +769,7 @@ impl DiagnosticCheck for JiraApiCheck {
                         .then(|| json!({ "provider": "jira", "error": error })),
                     fix_command: None,
                     fix_url: None,
-                }
+                };
             }
         };
 
@@ -1246,9 +1246,11 @@ mod tests {
         );
         let clickup_result = ClickUpApiCheck.run(&clickup_error_ctx).await;
         assert_eq!(clickup_result.status, CheckStatus::Error);
-        assert!(clickup_result
-            .message
-            .contains("Could not read clickup credentials"));
+        assert!(
+            clickup_result
+                .message
+                .contains("Could not read clickup credentials")
+        );
     }
 
     #[test]

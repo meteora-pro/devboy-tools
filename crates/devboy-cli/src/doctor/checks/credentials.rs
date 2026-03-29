@@ -1,5 +1,5 @@
 use crate::doctor::checks::{
-    resolve_active_provider_context, resolve_secret, DEFAULT_CONTEXT_NAME,
+    DEFAULT_CONTEXT_NAME, resolve_active_provider_context, resolve_secret,
 };
 use crate::doctor::{CheckResult, CheckStatus, DiagnosticCheck, DiagnosticContext};
 use async_trait::async_trait;
