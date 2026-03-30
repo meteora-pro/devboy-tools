@@ -218,6 +218,44 @@ fn replace_binary(new_binary: &[u8]) -> Result<PathBuf> {
     Ok(current_exe)
 }
 
+/// Run upgrade via the detected package manager (npm/pnpm/yarn).
+///
+/// Spawns the package manager as a child process, inheriting
+/// stdout/stderr so the user sees real-time progress.
+fn run_managed_upgrade(install_method: &crate::update_check::InstallMethod) -> Result<()> {
+    let cmd_str = install_method.update_command();
+    let parts: Vec<&str> = cmd_str.split_whitespace().collect();
+    let (program, args) = parts
+        .split_first()
+        .context("Empty update command")?;
+
+    println!(
+        "Installation managed by {}. Running: \x1b[1m{}\x1b[0m\n",
+        install_method.name(),
+        cmd_str
+    );
+
+    let status = std::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .with_context(|| format!("Failed to run '{}'. Is {} installed?", program, install_method.name()))?;
+
+    if !status.success() {
+        bail!(
+            "{} exited with {}. You can try manually: {}",
+            program,
+            status,
+            cmd_str
+        );
+    }
+
+    println!("\n\x1b[32m✓ Successfully upgraded via {}\x1b[0m", install_method.name());
+    Ok(())
+}
+
 /// Run the upgrade command.
 ///
 /// If `check_only` is true, only checks for updates without installing.
@@ -228,13 +266,7 @@ pub async fn run_upgrade(check_only: bool) -> Result<()> {
     let install_method = detect_install_method();
 
     if install_method.is_managed() && !check_only {
-        println!(
-            "This installation is managed by {}.\n\
-             Run: \x1b[1m{}\x1b[0m",
-            install_method.name(),
-            install_method.update_command()
-        );
-        return Ok(());
+        return run_managed_upgrade(&install_method);
     }
 
     println!("Current version: {}", current_version);
