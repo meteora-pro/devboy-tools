@@ -463,8 +463,8 @@ mod tests {
 
     #[async_trait]
     impl IssueProvider for TestProvider {
-        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
-            Ok(vec![])
+        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
+            Ok(vec![].into())
         }
         async fn get_issue(&self, _key: &str) -> devboy_core::Result<Issue> {
             Err(devboy_core::Error::NotFound("not found".into()))
@@ -479,8 +479,8 @@ mod tests {
         ) -> devboy_core::Result<Issue> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
-        async fn get_comments(&self, _issue_key: &str) -> devboy_core::Result<Vec<Comment>> {
-            Ok(vec![])
+        async fn get_comments(&self, _issue_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
+            Ok(vec![].into())
         }
         async fn add_comment(&self, _issue_key: &str, _body: &str) -> devboy_core::Result<Comment> {
             Err(devboy_core::Error::NotFound("not found".into()))
@@ -495,17 +495,17 @@ mod tests {
         async fn get_merge_requests(
             &self,
             _filter: MrFilter,
-        ) -> devboy_core::Result<Vec<MergeRequest>> {
-            Ok(vec![])
+        ) -> devboy_core::Result<devboy_core::ProviderResult<MergeRequest>> {
+            Ok(vec![].into())
         }
         async fn get_merge_request(&self, _key: &str) -> devboy_core::Result<MergeRequest> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
-        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<Vec<Discussion>> {
-            Ok(vec![])
+        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
+            Ok(vec![].into())
         }
-        async fn get_diffs(&self, _mr_key: &str) -> devboy_core::Result<Vec<FileDiff>> {
-            Ok(vec![])
+        async fn get_diffs(&self, _mr_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
+            Ok(vec![].into())
         }
         async fn add_comment(
             &self,
@@ -1065,8 +1065,8 @@ mod tests {
 
     #[async_trait]
     impl IssueProvider for IssueOnlyTestProvider {
-        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
-            Ok(vec![])
+        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
+            Ok(vec![].into())
         }
         async fn get_issue(&self, _key: &str) -> devboy_core::Result<Issue> {
             Err(devboy_core::Error::NotFound("not found".into()))
@@ -1081,8 +1081,8 @@ mod tests {
         ) -> devboy_core::Result<Issue> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
-        async fn get_comments(&self, _issue_key: &str) -> devboy_core::Result<Vec<Comment>> {
-            Ok(vec![])
+        async fn get_comments(&self, _issue_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
+            Ok(vec![].into())
         }
         async fn add_comment(&self, _issue_key: &str, _body: &str) -> devboy_core::Result<Comment> {
             Err(devboy_core::Error::NotFound("not found".into()))

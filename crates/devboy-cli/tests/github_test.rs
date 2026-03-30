@@ -51,7 +51,7 @@ async fn test_mode_detection() {
 async fn test_get_issues() {
     let provider = TestProvider::github();
 
-    let issues = provider.get_issues(IssueFilter::default()).await.unwrap();
+    let issues = provider.get_issues(IssueFilter::default()).await.unwrap().items;
 
     assert!(!issues.is_empty(), "Should have at least one issue");
 
@@ -76,7 +76,7 @@ async fn test_get_issues_with_filter() {
         ..Default::default()
     };
 
-    let issues = provider.get_issues(filter).await.unwrap();
+    let issues = provider.get_issues(filter).await.unwrap().items;
 
     // All issues should be open
     for issue in &issues {
@@ -90,7 +90,7 @@ async fn test_get_issue() {
     let provider = TestProvider::github();
 
     // First get all issues
-    let issues = provider.get_issues(IssueFilter::default()).await.unwrap();
+    let issues = provider.get_issues(IssueFilter::default()).await.unwrap().items;
     assert!(!issues.is_empty());
 
     // Then get a specific issue
@@ -108,7 +108,8 @@ async fn test_get_pull_requests() {
     let prs = provider
         .get_merge_requests(MrFilter::default())
         .await
-        .unwrap();
+        .unwrap()
+        .items;
 
     assert!(!prs.is_empty(), "Should have at least one PR");
 
@@ -132,7 +133,7 @@ async fn test_get_pull_requests_with_filter() {
         ..Default::default()
     };
 
-    let prs = provider.get_merge_requests(filter).await.unwrap();
+    let prs = provider.get_merge_requests(filter).await.unwrap().items;
 
     // All PRs should be open
     for pr in &prs {
@@ -164,7 +165,7 @@ async fn test_provider_name() {
 async fn test_issue_url_format() {
     let provider = TestProvider::github();
 
-    let issues = provider.get_issues(IssueFilter::default()).await.unwrap();
+    let issues = provider.get_issues(IssueFilter::default()).await.unwrap().items;
     assert!(!issues.is_empty());
 
     for issue in &issues {
@@ -186,7 +187,8 @@ async fn test_pr_url_format() {
     let prs = provider
         .get_merge_requests(MrFilter::default())
         .await
-        .unwrap();
+        .unwrap()
+        .items;
     assert!(!prs.is_empty());
 
     for pr in &prs {
@@ -206,12 +208,12 @@ async fn test_get_issue_comments() {
     let provider = TestProvider::github();
 
     // First get all issues
-    let issues = provider.get_issues(IssueFilter::default()).await.unwrap();
+    let issues = provider.get_issues(IssueFilter::default()).await.unwrap().items;
     assert!(!issues.is_empty());
 
     // Get comments for the first issue
     let key = &issues[0].key;
-    let comments = provider.get_comments(key).await.unwrap();
+    let comments = provider.get_comments(key).await.unwrap().items;
 
     // Comments should be a vector (may be empty)
     for comment in &comments {
@@ -229,7 +231,8 @@ async fn test_get_pull_request() {
     let prs = provider
         .get_merge_requests(MrFilter::default())
         .await
-        .unwrap();
+        .unwrap()
+        .items;
     assert!(!prs.is_empty());
 
     // Get a specific PR
@@ -249,12 +252,13 @@ async fn test_get_pull_request_discussions() {
     let prs = provider
         .get_merge_requests(MrFilter::default())
         .await
-        .unwrap();
+        .unwrap()
+        .items;
     assert!(!prs.is_empty());
 
     // Get discussions for the first PR
     let key = &prs[0].key;
-    let discussions = provider.get_discussions(key).await.unwrap();
+    let discussions = provider.get_discussions(key).await.unwrap().items;
 
     // Discussions should be a vector (may be empty)
     for discussion in &discussions {
@@ -271,12 +275,13 @@ async fn test_get_pull_request_diffs() {
     let prs = provider
         .get_merge_requests(MrFilter::default())
         .await
-        .unwrap();
+        .unwrap()
+        .items;
     assert!(!prs.is_empty());
 
     // Get diffs for the first PR
     let key = &prs[0].key;
-    let diffs = provider.get_diffs(key).await.unwrap();
+    let diffs = provider.get_diffs(key).await.unwrap().items;
 
     // Diffs should be a vector (may be empty for PRs without changes)
     for diff in &diffs {
@@ -317,11 +322,12 @@ async fn test_pr_issue_distinction() {
     let provider = TestProvider::github();
 
     // Get issues and PRs
-    let issues = provider.get_issues(IssueFilter::default()).await.unwrap();
+    let issues = provider.get_issues(IssueFilter::default()).await.unwrap().items;
     let prs = provider
         .get_merge_requests(MrFilter::default())
         .await
-        .unwrap();
+        .unwrap()
+        .items;
 
     // Extract numbers from keys
     let issue_numbers: Vec<u64> = issues
@@ -352,7 +358,7 @@ async fn test_add_issue_comment_not_supported() {
     let provider = TestProvider::github();
 
     // First get all issues
-    let issues = provider.get_issues(IssueFilter::default()).await.unwrap();
+    let issues = provider.get_issues(IssueFilter::default()).await.unwrap().items;
     assert!(!issues.is_empty(), "Should have at least one issue");
 
     // Add a comment to the first issue
@@ -383,7 +389,8 @@ async fn test_add_pr_comment_not_supported() {
     let prs = provider
         .get_merge_requests(MrFilter::default())
         .await
-        .unwrap();
+        .unwrap()
+        .items;
     assert!(!prs.is_empty(), "Should have at least one PR");
 
     // Add a comment to the first PR
@@ -420,7 +427,8 @@ async fn test_add_pr_inline_comment_not_supported() {
     let prs = provider
         .get_merge_requests(MrFilter::default())
         .await
-        .unwrap();
+        .unwrap()
+        .items;
     assert!(!prs.is_empty(), "Should have at least one PR");
 
     let key = &prs[0].key;
@@ -486,7 +494,7 @@ async fn test_update_issue_not_supported() {
     let provider = TestProvider::github();
 
     // First get all issues
-    let issues = provider.get_issues(IssueFilter::default()).await.unwrap();
+    let issues = provider.get_issues(IssueFilter::default()).await.unwrap().items;
     assert!(
         !issues.is_empty(),
         "Should have at least one issue to update"

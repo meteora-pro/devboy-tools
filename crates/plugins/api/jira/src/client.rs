@@ -6,7 +6,8 @@
 use async_trait::async_trait;
 use devboy_core::{
     Comment, CreateIssueInput, Error, GetUsersOptions, Issue, IssueFilter, IssueProvider,
-    IssueStatus, MergeRequestProvider, PipelineProvider, Provider, Result, UpdateIssueInput, User,
+    IssueStatus, MergeRequestProvider, PipelineProvider, Provider, ProviderResult, Result,
+    UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
@@ -814,10 +815,10 @@ fn instance_url_from_base(base_url: &str) -> String {
 
 #[async_trait]
 impl IssueProvider for JiraClient {
-    async fn get_issues(&self, filter: IssueFilter) -> Result<Vec<Issue>> {
+    async fn get_issues(&self, filter: IssueFilter) -> Result<ProviderResult<Issue>> {
         let limit = filter.limit.unwrap_or(20);
         if limit == 0 {
-            return Ok(vec![]);
+            return Ok(vec![].into());
         }
         let offset = filter.offset.unwrap_or(0);
 
@@ -926,7 +927,7 @@ impl IssueProvider for JiraClient {
                     }
                 }
 
-                Ok(all_issues)
+                Ok(all_issues.into())
             }
             JiraFlavor::SelfHosted => {
                 // Self-Hosted: GET /search?jql=...&startAt=...&maxResults=...
@@ -952,13 +953,13 @@ impl IssueProvider for JiraClient {
 
                 let search_resp: JiraSearchResponse = self.handle_response(response).await?;
 
-                let issues = search_resp
+                let issues: Vec<Issue> = search_resp
                     .issues
                     .iter()
                     .map(|i| map_issue(i, self.flavor, instance_url))
                     .collect();
 
-                Ok(issues)
+                Ok(issues.into())
             }
         }
     }
@@ -1077,7 +1078,7 @@ impl IssueProvider for JiraClient {
         self.get_issue(jira_key).await
     }
 
-    async fn get_comments(&self, issue_key: &str) -> Result<Vec<Comment>> {
+    async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>> {
         let jira_key = parse_jira_key(issue_key);
         let url = format!("{}/issue/{}/comment", self.base_url, jira_key);
         let response: JiraCommentsResponse = self.get(&url).await?;
@@ -1085,7 +1086,8 @@ impl IssueProvider for JiraClient {
             .comments
             .iter()
             .map(|c| map_comment(c, self.flavor))
-            .collect())
+            .collect::<Vec<_>>()
+            .into())
     }
 
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment> {
@@ -1103,10 +1105,10 @@ impl IssueProvider for JiraClient {
         Ok(map_comment(&jira_comment, self.flavor))
     }
 
-    async fn get_statuses(&self) -> Result<Vec<IssueStatus>> {
+    async fn get_statuses(&self) -> Result<ProviderResult<IssueStatus>> {
         let project_statuses = self.get_project_statuses().await?;
 
-        let statuses = project_statuses
+        let statuses: Vec<IssueStatus> = project_statuses
             .iter()
             .enumerate()
             .map(|(idx, s)| {
@@ -1131,10 +1133,10 @@ impl IssueProvider for JiraClient {
             })
             .collect();
 
-        Ok(statuses)
+        Ok(statuses.into())
     }
 
-    async fn get_users(&self, options: GetUsersOptions) -> Result<Vec<User>> {
+    async fn get_users(&self, options: GetUsersOptions) -> Result<ProviderResult<User>> {
         let start_at = options.start_at.unwrap_or(0);
         let max_results = options.max_results.unwrap_or(50);
 
@@ -1163,12 +1165,12 @@ impl IssueProvider for JiraClient {
 
         let jira_users: Vec<JiraUser> = self.get(&url).await?;
 
-        let users = jira_users
+        let users: Vec<User> = jira_users
             .iter()
             .map(|u| map_user(Some(u)).unwrap_or_default())
             .collect();
 
-        Ok(users)
+        Ok(users.into())
     }
 
     async fn link_issues(&self, source_key: &str, target_key: &str, link_type: &str) -> Result<()> {
@@ -1939,7 +1941,7 @@ mod tests {
             });
 
             let client = create_self_hosted_client(&server);
-            let issues = client.get_issues(IssueFilter::default()).await.unwrap();
+            let issues = client.get_issues(IssueFilter::default()).await.unwrap().items;
 
             assert_eq!(issues.len(), 1);
             assert_eq!(issues[0].key, "jira#PROJ-1");
@@ -1977,7 +1979,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             assert_eq!(issues.len(), 1);
         }
@@ -2007,7 +2010,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             assert_eq!(issues.len(), 1);
         }
@@ -2535,7 +2539,7 @@ mod tests {
             });
 
             let client = create_self_hosted_client(&server);
-            let comments = client.get_comments("PROJ-1").await.unwrap();
+            let comments = client.get_comments("PROJ-1").await.unwrap().items;
 
             assert_eq!(comments.len(), 1);
             assert_eq!(comments[0].id, "100");
@@ -2589,7 +2593,7 @@ mod tests {
             });
 
             let client = create_cloud_client(&server);
-            let issues = client.get_issues(IssueFilter::default()).await.unwrap();
+            let issues = client.get_issues(IssueFilter::default()).await.unwrap().items;
 
             assert_eq!(issues.len(), 1);
             assert_eq!(issues[0].key, "jira#PROJ-1");
@@ -2956,7 +2960,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             assert_eq!(issues.len(), 3);
             assert_eq!(issues[0].key, "jira#PROJ-1");

@@ -10,9 +10,9 @@
 //! # Example
 //!
 //! ```ignore
-//! use devboy_core::{IssueProvider, IssueFilter, Issue, Result};
+//! use devboy_core::{IssueProvider, IssueFilter, Issue, ProviderResult, Result};
 //!
-//! async fn list_open_issues(provider: &dyn IssueProvider) -> Result<Vec<Issue>> {
+//! async fn list_open_issues(provider: &dyn IssueProvider) -> Result<ProviderResult<Issue>> {
 //!     let filter = IssueFilter {
 //!         state: Some("opened".to_string()),
 //!         limit: Some(10),

@@ -743,13 +743,13 @@ impl ToolHandler {
 
         for provider in &providers {
             match provider.get_issues(filter.clone()).await {
-                Ok(issues) => {
+                Ok(result) => {
                     tracing::debug!(
                         "Got {} issues from {}",
-                        issues.len(),
+                        result.items.len(),
                         get_provider_name(provider.as_ref())
                     );
-                    all_issues.extend(issues);
+                    all_issues.extend(result.items);
                 }
                 Err(e) => {
                     let name = get_provider_name(provider.as_ref());
@@ -822,9 +822,9 @@ impl ToolHandler {
 
         for provider in &self.providers {
             match provider.get_comments(&params.key).await {
-                Ok(comments) => {
+                Ok(result) => {
                     let pipeline = self.create_pipeline(&params.format);
-                    return match pipeline.transform_comments(comments) {
+                    return match pipeline.transform_comments(result.items) {
                         Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
                     };
@@ -1002,13 +1002,13 @@ impl ToolHandler {
 
         for provider in &self.providers {
             match provider.get_merge_requests(filter.clone()).await {
-                Ok(mrs) => {
+                Ok(result) => {
                     tracing::debug!(
                         "Got {} MRs from {}",
-                        mrs.len(),
+                        result.items.len(),
                         get_provider_name(provider.as_ref())
                     );
-                    all_mrs.extend(mrs);
+                    all_mrs.extend(result.items);
                 }
                 Err(e) => {
                     let name = get_provider_name(provider.as_ref());
@@ -1094,7 +1094,8 @@ impl ToolHandler {
 
         for provider in &self.providers {
             match provider.get_discussions(&params.key).await {
-                Ok(discussions) => {
+                Ok(result) => {
+                    let discussions = result.items;
                     let offset = params.offset.unwrap_or(0);
                     let limit = params.limit.unwrap_or(20);
                     let total = discussions.len();
@@ -1158,9 +1159,9 @@ impl ToolHandler {
 
         for provider in &self.providers {
             match provider.get_diffs(&params.key).await {
-                Ok(diffs) => {
+                Ok(result) => {
                     let pipeline = self.create_pipeline(&params.format);
-                    return match pipeline.transform_diffs(diffs) {
+                    return match pipeline.transform_diffs(result.items) {
                         Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
                     };
@@ -1448,8 +1449,8 @@ impl ToolHandler {
         let mut last_error: Option<String> = None;
         for provider in &self.meeting_providers {
             match provider.get_meetings(filter.clone()).await {
-                Ok(meetings) => {
-                    let output = devboy_executor::ToolOutput::MeetingNotes(meetings);
+                Ok(result) => {
+                    let output = devboy_executor::ToolOutput::MeetingNotes(result.items);
                     return match devboy_executor::format_output(
                         output,
                         None,
@@ -1550,8 +1551,8 @@ impl ToolHandler {
                 .search_meetings(&params.query, filter.clone())
                 .await
             {
-                Ok(meetings) => {
-                    let output = devboy_executor::ToolOutput::MeetingNotes(meetings);
+                Ok(result) => {
+                    let output = devboy_executor::ToolOutput::MeetingNotes(result.items);
                     return match devboy_executor::format_output(
                         output,
                         None,
@@ -1848,8 +1849,8 @@ mod tests {
 
     #[async_trait]
     impl IssueProvider for MockProvider {
-        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
-            Ok(self.issues.clone())
+        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
+            Ok(self.issues.clone().into())
         }
 
         async fn get_issue(&self, _key: &str) -> devboy_core::Result<Issue> {
@@ -1868,7 +1869,7 @@ mod tests {
             Ok(self.issues[0].clone())
         }
 
-        async fn get_comments(&self, _issue_key: &str) -> devboy_core::Result<Vec<Comment>> {
+        async fn get_comments(&self, _issue_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
             Ok(vec![Comment {
                 id: "1".to_string(),
                 body: "Test comment".to_string(),
@@ -1876,7 +1877,7 @@ mod tests {
                 created_at: None,
                 updated_at: None,
                 position: None,
-            }])
+            }].into())
         }
 
         async fn add_comment(&self, _issue_key: &str, _body: &str) -> devboy_core::Result<Comment> {
@@ -1900,15 +1901,15 @@ mod tests {
         async fn get_merge_requests(
             &self,
             _filter: MrFilter,
-        ) -> devboy_core::Result<Vec<MergeRequest>> {
-            Ok(self.mrs.clone())
+        ) -> devboy_core::Result<devboy_core::ProviderResult<MergeRequest>> {
+            Ok(self.mrs.clone().into())
         }
 
         async fn get_merge_request(&self, _key: &str) -> devboy_core::Result<MergeRequest> {
             Ok(self.mrs[0].clone())
         }
 
-        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<Vec<Discussion>> {
+        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
             Ok(vec![Discussion {
                 id: "1".to_string(),
                 resolved: false,
@@ -1922,10 +1923,10 @@ mod tests {
                     position: None,
                 }],
                 position: None,
-            }])
+            }].into())
         }
 
-        async fn get_diffs(&self, _mr_key: &str) -> devboy_core::Result<Vec<FileDiff>> {
+        async fn get_diffs(&self, _mr_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
             Ok(vec![FileDiff {
                 file_path: "src/main.rs".to_string(),
                 old_path: None,
@@ -1935,7 +1936,7 @@ mod tests {
                 diff: "+added line\n-removed line".to_string(),
                 additions: Some(1),
                 deletions: Some(1),
-            }])
+            }].into())
         }
 
         async fn add_comment(
@@ -1987,7 +1988,7 @@ mod tests {
 
     #[async_trait]
     impl IssueProvider for ManyDiscussionsProvider {
-        async fn get_issues(&self, filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
+        async fn get_issues(&self, filter: IssueFilter) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
             self.base.get_issues(filter).await
         }
 
@@ -2007,7 +2008,7 @@ mod tests {
             self.base.update_issue(key, input).await
         }
 
-        async fn get_comments(&self, issue_key: &str) -> devboy_core::Result<Vec<Comment>> {
+        async fn get_comments(&self, issue_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
             self.base.get_comments(issue_key).await
         }
 
@@ -2025,7 +2026,7 @@ mod tests {
         async fn get_merge_requests(
             &self,
             filter: MrFilter,
-        ) -> devboy_core::Result<Vec<MergeRequest>> {
+        ) -> devboy_core::Result<devboy_core::ProviderResult<MergeRequest>> {
             self.base.get_merge_requests(filter).await
         }
 
@@ -2033,11 +2034,11 @@ mod tests {
             self.base.get_merge_request(key).await
         }
 
-        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<Vec<Discussion>> {
-            Ok(self.discussions.clone())
+        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
+            Ok(self.discussions.clone().into())
         }
 
-        async fn get_diffs(&self, mr_key: &str) -> devboy_core::Result<Vec<FileDiff>> {
+        async fn get_diffs(&self, mr_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
             self.base.get_diffs(mr_key).await
         }
 
@@ -2136,7 +2137,8 @@ mod tests {
         let merge_requests = provider
             .get_merge_requests(MrFilter::default())
             .await
-            .expect("merge requests should be forwarded");
+            .expect("merge requests should be forwarded")
+            .items;
         assert_eq!(merge_requests.len(), 1);
         assert_eq!(merge_requests[0].key, "pr#1");
 
@@ -2149,14 +2151,16 @@ mod tests {
         let discussions = provider
             .get_discussions("pr#1")
             .await
-            .expect("custom discussions should be returned");
+            .expect("custom discussions should be returned")
+            .items;
         assert_eq!(discussions.len(), 2);
         assert_eq!(discussions[0].comments[0].body, "Review comment 1");
 
         let diffs = provider
             .get_diffs("pr#1")
             .await
-            .expect("diffs should be forwarded");
+            .expect("diffs should be forwarded")
+            .items;
         assert_eq!(diffs.len(), 1);
         assert_eq!(diffs[0].file_path, "src/main.rs");
     }
@@ -2989,7 +2993,7 @@ mod tests {
 
     #[async_trait]
     impl IssueProvider for FailingProvider {
-        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
+        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
             Err(devboy_core::Error::Api {
                 status: 500,
                 message: "api error".into(),
@@ -3014,7 +3018,7 @@ mod tests {
                 message: "update failed".into(),
             })
         }
-        async fn get_comments(&self, _key: &str) -> devboy_core::Result<Vec<Comment>> {
+        async fn get_comments(&self, _key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
         async fn add_comment(&self, _key: &str, _body: &str) -> devboy_core::Result<Comment> {
@@ -3033,7 +3037,7 @@ mod tests {
         async fn get_merge_requests(
             &self,
             _filter: MrFilter,
-        ) -> devboy_core::Result<Vec<MergeRequest>> {
+        ) -> devboy_core::Result<devboy_core::ProviderResult<MergeRequest>> {
             Err(devboy_core::Error::Api {
                 status: 500,
                 message: "api error".into(),
@@ -3042,10 +3046,10 @@ mod tests {
         async fn get_merge_request(&self, _key: &str) -> devboy_core::Result<MergeRequest> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
-        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<Vec<Discussion>> {
+        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
-        async fn get_diffs(&self, _mr_key: &str) -> devboy_core::Result<Vec<FileDiff>> {
+        async fn get_diffs(&self, _mr_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
         async fn add_comment(
