@@ -207,8 +207,8 @@ async fn execute_get_meeting_notes(
         limit: params.limit,
         skip: params.offset,
     };
-    let meetings = provider.get_meetings(filter).await?;
-    Ok(ToolOutput::MeetingNotes(meetings))
+    let result = provider.get_meetings(filter).await?;
+    Ok(ToolOutput::MeetingNotes(result.items))
 }
 
 #[derive(Deserialize)]
@@ -252,8 +252,8 @@ async fn execute_search_meeting_notes(
         limit: params.limit,
         skip: params.offset,
     };
-    let meetings = provider.search_meetings(&params.query, filter).await?;
-    Ok(ToolOutput::MeetingNotes(meetings))
+    let result = provider.search_meetings(&params.query, filter).await?;
+    Ok(ToolOutput::MeetingNotes(result.items))
 }
 
 // --- Issue tool handlers ---
@@ -285,8 +285,8 @@ async fn execute_get_issues(
         sort_by: params.sort_by,
         sort_order: params.sort_order,
     };
-    let issues = provider.get_issues(filter).await?;
-    Ok(ToolOutput::Issues(issues))
+    let result = provider.get_issues(filter).await?;
+    Ok(ToolOutput::Issues(result.items))
 }
 
 #[derive(Deserialize)]
@@ -310,8 +310,8 @@ async fn execute_get_issue_comments(
 ) -> Result<ToolOutput> {
     let params: KeyParam = serde_json::from_value(args.clone())
         .map_err(|e| Error::InvalidData(format!("missing 'key' parameter: {e}")))?;
-    let comments = provider.get_comments(&params.key).await?;
-    Ok(ToolOutput::Comments(comments))
+    let result = provider.get_comments(&params.key).await?;
+    Ok(ToolOutput::Comments(result.items))
 }
 
 #[derive(Deserialize)]
@@ -417,8 +417,8 @@ async fn execute_get_merge_requests(
         limit: params.limit.or(Some(20)),
         ..Default::default()
     };
-    let mrs = provider.get_merge_requests(filter).await?;
-    Ok(ToolOutput::MergeRequests(mrs))
+    let result = provider.get_merge_requests(filter).await?;
+    Ok(ToolOutput::MergeRequests(result.items))
 }
 
 async fn execute_get_merge_request(
@@ -437,8 +437,8 @@ async fn execute_get_merge_request_discussions(
 ) -> Result<ToolOutput> {
     let params: KeyParam = serde_json::from_value(args.clone())
         .map_err(|e| Error::InvalidData(format!("missing 'key' parameter: {e}")))?;
-    let discussions = provider.get_discussions(&params.key).await?;
-    Ok(ToolOutput::Discussions(discussions))
+    let result = provider.get_discussions(&params.key).await?;
+    Ok(ToolOutput::Discussions(result.items))
 }
 
 async fn execute_get_merge_request_diffs(
@@ -447,8 +447,8 @@ async fn execute_get_merge_request_diffs(
 ) -> Result<ToolOutput> {
     let params: KeyParam = serde_json::from_value(args.clone())
         .map_err(|e| Error::InvalidData(format!("missing 'key' parameter: {e}")))?;
-    let diffs = provider.get_diffs(&params.key).await?;
-    Ok(ToolOutput::Diffs(diffs))
+    let result = provider.get_diffs(&params.key).await?;
+    Ok(ToolOutput::Diffs(result.items))
 }
 
 #[derive(Deserialize)]
@@ -600,8 +600,8 @@ async fn execute_get_job_logs(
 async fn execute_get_available_statuses(
     provider: &dyn devboy_core::Provider,
 ) -> Result<ToolOutput> {
-    let statuses = IssueProvider::get_statuses(provider).await?;
-    Ok(ToolOutput::Statuses(statuses))
+    let result = IssueProvider::get_statuses(provider).await?;
+    Ok(ToolOutput::Statuses(result.items))
 }
 
 #[derive(Deserialize, Default)]
@@ -627,8 +627,8 @@ async fn execute_get_users(
         start_at: params.start_at,
         max_results: params.max_results,
     };
-    let users = IssueProvider::get_users(provider, options).await?;
-    Ok(ToolOutput::Users(users))
+    let result = IssueProvider::get_users(provider, options).await?;
+    Ok(ToolOutput::Users(result.items))
 }
 
 #[derive(Deserialize)]
@@ -686,8 +686,8 @@ async fn execute_get_epics(
         sort_by: None,
         sort_order: None,
     };
-    let issues = provider.get_issues(filter).await?;
-    Ok(ToolOutput::Issues(issues))
+    let result = provider.get_issues(filter).await?;
+    Ok(ToolOutput::Issues(result.items))
 }
 
 #[derive(Deserialize)]
@@ -856,8 +856,8 @@ mod tests {
 
     #[async_trait]
     impl IssueProvider for MockProvider {
-        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
-            Ok(vec![sample_issue()])
+        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
+            Ok(vec![sample_issue()].into())
         }
         async fn get_issue(&self, _key: &str) -> devboy_core::Result<Issue> {
             Ok(sample_issue())
@@ -875,8 +875,8 @@ mod tests {
         ) -> devboy_core::Result<Issue> {
             Ok(sample_issue())
         }
-        async fn get_comments(&self, _key: &str) -> devboy_core::Result<Vec<Comment>> {
-            Ok(vec![sample_comment()])
+        async fn get_comments(&self, _key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
+            Ok(vec![sample_comment()].into())
         }
         async fn add_comment(&self, _key: &str, _body: &str) -> devboy_core::Result<Comment> {
             Ok(sample_comment())
@@ -891,17 +891,17 @@ mod tests {
         async fn get_merge_requests(
             &self,
             _filter: MrFilter,
-        ) -> devboy_core::Result<Vec<MergeRequest>> {
-            Ok(vec![sample_mr()])
+        ) -> devboy_core::Result<devboy_core::ProviderResult<MergeRequest>> {
+            Ok(vec![sample_mr()].into())
         }
         async fn get_merge_request(&self, _key: &str) -> devboy_core::Result<MergeRequest> {
             Ok(sample_mr())
         }
-        async fn get_discussions(&self, _key: &str) -> devboy_core::Result<Vec<Discussion>> {
-            Ok(vec![sample_discussion()])
+        async fn get_discussions(&self, _key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
+            Ok(vec![sample_discussion()].into())
         }
-        async fn get_diffs(&self, _key: &str) -> devboy_core::Result<Vec<FileDiff>> {
-            Ok(vec![sample_diff()])
+        async fn get_diffs(&self, _key: &str) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
+            Ok(vec![sample_diff()].into())
         }
         async fn add_comment(
             &self,
@@ -1305,12 +1305,12 @@ mod tests {
         async fn get_meetings(
             &self,
             _filter: MeetingFilter,
-        ) -> devboy_core::Result<Vec<devboy_core::MeetingNote>> {
+        ) -> devboy_core::Result<devboy_core::ProviderResult<devboy_core::MeetingNote>> {
             Ok(vec![devboy_core::MeetingNote {
                 id: "m1".into(),
                 title: "Test Meeting".into(),
                 ..Default::default()
-            }])
+            }].into())
         }
 
         async fn get_transcript(
@@ -1334,12 +1334,12 @@ mod tests {
             &self,
             _query: &str,
             _filter: MeetingFilter,
-        ) -> devboy_core::Result<Vec<devboy_core::MeetingNote>> {
+        ) -> devboy_core::Result<devboy_core::ProviderResult<devboy_core::MeetingNote>> {
             Ok(vec![devboy_core::MeetingNote {
                 id: "m2".into(),
                 title: "Search Result Meeting".into(),
                 ..Default::default()
-            }])
+            }].into())
         }
     }
 
