@@ -222,10 +222,13 @@ fn replace_binary(new_binary: &[u8]) -> Result<PathBuf> {
 ///
 /// Spawns the package manager as a child process, inheriting
 /// stdout/stderr so the user sees real-time progress.
+///
+/// On Windows, the running executable is locked by the OS, so the
+/// package manager cannot replace it in-place. In that case we fall
+/// back to printing the command for the user to run manually.
 fn run_managed_upgrade(install_method: &crate::update_check::InstallMethod) -> Result<()> {
     let cmd_str = install_method.update_command();
-    let parts: Vec<&str> = cmd_str.split_whitespace().collect();
-    let (program, args) = parts.split_first().context("Empty update command")?;
+    let (program, args) = install_method.update_command_parts();
 
     println!(
         "Installation managed by {}. Running: \x1b[1m{}\x1b[0m\n",
@@ -233,34 +236,46 @@ fn run_managed_upgrade(install_method: &crate::update_check::InstallMethod) -> R
         cmd_str
     );
 
-    let status = std::process::Command::new(program)
-        .args(args)
-        .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .with_context(|| {
-            format!(
-                "Failed to run '{}'. Is {} installed?",
-                program,
-                install_method.name()
-            )
-        })?;
-
-    if !status.success() {
-        bail!(
-            "{} exited with {}. You can try manually: {}",
-            program,
-            status,
-            cmd_str
+    #[cfg(windows)]
+    {
+        println!(
+            "On Windows the running binary is locked by the OS.\n\
+             Please run the command above manually after closing devboy."
         );
+        return Ok(());
     }
 
-    println!(
-        "\n\x1b[32m✓ Successfully upgraded via {}\x1b[0m",
-        install_method.name()
-    );
-    Ok(())
+    #[cfg(not(windows))]
+    {
+        let status = std::process::Command::new(program)
+            .args(args)
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+            .with_context(|| {
+                format!(
+                    "Failed to run '{}'. Is {} installed?",
+                    program,
+                    install_method.name()
+                )
+            })?;
+
+        if !status.success() {
+            bail!(
+                "{} exited with {}. You can try manually: {}",
+                program,
+                status,
+                cmd_str
+            );
+        }
+
+        println!(
+            "\n\x1b[32m✓ Successfully upgraded via {}\x1b[0m",
+            install_method.name()
+        );
+        Ok(())
+    }
 }
 
 /// Run the upgrade command.
