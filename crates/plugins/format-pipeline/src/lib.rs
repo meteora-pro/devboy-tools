@@ -23,6 +23,7 @@
 //! ```
 
 pub mod budget;
+pub mod page_index;
 pub mod pagination;
 pub mod strategy;
 pub mod token_counter;
@@ -60,6 +61,12 @@ pub struct TransformOutput {
     pub agent_hint: Option<String>,
     /// Cursor for fetching the next page (if overflow exists)
     pub page_cursor: Option<String>,
+    /// Page index for large results (when budget trimming is applied)
+    pub page_index: Option<page_index::PageIndex>,
+    /// Provider-level pagination metadata
+    pub provider_pagination: Option<devboy_core::Pagination>,
+    /// Provider-level sort metadata
+    pub provider_sort: Option<devboy_core::SortInfo>,
     /// Size of raw input data before formatting (UTF-8 bytes)
     pub raw_chars: usize,
     /// Size of formatted output (UTF-8 bytes) — updated after apply_char_limit
@@ -80,6 +87,9 @@ impl TransformOutput {
             included_count: 0,
             agent_hint: None,
             page_cursor: None,
+            page_index: None,
+            provider_pagination: None,
+            provider_sort: None,
             raw_chars: 0,
             output_chars,
             pre_trim_chars: 0,
@@ -101,13 +111,24 @@ impl TransformOutput {
         self
     }
 
-    /// Get the final output including any agent hints.
+    /// Get the final output including page index and agent hints.
     pub fn to_string_with_hints(&self) -> String {
-        if let Some(hint) = &self.agent_hint {
-            format!("{}\n\n{}", self.content, hint)
-        } else {
-            self.content.clone()
+        let mut parts = Vec::new();
+
+        // Page index header (when budget trimming produced pages)
+        if let Some(index) = &self.page_index {
+            parts.push(index.to_toon());
         }
+
+        // Main content
+        parts.push(self.content.clone());
+
+        // Agent hint footer
+        if let Some(hint) = &self.agent_hint {
+            parts.push(hint.clone());
+        }
+
+        parts.join("\n\n")
     }
 }
 
@@ -195,7 +216,8 @@ impl Pipeline {
         let strategy_kind = self.resolve_strategy("get_issues");
         let result = budget::process_issues(&issues, strategy_kind, &budget_config)?;
 
-        self.build_budget_output(result, raw_chars, total, "issues")
+        let index = page_index::build_issues_index(&issues, result.included_items, self.config.max_chars);
+        self.build_budget_output(result, raw_chars, total, "issues", Some(index))
     }
 
     /// Transform a list of merge requests using budget pipeline.
@@ -219,7 +241,8 @@ impl Pipeline {
         let strategy_kind = self.resolve_strategy("get_merge_requests");
         let result = budget::process_merge_requests(&mrs, strategy_kind, &budget_config)?;
 
-        self.build_budget_output(result, raw_chars, total, "merge_requests")
+        let index = page_index::build_merge_requests_index(&mrs, result.included_items, self.config.max_chars);
+        self.build_budget_output(result, raw_chars, total, "merge_requests", Some(index))
     }
 
     /// Transform a list of file diffs using budget pipeline.
@@ -256,7 +279,8 @@ impl Pipeline {
         let strategy_kind = self.resolve_strategy("get_merge_request_diffs");
         let result = budget::process_diffs(&diffs, strategy_kind, &budget_config)?;
 
-        self.build_budget_output(result, raw_chars, total, "diffs")
+        let index = page_index::build_diffs_index(&diffs, result.included_items, self.config.max_chars);
+        self.build_budget_output(result, raw_chars, total, "diffs", Some(index))
     }
 
     /// Transform a list of comments using budget pipeline.
@@ -280,7 +304,8 @@ impl Pipeline {
         let strategy_kind = self.resolve_strategy("get_issue_comments");
         let result = budget::process_comments(&comments, strategy_kind, &budget_config)?;
 
-        self.build_budget_output(result, raw_chars, total, "comments")
+        let index = page_index::build_comments_index(&comments, result.included_items, self.config.max_chars);
+        self.build_budget_output(result, raw_chars, total, "comments", Some(index))
     }
 
     /// Transform a list of discussions using budget pipeline.
@@ -304,7 +329,8 @@ impl Pipeline {
         let strategy_kind = self.resolve_strategy("get_merge_request_discussions");
         let result = budget::process_discussions(&discussions, strategy_kind, &budget_config)?;
 
-        self.build_budget_output(result, raw_chars, total, "discussions")
+        let index = page_index::build_discussions_index(&discussions, result.included_items, self.config.max_chars);
+        self.build_budget_output(result, raw_chars, total, "discussions", Some(index))
     }
 
     /// Convert max_chars to budget pipeline config.
@@ -322,24 +348,44 @@ impl Pipeline {
         resolver.resolve(tool)
     }
 
-    /// Build TransformOutput from BudgetResult.
+    /// Build TransformOutput from BudgetResult with optional page index.
     fn build_budget_output(
         &self,
         result: budget::BudgetResult,
         raw_chars: usize,
         total: usize,
         item_type: &str,
+        index: Option<page_index::PageIndex>,
     ) -> Result<TransformOutput> {
         let mut output = TransformOutput::new(result.content).with_raw_chars(raw_chars);
         output.included_count = result.included_items;
 
         if result.trimmed && self.config.include_hints {
             let remaining = total.saturating_sub(result.included_items);
-            let hint = format!(
-                "Showing {}/{} {}. {} items trimmed by budget. Use `offset` and `limit` parameters for pagination.",
-                result.included_items, total, item_type, remaining
-            );
-            output = output.with_truncation(total, result.included_items, hint);
+
+            // Generate page index for multi-page results
+            if let Some(idx) = index {
+                if idx.total_pages > 1 {
+                    let hint = format!(
+                        "Showing {}/{} {} (page 1 of {}). Use `offset` and `limit` parameters for pagination.",
+                        result.included_items, total, item_type, idx.total_pages
+                    );
+                    output.page_index = Some(idx);
+                    output = output.with_truncation(total, result.included_items, hint);
+                } else {
+                    let hint = format!(
+                        "Showing {}/{} {}. {} items trimmed by budget.",
+                        result.included_items, total, item_type, remaining
+                    );
+                    output = output.with_truncation(total, result.included_items, hint);
+                }
+            } else {
+                let hint = format!(
+                    "Showing {}/{} {}. {} items trimmed by budget. Use `offset` and `limit` parameters for pagination.",
+                    result.included_items, total, item_type, remaining
+                );
+                output = output.with_truncation(total, result.included_items, hint);
+            }
         }
 
         Ok(output)
