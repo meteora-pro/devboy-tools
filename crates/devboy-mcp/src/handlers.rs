@@ -994,6 +994,7 @@ impl ToolHandler {
             source_branch: params.source_branch,
             target_branch: params.target_branch,
             limit: Some(params.limit.unwrap_or(20) as u32),
+            ..Default::default()
         };
 
         let mut all_mrs = Vec::new();

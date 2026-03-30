@@ -43,8 +43,8 @@ pub use types::{
     Discussion, FailedJob, FileDiff, GetPipelineInput, GetUsersOptions, Issue, IssueFilter,
     IssueStatus, JobLogMode, JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote,
     MeetingSpeaker, MeetingTranscript, MergeRequest, MrFilter, Pagination, PipelineInfo,
-    PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, Release, ReleaseAsset,
-    TranscriptSentence, UpdateIssueInput, User,
+    PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, ProviderResult, Release,
+    ReleaseAsset, SortInfo, TranscriptSentence, UpdateIssueInput, User,
 };
 
 // Re-export enricher traits and utilities
