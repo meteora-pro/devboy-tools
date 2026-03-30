@@ -225,9 +225,7 @@ fn replace_binary(new_binary: &[u8]) -> Result<PathBuf> {
 fn run_managed_upgrade(install_method: &crate::update_check::InstallMethod) -> Result<()> {
     let cmd_str = install_method.update_command();
     let parts: Vec<&str> = cmd_str.split_whitespace().collect();
-    let (program, args) = parts
-        .split_first()
-        .context("Empty update command")?;
+    let (program, args) = parts.split_first().context("Empty update command")?;
 
     println!(
         "Installation managed by {}. Running: \x1b[1m{}\x1b[0m\n",
@@ -241,7 +239,13 @@ fn run_managed_upgrade(install_method: &crate::update_check::InstallMethod) -> R
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .status()
-        .with_context(|| format!("Failed to run '{}'. Is {} installed?", program, install_method.name()))?;
+        .with_context(|| {
+            format!(
+                "Failed to run '{}'. Is {} installed?",
+                program,
+                install_method.name()
+            )
+        })?;
 
     if !status.success() {
         bail!(
@@ -252,7 +256,10 @@ fn run_managed_upgrade(install_method: &crate::update_check::InstallMethod) -> R
         );
     }
 
-    println!("\n\x1b[32m✓ Successfully upgraded via {}\x1b[0m", install_method.name());
+    println!(
+        "\n\x1b[32m✓ Successfully upgraded via {}\x1b[0m",
+        install_method.name()
+    );
     Ok(())
 }
 
