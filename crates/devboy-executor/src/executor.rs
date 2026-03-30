@@ -323,6 +323,8 @@ struct CreateIssueParams {
     #[serde(default)]
     assignees: Vec<String>,
     priority: Option<String>,
+    parent: Option<String>,
+    markdown: Option<bool>,
 }
 
 async fn execute_create_issue(
@@ -337,6 +339,8 @@ async fn execute_create_issue(
         labels: params.labels,
         assignees: params.assignees,
         priority: params.priority,
+        parent: params.parent,
+        markdown: params.markdown.unwrap_or(true),
     };
     let issue = provider.create_issue(input).await?;
     Ok(ToolOutput::SingleIssue(Box::new(issue)))
@@ -351,6 +355,9 @@ struct UpdateIssueParams {
     labels: Option<Vec<String>>,
     assignees: Option<Vec<String>>,
     priority: Option<String>,
+    #[serde(rename = "parentId")]
+    parent_id: Option<String>,
+    markdown: Option<bool>,
 }
 
 async fn execute_update_issue(
@@ -366,6 +373,8 @@ async fn execute_update_issue(
         labels: params.labels,
         assignees: params.assignees,
         priority: params.priority,
+        parent_id: params.parent_id,
+        markdown: params.markdown.unwrap_or(true),
     };
     let issue = provider.update_issue(&params.key, input).await?;
     Ok(ToolOutput::SingleIssue(Box::new(issue)))
@@ -698,6 +707,7 @@ struct CreateEpicParams {
     #[serde(default)]
     assignees: Vec<String>,
     priority: Option<String>,
+    markdown: Option<bool>,
 }
 
 async fn execute_create_epic(
@@ -719,6 +729,8 @@ async fn execute_create_epic(
         labels,
         assignees: params.assignees,
         priority: params.priority,
+        parent: None,
+        markdown: params.markdown.unwrap_or(true),
     };
     let issue = provider.create_issue(input).await?;
     Ok(ToolOutput::SingleIssue(Box::new(issue)))
@@ -737,6 +749,8 @@ async fn execute_update_epic(
         labels: params.labels,
         assignees: params.assignees,
         priority: params.priority,
+        parent_id: params.parent_id,
+        markdown: params.markdown.unwrap_or(true),
     };
     let issue = provider.update_issue(&params.key, input).await?;
     Ok(ToolOutput::SingleIssue(Box::new(issue)))
@@ -796,6 +810,8 @@ mod tests {
             url: Some("https://example.com/1".into()),
             created_at: Some("2024-01-01T00:00:00Z".into()),
             updated_at: Some("2024-01-02T00:00:00Z".into()),
+            parent: None,
+            subtasks: vec![],
         }
     }
 
