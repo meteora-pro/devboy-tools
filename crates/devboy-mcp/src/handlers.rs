@@ -213,6 +213,14 @@ define_tools! {
                     "items": { "type": "string" },
                     "description": "Assignee usernames"
                 },
+                "parent": {
+                    "type": "string",
+                    "description": "Parent issue key to create a subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp."
+                },
+                "markdown": {
+                    "type": "boolean",
+                    "description": "Whether the description is markdown (default: true). When true, ClickUp renders formatted text."
+                },
                 "provider": {
                     "type": "string",
                     "enum": ["github", "gitlab", "clickup", "jira"],
@@ -255,6 +263,14 @@ define_tools! {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "New assignees (replaces existing)"
+                },
+                "parentId": {
+                    "type": "string",
+                    "description": "Parent issue key to move task as subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp."
+                },
+                "markdown": {
+                    "type": "boolean",
+                    "description": "Whether the description is markdown (default: true). When true, ClickUp renders formatted text."
                 }
             }
         }
@@ -862,6 +878,8 @@ impl ToolHandler {
             labels: params.labels.unwrap_or_default(),
             assignees: params.assignees.unwrap_or_default(),
             priority: None,
+            parent: params.parent,
+            markdown: params.markdown.unwrap_or(true),
         };
 
         let provider = if let Some(ref name) = params.provider {
@@ -917,6 +935,8 @@ impl ToolHandler {
             labels: params.labels,
             assignees: params.assignees,
             priority: None,
+            parent_id: params.parent_id,
+            markdown: params.markdown.unwrap_or(true),
         };
 
         for provider in &self.providers {
@@ -1645,6 +1665,8 @@ struct CreateIssueParams {
     description: Option<String>,
     labels: Option<Vec<String>>,
     assignees: Option<Vec<String>>,
+    parent: Option<String>,
+    markdown: Option<bool>,
     provider: Option<String>,
 }
 
@@ -1656,6 +1678,9 @@ struct UpdateIssueParams {
     state: Option<String>,
     labels: Option<Vec<String>>,
     assignees: Option<Vec<String>>,
+    #[serde(rename = "parentId")]
+    parent_id: Option<String>,
+    markdown: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1801,6 +1826,8 @@ mod tests {
                     url: Some("https://github.com/test/repo/issues/1".to_string()),
                     created_at: Some("2024-01-01T00:00:00Z".to_string()),
                     updated_at: Some("2024-01-02T00:00:00Z".to_string()),
+                    parent: None,
+                    subtasks: vec![],
                 }],
                 mrs: vec![MergeRequest {
                     key: "pr#1".to_string(),

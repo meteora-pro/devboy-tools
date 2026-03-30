@@ -753,6 +753,8 @@ fn map_issue(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> Issue
         url: Some(format!("{}/browse/{}", instance_url, issue.key)),
         created_at: issue.fields.created.clone(),
         updated_at: issue.fields.updated.clone(),
+        parent: None,
+        subtasks: vec![],
     }
 }
 
@@ -2061,9 +2063,7 @@ mod tests {
                 .create_issue(CreateIssueInput {
                     title: "New task".to_string(),
                     description: Some("Task description".to_string()),
-                    labels: vec![],
-                    assignees: vec![],
-                    priority: None,
+                    ..Default::default()
                 })
                 .await
                 .unwrap();
