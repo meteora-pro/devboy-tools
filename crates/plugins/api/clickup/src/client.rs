@@ -334,7 +334,7 @@ fn map_task(task: &ClickUpTask) -> Issue {
         url: Some(task.url.clone()),
         created_at: map_timestamp(&task.date_created),
         updated_at: map_timestamp(&task.date_updated),
-        parent: task.parent.clone(),
+        parent: task.parent.as_ref().map(|id| format!("CU-{id}")),
         subtasks: task
             .subtasks
             .as_deref()
@@ -495,11 +495,16 @@ impl IssueProvider for ClickUpClient {
         };
 
         // Resolve parent key to native ClickUp task ID if provided.
+        // Fast-path: if the key is already a CU-{id} key, the native ID is known.
         let parent = match input.parent {
             Some(ref parent_key) => {
-                let parent_url = self.task_url(parent_key)?;
-                let parent_task: ClickUpTask = self.get(&parent_url).await?;
-                Some(parent_task.id)
+                if let Some(stripped) = parent_key.strip_prefix("CU-") {
+                    Some(stripped.to_string())
+                } else {
+                    let parent_url = self.task_url(parent_key)?;
+                    let parent_task: ClickUpTask = self.get(&parent_url).await?;
+                    Some(parent_task.id)
+                }
             }
             None => None,
         };
@@ -572,9 +577,13 @@ impl IssueProvider for ClickUpClient {
         // That operation is only available through the ClickUp UI.
         let parent = match input.parent_id {
             Some(ref parent_key) if !parent_key.is_empty() => {
-                let parent_url = self.task_url(parent_key)?;
-                let parent_task: ClickUpTask = self.get(&parent_url).await?;
-                Some(parent_task.id)
+                if let Some(stripped) = parent_key.strip_prefix("CU-") {
+                    Some(stripped.to_string())
+                } else {
+                    let parent_url = self.task_url(parent_key)?;
+                    let parent_task: ClickUpTask = self.get(&parent_url).await?;
+                    Some(parent_task.id)
+                }
             }
             _ => None,
         };
@@ -1131,7 +1140,7 @@ mod tests {
         };
 
         let issue = map_task(&task);
-        assert_eq!(issue.parent, Some("parent123".to_string()));
+        assert_eq!(issue.parent, Some("CU-parent123".to_string()));
         assert!(issue.subtasks.is_empty());
     }
 
@@ -1187,7 +1196,7 @@ mod tests {
         assert_eq!(issue.subtasks.len(), 1);
         assert_eq!(issue.subtasks[0].key, "DEV-201");
         assert_eq!(issue.subtasks[0].title, "Subtask 1");
-        assert_eq!(issue.subtasks[0].parent, Some("epic1".to_string()));
+        assert_eq!(issue.subtasks[0].parent, Some("CU-epic1".to_string()));
     }
 
     #[test]
@@ -1268,7 +1277,7 @@ mod tests {
         assert_eq!(issue.subtasks.len(), 2);
         assert_eq!(issue.subtasks[0].key, "DEV-301");
         assert_eq!(issue.subtasks[1].key, "CU-sub2");
-        assert_eq!(issue.subtasks[0].parent, Some("epic1".to_string()));
+        assert_eq!(issue.subtasks[0].parent, Some("CU-epic1".to_string()));
     }
 
     #[test]
@@ -2127,7 +2136,7 @@ mod tests {
             assert_eq!(issue.subtasks[0].key, "DEV-401");
             assert_eq!(issue.subtasks[0].title, "Subtask 1");
             assert_eq!(issue.subtasks[0].state, "open");
-            assert_eq!(issue.subtasks[0].parent, Some("epic1".to_string()));
+            assert_eq!(issue.subtasks[0].parent, Some("CU-epic1".to_string()));
             assert_eq!(issue.subtasks[1].key, "DEV-402");
             assert_eq!(issue.subtasks[1].state, "closed");
         }
@@ -2181,7 +2190,7 @@ mod tests {
             let issue = client.get_issue("DEV-500").await.unwrap();
 
             assert_eq!(issue.key, "DEV-500");
-            assert_eq!(issue.parent, Some("parent123".to_string()));
+            assert_eq!(issue.parent, Some("CU-parent123".to_string()));
             assert!(issue.subtasks.is_empty());
         }
 
@@ -2242,7 +2251,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(issue.key, "DEV-601");
-            assert_eq!(issue.parent, Some("parent_native_id".to_string()));
+            assert_eq!(issue.parent, Some("CU-parent_native_id".to_string()));
         }
 
         #[tokio::test]
@@ -2298,7 +2307,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(issue.key, "DEV-701");
-            assert_eq!(issue.parent, Some("parent_id".to_string()));
+            assert_eq!(issue.parent, Some("CU-parent_id".to_string()));
         }
     }
 }

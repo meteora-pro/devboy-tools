@@ -140,7 +140,8 @@ pub struct UpdateIssueInput {
     /// New priority
     pub priority: Option<String>,
     /// Parent issue key (for moving task to subtask, e.g., "CU-abc123" or "DEV-42").
-    /// Set to empty string to remove parent (convert subtask back to task).
+    /// Note: removing parent (converting subtask back to task) is not supported by all providers
+    /// (e.g., ClickUp only supports this via UI). Empty string is ignored.
     pub parent_id: Option<String>,
     /// Whether the description is markdown (default: true).
     #[serde(default = "default_true")]
