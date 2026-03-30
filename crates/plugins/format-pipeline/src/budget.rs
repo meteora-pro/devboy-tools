@@ -202,6 +202,202 @@ pub fn process_issues(
     Ok(result)
 }
 
+/// High-level: apply strategy and run budget pipeline on merge requests.
+pub fn process_merge_requests(
+    mrs: &[devboy_core::MergeRequest],
+    strategy_kind: TrimStrategyKind,
+    config: &BudgetConfig,
+) -> devboy_core::Result<BudgetResult> {
+    let full_encoded = toon::encode_merge_requests(mrs, TrimLevel::Full)?;
+    let full_tokens = estimate_tokens(&full_encoded);
+
+    if full_tokens <= config.budget_tokens {
+        return Ok(BudgetResult {
+            content: full_encoded,
+            tokens: full_tokens,
+            trimmed: false,
+            overflow_indices: vec![],
+            total_items: mrs.len(),
+            included_items: mrs.len(),
+        });
+    }
+
+    let mut tree = crate::tree::build_merge_requests_tree(mrs);
+    let strategy = create_strategy(strategy_kind);
+    strategy.assign_values(&mut tree);
+
+    let mut result = run(&mut tree, &full_encoded, config);
+
+    if result.trimmed {
+        let included_indices = tree.included_item_indices();
+        let included_mrs: Vec<devboy_core::MergeRequest> = included_indices
+            .iter()
+            .map(|&i| mrs[i].clone())
+            .collect();
+
+        for level in [TrimLevel::Full, TrimLevel::Standard, TrimLevel::Minimal] {
+            let encoded = toon::encode_merge_requests(&included_mrs, level)?;
+            let tokens = estimate_tokens(&encoded);
+            if tokens <= config.budget_tokens {
+                result.content = encoded;
+                result.tokens = tokens;
+                return Ok(result);
+            }
+        }
+
+        let encoded = toon::encode_merge_requests(&included_mrs, TrimLevel::Minimal)?;
+        let max_chars = crate::token_counter::tokens_to_chars(config.budget_tokens);
+        result.content = truncation::truncate_string(&encoded, max_chars);
+        result.tokens = estimate_tokens(&result.content);
+    }
+
+    Ok(result)
+}
+
+/// High-level: apply strategy and run budget pipeline on diffs.
+pub fn process_diffs(
+    diffs: &[devboy_core::FileDiff],
+    strategy_kind: TrimStrategyKind,
+    config: &BudgetConfig,
+) -> devboy_core::Result<BudgetResult> {
+    let full_encoded = toon::encode_diffs(diffs)?;
+    let full_tokens = estimate_tokens(&full_encoded);
+
+    if full_tokens <= config.budget_tokens {
+        return Ok(BudgetResult {
+            content: full_encoded,
+            tokens: full_tokens,
+            trimmed: false,
+            overflow_indices: vec![],
+            total_items: diffs.len(),
+            included_items: diffs.len(),
+        });
+    }
+
+    let mut tree = crate::tree::build_diffs_tree(diffs);
+    let strategy = create_strategy(strategy_kind);
+    strategy.assign_values(&mut tree);
+
+    let mut result = run(&mut tree, &full_encoded, config);
+
+    if result.trimmed {
+        let included_indices = tree.included_item_indices();
+        let included_diffs: Vec<devboy_core::FileDiff> = included_indices
+            .iter()
+            .map(|&i| diffs[i].clone())
+            .collect();
+
+        let encoded = toon::encode_diffs(&included_diffs)?;
+        let tokens = estimate_tokens(&encoded);
+        if tokens <= config.budget_tokens {
+            result.content = encoded;
+            result.tokens = tokens;
+        } else {
+            let max_chars = crate::token_counter::tokens_to_chars(config.budget_tokens);
+            result.content = truncation::truncate_string(&encoded, max_chars);
+            result.tokens = estimate_tokens(&result.content);
+        }
+    }
+
+    Ok(result)
+}
+
+/// High-level: apply strategy and run budget pipeline on discussions.
+pub fn process_discussions(
+    discussions: &[devboy_core::Discussion],
+    strategy_kind: TrimStrategyKind,
+    config: &BudgetConfig,
+) -> devboy_core::Result<BudgetResult> {
+    let full_encoded = toon::encode_discussions(discussions)?;
+    let full_tokens = estimate_tokens(&full_encoded);
+
+    if full_tokens <= config.budget_tokens {
+        return Ok(BudgetResult {
+            content: full_encoded,
+            tokens: full_tokens,
+            trimmed: false,
+            overflow_indices: vec![],
+            total_items: discussions.len(),
+            included_items: discussions.len(),
+        });
+    }
+
+    let mut tree = crate::tree::build_discussions_tree(discussions);
+    let strategy = create_strategy(strategy_kind);
+    strategy.assign_values(&mut tree);
+
+    let mut result = run(&mut tree, &full_encoded, config);
+
+    if result.trimmed {
+        let included_indices = tree.included_item_indices();
+        let included_discussions: Vec<devboy_core::Discussion> = included_indices
+            .iter()
+            .map(|&i| discussions[i].clone())
+            .collect();
+
+        let encoded = toon::encode_discussions(&included_discussions)?;
+        let tokens = estimate_tokens(&encoded);
+        if tokens <= config.budget_tokens {
+            result.content = encoded;
+            result.tokens = tokens;
+        } else {
+            let max_chars = crate::token_counter::tokens_to_chars(config.budget_tokens);
+            result.content = truncation::truncate_string(&encoded, max_chars);
+            result.tokens = estimate_tokens(&result.content);
+        }
+    }
+
+    Ok(result)
+}
+
+/// High-level: apply strategy and run budget pipeline on comments.
+pub fn process_comments(
+    comments: &[devboy_core::Comment],
+    strategy_kind: TrimStrategyKind,
+    config: &BudgetConfig,
+) -> devboy_core::Result<BudgetResult> {
+    let full_encoded = toon::encode_comments(comments)?;
+    let full_tokens = estimate_tokens(&full_encoded);
+
+    if full_tokens <= config.budget_tokens {
+        return Ok(BudgetResult {
+            content: full_encoded,
+            tokens: full_tokens,
+            trimmed: false,
+            overflow_indices: vec![],
+            total_items: comments.len(),
+            included_items: comments.len(),
+        });
+    }
+
+    let mut tree = crate::tree::build_comments_tree(comments);
+    let strategy = create_strategy(strategy_kind);
+    strategy.assign_values(&mut tree);
+
+    let mut result = run(&mut tree, &full_encoded, config);
+
+    if result.trimmed {
+        let included_indices = tree.included_item_indices();
+        let included_comments: Vec<devboy_core::Comment> = included_indices
+            .iter()
+            .map(|&i| comments[i].clone())
+            .collect();
+
+        let encoded = toon::encode_comments(&included_comments)?;
+        let tokens = estimate_tokens(&encoded);
+        if tokens <= config.budget_tokens {
+            result.content = encoded;
+            result.tokens = tokens;
+        } else {
+            let max_chars = crate::token_counter::tokens_to_chars(config.budget_tokens);
+            result.content = truncation::truncate_string(&encoded, max_chars);
+            result.tokens = estimate_tokens(&result.content);
+        }
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

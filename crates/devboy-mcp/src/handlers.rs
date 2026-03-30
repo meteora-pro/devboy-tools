@@ -1096,13 +1096,13 @@ impl ToolHandler {
             match provider.get_discussions(&params.key).await {
                 Ok(discussions) => {
                     let offset = params.offset.unwrap_or(0);
-                    let limit = params.limit.unwrap_or(self.pipeline_config.max_items);
+                    let limit = params.limit.unwrap_or(20);
                     let total = discussions.len();
                     let paged_discussions: Vec<_> =
                         discussions.into_iter().skip(offset).take(limit).collect();
                     let included = paged_discussions.len();
 
-                    let pipeline = self.create_pipeline_with_max_items(&params.format, limit);
+                    let pipeline = self.create_pipeline(&params.format);
                     return match pipeline.transform_discussions(paged_discussions) {
                         Ok(mut output) => {
                             if self.pipeline_config.include_hints && offset + included < total {
@@ -1589,21 +1589,12 @@ impl ToolHandler {
     }
 
     fn create_pipeline(&self, format: &Option<String>) -> Pipeline {
-        self.create_pipeline_with_max_items(format, self.pipeline_config.max_items)
-    }
-
-    fn create_pipeline_with_max_items(
-        &self,
-        format: &Option<String>,
-        max_items: usize,
-    ) -> Pipeline {
         let output_format = match format.as_deref() {
             Some("json") => OutputFormat::Json,
             _ => OutputFormat::Toon,
         };
 
         Pipeline::with_config(PipelineConfig {
-            max_items,
             format: output_format,
             ..self.pipeline_config.clone()
         })
@@ -2247,16 +2238,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_merge_request_discussions_handler_uses_custom_configured_max_items() {
+    async fn test_get_merge_request_discussions_handler_uses_limit_parameter() {
         let provider = Arc::new(ManyDiscussionsProvider::new(10)) as Arc<dyn Provider>;
-        let handler = ToolHandler::new(vec![provider]).with_pipeline_config(PipelineConfig {
-            max_items: 3,
-            max_chars: 20_000,
-            ..Default::default()
-        });
+        let handler = ToolHandler::new(vec![provider]);
 
         let args = serde_json::json!({
             "key": "pr#1",
+            "limit": 3,
             "format": "json"
         });
         let result = handler

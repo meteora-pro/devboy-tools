@@ -98,7 +98,7 @@ fn test_json_vs_toon_token_savings() {
 
     let pipeline = Pipeline::with_config(PipelineConfig {
         format: OutputFormat::Toon,
-        max_items: 100,
+
         max_chars: 100_000,
         ..Default::default()
     });
@@ -126,7 +126,7 @@ fn test_pull_requests_toon_output() {
 
     let pipeline = Pipeline::with_config(PipelineConfig {
         format: OutputFormat::Toon,
-        max_items: 100,
+
         max_chars: 100_000,
         ..Default::default()
     });
@@ -150,8 +150,7 @@ fn test_truncation_with_pagination_hints() {
 
     let pipeline = Pipeline::with_config(PipelineConfig {
         format: OutputFormat::Toon,
-        max_items: 2,
-        max_chars: 100_000,
+        max_chars: 300,
         include_hints: true,
         ..Default::default()
     });
@@ -160,12 +159,10 @@ fn test_truncation_with_pagination_hints() {
 
     assert!(output.truncated, "Output should be marked as truncated");
     assert_eq!(output.total_count, Some(5));
-    assert_eq!(output.included_count, 2);
+    assert!(output.included_count < 5);
 
     let hint = output.agent_hint.as_ref().expect("Should have agent hint");
-    assert!(hint.contains("2/5"));
-    assert!(hint.contains("3 more"));
-    assert!(hint.contains("offset"));
+    assert!(hint.contains("trimmed by budget"));
 }
 
 #[test]
@@ -174,7 +171,6 @@ fn test_no_truncation_when_under_limit() {
 
     let pipeline = Pipeline::with_config(PipelineConfig {
         format: OutputFormat::Toon,
-        max_items: 10,
         max_chars: 100_000,
         include_hints: true,
         ..Default::default()
@@ -192,7 +188,7 @@ fn test_character_limit_truncation() {
 
     let pipeline = Pipeline::with_config(PipelineConfig {
         format: OutputFormat::Toon,
-        max_items: 100,
+
         max_chars: 500,
         include_hints: true,
         ..Default::default()
@@ -214,7 +210,7 @@ fn test_diffs_toon_output() {
 
     let pipeline = Pipeline::with_config(PipelineConfig {
         format: OutputFormat::Toon,
-        max_items: 100,
+
         max_chars: 100_000,
         max_chars_per_item: 1000,
         ..Default::default()
@@ -250,7 +246,7 @@ fn test_diff_content_truncation() {
 
     let pipeline = Pipeline::with_config(PipelineConfig {
         format: OutputFormat::Toon,
-        max_items: 100,
+
         max_chars: 100_000,
         max_chars_per_item: 200,
         ..Default::default()
@@ -281,7 +277,7 @@ fn test_format_comparison_demo() {
     // TOON
     let toon_pipeline = Pipeline::with_config(PipelineConfig {
         format: OutputFormat::Toon,
-        max_items: 100,
+
         max_chars: 100_000,
         ..Default::default()
     });
