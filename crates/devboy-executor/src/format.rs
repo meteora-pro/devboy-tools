@@ -608,7 +608,6 @@ mod tests {
     fn test_format_with_custom_pipeline_config() {
         let output = ToolOutput::Issues(vec![sample_issue()]);
         let config = PipelineConfig {
-            max_items: 1,
             max_chars: 500,
             ..PipelineConfig::default()
         };

@@ -201,7 +201,7 @@ fn bench_pipeline_transform(c: &mut Criterion) {
             |b, issues| {
                 let pipeline = Pipeline::with_config(PipelineConfig {
                     format: OutputFormat::Json,
-                    max_items: 100,
+
                     max_chars: 1_000_000,
                     ..Default::default()
                 });
@@ -219,7 +219,7 @@ fn bench_pipeline_transform(c: &mut Criterion) {
             |b, issues| {
                 let pipeline = Pipeline::with_config(PipelineConfig {
                     format: OutputFormat::Toon,
-                    max_items: 100,
+
                     max_chars: 1_000_000,
                     ..Default::default()
                 });
