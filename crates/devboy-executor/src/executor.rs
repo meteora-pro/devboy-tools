@@ -415,6 +415,7 @@ async fn execute_get_merge_requests(
         author: params.author,
         labels: params.labels,
         limit: params.limit.or(Some(20)),
+        ..Default::default()
     };
     let mrs = provider.get_merge_requests(filter).await?;
     Ok(ToolOutput::MergeRequests(mrs))

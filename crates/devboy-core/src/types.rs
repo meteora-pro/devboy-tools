@@ -183,6 +183,12 @@ pub struct MrFilter {
     pub labels: Option<Vec<String>>,
     /// Maximum number of results
     pub limit: Option<u32>,
+    /// Number of results to skip (offset)
+    pub offset: Option<u32>,
+    /// Sort by field (e.g., "created_at", "updated_at")
+    pub sort_by: Option<String>,
+    /// Sort order ("asc" or "desc")
+    pub sort_order: Option<String>,
 }
 
 // =============================================================================
@@ -285,6 +291,66 @@ pub struct Pagination {
     pub total: Option<u32>,
     /// Whether there are more items
     pub has_more: bool,
+}
+
+// =============================================================================
+// Sort Info
+// =============================================================================
+
+/// Sorting metadata from provider API.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SortInfo {
+    /// Current sort applied (e.g., "updated_at:desc")
+    pub current_sort: Option<String>,
+    /// Available sort fields for this endpoint
+    pub available_sorts: Vec<String>,
+}
+
+// =============================================================================
+// Provider Result
+// =============================================================================
+
+/// Wrapper for provider list responses with pagination and sorting metadata.
+///
+/// Providers return this instead of plain `Vec<T>` to convey API-level
+/// pagination state and sorting info to the format pipeline.
+#[derive(Debug, Clone, Default)]
+pub struct ProviderResult<T> {
+    /// The actual items returned by the provider
+    pub items: Vec<T>,
+    /// Pagination metadata from the API (total count, has_more, etc.)
+    pub pagination: Option<Pagination>,
+    /// Sorting metadata (current sort, available sort fields)
+    pub sort_info: Option<SortInfo>,
+}
+
+impl<T> ProviderResult<T> {
+    /// Create a new ProviderResult with just items (no metadata).
+    pub fn new(items: Vec<T>) -> Self {
+        Self {
+            items,
+            pagination: None,
+            sort_info: None,
+        }
+    }
+
+    /// Set pagination metadata.
+    pub fn with_pagination(mut self, pagination: Pagination) -> Self {
+        self.pagination = Some(pagination);
+        self
+    }
+
+    /// Set sort info metadata.
+    pub fn with_sort_info(mut self, sort_info: SortInfo) -> Self {
+        self.sort_info = Some(sort_info);
+        self
+    }
+}
+
+impl<T> From<Vec<T>> for ProviderResult<T> {
+    fn from(items: Vec<T>) -> Self {
+        Self::new(items)
+    }
 }
 
 #[cfg(test)]
