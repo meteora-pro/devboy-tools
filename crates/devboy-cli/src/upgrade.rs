@@ -238,10 +238,21 @@ fn run_managed_upgrade(install_method: &crate::update_check::InstallMethod) -> R
 
     #[cfg(windows)]
     {
-        println!(
-            "On Windows the running binary is locked by the OS.\n\
-             Please run the command above manually after closing devboy."
-        );
+        // Windows locks the running .exe, so the package manager cannot
+        // replace it while we are alive. Spawn a detached `cmd.exe` that
+        // waits for this process to exit and then runs the update.
+        // 3 pings ≈ 2 seconds — classic Windows sleep-without-console trick.
+        let script = format!("ping 127.0.0.1 -n 3 >nul & {}", cmd_str);
+
+        std::process::Command::new("cmd")
+            .args(["/C", &script])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .context("Failed to spawn helper process for upgrade")?;
+
+        println!("\x1b[33mThe upgrade will run in the background after this process exits.\x1b[0m");
         return Ok(());
     }
 
