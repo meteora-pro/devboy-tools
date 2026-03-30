@@ -39,6 +39,8 @@ impl IssueProvider for ClickUpTestProvider {
             url: None,
             created_at: None,
             updated_at: None,
+            parent: None,
+            subtasks: vec![],
         }])
     }
 
@@ -114,6 +116,8 @@ impl IssueProvider for GitLabTestProvider {
             url: None,
             created_at: None,
             updated_at: None,
+            parent: None,
+            subtasks: vec![],
         }])
     }
 
