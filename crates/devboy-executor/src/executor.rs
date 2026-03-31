@@ -800,8 +800,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use devboy_core::{
-        Comment, CreateMergeRequestInput, Discussion, FileDiff, Issue, IssueProvider, MergeRequest,
-        MergeRequestProvider, Provider, User,
+        Comment, CreateMergeRequestInput, Discussion, FileDiff, Issue, IssueLink, IssueProvider,
+        IssueRelations, MergeRequest, MergeRequestProvider, Provider, User,
     };
 
     // --- Mock Provider ---
@@ -907,6 +907,20 @@ mod tests {
         }
         async fn add_comment(&self, _key: &str, _body: &str) -> devboy_core::Result<Comment> {
             Ok(sample_comment())
+        }
+        async fn get_issue_relations(
+            &self,
+            _key: &str,
+        ) -> devboy_core::Result<IssueRelations> {
+            Ok(IssueRelations {
+                parent: Some(sample_issue()),
+                subtasks: vec![sample_issue()],
+                blocks: vec![IssueLink {
+                    issue: sample_issue(),
+                    link_type: "Blocks".into(),
+                }],
+                ..Default::default()
+            })
         }
         fn provider_name(&self) -> &'static str {
             "mock"
@@ -1060,6 +1074,30 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::Text(ref t) if t.contains("Comment added")));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_issue_relations() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"key": "gh#1"});
+        let result = dispatch_tool("get_issue_relations", &args, &provider)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::Relations(relations) => {
+                assert!(relations.parent.is_some());
+                assert_eq!(relations.subtasks.len(), 1);
+                assert_eq!(relations.blocks.len(), 1);
+            }
+            other => panic!("Expected Relations, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_issue_relations_missing_key() {
+        let provider = MockProvider;
+        let result = dispatch_tool("get_issue_relations", &serde_json::json!({}), &provider).await;
+        assert!(result.is_err());
     }
 
     // --- MR tool dispatch tests ---
