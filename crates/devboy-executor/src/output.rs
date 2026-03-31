@@ -193,10 +193,7 @@ mod tests {
             1
         );
         assert_eq!(ToolOutput::Users(vec![]).item_count(), 0);
-        assert_eq!(
-            ToolOutput::Relations(Box::default()).item_count(),
-            1
-        );
+        assert_eq!(ToolOutput::Relations(Box::default()).item_count(), 1);
         assert_eq!(ToolOutput::Text("x".into()).item_count(), 1);
     }
 
