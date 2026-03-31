@@ -1526,7 +1526,12 @@ impl ToolHandler {
         for provider in &self.meeting_providers {
             match provider.get_meetings(filter.clone()).await {
                 Ok(result) => {
-                    let output = devboy_executor::ToolOutput::MeetingNotes(result.items);
+                    let meta = devboy_executor::ResultMeta {
+                        pagination: result.pagination,
+                        sort_info: result.sort_info,
+                    };
+                    let output =
+                        devboy_executor::ToolOutput::MeetingNotes(result.items, Some(meta));
                     return match devboy_executor::format_output(
                         output,
                         None,
@@ -1628,7 +1633,12 @@ impl ToolHandler {
                 .await
             {
                 Ok(result) => {
-                    let output = devboy_executor::ToolOutput::MeetingNotes(result.items);
+                    let meta = devboy_executor::ResultMeta {
+                        pagination: result.pagination,
+                        sort_info: result.sort_info,
+                    };
+                    let output =
+                        devboy_executor::ToolOutput::MeetingNotes(result.items, Some(meta));
                     return match devboy_executor::format_output(
                         output,
                         None,

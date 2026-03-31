@@ -133,6 +133,83 @@ impl GitLabClient {
         self.handle_response(response).await
     }
 
+    /// Make an authenticated GET request and extract pagination from headers.
+    async fn get_with_pagination<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        filter_offset: Option<u32>,
+        filter_limit: Option<u32>,
+    ) -> Result<(T, Option<devboy_core::Pagination>)> {
+        debug!(url = url, "GitLab GET request (with pagination)");
+
+        let response = self
+            .request(reqwest::Method::GET, url)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let status_code = status.as_u16();
+            let message = response.text().await.unwrap_or_default();
+            warn!(
+                status = status_code,
+                message = message,
+                "GitLab API error response"
+            );
+            return Err(Error::from_status(status_code, message));
+        }
+
+        // Extract pagination from GitLab headers
+        let pagination = Self::extract_pagination(&response, filter_offset, filter_limit);
+
+        let data: T = response
+            .json()
+            .await
+            .map_err(|e| Error::InvalidData(format!("Failed to parse response: {}", e)))?;
+
+        Ok((data, pagination))
+    }
+
+    /// Extract pagination metadata from GitLab response headers.
+    fn extract_pagination(
+        response: &reqwest::Response,
+        offset: Option<u32>,
+        limit: Option<u32>,
+    ) -> Option<devboy_core::Pagination> {
+        let headers = response.headers();
+
+        let x_total = headers
+            .get("x-total")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u32>().ok());
+
+        let x_page = headers
+            .get("x-page")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u32>().ok());
+
+        let x_total_pages = headers
+            .get("x-total-pages")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u32>().ok());
+
+        let limit = limit.unwrap_or(20);
+        let offset = offset.unwrap_or(0);
+
+        let has_more = match (x_page, x_total_pages) {
+            (Some(page), Some(total_pages)) => page < total_pages,
+            _ => false,
+        };
+
+        Some(devboy_core::Pagination {
+            offset,
+            limit,
+            total: x_total,
+            has_more,
+        })
+    }
+
     /// Handle response and map errors.
     async fn handle_response<T: serde::de::DeserializeOwned>(
         &self,
@@ -409,8 +486,21 @@ impl IssueProvider for GitLabClient {
             url.push_str(&format!("?{}", params.join("&")));
         }
 
-        let gl_issues: Vec<GitLabIssue> = self.get(&url).await?;
-        Ok(gl_issues.iter().map(map_issue).collect::<Vec<_>>().into())
+        let (gl_issues, pagination): (Vec<GitLabIssue>, _) = self
+            .get_with_pagination(&url, filter.offset, filter.limit)
+            .await?;
+        let issues: Vec<Issue> = gl_issues.iter().map(map_issue).collect();
+        let mut result = ProviderResult::new(issues);
+        result.pagination = pagination;
+        result.sort_info = Some(devboy_core::SortInfo {
+            current_sort: Some(format!(
+                "{}:{}",
+                filter.sort_by.as_deref().unwrap_or("updated_at"),
+                filter.sort_order.as_deref().unwrap_or("desc")
+            )),
+            available_sorts: vec!["created_at".into(), "updated_at".into()],
+        });
+        Ok(result)
     }
 
     async fn get_issue(&self, key: &str) -> Result<Issue> {
@@ -540,12 +630,17 @@ impl MergeRequestProvider for GitLabClient {
             url.push_str(&format!("?{}", params.join("&")));
         }
 
-        let gl_mrs: Vec<GitLabMergeRequest> = self.get(&url).await?;
-        Ok(gl_mrs
-            .iter()
-            .map(map_merge_request)
-            .collect::<Vec<_>>()
-            .into())
+        let (gl_mrs, pagination): (Vec<GitLabMergeRequest>, _) = self
+            .get_with_pagination(&url, filter.offset, filter.limit)
+            .await?;
+        let mrs: Vec<MergeRequest> = gl_mrs.iter().map(map_merge_request).collect();
+        let mut result = ProviderResult::new(mrs);
+        result.pagination = pagination;
+        result.sort_info = Some(devboy_core::SortInfo {
+            current_sort: Some("updated_at:desc".into()),
+            available_sorts: vec!["created_at".into(), "updated_at".into()],
+        });
+        Ok(result)
     }
 
     async fn get_merge_request(&self, key: &str) -> Result<MergeRequest> {
