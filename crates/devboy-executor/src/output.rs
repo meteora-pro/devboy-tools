@@ -194,7 +194,7 @@ mod tests {
         );
         assert_eq!(ToolOutput::Users(vec![]).item_count(), 0);
         assert_eq!(
-            ToolOutput::Relations(Box::new(devboy_core::IssueRelations::default())).item_count(),
+            ToolOutput::Relations(Box::default()).item_count(),
             1
         );
         assert_eq!(ToolOutput::Text("x".into()).item_count(), 1);
@@ -248,7 +248,7 @@ mod tests {
         assert_eq!(ToolOutput::Statuses(vec![]).type_name(), "statuses");
         assert_eq!(ToolOutput::Users(vec![]).type_name(), "users");
         assert_eq!(
-            ToolOutput::Relations(Box::new(devboy_core::IssueRelations::default())).type_name(),
+            ToolOutput::Relations(Box::default()).type_name(),
             "issue_relations"
         );
         assert_eq!(ToolOutput::Text("x".into()).type_name(), "text");
