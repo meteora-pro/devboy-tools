@@ -1018,6 +1018,39 @@ mod tests {
         assert!(result.contains("Unknown speaker"));
     }
 
+    // --- Relations formatting ---
+
+    #[test]
+    fn test_format_relations() {
+        let relations = devboy_core::IssueRelations {
+            parent: Some(sample_issue()),
+            subtasks: vec![sample_issue()],
+            blocks: vec![devboy_core::IssueLink {
+                issue: sample_issue(),
+                link_type: "Blocks".into(),
+            }],
+            blocked_by: vec![],
+            related_to: vec![],
+            duplicates: vec![],
+        };
+        let output = ToolOutput::Relations(Box::new(relations));
+        let result = format_output(output, None, None, None).unwrap().content;
+        // Relations format uses JSON serialization
+        assert!(result.contains("gh#1"));
+        assert!(result.contains("Blocks"));
+        assert!(result.contains("Test Issue"));
+    }
+
+    #[test]
+    fn test_format_relations_empty() {
+        let relations = devboy_core::IssueRelations::default();
+        let output = ToolOutput::Relations(Box::new(relations));
+        let result = format_output(output, None, None, None).unwrap().content;
+        // Empty relations should still produce valid JSON
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed.is_object());
+    }
+
     // --- format_time edge cases ---
 
     #[test]

@@ -1863,7 +1863,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use devboy_core::{
-        Comment, CreateMergeRequestInput, Discussion, FileDiff, Issue, MergeRequest, User,
+        Comment, CreateMergeRequestInput, Discussion, FileDiff, Issue, IssueLink, IssueRelations,
+        MergeRequest, User,
     };
 
     struct MockProvider {
@@ -1983,6 +1984,23 @@ mod tests {
                 created_at: None,
                 updated_at: None,
                 position: None,
+            })
+        }
+
+        async fn get_issue_relations(
+            &self,
+            _issue_key: &str,
+        ) -> devboy_core::Result<IssueRelations> {
+            Ok(IssueRelations {
+                parent: Some(self.issues[0].clone()),
+                subtasks: vec![self.issues[0].clone()],
+                blocks: vec![IssueLink {
+                    issue: self.issues[0].clone(),
+                    link_type: "Blocks".to_string(),
+                }],
+                blocked_by: vec![],
+                related_to: vec![],
+                duplicates: vec![],
             })
         }
 
@@ -2109,6 +2127,13 @@ mod tests {
 
         async fn add_comment(&self, issue_key: &str, body: &str) -> devboy_core::Result<Comment> {
             IssueProvider::add_comment(&self.base, issue_key, body).await
+        }
+
+        async fn get_issue_relations(
+            &self,
+            issue_key: &str,
+        ) -> devboy_core::Result<IssueRelations> {
+            self.base.get_issue_relations(issue_key).await
         }
 
         fn provider_name(&self) -> &'static str {
@@ -3122,6 +3147,12 @@ mod tests {
                 message: "comment failed".into(),
             })
         }
+        async fn get_issue_relations(
+            &self,
+            _key: &str,
+        ) -> devboy_core::Result<IssueRelations> {
+            Err(devboy_core::Error::NotFound("not found".into()))
+        }
         fn provider_name(&self) -> &'static str {
             "failing"
         }
@@ -3482,5 +3513,68 @@ mod tests {
             .execute("get_pipeline", Some(serde_json::json!({})))
             .await;
         assert_eq!(result.is_error, Some(true));
+    }
+
+    // =========================================================================
+    // get_issue_relations handler tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_get_issue_relations_handler() {
+        let provider = Arc::new(MockProvider::new()) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({"key": "gh#1"});
+        let result = handler.execute("get_issue_relations", Some(args)).await;
+
+        assert!(result.is_error.is_none());
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        // Should contain serialized JSON with parent, subtasks, blocks
+        assert!(content.contains("gh#1"));
+        assert!(content.contains("Blocks"));
+    }
+
+    #[tokio::test]
+    async fn test_get_issue_relations_missing_params() {
+        let handler = ToolHandler::new(vec![Arc::new(MockProvider::new()) as Arc<dyn Provider>]);
+
+        let result = handler.execute("get_issue_relations", None).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Missing required parameter: key"));
+    }
+
+    #[tokio::test]
+    async fn test_get_issue_relations_no_providers() {
+        let handler = ToolHandler::new(vec![]);
+
+        let args = serde_json::json!({"key": "gh#1"});
+        let result = handler.execute("get_issue_relations", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("No providers configured"));
+    }
+
+    #[tokio::test]
+    async fn test_get_issue_relations_provider_fails() {
+        let provider = Arc::new(FailingProvider) as Arc<dyn Provider>;
+        let handler = ToolHandler::new(vec![provider]);
+
+        let args = serde_json::json!({"key": "gh#1"});
+        let result = handler.execute("get_issue_relations", Some(args)).await;
+
+        assert_eq!(result.is_error, Some(true));
+        let content = match &result.content[0] {
+            crate::protocol::ToolResultContent::Text { text } => text,
+        };
+        assert!(content.contains("Issue not found"));
     }
 }
