@@ -320,7 +320,7 @@ async fn execute_get_issue_relations(
     args: &Value,
 ) -> Result<ToolOutput> {
     let params: KeyParam = serde_json::from_value(args.clone())
-        .map_err(|e| Error::InvalidData(format!("invalid get_issue_relations params: {e}")))?;
+        .map_err(|e| Error::InvalidData(format!("missing 'key' parameter: {e}")))?;
     let relations = provider.get_issue_relations(&params.key).await?;
     Ok(ToolOutput::Relations(Box::new(relations)))
 }
