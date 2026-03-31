@@ -541,7 +541,11 @@ impl MergeRequestProvider for GitLabClient {
         }
 
         let gl_mrs: Vec<GitLabMergeRequest> = self.get(&url).await?;
-        Ok(gl_mrs.iter().map(map_merge_request).collect::<Vec<_>>().into())
+        Ok(gl_mrs
+            .iter()
+            .map(map_merge_request)
+            .collect::<Vec<_>>()
+            .into())
     }
 
     async fn get_merge_request(&self, key: &str) -> Result<MergeRequest> {
@@ -570,7 +574,12 @@ impl MergeRequestProvider for GitLabClient {
         // Use the changes endpoint which returns diffs with content
         let url = self.project_url(&format!("/merge_requests/{}/changes", iid));
         let gl_changes: GitLabMergeRequestChanges = self.get(&url).await?;
-        Ok(gl_changes.changes.iter().map(map_diff).collect::<Vec<_>>().into())
+        Ok(gl_changes
+            .changes
+            .iter()
+            .map(map_diff)
+            .collect::<Vec<_>>()
+            .into())
     }
 
     async fn add_comment(&self, mr_key: &str, input: CreateCommentInput) -> Result<Comment> {

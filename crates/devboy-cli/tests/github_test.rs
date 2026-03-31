@@ -51,7 +51,11 @@ async fn test_mode_detection() {
 async fn test_get_issues() {
     let provider = TestProvider::github();
 
-    let issues = provider.get_issues(IssueFilter::default()).await.unwrap().items;
+    let issues = provider
+        .get_issues(IssueFilter::default())
+        .await
+        .unwrap()
+        .items;
 
     assert!(!issues.is_empty(), "Should have at least one issue");
 
@@ -90,7 +94,11 @@ async fn test_get_issue() {
     let provider = TestProvider::github();
 
     // First get all issues
-    let issues = provider.get_issues(IssueFilter::default()).await.unwrap().items;
+    let issues = provider
+        .get_issues(IssueFilter::default())
+        .await
+        .unwrap()
+        .items;
     assert!(!issues.is_empty());
 
     // Then get a specific issue
@@ -165,7 +173,11 @@ async fn test_provider_name() {
 async fn test_issue_url_format() {
     let provider = TestProvider::github();
 
-    let issues = provider.get_issues(IssueFilter::default()).await.unwrap().items;
+    let issues = provider
+        .get_issues(IssueFilter::default())
+        .await
+        .unwrap()
+        .items;
     assert!(!issues.is_empty());
 
     for issue in &issues {
@@ -208,7 +220,11 @@ async fn test_get_issue_comments() {
     let provider = TestProvider::github();
 
     // First get all issues
-    let issues = provider.get_issues(IssueFilter::default()).await.unwrap().items;
+    let issues = provider
+        .get_issues(IssueFilter::default())
+        .await
+        .unwrap()
+        .items;
     assert!(!issues.is_empty());
 
     // Get comments for the first issue
@@ -322,7 +338,11 @@ async fn test_pr_issue_distinction() {
     let provider = TestProvider::github();
 
     // Get issues and PRs
-    let issues = provider.get_issues(IssueFilter::default()).await.unwrap().items;
+    let issues = provider
+        .get_issues(IssueFilter::default())
+        .await
+        .unwrap()
+        .items;
     let prs = provider
         .get_merge_requests(MrFilter::default())
         .await
@@ -358,7 +378,11 @@ async fn test_add_issue_comment_not_supported() {
     let provider = TestProvider::github();
 
     // First get all issues
-    let issues = provider.get_issues(IssueFilter::default()).await.unwrap().items;
+    let issues = provider
+        .get_issues(IssueFilter::default())
+        .await
+        .unwrap()
+        .items;
     assert!(!issues.is_empty(), "Should have at least one issue");
 
     // Add a comment to the first issue
@@ -493,7 +517,11 @@ async fn test_update_issue_not_supported() {
     let provider = TestProvider::github();
 
     // First get all issues
-    let issues = provider.get_issues(IssueFilter::default()).await.unwrap().items;
+    let issues = provider
+        .get_issues(IssueFilter::default())
+        .await
+        .unwrap()
+        .items;
     assert!(
         !issues.is_empty(),
         "Should have at least one issue to update"

@@ -41,7 +41,8 @@ impl IssueProvider for ClickUpTestProvider {
             updated_at: None,
             parent: None,
             subtasks: vec![],
-        }].into())
+        }]
+        .into())
     }
 
     async fn get_issue(&self, _key: &str) -> Result<Issue> {
@@ -118,7 +119,8 @@ impl IssueProvider for GitLabTestProvider {
             updated_at: None,
             parent: None,
             subtasks: vec![],
-        }].into())
+        }]
+        .into())
     }
 
     async fn get_issue(&self, _key: &str) -> Result<Issue> {
@@ -148,7 +150,10 @@ impl IssueProvider for GitLabTestProvider {
 
 #[async_trait]
 impl MergeRequestProvider for GitLabTestProvider {
-    async fn get_merge_requests(&self, _filter: MrFilter) -> Result<devboy_core::ProviderResult<MergeRequest>> {
+    async fn get_merge_requests(
+        &self,
+        _filter: MrFilter,
+    ) -> Result<devboy_core::ProviderResult<MergeRequest>> {
         Ok(vec![MergeRequest {
             key: "mr#123".to_string(),
             title: "Test MR".to_string(),
@@ -165,14 +170,18 @@ impl MergeRequestProvider for GitLabTestProvider {
             url: None,
             created_at: None,
             updated_at: None,
-        }].into())
+        }]
+        .into())
     }
 
     async fn get_merge_request(&self, _key: &str) -> Result<MergeRequest> {
         Err(devboy_core::Error::NotFound("not implemented".into()))
     }
 
-    async fn get_discussions(&self, _mr_key: &str) -> Result<devboy_core::ProviderResult<Discussion>> {
+    async fn get_discussions(
+        &self,
+        _mr_key: &str,
+    ) -> Result<devboy_core::ProviderResult<Discussion>> {
         Ok(vec![].into())
     }
 

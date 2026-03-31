@@ -1938,7 +1938,10 @@ mod tests {
 
     #[async_trait]
     impl IssueProvider for MockProvider {
-        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
+        async fn get_issues(
+            &self,
+            _filter: IssueFilter,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
             Ok(self.issues.clone().into())
         }
 
@@ -1958,7 +1961,10 @@ mod tests {
             Ok(self.issues[0].clone())
         }
 
-        async fn get_comments(&self, _issue_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
+        async fn get_comments(
+            &self,
+            _issue_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
             Ok(vec![Comment {
                 id: "1".to_string(),
                 body: "Test comment".to_string(),
@@ -1966,7 +1972,8 @@ mod tests {
                 created_at: None,
                 updated_at: None,
                 position: None,
-            }].into())
+            }]
+            .into())
         }
 
         async fn add_comment(&self, _issue_key: &str, _body: &str) -> devboy_core::Result<Comment> {
@@ -2015,7 +2022,10 @@ mod tests {
             Ok(self.mrs[0].clone())
         }
 
-        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
+        async fn get_discussions(
+            &self,
+            _mr_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
             Ok(vec![Discussion {
                 id: "1".to_string(),
                 resolved: false,
@@ -2029,10 +2039,14 @@ mod tests {
                     position: None,
                 }],
                 position: None,
-            }].into())
+            }]
+            .into())
         }
 
-        async fn get_diffs(&self, _mr_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
+        async fn get_diffs(
+            &self,
+            _mr_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
             Ok(vec![FileDiff {
                 file_path: "src/main.rs".to_string(),
                 old_path: None,
@@ -2042,7 +2056,8 @@ mod tests {
                 diff: "+added line\n-removed line".to_string(),
                 additions: Some(1),
                 deletions: Some(1),
-            }].into())
+            }]
+            .into())
         }
 
         async fn add_comment(
@@ -2094,7 +2109,10 @@ mod tests {
 
     #[async_trait]
     impl IssueProvider for ManyDiscussionsProvider {
-        async fn get_issues(&self, filter: IssueFilter) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
+        async fn get_issues(
+            &self,
+            filter: IssueFilter,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
             self.base.get_issues(filter).await
         }
 
@@ -2114,7 +2132,10 @@ mod tests {
             self.base.update_issue(key, input).await
         }
 
-        async fn get_comments(&self, issue_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
+        async fn get_comments(
+            &self,
+            issue_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
             self.base.get_comments(issue_key).await
         }
 
@@ -2147,11 +2168,17 @@ mod tests {
             self.base.get_merge_request(key).await
         }
 
-        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
+        async fn get_discussions(
+            &self,
+            _mr_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
             Ok(self.discussions.clone().into())
         }
 
-        async fn get_diffs(&self, mr_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
+        async fn get_diffs(
+            &self,
+            mr_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
             self.base.get_diffs(mr_key).await
         }
 
@@ -3106,7 +3133,10 @@ mod tests {
 
     #[async_trait]
     impl IssueProvider for FailingProvider {
-        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
+        async fn get_issues(
+            &self,
+            _filter: IssueFilter,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
             Err(devboy_core::Error::Api {
                 status: 500,
                 message: "api error".into(),
@@ -3131,7 +3161,10 @@ mod tests {
                 message: "update failed".into(),
             })
         }
-        async fn get_comments(&self, _key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
+        async fn get_comments(
+            &self,
+            _key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
         async fn add_comment(&self, _key: &str, _body: &str) -> devboy_core::Result<Comment> {
@@ -3162,10 +3195,16 @@ mod tests {
         async fn get_merge_request(&self, _key: &str) -> devboy_core::Result<MergeRequest> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
-        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
+        async fn get_discussions(
+            &self,
+            _mr_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
-        async fn get_diffs(&self, _mr_key: &str) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
+        async fn get_diffs(
+            &self,
+            _mr_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
         async fn add_comment(

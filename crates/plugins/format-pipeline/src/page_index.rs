@@ -49,10 +49,7 @@ impl PageIndex {
         lines.push("[page_index]".to_string());
         for p in &self.pages {
             let marker = if p.current { " (current)" } else { "" };
-            lines.push(format!(
-                "  p{}{}: {}",
-                p.page, marker, p.summary
-            ));
+            lines.push(format!("  p{}{}: {}", p.page, marker, p.summary));
         }
         lines.push("[/page_index]".to_string());
         lines.join("\n")
@@ -84,7 +81,7 @@ pub fn build_issues_index(
 ) -> PageIndex {
     let total = issues.len();
     let page_size = compute_page_size(total, included_count, budget_chars);
-    let total_pages = (total + page_size - 1) / page_size;
+    let total_pages = total.div_ceil(page_size);
 
     let pages: Vec<PageDescriptor> = (0..total_pages)
         .map(|page_idx| {
@@ -98,10 +95,8 @@ pub fn build_issues_index(
             for issue in page_issues {
                 *states.entry(issue.state.as_str()).or_default() += 1;
             }
-            let state_parts: Vec<String> = states
-                .iter()
-                .map(|(s, c)| format!("{} {}", c, s))
-                .collect();
+            let state_parts: Vec<String> =
+                states.iter().map(|(s, c)| format!("{} {}", c, s)).collect();
             let summary = format!(
                 "issues #{}-{} ({})",
                 offset + 1,
@@ -137,7 +132,7 @@ pub fn build_merge_requests_index(
 ) -> PageIndex {
     let total = mrs.len();
     let page_size = compute_page_size(total, included_count, budget_chars);
-    let total_pages = (total + page_size - 1) / page_size;
+    let total_pages = total.div_ceil(page_size);
 
     let pages: Vec<PageDescriptor> = (0..total_pages)
         .map(|page_idx| {
@@ -149,16 +144,9 @@ pub fn build_merge_requests_index(
             for mr in page_mrs {
                 *states.entry(mr.state.as_str()).or_default() += 1;
             }
-            let state_parts: Vec<String> = states
-                .iter()
-                .map(|(s, c)| format!("{} {}", c, s))
-                .collect();
-            let summary = format!(
-                "MRs #{}-{} ({})",
-                offset + 1,
-                end,
-                state_parts.join(", ")
-            );
+            let state_parts: Vec<String> =
+                states.iter().map(|(s, c)| format!("{} {}", c, s)).collect();
+            let summary = format!("MRs #{}-{} ({})", offset + 1, end, state_parts.join(", "));
 
             PageDescriptor {
                 page: page_idx + 1,
@@ -188,7 +176,7 @@ pub fn build_diffs_index(
 ) -> PageIndex {
     let total = diffs.len();
     let page_size = compute_page_size(total, included_count, budget_chars);
-    let total_pages = (total + page_size - 1) / page_size;
+    let total_pages = total.div_ceil(page_size);
 
     let pages: Vec<PageDescriptor> = (0..total_pages)
         .map(|page_idx| {
@@ -253,7 +241,7 @@ pub fn build_discussions_index(
 ) -> PageIndex {
     let total = discussions.len();
     let page_size = compute_page_size(total, included_count, budget_chars);
-    let total_pages = (total + page_size - 1) / page_size;
+    let total_pages = total.div_ceil(page_size);
 
     let pages: Vec<PageDescriptor> = (0..total_pages)
         .map(|page_idx| {
@@ -299,7 +287,7 @@ pub fn build_comments_index(
 ) -> PageIndex {
     let total = comments.len();
     let page_size = compute_page_size(total, included_count, budget_chars);
-    let total_pages = (total + page_size - 1) / page_size;
+    let total_pages = total.div_ceil(page_size);
 
     let pages: Vec<PageDescriptor> = (0..total_pages)
         .map(|page_idx| {
@@ -357,7 +345,10 @@ mod tests {
 
     #[test]
     fn test_extract_top_dir() {
-        assert_eq!(extract_top_dir("src/app/modules/mcp/tools/foo.ts"), "src/app/modules");
+        assert_eq!(
+            extract_top_dir("src/app/modules/mcp/tools/foo.ts"),
+            "src/app/modules"
+        );
         assert_eq!(extract_top_dir("README.md"), ".");
         assert_eq!(extract_top_dir("src/main.rs"), "src");
         assert_eq!(extract_top_dir("a/b/c/d/e.rs"), "a/b/c");

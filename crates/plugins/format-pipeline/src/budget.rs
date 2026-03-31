@@ -230,10 +230,8 @@ pub fn process_merge_requests(
 
     if result.trimmed {
         let included_indices = tree.included_item_indices();
-        let included_mrs: Vec<devboy_core::MergeRequest> = included_indices
-            .iter()
-            .map(|&i| mrs[i].clone())
-            .collect();
+        let included_mrs: Vec<devboy_core::MergeRequest> =
+            included_indices.iter().map(|&i| mrs[i].clone()).collect();
 
         for level in [TrimLevel::Full, TrimLevel::Standard, TrimLevel::Minimal] {
             let encoded = toon::encode_merge_requests(&included_mrs, level)?;
@@ -282,10 +280,8 @@ pub fn process_diffs(
 
     if result.trimmed {
         let included_indices = tree.included_item_indices();
-        let included_diffs: Vec<devboy_core::FileDiff> = included_indices
-            .iter()
-            .map(|&i| diffs[i].clone())
-            .collect();
+        let included_diffs: Vec<devboy_core::FileDiff> =
+            included_indices.iter().map(|&i| diffs[i].clone()).collect();
 
         let encoded = toon::encode_diffs(&included_diffs)?;
         let tokens = estimate_tokens(&encoded);

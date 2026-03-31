@@ -884,7 +884,10 @@ mod tests {
 
     #[async_trait]
     impl IssueProvider for MockProvider {
-        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
+        async fn get_issues(
+            &self,
+            _filter: IssueFilter,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
             Ok(vec![sample_issue()].into())
         }
         async fn get_issue(&self, _key: &str) -> devboy_core::Result<Issue> {
@@ -903,7 +906,10 @@ mod tests {
         ) -> devboy_core::Result<Issue> {
             Ok(sample_issue())
         }
-        async fn get_comments(&self, _key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
+        async fn get_comments(
+            &self,
+            _key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
             Ok(vec![sample_comment()].into())
         }
         async fn add_comment(&self, _key: &str, _body: &str) -> devboy_core::Result<Comment> {
@@ -936,10 +942,16 @@ mod tests {
         async fn get_merge_request(&self, _key: &str) -> devboy_core::Result<MergeRequest> {
             Ok(sample_mr())
         }
-        async fn get_discussions(&self, _key: &str) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
+        async fn get_discussions(
+            &self,
+            _key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
             Ok(vec![sample_discussion()].into())
         }
-        async fn get_diffs(&self, _key: &str) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
+        async fn get_diffs(
+            &self,
+            _key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
             Ok(vec![sample_diff()].into())
         }
         async fn add_comment(
@@ -1373,7 +1385,8 @@ mod tests {
                 id: "m1".into(),
                 title: "Test Meeting".into(),
                 ..Default::default()
-            }].into())
+            }]
+            .into())
         }
 
         async fn get_transcript(
@@ -1402,7 +1415,8 @@ mod tests {
                 id: "m2".into(),
                 title: "Search Result Meeting".into(),
                 ..Default::default()
-            }].into())
+            }]
+            .into())
         }
     }
 
