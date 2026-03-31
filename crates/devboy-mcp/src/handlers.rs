@@ -124,11 +124,6 @@ define_tools! {
                     "description": "Number of results to skip for pagination (default: 0)",
                     "minimum": 0
                 },
-                "format": {
-                    "type": "string",
-                    "enum": ["toon", "json"],
-                    "description": "Output format (default: toon)"
-                },
                 "provider": {
                     "type": "string",
                     "enum": ["github", "gitlab", "clickup", "jira"],
@@ -143,12 +138,6 @@ define_tools! {
                     "type": "string",
                     "enum": ["asc", "desc"],
                     "description": "Sort order (default: desc)"
-                },
-                "budget": {
-                    "type": "integer",
-                    "description": "Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.",
-                    "minimum": 100,
-                    "maximum": 100000
                 }
             }
         }
@@ -164,17 +153,6 @@ define_tools! {
                 "key": {
                     "type": "string",
                     "description": "Issue key (e.g., 'gh#123' for GitHub, 'gitlab#456' for GitLab, 'CU-abc' or custom ID like 'DEV-42' for ClickUp, 'jira#PROJ-123' for Jira)"
-                },
-                "format": {
-                    "type": "string",
-                    "enum": ["toon", "json"],
-                    "description": "Output format (default: toon)"
-                },
-                "budget": {
-                    "type": "integer",
-                    "description": "Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.",
-                    "minimum": 100,
-                    "maximum": 100000
                 }
             }
         }
@@ -190,17 +168,6 @@ define_tools! {
                 "key": {
                     "type": "string",
                     "description": "Issue key (e.g., 'gh#123')"
-                },
-                "format": {
-                    "type": "string",
-                    "enum": ["toon", "json"],
-                    "description": "Output format (default: toon)"
-                },
-                "budget": {
-                    "type": "integer",
-                    "description": "Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.",
-                    "minimum": 100,
-                    "maximum": 100000
                 }
             }
         }
@@ -365,17 +332,6 @@ define_tools! {
                     "description": "Maximum number of results (default: 20)",
                     "minimum": 1,
                     "maximum": 100
-                },
-                "format": {
-                    "type": "string",
-                    "enum": ["toon", "json"],
-                    "description": "Output format (default: toon)"
-                },
-                "budget": {
-                    "type": "integer",
-                    "description": "Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.",
-                    "minimum": 100,
-                    "maximum": 100000
                 }
             }
         }
@@ -391,17 +347,6 @@ define_tools! {
                 "key": {
                     "type": "string",
                     "description": "MR/PR key (e.g., 'pr#123' for GitHub, 'mr#456' for GitLab)"
-                },
-                "format": {
-                    "type": "string",
-                    "enum": ["toon", "json"],
-                    "description": "Output format (default: toon)"
-                },
-                "budget": {
-                    "type": "integer",
-                    "description": "Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.",
-                    "minimum": 100,
-                    "maximum": 100000
                 }
             }
         }
@@ -428,17 +373,6 @@ define_tools! {
                     "type": "integer",
                     "description": "Number of discussions to skip for pagination (default: 0)",
                     "minimum": 0
-                },
-                "format": {
-                    "type": "string",
-                    "enum": ["toon", "json"],
-                    "description": "Output format (default: toon)"
-                },
-                "budget": {
-                    "type": "integer",
-                    "description": "Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.",
-                    "minimum": 100,
-                    "maximum": 100000
                 }
             }
         }
@@ -454,17 +388,6 @@ define_tools! {
                 "key": {
                     "type": "string",
                     "description": "MR/PR key (e.g., 'pr#123')"
-                },
-                "format": {
-                    "type": "string",
-                    "enum": ["toon", "json"],
-                    "description": "Output format (default: toon)"
-                },
-                "budget": {
-                    "type": "integer",
-                    "description": "Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.",
-                    "minimum": 100,
-                    "maximum": 100000
                 }
             }
         }
