@@ -563,4 +563,258 @@ mod tests {
         assert!(!result.trimmed);
         assert_eq!(result.total_items, 0);
     }
+
+    // --- process_merge_requests tests ---
+
+    fn sample_merge_requests(n: usize) -> Vec<devboy_core::MergeRequest> {
+        (0..n)
+            .map(|i| devboy_core::MergeRequest {
+                key: format!("mr#{}", i + 1),
+                title: format!("Merge Request {}", i + 1),
+                description: Some(format!(
+                    "Description for MR {} with enough text to make it non-trivial for token counting purposes",
+                    i + 1
+                )),
+                state: "opened".into(),
+                source: "gitlab".into(),
+                source_branch: format!("feature-{}", i + 1),
+                target_branch: "main".into(),
+                author: Some(devboy_core::User {
+                    id: format!("{}", i),
+                    username: format!("user{}", i),
+                    name: None,
+                    email: None,
+                    avatar_url: None,
+                }),
+                assignees: vec![],
+                reviewers: vec![],
+                labels: vec!["enhancement".into()],
+                draft: false,
+                url: Some(format!("https://gitlab.com/test/repo/-/merge_requests/{}", i + 1)),
+                created_at: Some("2024-01-01T00:00:00Z".into()),
+                updated_at: Some("2024-01-02T00:00:00Z".into()),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_process_merge_requests_fast_path() {
+        let mrs = sample_merge_requests(2);
+        let config = BudgetConfig {
+            budget_tokens: 50000,
+            ..Default::default()
+        };
+        let result = process_merge_requests(&mrs, TrimStrategyKind::ElementCount, &config).unwrap();
+        assert!(!result.trimmed);
+        assert!(!result.content.is_empty());
+        assert_eq!(result.total_items, 2);
+        assert_eq!(result.included_items, 2);
+    }
+
+    #[test]
+    fn test_process_merge_requests_with_trimming() {
+        let mrs = sample_merge_requests(20);
+        let config = BudgetConfig {
+            budget_tokens: 500,
+            margin: 0.20,
+            max_iterations: 3,
+        };
+        let result = process_merge_requests(&mrs, TrimStrategyKind::ElementCount, &config).unwrap();
+        assert!(result.trimmed);
+        assert!(result.included_items < 20);
+        assert!(!result.content.is_empty());
+        assert!(result.tokens <= config.budget_tokens);
+    }
+
+    #[test]
+    fn test_process_merge_requests_empty() {
+        let config = BudgetConfig::default();
+        let result = process_merge_requests(&[], TrimStrategyKind::Default, &config).unwrap();
+        assert!(!result.trimmed);
+        assert_eq!(result.total_items, 0);
+    }
+
+    // --- process_diffs tests ---
+
+    fn sample_diffs(n: usize) -> Vec<devboy_core::FileDiff> {
+        (0..n)
+            .map(|i| devboy_core::FileDiff {
+                file_path: format!("src/module_{}/file_{}.rs", i / 3, i + 1),
+                old_path: None,
+                new_file: i == 0,
+                deleted_file: false,
+                renamed_file: false,
+                diff: format!(
+                    "@@ -1,10 +1,15 @@\n-old line {i}\n+new line {i}\n+added context for file {i} with enough diff content to be meaningful",
+                    i = i + 1
+                ),
+                additions: Some(2),
+                deletions: Some(1),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_process_diffs_fast_path() {
+        let diffs = sample_diffs(2);
+        let config = BudgetConfig {
+            budget_tokens: 50000,
+            ..Default::default()
+        };
+        let result = process_diffs(&diffs, TrimStrategyKind::ElementCount, &config).unwrap();
+        assert!(!result.trimmed);
+        assert!(!result.content.is_empty());
+        assert_eq!(result.total_items, 2);
+        assert_eq!(result.included_items, 2);
+    }
+
+    #[test]
+    fn test_process_diffs_with_trimming() {
+        let diffs = sample_diffs(20);
+        let config = BudgetConfig {
+            budget_tokens: 200,
+            margin: 0.20,
+            max_iterations: 3,
+        };
+        let result = process_diffs(&diffs, TrimStrategyKind::ElementCount, &config).unwrap();
+        assert!(result.trimmed);
+        assert!(result.included_items < 20);
+        assert!(!result.content.is_empty());
+    }
+
+    #[test]
+    fn test_process_diffs_empty() {
+        let config = BudgetConfig::default();
+        let result = process_diffs(&[], TrimStrategyKind::Default, &config).unwrap();
+        assert!(!result.trimmed);
+        assert_eq!(result.total_items, 0);
+    }
+
+    // --- process_discussions tests ---
+
+    fn sample_discussions(n: usize) -> Vec<devboy_core::Discussion> {
+        (0..n)
+            .map(|i| devboy_core::Discussion {
+                id: format!("disc-{}", i + 1),
+                resolved: i % 3 == 0,
+                resolved_by: None,
+                comments: vec![devboy_core::Comment {
+                    id: format!("comment-{}", i + 1),
+                    body: format!(
+                        "Discussion comment {} with enough body text for token counting purposes in the budget pipeline",
+                        i + 1
+                    ),
+                    author: Some(devboy_core::User {
+                        id: format!("{}", i),
+                        username: format!("reviewer{}", i),
+                        name: None,
+                        email: None,
+                        avatar_url: None,
+                    }),
+                    created_at: Some("2024-01-01T00:00:00Z".into()),
+                    updated_at: None,
+                    position: None,
+                }],
+                position: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_process_discussions_fast_path() {
+        let discussions = sample_discussions(2);
+        let config = BudgetConfig {
+            budget_tokens: 50000,
+            ..Default::default()
+        };
+        let result =
+            process_discussions(&discussions, TrimStrategyKind::ElementCount, &config).unwrap();
+        assert!(!result.trimmed);
+        assert!(!result.content.is_empty());
+        assert_eq!(result.total_items, 2);
+        assert_eq!(result.included_items, 2);
+    }
+
+    #[test]
+    fn test_process_discussions_with_trimming() {
+        let discussions = sample_discussions(20);
+        let config = BudgetConfig {
+            budget_tokens: 300,
+            margin: 0.20,
+            max_iterations: 3,
+        };
+        let result =
+            process_discussions(&discussions, TrimStrategyKind::ElementCount, &config).unwrap();
+        assert!(result.trimmed);
+        assert!(result.included_items < 20);
+        assert!(!result.content.is_empty());
+    }
+
+    #[test]
+    fn test_process_discussions_empty() {
+        let config = BudgetConfig::default();
+        let result = process_discussions(&[], TrimStrategyKind::Default, &config).unwrap();
+        assert!(!result.trimmed);
+        assert_eq!(result.total_items, 0);
+    }
+
+    // --- process_comments tests ---
+
+    fn sample_comments(n: usize) -> Vec<devboy_core::Comment> {
+        (0..n)
+            .map(|i| devboy_core::Comment {
+                id: format!("c-{}", i + 1),
+                body: format!(
+                    "Comment {} with enough body text to make it non-trivial for budget pipeline token counting",
+                    i + 1
+                ),
+                author: Some(devboy_core::User {
+                    id: format!("{}", i),
+                    username: format!("commenter{}", i),
+                    name: None,
+                    email: None,
+                    avatar_url: None,
+                }),
+                created_at: Some("2024-01-01T00:00:00Z".into()),
+                updated_at: Some("2024-01-02T00:00:00Z".into()),
+                position: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_process_comments_fast_path() {
+        let comments = sample_comments(2);
+        let config = BudgetConfig {
+            budget_tokens: 50000,
+            ..Default::default()
+        };
+        let result = process_comments(&comments, TrimStrategyKind::ElementCount, &config).unwrap();
+        assert!(!result.trimmed);
+        assert!(!result.content.is_empty());
+        assert_eq!(result.total_items, 2);
+        assert_eq!(result.included_items, 2);
+    }
+
+    #[test]
+    fn test_process_comments_with_trimming() {
+        let comments = sample_comments(20);
+        let config = BudgetConfig {
+            budget_tokens: 300,
+            margin: 0.20,
+            max_iterations: 3,
+        };
+        let result = process_comments(&comments, TrimStrategyKind::ElementCount, &config).unwrap();
+        assert!(result.trimmed);
+        assert!(result.included_items < 20);
+        assert!(!result.content.is_empty());
+    }
+
+    #[test]
+    fn test_process_comments_empty() {
+        let config = BudgetConfig::default();
+        let result = process_comments(&[], TrimStrategyKind::Default, &config).unwrap();
+        assert!(!result.trimmed);
+        assert_eq!(result.total_items, 0);
+    }
 }

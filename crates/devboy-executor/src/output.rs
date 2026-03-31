@@ -284,4 +284,70 @@ mod tests {
         );
         assert_eq!(ToolOutput::Text("x".into()).type_name(), "text");
     }
+
+    #[test]
+    fn test_result_meta_present() {
+        let meta = ResultMeta {
+            pagination: Some(devboy_core::Pagination {
+                offset: 0,
+                limit: 10,
+                total: Some(50),
+                has_more: true,
+            }),
+            sort_info: Some(devboy_core::SortInfo {
+                current_sort: Some("created_at:desc".into()),
+                available_sorts: vec!["created_at".into()],
+            }),
+        };
+
+        let output = ToolOutput::Issues(vec![issue()], Some(meta));
+        let rm = output.result_meta().unwrap();
+        assert!(rm.pagination.is_some());
+        assert!(rm.sort_info.is_some());
+        assert_eq!(rm.pagination.as_ref().unwrap().total, Some(50));
+    }
+
+    #[test]
+    fn test_result_meta_none_for_single_variants() {
+        assert!(
+            ToolOutput::SingleIssue(Box::new(issue()))
+                .result_meta()
+                .is_none()
+        );
+        assert!(
+            ToolOutput::SingleMergeRequest(Box::new(mr()))
+                .result_meta()
+                .is_none()
+        );
+        assert!(ToolOutput::Text("hello".into()).result_meta().is_none());
+        assert!(
+            ToolOutput::Relations(Box::default())
+                .result_meta()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_result_meta_none_when_not_provided() {
+        assert!(ToolOutput::Issues(vec![], None).result_meta().is_none());
+        assert!(
+            ToolOutput::MergeRequests(vec![], None)
+                .result_meta()
+                .is_none()
+        );
+        assert!(
+            ToolOutput::Discussions(vec![], None)
+                .result_meta()
+                .is_none()
+        );
+        assert!(ToolOutput::Diffs(vec![], None).result_meta().is_none());
+        assert!(ToolOutput::Comments(vec![], None).result_meta().is_none());
+        assert!(ToolOutput::Statuses(vec![], None).result_meta().is_none());
+        assert!(ToolOutput::Users(vec![], None).result_meta().is_none());
+        assert!(
+            ToolOutput::MeetingNotes(vec![], None)
+                .result_meta()
+                .is_none()
+        );
+    }
 }
