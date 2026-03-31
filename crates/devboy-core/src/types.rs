@@ -63,6 +63,38 @@ pub struct Issue {
     pub subtasks: Vec<Issue>,
 }
 
+/// A link between two issues.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct IssueLink {
+    /// The linked issue (minimal info: key, title, state, source)
+    pub issue: Issue,
+    /// Link type name (e.g., "Blocks", "Relates", "Duplicates")
+    pub link_type: String,
+}
+
+/// All relations for a single issue.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct IssueRelations {
+    /// Parent issue (if this is a subtask)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<Issue>,
+    /// Child issues / subtasks
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtasks: Vec<Issue>,
+    /// Issues that block this one
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_by: Vec<IssueLink>,
+    /// Issues that this one blocks
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocks: Vec<IssueLink>,
+    /// Related issues
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_to: Vec<IssueLink>,
+    /// Duplicate issues
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub duplicates: Vec<IssueLink>,
+}
+
 /// Filter parameters for listing issues.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IssueFilter {

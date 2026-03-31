@@ -58,6 +58,17 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
             },
         },
         ToolDefinition {
+            name: "get_issue_relations".into(),
+            description: "Get relations for an issue (parent, subtasks, linked issues).".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("key", PropertySchema::string("Issue key"));
+                s.set_required("key", true);
+                s
+            },
+        },
+        ToolDefinition {
             name: "create_issue".into(),
             description: "Create a new issue in the configured provider.".into(),
             category: ToolCategory::IssueTracker,
@@ -351,7 +362,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 23);
+        assert_eq!(tools.len(), 24);
     }
 
     #[test]
@@ -370,6 +381,7 @@ mod tests {
             "get_issues",
             "get_issue",
             "get_issue_comments",
+            "get_issue_relations",
             "create_issue",
             "update_issue",
             "add_issue_comment",

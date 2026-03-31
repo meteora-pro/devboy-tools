@@ -5,8 +5,9 @@
 
 use async_trait::async_trait;
 use devboy_core::{
-    Comment, CreateIssueInput, Error, GetUsersOptions, Issue, IssueFilter, IssueProvider,
-    IssueStatus, MergeRequestProvider, PipelineProvider, Provider, Result, UpdateIssueInput, User,
+    Comment, CreateIssueInput, Error, GetUsersOptions, Issue, IssueFilter, IssueLink,
+    IssueProvider, IssueRelations, IssueStatus, MergeRequestProvider, PipelineProvider, Provider,
+    Result, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
@@ -758,6 +759,64 @@ fn map_issue(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> Issue
     }
 }
 
+fn map_relations(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> IssueRelations {
+    let mut relations = IssueRelations::default();
+
+    // Parent
+    if let Some(parent) = &issue.fields.parent {
+        relations.parent = Some(map_issue(parent, flavor, instance_url));
+    }
+
+    // Subtasks
+    relations.subtasks = issue
+        .fields
+        .subtasks
+        .iter()
+        .map(|s| map_issue(s, flavor, instance_url))
+        .collect();
+
+    // Issue links
+    for link in &issue.fields.issuelinks {
+        let link_name = &link.link_type.name;
+
+        if let Some(outward) = &link.outward_issue {
+            let mapped = map_issue(outward, flavor, instance_url);
+            let issue_link = IssueLink {
+                issue: mapped,
+                link_type: link_name.clone(),
+            };
+
+            match link.link_type.outward.as_deref() {
+                Some(s) if s.to_lowercase().contains("block") => relations.blocks.push(issue_link),
+                Some(s) if s.to_lowercase().contains("duplicate") => {
+                    relations.duplicates.push(issue_link)
+                }
+                _ => relations.related_to.push(issue_link),
+            }
+        }
+
+        if let Some(inward) = &link.inward_issue {
+            let mapped = map_issue(inward, flavor, instance_url);
+            let issue_link = IssueLink {
+                issue: mapped,
+                link_type: link_name.clone(),
+            };
+
+            match link.link_type.inward.as_deref() {
+                Some(s) if s.to_lowercase().contains("block") => {
+                    relations.blocked_by.push(issue_link)
+                }
+                Some(s) if s.to_lowercase().contains("duplicate") => {
+                    relations.duplicates.push(issue_link)
+                }
+                _ => relations.related_to.push(issue_link),
+            }
+        }
+    }
+
+    relations
+}
+
 fn map_comment(jira_comment: &JiraComment, flavor: JiraFlavor) -> Comment {
     Comment {
         id: jira_comment.id.clone(),
@@ -1207,6 +1266,16 @@ impl IssueProvider for JiraClient {
         Ok(())
     }
 
+    async fn get_issue_relations(&self, issue_key: &str) -> Result<IssueRelations> {
+        let jira_key = parse_jira_key(issue_key);
+        let url = format!(
+            "{}/issue/{}?fields=parent,subtasks,issuelinks,summary,status,priority",
+            self.base_url, jira_key
+        );
+        let issue: JiraIssue = self.get(&url).await?;
+        Ok(map_relations(&issue, self.flavor, &self.instance_url))
+    }
+
     fn provider_name(&self) -> &'static str {
         "jira"
     }
@@ -1620,6 +1689,9 @@ mod tests {
                 labels: vec!["bug".to_string(), "mobile".to_string()],
                 created: Some("2024-01-01T10:00:00.000+0000".to_string()),
                 updated: Some("2024-01-02T15:30:00.000+0000".to_string()),
+                parent: None,
+                subtasks: vec![],
+                issuelinks: vec![],
             },
         };
 
@@ -1675,6 +1747,9 @@ mod tests {
                 labels: vec![],
                 created: None,
                 updated: None,
+                parent: None,
+                subtasks: vec![],
+                issuelinks: vec![],
             },
         };
 
@@ -1697,6 +1772,9 @@ mod tests {
                 labels: vec![],
                 created: None,
                 updated: None,
+                parent: None,
+                subtasks: vec![],
+                issuelinks: vec![],
             },
         };
 

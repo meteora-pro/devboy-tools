@@ -223,6 +223,7 @@ const ISSUE_TOOLS: &[&str] = &[
     "create_issue",
     "update_issue",
     "get_issue_comments",
+    "get_issue_relations",
     "add_issue_comment",
 ];
 
