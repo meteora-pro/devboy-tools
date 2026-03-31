@@ -938,6 +938,138 @@ mod tests {
 
     // --- TOON smaller than JSON ---
 
+    // --- JSON format with budget trimming (triggers json_fallback) ---
+
+    #[test]
+    fn test_json_format_with_budget_trimming_issues() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_chars: 200,
+            ..Default::default()
+        });
+
+        let issues = sample_issues();
+        let output = pipeline.transform_issues(issues).unwrap();
+
+        assert!(output.truncated);
+        assert!(output.included_count < 25);
+        // Content should be truncated JSON (not TOON)
+        assert!(!output.content.is_empty());
+    }
+
+    #[test]
+    fn test_json_format_with_budget_trimming_merge_requests() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_chars: 200,
+            ..Default::default()
+        });
+
+        let mrs = sample_merge_requests();
+        let output = pipeline.transform_merge_requests(mrs).unwrap();
+
+        assert!(output.truncated);
+        assert!(!output.content.is_empty());
+    }
+
+    #[test]
+    fn test_json_format_with_budget_trimming_diffs() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_chars: 100,
+            ..Default::default()
+        });
+
+        let diffs = sample_diffs();
+        let output = pipeline.transform_diffs(diffs).unwrap();
+
+        assert!(output.truncated);
+        assert!(!output.content.is_empty());
+    }
+
+    #[test]
+    fn test_json_format_with_budget_trimming_comments() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_chars: 100,
+            ..Default::default()
+        });
+
+        let comments = sample_comments();
+        let output = pipeline.transform_comments(comments).unwrap();
+
+        assert!(output.truncated);
+        assert!(!output.content.is_empty());
+    }
+
+    #[test]
+    fn test_json_format_with_budget_trimming_discussions() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_chars: 100,
+            ..Default::default()
+        });
+
+        let discussions = sample_discussions();
+        let output = pipeline.transform_discussions(discussions).unwrap();
+
+        assert!(output.truncated);
+        assert!(!output.content.is_empty());
+    }
+
+    // --- Chunk index hints (total_pages > 1) ---
+
+    #[test]
+    fn test_pipeline_chunk_index_with_many_issues() {
+        // Use enough issues and small budget to trigger multi-page chunk index
+        let issues: Vec<Issue> = (1..=50)
+            .map(|i| Issue {
+                key: format!("gh#{}", i),
+                title: format!("Issue {} with a moderately long title for sizing", i),
+                description: Some(format!(
+                    "Description for issue {} with substantial content to inflate token count significantly beyond budget",
+                    i
+                )),
+                state: "open".to_string(),
+                source: "github".to_string(),
+                priority: None,
+                labels: vec!["bug".to_string(), "critical".to_string()],
+                author: Some(User {
+                    id: "1".to_string(),
+                    username: "test".to_string(),
+                    name: None,
+                    email: None,
+                    avatar_url: None,
+                }),
+                assignees: vec![],
+                url: Some(format!("https://github.com/test/repo/issues/{}", i)),
+                created_at: Some("2024-01-01T00:00:00Z".to_string()),
+                updated_at: Some("2024-01-02T00:00:00Z".to_string()),
+                parent: None,
+                subtasks: vec![],
+            })
+            .collect();
+
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            max_chars: 500,
+            include_hints: true,
+            ..Default::default()
+        });
+
+        let output = pipeline.transform_issues(issues).unwrap();
+
+        assert!(output.truncated);
+        assert!(output.included_count < 50);
+        // When many items are trimmed, we expect page_index and chunk hint
+        if let Some(ref hint) = output.agent_hint {
+            assert!(
+                hint.contains("Chunk") || hint.contains("Showing"),
+                "Expected chunk or showing hint, got: {}",
+                hint
+            );
+        }
+    }
+
     #[test]
     fn test_toon_smaller_than_json_for_issues() {
         let issues: Vec<Issue> = sample_issues().into_iter().take(10).collect();

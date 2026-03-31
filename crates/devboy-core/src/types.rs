@@ -545,6 +545,73 @@ mod tests {
         assert_eq!(PipelineStatus::Failed.as_str(), "failed");
         assert_eq!(PipelineStatus::Running.as_str(), "running");
     }
+
+    // --- ProviderResult tests ---
+
+    #[test]
+    fn test_provider_result_new() {
+        let result = ProviderResult::new(vec![1, 2, 3]);
+        assert_eq!(result.items, vec![1, 2, 3]);
+        assert!(result.pagination.is_none());
+        assert!(result.sort_info.is_none());
+    }
+
+    #[test]
+    fn test_provider_result_with_pagination() {
+        let pagination = Pagination {
+            offset: 0,
+            limit: 10,
+            total: Some(100),
+            has_more: true,
+        };
+        let result = ProviderResult::new(vec!["a", "b"]).with_pagination(pagination);
+        assert_eq!(result.items, vec!["a", "b"]);
+        let pag = result.pagination.unwrap();
+        assert_eq!(pag.total, Some(100));
+        assert!(pag.has_more);
+        assert_eq!(pag.offset, 0);
+        assert_eq!(pag.limit, 10);
+    }
+
+    #[test]
+    fn test_provider_result_with_sort_info() {
+        let sort_info = SortInfo {
+            current_sort: Some("updated_at:desc".into()),
+            available_sorts: vec!["created_at".into(), "updated_at".into()],
+        };
+        let result = ProviderResult::new(vec![42]).with_sort_info(sort_info);
+        assert_eq!(result.items, vec![42]);
+        let si = result.sort_info.unwrap();
+        assert_eq!(si.current_sort, Some("updated_at:desc".into()));
+        assert_eq!(si.available_sorts.len(), 2);
+    }
+
+    #[test]
+    fn test_provider_result_from_vec() {
+        let items = vec![1, 2, 3, 4];
+        let result: ProviderResult<i32> = items.into();
+        assert_eq!(result.items, vec![1, 2, 3, 4]);
+        assert!(result.pagination.is_none());
+        assert!(result.sort_info.is_none());
+    }
+
+    #[test]
+    fn test_provider_result_chained() {
+        let result = ProviderResult::new(vec!["x"])
+            .with_pagination(Pagination {
+                offset: 10,
+                limit: 5,
+                total: Some(50),
+                has_more: true,
+            })
+            .with_sort_info(SortInfo {
+                current_sort: Some("priority:asc".into()),
+                available_sorts: vec![],
+            });
+        assert!(result.pagination.is_some());
+        assert!(result.sort_info.is_some());
+        assert_eq!(result.items, vec!["x"]);
+    }
 }
 
 // =============================================================================
