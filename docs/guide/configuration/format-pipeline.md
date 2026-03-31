@@ -139,3 +139,15 @@ Set a very high budget to effectively disable trimming:
 [format_pipeline]
 budget_tokens = 1000000
 ```
+
+## Chunk-Based Behavior
+
+When tool output exceeds the budget, the pipeline automatically splits the response into chunks. The first response includes chunk 1 (highest-value items based on the active trimming strategy) and a chunk index describing all available chunks. Agents use `offset` and `limit` parameters in subsequent tool calls to fetch specific chunks on demand, without needing to read all data sequentially.
+
+See [Format Pipeline Architecture — Chunk-Based Lazy Loading](/guide/architecture/format-pipeline#chunk-based-lazy-loading) for details on the chunk index format and data flow.
+
+## Provider Result Metadata
+
+When providers return list data, pagination and sort metadata from the upstream API (e.g., GitLab `X-Total` headers, Jira `total`/`startAt`/`maxResults`) is captured in `ProviderResult<T>` and flows through to `FormatMetadata`. This allows agents to understand the total dataset size and available sort options without additional API calls.
+
+See [Format Pipeline Architecture — Provider Metadata](/guide/architecture/format-pipeline#provider-metadata) for details.

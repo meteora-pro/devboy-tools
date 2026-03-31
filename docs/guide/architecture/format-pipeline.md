@@ -1,6 +1,6 @@
 # Format Pipeline
 
-The format pipeline transforms tool responses into token-efficient output for LLMs using **TOON** (Token-Oriented Object Notation) with intelligent budget trimming and cursor-based pagination.
+The format pipeline transforms tool responses into token-efficient output for LLMs using **TOON** (Token-Oriented Object Notation) with intelligent budget trimming and chunk-based lazy loading.
 
 ## Overview
 
@@ -18,16 +18,19 @@ ToolOutput (typed data)
 │     ├─ Check budget             │
 │     ├─ Trim tree                │
 │     └─ Re-encode + verify       │
-│  4. Pagination cursor           │
+│  4. Chunk index + pagination     │
 └─────────────────────────────────┘
     │
     ▼
 TransformOutput {
-    content: String,        // TOON or JSON
-    raw_chars: usize,       // input size (JSON)
-    output_chars: usize,    // output size (TOON/JSON)
-    page_cursor: Option,    // for next page
-    agent_hint: Option,     // pagination hint
+    content: String,            // TOON or JSON
+    raw_chars: usize,           // input size (JSON)
+    output_chars: usize,        // output size (TOON/JSON)
+    page_cursor: Option,        // for next page
+    agent_hint: Option,         // pagination hint
+    page_index: Option<String>, // chunk index for lazy loading
+    provider_pagination: Option,// upstream pagination metadata
+    provider_sort: Option,      // upstream sort metadata
 }
     │
     ▼
@@ -40,6 +43,8 @@ FormatResult {
         compression_ratio,      // output / raw (< 1.0 = savings)
         format,                 // "toon" | "json" | "text"
         truncated,              // budget trimming applied?
+        provider_pagination,    // upstream pagination metadata
+        provider_sort,          // upstream sort metadata
     }
 }
 ```
@@ -157,6 +162,8 @@ The pipeline processes and releases memory synchronously within a single tool ca
 
 ## Budget Trimming
 
+The `Pipeline::transform_*()` methods use the budget pipeline internally for ALL output size control. The flow is: format all items → if fits budget, return → else run budget pipeline with strategy → produce chunk 1 + chunk index.
+
 The trimming problem is modeled as a **Tree Knapsack Problem** (Cho & Shaw, 1997):
 
 > **maximize** Σ p(v) for v ∈ S
@@ -173,7 +180,8 @@ The trimming problem is modeled as a **Tree Knapsack Problem** (Cho & Shaw, 1997
    b. Re-encode → check tokens
    c. If fits → done
    d. Adjust B_trim based on actual compression ratio
-5. Fallback: hard truncate + overflow
+5. If overflow → generate chunk index + return chunk 1
+6. Fallback: hard truncate
 ```
 
 ### Algorithm Selection
@@ -184,6 +192,59 @@ The trimming problem is modeled as a **Tree Knapsack Problem** (Cho & Shaw, 1997
 | 100-999 | Greedy fractional | O(n log n) | ≥ 63% optimum |
 | 1,000-9,999 | Hierarchical WFQ | O(n log n) | Proportionally fair |
 | ≥ 10,000 | Head+Tail linear | O(n) | Heuristic |
+
+## Chunk-Based Lazy Loading
+
+When data exceeds the token budget, the pipeline splits output into sequential chunks. The first response returns **chunk 1** (the highest-value items according to the active strategy) plus a **chunk index** describing all available chunks.
+
+### How It Works
+
+1. Budget pipeline determines which items fit in the budget (chunk 1)
+2. Remaining items are grouped into sequential chunks with content summaries
+3. The chunk index is appended to the response, describing each chunk
+4. The agent uses `offset` and `limit` parameters in subsequent tool calls to fetch specific chunks
+5. The agent can stop early if it finds the needed information without reading all chunks
+
+### Chunk Index Format
+
+```
+[chunks] 15/52 diffs in 4 chunks:
+  chunk 1 (offset=0, limit=15): src/app/* — 8 files, +120/-45 << included above
+  chunk 2 (offset=15, limit=15): apps/e2e/features/* — 15 files, +340/-12
+  chunk 3 (offset=30, limit=12): apps/e2e/steps/* — 12 files, +280/-0
+  chunk 4 (offset=42, limit=10): libs/*, docs/* — 10 files, +95/-30
+[/chunks] Use offset and limit to fetch any chunk. You may not need all chunks.
+```
+
+Each chunk entry shows the `offset`/`limit` parameters needed to fetch it, a content summary (file paths, counts, line changes), and which chunk is already included in the current response.
+
+## Provider Metadata
+
+List-type provider responses are wrapped in `ProviderResult<T>`, which captures upstream pagination and sort metadata alongside the data items.
+
+### Metadata Sources
+
+- **GitLab**: Extracts `X-Total` and `X-Total-Pages` from response headers
+- **Jira**: Extracts `total`, `startAt`, `maxResults` from JQL response body
+
+### Data Flow
+
+```
+Provider (API call)
+    → ProviderResult<T> { items, pagination, sort }
+        → ToolOutput { items, ResultMeta { pagination, sort } }
+            → format.rs
+                → FormatMetadata { provider_pagination, provider_sort }
+```
+
+### SortInfo
+
+`SortInfo` describes the current ordering and available sort options:
+
+- `current_sort` — the sort field and direction applied to the current response
+- `available_sorts` — list of sort fields the provider supports (e.g., `created_at`, `updated_at`, `priority`)
+
+This metadata is passed through to `FormatMetadata` so agents can make informed decisions about re-querying with different sort orders or fetching additional pages.
 
 ## Trimming Strategies
 
@@ -245,30 +306,16 @@ The `StrategyResolver` maps tool names to strategies:
 3. **Strip proxy prefix** (`cloud__get_issues` → `get_issues`) and retry 1-2
 4. **Fallback** to `default` strategy
 
-## Cursor-Based Pagination
+## Pagination via Offset/Limit
 
-Since the MCP spec does not support pagination in tool responses, we implement it at the middleware level through a `_page_cursor` parameter.
+The primary pagination mechanism is `offset`/`limit` parameters on tool calls. When the pipeline produces a chunk index (see [Chunk-Based Lazy Loading](#chunk-based-lazy-loading)), agents use the `offset` and `limit` values from the chunk index to fetch specific chunks of data.
 
-### How It Works
+This replaces the earlier cursor-based approach with a simpler, stateless model:
 
-1. First request returns trimmed data + cursor in the response hint
-2. Agent includes `_page_cursor` in the next request
-3. Pipeline decodes cursor, serves the next page of overflow data
-4. Repeat until all data is consumed
-
-### Cursor Format
-
-Base64-encoded JSON:
-```json
-{
-  "v": 1,
-  "data_type": "issues",
-  "offset": 20,
-  "total": 50,
-  "strategy": "element_count",
-  "budget": 8000
-}
-```
+1. First request returns chunk 1 + chunk index
+2. Agent reads the chunk index to understand available data
+3. Agent calls the tool again with `offset` and `limit` for the desired chunk
+4. Agent can stop early — no need to consume all chunks sequentially
 
 ## Token Estimation
 
@@ -290,7 +337,8 @@ crates/plugins/format-pipeline/src/
 │   └── head_tail.rs    # Head+Tail linear (≥ 10000)
 ├── strategy.rs         # 6 strategies + StrategyResolver
 ├── budget.rs           # Iterative budget pipeline
-├── pagination.rs       # Cursor-based pagination
+├── page_index.rs       # Chunk index generation for lazy loading
+├── pagination.rs       # Offset/limit pagination
 └── truncation.rs       # String/diff truncation utilities
 ```
 
