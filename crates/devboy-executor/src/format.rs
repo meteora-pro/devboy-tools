@@ -435,11 +435,26 @@ pub async fn execute_and_format(
     ctx: &crate::context::AdditionalContext,
     pipeline_config: Option<PipelineConfig>,
 ) -> Result<FormatResult> {
-    // Extract format from args before execution
+    // Extract format and budget from args before execution
     let format = args
         .get("format")
         .and_then(|v| v.as_str())
         .map(String::from);
+
+    let budget = args
+        .get("budget")
+        .and_then(|v| v.as_u64())
+        .map(|b| b as usize);
+
+    // Apply budget override to pipeline config
+    let pipeline_config = if let Some(b) = budget {
+        let mut config = pipeline_config.unwrap_or_default();
+        // Convert token budget to max_chars (tokens * 3.5)
+        config.max_chars = (b as f64 * 3.5).floor() as usize;
+        Some(config)
+    } else {
+        pipeline_config
+    };
 
     let output = executor.execute(tool, args, ctx).await?;
     format_output(output, format.as_deref(), Some(tool), pipeline_config)
