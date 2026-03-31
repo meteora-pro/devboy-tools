@@ -469,8 +469,7 @@ async fn test_create_issue_not_supported() {
         title: "Test Issue".to_string(),
         description: Some("Test description".to_string()),
         labels: vec!["test".to_string()],
-        assignees: vec![],
-        priority: None,
+        ..Default::default()
     };
 
     let result = provider.create_issue(input).await;
@@ -504,10 +503,8 @@ async fn test_update_issue_not_supported() {
     let input = UpdateIssueInput {
         title: Some("Updated Title".to_string()),
         description: Some("Updated description".to_string()),
-        state: None,
         labels: Some(vec!["test".to_string()]),
-        assignees: None,
-        priority: None,
+        ..Default::default()
     };
 
     let result = provider.update_issue(key, input).await;

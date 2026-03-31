@@ -133,6 +133,7 @@ async fn dispatch_tool(
         "get_issues" => execute_get_issues(provider, args).await,
         "get_issue" => execute_get_issue(provider, args).await,
         "get_issue_comments" => execute_get_issue_comments(provider, args).await,
+        "get_issue_relations" => execute_get_issue_relations(provider, args).await,
         "create_issue" => execute_create_issue(provider, args).await,
         "update_issue" => execute_update_issue(provider, args).await,
         "add_issue_comment" => execute_add_issue_comment(provider, args).await,
@@ -314,6 +315,16 @@ async fn execute_get_issue_comments(
     Ok(ToolOutput::Comments(result.items))
 }
 
+async fn execute_get_issue_relations(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: KeyParam = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("missing 'key' parameter: {e}")))?;
+    let relations = provider.get_issue_relations(&params.key).await?;
+    Ok(ToolOutput::Relations(Box::new(relations)))
+}
+
 #[derive(Deserialize)]
 struct CreateIssueParams {
     title: String,
@@ -323,6 +334,8 @@ struct CreateIssueParams {
     #[serde(default)]
     assignees: Vec<String>,
     priority: Option<String>,
+    parent: Option<String>,
+    markdown: Option<bool>,
 }
 
 async fn execute_create_issue(
@@ -337,6 +350,8 @@ async fn execute_create_issue(
         labels: params.labels,
         assignees: params.assignees,
         priority: params.priority,
+        parent: params.parent,
+        markdown: params.markdown.unwrap_or(true),
     };
     let issue = provider.create_issue(input).await?;
     Ok(ToolOutput::SingleIssue(Box::new(issue)))
@@ -351,6 +366,9 @@ struct UpdateIssueParams {
     labels: Option<Vec<String>>,
     assignees: Option<Vec<String>>,
     priority: Option<String>,
+    #[serde(rename = "parentId")]
+    parent_id: Option<String>,
+    markdown: Option<bool>,
 }
 
 async fn execute_update_issue(
@@ -366,6 +384,8 @@ async fn execute_update_issue(
         labels: params.labels,
         assignees: params.assignees,
         priority: params.priority,
+        parent_id: params.parent_id,
+        markdown: params.markdown.unwrap_or(true),
     };
     let issue = provider.update_issue(&params.key, input).await?;
     Ok(ToolOutput::SingleIssue(Box::new(issue)))
@@ -699,6 +719,7 @@ struct CreateEpicParams {
     #[serde(default)]
     assignees: Vec<String>,
     priority: Option<String>,
+    markdown: Option<bool>,
 }
 
 async fn execute_create_epic(
@@ -720,6 +741,8 @@ async fn execute_create_epic(
         labels,
         assignees: params.assignees,
         priority: params.priority,
+        parent: None,
+        markdown: params.markdown.unwrap_or(true),
     };
     let issue = provider.create_issue(input).await?;
     Ok(ToolOutput::SingleIssue(Box::new(issue)))
@@ -738,6 +761,8 @@ async fn execute_update_epic(
         labels: params.labels,
         assignees: params.assignees,
         priority: params.priority,
+        parent_id: params.parent_id,
+        markdown: params.markdown.unwrap_or(true),
     };
     let issue = provider.update_issue(&params.key, input).await?;
     Ok(ToolOutput::SingleIssue(Box::new(issue)))
@@ -748,6 +773,7 @@ pub const SUPPORTED_TOOLS: &[&str] = &[
     "get_issues",
     "get_issue",
     "get_issue_comments",
+    "get_issue_relations",
     "create_issue",
     "update_issue",
     "add_issue_comment",
@@ -775,8 +801,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use devboy_core::{
-        Comment, CreateMergeRequestInput, Discussion, FileDiff, Issue, IssueProvider, MergeRequest,
-        MergeRequestProvider, Provider, User,
+        Comment, CreateMergeRequestInput, Discussion, FileDiff, Issue, IssueLink, IssueProvider,
+        IssueRelations, MergeRequest, MergeRequestProvider, Provider, User,
     };
 
     // --- Mock Provider ---
@@ -797,6 +823,8 @@ mod tests {
             url: Some("https://example.com/1".into()),
             created_at: Some("2024-01-01T00:00:00Z".into()),
             updated_at: Some("2024-01-02T00:00:00Z".into()),
+            parent: None,
+            subtasks: vec![],
         }
     }
 
@@ -881,6 +909,17 @@ mod tests {
         async fn add_comment(&self, _key: &str, _body: &str) -> devboy_core::Result<Comment> {
             Ok(sample_comment())
         }
+        async fn get_issue_relations(&self, _key: &str) -> devboy_core::Result<IssueRelations> {
+            Ok(IssueRelations {
+                parent: Some(sample_issue()),
+                subtasks: vec![sample_issue()],
+                blocks: vec![IssueLink {
+                    issue: sample_issue(),
+                    link_type: "Blocks".into(),
+                }],
+                ..Default::default()
+            })
+        }
         fn provider_name(&self) -> &'static str {
             "mock"
         }
@@ -957,7 +996,7 @@ mod tests {
         assert!(SUPPORTED_TOOLS.contains(&"get_meeting_notes"));
         assert!(SUPPORTED_TOOLS.contains(&"get_meeting_transcript"));
         assert!(SUPPORTED_TOOLS.contains(&"search_meeting_notes"));
-        assert_eq!(SUPPORTED_TOOLS.len(), 23);
+        assert_eq!(SUPPORTED_TOOLS.len(), 24);
     }
 
     // --- Issue tool dispatch tests ---
@@ -1033,6 +1072,30 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::Text(ref t) if t.contains("Comment added")));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_issue_relations() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"key": "gh#1"});
+        let result = dispatch_tool("get_issue_relations", &args, &provider)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::Relations(relations) => {
+                assert!(relations.parent.is_some());
+                assert_eq!(relations.subtasks.len(), 1);
+                assert_eq!(relations.blocks.len(), 1);
+            }
+            other => panic!("Expected Relations, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_issue_relations_missing_key() {
+        let provider = MockProvider;
+        let result = dispatch_tool("get_issue_relations", &serde_json::json!({}), &provider).await;
+        assert!(result.is_err());
     }
 
     // --- MR tool dispatch tests ---

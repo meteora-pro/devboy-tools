@@ -55,6 +55,46 @@ pub struct Issue {
     pub created_at: Option<String>,
     /// Updated at timestamp (ISO 8601)
     pub updated_at: Option<String>,
+    /// Parent issue key (for subtasks)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    /// Subtasks / child issues
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtasks: Vec<Issue>,
+}
+
+/// A link between two issues.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct IssueLink {
+    /// The linked issue as a full [`Issue`]. In many providers this will only be
+    /// partially populated (often just key, title, state, and source), but all
+    /// fields are allowed when available.
+    pub issue: Issue,
+    /// Link type name (e.g., "Blocks", "Relates", "Duplicates")
+    pub link_type: String,
+}
+
+/// All relations for a single issue.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct IssueRelations {
+    /// Parent issue (if this is a subtask)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<Issue>,
+    /// Child issues / subtasks
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtasks: Vec<Issue>,
+    /// Issues that block this one
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_by: Vec<IssueLink>,
+    /// Issues that this one blocks
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocks: Vec<IssueLink>,
+    /// Related issues
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_to: Vec<IssueLink>,
+    /// Duplicate issues
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub duplicates: Vec<IssueLink>,
 }
 
 /// Filter parameters for listing issues.
@@ -79,7 +119,7 @@ pub struct IssueFilter {
 }
 
 /// Input for creating a new issue.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateIssueInput {
     /// Issue title
     pub title: String,
@@ -91,10 +131,35 @@ pub struct CreateIssueInput {
     pub assignees: Vec<String>,
     /// Priority
     pub priority: Option<String>,
+    /// Parent issue key (for creating subtasks, e.g., "CU-abc123" or "DEV-42")
+    pub parent: Option<String>,
+    /// Whether the description is markdown (default: true).
+    /// When true, providers that support it (e.g., ClickUp) will use
+    /// markdown rendering for the description.
+    #[serde(default = "default_true")]
+    pub markdown: bool,
+}
+
+impl Default for CreateIssueInput {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            description: None,
+            labels: Vec::new(),
+            assignees: Vec::new(),
+            priority: None,
+            parent: None,
+            markdown: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Input for updating an existing issue.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateIssueInput {
     /// New title
     pub title: Option<String>,
@@ -108,6 +173,28 @@ pub struct UpdateIssueInput {
     pub assignees: Option<Vec<String>>,
     /// New priority
     pub priority: Option<String>,
+    /// Parent issue key (for moving task to subtask, e.g., "CU-abc123" or "DEV-42").
+    /// Note: removing parent (converting subtask back to task) is not supported by all providers
+    /// (e.g., ClickUp only supports this via UI). Empty string is ignored.
+    pub parent_id: Option<String>,
+    /// Whether the description is markdown (default: true).
+    #[serde(default = "default_true")]
+    pub markdown: bool,
+}
+
+impl Default for UpdateIssueInput {
+    fn default() -> Self {
+        Self {
+            title: None,
+            description: None,
+            state: None,
+            labels: None,
+            assignees: None,
+            priority: None,
+            parent_id: None,
+            markdown: true,
+        }
+    }
 }
 
 // =============================================================================
@@ -379,6 +466,70 @@ mod tests {
         let parsed: Issue = serde_json::from_str(&json).unwrap();
 
         assert_eq!(issue, parsed);
+    }
+
+    #[test]
+    fn test_issue_parent_subtasks_serialization() {
+        let child = Issue {
+            key: "DEV-101".to_string(),
+            title: "Child".to_string(),
+            state: "open".to_string(),
+            source: "clickup".to_string(),
+            parent: Some("parent123".to_string()),
+            ..Default::default()
+        };
+
+        let parent = Issue {
+            key: "DEV-100".to_string(),
+            title: "Parent".to_string(),
+            state: "open".to_string(),
+            source: "clickup".to_string(),
+            subtasks: vec![child],
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&parent).unwrap();
+        assert!(json.contains("\"subtasks\""));
+        assert!(json.contains("DEV-101"));
+        assert!(!json.contains("\"parent\":null")); // parent=None is skipped
+
+        let parsed: Issue = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.subtasks.len(), 1);
+        assert_eq!(parsed.subtasks[0].key, "DEV-101");
+        assert_eq!(parsed.subtasks[0].parent, Some("parent123".to_string()));
+    }
+
+    #[test]
+    fn test_issue_no_subtasks_skipped_in_json() {
+        let issue = Issue {
+            key: "DEV-200".to_string(),
+            title: "No children".to_string(),
+            state: "open".to_string(),
+            source: "clickup".to_string(),
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&issue).unwrap();
+        // subtasks: [] should be skipped, parent: None should be skipped
+        assert!(!json.contains("subtasks"));
+        assert!(!json.contains("parent"));
+    }
+
+    #[test]
+    fn test_issue_deserialize_without_parent_subtasks() {
+        // JSON from providers that don't have parent/subtasks
+        let json = r#"{
+            "key": "gitlab#1",
+            "title": "Test",
+            "state": "open",
+            "source": "gitlab",
+            "labels": [],
+            "assignees": []
+        }"#;
+
+        let issue: Issue = serde_json::from_str(json).unwrap();
+        assert!(issue.parent.is_none());
+        assert!(issue.subtasks.is_empty());
     }
 
     #[test]

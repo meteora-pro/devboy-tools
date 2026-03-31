@@ -335,6 +335,14 @@ fn map_task(task: &ClickUpTask) -> Issue {
         url: Some(task.url.clone()),
         created_at: map_timestamp(&task.date_created),
         updated_at: map_timestamp(&task.date_updated),
+        parent: task.parent.as_ref().map(|id| format!("CU-{id}")),
+        subtasks: task
+            .subtasks
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(map_task)
+            .collect(),
     }
 }
 
@@ -469,7 +477,9 @@ impl IssueProvider for ClickUpClient {
     }
 
     async fn get_issue(&self, key: &str) -> Result<Issue> {
-        let url = self.task_url(key)?;
+        let base_url = self.task_url(key)?;
+        let separator = if base_url.contains('?') { "&" } else { "?" };
+        let url = format!("{}{}include_subtasks=true", base_url, separator);
         let task: ClickUpTask = self.get(&url).await?;
         Ok(map_task(&task))
     }
@@ -485,9 +495,32 @@ impl IssueProvider for ClickUpClient {
             Some(input.labels)
         };
 
+        // Resolve parent key to native ClickUp task ID if provided.
+        // Fast-path: if the key is already a CU-{id} key, the native ID is known.
+        let parent = match input.parent {
+            Some(ref parent_key) => {
+                if let Some(stripped) = parent_key.strip_prefix("CU-") {
+                    Some(stripped.to_string())
+                } else {
+                    let parent_url = self.task_url(parent_key)?;
+                    let parent_task: ClickUpTask = self.get(&parent_url).await?;
+                    Some(parent_task.id)
+                }
+            }
+            None => None,
+        };
+
+        let (description, markdown_content) = if input.markdown {
+            (None, input.description)
+        } else {
+            (input.description, None)
+        };
+
         let request = CreateTaskRequest {
             name: input.title,
-            description: input.description,
+            description,
+            markdown_content,
+            parent,
             status: None,
             priority,
             tags,
@@ -534,11 +567,35 @@ impl IssueProvider for ClickUpClient {
 
         let priority = input.priority.as_deref().and_then(priority_to_clickup);
 
+        let (description, markdown_content) = if input.markdown {
+            (None, input.description)
+        } else {
+            (input.description, None)
+        };
+
+        // Resolve parent key to native ClickUp task ID if provided.
+        // Note: ClickUp API does not support removing parent (convert subtask → task).
+        // That operation is only available through the ClickUp UI.
+        let parent = match input.parent_id {
+            Some(ref parent_key) if !parent_key.is_empty() => {
+                if let Some(stripped) = parent_key.strip_prefix("CU-") {
+                    Some(stripped.to_string())
+                } else {
+                    let parent_url = self.task_url(parent_key)?;
+                    let parent_task: ClickUpTask = self.get(&parent_url).await?;
+                    Some(parent_task.id)
+                }
+            }
+            _ => None,
+        };
+
         let request = UpdateTaskRequest {
             name: input.title,
-            description: input.description,
+            description,
+            markdown_content,
             status,
             priority,
+            parent,
         };
 
         let task: ClickUpTask = self.put(&url, &request).await?;
@@ -775,6 +832,8 @@ mod tests {
             url: "https://app.clickup.com/t/abc123".to_string(),
             date_created: Some("1704067200000".to_string()),
             date_updated: Some("1704153600000".to_string()),
+            parent: None,
+            subtasks: None,
         };
 
         let issue = map_task(&task);
@@ -817,6 +876,8 @@ mod tests {
             url: "https://app.clickup.com/t/abc123".to_string(),
             date_created: None,
             date_updated: None,
+            parent: None,
+            subtasks: None,
         };
 
         let issue = map_task(&task);
@@ -842,6 +903,8 @@ mod tests {
             url: "https://app.clickup.com/t/abc123".to_string(),
             date_created: None,
             date_updated: None,
+            parent: None,
+            subtasks: None,
         };
 
         let issue = map_task(&task);
@@ -1019,6 +1082,8 @@ mod tests {
             url: "https://app.clickup.com/t/abc".to_string(),
             date_created: None,
             date_updated: None,
+            parent: None,
+            subtasks: None,
         };
 
         let issue = map_task(&task);
@@ -1044,10 +1109,197 @@ mod tests {
             url: "https://app.clickup.com/t/abc".to_string(),
             date_created: None,
             date_updated: None,
+            parent: None,
+            subtasks: None,
         };
 
         let issue = map_task(&task);
         assert_eq!(issue.state, "open");
+    }
+
+    #[test]
+    fn test_map_task_with_parent() {
+        let task = ClickUpTask {
+            id: "child1".to_string(),
+            custom_id: Some("DEV-100".to_string()),
+            name: "Child task".to_string(),
+            description: None,
+            text_content: None,
+            status: ClickUpStatus {
+                status: "open".to_string(),
+                status_type: Some("open".to_string()),
+            },
+            priority: None,
+            tags: vec![],
+            assignees: vec![],
+            creator: None,
+            url: "https://app.clickup.com/t/child1".to_string(),
+            date_created: None,
+            date_updated: None,
+            parent: Some("parent123".to_string()),
+            subtasks: None,
+        };
+
+        let issue = map_task(&task);
+        assert_eq!(issue.parent, Some("CU-parent123".to_string()));
+        assert!(issue.subtasks.is_empty());
+    }
+
+    #[test]
+    fn test_map_task_with_subtasks() {
+        let subtask = ClickUpTask {
+            id: "sub1".to_string(),
+            custom_id: Some("DEV-201".to_string()),
+            name: "Subtask 1".to_string(),
+            description: None,
+            text_content: None,
+            status: ClickUpStatus {
+                status: "in progress".to_string(),
+                status_type: Some("custom".to_string()),
+            },
+            priority: None,
+            tags: vec![],
+            assignees: vec![],
+            creator: None,
+            url: "https://app.clickup.com/t/sub1".to_string(),
+            date_created: None,
+            date_updated: None,
+            parent: Some("epic1".to_string()),
+            subtasks: None,
+        };
+
+        let task = ClickUpTask {
+            id: "epic1".to_string(),
+            custom_id: Some("DEV-200".to_string()),
+            name: "Epic task".to_string(),
+            description: None,
+            text_content: None,
+            status: ClickUpStatus {
+                status: "open".to_string(),
+                status_type: Some("open".to_string()),
+            },
+            priority: None,
+            tags: vec![ClickUpTag {
+                name: "epic".to_string(),
+            }],
+            assignees: vec![],
+            creator: None,
+            url: "https://app.clickup.com/t/epic1".to_string(),
+            date_created: None,
+            date_updated: None,
+            parent: None,
+            subtasks: Some(vec![subtask]),
+        };
+
+        let issue = map_task(&task);
+        assert_eq!(issue.key, "DEV-200");
+        assert!(issue.parent.is_none());
+        assert_eq!(issue.subtasks.len(), 1);
+        assert_eq!(issue.subtasks[0].key, "DEV-201");
+        assert_eq!(issue.subtasks[0].title, "Subtask 1");
+        assert_eq!(issue.subtasks[0].parent, Some("CU-epic1".to_string()));
+    }
+
+    #[test]
+    fn test_map_task_no_parent_no_subtasks() {
+        let task = ClickUpTask {
+            id: "standalone".to_string(),
+            custom_id: None,
+            name: "Standalone task".to_string(),
+            description: None,
+            text_content: None,
+            status: ClickUpStatus {
+                status: "open".to_string(),
+                status_type: Some("open".to_string()),
+            },
+            priority: None,
+            tags: vec![],
+            assignees: vec![],
+            creator: None,
+            url: "https://app.clickup.com/t/standalone".to_string(),
+            date_created: None,
+            date_updated: None,
+            parent: None,
+            subtasks: None,
+        };
+
+        let issue = map_task(&task);
+        assert!(issue.parent.is_none());
+        assert!(issue.subtasks.is_empty());
+    }
+
+    #[test]
+    fn test_deserialize_task_with_parent_and_subtasks() {
+        let json = serde_json::json!({
+            "id": "epic1",
+            "custom_id": "DEV-300",
+            "name": "Epic with subtasks",
+            "status": {"status": "open", "type": "open"},
+            "tags": [{"name": "epic"}],
+            "assignees": [],
+            "url": "https://app.clickup.com/t/epic1",
+            "parent": null,
+            "subtasks": [
+                {
+                    "id": "sub1",
+                    "custom_id": "DEV-301",
+                    "name": "Subtask A",
+                    "status": {"status": "open", "type": "open"},
+                    "tags": [],
+                    "assignees": [],
+                    "url": "https://app.clickup.com/t/sub1",
+                    "parent": "epic1"
+                },
+                {
+                    "id": "sub2",
+                    "name": "Subtask B",
+                    "status": {"status": "closed", "type": "closed"},
+                    "tags": [],
+                    "assignees": [],
+                    "url": "https://app.clickup.com/t/sub2",
+                    "parent": "epic1"
+                }
+            ]
+        });
+
+        let task: ClickUpTask = serde_json::from_value(json).unwrap();
+        assert!(task.parent.is_none());
+        assert_eq!(task.subtasks.as_ref().unwrap().len(), 2);
+        assert_eq!(
+            task.subtasks.as_ref().unwrap()[0].custom_id,
+            Some("DEV-301".to_string())
+        );
+        assert_eq!(
+            task.subtasks.as_ref().unwrap()[1].parent,
+            Some("epic1".to_string())
+        );
+
+        let issue = map_task(&task);
+        assert_eq!(issue.subtasks.len(), 2);
+        assert_eq!(issue.subtasks[0].key, "DEV-301");
+        assert_eq!(issue.subtasks[1].key, "CU-sub2");
+        assert_eq!(issue.subtasks[0].parent, Some("CU-epic1".to_string()));
+    }
+
+    #[test]
+    fn test_deserialize_task_without_subtasks_field() {
+        // ClickUp API may omit subtasks field entirely
+        let json = serde_json::json!({
+            "id": "task1",
+            "name": "Simple task",
+            "status": {"status": "open", "type": "open"},
+            "tags": [],
+            "assignees": [],
+            "url": "https://app.clickup.com/t/task1"
+        });
+
+        let task: ClickUpTask = serde_json::from_value(json).unwrap();
+        assert!(task.parent.is_none());
+        assert!(task.subtasks.is_none());
+
+        let issue = map_task(&task);
+        assert!(issue.parent.is_none());
+        assert!(issue.subtasks.is_empty());
     }
 
     // =========================================================================
@@ -1435,8 +1687,7 @@ mod tests {
                     title: "New Task".to_string(),
                     description: Some("Description".to_string()),
                     labels: vec!["bug".to_string()],
-                    assignees: vec![],
-                    priority: None,
+                    ..Default::default()
                 })
                 .await
                 .unwrap();
@@ -1835,6 +2086,235 @@ mod tests {
 
             assert!(result.is_err());
             assert!(matches!(result.unwrap_err(), Error::Unauthorized(_)));
+        }
+
+        #[tokio::test]
+        async fn test_get_issue_includes_subtasks() {
+            let server = MockServer::start();
+
+            let task_with_subtasks = serde_json::json!({
+                "id": "epic1",
+                "custom_id": "DEV-400",
+                "name": "Epic Task",
+                "status": {"status": "open", "type": "open"},
+                "tags": [{"name": "epic"}],
+                "assignees": [],
+                "creator": {"id": 1, "username": "author"},
+                "url": "https://app.clickup.com/t/epic1",
+                "date_created": "1704067200000",
+                "date_updated": "1704153600000",
+                "subtasks": [
+                    {
+                        "id": "sub1",
+                        "custom_id": "DEV-401",
+                        "name": "Subtask 1",
+                        "status": {"status": "open", "type": "open"},
+                        "tags": [],
+                        "assignees": [],
+                        "url": "https://app.clickup.com/t/sub1",
+                        "parent": "epic1"
+                    },
+                    {
+                        "id": "sub2",
+                        "custom_id": "DEV-402",
+                        "name": "Subtask 2",
+                        "status": {"status": "closed", "type": "closed"},
+                        "tags": [],
+                        "assignees": [],
+                        "url": "https://app.clickup.com/t/sub2",
+                        "parent": "epic1"
+                    }
+                ]
+            });
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/task/epic1")
+                    .query_param("include_subtasks", "true");
+                then.status(200).json_body(task_with_subtasks);
+            });
+
+            let client = create_test_client(&server);
+            let issue = client.get_issue("CU-epic1").await.unwrap();
+
+            assert_eq!(issue.key, "DEV-400");
+            assert!(issue.parent.is_none());
+            assert_eq!(issue.subtasks.len(), 2);
+            assert_eq!(issue.subtasks[0].key, "DEV-401");
+            assert_eq!(issue.subtasks[0].title, "Subtask 1");
+            assert_eq!(issue.subtasks[0].state, "open");
+            assert_eq!(issue.subtasks[0].parent, Some("CU-epic1".to_string()));
+            assert_eq!(issue.subtasks[1].key, "DEV-402");
+            assert_eq!(issue.subtasks[1].state, "closed");
+        }
+
+        #[tokio::test]
+        async fn test_get_issue_no_subtasks() {
+            let server = MockServer::start();
+
+            let task = sample_task_json();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/task/abc123")
+                    .query_param("include_subtasks", "true");
+                then.status(200).json_body(task);
+            });
+
+            let client = create_test_client(&server);
+            let issue = client.get_issue("CU-abc123").await.unwrap();
+
+            assert!(issue.subtasks.is_empty());
+            assert!(issue.parent.is_none());
+        }
+
+        #[tokio::test]
+        async fn test_get_issue_custom_id_includes_subtasks() {
+            let server = MockServer::start();
+
+            let task = serde_json::json!({
+                "id": "task1",
+                "custom_id": "DEV-500",
+                "name": "Task via custom ID",
+                "status": {"status": "open", "type": "open"},
+                "tags": [],
+                "assignees": [],
+                "url": "https://app.clickup.com/t/task1",
+                "parent": "parent123",
+                "subtasks": []
+            });
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/task/DEV-500")
+                    .query_param("custom_task_ids", "true")
+                    .query_param("team_id", "9876")
+                    .query_param("include_subtasks", "true");
+                then.status(200).json_body(task);
+            });
+
+            let client = create_test_client_with_team(&server);
+            let issue = client.get_issue("DEV-500").await.unwrap();
+
+            assert_eq!(issue.key, "DEV-500");
+            assert_eq!(issue.parent, Some("CU-parent123".to_string()));
+            assert!(issue.subtasks.is_empty());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_with_parent_id() {
+            let server = MockServer::start();
+
+            // Mock: resolve parent task by custom ID
+            let parent_task = serde_json::json!({
+                "id": "parent_native_id",
+                "custom_id": "DEV-600",
+                "name": "Parent Epic",
+                "status": {"status": "open", "type": "open"},
+                "tags": [],
+                "assignees": [],
+                "url": "https://app.clickup.com/t/parent_native_id"
+            });
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/task/DEV-600")
+                    .query_param("custom_task_ids", "true")
+                    .query_param("team_id", "9876");
+                then.status(200).json_body(parent_task);
+            });
+
+            // Mock: update task with parent
+            let updated_task = serde_json::json!({
+                "id": "child1",
+                "custom_id": "DEV-601",
+                "name": "Child Task",
+                "status": {"status": "open", "type": "open"},
+                "tags": [],
+                "assignees": [],
+                "url": "https://app.clickup.com/t/child1",
+                "parent": "parent_native_id"
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/DEV-601")
+                    .query_param("custom_task_ids", "true")
+                    .query_param("team_id", "9876")
+                    .body_includes("\"parent\":\"parent_native_id\"");
+                then.status(200).json_body(updated_task);
+            });
+
+            let client = create_test_client_with_team(&server);
+            let issue = client
+                .update_issue(
+                    "DEV-601",
+                    UpdateIssueInput {
+                        parent_id: Some("DEV-600".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "DEV-601");
+            assert_eq!(issue.parent, Some("CU-parent_native_id".to_string()));
+        }
+
+        #[tokio::test]
+        async fn test_create_issue_with_parent() {
+            let server = MockServer::start();
+
+            // Mock: resolve parent task
+            let parent_task = serde_json::json!({
+                "id": "parent_id",
+                "custom_id": "DEV-700",
+                "name": "Parent",
+                "status": {"status": "open", "type": "open"},
+                "tags": [],
+                "assignees": [],
+                "url": "https://app.clickup.com/t/parent_id"
+            });
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/task/DEV-700")
+                    .query_param("custom_task_ids", "true")
+                    .query_param("team_id", "9876");
+                then.status(200).json_body(parent_task);
+            });
+
+            // Mock: create task with parent
+            let created_task = serde_json::json!({
+                "id": "new_child",
+                "custom_id": "DEV-701",
+                "name": "New Subtask",
+                "status": {"status": "open", "type": "open"},
+                "tags": [],
+                "assignees": [],
+                "url": "https://app.clickup.com/t/new_child",
+                "parent": "parent_id"
+            });
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/list/12345/task")
+                    .body_includes("\"parent\":\"parent_id\"");
+                then.status(200).json_body(created_task);
+            });
+
+            let client = create_test_client_with_team(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "New Subtask".to_string(),
+                    parent: Some("DEV-700".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "DEV-701");
+            assert_eq!(issue.parent, Some("CU-parent_id".to_string()));
         }
     }
 }

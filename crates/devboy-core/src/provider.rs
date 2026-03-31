@@ -8,9 +8,9 @@ use async_trait::async_trait;
 use crate::error::{Error, Result};
 use crate::types::{
     Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Discussion, FileDiff,
-    GetPipelineInput, GetUsersOptions, Issue, IssueFilter, IssueStatus, JobLogOptions,
-    JobLogOutput, MeetingFilter, MeetingNote, MeetingTranscript, MergeRequest, MrFilter,
-    PipelineInfo, ProviderResult, Release, UpdateIssueInput, User,
+    GetPipelineInput, GetUsersOptions, Issue, IssueFilter, IssueRelations, IssueStatus,
+    JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote, MeetingTranscript, MergeRequest,
+    MrFilter, PipelineInfo, ProviderResult, Release, UpdateIssueInput, User,
 };
 
 /// Provider for working with issues.
@@ -63,6 +63,14 @@ pub trait IssueProvider: Send + Sync {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "get_users".to_string(),
+        })
+    }
+
+    /// Get issue relations (parent, subtasks, linked issues).
+    async fn get_issue_relations(&self, _issue_key: &str) -> Result<IssueRelations> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_issue_relations".to_string(),
         })
     }
 

@@ -199,6 +199,8 @@ fn map_issue(gl_issue: &GitLabIssue) -> Issue {
         url: Some(gl_issue.web_url.clone()),
         created_at: Some(gl_issue.created_at.clone()),
         updated_at: Some(gl_issue.updated_at.clone()),
+        parent: None,
+        subtasks: vec![],
     }
 }
 
@@ -1574,8 +1576,7 @@ mod tests {
                     title: "New Issue".to_string(),
                     description: Some("Description".to_string()),
                     labels: vec!["bug".to_string(), "feature".to_string()],
-                    assignees: vec![],
-                    priority: None,
+                    ..Default::default()
                 })
                 .await
                 .unwrap();
