@@ -3147,10 +3147,7 @@ mod tests {
                 message: "comment failed".into(),
             })
         }
-        async fn get_issue_relations(
-            &self,
-            _key: &str,
-        ) -> devboy_core::Result<IssueRelations> {
+        async fn get_issue_relations(&self, _key: &str) -> devboy_core::Result<IssueRelations> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
         fn provider_name(&self) -> &'static str {

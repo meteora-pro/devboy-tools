@@ -908,10 +908,7 @@ mod tests {
         async fn add_comment(&self, _key: &str, _body: &str) -> devboy_core::Result<Comment> {
             Ok(sample_comment())
         }
-        async fn get_issue_relations(
-            &self,
-            _key: &str,
-        ) -> devboy_core::Result<IssueRelations> {
+        async fn get_issue_relations(&self, _key: &str) -> devboy_core::Result<IssueRelations> {
             Ok(IssueRelations {
                 parent: Some(sample_issue()),
                 subtasks: vec![sample_issue()],
