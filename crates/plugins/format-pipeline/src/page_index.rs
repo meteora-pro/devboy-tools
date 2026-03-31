@@ -39,21 +39,31 @@ pub struct PageIndex {
 }
 
 impl PageIndex {
-    /// Render page index as a TOON-compatible block.
+    /// Render chunk index as a structured block.
+    ///
+    /// The output is designed to be read by an LLM agent that can decide
+    /// which chunks to fetch based on the descriptions.
     pub fn to_toon(&self) -> String {
         let mut lines = Vec::new();
         lines.push(format!(
-            "[meta]{{total:{},shown:{},pages:{}}}",
-            self.total_items, self.shown_items, self.total_pages
+            "[chunks] {}/{} {} in {} chunks:",
+            self.shown_items, self.total_items, self.data_type, self.total_pages
         ));
-        lines.push("[page_index]".to_string());
         for p in &self.pages {
+            let marker = if p.page == 1 {
+                " << included above"
+            } else {
+                ""
+            };
             lines.push(format!(
-                "  p{} (offset={},limit={}): {}",
-                p.page, p.offset, p.item_count, p.summary
+                "  chunk {} (offset={}, limit={}): {}{}",
+                p.page, p.offset, p.item_count, p.summary, marker
             ));
         }
-        lines.push("[/page_index]".to_string());
+        lines.push(
+            "[/chunks] Use offset and limit to fetch any chunk. You may not need all chunks."
+                .to_string(),
+        );
         lines.join("\n")
     }
 }
@@ -352,11 +362,18 @@ mod tests {
         };
 
         let toon = index.to_toon();
-        assert!(toon.contains("[meta]{total:52,shown:15,pages:4}"));
-        assert!(toon.contains("[page_index]"));
-        assert!(toon.contains("p1 (offset=0,limit=15):"));
-        assert!(toon.contains("p2 (offset=15,limit=15):"));
-        assert!(toon.contains("[/page_index]"));
+        assert!(toon.contains("[chunks] 15/52 diffs in 4 chunks:"));
+        assert!(toon.contains("chunk 1 (offset=0, limit=15):"));
+        assert!(toon.contains("<< included above"));
+        assert!(toon.contains("chunk 2 (offset=15, limit=15):"));
+        assert!(toon.contains("[/chunks]"));
+        assert!(toon.contains("You may not need all chunks"));
+        // Only chunk 1 is marked as included
+        let lines: Vec<&str> = toon
+            .lines()
+            .filter(|l| l.contains("included above"))
+            .collect();
+        assert_eq!(lines.len(), 1, "Only chunk 1 should be marked as included");
     }
 
     #[test]

@@ -398,7 +398,10 @@ impl Pipeline {
         resolver.resolve(tool)
     }
 
-    /// Build TransformOutput from BudgetResult with optional page index.
+    /// Build TransformOutput from BudgetResult with chunk index.
+    ///
+    /// Returns: chunk 1 (best items by strategy) + index of ALL chunks.
+    /// Agent can fetch remaining chunks via offset/limit in subsequent tool calls.
     ///
     /// Note: budget pipeline always produces TOON content. When format is JSON,
     /// we fall back to simple character truncation of the JSON output instead.
@@ -431,26 +434,30 @@ impl Pipeline {
             output.total_count = Some(total);
 
             if self.config.include_hints {
-                let remaining = total.saturating_sub(result.included_items);
-
-                // Generate page index for multi-page results
                 if let Some(idx) = index {
                     if idx.total_pages > 1 {
                         let hint = format!(
-                            "Showing {}/{} {} selected by priority ({} pages available). Use `offset` and `limit` for sequential access.",
-                            result.included_items, total, item_type, idx.total_pages
+                            "Chunk 1/{}: {} most relevant {} (by priority). {} total items across {} chunks. \
+                            Request specific chunks with `offset` and `limit` params, or request all remaining data.",
+                            idx.total_pages,
+                            result.included_items,
+                            item_type,
+                            total,
+                            idx.total_pages
                         );
                         output.page_index = Some(idx);
                         output.agent_hint = Some(hint);
                     } else {
+                        let remaining = total.saturating_sub(result.included_items);
                         output.agent_hint = Some(format!(
                             "Showing {}/{} {}. {} items trimmed by budget.",
                             result.included_items, total, item_type, remaining
                         ));
                     }
                 } else {
+                    let remaining = total.saturating_sub(result.included_items);
                     output.agent_hint = Some(format!(
-                        "Showing {}/{} {}. {} items trimmed by budget. Use `offset` and `limit` parameters for pagination.",
+                        "Showing {}/{} {}. {} items trimmed by budget. Use `offset` and `limit` for pagination.",
                         result.included_items, total, item_type, remaining
                     ));
                 }
