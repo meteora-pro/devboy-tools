@@ -66,7 +66,9 @@ pub struct Issue {
 /// A link between two issues.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IssueLink {
-    /// The linked issue (minimal info: key, title, state, source)
+    /// The linked issue as a full [`Issue`]. In many providers this will only be
+    /// partially populated (often just key, title, state, and source), but all
+    /// fields are allowed when available.
     pub issue: Issue,
     /// Link type name (e.g., "Blocks", "Relates", "Duplicates")
     pub link_type: String,

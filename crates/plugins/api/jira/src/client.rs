@@ -779,6 +779,9 @@ fn map_relations(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> I
     for link in &issue.fields.issuelinks {
         let link_name = &link.link_type.name;
 
+        let outward_lower = link.link_type.outward.as_deref().map(str::to_lowercase);
+        let inward_lower = link.link_type.inward.as_deref().map(str::to_lowercase);
+
         if let Some(outward) = &link.outward_issue {
             let mapped = map_issue(outward, flavor, instance_url);
             let issue_link = IssueLink {
@@ -786,9 +789,9 @@ fn map_relations(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> I
                 link_type: link_name.clone(),
             };
 
-            match link.link_type.outward.as_deref() {
-                Some(s) if s.to_lowercase().contains("block") => relations.blocks.push(issue_link),
-                Some(s) if s.to_lowercase().contains("duplicate") => {
+            match outward_lower.as_deref() {
+                Some(s) if s.contains("block") => relations.blocks.push(issue_link),
+                Some(s) if s.contains("duplicate") => {
                     relations.duplicates.push(issue_link)
                 }
                 _ => relations.related_to.push(issue_link),
@@ -802,11 +805,11 @@ fn map_relations(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> I
                 link_type: link_name.clone(),
             };
 
-            match link.link_type.inward.as_deref() {
-                Some(s) if s.to_lowercase().contains("block") => {
+            match inward_lower.as_deref() {
+                Some(s) if s.contains("block") => {
                     relations.blocked_by.push(issue_link)
                 }
-                Some(s) if s.to_lowercase().contains("duplicate") => {
+                Some(s) if s.contains("duplicate") => {
                     relations.duplicates.push(issue_link)
                 }
                 _ => relations.related_to.push(issue_link),
