@@ -3204,8 +3204,7 @@ mod tests {
             },
         };
 
-        let relations =
-            map_relations(&issue, JiraFlavor::SelfHosted, "https://jira.example.com");
+        let relations = map_relations(&issue, JiraFlavor::SelfHosted, "https://jira.example.com");
 
         assert!(relations.parent.is_some());
         let parent_issue = relations.parent.unwrap();
