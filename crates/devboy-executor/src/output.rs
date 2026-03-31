@@ -1,7 +1,14 @@
 use devboy_core::{
     Comment, Discussion, FileDiff, Issue, IssueRelations, IssueStatus, JobLogOutput, MeetingNote,
-    MeetingTranscript, MergeRequest, PipelineInfo, User,
+    MeetingTranscript, MergeRequest, Pagination, PipelineInfo, SortInfo, User,
 };
+
+/// Metadata from provider result (pagination + sort info).
+#[derive(Debug, Clone, Default)]
+pub struct ResultMeta {
+    pub pagination: Option<Pagination>,
+    pub sort_info: Option<SortInfo>,
+}
 
 /// Typed result of tool execution.
 ///
@@ -11,29 +18,29 @@ use devboy_core::{
 #[derive(Debug)]
 pub enum ToolOutput {
     /// List of merge requests / pull requests
-    MergeRequests(Vec<MergeRequest>),
+    MergeRequests(Vec<MergeRequest>, Option<ResultMeta>),
     /// Single merge request / pull request
     SingleMergeRequest(Box<MergeRequest>),
     /// MR/PR discussions with comments and code positions
-    Discussions(Vec<Discussion>),
+    Discussions(Vec<Discussion>, Option<ResultMeta>),
     /// File diffs from a merge request / pull request
-    Diffs(Vec<FileDiff>),
+    Diffs(Vec<FileDiff>, Option<ResultMeta>),
     /// List of issues / tasks
-    Issues(Vec<Issue>),
+    Issues(Vec<Issue>, Option<ResultMeta>),
     /// Single issue / task
     SingleIssue(Box<Issue>),
     /// Comments on an issue or merge request
-    Comments(Vec<Comment>),
+    Comments(Vec<Comment>, Option<ResultMeta>),
     /// CI/CD pipeline status with jobs
     Pipeline(Box<PipelineInfo>),
     /// Job log output
     JobLog(Box<JobLogOutput>),
     /// Available issue statuses
-    Statuses(Vec<IssueStatus>),
+    Statuses(Vec<IssueStatus>, Option<ResultMeta>),
     /// List of users
-    Users(Vec<User>),
+    Users(Vec<User>, Option<ResultMeta>),
     /// List of meeting notes
-    MeetingNotes(Vec<MeetingNote>),
+    MeetingNotes(Vec<MeetingNote>, Option<ResultMeta>),
     /// Single meeting transcript with sentences
     MeetingTranscript(Box<MeetingTranscript>),
     /// Issue relations (parent, subtasks, linked issues)
@@ -46,14 +53,14 @@ impl ToolOutput {
     /// Returns the number of items in collection outputs, or 1 for single items.
     pub fn item_count(&self) -> usize {
         match self {
-            Self::MergeRequests(v) => v.len(),
-            Self::Discussions(v) => v.len(),
-            Self::Diffs(v) => v.len(),
-            Self::Issues(v) => v.len(),
-            Self::Comments(v) => v.len(),
-            Self::Statuses(v) => v.len(),
-            Self::Users(v) => v.len(),
-            Self::MeetingNotes(v) => v.len(),
+            Self::MergeRequests(v, _) => v.len(),
+            Self::Discussions(v, _) => v.len(),
+            Self::Diffs(v, _) => v.len(),
+            Self::Issues(v, _) => v.len(),
+            Self::Comments(v, _) => v.len(),
+            Self::Statuses(v, _) => v.len(),
+            Self::Users(v, _) => v.len(),
+            Self::MeetingNotes(v, _) => v.len(),
             Self::SingleMergeRequest(_)
             | Self::SingleIssue(_)
             | Self::Pipeline(_)
@@ -67,21 +74,36 @@ impl ToolOutput {
     /// Returns a human-readable type name for this output.
     pub fn type_name(&self) -> &'static str {
         match self {
-            Self::MergeRequests(_) => "merge_requests",
+            Self::MergeRequests(..) => "merge_requests",
             Self::SingleMergeRequest(_) => "merge_request",
-            Self::Discussions(_) => "discussions",
-            Self::Diffs(_) => "diffs",
-            Self::Issues(_) => "issues",
+            Self::Discussions(..) => "discussions",
+            Self::Diffs(..) => "diffs",
+            Self::Issues(..) => "issues",
             Self::SingleIssue(_) => "issue",
-            Self::Comments(_) => "comments",
+            Self::Comments(..) => "comments",
             Self::Pipeline(_) => "pipeline",
             Self::JobLog(_) => "job_log",
-            Self::Statuses(_) => "statuses",
-            Self::Users(_) => "users",
-            Self::MeetingNotes(_) => "meeting_notes",
+            Self::Statuses(..) => "statuses",
+            Self::Users(..) => "users",
+            Self::MeetingNotes(..) => "meeting_notes",
             Self::MeetingTranscript(_) => "meeting_transcript",
             Self::Relations(_) => "issue_relations",
             Self::Text(_) => "text",
+        }
+    }
+
+    /// Returns the result metadata (pagination + sort info) if present.
+    pub fn result_meta(&self) -> Option<&ResultMeta> {
+        match self {
+            Self::MergeRequests(_, meta)
+            | Self::Discussions(_, meta)
+            | Self::Diffs(_, meta)
+            | Self::Issues(_, meta)
+            | Self::Comments(_, meta)
+            | Self::Statuses(_, meta)
+            | Self::Users(_, meta)
+            | Self::MeetingNotes(_, meta) => meta.as_ref(),
+            _ => None,
         }
     }
 }
@@ -132,16 +154,19 @@ mod tests {
 
     #[test]
     fn test_item_count_all_variants() {
-        assert_eq!(ToolOutput::Issues(vec![issue(), issue()]).item_count(), 2);
-        assert_eq!(ToolOutput::MergeRequests(vec![]).item_count(), 0);
+        assert_eq!(
+            ToolOutput::Issues(vec![issue(), issue()], None).item_count(),
+            2
+        );
+        assert_eq!(ToolOutput::MergeRequests(vec![], None).item_count(), 0);
         assert_eq!(ToolOutput::SingleIssue(Box::new(issue())).item_count(), 1);
         assert_eq!(
             ToolOutput::SingleMergeRequest(Box::new(mr())).item_count(),
             1
         );
-        assert_eq!(ToolOutput::Discussions(vec![]).item_count(), 0);
-        assert_eq!(ToolOutput::Diffs(vec![]).item_count(), 0);
-        assert_eq!(ToolOutput::Comments(vec![]).item_count(), 0);
+        assert_eq!(ToolOutput::Discussions(vec![], None).item_count(), 0);
+        assert_eq!(ToolOutput::Diffs(vec![], None).item_count(), 0);
+        assert_eq!(ToolOutput::Comments(vec![], None).item_count(), 0);
         assert_eq!(
             ToolOutput::Pipeline(Box::new(devboy_core::PipelineInfo {
                 id: "1".into(),
@@ -170,38 +195,44 @@ mod tests {
             1
         );
         assert_eq!(
-            ToolOutput::Statuses(vec![IssueStatus {
-                id: "1".into(),
-                name: "Open".into(),
-                category: "open".into(),
-                color: None,
-                order: None,
-            }])
+            ToolOutput::Statuses(
+                vec![IssueStatus {
+                    id: "1".into(),
+                    name: "Open".into(),
+                    category: "open".into(),
+                    color: None,
+                    order: None,
+                }],
+                None
+            )
             .item_count(),
             1
         );
-        assert_eq!(ToolOutput::Statuses(vec![]).item_count(), 0);
+        assert_eq!(ToolOutput::Statuses(vec![], None).item_count(), 0);
         assert_eq!(
-            ToolOutput::Users(vec![User {
-                id: "1".into(),
-                username: "test".into(),
-                name: None,
-                email: None,
-                avatar_url: None,
-            }])
+            ToolOutput::Users(
+                vec![User {
+                    id: "1".into(),
+                    username: "test".into(),
+                    name: None,
+                    email: None,
+                    avatar_url: None,
+                }],
+                None
+            )
             .item_count(),
             1
         );
-        assert_eq!(ToolOutput::Users(vec![]).item_count(), 0);
+        assert_eq!(ToolOutput::Users(vec![], None).item_count(), 0);
         assert_eq!(ToolOutput::Relations(Box::default()).item_count(), 1);
         assert_eq!(ToolOutput::Text("x".into()).item_count(), 1);
     }
 
     #[test]
     fn test_type_name_all_variants() {
-        assert_eq!(ToolOutput::Issues(vec![]).type_name(), "issues");
+        assert_eq!(ToolOutput::Issues(vec![], None).type_name(), "issues");
         assert_eq!(
-            ToolOutput::MergeRequests(vec![]).type_name(),
+            ToolOutput::MergeRequests(vec![], None).type_name(),
             "merge_requests"
         );
         assert_eq!(
@@ -212,9 +243,12 @@ mod tests {
             ToolOutput::SingleMergeRequest(Box::new(mr())).type_name(),
             "merge_request"
         );
-        assert_eq!(ToolOutput::Discussions(vec![]).type_name(), "discussions");
-        assert_eq!(ToolOutput::Diffs(vec![]).type_name(), "diffs");
-        assert_eq!(ToolOutput::Comments(vec![]).type_name(), "comments");
+        assert_eq!(
+            ToolOutput::Discussions(vec![], None).type_name(),
+            "discussions"
+        );
+        assert_eq!(ToolOutput::Diffs(vec![], None).type_name(), "diffs");
+        assert_eq!(ToolOutput::Comments(vec![], None).type_name(), "comments");
         assert_eq!(
             ToolOutput::Pipeline(Box::new(devboy_core::PipelineInfo {
                 id: "1".into(),
@@ -242,8 +276,8 @@ mod tests {
             .type_name(),
             "job_log"
         );
-        assert_eq!(ToolOutput::Statuses(vec![]).type_name(), "statuses");
-        assert_eq!(ToolOutput::Users(vec![]).type_name(), "users");
+        assert_eq!(ToolOutput::Statuses(vec![], None).type_name(), "statuses");
+        assert_eq!(ToolOutput::Users(vec![], None).type_name(), "users");
         assert_eq!(
             ToolOutput::Relations(Box::default()).type_name(),
             "issue_relations"

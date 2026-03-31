@@ -3,7 +3,7 @@
 //! This module bridges the executor's typed output with the pipeline's
 //! text formatting. Supports TOON (default) and JSON output formats.
 
-use devboy_core::Result;
+use devboy_core::{Pagination, Result, SortInfo};
 use devboy_format_pipeline::{OutputFormat, Pipeline, PipelineConfig};
 use serde::Serialize;
 
@@ -33,6 +33,10 @@ pub struct FormatMetadata {
     pub total_items: Option<usize>,
     /// Items included after truncation (e.g., 20 issues)
     pub included_items: usize,
+    /// Pagination metadata from the provider (offset, limit, total, has_more)
+    pub provider_pagination: Option<Pagination>,
+    /// Sort metadata from the provider (current sort, available sorts)
+    pub provider_sort: Option<SortInfo>,
 }
 
 /// Result of formatting a tool output — content + metadata.
@@ -82,8 +86,15 @@ pub fn format_output(
 
     let pipeline = Pipeline::with_config(pipeline_config);
 
+    // Extract provider metadata before consuming output
+    let provider_pagination = output.result_meta().and_then(|m| m.pagination.clone());
+    let provider_sort = output.result_meta().and_then(|m| m.sort_info.clone());
+
     // Helper: convert TransformOutput to FormatResult
-    let to_result = |t: devboy_format_pipeline::TransformOutput| -> FormatResult {
+    let to_result = |t: devboy_format_pipeline::TransformOutput,
+                     pag: Option<Pagination>,
+                     sort: Option<SortInfo>|
+     -> FormatResult {
         let content = t.to_string_with_hints();
         let output_chars = content.len();
         let raw_chars = if t.raw_chars > 0 {
@@ -111,57 +122,100 @@ pub fn format_output(
                 truncated: t.truncated,
                 total_items: t.total_count,
                 included_items: t.included_count,
+                provider_pagination: pag,
+                provider_sort: sort,
             },
             content,
         }
     };
 
     // Helper: wrap plain text (no pipeline transform)
-    let text_result = |text: String| -> FormatResult {
-        let chars = text.len();
-        FormatResult {
-            metadata: FormatMetadata {
-                raw_chars: chars,
-                output_chars: chars,
-                pre_trim_chars: chars,
-                estimated_tokens: chars * 10 / 35,
-                compression_ratio: 1.0,
-                format: "text".to_string(),
-                truncated: false,
-                total_items: None,
-                included_items: 0,
-            },
-            content: text,
-        }
-    };
+    let text_result =
+        |text: String, pag: Option<Pagination>, sort: Option<SortInfo>| -> FormatResult {
+            let chars = text.len();
+            FormatResult {
+                metadata: FormatMetadata {
+                    raw_chars: chars,
+                    output_chars: chars,
+                    pre_trim_chars: chars,
+                    estimated_tokens: chars * 10 / 35,
+                    compression_ratio: 1.0,
+                    format: "text".to_string(),
+                    truncated: false,
+                    total_items: None,
+                    included_items: 0,
+                    provider_pagination: pag,
+                    provider_sort: sort,
+                },
+                content: text,
+            }
+        };
 
     match output {
-        ToolOutput::Issues(issues) => Ok(to_result(pipeline.transform_issues(issues)?)),
-        ToolOutput::SingleIssue(issue) => Ok(to_result(pipeline.transform_issues(vec![*issue])?)),
-        ToolOutput::MergeRequests(mrs) => Ok(to_result(pipeline.transform_merge_requests(mrs)?)),
-        ToolOutput::SingleMergeRequest(mr) => {
-            Ok(to_result(pipeline.transform_merge_requests(vec![*mr])?))
-        }
-        ToolOutput::Discussions(discussions) => {
-            Ok(to_result(pipeline.transform_discussions(discussions)?))
-        }
-        ToolOutput::Diffs(diffs) => Ok(to_result(pipeline.transform_diffs(diffs)?)),
-        ToolOutput::Comments(comments) => Ok(to_result(pipeline.transform_comments(comments)?)),
-        ToolOutput::Pipeline(info) => Ok(text_result(format_pipeline(&info))),
-        ToolOutput::JobLog(log) => Ok(text_result(format_job_log(&log))),
-        ToolOutput::Statuses(statuses) => Ok(text_result(format_statuses(&statuses))),
-        ToolOutput::Users(users) => Ok(text_result(format_users(&users))),
-        ToolOutput::MeetingNotes(meetings) => Ok(text_result(format_meeting_notes(&meetings))),
-        ToolOutput::MeetingTranscript(transcript) => {
-            Ok(text_result(format_meeting_transcript(&transcript)))
-        }
+        ToolOutput::Issues(issues, _) => Ok(to_result(
+            pipeline.transform_issues(issues)?,
+            provider_pagination,
+            provider_sort,
+        )),
+        ToolOutput::SingleIssue(issue) => Ok(to_result(
+            pipeline.transform_issues(vec![*issue])?,
+            None,
+            None,
+        )),
+        ToolOutput::MergeRequests(mrs, _) => Ok(to_result(
+            pipeline.transform_merge_requests(mrs)?,
+            provider_pagination,
+            provider_sort,
+        )),
+        ToolOutput::SingleMergeRequest(mr) => Ok(to_result(
+            pipeline.transform_merge_requests(vec![*mr])?,
+            None,
+            None,
+        )),
+        ToolOutput::Discussions(discussions, _) => Ok(to_result(
+            pipeline.transform_discussions(discussions)?,
+            provider_pagination,
+            provider_sort,
+        )),
+        ToolOutput::Diffs(diffs, _) => Ok(to_result(
+            pipeline.transform_diffs(diffs)?,
+            provider_pagination,
+            provider_sort,
+        )),
+        ToolOutput::Comments(comments, _) => Ok(to_result(
+            pipeline.transform_comments(comments)?,
+            provider_pagination,
+            provider_sort,
+        )),
+        ToolOutput::Pipeline(info) => Ok(text_result(format_pipeline(&info), None, None)),
+        ToolOutput::JobLog(log) => Ok(text_result(format_job_log(&log), None, None)),
+        ToolOutput::Statuses(statuses, _) => Ok(text_result(
+            format_statuses(&statuses),
+            provider_pagination,
+            provider_sort,
+        )),
+        ToolOutput::Users(users, _) => Ok(text_result(
+            format_users(&users),
+            provider_pagination,
+            provider_sort,
+        )),
+        ToolOutput::MeetingNotes(meetings, _) => Ok(text_result(
+            format_meeting_notes(&meetings),
+            provider_pagination,
+            provider_sort,
+        )),
+        ToolOutput::MeetingTranscript(transcript) => Ok(text_result(
+            format_meeting_transcript(&transcript),
+            None,
+            None,
+        )),
         ToolOutput::Relations(relations) => {
             let json = serde_json::to_string_pretty(&*relations).map_err(|e| {
                 devboy_core::Error::InvalidData(format!("failed to serialize relations: {e}"))
             })?;
-            Ok(text_result(json))
+            Ok(text_result(json, None, None))
         }
-        ToolOutput::Text(text) => Ok(text_result(text)),
+        ToolOutput::Text(text) => Ok(text_result(text, None, None)),
     }
 }
 
@@ -417,7 +471,7 @@ mod tests {
 
     #[test]
     fn test_format_issues_toon() {
-        let output = ToolOutput::Issues(vec![sample_issue()]);
+        let output = ToolOutput::Issues(vec![sample_issue()], None);
         let result = format_output(output, Some("toon"), None, None)
             .unwrap()
             .content;
@@ -427,7 +481,7 @@ mod tests {
 
     #[test]
     fn test_format_metadata_toon_compression() {
-        let output = ToolOutput::Issues(vec![sample_issue()]);
+        let output = ToolOutput::Issues(vec![sample_issue()], None);
         let result = format_output(output, Some("toon"), None, None).unwrap();
 
         assert!(result.metadata.raw_chars > 0, "raw_chars should be > 0");
@@ -460,7 +514,7 @@ mod tests {
 
     #[test]
     fn test_format_metadata_truncated() {
-        let output = ToolOutput::Issues(vec![sample_issue()]);
+        let output = ToolOutput::Issues(vec![sample_issue()], None);
         let config = PipelineConfig {
             max_chars: 50, // very small — will truncate
             ..PipelineConfig::default()
@@ -479,7 +533,7 @@ mod tests {
 
     #[test]
     fn test_format_issues_json() {
-        let output = ToolOutput::Issues(vec![sample_issue()]);
+        let output = ToolOutput::Issues(vec![sample_issue()], None);
         let result = format_output(output, Some("json"), None, None)
             .unwrap()
             .content;
@@ -488,7 +542,7 @@ mod tests {
 
     #[test]
     fn test_format_issues_toon_explicit() {
-        let output = ToolOutput::Issues(vec![sample_issue()]);
+        let output = ToolOutput::Issues(vec![sample_issue()], None);
         let result = format_output(output, Some("toon"), None, None)
             .unwrap()
             .content;
@@ -504,7 +558,7 @@ mod tests {
 
     #[test]
     fn test_format_default_is_toon() {
-        let output = ToolOutput::Issues(vec![sample_issue()]);
+        let output = ToolOutput::Issues(vec![sample_issue()], None);
         let result = format_output(output, None, None, None).unwrap().content;
         assert!(result.contains("gh#1"));
     }
@@ -540,7 +594,7 @@ mod tests {
 
     #[test]
     fn test_format_merge_requests() {
-        let output = ToolOutput::MergeRequests(vec![sample_mr()]);
+        let output = ToolOutput::MergeRequests(vec![sample_mr()], None);
         let result = format_output(output, Some("toon"), None, None)
             .unwrap()
             .content;
@@ -558,20 +612,23 @@ mod tests {
 
     #[test]
     fn test_format_discussions() {
-        let output = ToolOutput::Discussions(vec![devboy_core::Discussion {
-            id: "d1".into(),
-            resolved: false,
-            resolved_by: None,
-            comments: vec![devboy_core::Comment {
-                id: "c1".into(),
-                body: "Review comment".into(),
-                author: None,
-                created_at: None,
-                updated_at: None,
+        let output = ToolOutput::Discussions(
+            vec![devboy_core::Discussion {
+                id: "d1".into(),
+                resolved: false,
+                resolved_by: None,
+                comments: vec![devboy_core::Comment {
+                    id: "c1".into(),
+                    body: "Review comment".into(),
+                    author: None,
+                    created_at: None,
+                    updated_at: None,
+                    position: None,
+                }],
                 position: None,
             }],
-            position: None,
-        }]);
+            None,
+        );
         let result = format_output(output, Some("toon"), None, None)
             .unwrap()
             .content;
@@ -580,16 +637,19 @@ mod tests {
 
     #[test]
     fn test_format_diffs() {
-        let output = ToolOutput::Diffs(vec![devboy_core::FileDiff {
-            file_path: "src/main.rs".into(),
-            old_path: None,
-            new_file: false,
-            deleted_file: false,
-            renamed_file: false,
-            diff: "+added line".into(),
-            additions: Some(1),
-            deletions: Some(0),
-        }]);
+        let output = ToolOutput::Diffs(
+            vec![devboy_core::FileDiff {
+                file_path: "src/main.rs".into(),
+                old_path: None,
+                new_file: false,
+                deleted_file: false,
+                renamed_file: false,
+                diff: "+added line".into(),
+                additions: Some(1),
+                deletions: Some(0),
+            }],
+            None,
+        );
         let result = format_output(output, Some("toon"), None, None)
             .unwrap()
             .content;
@@ -598,14 +658,17 @@ mod tests {
 
     #[test]
     fn test_format_comments() {
-        let output = ToolOutput::Comments(vec![devboy_core::Comment {
-            id: "c1".into(),
-            body: "A comment body".into(),
-            author: None,
-            created_at: None,
-            updated_at: None,
-            position: None,
-        }]);
+        let output = ToolOutput::Comments(
+            vec![devboy_core::Comment {
+                id: "c1".into(),
+                body: "A comment body".into(),
+                author: None,
+                created_at: None,
+                updated_at: None,
+                position: None,
+            }],
+            None,
+        );
         let result = format_output(output, Some("json"), None, None)
             .unwrap()
             .content;
@@ -614,7 +677,7 @@ mod tests {
 
     #[test]
     fn test_format_with_custom_pipeline_config() {
-        let output = ToolOutput::Issues(vec![sample_issue()]);
+        let output = ToolOutput::Issues(vec![sample_issue()], None);
         let config = PipelineConfig {
             max_chars: 500,
             ..PipelineConfig::default()
@@ -828,22 +891,25 @@ mod tests {
 
     #[test]
     fn test_format_statuses() {
-        let output = ToolOutput::Statuses(vec![
-            devboy_core::IssueStatus {
-                id: "1".into(),
-                name: "To Do".into(),
-                category: "todo".into(),
-                color: Some("#blue".into()),
-                order: Some(0),
-            },
-            devboy_core::IssueStatus {
-                id: "2".into(),
-                name: "In Progress".into(),
-                category: "in_progress".into(),
-                color: None,
-                order: None,
-            },
-        ]);
+        let output = ToolOutput::Statuses(
+            vec![
+                devboy_core::IssueStatus {
+                    id: "1".into(),
+                    name: "To Do".into(),
+                    category: "todo".into(),
+                    color: Some("#blue".into()),
+                    order: Some(0),
+                },
+                devboy_core::IssueStatus {
+                    id: "2".into(),
+                    name: "In Progress".into(),
+                    category: "in_progress".into(),
+                    color: None,
+                    order: None,
+                },
+            ],
+            None,
+        );
         let result = format_output(output, None, None, None).unwrap().content;
         assert!(result.contains("Available Statuses"));
         assert!(result.contains("To Do"));
@@ -855,7 +921,7 @@ mod tests {
 
     #[test]
     fn test_format_statuses_empty() {
-        let output = ToolOutput::Statuses(vec![]);
+        let output = ToolOutput::Statuses(vec![], None);
         let result = format_output(output, None, None, None).unwrap().content;
         assert_eq!(result, "No statuses found.");
     }
@@ -864,22 +930,25 @@ mod tests {
 
     #[test]
     fn test_format_users() {
-        let output = ToolOutput::Users(vec![
-            devboy_core::User {
-                id: "u1".into(),
-                username: "johndoe".into(),
-                name: Some("John Doe".into()),
-                email: Some("john@example.com".into()),
-                avatar_url: None,
-            },
-            devboy_core::User {
-                id: "u2".into(),
-                username: "janesmith".into(),
-                name: None,
-                email: None,
-                avatar_url: None,
-            },
-        ]);
+        let output = ToolOutput::Users(
+            vec![
+                devboy_core::User {
+                    id: "u1".into(),
+                    username: "johndoe".into(),
+                    name: Some("John Doe".into()),
+                    email: Some("john@example.com".into()),
+                    avatar_url: None,
+                },
+                devboy_core::User {
+                    id: "u2".into(),
+                    username: "janesmith".into(),
+                    name: None,
+                    email: None,
+                    avatar_url: None,
+                },
+            ],
+            None,
+        );
         let result = format_output(output, None, None, None).unwrap().content;
         assert!(result.contains("# Users"));
         assert!(result.contains("johndoe"));
@@ -891,7 +960,7 @@ mod tests {
 
     #[test]
     fn test_format_users_empty() {
-        let output = ToolOutput::Users(vec![]);
+        let output = ToolOutput::Users(vec![], None);
         let result = format_output(output, None, None, None).unwrap().content;
         assert_eq!(result, "No users found.");
     }
@@ -949,7 +1018,7 @@ mod tests {
             summary: Some("Discussed sprint goals.".into()),
             ..Default::default()
         }];
-        let output = ToolOutput::MeetingNotes(meetings);
+        let output = ToolOutput::MeetingNotes(meetings, None);
         let result = format_output(output, None, None, None).unwrap().content;
         assert!(result.contains("Sprint Planning"));
         assert!(result.contains("2025-01-15T10:00:00Z"));
@@ -964,7 +1033,7 @@ mod tests {
 
     #[test]
     fn test_format_meeting_notes_empty() {
-        let output = ToolOutput::MeetingNotes(vec![]);
+        let output = ToolOutput::MeetingNotes(vec![], None);
         let result = format_output(output, None, None, None).unwrap().content;
         assert_eq!(result, "No meeting notes found.");
     }

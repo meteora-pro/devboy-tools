@@ -984,7 +984,18 @@ impl IssueProvider for JiraClient {
                     }
                 }
 
-                Ok(all_issues.into())
+                let mut result = ProviderResult::new(all_issues);
+                result.pagination = Some(devboy_core::Pagination {
+                    offset,
+                    limit,
+                    total: None, // Jira Cloud cursor-based, no total
+                    has_more: next_page_token.is_some(),
+                });
+                result.sort_info = Some(devboy_core::SortInfo {
+                    current_sort: Some(format!("{}:{}", order_by, order.to_lowercase())),
+                    available_sorts: vec!["created".into(), "updated".into(), "priority".into()],
+                });
+                Ok(result)
             }
             JiraFlavor::SelfHosted => {
                 // Self-Hosted: GET /search?jql=...&startAt=...&maxResults=...
@@ -1010,13 +1021,30 @@ impl IssueProvider for JiraClient {
 
                 let search_resp: JiraSearchResponse = self.handle_response(response).await?;
 
+                let total = search_resp.total;
+                let has_more = match (total, search_resp.start_at, search_resp.max_results) {
+                    (Some(t), Some(s), Some(m)) => s + m < t,
+                    _ => false,
+                };
+
                 let issues: Vec<Issue> = search_resp
                     .issues
                     .iter()
                     .map(|i| map_issue(i, self.flavor, instance_url))
                     .collect();
 
-                Ok(issues.into())
+                let mut result = ProviderResult::new(issues);
+                result.pagination = Some(devboy_core::Pagination {
+                    offset,
+                    limit,
+                    total,
+                    has_more,
+                });
+                result.sort_info = Some(devboy_core::SortInfo {
+                    current_sort: Some(format!("{}:{}", order_by, order.to_lowercase())),
+                    available_sorts: vec!["created".into(), "updated".into(), "priority".into()],
+                });
+                Ok(result)
             }
         }
     }
