@@ -198,6 +198,8 @@ fn map_issue(gh_issue: &GitHubIssue) -> Issue {
         url: Some(gh_issue.html_url.clone()),
         created_at: Some(gh_issue.created_at.clone()),
         updated_at: Some(gh_issue.updated_at.clone()),
+        parent: None,
+        subtasks: vec![],
     }
 }
 
@@ -1858,8 +1860,7 @@ mod tests {
                     title: "New Issue".to_string(),
                     description: Some("Body".to_string()),
                     labels: vec!["bug".to_string()],
-                    assignees: vec![],
-                    priority: None,
+                    ..Default::default()
                 })
                 .await
                 .unwrap();

@@ -39,6 +39,8 @@ impl IssueProvider for ClickUpTestProvider {
             url: None,
             created_at: None,
             updated_at: None,
+            parent: None,
+            subtasks: vec![],
         }].into())
     }
 
@@ -114,6 +116,8 @@ impl IssueProvider for GitLabTestProvider {
             url: None,
             created_at: None,
             updated_at: None,
+            parent: None,
+            subtasks: vec![],
         }].into())
     }
 
@@ -219,6 +223,7 @@ const ISSUE_TOOLS: &[&str] = &[
     "create_issue",
     "update_issue",
     "get_issue_comments",
+    "get_issue_relations",
     "add_issue_comment",
 ];
 
