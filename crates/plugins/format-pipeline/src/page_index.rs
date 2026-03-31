@@ -11,8 +11,6 @@ use std::collections::BTreeMap;
 pub struct PageDescriptor {
     /// Page number (1-based)
     pub page: usize,
-    /// Whether this is the current page
-    pub current: bool,
     /// Human-readable summary of page contents
     pub summary: String,
     /// Number of items on this page
@@ -22,14 +20,16 @@ pub struct PageDescriptor {
 }
 
 /// Full page index for a result set.
+///
+/// Note: there is no "current page" concept because budget trimming may
+/// select non-contiguous items by priority. The shown items are selected
+/// by the trim strategy, not by sequential page boundaries.
 #[derive(Debug, Clone)]
 pub struct PageIndex {
     /// Total items across all pages
     pub total_items: usize,
-    /// Items shown on current page
+    /// Items shown (selected by budget trimming, may span multiple pages)
     pub shown_items: usize,
-    /// Current page number (1-based)
-    pub current_page: usize,
     /// Total number of pages
     pub total_pages: usize,
     /// Page descriptors
@@ -43,13 +43,15 @@ impl PageIndex {
     pub fn to_toon(&self) -> String {
         let mut lines = Vec::new();
         lines.push(format!(
-            "[meta]{{total:{},shown:{},pages:{},page:{}}}",
-            self.total_items, self.shown_items, self.total_pages, self.current_page
+            "[meta]{{total:{},shown:{},pages:{}}}",
+            self.total_items, self.shown_items, self.total_pages
         ));
         lines.push("[page_index]".to_string());
         for p in &self.pages {
-            let marker = if p.current { " (current)" } else { "" };
-            lines.push(format!("  p{}{}: {}", p.page, marker, p.summary));
+            lines.push(format!(
+                "  p{} (offset={},limit={}): {}",
+                p.page, p.offset, p.item_count, p.summary
+            ));
         }
         lines.push("[/page_index]".to_string());
         lines.join("\n")
@@ -104,7 +106,6 @@ pub fn build_issues_index(issues: &[Issue], included_count: usize) -> PageIndex 
 
             PageDescriptor {
                 page: page_idx + 1,
-                current: page_idx == 0,
                 summary,
                 item_count,
                 offset,
@@ -115,7 +116,6 @@ pub fn build_issues_index(issues: &[Issue], included_count: usize) -> PageIndex 
     PageIndex {
         total_items: total,
         shown_items: included_count,
-        current_page: 1,
         total_pages,
         pages,
         data_type: "issues".to_string(),
@@ -144,7 +144,6 @@ pub fn build_merge_requests_index(mrs: &[MergeRequest], included_count: usize) -
 
             PageDescriptor {
                 page: page_idx + 1,
-                current: page_idx == 0,
                 summary,
                 item_count: page_mrs.len(),
                 offset,
@@ -155,7 +154,6 @@ pub fn build_merge_requests_index(mrs: &[MergeRequest], included_count: usize) -
     PageIndex {
         total_items: total,
         shown_items: included_count,
-        current_page: 1,
         total_pages,
         pages,
         data_type: "merge_requests".to_string(),
@@ -205,7 +203,6 @@ pub fn build_diffs_index(diffs: &[FileDiff], included_count: usize) -> PageIndex
 
             PageDescriptor {
                 page: page_idx + 1,
-                current: page_idx == 0,
                 summary,
                 item_count: page_diffs.len(),
                 offset,
@@ -216,7 +213,6 @@ pub fn build_diffs_index(diffs: &[FileDiff], included_count: usize) -> PageIndex
     PageIndex {
         total_items: total,
         shown_items: included_count,
-        current_page: 1,
         total_pages,
         pages,
         data_type: "diffs".to_string(),
@@ -247,7 +243,6 @@ pub fn build_discussions_index(discussions: &[Discussion], included_count: usize
 
             PageDescriptor {
                 page: page_idx + 1,
-                current: page_idx == 0,
                 summary,
                 item_count: page_disc.len(),
                 offset,
@@ -258,7 +253,6 @@ pub fn build_discussions_index(discussions: &[Discussion], included_count: usize
     PageIndex {
         total_items: total,
         shown_items: included_count,
-        current_page: 1,
         total_pages,
         pages,
         data_type: "discussions".to_string(),
@@ -281,7 +275,6 @@ pub fn build_comments_index(comments: &[Comment], included_count: usize) -> Page
 
             PageDescriptor {
                 page: page_idx + 1,
-                current: page_idx == 0,
                 summary,
                 item_count: page_comments.len(),
                 offset,
@@ -292,7 +285,6 @@ pub fn build_comments_index(comments: &[Comment], included_count: usize) -> Page
     PageIndex {
         total_items: total,
         shown_items: included_count,
-        current_page: 1,
         total_pages,
         pages,
         data_type: "comments".to_string(),
@@ -341,19 +333,16 @@ mod tests {
         let index = PageIndex {
             total_items: 52,
             shown_items: 15,
-            current_page: 1,
             total_pages: 4,
             pages: vec![
                 PageDescriptor {
                     page: 1,
-                    current: true,
                     summary: "src/app/modules/* (8 files) — +120/-45".to_string(),
                     item_count: 15,
                     offset: 0,
                 },
                 PageDescriptor {
                     page: 2,
-                    current: false,
                     summary: "apps/dev-boy-e2e/* (17 files) — +340/-12".to_string(),
                     item_count: 15,
                     offset: 15,
@@ -363,10 +352,10 @@ mod tests {
         };
 
         let toon = index.to_toon();
-        assert!(toon.contains("[meta]{total:52,shown:15,pages:4,page:1}"));
+        assert!(toon.contains("[meta]{total:52,shown:15,pages:4}"));
         assert!(toon.contains("[page_index]"));
-        assert!(toon.contains("p1 (current):"));
-        assert!(toon.contains("p2:"));
+        assert!(toon.contains("p1 (offset=0,limit=15):"));
+        assert!(toon.contains("p2 (offset=15,limit=15):"));
         assert!(toon.contains("[/page_index]"));
     }
 
@@ -386,7 +375,7 @@ mod tests {
         assert_eq!(index.total_items, 10);
         assert_eq!(index.total_pages, 2);
         assert_eq!(index.pages[0].item_count, 5);
-        assert!(index.pages[0].current);
-        assert!(!index.pages[1].current);
+        assert_eq!(index.pages[0].offset, 0);
+        assert_eq!(index.pages[1].offset, 5);
     }
 }
