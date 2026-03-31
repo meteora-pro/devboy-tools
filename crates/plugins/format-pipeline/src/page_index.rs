@@ -59,9 +59,11 @@ impl PageIndex {
 /// Default page size for chunking.
 const DEFAULT_PAGE_SIZE: usize = 20;
 
-/// Compute page size based on budget and average item size.
-fn compute_page_size(total_items: usize, included_items: usize, _budget_chars: usize) -> usize {
-    // Use the number of items that fit in budget as page size
+/// Compute page size from the number of items that fit in budget.
+///
+/// Uses `included_items` (items that fit in one budget window) as page size.
+/// Falls back to `DEFAULT_PAGE_SIZE` when included_items is 0.
+fn compute_page_size(total_items: usize, included_items: usize) -> usize {
     if included_items > 0 {
         included_items
     } else {
@@ -74,13 +76,9 @@ fn compute_page_size(total_items: usize, included_items: usize, _budget_chars: u
 // =============================================================================
 
 /// Build page index for issues.
-pub fn build_issues_index(
-    issues: &[Issue],
-    included_count: usize,
-    budget_chars: usize,
-) -> PageIndex {
+pub fn build_issues_index(issues: &[Issue], included_count: usize) -> PageIndex {
     let total = issues.len();
-    let page_size = compute_page_size(total, included_count, budget_chars);
+    let page_size = compute_page_size(total, included_count);
     let total_pages = total.div_ceil(page_size);
 
     let pages: Vec<PageDescriptor> = (0..total_pages)
@@ -125,13 +123,9 @@ pub fn build_issues_index(
 }
 
 /// Build page index for merge requests.
-pub fn build_merge_requests_index(
-    mrs: &[MergeRequest],
-    included_count: usize,
-    budget_chars: usize,
-) -> PageIndex {
+pub fn build_merge_requests_index(mrs: &[MergeRequest], included_count: usize) -> PageIndex {
     let total = mrs.len();
-    let page_size = compute_page_size(total, included_count, budget_chars);
+    let page_size = compute_page_size(total, included_count);
     let total_pages = total.div_ceil(page_size);
 
     let pages: Vec<PageDescriptor> = (0..total_pages)
@@ -169,13 +163,9 @@ pub fn build_merge_requests_index(
 }
 
 /// Build page index for diffs — grouped by directory.
-pub fn build_diffs_index(
-    diffs: &[FileDiff],
-    included_count: usize,
-    budget_chars: usize,
-) -> PageIndex {
+pub fn build_diffs_index(diffs: &[FileDiff], included_count: usize) -> PageIndex {
     let total = diffs.len();
-    let page_size = compute_page_size(total, included_count, budget_chars);
+    let page_size = compute_page_size(total, included_count);
     let total_pages = total.div_ceil(page_size);
 
     let pages: Vec<PageDescriptor> = (0..total_pages)
@@ -234,13 +224,9 @@ pub fn build_diffs_index(
 }
 
 /// Build page index for discussions — grouped by resolved status.
-pub fn build_discussions_index(
-    discussions: &[Discussion],
-    included_count: usize,
-    budget_chars: usize,
-) -> PageIndex {
+pub fn build_discussions_index(discussions: &[Discussion], included_count: usize) -> PageIndex {
     let total = discussions.len();
-    let page_size = compute_page_size(total, included_count, budget_chars);
+    let page_size = compute_page_size(total, included_count);
     let total_pages = total.div_ceil(page_size);
 
     let pages: Vec<PageDescriptor> = (0..total_pages)
@@ -280,13 +266,9 @@ pub fn build_discussions_index(
 }
 
 /// Build page index for comments — chronological.
-pub fn build_comments_index(
-    comments: &[Comment],
-    included_count: usize,
-    budget_chars: usize,
-) -> PageIndex {
+pub fn build_comments_index(comments: &[Comment], included_count: usize) -> PageIndex {
     let total = comments.len();
-    let page_size = compute_page_size(total, included_count, budget_chars);
+    let page_size = compute_page_size(total, included_count);
     let total_pages = total.div_ceil(page_size);
 
     let pages: Vec<PageDescriptor> = (0..total_pages)
@@ -321,8 +303,8 @@ pub fn build_comments_index(
 // Helpers
 // =============================================================================
 
-/// Extract top-level directory from a file path.
-/// "src/app/modules/mcp/tools/foo.ts" → "src/app/modules/mcp"
+/// Extract top-level directory from a file path (first 3 segments).
+/// "src/app/modules/mcp/tools/foo.ts" → "src/app/modules"
 fn extract_top_dir(path: &str) -> String {
     let parts: Vec<&str> = path.split('/').collect();
     if parts.len() <= 2 {
@@ -400,7 +382,7 @@ mod tests {
             })
             .collect();
 
-        let index = build_diffs_index(&diffs, 5, 1000);
+        let index = build_diffs_index(&diffs, 5);
         assert_eq!(index.total_items, 10);
         assert_eq!(index.total_pages, 2);
         assert_eq!(index.pages[0].item_count, 5);

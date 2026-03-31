@@ -216,9 +216,16 @@ impl Pipeline {
         let strategy_kind = self.resolve_strategy("get_issues");
         let result = budget::process_issues(&issues, strategy_kind, &budget_config)?;
 
-        let index =
-            page_index::build_issues_index(&issues, result.included_items, self.config.max_chars);
-        self.build_budget_output(result, raw_chars, total, "issues", Some(index))
+        let json_fallback = self.json_fallback(&content);
+        let index = page_index::build_issues_index(&issues, result.included_items);
+        self.build_budget_output(
+            result,
+            raw_chars,
+            total,
+            "issues",
+            Some(index),
+            json_fallback,
+        )
     }
 
     /// Transform a list of merge requests using budget pipeline.
@@ -238,16 +245,20 @@ impl Pipeline {
             return Ok(output);
         }
 
+        let json_fallback = self.json_fallback(&content);
         let budget_config = self.budget_config();
         let strategy_kind = self.resolve_strategy("get_merge_requests");
         let result = budget::process_merge_requests(&mrs, strategy_kind, &budget_config)?;
 
-        let index = page_index::build_merge_requests_index(
-            &mrs,
-            result.included_items,
-            self.config.max_chars,
-        );
-        self.build_budget_output(result, raw_chars, total, "merge_requests", Some(index))
+        let index = page_index::build_merge_requests_index(&mrs, result.included_items);
+        self.build_budget_output(
+            result,
+            raw_chars,
+            total,
+            "merge_requests",
+            Some(index),
+            json_fallback,
+        )
     }
 
     /// Transform a list of file diffs using budget pipeline.
@@ -280,13 +291,20 @@ impl Pipeline {
             return Ok(output);
         }
 
+        let json_fallback = self.json_fallback(&content);
         let budget_config = self.budget_config();
         let strategy_kind = self.resolve_strategy("get_merge_request_diffs");
         let result = budget::process_diffs(&diffs, strategy_kind, &budget_config)?;
 
-        let index =
-            page_index::build_diffs_index(&diffs, result.included_items, self.config.max_chars);
-        self.build_budget_output(result, raw_chars, total, "diffs", Some(index))
+        let index = page_index::build_diffs_index(&diffs, result.included_items);
+        self.build_budget_output(
+            result,
+            raw_chars,
+            total,
+            "diffs",
+            Some(index),
+            json_fallback,
+        )
     }
 
     /// Transform a list of comments using budget pipeline.
@@ -306,16 +324,20 @@ impl Pipeline {
             return Ok(output);
         }
 
+        let json_fallback = self.json_fallback(&content);
         let budget_config = self.budget_config();
         let strategy_kind = self.resolve_strategy("get_issue_comments");
         let result = budget::process_comments(&comments, strategy_kind, &budget_config)?;
 
-        let index = page_index::build_comments_index(
-            &comments,
-            result.included_items,
-            self.config.max_chars,
-        );
-        self.build_budget_output(result, raw_chars, total, "comments", Some(index))
+        let index = page_index::build_comments_index(&comments, result.included_items);
+        self.build_budget_output(
+            result,
+            raw_chars,
+            total,
+            "comments",
+            Some(index),
+            json_fallback,
+        )
     }
 
     /// Transform a list of discussions using budget pipeline.
@@ -335,16 +357,30 @@ impl Pipeline {
             return Ok(output);
         }
 
+        let json_fallback = self.json_fallback(&content);
         let budget_config = self.budget_config();
         let strategy_kind = self.resolve_strategy("get_merge_request_discussions");
         let result = budget::process_discussions(&discussions, strategy_kind, &budget_config)?;
 
-        let index = page_index::build_discussions_index(
-            &discussions,
-            result.included_items,
-            self.config.max_chars,
-        );
-        self.build_budget_output(result, raw_chars, total, "discussions", Some(index))
+        let index = page_index::build_discussions_index(&discussions, result.included_items);
+        self.build_budget_output(
+            result,
+            raw_chars,
+            total,
+            "discussions",
+            Some(index),
+            json_fallback,
+        )
+    }
+
+    /// When format is JSON, return the content for truncation fallback.
+    /// Budget pipeline always produces TOON, so for JSON we truncate the original JSON.
+    fn json_fallback(&self, content: &str) -> Option<String> {
+        if matches!(self.config.format, OutputFormat::Json) {
+            Some(content.to_string())
+        } else {
+            None
+        }
     }
 
     /// Convert max_chars to budget pipeline config.
@@ -363,6 +399,9 @@ impl Pipeline {
     }
 
     /// Build TransformOutput from BudgetResult with optional page index.
+    ///
+    /// Note: budget pipeline always produces TOON content. When format is JSON,
+    /// we fall back to simple character truncation of the JSON output instead.
     fn build_budget_output(
         &self,
         result: budget::BudgetResult,
@@ -370,35 +409,51 @@ impl Pipeline {
         total: usize,
         item_type: &str,
         index: Option<page_index::PageIndex>,
+        json_fallback: Option<String>,
     ) -> Result<TransformOutput> {
-        let mut output = TransformOutput::new(result.content).with_raw_chars(raw_chars);
+        // Budget pipeline produces TOON. For JSON format, use truncated JSON instead.
+        let content = if matches!(self.config.format, OutputFormat::Json) {
+            if let Some(json) = json_fallback {
+                truncation::truncate_string(&json, self.config.max_chars)
+            } else {
+                result.content
+            }
+        } else {
+            result.content
+        };
+
+        let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
         output.included_count = result.included_items;
 
-        if result.trimmed && self.config.include_hints {
-            let remaining = total.saturating_sub(result.included_items);
+        // Always set truncation metadata when trimmed, regardless of include_hints
+        if result.trimmed {
+            output.truncated = true;
+            output.total_count = Some(total);
 
-            // Generate page index for multi-page results
-            if let Some(idx) = index {
-                if idx.total_pages > 1 {
-                    let hint = format!(
-                        "Showing {}/{} {} (page 1 of {}). Use `offset` and `limit` parameters for pagination.",
-                        result.included_items, total, item_type, idx.total_pages
-                    );
-                    output.page_index = Some(idx);
-                    output = output.with_truncation(total, result.included_items, hint);
+            if self.config.include_hints {
+                let remaining = total.saturating_sub(result.included_items);
+
+                // Generate page index for multi-page results
+                if let Some(idx) = index {
+                    if idx.total_pages > 1 {
+                        let hint = format!(
+                            "Showing {}/{} {} (page 1 of {}). Use `offset` and `limit` parameters for pagination.",
+                            result.included_items, total, item_type, idx.total_pages
+                        );
+                        output.page_index = Some(idx);
+                        output.agent_hint = Some(hint);
+                    } else {
+                        output.agent_hint = Some(format!(
+                            "Showing {}/{} {}. {} items trimmed by budget.",
+                            result.included_items, total, item_type, remaining
+                        ));
+                    }
                 } else {
-                    let hint = format!(
-                        "Showing {}/{} {}. {} items trimmed by budget.",
+                    output.agent_hint = Some(format!(
+                        "Showing {}/{} {}. {} items trimmed by budget. Use `offset` and `limit` parameters for pagination.",
                         result.included_items, total, item_type, remaining
-                    );
-                    output = output.with_truncation(total, result.included_items, hint);
+                    ));
                 }
-            } else {
-                let hint = format!(
-                    "Showing {}/{} {}. {} items trimmed by budget. Use `offset` and `limit` parameters for pagination.",
-                    result.included_items, total, item_type, remaining
-                );
-                output = output.with_truncation(total, result.included_items, hint);
             }
         }
 
@@ -773,9 +828,11 @@ mod tests {
         let output = pipeline.transform_issues(issues).unwrap();
 
         assert!(output.included_count < 25);
-        // hints are disabled, so even though trimming occurred, no hint is set
-        assert!(!output.truncated);
+        // truncated flag is always set when trimming occurs (for metadata consumers)
+        assert!(output.truncated);
+        // but agent_hint and page_index are suppressed when include_hints is false
         assert!(output.agent_hint.is_none());
+        assert!(output.page_index.is_none());
     }
 
     // --- Character limit (budget-based) ---
