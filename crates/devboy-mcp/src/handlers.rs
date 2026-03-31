@@ -896,7 +896,7 @@ impl ToolHandler {
                             return ToolCallResult::error(format!(
                                 "Failed to serialize relations: {}",
                                 e
-                            ))
+                            ));
                         }
                     };
                     return ToolCallResult::text(json);
