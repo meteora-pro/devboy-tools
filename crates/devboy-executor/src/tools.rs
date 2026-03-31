@@ -32,6 +32,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("offset", PropertySchema::integer("Number of results to skip (default: 0)", Some(0.0), None));
                 s.add_property("sort_by", PropertySchema::string_enum(&["created_at", "updated_at"], "Sort by field (default: updated_at)"));
                 s.add_property("sort_order", PropertySchema::string_enum(&["asc", "desc"], "Sort order (default: desc)"));
+                s.add_property("budget", PropertySchema::integer("Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.", Some(100.0), Some(100000.0)));
                 s
             },
         },
@@ -42,6 +43,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
             input_schema: {
                 let mut s = ToolSchema::new();
                 s.add_property("key", PropertySchema::string("Issue key"));
+                s.add_property("budget", PropertySchema::integer("Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.", Some(100.0), Some(100000.0)));
                 s.set_required("key", true);
                 s
             },
@@ -53,6 +55,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
             input_schema: {
                 let mut s = ToolSchema::new();
                 s.add_property("key", PropertySchema::string("Issue key"));
+                s.add_property("budget", PropertySchema::integer("Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.", Some(100.0), Some(100000.0)));
                 s.set_required("key", true);
                 s
             },
@@ -129,6 +132,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("source_branch", PropertySchema::string("Filter by source branch"));
                 s.add_property("target_branch", PropertySchema::string("Filter by target branch"));
                 s.add_property("limit", PropertySchema::integer("Maximum results (default: 20)", Some(1.0), Some(100.0)));
+                s.add_property("budget", PropertySchema::integer("Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.", Some(100.0), Some(100000.0)));
                 s
             },
         },
@@ -139,6 +143,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
             input_schema: {
                 let mut s = ToolSchema::new();
                 s.add_property("key", PropertySchema::string("MR/PR key"));
+                s.add_property("budget", PropertySchema::integer("Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.", Some(100.0), Some(100000.0)));
                 s.set_required("key", true);
                 s
             },
@@ -152,6 +157,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("key", PropertySchema::string("MR/PR key"));
                 s.add_property("limit", PropertySchema::integer("Max discussions (default: 20)", Some(1.0), Some(100.0)));
                 s.add_property("offset", PropertySchema::integer("Skip N discussions (default: 0)", Some(0.0), None));
+                s.add_property("budget", PropertySchema::integer("Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.", Some(100.0), Some(100000.0)));
                 s.set_required("key", true);
                 s
             },
@@ -163,6 +169,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
             input_schema: {
                 let mut s = ToolSchema::new();
                 s.add_property("key", PropertySchema::string("MR/PR key"));
+                s.add_property("budget", PropertySchema::integer("Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.", Some(100.0), Some(100000.0)));
                 s.set_required("key", true);
                 s
             },

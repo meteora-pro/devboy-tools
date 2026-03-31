@@ -143,6 +143,12 @@ define_tools! {
                     "type": "string",
                     "enum": ["asc", "desc"],
                     "description": "Sort order (default: desc)"
+                },
+                "budget": {
+                    "type": "integer",
+                    "description": "Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.",
+                    "minimum": 100,
+                    "maximum": 100000
                 }
             }
         }
@@ -163,6 +169,12 @@ define_tools! {
                     "type": "string",
                     "enum": ["toon", "json"],
                     "description": "Output format (default: toon)"
+                },
+                "budget": {
+                    "type": "integer",
+                    "description": "Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.",
+                    "minimum": 100,
+                    "maximum": 100000
                 }
             }
         }
@@ -183,6 +195,12 @@ define_tools! {
                     "type": "string",
                     "enum": ["toon", "json"],
                     "description": "Output format (default: toon)"
+                },
+                "budget": {
+                    "type": "integer",
+                    "description": "Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.",
+                    "minimum": 100,
+                    "maximum": 100000
                 }
             }
         }
@@ -352,6 +370,12 @@ define_tools! {
                     "type": "string",
                     "enum": ["toon", "json"],
                     "description": "Output format (default: toon)"
+                },
+                "budget": {
+                    "type": "integer",
+                    "description": "Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.",
+                    "minimum": 100,
+                    "maximum": 100000
                 }
             }
         }
@@ -372,6 +396,12 @@ define_tools! {
                     "type": "string",
                     "enum": ["toon", "json"],
                     "description": "Output format (default: toon)"
+                },
+                "budget": {
+                    "type": "integer",
+                    "description": "Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.",
+                    "minimum": 100,
+                    "maximum": 100000
                 }
             }
         }
@@ -403,6 +433,12 @@ define_tools! {
                     "type": "string",
                     "enum": ["toon", "json"],
                     "description": "Output format (default: toon)"
+                },
+                "budget": {
+                    "type": "integer",
+                    "description": "Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.",
+                    "minimum": 100,
+                    "maximum": 100000
                 }
             }
         }
@@ -423,6 +459,12 @@ define_tools! {
                     "type": "string",
                     "enum": ["toon", "json"],
                     "description": "Output format (default: toon)"
+                },
+                "budget": {
+                    "type": "integer",
+                    "description": "Token budget for this response (default: from config, typically ~28000). Lower values return less data with chunk index for navigation. Higher values return more data in one call.",
+                    "minimum": 100,
+                    "maximum": 100000
                 }
             }
         }
@@ -794,7 +836,7 @@ impl ToolHandler {
             return ToolCallResult::error(format!("Failed to get issues: {}", errors.join(", ")));
         }
 
-        let pipeline = self.create_pipeline(&params.format);
+        let pipeline = self.create_pipeline(&params.format, params.budget);
         match pipeline.transform_issues(all_issues) {
             Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
             Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -818,7 +860,7 @@ impl ToolHandler {
         for provider in &self.providers {
             match provider.get_issue(&params.key).await {
                 Ok(issue) => {
-                    let pipeline = self.create_pipeline(&params.format);
+                    let pipeline = self.create_pipeline(&params.format, params.budget);
                     return match pipeline.transform_issues(vec![issue]) {
                         Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -854,7 +896,7 @@ impl ToolHandler {
         for provider in &self.providers {
             match provider.get_comments(&params.key).await {
                 Ok(result) => {
-                    let pipeline = self.create_pipeline(&params.format);
+                    let pipeline = self.create_pipeline(&params.format, params.budget);
                     return match pipeline.transform_comments(result.items) {
                         Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -1101,7 +1143,7 @@ impl ToolHandler {
             ));
         }
 
-        let pipeline = self.create_pipeline(&params.format);
+        let pipeline = self.create_pipeline(&params.format, params.budget);
         match pipeline.transform_merge_requests(all_mrs) {
             Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
             Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -1124,7 +1166,7 @@ impl ToolHandler {
         for provider in &self.providers {
             match provider.get_merge_request(&params.key).await {
                 Ok(mr) => {
-                    let pipeline = self.create_pipeline(&params.format);
+                    let pipeline = self.create_pipeline(&params.format, params.budget);
                     return match pipeline.transform_merge_requests(vec![mr]) {
                         Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -1179,7 +1221,7 @@ impl ToolHandler {
                         discussions.into_iter().skip(offset).take(limit).collect();
                     let included = paged_discussions.len();
 
-                    let pipeline = self.create_pipeline(&params.format);
+                    let pipeline = self.create_pipeline(&params.format, params.budget);
                     return match pipeline.transform_discussions(paged_discussions) {
                         Ok(mut output) => {
                             if self.pipeline_config.include_hints && offset + included < total {
@@ -1236,7 +1278,7 @@ impl ToolHandler {
         for provider in &self.providers {
             match provider.get_diffs(&params.key).await {
                 Ok(result) => {
-                    let pipeline = self.create_pipeline(&params.format);
+                    let pipeline = self.create_pipeline(&params.format, params.budget);
                     return match pipeline.transform_diffs(result.items) {
                         Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -1675,16 +1717,24 @@ impl ToolHandler {
             .find(|p| get_provider_name(p.as_ref()) == name)
     }
 
-    fn create_pipeline(&self, format: &Option<String>) -> Pipeline {
+    fn create_pipeline(&self, format: &Option<String>, budget: Option<usize>) -> Pipeline {
         let output_format = match format.as_deref() {
             Some("json") => OutputFormat::Json,
             _ => OutputFormat::Toon,
         };
 
-        Pipeline::with_config(PipelineConfig {
+        let mut config = PipelineConfig {
             format: output_format,
             ..self.pipeline_config.clone()
-        })
+        };
+
+        // LLM-controlled budget overrides default
+        if let Some(b) = budget {
+            // Convert token budget to max_chars (tokens * 3.5)
+            config.max_chars = (b as f64 * 3.5).floor() as usize;
+        }
+
+        Pipeline::with_config(config)
     }
 }
 
@@ -1704,18 +1754,21 @@ struct GetIssuesParams {
     provider: Option<String>,
     sort_by: Option<String>,
     sort_order: Option<String>,
+    budget: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GetIssueParams {
     key: String,
     format: Option<String>,
+    budget: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GetIssueCommentsParams {
     key: String,
     format: Option<String>,
+    budget: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1762,12 +1815,14 @@ struct GetMergeRequestsParams {
     target_branch: Option<String>,
     limit: Option<usize>,
     format: Option<String>,
+    budget: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GetMergeRequestParams {
     key: String,
     format: Option<String>,
+    budget: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1776,12 +1831,14 @@ struct GetMergeRequestDiscussionsParams {
     limit: Option<usize>,
     offset: Option<usize>,
     format: Option<String>,
+    budget: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GetMergeRequestDiffsParams {
     key: String,
     format: Option<String>,
+    budget: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2984,13 +3041,13 @@ mod tests {
     async fn test_create_pipeline_formats() {
         let handler = ToolHandler::new(vec![]);
 
-        let pipeline = handler.create_pipeline(&Some("json".to_string()));
+        let pipeline = handler.create_pipeline(&Some("json".to_string()), None);
         assert!(pipeline.transform_issues(vec![]).is_ok());
 
-        let pipeline = handler.create_pipeline(&Some("toon".to_string()));
+        let pipeline = handler.create_pipeline(&Some("toon".to_string()), None);
         assert!(pipeline.transform_issues(vec![]).is_ok());
 
-        let pipeline = handler.create_pipeline(&None);
+        let pipeline = handler.create_pipeline(&None, None);
         assert!(pipeline.transform_issues(vec![]).is_ok());
     }
 

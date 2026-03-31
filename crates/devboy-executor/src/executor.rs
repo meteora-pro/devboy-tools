@@ -277,6 +277,9 @@ struct GetIssuesParams {
     offset: Option<u32>,
     sort_by: Option<String>,
     sort_order: Option<String>,
+    /// Token budget for response size control (consumed by format layer via execute_and_format).
+    #[allow(dead_code)]
+    budget: Option<usize>,
 }
 
 async fn execute_get_issues(
@@ -305,6 +308,10 @@ async fn execute_get_issues(
 #[derive(Deserialize)]
 struct KeyParam {
     key: String,
+    /// Token budget for response size control (consumed by format layer via execute_and_format).
+    #[serde(default)]
+    #[allow(dead_code)]
+    budget: Option<usize>,
 }
 
 async fn execute_get_issue(
@@ -440,6 +447,9 @@ struct GetMergeRequestsParams {
     offset: Option<u32>,
     sort_by: Option<String>,
     sort_order: Option<String>,
+    /// Token budget for response size control (consumed by format layer via execute_and_format).
+    #[allow(dead_code)]
+    budget: Option<usize>,
 }
 
 async fn execute_get_merge_requests(
