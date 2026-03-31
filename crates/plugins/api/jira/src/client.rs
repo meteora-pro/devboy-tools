@@ -791,9 +791,7 @@ fn map_relations(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> I
 
             match outward_lower.as_deref() {
                 Some(s) if s.contains("block") => relations.blocks.push(issue_link),
-                Some(s) if s.contains("duplicate") => {
-                    relations.duplicates.push(issue_link)
-                }
+                Some(s) if s.contains("duplicate") => relations.duplicates.push(issue_link),
                 _ => relations.related_to.push(issue_link),
             }
         }
@@ -806,12 +804,8 @@ fn map_relations(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> I
             };
 
             match inward_lower.as_deref() {
-                Some(s) if s.contains("block") => {
-                    relations.blocked_by.push(issue_link)
-                }
-                Some(s) if s.contains("duplicate") => {
-                    relations.duplicates.push(issue_link)
-                }
+                Some(s) if s.contains("block") => relations.blocked_by.push(issue_link),
+                Some(s) if s.contains("duplicate") => relations.duplicates.push(issue_link),
                 _ => relations.related_to.push(issue_link),
             }
         }

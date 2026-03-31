@@ -156,8 +156,9 @@ pub fn format_output(
             Ok(text_result(format_meeting_transcript(&transcript)))
         }
         ToolOutput::Relations(relations) => {
-            let json = serde_json::to_string_pretty(&*relations)
-                .map_err(|e| devboy_core::Error::InvalidData(format!("failed to serialize relations: {e}")))?;
+            let json = serde_json::to_string_pretty(&*relations).map_err(|e| {
+                devboy_core::Error::InvalidData(format!("failed to serialize relations: {e}"))
+            })?;
             Ok(text_result(json))
         }
         ToolOutput::Text(text) => Ok(text_result(text)),
