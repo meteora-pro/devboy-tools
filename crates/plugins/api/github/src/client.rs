@@ -422,7 +422,11 @@ impl IssueProvider for GitHubClient {
         let number = parse_issue_key(issue_key)?;
         let url = self.repo_url(&format!("/issues/{}/comments", number));
         let gh_comments: Vec<GitHubComment> = self.get(&url).await?;
-        Ok(gh_comments.iter().map(map_comment).collect::<Vec<_>>().into())
+        Ok(gh_comments
+            .iter()
+            .map(map_comment)
+            .collect::<Vec<_>>()
+            .into())
     }
 
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment> {
@@ -1767,7 +1771,11 @@ mod tests {
             });
 
             let client = create_test_client(&server);
-            let issues = client.get_issues(IssueFilter::default()).await.unwrap().items;
+            let issues = client
+                .get_issues(IssueFilter::default())
+                .await
+                .unwrap()
+                .items;
 
             // Only the real issue, not the PR
             assert_eq!(issues.len(), 1);

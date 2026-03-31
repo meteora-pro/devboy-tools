@@ -612,7 +612,12 @@ impl IssueProvider for ClickUpClient {
             format!("{}/comment", base_url)
         };
         let response: ClickUpCommentList = self.get(&url).await?;
-        Ok(response.comments.iter().map(map_comment).collect::<Vec<_>>().into())
+        Ok(response
+            .comments
+            .iter()
+            .map(map_comment)
+            .collect::<Vec<_>>()
+            .into())
     }
 
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment> {
@@ -1389,7 +1394,11 @@ mod tests {
             });
 
             let client = create_test_client(&server);
-            let issues = client.get_issues(IssueFilter::default()).await.unwrap().items;
+            let issues = client
+                .get_issues(IssueFilter::default())
+                .await
+                .unwrap()
+                .items;
 
             assert_eq!(issues.len(), 1);
             assert_eq!(issues[0].key, "CU-abc123");

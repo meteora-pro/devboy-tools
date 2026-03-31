@@ -277,7 +277,8 @@ impl IssueProvider for TestProvider {
                 created_at: Some("2024-01-01T00:00:00Z".to_string()),
                 updated_at: None,
                 position: None,
-            }].into())
+            }]
+            .into())
         }
     }
 
@@ -333,7 +334,8 @@ impl MergeRequestProvider for TestProvider {
                     position: None,
                 }],
                 position: None,
-            }].into())
+            }]
+            .into())
         }
     }
 
@@ -354,7 +356,8 @@ impl MergeRequestProvider for TestProvider {
                 diff: "+added line\n-removed line".to_string(),
                 additions: Some(1),
                 deletions: Some(1),
-            }].into())
+            }]
+            .into())
         }
     }
 
@@ -404,7 +407,11 @@ mod tests {
     async fn test_provider_loads_fixtures_in_replay() {
         temp_env::async_with_vars([("GITHUB_TOKEN", None::<&str>)], async {
             let provider = TestProvider::github();
-            let issues = provider.get_issues(IssueFilter::default()).await.unwrap().items;
+            let issues = provider
+                .get_issues(IssueFilter::default())
+                .await
+                .unwrap()
+                .items;
             assert!(!issues.is_empty());
             assert!(issues[0].key.starts_with("gh#"));
         })

@@ -2017,7 +2017,11 @@ mod tests {
             });
 
             let client = create_self_hosted_client(&server);
-            let issues = client.get_issues(IssueFilter::default()).await.unwrap().items;
+            let issues = client
+                .get_issues(IssueFilter::default())
+                .await
+                .unwrap()
+                .items;
 
             assert_eq!(issues.len(), 1);
             assert_eq!(issues[0].key, "jira#PROJ-1");
@@ -2667,7 +2671,11 @@ mod tests {
             });
 
             let client = create_cloud_client(&server);
-            let issues = client.get_issues(IssueFilter::default()).await.unwrap().items;
+            let issues = client
+                .get_issues(IssueFilter::default())
+                .await
+                .unwrap()
+                .items;
 
             assert_eq!(issues.len(), 1);
             assert_eq!(issues[0].key, "jira#PROJ-1");

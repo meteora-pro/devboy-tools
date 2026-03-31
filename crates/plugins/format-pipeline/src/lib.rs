@@ -216,7 +216,8 @@ impl Pipeline {
         let strategy_kind = self.resolve_strategy("get_issues");
         let result = budget::process_issues(&issues, strategy_kind, &budget_config)?;
 
-        let index = page_index::build_issues_index(&issues, result.included_items, self.config.max_chars);
+        let index =
+            page_index::build_issues_index(&issues, result.included_items, self.config.max_chars);
         self.build_budget_output(result, raw_chars, total, "issues", Some(index))
     }
 
@@ -241,7 +242,11 @@ impl Pipeline {
         let strategy_kind = self.resolve_strategy("get_merge_requests");
         let result = budget::process_merge_requests(&mrs, strategy_kind, &budget_config)?;
 
-        let index = page_index::build_merge_requests_index(&mrs, result.included_items, self.config.max_chars);
+        let index = page_index::build_merge_requests_index(
+            &mrs,
+            result.included_items,
+            self.config.max_chars,
+        );
         self.build_budget_output(result, raw_chars, total, "merge_requests", Some(index))
     }
 
@@ -279,7 +284,8 @@ impl Pipeline {
         let strategy_kind = self.resolve_strategy("get_merge_request_diffs");
         let result = budget::process_diffs(&diffs, strategy_kind, &budget_config)?;
 
-        let index = page_index::build_diffs_index(&diffs, result.included_items, self.config.max_chars);
+        let index =
+            page_index::build_diffs_index(&diffs, result.included_items, self.config.max_chars);
         self.build_budget_output(result, raw_chars, total, "diffs", Some(index))
     }
 
@@ -304,7 +310,11 @@ impl Pipeline {
         let strategy_kind = self.resolve_strategy("get_issue_comments");
         let result = budget::process_comments(&comments, strategy_kind, &budget_config)?;
 
-        let index = page_index::build_comments_index(&comments, result.included_items, self.config.max_chars);
+        let index = page_index::build_comments_index(
+            &comments,
+            result.included_items,
+            self.config.max_chars,
+        );
         self.build_budget_output(result, raw_chars, total, "comments", Some(index))
     }
 
@@ -329,7 +339,11 @@ impl Pipeline {
         let strategy_kind = self.resolve_strategy("get_merge_request_discussions");
         let result = budget::process_discussions(&discussions, strategy_kind, &budget_config)?;
 
-        let index = page_index::build_discussions_index(&discussions, result.included_items, self.config.max_chars);
+        let index = page_index::build_discussions_index(
+            &discussions,
+            result.included_items,
+            self.config.max_chars,
+        );
         self.build_budget_output(result, raw_chars, total, "discussions", Some(index))
     }
 
