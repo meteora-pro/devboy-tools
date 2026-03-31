@@ -437,7 +437,7 @@ impl Pipeline {
                 if let Some(idx) = index {
                     if idx.total_pages > 1 {
                         let hint = format!(
-                            "Showing {}/{} {} (page 1 of {}). Use `offset` and `limit` parameters for pagination.",
+                            "Showing {}/{} {} selected by priority ({} pages available). Use `offset` and `limit` for sequential access.",
                             result.included_items, total, item_type, idx.total_pages
                         );
                         output.page_index = Some(idx);
