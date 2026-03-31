@@ -14,12 +14,12 @@
 //!
 //! ```rust,no_run
 //! use devboy_executor::{Executor, AdditionalContext, ProviderConfig, GitLabScope};
-//! use devboy_executor::enricher::PipelineFormatEnricher;
+//! use devboy_executor::enricher::FormatPipelineEnricher;
 //! use std::collections::HashMap;
 //!
 //! # async fn example() -> devboy_core::Result<()> {
 //! let mut executor = Executor::new();
-//! executor.add_enricher(Box::new(PipelineFormatEnricher));
+//! executor.add_enricher(Box::new(FormatPipelineEnricher));
 //!
 //! let ctx = AdditionalContext {
 //!     provider: ProviderConfig::GitLab {
