@@ -71,6 +71,15 @@ pub struct JiraIssueFields {
     /// Updated timestamp
     #[serde(default)]
     pub updated: Option<String>,
+    /// Parent issue (for subtasks)
+    #[serde(default)]
+    pub parent: Option<Box<JiraIssue>>,
+    /// Subtasks / child issues
+    #[serde(default)]
+    pub subtasks: Vec<JiraIssue>,
+    /// Issue links
+    #[serde(default)]
+    pub issuelinks: Vec<JiraIssueLink>,
 }
 
 /// Jira issue status.
@@ -96,6 +105,40 @@ pub struct JiraStatusCategory {
 pub struct JiraPriority {
     /// Priority name
     pub name: String,
+}
+
+// =============================================================================
+// Issue Links
+// =============================================================================
+
+/// Jira issue link representation.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JiraIssueLink {
+    /// Link ID
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Link type
+    #[serde(rename = "type")]
+    pub link_type: JiraIssueLinkType,
+    /// Inward issue (e.g., "is blocked by" this issue)
+    #[serde(default, rename = "inwardIssue")]
+    pub inward_issue: Option<Box<JiraIssue>>,
+    /// Outward issue (e.g., "blocks" this issue)
+    #[serde(default, rename = "outwardIssue")]
+    pub outward_issue: Option<Box<JiraIssue>>,
+}
+
+/// Jira issue link type.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JiraIssueLinkType {
+    /// Link type name (e.g., "Blocks", "Relates")
+    pub name: String,
+    /// Inward description (e.g., "is blocked by")
+    #[serde(default)]
+    pub inward: Option<String>,
+    /// Outward description (e.g., "blocks")
+    #[serde(default)]
+    pub outward: Option<String>,
 }
 
 // =============================================================================

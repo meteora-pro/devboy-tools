@@ -5,8 +5,9 @@
 
 use async_trait::async_trait;
 use devboy_core::{
-    Comment, CreateIssueInput, Error, GetUsersOptions, Issue, IssueFilter, IssueProvider,
-    IssueStatus, MergeRequestProvider, PipelineProvider, Provider, Result, UpdateIssueInput, User,
+    Comment, CreateIssueInput, Error, GetUsersOptions, Issue, IssueFilter, IssueLink,
+    IssueProvider, IssueRelations, IssueStatus, MergeRequestProvider, PipelineProvider, Provider,
+    Result, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
@@ -758,6 +759,61 @@ fn map_issue(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> Issue
     }
 }
 
+fn map_relations(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> IssueRelations {
+    let mut relations = IssueRelations::default();
+
+    // Parent
+    if let Some(parent) = &issue.fields.parent {
+        relations.parent = Some(map_issue(parent, flavor, instance_url));
+    }
+
+    // Subtasks
+    relations.subtasks = issue
+        .fields
+        .subtasks
+        .iter()
+        .map(|s| map_issue(s, flavor, instance_url))
+        .collect();
+
+    // Issue links
+    for link in &issue.fields.issuelinks {
+        let link_name = &link.link_type.name;
+
+        let outward_lower = link.link_type.outward.as_deref().map(str::to_lowercase);
+        let inward_lower = link.link_type.inward.as_deref().map(str::to_lowercase);
+
+        if let Some(outward) = &link.outward_issue {
+            let mapped = map_issue(outward, flavor, instance_url);
+            let issue_link = IssueLink {
+                issue: mapped,
+                link_type: link_name.clone(),
+            };
+
+            match outward_lower.as_deref() {
+                Some(s) if s.contains("block") => relations.blocks.push(issue_link),
+                Some(s) if s.contains("duplicate") => relations.duplicates.push(issue_link),
+                _ => relations.related_to.push(issue_link),
+            }
+        }
+
+        if let Some(inward) = &link.inward_issue {
+            let mapped = map_issue(inward, flavor, instance_url);
+            let issue_link = IssueLink {
+                issue: mapped,
+                link_type: link_name.clone(),
+            };
+
+            match inward_lower.as_deref() {
+                Some(s) if s.contains("block") => relations.blocked_by.push(issue_link),
+                Some(s) if s.contains("duplicate") => relations.duplicates.push(issue_link),
+                _ => relations.related_to.push(issue_link),
+            }
+        }
+    }
+
+    relations
+}
+
 fn map_comment(jira_comment: &JiraComment, flavor: JiraFlavor) -> Comment {
     Comment {
         id: jira_comment.id.clone(),
@@ -1207,6 +1263,16 @@ impl IssueProvider for JiraClient {
         Ok(())
     }
 
+    async fn get_issue_relations(&self, issue_key: &str) -> Result<IssueRelations> {
+        let jira_key = parse_jira_key(issue_key);
+        let url = format!(
+            "{}/issue/{}?fields=parent,subtasks,issuelinks,summary,status,priority",
+            self.base_url, jira_key
+        );
+        let issue: JiraIssue = self.get(&url).await?;
+        Ok(map_relations(&issue, self.flavor, &self.instance_url))
+    }
+
     fn provider_name(&self) -> &'static str {
         "jira"
     }
@@ -1620,6 +1686,9 @@ mod tests {
                 labels: vec!["bug".to_string(), "mobile".to_string()],
                 created: Some("2024-01-01T10:00:00.000+0000".to_string()),
                 updated: Some("2024-01-02T15:30:00.000+0000".to_string()),
+                parent: None,
+                subtasks: vec![],
+                issuelinks: vec![],
             },
         };
 
@@ -1675,6 +1744,9 @@ mod tests {
                 labels: vec![],
                 created: None,
                 updated: None,
+                parent: None,
+                subtasks: vec![],
+                issuelinks: vec![],
             },
         };
 
@@ -1697,6 +1769,9 @@ mod tests {
                 labels: vec![],
                 created: None,
                 updated: None,
+                parent: None,
+                subtasks: vec![],
+                issuelinks: vec![],
             },
         };
 
@@ -2974,5 +3049,554 @@ mod tests {
                 r#"both \"and\" \\ here"#
             );
         }
+
+        // =================================================================
+        // get_issue_relations integration test
+        // =================================================================
+
+        #[tokio::test]
+        async fn test_get_issue_relations() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/issue/PROJ-1")
+                    .query_param_includes("fields", "parent");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "summary": "Main issue",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "parent": {
+                            "id": "10000",
+                            "key": "PROJ-0",
+                            "fields": {
+                                "summary": "Parent issue",
+                                "status": {"name": "Open"},
+                                "labels": []
+                            }
+                        },
+                        "subtasks": [
+                            {
+                                "id": "10002",
+                                "key": "PROJ-2",
+                                "fields": {
+                                    "summary": "Subtask 1",
+                                    "status": {"name": "In Progress"},
+                                    "labels": []
+                                }
+                            }
+                        ],
+                        "issuelinks": [
+                            {
+                                "type": {
+                                    "name": "Blocks",
+                                    "outward": "blocks",
+                                    "inward": "is blocked by"
+                                },
+                                "outwardIssue": {
+                                    "id": "10003",
+                                    "key": "PROJ-3",
+                                    "fields": {
+                                        "summary": "Blocked issue",
+                                        "status": {"name": "Open"},
+                                        "labels": []
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let relations = client.get_issue_relations("jira#PROJ-1").await.unwrap();
+
+            assert!(relations.parent.is_some());
+            assert_eq!(relations.parent.unwrap().key, "jira#PROJ-0");
+            assert_eq!(relations.subtasks.len(), 1);
+            assert_eq!(relations.subtasks[0].key, "jira#PROJ-2");
+            assert_eq!(relations.blocks.len(), 1);
+            assert_eq!(relations.blocks[0].issue.key, "jira#PROJ-3");
+        }
+    }
+
+    // =========================================================================
+    // map_relations unit tests
+    // =========================================================================
+
+    #[test]
+    fn test_map_relations_empty() {
+        let issue = JiraIssue {
+            id: "10001".to_string(),
+            key: "PROJ-1".to_string(),
+            fields: JiraIssueFields {
+                summary: Some("Test".to_string()),
+                description: None,
+                status: None,
+                priority: None,
+                assignee: None,
+                reporter: None,
+                labels: vec![],
+                created: None,
+                updated: None,
+                parent: None,
+                subtasks: vec![],
+                issuelinks: vec![],
+            },
+        };
+
+        let relations = map_relations(&issue, JiraFlavor::Cloud, "https://test.atlassian.net");
+
+        assert!(relations.parent.is_none());
+        assert!(relations.subtasks.is_empty());
+        assert!(relations.blocks.is_empty());
+        assert!(relations.blocked_by.is_empty());
+        assert!(relations.related_to.is_empty());
+        assert!(relations.duplicates.is_empty());
+    }
+
+    #[test]
+    fn test_map_relations_with_parent() {
+        let parent = Box::new(JiraIssue {
+            id: "10000".to_string(),
+            key: "PROJ-0".to_string(),
+            fields: JiraIssueFields {
+                summary: Some("Parent Issue".to_string()),
+                description: None,
+                status: Some(JiraStatus {
+                    name: "Open".to_string(),
+                    status_category: None,
+                }),
+                priority: None,
+                assignee: None,
+                reporter: None,
+                labels: vec![],
+                created: None,
+                updated: None,
+                parent: None,
+                subtasks: vec![],
+                issuelinks: vec![],
+            },
+        });
+
+        let issue = JiraIssue {
+            id: "10001".to_string(),
+            key: "PROJ-1".to_string(),
+            fields: JiraIssueFields {
+                summary: Some("Child Issue".to_string()),
+                description: None,
+                status: None,
+                priority: None,
+                assignee: None,
+                reporter: None,
+                labels: vec![],
+                created: None,
+                updated: None,
+                parent: Some(parent),
+                subtasks: vec![],
+                issuelinks: vec![],
+            },
+        };
+
+        let relations = map_relations(&issue, JiraFlavor::SelfHosted, "https://jira.example.com");
+
+        assert!(relations.parent.is_some());
+        let parent_issue = relations.parent.unwrap();
+        assert_eq!(parent_issue.key, "jira#PROJ-0");
+        assert_eq!(parent_issue.title, "Parent Issue");
+    }
+
+    #[test]
+    fn test_map_relations_with_subtasks() {
+        let issue = JiraIssue {
+            id: "10001".to_string(),
+            key: "PROJ-1".to_string(),
+            fields: JiraIssueFields {
+                summary: Some("Epic".to_string()),
+                description: None,
+                status: None,
+                priority: None,
+                assignee: None,
+                reporter: None,
+                labels: vec![],
+                created: None,
+                updated: None,
+                parent: None,
+                subtasks: vec![
+                    JiraIssue {
+                        id: "10002".to_string(),
+                        key: "PROJ-2".to_string(),
+                        fields: JiraIssueFields {
+                            summary: Some("Subtask 1".to_string()),
+                            description: None,
+                            status: Some(JiraStatus {
+                                name: "In Progress".to_string(),
+                                status_category: None,
+                            }),
+                            priority: None,
+                            assignee: None,
+                            reporter: None,
+                            labels: vec![],
+                            created: None,
+                            updated: None,
+                            parent: None,
+                            subtasks: vec![],
+                            issuelinks: vec![],
+                        },
+                    },
+                    JiraIssue {
+                        id: "10003".to_string(),
+                        key: "PROJ-3".to_string(),
+                        fields: JiraIssueFields {
+                            summary: Some("Subtask 2".to_string()),
+                            description: None,
+                            status: None,
+                            priority: None,
+                            assignee: None,
+                            reporter: None,
+                            labels: vec![],
+                            created: None,
+                            updated: None,
+                            parent: None,
+                            subtasks: vec![],
+                            issuelinks: vec![],
+                        },
+                    },
+                ],
+                issuelinks: vec![],
+            },
+        };
+
+        let relations = map_relations(&issue, JiraFlavor::Cloud, "https://test.atlassian.net");
+
+        assert_eq!(relations.subtasks.len(), 2);
+        assert_eq!(relations.subtasks[0].key, "jira#PROJ-2");
+        assert_eq!(relations.subtasks[0].title, "Subtask 1");
+        assert_eq!(relations.subtasks[1].key, "jira#PROJ-3");
+        assert_eq!(relations.subtasks[1].title, "Subtask 2");
+    }
+
+    #[test]
+    fn test_map_relations_with_issuelinks_blocks() {
+        let issue = JiraIssue {
+            id: "10001".to_string(),
+            key: "PROJ-1".to_string(),
+            fields: JiraIssueFields {
+                summary: Some("Test".to_string()),
+                description: None,
+                status: None,
+                priority: None,
+                assignee: None,
+                reporter: None,
+                labels: vec![],
+                created: None,
+                updated: None,
+                parent: None,
+                subtasks: vec![],
+                issuelinks: vec![
+                    // Outward "blocks" link
+                    JiraIssueLink {
+                        id: Some("1".to_string()),
+                        link_type: JiraIssueLinkType {
+                            name: "Blocks".to_string(),
+                            outward: Some("blocks".to_string()),
+                            inward: Some("is blocked by".to_string()),
+                        },
+                        outward_issue: Some(Box::new(JiraIssue {
+                            id: "10002".to_string(),
+                            key: "PROJ-2".to_string(),
+                            fields: JiraIssueFields {
+                                summary: Some("Blocked".to_string()),
+                                description: None,
+                                status: None,
+                                priority: None,
+                                assignee: None,
+                                reporter: None,
+                                labels: vec![],
+                                created: None,
+                                updated: None,
+                                parent: None,
+                                subtasks: vec![],
+                                issuelinks: vec![],
+                            },
+                        })),
+                        inward_issue: None,
+                    },
+                    // Inward "is blocked by" link
+                    JiraIssueLink {
+                        id: Some("2".to_string()),
+                        link_type: JiraIssueLinkType {
+                            name: "Blocks".to_string(),
+                            outward: Some("blocks".to_string()),
+                            inward: Some("is blocked by".to_string()),
+                        },
+                        outward_issue: None,
+                        inward_issue: Some(Box::new(JiraIssue {
+                            id: "10003".to_string(),
+                            key: "PROJ-3".to_string(),
+                            fields: JiraIssueFields {
+                                summary: Some("Blocker".to_string()),
+                                description: None,
+                                status: None,
+                                priority: None,
+                                assignee: None,
+                                reporter: None,
+                                labels: vec![],
+                                created: None,
+                                updated: None,
+                                parent: None,
+                                subtasks: vec![],
+                                issuelinks: vec![],
+                            },
+                        })),
+                    },
+                ],
+            },
+        };
+
+        let relations = map_relations(&issue, JiraFlavor::Cloud, "https://test.atlassian.net");
+
+        assert_eq!(relations.blocks.len(), 1);
+        assert_eq!(relations.blocks[0].issue.key, "jira#PROJ-2");
+        assert_eq!(relations.blocks[0].link_type, "Blocks");
+        assert_eq!(relations.blocked_by.len(), 1);
+        assert_eq!(relations.blocked_by[0].issue.key, "jira#PROJ-3");
+    }
+
+    #[test]
+    fn test_map_relations_with_issuelinks_duplicates() {
+        let issue = JiraIssue {
+            id: "10001".to_string(),
+            key: "PROJ-1".to_string(),
+            fields: JiraIssueFields {
+                summary: Some("Test".to_string()),
+                description: None,
+                status: None,
+                priority: None,
+                assignee: None,
+                reporter: None,
+                labels: vec![],
+                created: None,
+                updated: None,
+                parent: None,
+                subtasks: vec![],
+                issuelinks: vec![
+                    // Outward "duplicate" link
+                    JiraIssueLink {
+                        id: Some("1".to_string()),
+                        link_type: JiraIssueLinkType {
+                            name: "Duplicate".to_string(),
+                            outward: Some("duplicates".to_string()),
+                            inward: Some("is duplicated by".to_string()),
+                        },
+                        outward_issue: Some(Box::new(JiraIssue {
+                            id: "10002".to_string(),
+                            key: "PROJ-2".to_string(),
+                            fields: JiraIssueFields {
+                                summary: Some("Dup outward".to_string()),
+                                description: None,
+                                status: None,
+                                priority: None,
+                                assignee: None,
+                                reporter: None,
+                                labels: vec![],
+                                created: None,
+                                updated: None,
+                                parent: None,
+                                subtasks: vec![],
+                                issuelinks: vec![],
+                            },
+                        })),
+                        inward_issue: None,
+                    },
+                    // Inward "duplicate" link
+                    JiraIssueLink {
+                        id: Some("2".to_string()),
+                        link_type: JiraIssueLinkType {
+                            name: "Duplicate".to_string(),
+                            outward: Some("duplicates".to_string()),
+                            inward: Some("is duplicated by".to_string()),
+                        },
+                        outward_issue: None,
+                        inward_issue: Some(Box::new(JiraIssue {
+                            id: "10003".to_string(),
+                            key: "PROJ-3".to_string(),
+                            fields: JiraIssueFields {
+                                summary: Some("Dup inward".to_string()),
+                                description: None,
+                                status: None,
+                                priority: None,
+                                assignee: None,
+                                reporter: None,
+                                labels: vec![],
+                                created: None,
+                                updated: None,
+                                parent: None,
+                                subtasks: vec![],
+                                issuelinks: vec![],
+                            },
+                        })),
+                    },
+                ],
+            },
+        };
+
+        let relations = map_relations(&issue, JiraFlavor::Cloud, "https://test.atlassian.net");
+
+        // Both outward and inward duplicates go to `duplicates`
+        assert_eq!(relations.duplicates.len(), 2);
+        assert_eq!(relations.duplicates[0].issue.key, "jira#PROJ-2");
+        assert_eq!(relations.duplicates[1].issue.key, "jira#PROJ-3");
+    }
+
+    #[test]
+    fn test_map_relations_with_issuelinks_relates() {
+        let issue = JiraIssue {
+            id: "10001".to_string(),
+            key: "PROJ-1".to_string(),
+            fields: JiraIssueFields {
+                summary: Some("Test".to_string()),
+                description: None,
+                status: None,
+                priority: None,
+                assignee: None,
+                reporter: None,
+                labels: vec![],
+                created: None,
+                updated: None,
+                parent: None,
+                subtasks: vec![],
+                issuelinks: vec![JiraIssueLink {
+                    id: Some("1".to_string()),
+                    link_type: JiraIssueLinkType {
+                        name: "Relates".to_string(),
+                        outward: Some("relates to".to_string()),
+                        inward: Some("relates to".to_string()),
+                    },
+                    outward_issue: Some(Box::new(JiraIssue {
+                        id: "10002".to_string(),
+                        key: "PROJ-2".to_string(),
+                        fields: JiraIssueFields {
+                            summary: Some("Related".to_string()),
+                            description: None,
+                            status: None,
+                            priority: None,
+                            assignee: None,
+                            reporter: None,
+                            labels: vec![],
+                            created: None,
+                            updated: None,
+                            parent: None,
+                            subtasks: vec![],
+                            issuelinks: vec![],
+                        },
+                    })),
+                    inward_issue: None,
+                }],
+            },
+        };
+
+        let relations = map_relations(&issue, JiraFlavor::Cloud, "https://test.atlassian.net");
+
+        assert_eq!(relations.related_to.len(), 1);
+        assert_eq!(relations.related_to[0].issue.key, "jira#PROJ-2");
+        assert_eq!(relations.related_to[0].link_type, "Relates");
+    }
+
+    #[test]
+    fn test_map_relations_mixed() {
+        let issue = JiraIssue {
+            id: "10001".to_string(),
+            key: "PROJ-1".to_string(),
+            fields: JiraIssueFields {
+                summary: Some("Main".to_string()),
+                description: None,
+                status: None,
+                priority: None,
+                assignee: None,
+                reporter: None,
+                labels: vec![],
+                created: None,
+                updated: None,
+                parent: Some(Box::new(JiraIssue {
+                    id: "10000".to_string(),
+                    key: "PROJ-0".to_string(),
+                    fields: JiraIssueFields {
+                        summary: Some("Parent".to_string()),
+                        description: None,
+                        status: None,
+                        priority: None,
+                        assignee: None,
+                        reporter: None,
+                        labels: vec![],
+                        created: None,
+                        updated: None,
+                        parent: None,
+                        subtasks: vec![],
+                        issuelinks: vec![],
+                    },
+                })),
+                subtasks: vec![JiraIssue {
+                    id: "10002".to_string(),
+                    key: "PROJ-2".to_string(),
+                    fields: JiraIssueFields {
+                        summary: Some("Sub".to_string()),
+                        description: None,
+                        status: None,
+                        priority: None,
+                        assignee: None,
+                        reporter: None,
+                        labels: vec![],
+                        created: None,
+                        updated: None,
+                        parent: None,
+                        subtasks: vec![],
+                        issuelinks: vec![],
+                    },
+                }],
+                issuelinks: vec![JiraIssueLink {
+                    id: Some("1".to_string()),
+                    link_type: JiraIssueLinkType {
+                        name: "Blocks".to_string(),
+                        outward: Some("blocks".to_string()),
+                        inward: Some("is blocked by".to_string()),
+                    },
+                    outward_issue: Some(Box::new(JiraIssue {
+                        id: "10003".to_string(),
+                        key: "PROJ-3".to_string(),
+                        fields: JiraIssueFields {
+                            summary: Some("Blocked".to_string()),
+                            description: None,
+                            status: None,
+                            priority: None,
+                            assignee: None,
+                            reporter: None,
+                            labels: vec![],
+                            created: None,
+                            updated: None,
+                            parent: None,
+                            subtasks: vec![],
+                            issuelinks: vec![],
+                        },
+                    })),
+                    inward_issue: None,
+                }],
+            },
+        };
+
+        let relations = map_relations(&issue, JiraFlavor::Cloud, "https://test.atlassian.net");
+
+        assert!(relations.parent.is_some());
+        assert_eq!(relations.parent.unwrap().key, "jira#PROJ-0");
+        assert_eq!(relations.subtasks.len(), 1);
+        assert_eq!(relations.subtasks[0].key, "jira#PROJ-2");
+        assert_eq!(relations.blocks.len(), 1);
+        assert_eq!(relations.blocks[0].issue.key, "jira#PROJ-3");
+        assert!(relations.blocked_by.is_empty());
+        assert!(relations.related_to.is_empty());
+        assert!(relations.duplicates.is_empty());
     }
 }

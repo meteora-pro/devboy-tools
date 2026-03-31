@@ -1,5 +1,5 @@
 use devboy_core::{
-    Comment, Discussion, FileDiff, Issue, IssueStatus, JobLogOutput, MeetingNote,
+    Comment, Discussion, FileDiff, Issue, IssueRelations, IssueStatus, JobLogOutput, MeetingNote,
     MeetingTranscript, MergeRequest, PipelineInfo, User,
 };
 
@@ -36,6 +36,8 @@ pub enum ToolOutput {
     MeetingNotes(Vec<MeetingNote>),
     /// Single meeting transcript with sentences
     MeetingTranscript(Box<MeetingTranscript>),
+    /// Issue relations (parent, subtasks, linked issues)
+    Relations(Box<IssueRelations>),
     /// Plain text result (e.g., "Comment created successfully")
     Text(String),
 }
@@ -57,6 +59,7 @@ impl ToolOutput {
             | Self::Pipeline(_)
             | Self::JobLog(_)
             | Self::MeetingTranscript(_)
+            | Self::Relations(_)
             | Self::Text(_) => 1,
         }
     }
@@ -77,6 +80,7 @@ impl ToolOutput {
             Self::Users(_) => "users",
             Self::MeetingNotes(_) => "meeting_notes",
             Self::MeetingTranscript(_) => "meeting_transcript",
+            Self::Relations(_) => "issue_relations",
             Self::Text(_) => "text",
         }
     }
@@ -189,6 +193,7 @@ mod tests {
             1
         );
         assert_eq!(ToolOutput::Users(vec![]).item_count(), 0);
+        assert_eq!(ToolOutput::Relations(Box::default()).item_count(), 1);
         assert_eq!(ToolOutput::Text("x".into()).item_count(), 1);
     }
 
@@ -239,6 +244,10 @@ mod tests {
         );
         assert_eq!(ToolOutput::Statuses(vec![]).type_name(), "statuses");
         assert_eq!(ToolOutput::Users(vec![]).type_name(), "users");
+        assert_eq!(
+            ToolOutput::Relations(Box::default()).type_name(),
+            "issue_relations"
+        );
         assert_eq!(ToolOutput::Text("x".into()).type_name(), "text");
     }
 }
