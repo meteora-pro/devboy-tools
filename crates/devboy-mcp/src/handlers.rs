@@ -188,6 +188,21 @@ define_tools! {
         }
     },
 
+    "get_issue_relations" => handle_get_issue_relations {
+        category: ToolCategory::Issues,
+        description: "Get relations for an issue (parent, subtasks, linked issues).",
+        schema: {
+            "type": "object",
+            "required": ["key"],
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Issue key (e.g., 'gh#123', 'gitlab#456', 'CU-abc', 'jira#PROJ-123')"
+                }
+            }
+        }
+    },
+
     "create_issue" => handle_create_issue {
         category: ToolCategory::Issues,
         description: "Create a new issue in the configured provider.",
@@ -844,6 +859,47 @@ impl ToolHandler {
                         Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
                     };
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "Provider {} failed for key {}: {}",
+                        get_provider_name(provider.as_ref()),
+                        params.key,
+                        e
+                    );
+                }
+            }
+        }
+
+        ToolCallResult::error(format!("Issue not found: {}", params.key))
+    }
+
+    async fn handle_get_issue_relations(&self, arguments: Option<Value>) -> ToolCallResult {
+        let params: GetIssueRelationsParams = match arguments {
+            Some(v) => match serde_json::from_value(v) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("Invalid parameters: {}", e)),
+            },
+            None => return ToolCallResult::error("Missing required parameter: key".to_string()),
+        };
+
+        if self.providers.is_empty() {
+            return ToolCallResult::error("No providers configured".to_string());
+        }
+
+        for provider in &self.providers {
+            match provider.get_issue_relations(&params.key).await {
+                Ok(relations) => {
+                    let json = match serde_json::to_string_pretty(&relations) {
+                        Ok(j) => j,
+                        Err(e) => {
+                            return ToolCallResult::error(format!(
+                                "Failed to serialize relations: {}",
+                                e
+                            ))
+                        }
+                    };
+                    return ToolCallResult::text(json);
                 }
                 Err(e) => {
                     tracing::debug!(
@@ -1660,6 +1716,11 @@ struct GetIssueCommentsParams {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct GetIssueRelationsParams {
+    key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct CreateIssueParams {
     title: String,
     description: Option<String>,
@@ -2454,8 +2515,8 @@ mod tests {
         let handler = ToolHandler::new(vec![]);
         let tools = handler.available_tools();
 
-        // 6 issue tools + 6 MR tools + 2 pipeline tools + 3 meeting tools = 17 total
-        assert_eq!(tools.len(), 17);
+        // 7 issue tools + 6 MR tools + 2 pipeline tools + 3 meeting tools = 18 total
+        assert_eq!(tools.len(), 18);
     }
 
     #[tokio::test]

@@ -1,5 +1,5 @@
 use devboy_core::{
-    Comment, Discussion, FileDiff, Issue, IssueStatus, JobLogOutput, MeetingNote,
+    Comment, Discussion, FileDiff, Issue, IssueRelations, IssueStatus, JobLogOutput, MeetingNote,
     MeetingTranscript, MergeRequest, PipelineInfo, User,
 };
 
@@ -36,6 +36,8 @@ pub enum ToolOutput {
     MeetingNotes(Vec<MeetingNote>),
     /// Single meeting transcript with sentences
     MeetingTranscript(Box<MeetingTranscript>),
+    /// Issue relations (parent, subtasks, linked issues)
+    Relations(Box<IssueRelations>),
     /// Plain text result (e.g., "Comment created successfully")
     Text(String),
 }
@@ -57,6 +59,7 @@ impl ToolOutput {
             | Self::Pipeline(_)
             | Self::JobLog(_)
             | Self::MeetingTranscript(_)
+            | Self::Relations(_)
             | Self::Text(_) => 1,
         }
     }
@@ -77,6 +80,7 @@ impl ToolOutput {
             Self::Users(_) => "users",
             Self::MeetingNotes(_) => "meeting_notes",
             Self::MeetingTranscript(_) => "meeting_transcript",
+            Self::Relations(_) => "issue_relations",
             Self::Text(_) => "text",
         }
     }

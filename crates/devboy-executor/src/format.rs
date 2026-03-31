@@ -155,6 +155,11 @@ pub fn format_output(
         ToolOutput::MeetingTranscript(transcript) => {
             Ok(text_result(format_meeting_transcript(&transcript)))
         }
+        ToolOutput::Relations(relations) => {
+            let json = serde_json::to_string_pretty(&*relations)
+                .unwrap_or_else(|e| format!("Failed to serialize relations: {e}"));
+            Ok(text_result(json))
+        }
         ToolOutput::Text(text) => Ok(text_result(text)),
     }
 }

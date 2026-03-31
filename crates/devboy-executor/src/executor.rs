@@ -133,6 +133,7 @@ async fn dispatch_tool(
         "get_issues" => execute_get_issues(provider, args).await,
         "get_issue" => execute_get_issue(provider, args).await,
         "get_issue_comments" => execute_get_issue_comments(provider, args).await,
+        "get_issue_relations" => execute_get_issue_relations(provider, args).await,
         "create_issue" => execute_create_issue(provider, args).await,
         "update_issue" => execute_update_issue(provider, args).await,
         "add_issue_comment" => execute_add_issue_comment(provider, args).await,
@@ -312,6 +313,16 @@ async fn execute_get_issue_comments(
         .map_err(|e| Error::InvalidData(format!("missing 'key' parameter: {e}")))?;
     let comments = provider.get_comments(&params.key).await?;
     Ok(ToolOutput::Comments(comments))
+}
+
+async fn execute_get_issue_relations(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: KeyParam = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid get_issue_relations params: {e}")))?;
+    let relations = provider.get_issue_relations(&params.key).await?;
+    Ok(ToolOutput::Relations(Box::new(relations)))
 }
 
 #[derive(Deserialize)]
@@ -761,6 +772,7 @@ pub const SUPPORTED_TOOLS: &[&str] = &[
     "get_issues",
     "get_issue",
     "get_issue_comments",
+    "get_issue_relations",
     "create_issue",
     "update_issue",
     "add_issue_comment",
@@ -972,7 +984,7 @@ mod tests {
         assert!(SUPPORTED_TOOLS.contains(&"get_meeting_notes"));
         assert!(SUPPORTED_TOOLS.contains(&"get_meeting_transcript"));
         assert!(SUPPORTED_TOOLS.contains(&"search_meeting_notes"));
-        assert_eq!(SUPPORTED_TOOLS.len(), 23);
+        assert_eq!(SUPPORTED_TOOLS.len(), 24);
     }
 
     // --- Issue tool dispatch tests ---
