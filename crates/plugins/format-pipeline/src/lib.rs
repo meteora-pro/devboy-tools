@@ -150,6 +150,9 @@ pub struct PipelineConfig {
     pub page_cursor: Option<String>,
     /// Tool name for strategy resolution (e.g., "get_issues", "get_merge_request_diffs")
     pub tool_name: Option<String>,
+    /// Chunk number to return (1-based). When set, pipeline skips to that chunk
+    /// instead of returning chunk 1. Used for chunk index navigation.
+    pub chunk: Option<usize>,
 }
 
 impl Default for PipelineConfig {
@@ -162,6 +165,7 @@ impl Default for PipelineConfig {
             include_hints: true,
             page_cursor: None,
             tool_name: None,
+            chunk: None,
         }
     }
 }
@@ -199,24 +203,39 @@ impl Pipeline {
         let raw_json = serde_json::to_string(&issues)?;
         let raw_chars = raw_json.len();
 
-        let content = match self.config.format {
+        // First pass: check if all data fits in budget
+        let full_content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&issues)?,
             OutputFormat::Toon => toon::encode_issues(&issues, toon::TrimLevel::Full)?,
         };
 
-        // Fast path: fits within budget
-        if self.config.max_chars == 0 || content.len() <= self.config.max_chars {
-            let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
+        if self.config.max_chars == 0 || full_content.len() <= self.config.max_chars {
+            let mut output = TransformOutput::new(full_content).with_raw_chars(raw_chars);
             output.included_count = total;
             return Ok(output);
         }
 
-        // Budget pipeline: smart trimming with strategy
+        // Budget pipeline: find how many items fit
         let budget_config = self.budget_config();
         let strategy_kind = self.resolve_strategy("get_issues");
         let result = budget::process_issues(&issues, strategy_kind, &budget_config)?;
+        let chunk_size = result.included_items;
 
-        let json_fallback = self.json_fallback(&content);
+        // Chunk navigation: if chunk > 1, slice to that chunk
+        let (chunk_items, is_chunk_request) = self.slice_for_chunk(&issues, chunk_size);
+        if is_chunk_request {
+            let content = match self.config.format {
+                OutputFormat::Json => serde_json::to_string_pretty(chunk_items)?,
+                OutputFormat::Toon => toon::encode_issues(chunk_items, toon::TrimLevel::Full)?,
+            };
+            let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
+            output.included_count = chunk_items.len();
+            output.total_count = Some(total);
+            return Ok(output);
+        }
+
+        // Chunk 1 (default): budget-trimmed best items + chunk index
+        let json_fallback = self.json_fallback(&full_content);
         let index = page_index::build_issues_index(&issues, result.included_items);
         self.build_budget_output(
             result,
@@ -234,22 +253,37 @@ impl Pipeline {
         let raw_json = serde_json::to_string(&mrs)?;
         let raw_chars = raw_json.len();
 
-        let content = match self.config.format {
+        let full_content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&mrs)?,
             OutputFormat::Toon => toon::encode_merge_requests(&mrs, toon::TrimLevel::Full)?,
         };
 
-        if self.config.max_chars == 0 || content.len() <= self.config.max_chars {
-            let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
+        if self.config.max_chars == 0 || full_content.len() <= self.config.max_chars {
+            let mut output = TransformOutput::new(full_content).with_raw_chars(raw_chars);
             output.included_count = total;
             return Ok(output);
         }
 
-        let json_fallback = self.json_fallback(&content);
         let budget_config = self.budget_config();
         let strategy_kind = self.resolve_strategy("get_merge_requests");
         let result = budget::process_merge_requests(&mrs, strategy_kind, &budget_config)?;
+        let chunk_size = result.included_items;
 
+        let (chunk_items, is_chunk_request) = self.slice_for_chunk(&mrs, chunk_size);
+        if is_chunk_request {
+            let content = match self.config.format {
+                OutputFormat::Json => serde_json::to_string_pretty(chunk_items)?,
+                OutputFormat::Toon => {
+                    toon::encode_merge_requests(chunk_items, toon::TrimLevel::Full)?
+                }
+            };
+            let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
+            output.included_count = chunk_items.len();
+            output.total_count = Some(total);
+            return Ok(output);
+        }
+
+        let json_fallback = self.json_fallback(&full_content);
         let index = page_index::build_merge_requests_index(&mrs, result.included_items);
         self.build_budget_output(
             result,
@@ -280,22 +314,35 @@ impl Pipeline {
         let raw_json = serde_json::to_string(&diffs)?;
         let raw_chars = raw_json.len();
 
-        let content = match self.config.format {
+        let full_content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&diffs)?,
             OutputFormat::Toon => toon::encode_diffs(&diffs)?,
         };
 
-        if self.config.max_chars == 0 || content.len() <= self.config.max_chars {
-            let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
+        if self.config.max_chars == 0 || full_content.len() <= self.config.max_chars {
+            let mut output = TransformOutput::new(full_content).with_raw_chars(raw_chars);
             output.included_count = total;
             return Ok(output);
         }
 
-        let json_fallback = self.json_fallback(&content);
         let budget_config = self.budget_config();
         let strategy_kind = self.resolve_strategy("get_merge_request_diffs");
         let result = budget::process_diffs(&diffs, strategy_kind, &budget_config)?;
+        let chunk_size = result.included_items;
 
+        let (chunk_items, is_chunk_request) = self.slice_for_chunk(&diffs, chunk_size);
+        if is_chunk_request {
+            let content = match self.config.format {
+                OutputFormat::Json => serde_json::to_string_pretty(chunk_items)?,
+                OutputFormat::Toon => toon::encode_diffs(chunk_items)?,
+            };
+            let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
+            output.included_count = chunk_items.len();
+            output.total_count = Some(total);
+            return Ok(output);
+        }
+
+        let json_fallback = self.json_fallback(&full_content);
         let index = page_index::build_diffs_index(&diffs, result.included_items);
         self.build_budget_output(
             result,
@@ -313,22 +360,35 @@ impl Pipeline {
         let raw_json = serde_json::to_string(&comments)?;
         let raw_chars = raw_json.len();
 
-        let content = match self.config.format {
+        let full_content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&comments)?,
             OutputFormat::Toon => toon::encode_comments(&comments)?,
         };
 
-        if self.config.max_chars == 0 || content.len() <= self.config.max_chars {
-            let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
+        if self.config.max_chars == 0 || full_content.len() <= self.config.max_chars {
+            let mut output = TransformOutput::new(full_content).with_raw_chars(raw_chars);
             output.included_count = total;
             return Ok(output);
         }
 
-        let json_fallback = self.json_fallback(&content);
         let budget_config = self.budget_config();
         let strategy_kind = self.resolve_strategy("get_issue_comments");
         let result = budget::process_comments(&comments, strategy_kind, &budget_config)?;
+        let chunk_size = result.included_items;
 
+        let (chunk_items, is_chunk_request) = self.slice_for_chunk(&comments, chunk_size);
+        if is_chunk_request {
+            let content = match self.config.format {
+                OutputFormat::Json => serde_json::to_string_pretty(chunk_items)?,
+                OutputFormat::Toon => toon::encode_comments(chunk_items)?,
+            };
+            let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
+            output.included_count = chunk_items.len();
+            output.total_count = Some(total);
+            return Ok(output);
+        }
+
+        let json_fallback = self.json_fallback(&full_content);
         let index = page_index::build_comments_index(&comments, result.included_items);
         self.build_budget_output(
             result,
@@ -346,22 +406,35 @@ impl Pipeline {
         let raw_json = serde_json::to_string(&discussions)?;
         let raw_chars = raw_json.len();
 
-        let content = match self.config.format {
+        let full_content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&discussions)?,
             OutputFormat::Toon => toon::encode_discussions(&discussions)?,
         };
 
-        if self.config.max_chars == 0 || content.len() <= self.config.max_chars {
-            let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
+        if self.config.max_chars == 0 || full_content.len() <= self.config.max_chars {
+            let mut output = TransformOutput::new(full_content).with_raw_chars(raw_chars);
             output.included_count = total;
             return Ok(output);
         }
 
-        let json_fallback = self.json_fallback(&content);
         let budget_config = self.budget_config();
         let strategy_kind = self.resolve_strategy("get_merge_request_discussions");
         let result = budget::process_discussions(&discussions, strategy_kind, &budget_config)?;
+        let chunk_size = result.included_items;
 
+        let (chunk_items, is_chunk_request) = self.slice_for_chunk(&discussions, chunk_size);
+        if is_chunk_request {
+            let content = match self.config.format {
+                OutputFormat::Json => serde_json::to_string_pretty(chunk_items)?,
+                OutputFormat::Toon => toon::encode_discussions(chunk_items)?,
+            };
+            let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
+            output.included_count = chunk_items.len();
+            output.total_count = Some(total);
+            return Ok(output);
+        }
+
+        let json_fallback = self.json_fallback(&full_content);
         let index = page_index::build_discussions_index(&discussions, result.included_items);
         self.build_budget_output(
             result,
@@ -380,6 +453,27 @@ impl Pipeline {
             Some(content.to_string())
         } else {
             None
+        }
+    }
+
+    /// Slice items for a specific chunk number.
+    ///
+    /// When `config.chunk` is Some(n) with n > 1, we need to compute
+    /// the chunk boundaries and return only items for that chunk.
+    /// Returns (slice_items, is_chunk_request) — if not a chunk request,
+    /// returns all items.
+    fn slice_for_chunk<'a, T>(&self, items: &'a [T], chunk_size: usize) -> (&'a [T], bool) {
+        match self.config.chunk {
+            Some(n) if n > 1 && chunk_size > 0 => {
+                let offset = (n - 1) * chunk_size;
+                if offset >= items.len() {
+                    (&[], true) // chunk beyond data
+                } else {
+                    let end = (offset + chunk_size).min(items.len());
+                    (&items[offset..end], true)
+                }
+            }
+            _ => (items, false),
         }
     }
 
