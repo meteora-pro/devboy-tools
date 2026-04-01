@@ -7,7 +7,7 @@ use std::env;
 use async_trait::async_trait;
 use devboy_core::{
     Comment, CreateCommentInput, CreateIssueInput, Discussion, Error, FileDiff, Issue, IssueFilter,
-    IssueProvider, MergeRequest, MergeRequestProvider, MrFilter, Provider, Result,
+    IssueProvider, MergeRequest, MergeRequestProvider, MrFilter, Provider, ProviderResult, Result,
     UpdateIssueInput, User,
 };
 use devboy_github::GitHubClient;
@@ -87,7 +87,8 @@ impl TestProvider {
                 };
 
                 match client.get_issues(filter).await {
-                    Ok(issues) => {
+                    Ok(result) => {
+                        let issues = result.items;
                         // Save to fixtures for future replay
                         if let Err(e) = self.fixture_provider.save_issues(&issues) {
                             eprintln!("⚠️  Failed to save fixtures: {}", e);
@@ -123,7 +124,8 @@ impl TestProvider {
                 };
 
                 match client.get_merge_requests(filter).await {
-                    Ok(mrs) => {
+                    Ok(result) => {
+                        let mrs = result.items;
                         // Save to fixtures for future replay
                         if let Err(e) = self.fixture_provider.save_merge_requests(&mrs) {
                             eprintln!("⚠️  Failed to save fixtures: {}", e);
@@ -230,17 +232,19 @@ impl TestProvider {
 /// Implement IssueProvider for TestProvider.
 #[async_trait]
 impl IssueProvider for TestProvider {
-    async fn get_issues(&self, filter: IssueFilter) -> Result<Vec<Issue>> {
+    async fn get_issues(&self, filter: IssueFilter) -> Result<ProviderResult<Issue>> {
         self.get_issues_with_fallback(filter)
             .await
             .into_result()
+            .map(|v| v.into())
             .map_err(Error::Config)
     }
 
     async fn get_issue(&self, key: &str) -> Result<Issue> {
         // Find in the list
-        let issues = self.get_issues(IssueFilter::default()).await?;
-        issues
+        let result = self.get_issues(IssueFilter::default()).await?;
+        result
+            .items
             .into_iter()
             .find(|i| i.key == key)
             .ok_or_else(|| Error::NotFound(format!("Issue {} not found", key)))
@@ -258,7 +262,7 @@ impl IssueProvider for TestProvider {
         ))
     }
 
-    async fn get_comments(&self, issue_key: &str) -> Result<Vec<Comment>> {
+    async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>> {
         if self.mode.is_record() {
             let Some(client) = &self.github_client else {
                 return Err(Error::Config("GitHub client not initialized".to_string()));
@@ -273,7 +277,8 @@ impl IssueProvider for TestProvider {
                 created_at: Some("2024-01-01T00:00:00Z".to_string()),
                 updated_at: None,
                 position: None,
-            }])
+            }]
+            .into())
         }
     }
 
@@ -291,21 +296,24 @@ impl IssueProvider for TestProvider {
 /// Implement MergeRequestProvider for TestProvider.
 #[async_trait]
 impl MergeRequestProvider for TestProvider {
-    async fn get_merge_requests(&self, filter: MrFilter) -> Result<Vec<MergeRequest>> {
+    async fn get_merge_requests(&self, filter: MrFilter) -> Result<ProviderResult<MergeRequest>> {
         self.get_merge_requests_with_fallback(filter)
             .await
             .into_result()
+            .map(|v| v.into())
             .map_err(Error::Config)
     }
 
     async fn get_merge_request(&self, key: &str) -> Result<MergeRequest> {
-        let mrs = self.get_merge_requests(MrFilter::default()).await?;
-        mrs.into_iter()
+        let result = self.get_merge_requests(MrFilter::default()).await?;
+        result
+            .items
+            .into_iter()
             .find(|mr| mr.key == key)
             .ok_or_else(|| Error::NotFound(format!("MR {} not found", key)))
     }
 
-    async fn get_discussions(&self, mr_key: &str) -> Result<Vec<Discussion>> {
+    async fn get_discussions(&self, mr_key: &str) -> Result<ProviderResult<Discussion>> {
         if self.mode.is_record() {
             let Some(client) = &self.github_client else {
                 return Err(Error::Config("GitHub client not initialized".to_string()));
@@ -326,11 +334,12 @@ impl MergeRequestProvider for TestProvider {
                     position: None,
                 }],
                 position: None,
-            }])
+            }]
+            .into())
         }
     }
 
-    async fn get_diffs(&self, mr_key: &str) -> Result<Vec<FileDiff>> {
+    async fn get_diffs(&self, mr_key: &str) -> Result<ProviderResult<FileDiff>> {
         if self.mode.is_record() {
             let Some(client) = &self.github_client else {
                 return Err(Error::Config("GitHub client not initialized".to_string()));
@@ -347,7 +356,8 @@ impl MergeRequestProvider for TestProvider {
                 diff: "+added line\n-removed line".to_string(),
                 additions: Some(1),
                 deletions: Some(1),
-            }])
+            }]
+            .into())
         }
     }
 
@@ -397,7 +407,11 @@ mod tests {
     async fn test_provider_loads_fixtures_in_replay() {
         temp_env::async_with_vars([("GITHUB_TOKEN", None::<&str>)], async {
             let provider = TestProvider::github();
-            let issues = provider.get_issues(IssueFilter::default()).await.unwrap();
+            let issues = provider
+                .get_issues(IssueFilter::default())
+                .await
+                .unwrap()
+                .items;
             assert!(!issues.is_empty());
             assert!(issues[0].key.starts_with("gh#"));
         })
@@ -411,7 +425,8 @@ mod tests {
             let mrs = provider
                 .get_merge_requests(MrFilter::default())
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
             assert!(!mrs.is_empty());
             assert!(mrs[0].key.starts_with("pr#"));
         })

@@ -10,7 +10,7 @@ use crate::types::{
     Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Discussion, FileDiff,
     GetPipelineInput, GetUsersOptions, Issue, IssueFilter, IssueRelations, IssueStatus,
     JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote, MeetingTranscript, MergeRequest,
-    MrFilter, PipelineInfo, Release, UpdateIssueInput, User,
+    MrFilter, PipelineInfo, ProviderResult, Release, UpdateIssueInput, User,
 };
 
 /// Provider for working with issues.
@@ -19,7 +19,7 @@ use crate::types::{
 #[async_trait]
 pub trait IssueProvider: Send + Sync {
     /// Get a list of issues with optional filters.
-    async fn get_issues(&self, filter: IssueFilter) -> Result<Vec<Issue>>;
+    async fn get_issues(&self, filter: IssueFilter) -> Result<ProviderResult<Issue>>;
 
     /// Get a single issue by key (e.g., "gitlab#123", "gh#456").
     async fn get_issue(&self, key: &str) -> Result<Issue>;
@@ -31,14 +31,14 @@ pub trait IssueProvider: Send + Sync {
     async fn update_issue(&self, key: &str, input: UpdateIssueInput) -> Result<Issue>;
 
     /// Get comments for an issue.
-    async fn get_comments(&self, issue_key: &str) -> Result<Vec<Comment>>;
+    async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>>;
 
     /// Add a comment to an issue.
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment>;
 
     /// Get available statuses for the issue tracker.
     /// Default returns ProviderUnsupported — override in providers that support statuses.
-    async fn get_statuses(&self) -> Result<Vec<IssueStatus>> {
+    async fn get_statuses(&self) -> Result<ProviderResult<IssueStatus>> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "get_statuses".to_string(),
@@ -72,7 +72,7 @@ pub trait IssueProvider: Send + Sync {
     }
 
     /// Get users from the issue tracker (Jira only).
-    async fn get_users(&self, _options: GetUsersOptions) -> Result<Vec<User>> {
+    async fn get_users(&self, _options: GetUsersOptions) -> Result<ProviderResult<User>> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "get_users".to_string(),
@@ -102,7 +102,7 @@ pub trait MergeRequestProvider: Send + Sync {
     fn provider_name(&self) -> &'static str;
 
     /// Get a list of merge requests with optional filters.
-    async fn get_merge_requests(&self, _filter: MrFilter) -> Result<Vec<MergeRequest>> {
+    async fn get_merge_requests(&self, _filter: MrFilter) -> Result<ProviderResult<MergeRequest>> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "get_merge_requests".to_string(),
@@ -118,7 +118,7 @@ pub trait MergeRequestProvider: Send + Sync {
     }
 
     /// Get discussions/comments for a merge request.
-    async fn get_discussions(&self, _mr_key: &str) -> Result<Vec<Discussion>> {
+    async fn get_discussions(&self, _mr_key: &str) -> Result<ProviderResult<Discussion>> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "get_discussions".to_string(),
@@ -126,7 +126,7 @@ pub trait MergeRequestProvider: Send + Sync {
     }
 
     /// Get file diffs for a merge request.
-    async fn get_diffs(&self, _mr_key: &str) -> Result<Vec<FileDiff>> {
+    async fn get_diffs(&self, _mr_key: &str) -> Result<ProviderResult<FileDiff>> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "get_diffs".to_string(),
@@ -150,7 +150,7 @@ pub trait MergeRequestProvider: Send + Sync {
     }
 
     /// Get releases/tags for the repository.
-    async fn get_releases(&self) -> Result<Vec<Release>> {
+    async fn get_releases(&self) -> Result<ProviderResult<Release>> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "get_releases".to_string(),
@@ -202,12 +202,15 @@ pub trait MeetingNotesProvider: Send + Sync {
     fn provider_name(&self) -> &'static str;
 
     /// Get a list of meeting notes with optional filters.
-    async fn get_meetings(&self, filter: MeetingFilter) -> Result<Vec<MeetingNote>>;
+    async fn get_meetings(&self, filter: MeetingFilter) -> Result<ProviderResult<MeetingNote>>;
 
     /// Get the full transcript for a meeting.
     async fn get_transcript(&self, meeting_id: &str) -> Result<MeetingTranscript>;
 
     /// Search meetings by keyword across titles, action items, keywords, and topics.
-    async fn search_meetings(&self, query: &str, filter: MeetingFilter)
-    -> Result<Vec<MeetingNote>>;
+    async fn search_meetings(
+        &self,
+        query: &str,
+        filter: MeetingFilter,
+    ) -> Result<ProviderResult<MeetingNote>>;
 }

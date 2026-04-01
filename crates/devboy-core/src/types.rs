@@ -271,6 +271,12 @@ pub struct MrFilter {
     pub labels: Option<Vec<String>>,
     /// Maximum number of results
     pub limit: Option<u32>,
+    /// Number of results to skip (offset)
+    pub offset: Option<u32>,
+    /// Sort by field (e.g., "created_at", "updated_at")
+    pub sort_by: Option<String>,
+    /// Sort order ("asc" or "desc")
+    pub sort_order: Option<String>,
 }
 
 // =============================================================================
@@ -373,6 +379,77 @@ pub struct Pagination {
     pub total: Option<u32>,
     /// Whether there are more items
     pub has_more: bool,
+}
+
+// =============================================================================
+// Sort Info
+// =============================================================================
+
+/// Sort direction.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortOrder {
+    Asc,
+    #[default]
+    Desc,
+}
+
+/// Sorting metadata from provider API.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SortInfo {
+    /// Current sort field (e.g., "updated_at", "created_at")
+    pub sort_by: Option<String>,
+    /// Current sort order
+    pub sort_order: SortOrder,
+    /// Available sort fields for this endpoint
+    pub available_sorts: Vec<String>,
+}
+
+// =============================================================================
+// Provider Result
+// =============================================================================
+
+/// Wrapper for provider list responses with pagination and sorting metadata.
+///
+/// Providers return this instead of plain `Vec<T>` to convey API-level
+/// pagination state and sorting info to the format pipeline.
+#[derive(Debug, Clone, Default)]
+pub struct ProviderResult<T> {
+    /// The actual items returned by the provider
+    pub items: Vec<T>,
+    /// Pagination metadata from the API (total count, has_more, etc.)
+    pub pagination: Option<Pagination>,
+    /// Sorting metadata (current sort, available sort fields)
+    pub sort_info: Option<SortInfo>,
+}
+
+impl<T> ProviderResult<T> {
+    /// Create a new ProviderResult with just items (no metadata).
+    pub fn new(items: Vec<T>) -> Self {
+        Self {
+            items,
+            pagination: None,
+            sort_info: None,
+        }
+    }
+
+    /// Set pagination metadata.
+    pub fn with_pagination(mut self, pagination: Pagination) -> Self {
+        self.pagination = Some(pagination);
+        self
+    }
+
+    /// Set sort info metadata.
+    pub fn with_sort_info(mut self, sort_info: SortInfo) -> Self {
+        self.sort_info = Some(sort_info);
+        self
+    }
+}
+
+impl<T> From<Vec<T>> for ProviderResult<T> {
+    fn from(items: Vec<T>) -> Self {
+        Self::new(items)
+    }
 }
 
 #[cfg(test)]
@@ -479,6 +556,76 @@ mod tests {
         assert_eq!(PipelineStatus::Success.as_str(), "success");
         assert_eq!(PipelineStatus::Failed.as_str(), "failed");
         assert_eq!(PipelineStatus::Running.as_str(), "running");
+    }
+
+    // --- ProviderResult tests ---
+
+    #[test]
+    fn test_provider_result_new() {
+        let result = ProviderResult::new(vec![1, 2, 3]);
+        assert_eq!(result.items, vec![1, 2, 3]);
+        assert!(result.pagination.is_none());
+        assert!(result.sort_info.is_none());
+    }
+
+    #[test]
+    fn test_provider_result_with_pagination() {
+        let pagination = Pagination {
+            offset: 0,
+            limit: 10,
+            total: Some(100),
+            has_more: true,
+        };
+        let result = ProviderResult::new(vec!["a", "b"]).with_pagination(pagination);
+        assert_eq!(result.items, vec!["a", "b"]);
+        let pag = result.pagination.unwrap();
+        assert_eq!(pag.total, Some(100));
+        assert!(pag.has_more);
+        assert_eq!(pag.offset, 0);
+        assert_eq!(pag.limit, 10);
+    }
+
+    #[test]
+    fn test_provider_result_with_sort_info() {
+        let sort_info = SortInfo {
+            sort_by: Some("updated_at".into()),
+            sort_order: SortOrder::Desc,
+            available_sorts: vec!["created_at".into(), "updated_at".into()],
+        };
+        let result = ProviderResult::new(vec![42]).with_sort_info(sort_info);
+        assert_eq!(result.items, vec![42]);
+        let si = result.sort_info.unwrap();
+        assert_eq!(si.sort_by, Some("updated_at".into()));
+        assert_eq!(si.sort_order, SortOrder::Desc);
+        assert_eq!(si.available_sorts.len(), 2);
+    }
+
+    #[test]
+    fn test_provider_result_from_vec() {
+        let items = vec![1, 2, 3, 4];
+        let result: ProviderResult<i32> = items.into();
+        assert_eq!(result.items, vec![1, 2, 3, 4]);
+        assert!(result.pagination.is_none());
+        assert!(result.sort_info.is_none());
+    }
+
+    #[test]
+    fn test_provider_result_chained() {
+        let result = ProviderResult::new(vec!["x"])
+            .with_pagination(Pagination {
+                offset: 10,
+                limit: 5,
+                total: Some(50),
+                has_more: true,
+            })
+            .with_sort_info(SortInfo {
+                sort_by: Some("priority".into()),
+                sort_order: SortOrder::Asc,
+                available_sorts: vec![],
+            });
+        assert!(result.pagination.is_some());
+        assert!(result.sort_info.is_some());
+        assert_eq!(result.items, vec!["x"]);
     }
 }
 

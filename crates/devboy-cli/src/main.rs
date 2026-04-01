@@ -1495,7 +1495,8 @@ async fn handle_issues_command(state: &str, limit: u32) -> Result<()> {
         let issues = client
             .get_issues(filter)
             .await
-            .context("Failed to fetch issues")?;
+            .context("Failed to fetch issues")?
+            .items;
 
         if issues.is_empty() {
             println!("No issues found with state: {}", state);
@@ -1544,7 +1545,8 @@ async fn handle_mrs_command(state: &str, limit: u32) -> Result<()> {
         let prs = client
             .get_merge_requests(filter)
             .await
-            .context("Failed to fetch PRs")?;
+            .context("Failed to fetch PRs")?
+            .items;
 
         if prs.is_empty() {
             println!("No pull requests found with state: {}", state);
@@ -2920,7 +2922,7 @@ async fn run_benchmark(
         limit: Some(limit),
         ..Default::default()
     };
-    let issues = client.get_issues(filter).await?;
+    let issues = client.get_issues(filter).await?.items;
     if !issues.is_empty() {
         print_comparison("Issues", &issues, budget)?;
     } else {
@@ -2934,7 +2936,7 @@ async fn run_benchmark(
         limit: Some(limit),
         ..Default::default()
     };
-    let mrs = client.get_merge_requests(mr_filter).await?;
+    let mrs = client.get_merge_requests(mr_filter).await?.items;
     if !mrs.is_empty() {
         print_comparison("Pull Requests", &mrs, budget)?;
     } else {
@@ -2946,8 +2948,8 @@ async fn run_benchmark(
     if let Some(mr) = open_mrs.first() {
         println!("\nFetching diffs for {}...", mr.key);
         match client.get_diffs(&mr.key).await {
-            Ok(diffs) if !diffs.is_empty() => {
-                print_comparison("Diffs", &diffs, budget)?;
+            Ok(result) if !result.items.is_empty() => {
+                print_comparison("Diffs", &result.items, budget)?;
             }
             Ok(_) => println!("  No diffs in this PR."),
             Err(e) => println!("  Failed to fetch diffs: {}", e),

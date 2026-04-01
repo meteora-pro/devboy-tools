@@ -25,7 +25,7 @@ struct ClickUpTestProvider;
 
 #[async_trait]
 impl IssueProvider for ClickUpTestProvider {
-    async fn get_issues(&self, _filter: IssueFilter) -> Result<Vec<Issue>> {
+    async fn get_issues(&self, _filter: IssueFilter) -> Result<devboy_core::ProviderResult<Issue>> {
         Ok(vec![Issue {
             key: "CU-123".to_string(),
             title: "Test Issue".to_string(),
@@ -41,7 +41,8 @@ impl IssueProvider for ClickUpTestProvider {
             updated_at: None,
             parent: None,
             subtasks: vec![],
-        }])
+        }]
+        .into())
     }
 
     async fn get_issue(&self, _key: &str) -> Result<Issue> {
@@ -56,8 +57,8 @@ impl IssueProvider for ClickUpTestProvider {
         Err(devboy_core::Error::NotFound("not implemented".into()))
     }
 
-    async fn get_comments(&self, _issue_key: &str) -> Result<Vec<Comment>> {
-        Ok(vec![])
+    async fn get_comments(&self, _issue_key: &str) -> Result<devboy_core::ProviderResult<Comment>> {
+        Ok(vec![].into())
     }
 
     async fn add_comment(&self, _issue_key: &str, _body: &str) -> Result<Comment> {
@@ -102,7 +103,7 @@ struct GitLabTestProvider;
 
 #[async_trait]
 impl IssueProvider for GitLabTestProvider {
-    async fn get_issues(&self, _filter: IssueFilter) -> Result<Vec<Issue>> {
+    async fn get_issues(&self, _filter: IssueFilter) -> Result<devboy_core::ProviderResult<Issue>> {
         Ok(vec![Issue {
             key: "gitlab#123".to_string(),
             title: "Test Issue".to_string(),
@@ -118,7 +119,8 @@ impl IssueProvider for GitLabTestProvider {
             updated_at: None,
             parent: None,
             subtasks: vec![],
-        }])
+        }]
+        .into())
     }
 
     async fn get_issue(&self, _key: &str) -> Result<Issue> {
@@ -133,8 +135,8 @@ impl IssueProvider for GitLabTestProvider {
         Err(devboy_core::Error::NotFound("not implemented".into()))
     }
 
-    async fn get_comments(&self, _issue_key: &str) -> Result<Vec<Comment>> {
-        Ok(vec![])
+    async fn get_comments(&self, _issue_key: &str) -> Result<devboy_core::ProviderResult<Comment>> {
+        Ok(vec![].into())
     }
 
     async fn add_comment(&self, _issue_key: &str, _body: &str) -> Result<Comment> {
@@ -148,7 +150,10 @@ impl IssueProvider for GitLabTestProvider {
 
 #[async_trait]
 impl MergeRequestProvider for GitLabTestProvider {
-    async fn get_merge_requests(&self, _filter: MrFilter) -> Result<Vec<MergeRequest>> {
+    async fn get_merge_requests(
+        &self,
+        _filter: MrFilter,
+    ) -> Result<devboy_core::ProviderResult<MergeRequest>> {
         Ok(vec![MergeRequest {
             key: "mr#123".to_string(),
             title: "Test MR".to_string(),
@@ -165,19 +170,23 @@ impl MergeRequestProvider for GitLabTestProvider {
             url: None,
             created_at: None,
             updated_at: None,
-        }])
+        }]
+        .into())
     }
 
     async fn get_merge_request(&self, _key: &str) -> Result<MergeRequest> {
         Err(devboy_core::Error::NotFound("not implemented".into()))
     }
 
-    async fn get_discussions(&self, _mr_key: &str) -> Result<Vec<Discussion>> {
-        Ok(vec![])
+    async fn get_discussions(
+        &self,
+        _mr_key: &str,
+    ) -> Result<devboy_core::ProviderResult<Discussion>> {
+        Ok(vec![].into())
     }
 
-    async fn get_diffs(&self, _mr_key: &str) -> Result<Vec<FileDiff>> {
-        Ok(vec![])
+    async fn get_diffs(&self, _mr_key: &str) -> Result<devboy_core::ProviderResult<FileDiff>> {
+        Ok(vec![].into())
     }
 
     async fn add_comment(&self, _mr_key: &str, _input: CreateCommentInput) -> Result<Comment> {
