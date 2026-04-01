@@ -10,9 +10,9 @@
 //! # Example
 //!
 //! ```ignore
-//! use devboy_core::{IssueProvider, IssueFilter, Issue, Result};
+//! use devboy_core::{IssueProvider, IssueFilter, Issue, ProviderResult, Result};
 //!
-//! async fn list_open_issues(provider: &dyn IssueProvider) -> Result<Vec<Issue>> {
+//! async fn list_open_issues(provider: &dyn IssueProvider) -> Result<ProviderResult<Issue>> {
 //!     let filter = IssueFilter {
 //!         state: Some("opened".to_string()),
 //!         limit: Some(10),
@@ -43,8 +43,8 @@ pub use types::{
     Discussion, FailedJob, FileDiff, GetPipelineInput, GetUsersOptions, Issue, IssueFilter,
     IssueLink, IssueRelations, IssueStatus, JobLogMode, JobLogOptions, JobLogOutput, MeetingFilter,
     MeetingNote, MeetingSpeaker, MeetingTranscript, MergeRequest, MrFilter, Pagination,
-    PipelineInfo, PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, Release,
-    ReleaseAsset, TranscriptSentence, UpdateIssueInput, User,
+    PipelineInfo, PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, ProviderResult,
+    Release, ReleaseAsset, SortInfo, SortOrder, TranscriptSentence, UpdateIssueInput, User,
 };
 
 // Re-export enricher traits and utilities

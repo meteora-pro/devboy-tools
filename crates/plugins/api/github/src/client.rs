@@ -6,7 +6,7 @@ use devboy_core::{
     Discussion, Error, FailedJob, FileDiff, GetPipelineInput, Issue, IssueFilter, IssueProvider,
     JobLogMode, JobLogOptions, JobLogOutput, MergeRequest, MergeRequestProvider, MrFilter,
     PipelineInfo, PipelineJob, PipelineProvider, PipelineStage, PipelineStatus, PipelineSummary,
-    Provider, Result, UpdateIssueInput, User,
+    Provider, ProviderResult, Result, UpdateIssueInput, User,
 };
 use serde::Deserialize;
 use tracing::{debug, warn};
@@ -301,7 +301,7 @@ fn map_file(gh_file: &GitHubFile) -> FileDiff {
 
 #[async_trait]
 impl IssueProvider for GitHubClient {
-    async fn get_issues(&self, filter: IssueFilter) -> Result<Vec<Issue>> {
+    async fn get_issues(&self, filter: IssueFilter) -> Result<ProviderResult<Issue>> {
         let mut url = self.repo_url("/issues");
         let mut params = vec![];
 
@@ -363,7 +363,7 @@ impl IssueProvider for GitHubClient {
             .map(map_issue)
             .collect();
 
-        Ok(issues)
+        Ok(issues.into())
     }
 
     async fn get_issue(&self, key: &str) -> Result<Issue> {
@@ -418,11 +418,15 @@ impl IssueProvider for GitHubClient {
         Ok(map_issue(&gh_issue))
     }
 
-    async fn get_comments(&self, issue_key: &str) -> Result<Vec<Comment>> {
+    async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>> {
         let number = parse_issue_key(issue_key)?;
         let url = self.repo_url(&format!("/issues/{}/comments", number));
         let gh_comments: Vec<GitHubComment> = self.get(&url).await?;
-        Ok(gh_comments.iter().map(map_comment).collect())
+        Ok(gh_comments
+            .iter()
+            .map(map_comment)
+            .collect::<Vec<_>>()
+            .into())
     }
 
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment> {
@@ -443,7 +447,7 @@ impl IssueProvider for GitHubClient {
 
 #[async_trait]
 impl MergeRequestProvider for GitHubClient {
-    async fn get_merge_requests(&self, filter: MrFilter) -> Result<Vec<MergeRequest>> {
+    async fn get_merge_requests(&self, filter: MrFilter) -> Result<ProviderResult<MergeRequest>> {
         let mut url = self.repo_url("/pulls");
         let mut params = vec![];
 
@@ -487,7 +491,7 @@ impl MergeRequestProvider for GitHubClient {
             prs.retain(|pr| pr.state == "merged");
         }
 
-        Ok(prs)
+        Ok(prs.into())
     }
 
     async fn get_merge_request(&self, key: &str) -> Result<MergeRequest> {
@@ -497,7 +501,7 @@ impl MergeRequestProvider for GitHubClient {
         Ok(map_pull_request(&gh_pr))
     }
 
-    async fn get_discussions(&self, mr_key: &str) -> Result<Vec<Discussion>> {
+    async fn get_discussions(&self, mr_key: &str) -> Result<ProviderResult<Discussion>> {
         let number = parse_pr_key(mr_key)?;
 
         // Fetch reviews, review comments, and general comments
@@ -573,14 +577,14 @@ impl MergeRequestProvider for GitHubClient {
             });
         }
 
-        Ok(discussions)
+        Ok(discussions.into())
     }
 
-    async fn get_diffs(&self, mr_key: &str) -> Result<Vec<FileDiff>> {
+    async fn get_diffs(&self, mr_key: &str) -> Result<ProviderResult<FileDiff>> {
         let number = parse_pr_key(mr_key)?;
         let url = self.repo_url(&format!("/pulls/{}/files", number));
         let gh_files: Vec<GitHubFile> = self.get(&url).await?;
-        Ok(gh_files.iter().map(map_file).collect())
+        Ok(gh_files.iter().map(map_file).collect::<Vec<_>>().into())
     }
 
     async fn add_comment(&self, mr_key: &str, input: CreateCommentInput) -> Result<Comment> {
@@ -1744,7 +1748,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             assert_eq!(issues.len(), 1);
             assert_eq!(issues[0].key, "gh#42");
@@ -1766,7 +1771,11 @@ mod tests {
             });
 
             let client = create_test_client(&server);
-            let issues = client.get_issues(IssueFilter::default()).await.unwrap();
+            let issues = client
+                .get_issues(IssueFilter::default())
+                .await
+                .unwrap()
+                .items;
 
             // Only the real issue, not the PR
             assert_eq!(issues.len(), 1);
@@ -1803,7 +1812,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             assert!(issues.is_empty());
         }
@@ -1933,7 +1943,7 @@ mod tests {
             });
 
             let client = create_test_client(&server);
-            let comments = client.get_comments("gh#42").await.unwrap();
+            let comments = client.get_comments("gh#42").await.unwrap().items;
 
             assert_eq!(comments.len(), 1);
             assert_eq!(comments[0].body, "Comment text");
@@ -1995,7 +2005,8 @@ mod tests {
             let mrs = client
                 .get_merge_requests(MrFilter::default())
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             assert_eq!(mrs.len(), 1);
             assert_eq!(mrs[0].key, "pr#10");
@@ -2025,7 +2036,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             assert!(mrs.is_empty());
         }
@@ -2055,7 +2067,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             // Only merged PRs returned
             assert_eq!(mrs.len(), 1);
@@ -2105,7 +2118,7 @@ mod tests {
             });
 
             let client = create_test_client(&server);
-            let discussions = client.get_discussions("pr#10").await.unwrap();
+            let discussions = client.get_discussions("pr#10").await.unwrap().items;
 
             // 1 review comment thread + 1 review + 1 general comment = 3
             assert_eq!(discussions.len(), 3);
@@ -2129,7 +2142,7 @@ mod tests {
             });
 
             let client = create_test_client(&server);
-            let diffs = client.get_diffs("pr#10").await.unwrap();
+            let diffs = client.get_diffs("pr#10").await.unwrap().items;
 
             assert_eq!(diffs.len(), 1);
             assert_eq!(diffs[0].file_path, "src/main.rs");

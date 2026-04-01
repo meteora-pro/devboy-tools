@@ -3,7 +3,8 @@
 use async_trait::async_trait;
 use devboy_core::{
     Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueLink, IssueProvider, IssueRelations,
-    IssueStatus, MergeRequestProvider, PipelineProvider, Provider, Result, UpdateIssueInput, User,
+    IssueStatus, MergeRequestProvider, PipelineProvider, Provider, ProviderResult, Result,
+    UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
@@ -553,10 +554,10 @@ fn map_linked_tasks(links: &[ClickUpLinkedTask]) -> Vec<IssueLink> {
 
 #[async_trait]
 impl IssueProvider for ClickUpClient {
-    async fn get_issues(&self, filter: IssueFilter) -> Result<Vec<Issue>> {
+    async fn get_issues(&self, filter: IssueFilter) -> Result<ProviderResult<Issue>> {
         let limit = filter.limit.unwrap_or(20) as usize;
         if limit == 0 {
-            return Ok(vec![]);
+            return Ok(vec![].into());
         }
         let offset = filter.offset.unwrap_or(0) as usize;
 
@@ -652,7 +653,7 @@ impl IssueProvider for ClickUpClient {
 
         issues.truncate(limit);
 
-        Ok(issues)
+        Ok(issues.into())
     }
 
     async fn get_issue(&self, key: &str) -> Result<Issue> {
@@ -784,7 +785,7 @@ impl IssueProvider for ClickUpClient {
         Ok(map_task(&task))
     }
 
-    async fn get_comments(&self, issue_key: &str) -> Result<Vec<Comment>> {
+    async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>> {
         let base_url = self.task_url(issue_key)?;
         // Append /comment — handle both raw URL and URL with query params
         let url = if base_url.contains('?') {
@@ -794,7 +795,12 @@ impl IssueProvider for ClickUpClient {
             format!("{}/comment", base_url)
         };
         let response: ClickUpCommentList = self.get(&url).await?;
-        Ok(response.comments.iter().map(map_comment).collect())
+        Ok(response
+            .comments
+            .iter()
+            .map(map_comment)
+            .collect::<Vec<_>>()
+            .into())
     }
 
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment> {
@@ -821,11 +827,11 @@ impl IssueProvider for ClickUpClient {
         })
     }
 
-    async fn get_statuses(&self) -> Result<Vec<IssueStatus>> {
+    async fn get_statuses(&self) -> Result<ProviderResult<IssueStatus>> {
         let url = format!("{}/list/{}", self.base_url, self.list_id);
         let list_info: ClickUpListInfo = self.get(&url).await?;
 
-        let statuses = list_info
+        let statuses: Vec<IssueStatus> = list_info
             .statuses
             .iter()
             .enumerate()
@@ -846,7 +852,7 @@ impl IssueProvider for ClickUpClient {
             })
             .collect();
 
-        Ok(statuses)
+        Ok(statuses.into())
     }
 
     async fn link_issues(&self, source_key: &str, target_key: &str, link_type: &str) -> Result<()> {
@@ -1692,7 +1698,11 @@ mod tests {
             });
 
             let client = create_test_client(&server);
-            let issues = client.get_issues(IssueFilter::default()).await.unwrap();
+            let issues = client
+                .get_issues(IssueFilter::default())
+                .await
+                .unwrap()
+                .items;
 
             assert_eq!(issues.len(), 1);
             assert_eq!(issues[0].key, "CU-abc123");
@@ -1729,7 +1739,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             assert_eq!(issues.len(), 2);
         }
@@ -1752,7 +1763,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             assert_eq!(issues.len(), 1);
             assert_eq!(issues[0].state, "open");
@@ -1778,7 +1790,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             assert_eq!(issues.len(), 1);
             assert_eq!(issues[0].state, "closed");
@@ -1820,7 +1833,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             assert_eq!(issues.len(), 2);
             assert_eq!(issues[0].key, "CU-task1");
@@ -1837,7 +1851,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             assert!(issues.is_empty());
         }
@@ -1904,7 +1919,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             assert_eq!(issues.len(), 120);
             assert_eq!(issues[0].key, "CU-task0");
@@ -2221,7 +2237,7 @@ mod tests {
             });
 
             let client = create_test_client(&server);
-            let comments = client.get_comments("CU-abc123").await.unwrap();
+            let comments = client.get_comments("CU-abc123").await.unwrap().items;
 
             assert_eq!(comments.len(), 1);
             assert_eq!(comments[0].body, "Looks good!");

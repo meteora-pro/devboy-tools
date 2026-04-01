@@ -6,7 +6,7 @@ use devboy_core::{
     Discussion, Error, FailedJob, FileDiff, GetPipelineInput, Issue, IssueFilter, IssueProvider,
     JobLogMode, JobLogOptions, JobLogOutput, MergeRequest, MergeRequestProvider, MrFilter,
     PipelineInfo, PipelineJob, PipelineProvider, PipelineStage, PipelineStatus, PipelineSummary,
-    Provider, Result, UpdateIssueInput, User,
+    Provider, ProviderResult, Result, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
@@ -131,6 +131,83 @@ impl GitLabClient {
             .map_err(|e| Error::Http(e.to_string()))?;
 
         self.handle_response(response).await
+    }
+
+    /// Make an authenticated GET request and extract pagination from headers.
+    async fn get_with_pagination<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        filter_offset: Option<u32>,
+        filter_limit: Option<u32>,
+    ) -> Result<(T, Option<devboy_core::Pagination>)> {
+        debug!(url = url, "GitLab GET request (with pagination)");
+
+        let response = self
+            .request(reqwest::Method::GET, url)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let status_code = status.as_u16();
+            let message = response.text().await.unwrap_or_default();
+            warn!(
+                status = status_code,
+                message = message,
+                "GitLab API error response"
+            );
+            return Err(Error::from_status(status_code, message));
+        }
+
+        // Extract pagination from GitLab headers
+        let pagination = Self::extract_pagination(&response, filter_offset, filter_limit);
+
+        let data: T = response
+            .json()
+            .await
+            .map_err(|e| Error::InvalidData(format!("Failed to parse response: {}", e)))?;
+
+        Ok((data, pagination))
+    }
+
+    /// Extract pagination metadata from GitLab response headers.
+    fn extract_pagination(
+        response: &reqwest::Response,
+        offset: Option<u32>,
+        limit: Option<u32>,
+    ) -> Option<devboy_core::Pagination> {
+        let headers = response.headers();
+
+        let x_total = headers
+            .get("x-total")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u32>().ok());
+
+        let x_page = headers
+            .get("x-page")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u32>().ok());
+
+        let x_total_pages = headers
+            .get("x-total-pages")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u32>().ok());
+
+        let limit = limit.unwrap_or(20);
+        let offset = offset.unwrap_or(0);
+
+        let has_more = match (x_page, x_total_pages) {
+            (Some(page), Some(total_pages)) => page < total_pages,
+            _ => false,
+        };
+
+        Some(devboy_core::Pagination {
+            offset,
+            limit,
+            total: x_total,
+            has_more,
+        })
     }
 
     /// Handle response and map errors.
@@ -354,7 +431,7 @@ fn parse_mr_key(key: &str) -> Result<u64> {
 
 #[async_trait]
 impl IssueProvider for GitLabClient {
-    async fn get_issues(&self, filter: IssueFilter) -> Result<Vec<Issue>> {
+    async fn get_issues(&self, filter: IssueFilter) -> Result<ProviderResult<Issue>> {
         let mut url = self.project_url("/issues");
         let mut params = vec![];
 
@@ -409,8 +486,21 @@ impl IssueProvider for GitLabClient {
             url.push_str(&format!("?{}", params.join("&")));
         }
 
-        let gl_issues: Vec<GitLabIssue> = self.get(&url).await?;
-        Ok(gl_issues.iter().map(map_issue).collect())
+        let (gl_issues, pagination): (Vec<GitLabIssue>, _) = self
+            .get_with_pagination(&url, filter.offset, filter.limit)
+            .await?;
+        let issues: Vec<Issue> = gl_issues.iter().map(map_issue).collect();
+        let mut result = ProviderResult::new(issues);
+        result.pagination = pagination;
+        result.sort_info = Some(devboy_core::SortInfo {
+            sort_by: Some(filter.sort_by.as_deref().unwrap_or("updated_at").into()),
+            sort_order: match filter.sort_order.as_deref() {
+                Some("asc") => devboy_core::SortOrder::Asc,
+                _ => devboy_core::SortOrder::Desc,
+            },
+            available_sorts: vec!["created_at".into(), "updated_at".into()],
+        });
+        Ok(result)
     }
 
     async fn get_issue(&self, key: &str) -> Result<Issue> {
@@ -464,17 +554,18 @@ impl IssueProvider for GitLabClient {
         Ok(map_issue(&gl_issue))
     }
 
-    async fn get_comments(&self, issue_key: &str) -> Result<Vec<Comment>> {
+    async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>> {
         let iid = parse_issue_key(issue_key)?;
         let url = self.project_url(&format!("/issues/{}/notes", iid));
         let gl_notes: Vec<GitLabNote> = self.get(&url).await?;
 
         // Filter out system notes
-        Ok(gl_notes
+        let comments: Vec<Comment> = gl_notes
             .iter()
             .filter(|n| !n.system)
             .map(map_note)
-            .collect())
+            .collect();
+        Ok(comments.into())
     }
 
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment> {
@@ -495,7 +586,7 @@ impl IssueProvider for GitLabClient {
 
 #[async_trait]
 impl MergeRequestProvider for GitLabClient {
-    async fn get_merge_requests(&self, filter: MrFilter) -> Result<Vec<MergeRequest>> {
+    async fn get_merge_requests(&self, filter: MrFilter) -> Result<ProviderResult<MergeRequest>> {
         let mut url = self.project_url("/merge_requests");
         let mut params = vec![];
 
@@ -532,15 +623,35 @@ impl MergeRequestProvider for GitLabClient {
             params.push(format!("per_page={}", limit.min(100)));
         }
 
-        params.push("order_by=updated_at".to_string());
-        params.push("sort=desc".to_string());
+        let order_by = filter.sort_by.as_deref().unwrap_or("updated_at");
+        let sort_order = filter.sort_order.as_deref().unwrap_or("desc");
+        params.push(format!("order_by={}", order_by));
+        params.push(format!("sort={}", sort_order));
+
+        if let Some(offset) = filter.offset {
+            let page = (offset / filter.limit.unwrap_or(20)) + 1;
+            params.push(format!("page={}", page));
+        }
 
         if !params.is_empty() {
             url.push_str(&format!("?{}", params.join("&")));
         }
 
-        let gl_mrs: Vec<GitLabMergeRequest> = self.get(&url).await?;
-        Ok(gl_mrs.iter().map(map_merge_request).collect())
+        let (gl_mrs, pagination): (Vec<GitLabMergeRequest>, _) = self
+            .get_with_pagination(&url, filter.offset, filter.limit)
+            .await?;
+        let mrs: Vec<MergeRequest> = gl_mrs.iter().map(map_merge_request).collect();
+        let mut result = ProviderResult::new(mrs);
+        result.pagination = pagination;
+        result.sort_info = Some(devboy_core::SortInfo {
+            sort_by: Some(order_by.into()),
+            sort_order: match sort_order {
+                "asc" => devboy_core::SortOrder::Asc,
+                _ => devboy_core::SortOrder::Desc,
+            },
+            available_sorts: vec!["created_at".into(), "updated_at".into()],
+        });
+        Ok(result)
     }
 
     async fn get_merge_request(&self, key: &str) -> Result<MergeRequest> {
@@ -550,25 +661,31 @@ impl MergeRequestProvider for GitLabClient {
         Ok(map_merge_request(&gl_mr))
     }
 
-    async fn get_discussions(&self, mr_key: &str) -> Result<Vec<Discussion>> {
+    async fn get_discussions(&self, mr_key: &str) -> Result<ProviderResult<Discussion>> {
         let iid = parse_mr_key(mr_key)?;
         let url = self.project_url(&format!("/merge_requests/{}/discussions", iid));
         let gl_discussions: Vec<GitLabDiscussion> = self.get(&url).await?;
 
         // Map and filter out empty discussions (all system notes)
-        Ok(gl_discussions
+        let discussions: Vec<Discussion> = gl_discussions
             .iter()
             .map(map_discussion)
             .filter(|d| !d.comments.is_empty())
-            .collect())
+            .collect();
+        Ok(discussions.into())
     }
 
-    async fn get_diffs(&self, mr_key: &str) -> Result<Vec<FileDiff>> {
+    async fn get_diffs(&self, mr_key: &str) -> Result<ProviderResult<FileDiff>> {
         let iid = parse_mr_key(mr_key)?;
         // Use the changes endpoint which returns diffs with content
         let url = self.project_url(&format!("/merge_requests/{}/changes", iid));
         let gl_changes: GitLabMergeRequestChanges = self.get(&url).await?;
-        Ok(gl_changes.changes.iter().map(map_diff).collect())
+        Ok(gl_changes
+            .changes
+            .iter()
+            .map(map_diff)
+            .collect::<Vec<_>>()
+            .into())
     }
 
     async fn add_comment(&self, mr_key: &str, input: CreateCommentInput) -> Result<Comment> {
@@ -1500,7 +1617,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             assert_eq!(issues.len(), 1);
             assert_eq!(issues[0].key, "gitlab#42");
@@ -1660,7 +1778,8 @@ mod tests {
             let mrs = client
                 .get_merge_requests(MrFilter::default())
                 .await
-                .unwrap();
+                .unwrap()
+                .items;
 
             assert_eq!(mrs.len(), 1);
             assert_eq!(mrs[0].key, "mr#50");
@@ -1726,7 +1845,7 @@ mod tests {
             });
 
             let client = create_test_client(&server);
-            let discussions = client.get_discussions("mr#50").await.unwrap();
+            let discussions = client.get_discussions("mr#50").await.unwrap().items;
 
             // System-only discussion should be filtered out
             assert_eq!(discussions.len(), 1);
@@ -1767,7 +1886,7 @@ mod tests {
             });
 
             let client = create_test_client(&server);
-            let diffs = client.get_diffs("mr#50").await.unwrap();
+            let diffs = client.get_diffs("mr#50").await.unwrap().items;
 
             assert_eq!(diffs.len(), 2);
             assert_eq!(diffs[0].file_path, "src/main.rs");

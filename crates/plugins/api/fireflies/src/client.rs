@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use devboy_core::{
     Error, MeetingFilter, MeetingNote, MeetingNotesProvider, MeetingSpeaker, MeetingTranscript,
-    Result, TranscriptSentence,
+    ProviderResult, Result, TranscriptSentence,
 };
 use serde_json::{Value, json};
 use tracing::debug;
@@ -149,14 +149,15 @@ impl MeetingNotesProvider for FirefliesClient {
         "fireflies"
     }
 
-    async fn get_meetings(&self, filter: MeetingFilter) -> Result<Vec<MeetingNote>> {
+    async fn get_meetings(&self, filter: MeetingFilter) -> Result<ProviderResult<MeetingNote>> {
         let variables = build_filter_variables(&filter);
         let data: TranscriptsData = self.graphql(GET_TRANSCRIPTS_QUERY, variables).await?;
         Ok(data
             .transcripts
             .into_iter()
             .map(convert_transcript)
-            .collect())
+            .collect::<Vec<_>>()
+            .into())
     }
 
     async fn get_transcript(&self, meeting_id: &str) -> Result<MeetingTranscript> {
@@ -218,7 +219,7 @@ impl MeetingNotesProvider for FirefliesClient {
         &self,
         query: &str,
         filter: MeetingFilter,
-    ) -> Result<Vec<MeetingNote>> {
+    ) -> Result<ProviderResult<MeetingNote>> {
         let mut variables = build_filter_variables(&filter);
         if let Some(obj) = variables.as_object_mut() {
             obj.insert("keyword".into(), Value::String(query.to_string()));
@@ -228,7 +229,8 @@ impl MeetingNotesProvider for FirefliesClient {
             .transcripts
             .into_iter()
             .map(convert_transcript)
-            .collect())
+            .collect::<Vec<_>>()
+            .into())
     }
 }
 

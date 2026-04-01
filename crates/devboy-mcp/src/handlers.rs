@@ -124,11 +124,6 @@ define_tools! {
                     "description": "Number of results to skip for pagination (default: 0)",
                     "minimum": 0
                 },
-                "format": {
-                    "type": "string",
-                    "enum": ["toon", "json"],
-                    "description": "Output format (default: toon)"
-                },
                 "provider": {
                     "type": "string",
                     "enum": ["github", "gitlab", "clickup", "jira"],
@@ -158,11 +153,6 @@ define_tools! {
                 "key": {
                     "type": "string",
                     "description": "Issue key (e.g., 'gh#123' for GitHub, 'gitlab#456' for GitLab, 'CU-abc' or custom ID like 'DEV-42' for ClickUp, 'jira#PROJ-123' for Jira)"
-                },
-                "format": {
-                    "type": "string",
-                    "enum": ["toon", "json"],
-                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -178,11 +168,6 @@ define_tools! {
                 "key": {
                     "type": "string",
                     "description": "Issue key (e.g., 'gh#123')"
-                },
-                "format": {
-                    "type": "string",
-                    "enum": ["toon", "json"],
-                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -395,11 +380,6 @@ define_tools! {
                     "description": "Maximum number of results (default: 20)",
                     "minimum": 1,
                     "maximum": 100
-                },
-                "format": {
-                    "type": "string",
-                    "enum": ["toon", "json"],
-                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -415,11 +395,6 @@ define_tools! {
                 "key": {
                     "type": "string",
                     "description": "MR/PR key (e.g., 'pr#123' for GitHub, 'mr#456' for GitLab)"
-                },
-                "format": {
-                    "type": "string",
-                    "enum": ["toon", "json"],
-                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -446,11 +421,6 @@ define_tools! {
                     "type": "integer",
                     "description": "Number of discussions to skip for pagination (default: 0)",
                     "minimum": 0
-                },
-                "format": {
-                    "type": "string",
-                    "enum": ["toon", "json"],
-                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -466,11 +436,6 @@ define_tools! {
                 "key": {
                     "type": "string",
                     "description": "MR/PR key (e.g., 'pr#123')"
-                },
-                "format": {
-                    "type": "string",
-                    "enum": ["toon", "json"],
-                    "description": "Output format (default: toon)"
                 }
             }
         }
@@ -822,13 +787,13 @@ impl ToolHandler {
 
         for provider in &providers {
             match provider.get_issues(filter.clone()).await {
-                Ok(issues) => {
+                Ok(result) => {
                     tracing::debug!(
                         "Got {} issues from {}",
-                        issues.len(),
+                        result.items.len(),
                         get_provider_name(provider.as_ref())
                     );
-                    all_issues.extend(issues);
+                    all_issues.extend(result.items);
                 }
                 Err(e) => {
                     let name = get_provider_name(provider.as_ref());
@@ -842,7 +807,7 @@ impl ToolHandler {
             return ToolCallResult::error(format!("Failed to get issues: {}", errors.join(", ")));
         }
 
-        let pipeline = self.create_pipeline(&params.format);
+        let pipeline = self.create_pipeline(&params.format, params.budget, params.chunk);
         match pipeline.transform_issues(all_issues) {
             Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
             Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -866,7 +831,8 @@ impl ToolHandler {
         for provider in &self.providers {
             match provider.get_issue(&params.key).await {
                 Ok(issue) => {
-                    let pipeline = self.create_pipeline(&params.format);
+                    let pipeline =
+                        self.create_pipeline(&params.format, params.budget, params.chunk);
                     return match pipeline.transform_issues(vec![issue]) {
                         Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -901,9 +867,10 @@ impl ToolHandler {
 
         for provider in &self.providers {
             match provider.get_comments(&params.key).await {
-                Ok(comments) => {
-                    let pipeline = self.create_pipeline(&params.format);
-                    return match pipeline.transform_comments(comments) {
+                Ok(result) => {
+                    let pipeline =
+                        self.create_pipeline(&params.format, params.budget, params.chunk);
+                    return match pipeline.transform_comments(result.items) {
                         Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
                     };
@@ -1218,6 +1185,7 @@ impl ToolHandler {
             source_branch: params.source_branch,
             target_branch: params.target_branch,
             limit: Some(params.limit.unwrap_or(20) as u32),
+            ..Default::default()
         };
 
         let mut all_mrs = Vec::new();
@@ -1225,13 +1193,13 @@ impl ToolHandler {
 
         for provider in &self.providers {
             match provider.get_merge_requests(filter.clone()).await {
-                Ok(mrs) => {
+                Ok(result) => {
                     tracing::debug!(
                         "Got {} MRs from {}",
-                        mrs.len(),
+                        result.items.len(),
                         get_provider_name(provider.as_ref())
                     );
-                    all_mrs.extend(mrs);
+                    all_mrs.extend(result.items);
                 }
                 Err(e) => {
                     let name = get_provider_name(provider.as_ref());
@@ -1248,7 +1216,7 @@ impl ToolHandler {
             ));
         }
 
-        let pipeline = self.create_pipeline(&params.format);
+        let pipeline = self.create_pipeline(&params.format, params.budget, params.chunk);
         match pipeline.transform_merge_requests(all_mrs) {
             Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
             Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -1271,7 +1239,8 @@ impl ToolHandler {
         for provider in &self.providers {
             match provider.get_merge_request(&params.key).await {
                 Ok(mr) => {
-                    let pipeline = self.create_pipeline(&params.format);
+                    let pipeline =
+                        self.create_pipeline(&params.format, params.budget, params.chunk);
                     return match pipeline.transform_merge_requests(vec![mr]) {
                         Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -1317,15 +1286,17 @@ impl ToolHandler {
 
         for provider in &self.providers {
             match provider.get_discussions(&params.key).await {
-                Ok(discussions) => {
+                Ok(result) => {
+                    let discussions = result.items;
                     let offset = params.offset.unwrap_or(0);
-                    let limit = params.limit.unwrap_or(self.pipeline_config.max_items);
+                    let limit = params.limit.unwrap_or(20);
                     let total = discussions.len();
                     let paged_discussions: Vec<_> =
                         discussions.into_iter().skip(offset).take(limit).collect();
                     let included = paged_discussions.len();
 
-                    let pipeline = self.create_pipeline_with_max_items(&params.format, limit);
+                    let pipeline =
+                        self.create_pipeline(&params.format, params.budget, params.chunk);
                     return match pipeline.transform_discussions(paged_discussions) {
                         Ok(mut output) => {
                             if self.pipeline_config.include_hints && offset + included < total {
@@ -1381,9 +1352,10 @@ impl ToolHandler {
 
         for provider in &self.providers {
             match provider.get_diffs(&params.key).await {
-                Ok(diffs) => {
-                    let pipeline = self.create_pipeline(&params.format);
-                    return match pipeline.transform_diffs(diffs) {
+                Ok(result) => {
+                    let pipeline =
+                        self.create_pipeline(&params.format, params.budget, params.chunk);
+                    return match pipeline.transform_diffs(result.items) {
                         Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
                     };
@@ -1671,8 +1643,13 @@ impl ToolHandler {
         let mut last_error: Option<String> = None;
         for provider in &self.meeting_providers {
             match provider.get_meetings(filter.clone()).await {
-                Ok(meetings) => {
-                    let output = devboy_executor::ToolOutput::MeetingNotes(meetings);
+                Ok(result) => {
+                    let meta = devboy_executor::ResultMeta {
+                        pagination: result.pagination,
+                        sort_info: result.sort_info,
+                    };
+                    let output =
+                        devboy_executor::ToolOutput::MeetingNotes(result.items, Some(meta));
                     return match devboy_executor::format_output(
                         output,
                         None,
@@ -1773,8 +1750,13 @@ impl ToolHandler {
                 .search_meetings(&params.query, filter.clone())
                 .await
             {
-                Ok(meetings) => {
-                    let output = devboy_executor::ToolOutput::MeetingNotes(meetings);
+                Ok(result) => {
+                    let meta = devboy_executor::ResultMeta {
+                        pagination: result.pagination,
+                        sort_info: result.sort_info,
+                    };
+                    let output =
+                        devboy_executor::ToolOutput::MeetingNotes(result.items, Some(meta));
                     return match devboy_executor::format_output(
                         output,
                         None,
@@ -1811,25 +1793,31 @@ impl ToolHandler {
             .find(|p| get_provider_name(p.as_ref()) == name)
     }
 
-    fn create_pipeline(&self, format: &Option<String>) -> Pipeline {
-        self.create_pipeline_with_max_items(format, self.pipeline_config.max_items)
-    }
-
-    fn create_pipeline_with_max_items(
+    fn create_pipeline(
         &self,
         format: &Option<String>,
-        max_items: usize,
+        budget: Option<usize>,
+        chunk: Option<usize>,
     ) -> Pipeline {
         let output_format = match format.as_deref() {
             Some("json") => OutputFormat::Json,
             _ => OutputFormat::Toon,
         };
 
-        Pipeline::with_config(PipelineConfig {
-            max_items,
+        let mut config = PipelineConfig {
             format: output_format,
             ..self.pipeline_config.clone()
-        })
+        };
+
+        // LLM-controlled budget overrides default
+        if let Some(b) = budget {
+            // Convert token budget to max_chars (tokens * 3.5)
+            config.max_chars = (b as f64 * 3.5).floor() as usize;
+        }
+
+        config.chunk = chunk;
+
+        Pipeline::with_config(config)
     }
 }
 
@@ -1849,18 +1837,24 @@ struct GetIssuesParams {
     provider: Option<String>,
     sort_by: Option<String>,
     sort_order: Option<String>,
+    budget: Option<usize>,
+    chunk: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GetIssueParams {
     key: String,
     format: Option<String>,
+    budget: Option<usize>,
+    chunk: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GetIssueCommentsParams {
     key: String,
     format: Option<String>,
+    budget: Option<usize>,
+    chunk: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1927,12 +1921,16 @@ struct GetMergeRequestsParams {
     target_branch: Option<String>,
     limit: Option<usize>,
     format: Option<String>,
+    budget: Option<usize>,
+    chunk: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GetMergeRequestParams {
     key: String,
     format: Option<String>,
+    budget: Option<usize>,
+    chunk: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1941,12 +1939,16 @@ struct GetMergeRequestDiscussionsParams {
     limit: Option<usize>,
     offset: Option<usize>,
     format: Option<String>,
+    budget: Option<usize>,
+    chunk: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GetMergeRequestDiffsParams {
     key: String,
     format: Option<String>,
+    budget: Option<usize>,
+    chunk: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2113,8 +2115,11 @@ mod tests {
 
     #[async_trait]
     impl IssueProvider for MockProvider {
-        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
-            Ok(self.issues.clone())
+        async fn get_issues(
+            &self,
+            _filter: IssueFilter,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
+            Ok(self.issues.clone().into())
         }
 
         async fn get_issue(&self, _key: &str) -> devboy_core::Result<Issue> {
@@ -2133,7 +2138,10 @@ mod tests {
             Ok(self.issues[0].clone())
         }
 
-        async fn get_comments(&self, _issue_key: &str) -> devboy_core::Result<Vec<Comment>> {
+        async fn get_comments(
+            &self,
+            _issue_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
             Ok(vec![Comment {
                 id: "1".to_string(),
                 body: "Test comment".to_string(),
@@ -2141,7 +2149,8 @@ mod tests {
                 created_at: None,
                 updated_at: None,
                 position: None,
-            }])
+            }]
+            .into())
         }
 
         async fn add_comment(&self, _issue_key: &str, _body: &str) -> devboy_core::Result<Comment> {
@@ -2182,15 +2191,18 @@ mod tests {
         async fn get_merge_requests(
             &self,
             _filter: MrFilter,
-        ) -> devboy_core::Result<Vec<MergeRequest>> {
-            Ok(self.mrs.clone())
+        ) -> devboy_core::Result<devboy_core::ProviderResult<MergeRequest>> {
+            Ok(self.mrs.clone().into())
         }
 
         async fn get_merge_request(&self, _key: &str) -> devboy_core::Result<MergeRequest> {
             Ok(self.mrs[0].clone())
         }
 
-        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<Vec<Discussion>> {
+        async fn get_discussions(
+            &self,
+            _mr_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
             Ok(vec![Discussion {
                 id: "1".to_string(),
                 resolved: false,
@@ -2204,10 +2216,14 @@ mod tests {
                     position: None,
                 }],
                 position: None,
-            }])
+            }]
+            .into())
         }
 
-        async fn get_diffs(&self, _mr_key: &str) -> devboy_core::Result<Vec<FileDiff>> {
+        async fn get_diffs(
+            &self,
+            _mr_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
             Ok(vec![FileDiff {
                 file_path: "src/main.rs".to_string(),
                 old_path: None,
@@ -2217,7 +2233,8 @@ mod tests {
                 diff: "+added line\n-removed line".to_string(),
                 additions: Some(1),
                 deletions: Some(1),
-            }])
+            }]
+            .into())
         }
 
         async fn add_comment(
@@ -2269,7 +2286,10 @@ mod tests {
 
     #[async_trait]
     impl IssueProvider for ManyDiscussionsProvider {
-        async fn get_issues(&self, filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
+        async fn get_issues(
+            &self,
+            filter: IssueFilter,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
             self.base.get_issues(filter).await
         }
 
@@ -2289,7 +2309,10 @@ mod tests {
             self.base.update_issue(key, input).await
         }
 
-        async fn get_comments(&self, issue_key: &str) -> devboy_core::Result<Vec<Comment>> {
+        async fn get_comments(
+            &self,
+            issue_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
             self.base.get_comments(issue_key).await
         }
 
@@ -2314,7 +2337,7 @@ mod tests {
         async fn get_merge_requests(
             &self,
             filter: MrFilter,
-        ) -> devboy_core::Result<Vec<MergeRequest>> {
+        ) -> devboy_core::Result<devboy_core::ProviderResult<MergeRequest>> {
             self.base.get_merge_requests(filter).await
         }
 
@@ -2322,11 +2345,17 @@ mod tests {
             self.base.get_merge_request(key).await
         }
 
-        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<Vec<Discussion>> {
-            Ok(self.discussions.clone())
+        async fn get_discussions(
+            &self,
+            _mr_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
+            Ok(self.discussions.clone().into())
         }
 
-        async fn get_diffs(&self, mr_key: &str) -> devboy_core::Result<Vec<FileDiff>> {
+        async fn get_diffs(
+            &self,
+            mr_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
             self.base.get_diffs(mr_key).await
         }
 
@@ -2425,7 +2454,8 @@ mod tests {
         let merge_requests = provider
             .get_merge_requests(MrFilter::default())
             .await
-            .expect("merge requests should be forwarded");
+            .expect("merge requests should be forwarded")
+            .items;
         assert_eq!(merge_requests.len(), 1);
         assert_eq!(merge_requests[0].key, "pr#1");
 
@@ -2438,14 +2468,16 @@ mod tests {
         let discussions = provider
             .get_discussions("pr#1")
             .await
-            .expect("custom discussions should be returned");
+            .expect("custom discussions should be returned")
+            .items;
         assert_eq!(discussions.len(), 2);
         assert_eq!(discussions[0].comments[0].body, "Review comment 1");
 
         let diffs = provider
             .get_diffs("pr#1")
             .await
-            .expect("diffs should be forwarded");
+            .expect("diffs should be forwarded")
+            .items;
         assert_eq!(diffs.len(), 1);
         assert_eq!(diffs[0].file_path, "src/main.rs");
     }
@@ -2527,16 +2559,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_merge_request_discussions_handler_uses_custom_configured_max_items() {
+    async fn test_get_merge_request_discussions_handler_uses_limit_parameter() {
         let provider = Arc::new(ManyDiscussionsProvider::new(10)) as Arc<dyn Provider>;
-        let handler = ToolHandler::new(vec![provider]).with_pipeline_config(PipelineConfig {
-            max_items: 3,
-            max_chars: 20_000,
-            ..Default::default()
-        });
+        let handler = ToolHandler::new(vec![provider]);
 
         let args = serde_json::json!({
             "key": "pr#1",
+            "limit": 3,
             "format": "json"
         });
         let result = handler
@@ -3122,13 +3151,13 @@ mod tests {
     async fn test_create_pipeline_formats() {
         let handler = ToolHandler::new(vec![]);
 
-        let pipeline = handler.create_pipeline(&Some("json".to_string()));
+        let pipeline = handler.create_pipeline(&Some("json".to_string()), None, None);
         assert!(pipeline.transform_issues(vec![]).is_ok());
 
-        let pipeline = handler.create_pipeline(&Some("toon".to_string()));
+        let pipeline = handler.create_pipeline(&Some("toon".to_string()), None, None);
         assert!(pipeline.transform_issues(vec![]).is_ok());
 
-        let pipeline = handler.create_pipeline(&None);
+        let pipeline = handler.create_pipeline(&None, None, None);
         assert!(pipeline.transform_issues(vec![]).is_ok());
     }
 
@@ -3281,7 +3310,10 @@ mod tests {
 
     #[async_trait]
     impl IssueProvider for FailingProvider {
-        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
+        async fn get_issues(
+            &self,
+            _filter: IssueFilter,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
             Err(devboy_core::Error::Api {
                 status: 500,
                 message: "api error".into(),
@@ -3306,7 +3338,10 @@ mod tests {
                 message: "update failed".into(),
             })
         }
-        async fn get_comments(&self, _key: &str) -> devboy_core::Result<Vec<Comment>> {
+        async fn get_comments(
+            &self,
+            _key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
         async fn add_comment(&self, _key: &str, _body: &str) -> devboy_core::Result<Comment> {
@@ -3328,7 +3363,7 @@ mod tests {
         async fn get_merge_requests(
             &self,
             _filter: MrFilter,
-        ) -> devboy_core::Result<Vec<MergeRequest>> {
+        ) -> devboy_core::Result<devboy_core::ProviderResult<MergeRequest>> {
             Err(devboy_core::Error::Api {
                 status: 500,
                 message: "api error".into(),
@@ -3337,10 +3372,16 @@ mod tests {
         async fn get_merge_request(&self, _key: &str) -> devboy_core::Result<MergeRequest> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
-        async fn get_discussions(&self, _mr_key: &str) -> devboy_core::Result<Vec<Discussion>> {
+        async fn get_discussions(
+            &self,
+            _mr_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
-        async fn get_diffs(&self, _mr_key: &str) -> devboy_core::Result<Vec<FileDiff>> {
+        async fn get_diffs(
+            &self,
+            _mr_key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
             Err(devboy_core::Error::NotFound("not found".into()))
         }
         async fn add_comment(

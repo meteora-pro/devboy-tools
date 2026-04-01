@@ -10,7 +10,7 @@ use tracing::debug;
 
 use crate::context::AdditionalContext;
 use crate::factory;
-use crate::output::ToolOutput;
+use crate::output::{ResultMeta, ToolOutput};
 use devboy_core::ToolEnricher;
 
 /// Tool execution engine.
@@ -209,8 +209,12 @@ async fn execute_get_meeting_notes(
         limit: params.limit,
         skip: params.offset,
     };
-    let meetings = provider.get_meetings(filter).await?;
-    Ok(ToolOutput::MeetingNotes(meetings))
+    let result = provider.get_meetings(filter).await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::MeetingNotes(result.items, Some(meta)))
 }
 
 #[derive(Deserialize)]
@@ -254,8 +258,12 @@ async fn execute_search_meeting_notes(
         limit: params.limit,
         skip: params.offset,
     };
-    let meetings = provider.search_meetings(&params.query, filter).await?;
-    Ok(ToolOutput::MeetingNotes(meetings))
+    let result = provider.search_meetings(&params.query, filter).await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::MeetingNotes(result.items, Some(meta)))
 }
 
 // --- Issue tool handlers ---
@@ -270,6 +278,9 @@ struct GetIssuesParams {
     offset: Option<u32>,
     sort_by: Option<String>,
     sort_order: Option<String>,
+    /// Token budget for response size control (consumed by format layer via execute_and_format).
+    #[allow(dead_code)]
+    budget: Option<usize>,
 }
 
 async fn execute_get_issues(
@@ -287,13 +298,21 @@ async fn execute_get_issues(
         sort_by: params.sort_by,
         sort_order: params.sort_order,
     };
-    let issues = provider.get_issues(filter).await?;
-    Ok(ToolOutput::Issues(issues))
+    let result = provider.get_issues(filter).await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::Issues(result.items, Some(meta)))
 }
 
 #[derive(Deserialize)]
 struct KeyParam {
     key: String,
+    /// Token budget for response size control (consumed by format layer via execute_and_format).
+    #[serde(default)]
+    #[allow(dead_code)]
+    budget: Option<usize>,
 }
 
 async fn execute_get_issue(
@@ -312,8 +331,12 @@ async fn execute_get_issue_comments(
 ) -> Result<ToolOutput> {
     let params: KeyParam = serde_json::from_value(args.clone())
         .map_err(|e| Error::InvalidData(format!("missing 'key' parameter: {e}")))?;
-    let comments = provider.get_comments(&params.key).await?;
-    Ok(ToolOutput::Comments(comments))
+    let result = provider.get_comments(&params.key).await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::Comments(result.items, Some(meta)))
 }
 
 async fn execute_get_issue_relations(
@@ -422,6 +445,12 @@ struct GetMergeRequestsParams {
     source_branch: Option<String>,
     target_branch: Option<String>,
     limit: Option<u32>,
+    offset: Option<u32>,
+    sort_by: Option<String>,
+    sort_order: Option<String>,
+    /// Token budget for response size control (consumed by format layer via execute_and_format).
+    #[allow(dead_code)]
+    budget: Option<usize>,
 }
 
 async fn execute_get_merge_requests(
@@ -436,9 +465,16 @@ async fn execute_get_merge_requests(
         author: params.author,
         labels: params.labels,
         limit: params.limit.or(Some(20)),
+        offset: params.offset,
+        sort_by: params.sort_by,
+        sort_order: params.sort_order,
     };
-    let mrs = provider.get_merge_requests(filter).await?;
-    Ok(ToolOutput::MergeRequests(mrs))
+    let result = provider.get_merge_requests(filter).await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::MergeRequests(result.items, Some(meta)))
 }
 
 async fn execute_get_merge_request(
@@ -457,8 +493,12 @@ async fn execute_get_merge_request_discussions(
 ) -> Result<ToolOutput> {
     let params: KeyParam = serde_json::from_value(args.clone())
         .map_err(|e| Error::InvalidData(format!("missing 'key' parameter: {e}")))?;
-    let discussions = provider.get_discussions(&params.key).await?;
-    Ok(ToolOutput::Discussions(discussions))
+    let result = provider.get_discussions(&params.key).await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::Discussions(result.items, Some(meta)))
 }
 
 async fn execute_get_merge_request_diffs(
@@ -467,8 +507,12 @@ async fn execute_get_merge_request_diffs(
 ) -> Result<ToolOutput> {
     let params: KeyParam = serde_json::from_value(args.clone())
         .map_err(|e| Error::InvalidData(format!("missing 'key' parameter: {e}")))?;
-    let diffs = provider.get_diffs(&params.key).await?;
-    Ok(ToolOutput::Diffs(diffs))
+    let result = provider.get_diffs(&params.key).await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::Diffs(result.items, Some(meta)))
 }
 
 #[derive(Deserialize)]
@@ -620,8 +664,12 @@ async fn execute_get_job_logs(
 async fn execute_get_available_statuses(
     provider: &dyn devboy_core::Provider,
 ) -> Result<ToolOutput> {
-    let statuses = IssueProvider::get_statuses(provider).await?;
-    Ok(ToolOutput::Statuses(statuses))
+    let result = IssueProvider::get_statuses(provider).await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::Statuses(result.items, Some(meta)))
 }
 
 #[derive(Deserialize, Default)]
@@ -647,8 +695,12 @@ async fn execute_get_users(
         start_at: params.start_at,
         max_results: params.max_results,
     };
-    let users = IssueProvider::get_users(provider, options).await?;
-    Ok(ToolOutput::Users(users))
+    let result = IssueProvider::get_users(provider, options).await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::Users(result.items, Some(meta)))
 }
 
 #[derive(Deserialize)]
@@ -725,8 +777,12 @@ async fn execute_get_epics(
         sort_by: None,
         sort_order: None,
     };
-    let issues = provider.get_issues(filter).await?;
-    Ok(ToolOutput::Issues(issues))
+    let result = provider.get_issues(filter).await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::Issues(result.items, Some(meta)))
 }
 
 #[derive(Deserialize)]
@@ -904,8 +960,11 @@ mod tests {
 
     #[async_trait]
     impl IssueProvider for MockProvider {
-        async fn get_issues(&self, _filter: IssueFilter) -> devboy_core::Result<Vec<Issue>> {
-            Ok(vec![sample_issue()])
+        async fn get_issues(
+            &self,
+            _filter: IssueFilter,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Issue>> {
+            Ok(vec![sample_issue()].into())
         }
         async fn get_issue(&self, _key: &str) -> devboy_core::Result<Issue> {
             Ok(sample_issue())
@@ -923,8 +982,11 @@ mod tests {
         ) -> devboy_core::Result<Issue> {
             Ok(sample_issue())
         }
-        async fn get_comments(&self, _key: &str) -> devboy_core::Result<Vec<Comment>> {
-            Ok(vec![sample_comment()])
+        async fn get_comments(
+            &self,
+            _key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Comment>> {
+            Ok(vec![sample_comment()].into())
         }
         async fn add_comment(&self, _key: &str, _body: &str) -> devboy_core::Result<Comment> {
             Ok(sample_comment())
@@ -950,17 +1012,23 @@ mod tests {
         async fn get_merge_requests(
             &self,
             _filter: MrFilter,
-        ) -> devboy_core::Result<Vec<MergeRequest>> {
-            Ok(vec![sample_mr()])
+        ) -> devboy_core::Result<devboy_core::ProviderResult<MergeRequest>> {
+            Ok(vec![sample_mr()].into())
         }
         async fn get_merge_request(&self, _key: &str) -> devboy_core::Result<MergeRequest> {
             Ok(sample_mr())
         }
-        async fn get_discussions(&self, _key: &str) -> devboy_core::Result<Vec<Discussion>> {
-            Ok(vec![sample_discussion()])
+        async fn get_discussions(
+            &self,
+            _key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<Discussion>> {
+            Ok(vec![sample_discussion()].into())
         }
-        async fn get_diffs(&self, _key: &str) -> devboy_core::Result<Vec<FileDiff>> {
-            Ok(vec![sample_diff()])
+        async fn get_diffs(
+            &self,
+            _key: &str,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<FileDiff>> {
+            Ok(vec![sample_diff()].into())
         }
         async fn add_comment(
             &self,
@@ -1026,7 +1094,7 @@ mod tests {
         let provider = MockProvider;
         let args = serde_json::json!({"state": "open", "limit": 10});
         let result = dispatch_tool("get_issues", &args, &provider).await.unwrap();
-        assert!(matches!(result, ToolOutput::Issues(v) if v.len() == 1));
+        assert!(matches!(result, ToolOutput::Issues(v, _) if v.len() == 1));
     }
 
     #[tokio::test]
@@ -1035,7 +1103,7 @@ mod tests {
         let result = dispatch_tool("get_issues", &Value::Null, &provider)
             .await
             .unwrap();
-        assert!(matches!(result, ToolOutput::Issues(_)));
+        assert!(matches!(result, ToolOutput::Issues(_, _)));
     }
 
     #[tokio::test]
@@ -1060,7 +1128,7 @@ mod tests {
         let result = dispatch_tool("get_issue_comments", &args, &provider)
             .await
             .unwrap();
-        assert!(matches!(result, ToolOutput::Comments(v) if v.len() == 1));
+        assert!(matches!(result, ToolOutput::Comments(v, _) if v.len() == 1));
     }
 
     #[tokio::test]
@@ -1127,7 +1195,7 @@ mod tests {
         let result = dispatch_tool("get_merge_requests", &args, &provider)
             .await
             .unwrap();
-        assert!(matches!(result, ToolOutput::MergeRequests(v) if v.len() == 1));
+        assert!(matches!(result, ToolOutput::MergeRequests(v, _) if v.len() == 1));
     }
 
     #[tokio::test]
@@ -1136,7 +1204,7 @@ mod tests {
         let result = dispatch_tool("get_merge_requests", &Value::Null, &provider)
             .await
             .unwrap();
-        assert!(matches!(result, ToolOutput::MergeRequests(_)));
+        assert!(matches!(result, ToolOutput::MergeRequests(_, _)));
     }
 
     #[tokio::test]
@@ -1156,7 +1224,7 @@ mod tests {
         let result = dispatch_tool("get_merge_request_discussions", &args, &provider)
             .await
             .unwrap();
-        assert!(matches!(result, ToolOutput::Discussions(v) if v.len() == 1));
+        assert!(matches!(result, ToolOutput::Discussions(v, _) if v.len() == 1));
     }
 
     #[tokio::test]
@@ -1166,7 +1234,7 @@ mod tests {
         let result = dispatch_tool("get_merge_request_diffs", &args, &provider)
             .await
             .unwrap();
-        assert!(matches!(result, ToolOutput::Diffs(v) if v.len() == 1));
+        assert!(matches!(result, ToolOutput::Diffs(v, _) if v.len() == 1));
     }
 
     #[tokio::test]
@@ -1335,7 +1403,7 @@ mod tests {
         let provider = MockProvider;
         let args = serde_json::json!({"state": "open", "limit": 10});
         let result = dispatch_tool("get_epics", &args, &provider).await.unwrap();
-        assert!(matches!(result, ToolOutput::Issues(v) if v.len() == 1));
+        assert!(matches!(result, ToolOutput::Issues(v, _) if v.len() == 1));
     }
 
     #[tokio::test]
@@ -1344,7 +1412,7 @@ mod tests {
         let result = dispatch_tool("get_epics", &Value::Null, &provider)
             .await
             .unwrap();
-        assert!(matches!(result, ToolOutput::Issues(_)));
+        assert!(matches!(result, ToolOutput::Issues(_, _)));
     }
 
     #[tokio::test]
@@ -1388,12 +1456,13 @@ mod tests {
         async fn get_meetings(
             &self,
             _filter: MeetingFilter,
-        ) -> devboy_core::Result<Vec<devboy_core::MeetingNote>> {
+        ) -> devboy_core::Result<devboy_core::ProviderResult<devboy_core::MeetingNote>> {
             Ok(vec![devboy_core::MeetingNote {
                 id: "m1".into(),
                 title: "Test Meeting".into(),
                 ..Default::default()
-            }])
+            }]
+            .into())
         }
 
         async fn get_transcript(
@@ -1417,12 +1486,13 @@ mod tests {
             &self,
             _query: &str,
             _filter: MeetingFilter,
-        ) -> devboy_core::Result<Vec<devboy_core::MeetingNote>> {
+        ) -> devboy_core::Result<devboy_core::ProviderResult<devboy_core::MeetingNote>> {
             Ok(vec![devboy_core::MeetingNote {
                 id: "m2".into(),
                 title: "Search Result Meeting".into(),
                 ..Default::default()
-            }])
+            }]
+            .into())
         }
     }
 
@@ -1434,7 +1504,7 @@ mod tests {
             .await
             .unwrap();
         match result {
-            ToolOutput::MeetingNotes(meetings) => {
+            ToolOutput::MeetingNotes(meetings, _) => {
                 assert_eq!(meetings.len(), 1);
                 assert_eq!(meetings[0].title, "Test Meeting");
             }
@@ -1467,7 +1537,7 @@ mod tests {
             .await
             .unwrap();
         match result {
-            ToolOutput::MeetingNotes(meetings) => {
+            ToolOutput::MeetingNotes(meetings, _) => {
                 assert_eq!(meetings.len(), 1);
                 assert_eq!(meetings[0].title, "Search Result Meeting");
             }

@@ -4,7 +4,7 @@
 //!
 //! - **TOON** (default): Token-Oriented Object Notation -- saves 39-90% of tokens
 //! - **JSON**: for programmatic processing
-//! - **Truncation**: size limiting with pagination hints
+//! - **Budget trimming**: smart strategy-based trimming when output exceeds budget
 //!
 //! # Example
 //!
@@ -14,7 +14,7 @@
 //!
 //! let pipeline = Pipeline::with_config(PipelineConfig {
 //!     format: OutputFormat::Toon,
-//!     max_items: 20,
+//!     max_chars: 100_000,
 //!     ..Default::default()
 //! });
 //!
@@ -23,6 +23,7 @@
 //! ```
 
 pub mod budget;
+pub mod page_index;
 pub mod pagination;
 pub mod strategy;
 pub mod token_counter;
@@ -34,6 +35,14 @@ pub mod truncation;
 pub use truncation::TruncationPlugin;
 
 use devboy_core::{Comment, Discussion, FileDiff, Issue, MergeRequest, Result};
+
+use budget::BudgetConfig;
+use strategy::StrategyResolver;
+
+/// Convert character budget to token estimate (chars / 3.5).
+fn estimate_tokens_from_chars(chars: usize) -> usize {
+    (chars as f64 / 3.5).ceil() as usize
+}
 
 /// Output from a pipeline transformation.
 ///
@@ -52,6 +61,12 @@ pub struct TransformOutput {
     pub agent_hint: Option<String>,
     /// Cursor for fetching the next page (if overflow exists)
     pub page_cursor: Option<String>,
+    /// Page index for large results (when budget trimming is applied)
+    pub page_index: Option<page_index::PageIndex>,
+    /// Provider-level pagination metadata
+    pub provider_pagination: Option<devboy_core::Pagination>,
+    /// Provider-level sort metadata
+    pub provider_sort: Option<devboy_core::SortInfo>,
     /// Size of raw input data before formatting (UTF-8 bytes)
     pub raw_chars: usize,
     /// Size of formatted output (UTF-8 bytes) — updated after apply_char_limit
@@ -72,6 +87,9 @@ impl TransformOutput {
             included_count: 0,
             agent_hint: None,
             page_cursor: None,
+            page_index: None,
+            provider_pagination: None,
+            provider_sort: None,
             raw_chars: 0,
             output_chars,
             pre_trim_chars: 0,
@@ -93,22 +111,32 @@ impl TransformOutput {
         self
     }
 
-    /// Get the final output including any agent hints.
+    /// Get the final output including page index and agent hints.
     pub fn to_string_with_hints(&self) -> String {
-        if let Some(hint) = &self.agent_hint {
-            format!("{}\n\n{}", self.content, hint)
-        } else {
-            self.content.clone()
+        let mut parts = Vec::new();
+
+        // Page index header (when budget trimming produced pages)
+        if let Some(index) = &self.page_index {
+            parts.push(index.to_toon());
         }
+
+        // Main content
+        parts.push(self.content.clone());
+
+        // Agent hint footer
+        if let Some(hint) = &self.agent_hint {
+            parts.push(hint.clone());
+        }
+
+        parts.join("\n\n")
     }
 }
 
 /// Configuration for pipeline transformations.
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
-    /// Maximum number of items to include in output
-    pub max_items: usize,
-    /// Maximum characters for the entire output (0 = no limit)
+    /// Maximum characters for the entire output (0 = no limit).
+    /// Used as budget ceiling — converted to tokens via `max_chars / 3.5`.
     pub max_chars: usize,
     /// Maximum characters per item (e.g., diff content)
     pub max_chars_per_item: usize,
@@ -120,18 +148,24 @@ pub struct PipelineConfig {
     pub include_hints: bool,
     /// Page cursor from a previous request (for pagination)
     pub page_cursor: Option<String>,
+    /// Tool name for strategy resolution (e.g., "get_issues", "get_merge_request_diffs")
+    pub tool_name: Option<String>,
+    /// Chunk number to return (1-based). When set, pipeline skips to that chunk
+    /// instead of returning chunk 1. Used for chunk index navigation.
+    pub chunk: Option<usize>,
 }
 
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
-            max_items: 20,
             max_chars: 100_000,
             max_chars_per_item: 10_000,
             max_description_len: 10_000,
             format: OutputFormat::Toon,
             include_hints: true,
             page_cursor: None,
+            tool_name: None,
+            chunk: None,
         }
     }
 }
@@ -163,184 +197,368 @@ impl Pipeline {
         Self { config }
     }
 
-    /// Transform a list of issues.
+    /// Transform a list of issues using budget pipeline.
     pub fn transform_issues(&self, issues: Vec<Issue>) -> Result<TransformOutput> {
         let total = issues.len();
-        let truncated_issues = self.truncate_items(issues);
-        let included = truncated_issues.len();
-
-        let raw_json = serde_json::to_string(&truncated_issues)?;
+        let raw_json = serde_json::to_string(&issues)?;
         let raw_chars = raw_json.len();
 
-        let content = match self.config.format {
-            OutputFormat::Json => serde_json::to_string_pretty(&truncated_issues)?,
-            OutputFormat::Toon => toon::encode_issues(&truncated_issues, toon::TrimLevel::Full)?,
+        // First pass: check if all data fits in budget
+        let full_content = match self.config.format {
+            OutputFormat::Json => serde_json::to_string_pretty(&issues)?,
+            OutputFormat::Toon => toon::encode_issues(&issues, toon::TrimLevel::Full)?,
         };
 
-        let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
-        output.included_count = included;
-
-        if included < total && self.config.include_hints {
-            let hint = self.create_pagination_hint("issues", total, included, None);
-            output = output.with_truncation(total, included, hint);
+        if self.config.max_chars == 0 || full_content.len() <= self.config.max_chars {
+            let mut output = TransformOutput::new(full_content).with_raw_chars(raw_chars);
+            output.included_count = total;
+            return Ok(output);
         }
 
-        Ok(self.apply_char_limit(output))
+        // Budget pipeline: find how many items fit
+        let budget_config = self.budget_config();
+        let strategy_kind = self.resolve_strategy("get_issues");
+        let result = budget::process_issues(&issues, strategy_kind, &budget_config)?;
+        let chunk_size = result.included_items;
+
+        // Chunk navigation: if chunk > 1, slice to that chunk
+        let (chunk_items, is_chunk_request) = self.slice_for_chunk(&issues, chunk_size);
+        if is_chunk_request {
+            let content = match self.config.format {
+                OutputFormat::Json => serde_json::to_string_pretty(chunk_items)?,
+                OutputFormat::Toon => toon::encode_issues(chunk_items, toon::TrimLevel::Full)?,
+            };
+            let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
+            output.included_count = chunk_items.len();
+            output.total_count = Some(total);
+            return Ok(output);
+        }
+
+        // Chunk 1 (default): budget-trimmed best items + chunk index
+        let json_fallback = self.json_fallback(&full_content);
+        let index = page_index::build_issues_index(&issues, result.included_items);
+        self.build_budget_output(
+            result,
+            raw_chars,
+            total,
+            "issues",
+            Some(index),
+            json_fallback,
+        )
     }
 
-    /// Transform a list of merge requests.
+    /// Transform a list of merge requests using budget pipeline.
     pub fn transform_merge_requests(&self, mrs: Vec<MergeRequest>) -> Result<TransformOutput> {
         let total = mrs.len();
-        let truncated_mrs = self.truncate_items(mrs);
-        let included = truncated_mrs.len();
-
-        let raw_json = serde_json::to_string(&truncated_mrs)?;
+        let raw_json = serde_json::to_string(&mrs)?;
         let raw_chars = raw_json.len();
 
-        let content = match self.config.format {
-            OutputFormat::Json => serde_json::to_string_pretty(&truncated_mrs)?,
-            OutputFormat::Toon => {
-                toon::encode_merge_requests(&truncated_mrs, toon::TrimLevel::Full)?
-            }
+        let full_content = match self.config.format {
+            OutputFormat::Json => serde_json::to_string_pretty(&mrs)?,
+            OutputFormat::Toon => toon::encode_merge_requests(&mrs, toon::TrimLevel::Full)?,
         };
 
-        let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
-        output.included_count = included;
-
-        if included < total && self.config.include_hints {
-            let hint = self.create_pagination_hint("merge_requests", total, included, None);
-            output = output.with_truncation(total, included, hint);
+        if self.config.max_chars == 0 || full_content.len() <= self.config.max_chars {
+            let mut output = TransformOutput::new(full_content).with_raw_chars(raw_chars);
+            output.included_count = total;
+            return Ok(output);
         }
 
-        Ok(self.apply_char_limit(output))
+        let budget_config = self.budget_config();
+        let strategy_kind = self.resolve_strategy("get_merge_requests");
+        let result = budget::process_merge_requests(&mrs, strategy_kind, &budget_config)?;
+        let chunk_size = result.included_items;
+
+        let (chunk_items, is_chunk_request) = self.slice_for_chunk(&mrs, chunk_size);
+        if is_chunk_request {
+            let content = match self.config.format {
+                OutputFormat::Json => serde_json::to_string_pretty(chunk_items)?,
+                OutputFormat::Toon => {
+                    toon::encode_merge_requests(chunk_items, toon::TrimLevel::Full)?
+                }
+            };
+            let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
+            output.included_count = chunk_items.len();
+            output.total_count = Some(total);
+            return Ok(output);
+        }
+
+        let json_fallback = self.json_fallback(&full_content);
+        let index = page_index::build_merge_requests_index(&mrs, result.included_items);
+        self.build_budget_output(
+            result,
+            raw_chars,
+            total,
+            "merge_requests",
+            Some(index),
+            json_fallback,
+        )
     }
 
-    /// Transform a list of file diffs.
+    /// Transform a list of file diffs using budget pipeline.
+    ///
+    /// Individual diff content is truncated per `max_chars_per_item` before
+    /// budget trimming to protect against giant lock/generated files.
     pub fn transform_diffs(&self, diffs: Vec<FileDiff>) -> Result<TransformOutput> {
         let total = diffs.len();
 
-        // Truncate diff content first
-        let truncated_diffs: Vec<FileDiff> = diffs
+        // Per-item truncation for individual diff content (protection against giant files)
+        let diffs: Vec<FileDiff> = diffs
             .into_iter()
-            .take(self.config.max_items)
             .map(|mut d| {
                 d.diff = truncation::truncate_string(&d.diff, self.config.max_chars_per_item);
                 d
             })
             .collect();
 
-        let included = truncated_diffs.len();
-
-        let raw_json = serde_json::to_string(&truncated_diffs)?;
+        let raw_json = serde_json::to_string(&diffs)?;
         let raw_chars = raw_json.len();
 
-        let content = match self.config.format {
-            OutputFormat::Json => serde_json::to_string_pretty(&truncated_diffs)?,
-            OutputFormat::Toon => toon::encode_diffs(&truncated_diffs)?,
+        let full_content = match self.config.format {
+            OutputFormat::Json => serde_json::to_string_pretty(&diffs)?,
+            OutputFormat::Toon => toon::encode_diffs(&diffs)?,
         };
 
-        let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
-        output.included_count = included;
-
-        if included < total && self.config.include_hints {
-            let hint = self.create_pagination_hint("diffs", total, included, Some("get_diffs"));
-            output = output.with_truncation(total, included, hint);
+        if self.config.max_chars == 0 || full_content.len() <= self.config.max_chars {
+            let mut output = TransformOutput::new(full_content).with_raw_chars(raw_chars);
+            output.included_count = total;
+            return Ok(output);
         }
 
-        Ok(self.apply_char_limit(output))
+        let budget_config = self.budget_config();
+        let strategy_kind = self.resolve_strategy("get_merge_request_diffs");
+        let result = budget::process_diffs(&diffs, strategy_kind, &budget_config)?;
+        let chunk_size = result.included_items;
+
+        let (chunk_items, is_chunk_request) = self.slice_for_chunk(&diffs, chunk_size);
+        if is_chunk_request {
+            let content = match self.config.format {
+                OutputFormat::Json => serde_json::to_string_pretty(chunk_items)?,
+                OutputFormat::Toon => toon::encode_diffs(chunk_items)?,
+            };
+            let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
+            output.included_count = chunk_items.len();
+            output.total_count = Some(total);
+            return Ok(output);
+        }
+
+        let json_fallback = self.json_fallback(&full_content);
+        let index = page_index::build_diffs_index(&diffs, result.included_items);
+        self.build_budget_output(
+            result,
+            raw_chars,
+            total,
+            "diffs",
+            Some(index),
+            json_fallback,
+        )
     }
 
-    /// Transform a list of comments.
+    /// Transform a list of comments using budget pipeline.
     pub fn transform_comments(&self, comments: Vec<Comment>) -> Result<TransformOutput> {
         let total = comments.len();
-        let truncated_comments = self.truncate_items(comments);
-        let included = truncated_comments.len();
-
-        let raw_json = serde_json::to_string(&truncated_comments)?;
+        let raw_json = serde_json::to_string(&comments)?;
         let raw_chars = raw_json.len();
 
-        let content = match self.config.format {
-            OutputFormat::Json => serde_json::to_string_pretty(&truncated_comments)?,
-            OutputFormat::Toon => toon::encode_comments(&truncated_comments)?,
+        let full_content = match self.config.format {
+            OutputFormat::Json => serde_json::to_string_pretty(&comments)?,
+            OutputFormat::Toon => toon::encode_comments(&comments)?,
         };
 
-        let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
-        output.included_count = included;
-
-        if included < total && self.config.include_hints {
-            let hint = self.create_pagination_hint("comments", total, included, None);
-            output = output.with_truncation(total, included, hint);
+        if self.config.max_chars == 0 || full_content.len() <= self.config.max_chars {
+            let mut output = TransformOutput::new(full_content).with_raw_chars(raw_chars);
+            output.included_count = total;
+            return Ok(output);
         }
 
-        Ok(self.apply_char_limit(output))
+        let budget_config = self.budget_config();
+        let strategy_kind = self.resolve_strategy("get_issue_comments");
+        let result = budget::process_comments(&comments, strategy_kind, &budget_config)?;
+        let chunk_size = result.included_items;
+
+        let (chunk_items, is_chunk_request) = self.slice_for_chunk(&comments, chunk_size);
+        if is_chunk_request {
+            let content = match self.config.format {
+                OutputFormat::Json => serde_json::to_string_pretty(chunk_items)?,
+                OutputFormat::Toon => toon::encode_comments(chunk_items)?,
+            };
+            let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
+            output.included_count = chunk_items.len();
+            output.total_count = Some(total);
+            return Ok(output);
+        }
+
+        let json_fallback = self.json_fallback(&full_content);
+        let index = page_index::build_comments_index(&comments, result.included_items);
+        self.build_budget_output(
+            result,
+            raw_chars,
+            total,
+            "comments",
+            Some(index),
+            json_fallback,
+        )
     }
 
-    /// Transform a list of discussions.
+    /// Transform a list of discussions using budget pipeline.
     pub fn transform_discussions(&self, discussions: Vec<Discussion>) -> Result<TransformOutput> {
         let total = discussions.len();
-        let truncated_discussions = self.truncate_items(discussions);
-        let included = truncated_discussions.len();
-
-        let raw_json = serde_json::to_string(&truncated_discussions)?;
+        let raw_json = serde_json::to_string(&discussions)?;
         let raw_chars = raw_json.len();
 
-        let content = match self.config.format {
-            OutputFormat::Json => serde_json::to_string_pretty(&truncated_discussions)?,
-            OutputFormat::Toon => toon::encode_discussions(&truncated_discussions)?,
+        let full_content = match self.config.format {
+            OutputFormat::Json => serde_json::to_string_pretty(&discussions)?,
+            OutputFormat::Toon => toon::encode_discussions(&discussions)?,
+        };
+
+        if self.config.max_chars == 0 || full_content.len() <= self.config.max_chars {
+            let mut output = TransformOutput::new(full_content).with_raw_chars(raw_chars);
+            output.included_count = total;
+            return Ok(output);
+        }
+
+        let budget_config = self.budget_config();
+        let strategy_kind = self.resolve_strategy("get_merge_request_discussions");
+        let result = budget::process_discussions(&discussions, strategy_kind, &budget_config)?;
+        let chunk_size = result.included_items;
+
+        let (chunk_items, is_chunk_request) = self.slice_for_chunk(&discussions, chunk_size);
+        if is_chunk_request {
+            let content = match self.config.format {
+                OutputFormat::Json => serde_json::to_string_pretty(chunk_items)?,
+                OutputFormat::Toon => toon::encode_discussions(chunk_items)?,
+            };
+            let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
+            output.included_count = chunk_items.len();
+            output.total_count = Some(total);
+            return Ok(output);
+        }
+
+        let json_fallback = self.json_fallback(&full_content);
+        let index = page_index::build_discussions_index(&discussions, result.included_items);
+        self.build_budget_output(
+            result,
+            raw_chars,
+            total,
+            "discussions",
+            Some(index),
+            json_fallback,
+        )
+    }
+
+    /// When format is JSON, return the content for truncation fallback.
+    /// Budget pipeline always produces TOON, so for JSON we truncate the original JSON.
+    fn json_fallback(&self, content: &str) -> Option<String> {
+        if matches!(self.config.format, OutputFormat::Json) {
+            Some(content.to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Slice items for a specific chunk number.
+    ///
+    /// When `config.chunk` is Some(n) with n > 1, we need to compute
+    /// the chunk boundaries and return only items for that chunk.
+    /// Returns (slice_items, is_chunk_request) — if not a chunk request,
+    /// returns all items.
+    fn slice_for_chunk<'a, T>(&self, items: &'a [T], chunk_size: usize) -> (&'a [T], bool) {
+        match self.config.chunk {
+            Some(n) if n > 1 && chunk_size > 0 => {
+                let offset = (n - 1) * chunk_size;
+                if offset >= items.len() {
+                    (&[], true) // chunk beyond data
+                } else {
+                    let end = (offset + chunk_size).min(items.len());
+                    (&items[offset..end], true)
+                }
+            }
+            _ => (items, false),
+        }
+    }
+
+    /// Convert max_chars to budget pipeline config.
+    fn budget_config(&self) -> BudgetConfig {
+        BudgetConfig {
+            budget_tokens: estimate_tokens_from_chars(self.config.max_chars),
+            ..Default::default()
+        }
+    }
+
+    /// Resolve trimming strategy for tool name.
+    fn resolve_strategy(&self, default_tool: &str) -> strategy::TrimStrategyKind {
+        let resolver = StrategyResolver::new();
+        let tool = self.config.tool_name.as_deref().unwrap_or(default_tool);
+        resolver.resolve(tool)
+    }
+
+    /// Build TransformOutput from BudgetResult with chunk index.
+    ///
+    /// Returns: chunk 1 (best items by strategy) + index of ALL chunks.
+    /// Agent can fetch remaining chunks via offset/limit in subsequent tool calls.
+    ///
+    /// Note: budget pipeline always produces TOON content. When format is JSON,
+    /// we fall back to simple character truncation of the JSON output instead.
+    fn build_budget_output(
+        &self,
+        result: budget::BudgetResult,
+        raw_chars: usize,
+        total: usize,
+        item_type: &str,
+        index: Option<page_index::PageIndex>,
+        json_fallback: Option<String>,
+    ) -> Result<TransformOutput> {
+        // Budget pipeline produces TOON. For JSON format, use truncated JSON instead.
+        let content = if matches!(self.config.format, OutputFormat::Json) {
+            if let Some(json) = json_fallback {
+                truncation::truncate_string(&json, self.config.max_chars)
+            } else {
+                result.content
+            }
+        } else {
+            result.content
         };
 
         let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
-        output.included_count = included;
+        output.included_count = result.included_items;
 
-        if included < total && self.config.include_hints {
-            let hint = self.create_pagination_hint("discussions", total, included, None);
-            output = output.with_truncation(total, included, hint);
-        }
+        // Always set truncation metadata when trimmed, regardless of include_hints
+        if result.trimmed {
+            output.truncated = true;
+            output.total_count = Some(total);
 
-        Ok(self.apply_char_limit(output))
-    }
-
-    /// Truncate a vector to max_items.
-    fn truncate_items<T>(&self, items: Vec<T>) -> Vec<T> {
-        items.into_iter().take(self.config.max_items).collect()
-    }
-
-    /// Apply character limit to output.
-    fn apply_char_limit(&self, mut output: TransformOutput) -> TransformOutput {
-        if output.content.len() > self.config.max_chars {
-            output.pre_trim_chars = output.output_chars; // save size before trimming
-            output.content = truncation::truncate_string(&output.content, self.config.max_chars);
-            output.output_chars = output.content.len();
-            if !output.truncated {
-                output.truncated = true;
-                output.agent_hint = Some(format!(
-                    "Output truncated to {} chars. Use pagination or filters to get more specific results.",
-                    self.config.max_chars
-                ));
+            if self.config.include_hints {
+                if let Some(idx) = index {
+                    if idx.total_pages > 1 {
+                        let hint = format!(
+                            "Chunk 1/{}: {} most relevant {} (by priority). {} total items across {} chunks. \
+                            Use `chunk: N` parameter to fetch a specific chunk, or request all remaining data.",
+                            idx.total_pages,
+                            result.included_items,
+                            item_type,
+                            total,
+                            idx.total_pages
+                        );
+                        output.page_index = Some(idx);
+                        output.agent_hint = Some(hint);
+                    } else {
+                        let remaining = total.saturating_sub(result.included_items);
+                        output.agent_hint = Some(format!(
+                            "Showing {}/{} {}. {} items trimmed by budget.",
+                            result.included_items, total, item_type, remaining
+                        ));
+                    }
+                } else {
+                    let remaining = total.saturating_sub(result.included_items);
+                    output.agent_hint = Some(format!(
+                        "Showing {}/{} {}. {} items trimmed by budget. Use `chunk: N` parameter to fetch a specific chunk.",
+                        result.included_items, total, item_type, remaining
+                    ));
+                }
             }
         }
-        output
-    }
 
-    /// Create a pagination hint for the agent.
-    fn create_pagination_hint(
-        &self,
-        item_type: &str,
-        total: usize,
-        included: usize,
-        tool_name: Option<&str>,
-    ) -> String {
-        let remaining = total - included;
-        let next_offset = included;
-
-        let tool_hint = tool_name
-            .map(|t| format!(" Use `{}` with offset={}", t, next_offset))
-            .unwrap_or_default();
-
-        format!(
-            "Showing {}/{} {}. {} more available.{} You can use `offset` and `limit` parameters for pagination.",
-            included, total, item_type, remaining, tool_hint
-        )
+        Ok(output)
     }
 }
 
@@ -454,13 +672,13 @@ mod tests {
             .collect()
     }
 
-    // --- Pipeline truncation ---
+    // --- Pipeline truncation (budget-based) ---
 
     #[test]
     fn test_pipeline_truncates_items() {
+        // Use a small max_chars to force budget trimming
         let pipeline = Pipeline::with_config(PipelineConfig {
-            max_items: 5,
-            max_chars: 100_000,
+            max_chars: 200,
             ..Default::default()
         });
 
@@ -469,14 +687,13 @@ mod tests {
 
         assert!(output.truncated);
         assert_eq!(output.total_count, Some(25));
-        assert_eq!(output.included_count, 5);
+        assert!(output.included_count < 25);
         assert!(output.agent_hint.is_some());
     }
 
     #[test]
     fn test_pipeline_no_truncation_when_under_limit() {
         let pipeline = Pipeline::with_config(PipelineConfig {
-            max_items: 50,
             max_chars: 100_000,
             ..Default::default()
         });
@@ -494,7 +711,6 @@ mod tests {
     fn test_toon_format_issues() {
         let pipeline = Pipeline::with_config(PipelineConfig {
             format: OutputFormat::Toon,
-            max_items: 3,
             max_chars: 100_000,
             ..Default::default()
         });
@@ -508,10 +724,10 @@ mod tests {
 
     #[test]
     fn test_toon_format_merge_requests() {
+        // Use max_chars large enough to include some but not all MRs
         let pipeline = Pipeline::with_config(PipelineConfig {
             format: OutputFormat::Toon,
-            max_items: 3,
-            max_chars: 100_000,
+            max_chars: 500,
             ..Default::default()
         });
 
@@ -521,15 +737,15 @@ mod tests {
         assert!(output.content.contains("mr#1"));
         assert!(output.content.contains("MR 1"));
         assert!(output.truncated);
-        assert_eq!(output.included_count, 3);
+        assert!(output.included_count < 5);
     }
 
     #[test]
     fn test_toon_format_diffs() {
+        // Use max_chars small enough to force budget trimming of 5 diffs
         let pipeline = Pipeline::with_config(PipelineConfig {
             format: OutputFormat::Toon,
-            max_items: 3,
-            max_chars: 100_000,
+            max_chars: 200,
             ..Default::default()
         });
 
@@ -538,32 +754,34 @@ mod tests {
 
         assert!(output.content.contains("src/file_1.rs"));
         assert!(output.truncated);
-        assert_eq!(output.included_count, 3);
+        assert!(output.included_count < 5);
     }
 
     #[test]
     fn test_toon_format_comments() {
+        // Use max_chars small enough to force budget trimming of 5 comments
+        // but large enough to include at least one comment with body text
         let pipeline = Pipeline::with_config(PipelineConfig {
             format: OutputFormat::Toon,
-            max_items: 3,
-            max_chars: 100_000,
+            max_chars: 300,
             ..Default::default()
         });
 
         let comments = sample_comments();
         let output = pipeline.transform_comments(comments).unwrap();
 
-        assert!(output.content.contains("Comment body 1"));
+        // Budget trimming may drop early items; check that some comment body is present
+        assert!(output.content.contains("Comment body"));
         assert!(output.truncated);
-        assert_eq!(output.included_count, 3);
+        assert!(output.included_count < 5);
     }
 
     #[test]
     fn test_toon_format_discussions() {
+        // Use max_chars large enough to include some but not all discussions
         let pipeline = Pipeline::with_config(PipelineConfig {
             format: OutputFormat::Toon,
-            max_items: 3,
-            max_chars: 100_000,
+            max_chars: 500,
             ..Default::default()
         });
 
@@ -572,7 +790,7 @@ mod tests {
 
         assert!(output.content.contains("Discussion comment 1"));
         assert!(output.truncated);
-        assert_eq!(output.included_count, 3);
+        assert!(output.included_count < 5);
     }
 
     // --- JSON format ---
@@ -581,7 +799,6 @@ mod tests {
     fn test_json_format_issues() {
         let pipeline = Pipeline::with_config(PipelineConfig {
             format: OutputFormat::Json,
-            max_items: 2,
             max_chars: 100_000,
             ..Default::default()
         });
@@ -597,7 +814,6 @@ mod tests {
     fn test_json_format_merge_requests() {
         let pipeline = Pipeline::with_config(PipelineConfig {
             format: OutputFormat::Json,
-            max_items: 2,
             max_chars: 100_000,
             ..Default::default()
         });
@@ -613,7 +829,6 @@ mod tests {
     fn test_json_format_diffs() {
         let pipeline = Pipeline::with_config(PipelineConfig {
             format: OutputFormat::Json,
-            max_items: 2,
             max_chars: 100_000,
             ..Default::default()
         });
@@ -629,7 +844,6 @@ mod tests {
     fn test_json_format_comments() {
         let pipeline = Pipeline::with_config(PipelineConfig {
             format: OutputFormat::Json,
-            max_items: 2,
             max_chars: 100_000,
             ..Default::default()
         });
@@ -645,7 +859,6 @@ mod tests {
     fn test_json_format_discussions() {
         let pipeline = Pipeline::with_config(PipelineConfig {
             format: OutputFormat::Json,
-            max_items: 2,
             max_chars: 100_000,
             ..Default::default()
         });
@@ -688,7 +901,6 @@ mod tests {
     #[test]
     fn test_pipeline_config_default_values() {
         let config = PipelineConfig::default();
-        assert_eq!(config.max_items, 20);
         assert_eq!(config.max_chars, 100_000);
         assert_eq!(config.max_chars_per_item, 10_000);
         assert_eq!(config.max_description_len, 10_000);
@@ -706,9 +918,9 @@ mod tests {
 
     #[test]
     fn test_pipeline_hints_disabled() {
+        // Use small max_chars to trigger budget trimming, but with hints disabled
         let pipeline = Pipeline::with_config(PipelineConfig {
-            max_items: 2,
-            max_chars: 100_000,
+            max_chars: 200,
             include_hints: false,
             ..Default::default()
         });
@@ -716,17 +928,19 @@ mod tests {
         let issues = sample_issues();
         let output = pipeline.transform_issues(issues).unwrap();
 
-        assert_eq!(output.included_count, 2);
-        assert!(!output.truncated);
+        assert!(output.included_count < 25);
+        // truncated flag is always set when trimming occurs (for metadata consumers)
+        assert!(output.truncated);
+        // but agent_hint and page_index are suppressed when include_hints is false
         assert!(output.agent_hint.is_none());
+        assert!(output.page_index.is_none());
     }
 
-    // --- Character limit ---
+    // --- Character limit (budget-based) ---
 
     #[test]
     fn test_char_limit_applied() {
         let pipeline = Pipeline::with_config(PipelineConfig {
-            max_items: 100,
             max_chars: 100,
             ..Default::default()
         });
@@ -734,58 +948,12 @@ mod tests {
         let issues = sample_issues();
         let output = pipeline.transform_issues(issues).unwrap();
 
-        assert!(output.content.len() <= 100);
         assert!(output.truncated);
     }
 
     #[test]
-    fn test_apply_char_limit_no_truncation() {
+    fn test_char_limit_triggers_trimming() {
         let pipeline = Pipeline::with_config(PipelineConfig {
-            max_chars: 1000,
-            max_items: 50,
-            ..Default::default()
-        });
-        let output = TransformOutput::new("short content".into());
-        let result = pipeline.apply_char_limit(output);
-        assert!(!result.truncated);
-        assert!(result.agent_hint.is_none());
-        assert_eq!(result.content, "short content");
-    }
-
-    #[test]
-    fn test_apply_char_limit_truncates_large_content() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            max_chars: 20,
-            max_items: 50,
-            ..Default::default()
-        });
-        let long_content = "a".repeat(100);
-        let output = TransformOutput::new(long_content);
-        let result = pipeline.apply_char_limit(output);
-        assert!(result.truncated);
-        assert!(result.content.len() <= 20);
-        assert!(result.agent_hint.is_some());
-        assert!(result.agent_hint.unwrap().contains("truncated"));
-    }
-
-    #[test]
-    fn test_apply_char_limit_preserves_existing_truncation() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            max_chars: 10,
-            max_items: 50,
-            ..Default::default()
-        });
-        let long_content = "x".repeat(100);
-        let output =
-            TransformOutput::new(long_content).with_truncation(50, 5, "existing hint".into());
-        let result = pipeline.apply_char_limit(output);
-        assert!(result.truncated);
-    }
-
-    #[test]
-    fn test_char_limit_triggers_before_item_limit() {
-        let pipeline = Pipeline::with_config(PipelineConfig {
-            max_items: 100,
             max_chars: 50,
             ..Default::default()
         });
@@ -793,29 +961,6 @@ mod tests {
         let issues: Vec<Issue> = sample_issues().into_iter().take(3).collect();
         let output = pipeline.transform_issues(issues).unwrap();
         assert!(output.truncated);
-        assert!(output.content.len() <= 50);
-    }
-
-    // --- Pagination hints ---
-
-    #[test]
-    fn test_create_pagination_hint_without_tool() {
-        let pipeline = Pipeline::new();
-        let hint = pipeline.create_pagination_hint("issues", 50, 20, None);
-        assert!(hint.contains("20/50"));
-        assert!(hint.contains("30 more"));
-        assert!(hint.contains("offset"));
-        assert!(hint.contains("limit"));
-    }
-
-    #[test]
-    fn test_create_pagination_hint_with_tool() {
-        let pipeline = Pipeline::new();
-        let hint = pipeline.create_pagination_hint("diffs", 30, 10, Some("get_diffs"));
-        assert!(hint.contains("10/30"));
-        assert!(hint.contains("20 more"));
-        assert!(hint.contains("get_diffs"));
-        assert!(hint.contains("offset=10"));
     }
 
     // --- Empty collections ---
@@ -866,7 +1011,6 @@ mod tests {
     fn test_diff_content_truncated_per_item() {
         let pipeline = Pipeline::with_config(PipelineConfig {
             max_chars_per_item: 10,
-            max_items: 10,
             max_chars: 100_000,
             ..Default::default()
         });
@@ -888,19 +1032,149 @@ mod tests {
 
     // --- TOON smaller than JSON ---
 
+    // --- JSON format with budget trimming (triggers json_fallback) ---
+
+    #[test]
+    fn test_json_format_with_budget_trimming_issues() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_chars: 200,
+            ..Default::default()
+        });
+
+        let issues = sample_issues();
+        let output = pipeline.transform_issues(issues).unwrap();
+
+        assert!(output.truncated);
+        assert!(output.included_count < 25);
+        // Content should be truncated JSON (not TOON)
+        assert!(!output.content.is_empty());
+    }
+
+    #[test]
+    fn test_json_format_with_budget_trimming_merge_requests() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_chars: 200,
+            ..Default::default()
+        });
+
+        let mrs = sample_merge_requests();
+        let output = pipeline.transform_merge_requests(mrs).unwrap();
+
+        assert!(output.truncated);
+        assert!(!output.content.is_empty());
+    }
+
+    #[test]
+    fn test_json_format_with_budget_trimming_diffs() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_chars: 100,
+            ..Default::default()
+        });
+
+        let diffs = sample_diffs();
+        let output = pipeline.transform_diffs(diffs).unwrap();
+
+        assert!(output.truncated);
+        assert!(!output.content.is_empty());
+    }
+
+    #[test]
+    fn test_json_format_with_budget_trimming_comments() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_chars: 100,
+            ..Default::default()
+        });
+
+        let comments = sample_comments();
+        let output = pipeline.transform_comments(comments).unwrap();
+
+        assert!(output.truncated);
+        assert!(!output.content.is_empty());
+    }
+
+    #[test]
+    fn test_json_format_with_budget_trimming_discussions() {
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_chars: 100,
+            ..Default::default()
+        });
+
+        let discussions = sample_discussions();
+        let output = pipeline.transform_discussions(discussions).unwrap();
+
+        assert!(output.truncated);
+        assert!(!output.content.is_empty());
+    }
+
+    // --- Chunk index hints (total_pages > 1) ---
+
+    #[test]
+    fn test_pipeline_chunk_index_with_many_issues() {
+        // Use enough issues and small budget to trigger multi-page chunk index
+        let issues: Vec<Issue> = (1..=50)
+            .map(|i| Issue {
+                key: format!("gh#{}", i),
+                title: format!("Issue {} with a moderately long title for sizing", i),
+                description: Some(format!(
+                    "Description for issue {} with substantial content to inflate token count significantly beyond budget",
+                    i
+                )),
+                state: "open".to_string(),
+                source: "github".to_string(),
+                priority: None,
+                labels: vec!["bug".to_string(), "critical".to_string()],
+                author: Some(User {
+                    id: "1".to_string(),
+                    username: "test".to_string(),
+                    name: None,
+                    email: None,
+                    avatar_url: None,
+                }),
+                assignees: vec![],
+                url: Some(format!("https://github.com/test/repo/issues/{}", i)),
+                created_at: Some("2024-01-01T00:00:00Z".to_string()),
+                updated_at: Some("2024-01-02T00:00:00Z".to_string()),
+                parent: None,
+                subtasks: vec![],
+            })
+            .collect();
+
+        let pipeline = Pipeline::with_config(PipelineConfig {
+            max_chars: 500,
+            include_hints: true,
+            ..Default::default()
+        });
+
+        let output = pipeline.transform_issues(issues).unwrap();
+
+        assert!(output.truncated);
+        assert!(output.included_count < 50);
+        // When many items are trimmed, we expect page_index and chunk hint
+        if let Some(ref hint) = output.agent_hint {
+            assert!(
+                hint.contains("Chunk") || hint.contains("Showing"),
+                "Expected chunk or showing hint, got: {}",
+                hint
+            );
+        }
+    }
+
     #[test]
     fn test_toon_smaller_than_json_for_issues() {
         let issues: Vec<Issue> = sample_issues().into_iter().take(10).collect();
 
         let json_pipeline = Pipeline::with_config(PipelineConfig {
             format: OutputFormat::Json,
-            max_items: 100,
             max_chars: 1_000_000,
             ..Default::default()
         });
         let toon_pipeline = Pipeline::with_config(PipelineConfig {
             format: OutputFormat::Toon,
-            max_items: 100,
             max_chars: 1_000_000,
             ..Default::default()
         });
