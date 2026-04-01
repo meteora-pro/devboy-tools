@@ -445,8 +445,8 @@ fn priority_to_clickup(priority: &str) -> Option<u8> {
 /// ```json
 /// { "task_id": "abc", "depends_on": "xyz", "type": 1, ... }
 /// ```
-/// - If `depends_on` == this task's ID → this task is blocked by `task_id` (blocked_by)
-/// - If `dependency_of` == this task's ID → this task blocks `task_id` (blocks)
+/// - If `depends_on` == this task's ID → `task_id` depends on this task, so this task **blocks** `task_id`
+/// - If `dependency_of` == this task's ID → this task depends on `task_id`, so this task is **blocked by** `task_id`
 fn map_dependencies(
     deps: &[serde_json::Value],
     this_task_id: &str,
@@ -523,17 +523,26 @@ fn map_dependencies(
     (blocked_by, blocks)
 }
 
-/// Map ClickUp linked tasks to related_to IssueLinks.
+/// Map ClickUp linked tasks to IssueLinks, preserving dependency semantics when available.
 fn map_linked_tasks(links: &[ClickUpLinkedTask]) -> Vec<IssueLink> {
     links
         .iter()
-        .map(|link| IssueLink {
-            issue: Issue {
-                key: format!("CU-{}", link.task_id),
-                source: "clickup".to_string(),
-                ..Default::default()
-            },
-            link_type: "relates_to".to_string(),
+        .map(|link| {
+            let link_type = match link.link_type.as_deref() {
+                Some("blocked_by") => "blocked_by",
+                Some("blocking") => "blocks",
+                _ => "relates_to",
+            }
+            .to_string();
+
+            IssueLink {
+                issue: Issue {
+                    key: format!("CU-{}", link.task_id),
+                    source: "clickup".to_string(),
+                    ..Default::default()
+                },
+                link_type,
+            }
         })
         .collect()
 }
@@ -924,7 +933,7 @@ impl IssueProvider for ClickUpClient {
     async fn get_issue_relations(&self, issue_key: &str) -> Result<IssueRelations> {
         let url = self.task_url(issue_key)?;
         let task: ClickUpTask = self
-            .get_with_query(&url, &[("subtasks", "true"), ("include_closed", "true")])
+            .get_with_query(&url, &[("include_subtasks", "true"), ("include_closed", "true")])
             .await?;
 
         let mut relations = IssueRelations::default();
