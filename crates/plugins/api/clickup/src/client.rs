@@ -2,16 +2,16 @@
 
 use async_trait::async_trait;
 use devboy_core::{
-    Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, IssueStatus,
-    MergeRequestProvider, PipelineProvider, Provider, Result, UpdateIssueInput, User,
+    Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueLink, IssueProvider, IssueRelations,
+    IssueStatus, MergeRequestProvider, PipelineProvider, Provider, Result, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
 use crate::DEFAULT_CLICKUP_URL;
 use crate::types::{
-    ClickUpComment, ClickUpCommentList, ClickUpListInfo, ClickUpPriority, ClickUpTask,
-    ClickUpTaskList, ClickUpUser, CreateCommentRequest, CreateCommentResponse, CreateTaskRequest,
-    UpdateTaskRequest,
+    ClickUpComment, ClickUpCommentList, ClickUpLinkedTask, ClickUpListInfo, ClickUpPriority,
+    ClickUpTask, ClickUpTaskList, ClickUpUser, CreateCommentRequest, CreateCommentResponse,
+    CreateTaskRequest, UpdateTaskRequest,
 };
 
 /// Maximum number of tasks per page in ClickUp API.
@@ -131,6 +131,64 @@ impl ClickUpClient {
         self.handle_response(response).await
     }
 
+    /// Make an authenticated DELETE request.
+    /// Returns `Ok(())` on success. Treats 404 as success (idempotent delete).
+    async fn delete(&self, url: &str) -> Result<()> {
+        debug!(url = url, "ClickUp DELETE request");
+
+        let response = self
+            .request(reqwest::Method::DELETE, url)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            // 404 = already removed, treat as success
+            return Ok(());
+        }
+        if !status.is_success() {
+            let status_code = status.as_u16();
+            let message = response.text().await.unwrap_or_default();
+            warn!(
+                status = status_code,
+                message = message,
+                "ClickUp API error response"
+            );
+            return Err(Error::from_status(status_code, message));
+        }
+        Ok(())
+    }
+
+    /// Make an authenticated DELETE request with query parameters.
+    /// Returns `Ok(())` on success. Treats 404 as success (idempotent delete).
+    async fn delete_with_query(&self, url: &str, params: &[(&str, &str)]) -> Result<()> {
+        debug!(url = url, params = ?params, "ClickUp DELETE request with query");
+
+        let response = self
+            .request(reqwest::Method::DELETE, url)
+            .query(params)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        if !status.is_success() {
+            let status_code = status.as_u16();
+            let message = response.text().await.unwrap_or_default();
+            warn!(
+                status = status_code,
+                message = message,
+                "ClickUp API error response"
+            );
+            return Err(Error::from_status(status_code, message));
+        }
+        Ok(())
+    }
+
     /// Handle response and map errors.
     async fn handle_response<T: serde::de::DeserializeOwned>(
         &self,
@@ -189,6 +247,20 @@ impl ClickUpClient {
             Ok(raw_id.to_string())
         } else {
             Ok(key.to_string())
+        }
+    }
+
+    /// Resolve a task key to its native ClickUp task ID by fetching the task if needed.
+    /// For `CU-{id}` keys, strips the prefix (fast path).
+    /// For custom IDs (e.g., `DEV-42`), fetches the task to get the native `.id`.
+    /// Use this when the native ID is required in URL path segments.
+    async fn resolve_to_native_id(&self, key: &str) -> Result<String> {
+        if let Some(raw_id) = key.strip_prefix("CU-") {
+            Ok(raw_id.to_string())
+        } else {
+            let url = self.task_url(key)?;
+            let task: ClickUpTask = self.get(&url).await?;
+            Ok(task.id)
         }
     }
 
@@ -365,6 +437,114 @@ fn priority_to_clickup(priority: &str) -> Option<u8> {
         "low" => Some(4),
         _ => None,
     }
+}
+
+/// Map ClickUp dependencies (serde_json::Value) to (blocked_by, blocks) IssueLink vectors.
+///
+/// ClickUp dependency JSON shape (observed):
+/// ```json
+/// { "task_id": "abc", "depends_on": "xyz", "type": 1, ... }
+/// ```
+/// - If `depends_on` == this task's ID → `task_id` depends on this task, so this task **blocks** `task_id`
+/// - If `dependency_of` == this task's ID → this task depends on `task_id`, so this task is **blocked by** `task_id`
+fn map_dependencies(
+    deps: &[serde_json::Value],
+    this_task_id: &str,
+) -> (Vec<IssueLink>, Vec<IssueLink>) {
+    let mut blocked_by = Vec::new();
+    let mut blocks = Vec::new();
+
+    for dep in deps {
+        let task_id = dep
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let depends_on = dep
+            .get("depends_on")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let dependency_of = dep
+            .get("dependency_of")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+
+        let other_id = if !task_id.is_empty() {
+            task_id
+        } else {
+            continue;
+        };
+
+        let other_issue = Issue {
+            key: format!("CU-{other_id}"),
+            source: "clickup".to_string(),
+            ..Default::default()
+        };
+
+        if depends_on == this_task_id {
+            // task_id depends on this task → this task blocks task_id
+            blocks.push(IssueLink {
+                issue: other_issue,
+                link_type: "blocks".to_string(),
+            });
+        } else if dependency_of == this_task_id {
+            // task_id is dependency of this task → this task is blocked by task_id
+            blocked_by.push(IssueLink {
+                issue: other_issue,
+                link_type: "blocked_by".to_string(),
+            });
+        } else {
+            // Fallback: try to infer from "type" field
+            // ClickUp type 1 = waiting on, type 0 = blocking
+            let dep_type = dep.get("type").and_then(|v| v.as_u64());
+            match dep_type {
+                Some(1) => {
+                    blocked_by.push(IssueLink {
+                        issue: other_issue,
+                        link_type: "blocked_by".to_string(),
+                    });
+                }
+                Some(0) => {
+                    blocks.push(IssueLink {
+                        issue: other_issue,
+                        link_type: "blocks".to_string(),
+                    });
+                }
+                _ => {
+                    // Unknown direction, add as blocked_by by default
+                    blocked_by.push(IssueLink {
+                        issue: other_issue,
+                        link_type: "blocked_by".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    (blocked_by, blocks)
+}
+
+/// Map ClickUp linked tasks to IssueLinks, preserving dependency semantics when available.
+fn map_linked_tasks(links: &[ClickUpLinkedTask]) -> Vec<IssueLink> {
+    links
+        .iter()
+        .map(|link| {
+            let link_type = match link.link_type.as_deref() {
+                Some("blocked_by") => "blocked_by",
+                Some("blocking") => "blocks",
+                _ => "relates_to",
+            }
+            .to_string();
+
+            IssueLink {
+                issue: Issue {
+                    key: format!("CU-{}", link.task_id),
+                    source: "clickup".to_string(),
+                    ..Default::default()
+                },
+                link_type,
+            }
+        })
+        .collect()
 }
 
 // =============================================================================
@@ -573,10 +753,13 @@ impl IssueProvider for ClickUpClient {
         };
 
         // Resolve parent key to native ClickUp task ID if provided.
-        // Note: ClickUp API does not support removing parent (convert subtask → task).
-        // That operation is only available through the ClickUp UI.
+        // "none" or "" → detach from parent (convert subtask → standalone task).
+        // ClickUp API accepts {"parent": "none"} to remove parent (undocumented but verified).
         let parent = match input.parent_id {
-            Some(ref parent_key) if !parent_key.is_empty() => {
+            Some(ref parent_key) if parent_key == "none" || parent_key.is_empty() => {
+                Some("none".to_string())
+            }
+            Some(ref parent_key) => {
                 if let Some(stripped) = parent_key.strip_prefix("CU-") {
                     Some(stripped.to_string())
                 } else {
@@ -585,7 +768,7 @@ impl IssueProvider for ClickUpClient {
                     Some(parent_task.id)
                 }
             }
-            _ => None,
+            None => None,
         };
 
         let request = UpdateTaskRequest {
@@ -667,24 +850,34 @@ impl IssueProvider for ClickUpClient {
     }
 
     async fn link_issues(&self, source_key: &str, target_key: &str, link_type: &str) -> Result<()> {
-        let source_id = self.resolve_task_id(source_key)?;
-        let target_id = self.resolve_task_id(target_key)?;
-
         match link_type {
+            "subtask" => {
+                // source becomes subtask of target → set parent on source task
+                let source_url = self.task_url(source_key)?;
+                let target_native_id = self.resolve_to_native_id(target_key).await?;
+                let body = serde_json::json!({ "parent": target_native_id });
+                let _: ClickUpTask = self.put(&source_url, &body).await?;
+            }
             "blocks" => {
                 // source blocks target → target depends_on source
+                let source_id = self.resolve_task_id(source_key)?;
+                let target_id = self.resolve_task_id(target_key)?;
                 let url = format!("{}/task/{}/dependency", self.base_url, target_id);
                 let body = serde_json::json!({ "depends_on": source_id });
                 let _: serde_json::Value = self.post(&url, &body).await?;
             }
             "blocked_by" => {
                 // source is blocked by target → source depends_on target
+                let source_id = self.resolve_task_id(source_key)?;
+                let target_id = self.resolve_task_id(target_key)?;
                 let url = format!("{}/task/{}/dependency", self.base_url, source_id);
                 let body = serde_json::json!({ "depends_on": target_id });
                 let _: serde_json::Value = self.post(&url, &body).await?;
             }
             _ => {
-                // Link tasks (non-dependency relationship)
+                // Link tasks (bidirectional, non-dependency relationship)
+                let source_id = self.resolve_to_native_id(source_key).await?;
+                let target_id = self.resolve_to_native_id(target_key).await?;
                 let url = format!("{}/task/{}/link/{}", self.base_url, source_id, target_id);
                 let body = serde_json::json!({});
                 let _: serde_json::Value = self.post(&url, &body).await?;
@@ -692,6 +885,99 @@ impl IssueProvider for ClickUpClient {
         }
 
         Ok(())
+    }
+
+    async fn unlink_issues(
+        &self,
+        source_key: &str,
+        target_key: &str,
+        link_type: &str,
+    ) -> Result<()> {
+        match link_type {
+            "subtask" => {
+                // Detach source from parent (convert subtask → standalone task).
+                // Use native task ID + "parent": "none" (undocumented but verified working).
+                let source_id = self.resolve_to_native_id(source_key).await?;
+                let url = format!("{}/task/{}", self.base_url, source_id);
+                let body = serde_json::json!({ "parent": "none" });
+                let _: ClickUpTask = self.put(&url, &body).await?;
+            }
+            "blocks" => {
+                // Remove: source blocks target → target depends_on source
+                let source_id = self.resolve_to_native_id(source_key).await?;
+                let target_id = self.resolve_to_native_id(target_key).await?;
+                let url = format!("{}/task/{}/dependency", self.base_url, target_id);
+                self.delete_with_query(&url, &[("depends_on", &source_id)])
+                    .await?;
+            }
+            "blocked_by" => {
+                // Remove: source is blocked by target → source depends_on target
+                let source_id = self.resolve_to_native_id(source_key).await?;
+                let target_id = self.resolve_to_native_id(target_key).await?;
+                let url = format!("{}/task/{}/dependency", self.base_url, source_id);
+                self.delete_with_query(&url, &[("depends_on", &target_id)])
+                    .await?;
+            }
+            _ => {
+                // Remove bidirectional link
+                let source_id = self.resolve_to_native_id(source_key).await?;
+                let target_id = self.resolve_to_native_id(target_key).await?;
+                let url = format!("{}/task/{}/link/{}", self.base_url, source_id, target_id);
+                self.delete(&url).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn get_issue_relations(&self, issue_key: &str) -> Result<IssueRelations> {
+        let url = self.task_url(issue_key)?;
+        let task: ClickUpTask = self
+            .get_with_query(
+                &url,
+                &[("include_subtasks", "true"), ("include_closed", "true")],
+            )
+            .await?;
+
+        let mut relations = IssueRelations::default();
+
+        // Parent: fetch parent task for full Issue data
+        if let Some(ref parent_id) = task.parent {
+            let parent_url = format!("{}/task/{}", self.base_url, parent_id);
+            match self.get::<ClickUpTask>(&parent_url).await {
+                Ok(parent_task) => {
+                    relations.parent = Some(map_task(&parent_task));
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to fetch parent task {}: {}", parent_id, e);
+                    // Still include a minimal parent reference
+                    relations.parent = Some(Issue {
+                        key: format!("CU-{parent_id}"),
+                        source: "clickup".to_string(),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+
+        // Subtasks
+        if let Some(ref subtasks) = task.subtasks {
+            relations.subtasks = subtasks.iter().map(map_task).collect();
+        }
+
+        // Dependencies → blocked_by / blocks
+        if let Some(ref deps) = task.dependencies {
+            let (blocked_by, blocks) = map_dependencies(deps, &task.id);
+            relations.blocked_by = blocked_by;
+            relations.blocks = blocks;
+        }
+
+        // Linked tasks → related_to
+        if let Some(ref linked) = task.linked_tasks {
+            relations.related_to = map_linked_tasks(linked);
+        }
+
+        Ok(relations)
     }
 
     fn provider_name(&self) -> &'static str {
@@ -833,6 +1119,8 @@ mod tests {
             date_updated: Some("1704153600000".to_string()),
             parent: None,
             subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
         };
 
         let issue = map_task(&task);
@@ -877,6 +1165,8 @@ mod tests {
             date_updated: None,
             parent: None,
             subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
         };
 
         let issue = map_task(&task);
@@ -904,6 +1194,8 @@ mod tests {
             date_updated: None,
             parent: None,
             subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
         };
 
         let issue = map_task(&task);
@@ -1083,6 +1375,8 @@ mod tests {
             date_updated: None,
             parent: None,
             subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
         };
 
         let issue = map_task(&task);
@@ -1110,6 +1404,8 @@ mod tests {
             date_updated: None,
             parent: None,
             subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
         };
 
         let issue = map_task(&task);
@@ -1137,6 +1433,8 @@ mod tests {
             date_updated: None,
             parent: Some("parent123".to_string()),
             subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
         };
 
         let issue = map_task(&task);
@@ -1165,6 +1463,8 @@ mod tests {
             date_updated: None,
             parent: Some("epic1".to_string()),
             subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
         };
 
         let task = ClickUpTask {
@@ -1188,6 +1488,8 @@ mod tests {
             date_updated: None,
             parent: None,
             subtasks: Some(vec![subtask]),
+            dependencies: None,
+            linked_tasks: None,
         };
 
         let issue = map_task(&task);
@@ -1220,6 +1522,8 @@ mod tests {
             date_updated: None,
             parent: None,
             subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
         };
 
         let issue = map_task(&task);
