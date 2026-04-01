@@ -53,6 +53,13 @@ pub struct ClickUpTask {
     pub parent: Option<String>,
     #[serde(default)]
     pub subtasks: Option<Vec<ClickUpTask>>,
+    /// Dependencies (blocking/waiting relationships).
+    /// Uses `serde_json::Value` for flexible parsing of undocumented API shape.
+    #[serde(default)]
+    pub dependencies: Option<Vec<serde_json::Value>>,
+    /// Linked tasks (non-dependency relationships).
+    #[serde(default)]
+    pub linked_tasks: Option<Vec<ClickUpLinkedTask>>,
 }
 
 /// ClickUp task status.
@@ -76,6 +83,16 @@ pub struct ClickUpPriority {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpTag {
     pub name: String,
+}
+
+/// ClickUp linked task (non-dependency relationship).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClickUpLinkedTask {
+    pub task_id: String,
+    pub link_id: String,
+    /// Dependency type: "blocked_by", "blocking", or null (plain link).
+    #[serde(default)]
+    pub link_type: Option<String>,
 }
 
 // =============================================================================

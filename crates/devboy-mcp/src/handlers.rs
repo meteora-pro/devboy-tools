@@ -281,7 +281,7 @@ define_tools! {
                 },
                 "parentId": {
                     "type": "string",
-                    "description": "Parent issue key to move task as subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp."
+                    "description": "Parent issue key to move task as subtask (e.g., 'CU-abc123' or 'DEV-42'). Set to 'none' to detach from parent (convert subtask to standalone task). Only supported by ClickUp."
                 },
                 "markdown": {
                     "type": "boolean",
@@ -305,6 +305,54 @@ define_tools! {
                 "body": {
                     "type": "string",
                     "description": "Comment text"
+                }
+            }
+        }
+    },
+
+    "link_issues" => handle_link_issues {
+        category: ToolCategory::Issues,
+        description: "Create a link between two issues. Supports ClickUp dependencies and parent/subtask relationships.\n\nLink types:\n- blocks: Source issue blocks target issue\n- blocked_by: Source issue is blocked by target issue\n- relates_to: Related issues (bidirectional link, no dependency)\n- subtask: Source becomes subtask of target. Parent and child must be in the same List (ClickUp).",
+        schema: {
+            "type": "object",
+            "required": ["source_issue_key", "target_issue_key", "link_type"],
+            "properties": {
+                "source_issue_key": {
+                    "type": "string",
+                    "description": "Source issue key (e.g., 'DEV-123', 'CU-abc')"
+                },
+                "target_issue_key": {
+                    "type": "string",
+                    "description": "Target issue key (e.g., 'DEV-456', 'CU-xyz')"
+                },
+                "link_type": {
+                    "type": "string",
+                    "enum": ["blocks", "blocked_by", "relates_to", "subtask"],
+                    "description": "Type of link to create"
+                }
+            }
+        }
+    },
+
+    "unlink_issues" => handle_unlink_issues {
+        category: ToolCategory::Issues,
+        description: "Remove a link between two issues.\n\nLink types:\n- blocks: Remove 'blocks' dependency\n- blocked_by: Remove 'blocked by' dependency\n- relates_to: Remove bidirectional link\n- subtask: Detach source from parent (convert to standalone task)",
+        schema: {
+            "type": "object",
+            "required": ["source_issue_key", "target_issue_key", "link_type"],
+            "properties": {
+                "source_issue_key": {
+                    "type": "string",
+                    "description": "Source issue key (e.g., 'DEV-123', 'CU-abc')"
+                },
+                "target_issue_key": {
+                    "type": "string",
+                    "description": "Target issue key (e.g., 'DEV-456', 'CU-xyz')"
+                },
+                "link_type": {
+                    "type": "string",
+                    "enum": ["blocks", "blocked_by", "relates_to", "subtask"],
+                    "description": "Type of link to remove"
                 }
             }
         }
@@ -1050,6 +1098,106 @@ impl ToolHandler {
         ToolCallResult::error(format!("Failed to add comment to issue: {}", params.key))
     }
 
+    async fn handle_link_issues(&self, arguments: Option<Value>) -> ToolCallResult {
+        let params: LinkIssuesParams = match arguments {
+            Some(v) => match serde_json::from_value(v) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("Invalid parameters: {}", e)),
+            },
+            None => {
+                return ToolCallResult::error(
+                    "Missing required parameters: source_issue_key, target_issue_key, link_type"
+                        .to_string(),
+                );
+            }
+        };
+
+        if self.providers.is_empty() {
+            return ToolCallResult::error("No providers configured".to_string());
+        }
+
+        for provider in &self.providers {
+            match provider
+                .link_issues(
+                    &params.source_issue_key,
+                    &params.target_issue_key,
+                    &params.link_type,
+                )
+                .await
+            {
+                Ok(()) => {
+                    let msg = format!(
+                        "Linked issues: {} --[{}]--> {}",
+                        params.source_issue_key, params.link_type, params.target_issue_key
+                    );
+                    return ToolCallResult::text(msg);
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "Provider {} failed to link issues: {}",
+                        get_provider_name(provider.as_ref()),
+                        e
+                    );
+                }
+            }
+        }
+
+        ToolCallResult::error(format!(
+            "Failed to link issues: {} --[{}]--> {}",
+            params.source_issue_key, params.link_type, params.target_issue_key
+        ))
+    }
+
+    async fn handle_unlink_issues(&self, arguments: Option<Value>) -> ToolCallResult {
+        let params: UnlinkIssuesParams = match arguments {
+            Some(v) => match serde_json::from_value(v) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("Invalid parameters: {}", e)),
+            },
+            None => {
+                return ToolCallResult::error(
+                    "Missing required parameters: source_issue_key, target_issue_key, link_type"
+                        .to_string(),
+                );
+            }
+        };
+
+        if self.providers.is_empty() {
+            return ToolCallResult::error("No providers configured".to_string());
+        }
+
+        for provider in &self.providers {
+            match provider
+                .unlink_issues(
+                    &params.source_issue_key,
+                    &params.target_issue_key,
+                    &params.link_type,
+                )
+                .await
+            {
+                Ok(()) => {
+                    let msg = format!(
+                        "Unlinked issues: {} --[{}]--> {}",
+                        params.source_issue_key, params.link_type, params.target_issue_key
+                    );
+                    return ToolCallResult::text(msg);
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "Provider {} failed to unlink issues: {}",
+                        get_provider_name(provider.as_ref()),
+                        e
+                    );
+                }
+            }
+        }
+
+        ToolCallResult::error(format!(
+            "Failed to unlink issues: {} --[{}]--> {}",
+            params.source_issue_key, params.link_type, params.target_issue_key
+        ))
+    }
+
     // =========================================================================
     // MERGE REQUESTS HANDLERS
     // =========================================================================
@@ -1748,6 +1896,26 @@ struct UpdateIssueParams {
 struct AddIssueCommentParams {
     key: String,
     body: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LinkIssuesParams {
+    #[serde(alias = "sourceIssueKey")]
+    source_issue_key: String,
+    #[serde(alias = "targetIssueKey")]
+    target_issue_key: String,
+    #[serde(alias = "linkType")]
+    link_type: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct UnlinkIssuesParams {
+    #[serde(alias = "sourceIssueKey")]
+    source_issue_key: String,
+    #[serde(alias = "targetIssueKey")]
+    target_issue_key: String,
+    #[serde(alias = "linkType")]
+    link_type: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -2540,8 +2708,8 @@ mod tests {
         let handler = ToolHandler::new(vec![]);
         let tools = handler.available_tools();
 
-        // 7 issue tools + 6 MR tools + 2 pipeline tools + 3 meeting tools = 18 total
-        assert_eq!(tools.len(), 18);
+        // 9 issue tools + 6 MR tools + 2 pipeline tools + 3 meeting tools = 20 total
+        assert_eq!(tools.len(), 20);
     }
 
     #[tokio::test]
