@@ -58,6 +58,19 @@ pub trait IssueProvider: Send + Sync {
         })
     }
 
+    /// Remove a link between two issues.
+    async fn unlink_issues(
+        &self,
+        _source_key: &str,
+        _target_key: &str,
+        _link_type: &str,
+    ) -> Result<()> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "unlink_issues".to_string(),
+        })
+    }
+
     /// Get users from the issue tracker (Jira only).
     async fn get_users(&self, _options: GetUsersOptions) -> Result<Vec<User>> {
         Err(Error::ProviderUnsupported {
