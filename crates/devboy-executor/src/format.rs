@@ -95,26 +95,32 @@ pub fn format_output(
                      pag: Option<Pagination>,
                      sort: Option<SortInfo>|
      -> FormatResult {
+        // output_chars = pure content size (TOON/JSON), used for compression metrics
+        // content includes hints/chunk index on top, but metrics should reflect pipeline savings
+        let content_chars = t.output_chars;
         let content = t.to_string_with_hints();
         let output_chars = content.len();
         let raw_chars = if t.raw_chars > 0 {
             t.raw_chars
         } else {
-            output_chars
+            content_chars
         };
         let pre_trim = if t.pre_trim_chars > 0 {
             t.pre_trim_chars
         } else {
-            output_chars
+            content_chars
         };
         FormatResult {
             metadata: FormatMetadata {
                 raw_chars,
-                output_chars,
+                // output_chars = pipeline content size (without hints/chunk index)
+                // Used for compression ratio and saved tokens calculation
+                output_chars: content_chars,
                 pre_trim_chars: pre_trim,
+                // estimated_tokens = full output including hints (what LLM actually consumes)
                 estimated_tokens: output_chars * 10 / 35, // chars / 3.5
                 compression_ratio: if raw_chars > 0 {
-                    output_chars as f32 / raw_chars as f32
+                    content_chars as f32 / raw_chars as f32
                 } else {
                     1.0
                 },
