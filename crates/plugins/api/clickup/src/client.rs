@@ -933,7 +933,10 @@ impl IssueProvider for ClickUpClient {
     async fn get_issue_relations(&self, issue_key: &str) -> Result<IssueRelations> {
         let url = self.task_url(issue_key)?;
         let task: ClickUpTask = self
-            .get_with_query(&url, &[("include_subtasks", "true"), ("include_closed", "true")])
+            .get_with_query(
+                &url,
+                &[("include_subtasks", "true"), ("include_closed", "true")],
+            )
             .await?;
 
         let mut relations = IssueRelations::default();
