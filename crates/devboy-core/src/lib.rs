@@ -44,7 +44,7 @@ pub use types::{
     IssueLink, IssueRelations, IssueStatus, JobLogMode, JobLogOptions, JobLogOutput, MeetingFilter,
     MeetingNote, MeetingSpeaker, MeetingTranscript, MergeRequest, MrFilter, Pagination,
     PipelineInfo, PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, ProviderResult,
-    Release, ReleaseAsset, SortInfo, TranscriptSentence, UpdateIssueInput, User,
+    Release, ReleaseAsset, SortInfo, SortOrder, TranscriptSentence, UpdateIssueInput, User,
 };
 
 // Re-export enricher traits and utilities

@@ -532,7 +532,7 @@ impl Pipeline {
                     if idx.total_pages > 1 {
                         let hint = format!(
                             "Chunk 1/{}: {} most relevant {} (by priority). {} total items across {} chunks. \
-                            Request specific chunks with `offset` and `limit` params, or request all remaining data.",
+                            Use `chunk: N` parameter to fetch a specific chunk, or request all remaining data.",
                             idx.total_pages,
                             result.included_items,
                             item_type,
@@ -551,7 +551,7 @@ impl Pipeline {
                 } else {
                     let remaining = total.saturating_sub(result.included_items);
                     output.agent_hint = Some(format!(
-                        "Showing {}/{} {}. {} items trimmed by budget. Use `offset` and `limit` for pagination.",
+                        "Showing {}/{} {}. {} items trimmed by budget. Use `chunk: N` parameter to fetch a specific chunk.",
                         result.included_items, total, item_type, remaining
                     ));
                 }

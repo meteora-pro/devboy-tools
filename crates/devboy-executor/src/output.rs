@@ -295,7 +295,8 @@ mod tests {
                 has_more: true,
             }),
             sort_info: Some(devboy_core::SortInfo {
-                current_sort: Some("created_at:desc".into()),
+                sort_by: Some("created_at".into()),
+                sort_order: devboy_core::SortOrder::Desc,
                 available_sorts: vec!["created_at".into()],
             }),
         };

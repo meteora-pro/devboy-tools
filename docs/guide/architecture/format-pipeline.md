@@ -26,7 +26,6 @@ TransformOutput {
     content: String,            // TOON or JSON
     raw_chars: usize,           // input size (JSON)
     output_chars: usize,        // output size (TOON/JSON)
-    page_cursor: Option,        // for next page
     agent_hint: Option,         // pagination hint
     page_index: Option<String>, // chunk index for lazy loading
     provider_pagination: Option,// upstream pagination metadata
@@ -202,21 +201,21 @@ When data exceeds the token budget, the pipeline splits output into sequential c
 1. Budget pipeline determines which items fit in the budget (chunk 1)
 2. Remaining items are grouped into sequential chunks with content summaries
 3. The chunk index is appended to the response, describing each chunk
-4. The agent uses `offset` and `limit` parameters in subsequent tool calls to fetch specific chunks
+4. The agent uses the `chunk: N` parameter in subsequent tool calls to fetch specific chunks
 5. The agent can stop early if it finds the needed information without reading all chunks
 
 ### Chunk Index Format
 
 ```
 [chunks] 15/52 diffs in 4 chunks:
-  chunk 1 (offset=0, limit=15): src/app/* — 8 files, +120/-45 << included above
+  chunk 1 (offset=0, limit=15): src/app/* — 8 files, +120/-45 << returned in this response
   chunk 2 (offset=15, limit=15): apps/e2e/features/* — 15 files, +340/-12
   chunk 3 (offset=30, limit=12): apps/e2e/steps/* — 12 files, +280/-0
   chunk 4 (offset=42, limit=10): libs/*, docs/* — 10 files, +95/-30
-[/chunks] Use offset and limit to fetch any chunk. You may not need all chunks.
+[/chunks] Use `chunk: N` parameter to fetch a specific chunk. You may not need all chunks.
 ```
 
-Each chunk entry shows the `offset`/`limit` parameters needed to fetch it, a content summary (file paths, counts, line changes), and which chunk is already included in the current response.
+Each chunk entry shows the `offset`/`limit` boundaries, a content summary (file paths, counts, line changes), and which chunk is already included in the current response. Use `chunk: N` to fetch a specific chunk.
 
 ## Provider Metadata
 
@@ -241,7 +240,8 @@ Provider (API call)
 
 `SortInfo` describes the current ordering and available sort options:
 
-- `current_sort` — the sort field and direction applied to the current response
+- `sort_by` — the sort field applied to the current response (e.g., `updated_at`, `created_at`)
+- `sort_order` — the sort direction (`asc` or `desc`)
 - `available_sorts` — list of sort fields the provider supports (e.g., `created_at`, `updated_at`, `priority`)
 
 This metadata is passed through to `FormatMetadata` so agents can make informed decisions about re-querying with different sort orders or fetching additional pages.
@@ -314,7 +314,7 @@ This replaces the earlier cursor-based approach with a simpler, stateless model:
 
 1. First request returns chunk 1 + chunk index
 2. Agent reads the chunk index to understand available data
-3. Agent calls the tool again with `offset` and `limit` for the desired chunk
+3. Agent calls the tool again with `chunk: N` for the desired chunk
 4. Agent can stop early — no need to consume all chunks sequentially
 
 ## Token Estimation

@@ -992,7 +992,11 @@ impl IssueProvider for JiraClient {
                     has_more: next_page_token.is_some(),
                 });
                 result.sort_info = Some(devboy_core::SortInfo {
-                    current_sort: Some(format!("{}:{}", order_by, order.to_lowercase())),
+                    sort_by: Some(order_by.into()),
+                    sort_order: match order {
+                        "ASC" => devboy_core::SortOrder::Asc,
+                        _ => devboy_core::SortOrder::Desc,
+                    },
                     available_sorts: vec!["created".into(), "updated".into(), "priority".into()],
                 });
                 Ok(result)
@@ -1041,7 +1045,11 @@ impl IssueProvider for JiraClient {
                     has_more,
                 });
                 result.sort_info = Some(devboy_core::SortInfo {
-                    current_sort: Some(format!("{}:{}", order_by, order.to_lowercase())),
+                    sort_by: Some(order_by.into()),
+                    sort_order: match order {
+                        "ASC" => devboy_core::SortOrder::Asc,
+                        _ => devboy_core::SortOrder::Desc,
+                    },
                     available_sorts: vec!["created".into(), "updated".into(), "priority".into()],
                 });
                 Ok(result)
