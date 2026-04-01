@@ -493,11 +493,11 @@ impl IssueProvider for GitLabClient {
         let mut result = ProviderResult::new(issues);
         result.pagination = pagination;
         result.sort_info = Some(devboy_core::SortInfo {
-            current_sort: Some(format!(
-                "{}:{}",
-                filter.sort_by.as_deref().unwrap_or("updated_at"),
-                filter.sort_order.as_deref().unwrap_or("desc")
-            )),
+            sort_by: Some(filter.sort_by.as_deref().unwrap_or("updated_at").into()),
+            sort_order: match filter.sort_order.as_deref() {
+                Some("asc") => devboy_core::SortOrder::Asc,
+                _ => devboy_core::SortOrder::Desc,
+            },
             available_sorts: vec!["created_at".into(), "updated_at".into()],
         });
         Ok(result)
@@ -623,8 +623,15 @@ impl MergeRequestProvider for GitLabClient {
             params.push(format!("per_page={}", limit.min(100)));
         }
 
-        params.push("order_by=updated_at".to_string());
-        params.push("sort=desc".to_string());
+        let order_by = filter.sort_by.as_deref().unwrap_or("updated_at");
+        let sort_order = filter.sort_order.as_deref().unwrap_or("desc");
+        params.push(format!("order_by={}", order_by));
+        params.push(format!("sort={}", sort_order));
+
+        if let Some(offset) = filter.offset {
+            let page = (offset / filter.limit.unwrap_or(20)) + 1;
+            params.push(format!("page={}", page));
+        }
 
         if !params.is_empty() {
             url.push_str(&format!("?{}", params.join("&")));
@@ -637,7 +644,11 @@ impl MergeRequestProvider for GitLabClient {
         let mut result = ProviderResult::new(mrs);
         result.pagination = pagination;
         result.sort_info = Some(devboy_core::SortInfo {
-            current_sort: Some("updated_at:desc".into()),
+            sort_by: Some(order_by.into()),
+            sort_order: match sort_order {
+                "asc" => devboy_core::SortOrder::Asc,
+                _ => devboy_core::SortOrder::Desc,
+            },
             available_sorts: vec!["created_at".into(), "updated_at".into()],
         });
         Ok(result)

@@ -384,11 +384,22 @@ pub struct Pagination {
 // Sort Info
 // =============================================================================
 
+/// Sort direction.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortOrder {
+    Asc,
+    #[default]
+    Desc,
+}
+
 /// Sorting metadata from provider API.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SortInfo {
-    /// Current sort applied (e.g., "updated_at:desc")
-    pub current_sort: Option<String>,
+    /// Current sort field (e.g., "updated_at", "created_at")
+    pub sort_by: Option<String>,
+    /// Current sort order
+    pub sort_order: SortOrder,
     /// Available sort fields for this endpoint
     pub available_sorts: Vec<String>,
 }
@@ -576,13 +587,15 @@ mod tests {
     #[test]
     fn test_provider_result_with_sort_info() {
         let sort_info = SortInfo {
-            current_sort: Some("updated_at:desc".into()),
+            sort_by: Some("updated_at".into()),
+            sort_order: SortOrder::Desc,
             available_sorts: vec!["created_at".into(), "updated_at".into()],
         };
         let result = ProviderResult::new(vec![42]).with_sort_info(sort_info);
         assert_eq!(result.items, vec![42]);
         let si = result.sort_info.unwrap();
-        assert_eq!(si.current_sort, Some("updated_at:desc".into()));
+        assert_eq!(si.sort_by, Some("updated_at".into()));
+        assert_eq!(si.sort_order, SortOrder::Desc);
         assert_eq!(si.available_sorts.len(), 2);
     }
 
@@ -605,7 +618,8 @@ mod tests {
                 has_more: true,
             })
             .with_sort_info(SortInfo {
-                current_sort: Some("priority:asc".into()),
+                sort_by: Some("priority".into()),
+                sort_order: SortOrder::Asc,
                 available_sorts: vec![],
             });
         assert!(result.pagination.is_some());

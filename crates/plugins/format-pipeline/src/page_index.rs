@@ -51,7 +51,7 @@ impl PageIndex {
         ));
         for p in &self.pages {
             let marker = if p.page == 1 {
-                " << included above"
+                " << returned in this response"
             } else {
                 ""
             };
@@ -61,7 +61,7 @@ impl PageIndex {
             ));
         }
         lines.push(
-            "[/chunks] Use offset and limit to fetch any chunk. You may not need all chunks."
+            "[/chunks] Use `chunk: N` parameter to fetch a specific chunk. You may not need all chunks."
                 .to_string(),
         );
         lines.join("\n")
@@ -364,16 +364,16 @@ mod tests {
         let toon = index.to_toon();
         assert!(toon.contains("[chunks] 15/52 diffs in 4 chunks:"));
         assert!(toon.contains("chunk 1 (offset=0, limit=15):"));
-        assert!(toon.contains("<< included above"));
+        assert!(toon.contains("<< returned in this response"));
         assert!(toon.contains("chunk 2 (offset=15, limit=15):"));
         assert!(toon.contains("[/chunks]"));
         assert!(toon.contains("You may not need all chunks"));
-        // Only chunk 1 is marked as included
+        // Only chunk 1 is marked as returned
         let lines: Vec<&str> = toon
             .lines()
-            .filter(|l| l.contains("included above"))
+            .filter(|l| l.contains("returned in this response"))
             .collect();
-        assert_eq!(lines.len(), 1, "Only chunk 1 should be marked as included");
+        assert_eq!(lines.len(), 1, "Only chunk 1 should be marked as returned");
     }
 
     #[test]

@@ -98,7 +98,6 @@ fn test_json_vs_toon_token_savings() {
 
     let pipeline = Pipeline::with_config(PipelineConfig {
         format: OutputFormat::Toon,
-
         max_chars: 100_000,
         ..Default::default()
     });
@@ -126,7 +125,6 @@ fn test_pull_requests_toon_output() {
 
     let pipeline = Pipeline::with_config(PipelineConfig {
         format: OutputFormat::Toon,
-
         max_chars: 100_000,
         ..Default::default()
     });
@@ -210,7 +208,6 @@ fn test_diffs_toon_output() {
 
     let pipeline = Pipeline::with_config(PipelineConfig {
         format: OutputFormat::Toon,
-
         max_chars: 100_000,
         max_chars_per_item: 1000,
         ..Default::default()
@@ -246,7 +243,6 @@ fn test_diff_content_truncation() {
 
     let pipeline = Pipeline::with_config(PipelineConfig {
         format: OutputFormat::Toon,
-
         max_chars: 100_000,
         max_chars_per_item: 200,
         ..Default::default()
