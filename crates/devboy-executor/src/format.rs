@@ -33,6 +33,12 @@ pub struct FormatMetadata {
     pub total_items: Option<usize>,
     /// Items included after truncation (e.g., 20 issues)
     pub included_items: usize,
+    /// Whether response was split into chunks (budget exceeded)
+    pub chunked: bool,
+    /// Number of chunks generated (1 = no chunking, >1 = chunked)
+    pub total_chunks: usize,
+    /// Which chunk was requested (1 = first/default, >1 = navigation)
+    pub chunk_number: usize,
     /// Pagination metadata from the provider (offset, limit, total, has_more)
     pub provider_pagination: Option<Pagination>,
     /// Sort metadata from the provider (current sort, available sorts)
@@ -84,6 +90,7 @@ pub fn format_output(
         OutputFormat::Toon => "toon",
     };
 
+    let requested_chunk = pipeline_config.chunk.unwrap_or(1);
     let pipeline = Pipeline::with_config(pipeline_config);
 
     // Extract provider metadata before consuming output
@@ -107,6 +114,13 @@ pub fn format_output(
         } else {
             output_chars
         };
+        // Extract chunk metrics from page_index
+        let (chunked, total_chunks) = match &t.page_index {
+            Some(idx) if idx.total_pages > 1 => (true, idx.total_pages),
+            _ => (false, 1),
+        };
+        let chunk_number = requested_chunk;
+
         FormatResult {
             metadata: FormatMetadata {
                 raw_chars,
@@ -122,6 +136,9 @@ pub fn format_output(
                 truncated: t.truncated,
                 total_items: t.total_count,
                 included_items: t.included_count,
+                chunked,
+                total_chunks,
+                chunk_number,
                 provider_pagination: pag,
                 provider_sort: sort,
             },
@@ -144,6 +161,9 @@ pub fn format_output(
                     truncated: false,
                     total_items: None,
                     included_items: 0,
+                    chunked: false,
+                    total_chunks: 1,
+                    chunk_number: 1,
                     provider_pagination: pag,
                     provider_sort: sort,
                 },
