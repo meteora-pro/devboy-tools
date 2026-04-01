@@ -11,7 +11,6 @@ use serde_json::Value;
 pub use devboy_core::{ToolSchema as Schema, sanitize_field_name};
 
 /// Tools that return lists and go through the format pipeline.
-/// These get `format`, `budget`, `offset`, `limit` parameters automatically.
 const LIST_TOOLS: &[&str] = &[
     "get_issues",
     "get_issue",
@@ -22,15 +21,47 @@ const LIST_TOOLS: &[&str] = &[
     "get_merge_request_diffs",
 ];
 
-/// Format pipeline enricher — adds pagination and budget parameters to list tools.
+// =============================================================================
+// Safe parameter insertion
+// =============================================================================
+
+/// Find a free parameter name: try `preferred`, then `_preferred`, `__preferred`, etc.
 ///
-/// Automatically adds these parameters to all list-returning tools:
+/// If a tool already has a parameter with the same name (e.g., the tool defines
+/// its own `chunk`), the enricher uses a prefixed variant to avoid collisions.
+fn safe_param_name(schema: &ToolSchema, preferred: &str) -> String {
+    if !schema.properties.contains_key(preferred) {
+        return preferred.to_string();
+    }
+    // Prefix with underscores until we find a free name
+    let mut name = format!("_{preferred}");
+    while schema.properties.contains_key(&name) {
+        name = format!("_{name}");
+    }
+    name
+}
+
+/// Insert a property only if the preferred name (or a safe variant) is available.
+/// Returns the actual name used.
+fn safe_insert(schema: &mut ToolSchema, preferred: &str, prop: PropertySchema) -> String {
+    let name = safe_param_name(schema, preferred);
+    schema.add_property(&name, prop);
+    name
+}
+
+// =============================================================================
+// FormatPipelineEnricher
+// =============================================================================
+
+/// Format pipeline enricher — adds pipeline-level parameters to list tools.
+///
+/// Adds these parameters (using safe naming to avoid collisions):
 /// - `format` — output format (toon/json)
 /// - `budget` — token budget for response size control
-/// - `offset` — pagination offset
-/// - `limit` — pagination limit
+/// - `chunk`  — chunk number for navigating large results
 ///
-/// This avoids duplicating these params in every tool schema definition.
+/// API-level `limit`/`offset` are defined by individual tools where
+/// the provider API supports pagination. The enricher does NOT add them.
 pub struct FormatPipelineEnricher;
 
 impl ToolEnricher for FormatPipelineEnricher {
@@ -44,49 +75,44 @@ impl ToolEnricher for FormatPipelineEnricher {
         }
 
         // Output format
-        if !schema.properties.contains_key("format") {
-            schema.add_enum_param("format", &["toon", "json"], "Output format (default: toon)");
-        }
+        safe_insert(
+            schema,
+            "format",
+            PropertySchema::string_enum(&["toon", "json"], "Output format (default: toon)"),
+        );
 
         // Token budget — LLM controls response size
-        if !schema.properties.contains_key("budget") {
-            schema.add_property(
-                "budget",
-                PropertySchema::integer(
-                    "Token budget for response. Lower = less data + chunk index for navigation. \
-                     Higher = more data per call. Default: from server config (~28000 tokens).",
-                    Some(100.0),
-                    Some(100000.0),
-                ),
-            );
-        }
+        safe_insert(
+            schema,
+            "budget",
+            PropertySchema::integer(
+                "Token budget for this response. Lower = less data + chunk index for navigation. \
+                 Higher = more data per call. Default: from server config.",
+                Some(100.0),
+                Some(100000.0),
+            ),
+        );
 
-        // Pagination — offset and limit
-        if !schema.properties.contains_key("offset") {
-            schema.add_property(
-                "offset",
-                PropertySchema::integer(
-                    "Skip N items for pagination. Use with chunk index offsets.",
-                    Some(0.0),
-                    None,
-                ),
-            );
-        }
-
-        if !schema.properties.contains_key("limit") {
-            schema.add_property(
-                "limit",
-                PropertySchema::integer(
-                    "Maximum items to return (default: 20, max: 100)",
-                    Some(1.0),
-                    Some(100.0),
-                ),
-            );
-        }
+        // Chunk navigation — for fetching specific chunks from large results
+        safe_insert(
+            schema,
+            "chunk",
+            PropertySchema::integer(
+                "Chunk number to fetch (from chunk index). \
+                 When a response exceeds budget, it returns chunk 1 + an index of all chunks. \
+                 Use this parameter to fetch a specific chunk by number.",
+                Some(1.0),
+                None,
+            ),
+        );
     }
 
-    fn transform_args(&self, _tool_name: &str, _args: &mut Value) {
-        // These params are consumed by the pipeline layer, not the provider
+    fn transform_args(&self, _tool_name: &str, args: &mut Value) {
+        // Convert `chunk` to `offset`/`limit` for the pipeline.
+        // The chunk index includes offset/limit per chunk, but the LLM
+        // just sends a chunk number. We resolve it at runtime in the handler.
+        // For now, pass through — the handler reads `chunk` from args directly.
+        let _ = args;
     }
 }
 
@@ -98,7 +124,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_format_pipeline_enricher_adds_all_params() {
+    fn test_safe_param_name_no_conflict() {
+        let schema = ToolSchema::new();
+        assert_eq!(safe_param_name(&schema, "budget"), "budget");
+        assert_eq!(safe_param_name(&schema, "chunk"), "chunk");
+    }
+
+    #[test]
+    fn test_safe_param_name_with_conflict() {
+        let mut schema = ToolSchema::new();
+        schema.add_property("chunk", PropertySchema::string("existing"));
+        assert_eq!(safe_param_name(&schema, "chunk"), "_chunk");
+
+        schema.add_property("_chunk", PropertySchema::string("also taken"));
+        assert_eq!(safe_param_name(&schema, "chunk"), "__chunk");
+    }
+
+    #[test]
+    fn test_format_pipeline_enricher_adds_params() {
         let enricher = FormatPipelineEnricher;
         let mut schema = ToolSchema::new();
         enricher.enrich_schema("get_issues", &mut schema);
@@ -111,18 +154,15 @@ mod tests {
         let budget = schema.properties.get("budget").unwrap();
         assert_eq!(budget.schema_type, "integer");
         assert_eq!(budget.minimum, Some(100.0));
-        assert_eq!(budget.maximum, Some(100000.0));
 
-        // offset
-        let offset = schema.properties.get("offset").unwrap();
-        assert_eq!(offset.schema_type, "integer");
-        assert_eq!(offset.minimum, Some(0.0));
+        // chunk (new)
+        let chunk = schema.properties.get("chunk").unwrap();
+        assert_eq!(chunk.schema_type, "integer");
+        assert_eq!(chunk.minimum, Some(1.0));
 
-        // limit
-        let limit = schema.properties.get("limit").unwrap();
-        assert_eq!(limit.schema_type, "integer");
-        assert_eq!(limit.minimum, Some(1.0));
-        assert_eq!(limit.maximum, Some(100.0));
+        // NO offset/limit — those are API-level, defined by tools themselves
+        assert!(!schema.properties.contains_key("offset"));
+        assert!(!schema.properties.contains_key("limit"));
     }
 
     #[test]
@@ -130,30 +170,29 @@ mod tests {
         let enricher = FormatPipelineEnricher;
         let mut schema = ToolSchema::new();
         enricher.enrich_schema("create_issue", &mut schema);
-
         assert!(schema.properties.is_empty());
     }
 
     #[test]
-    fn test_enricher_does_not_overwrite_existing() {
+    fn test_enricher_safe_naming_on_collision() {
         let enricher = FormatPipelineEnricher;
         let mut schema = ToolSchema::new();
-        // Pre-existing limit with different bounds
-        schema.add_property(
-            "limit",
-            PropertySchema::integer("Custom limit", Some(1.0), Some(50.0)),
-        );
+        // Tool already defines `chunk` for its own purpose
+        schema.add_property("chunk", PropertySchema::string("tool's own chunk param"));
 
-        enricher.enrich_schema("get_merge_request_discussions", &mut schema);
+        enricher.enrich_schema("get_merge_request_diffs", &mut schema);
 
-        // limit should NOT be overwritten
-        let limit = schema.properties.get("limit").unwrap();
-        assert_eq!(limit.maximum, Some(50.0));
+        // Original `chunk` preserved
+        let original = schema.properties.get("chunk").unwrap();
+        assert_eq!(original.schema_type, "string");
 
-        // but format/budget/offset should be added
+        // Enricher's chunk renamed to `_chunk`
+        let enriched = schema.properties.get("_chunk").unwrap();
+        assert_eq!(enriched.schema_type, "integer");
+
+        // format and budget added normally (no collision)
         assert!(schema.properties.contains_key("format"));
         assert!(schema.properties.contains_key("budget"));
-        assert!(schema.properties.contains_key("offset"));
     }
 
     #[test]

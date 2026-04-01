@@ -759,7 +759,7 @@ impl ToolHandler {
             return ToolCallResult::error(format!("Failed to get issues: {}", errors.join(", ")));
         }
 
-        let pipeline = self.create_pipeline(&params.format, params.budget);
+        let pipeline = self.create_pipeline(&params.format, params.budget, params.chunk);
         match pipeline.transform_issues(all_issues) {
             Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
             Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -783,7 +783,8 @@ impl ToolHandler {
         for provider in &self.providers {
             match provider.get_issue(&params.key).await {
                 Ok(issue) => {
-                    let pipeline = self.create_pipeline(&params.format, params.budget);
+                    let pipeline =
+                        self.create_pipeline(&params.format, params.budget, params.chunk);
                     return match pipeline.transform_issues(vec![issue]) {
                         Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -819,7 +820,8 @@ impl ToolHandler {
         for provider in &self.providers {
             match provider.get_comments(&params.key).await {
                 Ok(result) => {
-                    let pipeline = self.create_pipeline(&params.format, params.budget);
+                    let pipeline =
+                        self.create_pipeline(&params.format, params.budget, params.chunk);
                     return match pipeline.transform_comments(result.items) {
                         Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -1066,7 +1068,7 @@ impl ToolHandler {
             ));
         }
 
-        let pipeline = self.create_pipeline(&params.format, params.budget);
+        let pipeline = self.create_pipeline(&params.format, params.budget, params.chunk);
         match pipeline.transform_merge_requests(all_mrs) {
             Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
             Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -1089,7 +1091,8 @@ impl ToolHandler {
         for provider in &self.providers {
             match provider.get_merge_request(&params.key).await {
                 Ok(mr) => {
-                    let pipeline = self.create_pipeline(&params.format, params.budget);
+                    let pipeline =
+                        self.create_pipeline(&params.format, params.budget, params.chunk);
                     return match pipeline.transform_merge_requests(vec![mr]) {
                         Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -1144,7 +1147,8 @@ impl ToolHandler {
                         discussions.into_iter().skip(offset).take(limit).collect();
                     let included = paged_discussions.len();
 
-                    let pipeline = self.create_pipeline(&params.format, params.budget);
+                    let pipeline =
+                        self.create_pipeline(&params.format, params.budget, params.chunk);
                     return match pipeline.transform_discussions(paged_discussions) {
                         Ok(mut output) => {
                             if self.pipeline_config.include_hints && offset + included < total {
@@ -1201,7 +1205,8 @@ impl ToolHandler {
         for provider in &self.providers {
             match provider.get_diffs(&params.key).await {
                 Ok(result) => {
-                    let pipeline = self.create_pipeline(&params.format, params.budget);
+                    let pipeline =
+                        self.create_pipeline(&params.format, params.budget, params.chunk);
                     return match pipeline.transform_diffs(result.items) {
                         Ok(output) => ToolCallResult::text(output.to_string_with_hints()),
                         Err(e) => ToolCallResult::error(format!("Pipeline error: {}", e)),
@@ -1640,7 +1645,12 @@ impl ToolHandler {
             .find(|p| get_provider_name(p.as_ref()) == name)
     }
 
-    fn create_pipeline(&self, format: &Option<String>, budget: Option<usize>) -> Pipeline {
+    fn create_pipeline(
+        &self,
+        format: &Option<String>,
+        budget: Option<usize>,
+        chunk: Option<usize>,
+    ) -> Pipeline {
         let output_format = match format.as_deref() {
             Some("json") => OutputFormat::Json,
             _ => OutputFormat::Toon,
@@ -1656,6 +1666,8 @@ impl ToolHandler {
             // Convert token budget to max_chars (tokens * 3.5)
             config.max_chars = (b as f64 * 3.5).floor() as usize;
         }
+
+        config.chunk = chunk;
 
         Pipeline::with_config(config)
     }
@@ -1678,6 +1690,7 @@ struct GetIssuesParams {
     sort_by: Option<String>,
     sort_order: Option<String>,
     budget: Option<usize>,
+    chunk: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1685,6 +1698,7 @@ struct GetIssueParams {
     key: String,
     format: Option<String>,
     budget: Option<usize>,
+    chunk: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1692,6 +1706,7 @@ struct GetIssueCommentsParams {
     key: String,
     format: Option<String>,
     budget: Option<usize>,
+    chunk: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1739,6 +1754,7 @@ struct GetMergeRequestsParams {
     limit: Option<usize>,
     format: Option<String>,
     budget: Option<usize>,
+    chunk: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1746,6 +1762,7 @@ struct GetMergeRequestParams {
     key: String,
     format: Option<String>,
     budget: Option<usize>,
+    chunk: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1755,6 +1772,7 @@ struct GetMergeRequestDiscussionsParams {
     offset: Option<usize>,
     format: Option<String>,
     budget: Option<usize>,
+    chunk: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1762,6 +1780,7 @@ struct GetMergeRequestDiffsParams {
     key: String,
     format: Option<String>,
     budget: Option<usize>,
+    chunk: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2964,13 +2983,13 @@ mod tests {
     async fn test_create_pipeline_formats() {
         let handler = ToolHandler::new(vec![]);
 
-        let pipeline = handler.create_pipeline(&Some("json".to_string()), None);
+        let pipeline = handler.create_pipeline(&Some("json".to_string()), None, None);
         assert!(pipeline.transform_issues(vec![]).is_ok());
 
-        let pipeline = handler.create_pipeline(&Some("toon".to_string()), None);
+        let pipeline = handler.create_pipeline(&Some("toon".to_string()), None, None);
         assert!(pipeline.transform_issues(vec![]).is_ok());
 
-        let pipeline = handler.create_pipeline(&None, None);
+        let pipeline = handler.create_pipeline(&None, None, None);
         assert!(pipeline.transform_issues(vec![]).is_ok());
     }
 
