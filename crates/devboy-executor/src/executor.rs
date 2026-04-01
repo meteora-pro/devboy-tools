@@ -158,6 +158,7 @@ async fn dispatch_tool(
         "get_available_statuses" => execute_get_available_statuses(provider).await,
         "get_users" => execute_get_users(provider, args).await,
         "link_issues" => execute_link_issues(provider, args).await,
+        "unlink_issues" => execute_unlink_issues(provider, args).await,
 
         // Epic tools (issue-based with "epic" label convention)
         "get_epics" => execute_get_epics(provider, args).await,
@@ -731,6 +732,25 @@ async fn execute_link_issues(
     )))
 }
 
+async fn execute_unlink_issues(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: LinkIssuesParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid unlink_issues params: {e}")))?;
+    IssueProvider::unlink_issues(
+        provider,
+        &params.source_key,
+        &params.target_key,
+        &params.link_type,
+    )
+    .await?;
+    Ok(ToolOutput::Text(format!(
+        "Unlinked {} -> {} (type: {})",
+        params.source_key, params.target_key, params.link_type
+    )))
+}
+
 // --- Epic tool handlers ---
 
 #[derive(Deserialize, Default)]
@@ -843,6 +863,7 @@ pub const SUPPORTED_TOOLS: &[&str] = &[
     "get_available_statuses",
     "get_users",
     "link_issues",
+    "unlink_issues",
     "get_epics",
     "create_epic",
     "update_epic",
@@ -1063,7 +1084,7 @@ mod tests {
         assert!(SUPPORTED_TOOLS.contains(&"get_meeting_notes"));
         assert!(SUPPORTED_TOOLS.contains(&"get_meeting_transcript"));
         assert!(SUPPORTED_TOOLS.contains(&"search_meeting_notes"));
-        assert_eq!(SUPPORTED_TOOLS.len(), 24);
+        assert_eq!(SUPPORTED_TOOLS.len(), 25);
     }
 
     // --- Issue tool dispatch tests ---
