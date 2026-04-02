@@ -23,6 +23,26 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: docs
+      - name: Build docs
+        run: pnpm build
+        working-directory: docs
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
