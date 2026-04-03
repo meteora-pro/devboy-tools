@@ -13,6 +13,22 @@ use crate::factory;
 use crate::output::{ResultMeta, ToolOutput};
 use devboy_core::ToolEnricher;
 
+/// Deserialize a value that can be either a string or a number into Option<String>.
+/// Enricher may transform priority "high" → 2 (number), but executor needs String.
+fn deserialize_string_or_number<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value: Option<Value> = Option::deserialize(deserializer)?;
+    Ok(value.map(|v| match v {
+        Value::String(s) => s,
+        Value::Number(n) => n.to_string(),
+        other => other.to_string(),
+    }))
+}
+
 /// Tool execution engine.
 ///
 /// Manages enrichers and dispatches tool calls to providers.
@@ -416,6 +432,7 @@ struct CreateIssueParams {
     labels: Vec<String>,
     #[serde(default)]
     assignees: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_string_or_number")]
     priority: Option<String>,
     parent: Option<String>,
     markdown: Option<bool>,
@@ -457,6 +474,7 @@ struct UpdateIssueParams {
     state: Option<String>,
     labels: Option<Vec<String>>,
     assignees: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_string_or_number")]
     priority: Option<String>,
     #[serde(rename = "parentId")]
     parent_id: Option<String>,
@@ -974,6 +992,7 @@ struct CreateEpicParams {
     labels: Vec<String>,
     #[serde(default)]
     assignees: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_string_or_number")]
     priority: Option<String>,
     markdown: Option<bool>,
 }
@@ -1032,6 +1051,7 @@ struct UpdateEpicParams {
     goal_id: Option<String>,
     labels: Option<Vec<String>>,
     assignees: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_string_or_number")]
     priority: Option<String>,
     markdown: Option<bool>,
 }
