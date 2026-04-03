@@ -126,8 +126,21 @@ impl ToolEnricher for ClickUpSchemaEnricher {
             obj.insert(cf_name, goal_id);
         }
 
-        // NOTE: priority name→number conversion is handled by ClickUp client
-        // (priority_to_clickup), not here. Enricher only adds the enum to schema.
+        // Transform priority name to ClickUp numeric value (only for direct issue tools,
+        // epic tools pass priority as string to executor which handles conversion).
+        if is_issue_tool
+            && let Some(obj) = args.as_object_mut()
+            && let Some(priority) = obj.get("priority").and_then(|v| v.as_str())
+        {
+            let numeric = match priority {
+                "urgent" => 1,
+                "high" => 2,
+                "normal" => 3,
+                "low" => 4,
+                _ => 3, // default to normal
+            };
+            obj.insert("priority".into(), json!(numeric));
+        }
 
         // Transform cf_* params to customFields array
         let Some(obj) = args.as_object_mut() else {
@@ -354,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn test_clickup_enricher_transform_args_priority_passthrough() {
+    fn test_clickup_enricher_transform_args_priority() {
         let enricher = ClickUpSchemaEnricher::new(sample_metadata());
         let mut args = json!({
             "title": "Test",
@@ -363,8 +376,7 @@ mod tests {
 
         enricher.transform_args("create_issue", &mut args);
 
-        // Priority stays as string — ClickUp client handles name→number conversion
-        assert_eq!(args["priority"], "high");
+        assert_eq!(args["priority"], 2);
     }
 
     #[test]
@@ -449,12 +461,11 @@ mod tests {
     }
 
     #[test]
-    fn test_clickup_enricher_priority_passthrough_unknown() {
+    fn test_clickup_enricher_priority_default() {
         let enricher = ClickUpSchemaEnricher::new(sample_metadata());
         let mut args = json!({"title": "Test", "priority": "unknown_value"});
         enricher.transform_args("create_issue", &mut args);
-        // Priority stays as string — ClickUp client handles conversion
-        assert_eq!(args["priority"], "unknown_value");
+        assert_eq!(args["priority"], 3); // default to normal
     }
 
     #[test]
