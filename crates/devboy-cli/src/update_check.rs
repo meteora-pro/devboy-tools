@@ -61,6 +61,7 @@ impl InstallMethod {
     }
 
     /// Returns the update command as structured `(program, args)` for execution.
+    #[cfg(not(windows))]
     pub fn update_command_parts(&self) -> (&'static str, &'static [&'static str]) {
         match self {
             InstallMethod::Npm => ("npm", &["update", "-g", "@devboy-tools/cli"]),
@@ -376,6 +377,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn test_install_method_update_command_parts() {
         assert_eq!(
             InstallMethod::Npm.update_command_parts(),
