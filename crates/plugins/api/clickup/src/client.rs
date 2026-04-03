@@ -18,6 +18,14 @@ use crate::types::{
 /// Maximum number of tasks per page in ClickUp API.
 const PAGE_SIZE: u32 = 100;
 
+/// Percent-encode a tag name for use in ClickUp URL paths.
+fn encode_tag(tag: &str) -> String {
+    tag.replace('%', "%25")
+        .replace(' ', "%20")
+        .replace('#', "%23")
+        .replace('/', "%2F")
+}
+
 /// ClickUp API client.
 pub struct ClickUpClient {
     base_url: String,
@@ -739,16 +747,15 @@ impl IssueProvider for ClickUpClient {
         }
 
         // Labels AND operator: ClickUp API uses OR by default. For AND, post-filter.
-        if filter.labels_operator.as_deref() == Some("and") {
-            if let Some(ref required_labels) = filter.labels {
-                let required: Vec<String> =
-                    required_labels.iter().map(|l| l.to_lowercase()).collect();
-                issues.retain(|issue| {
-                    let issue_labels: Vec<String> =
-                        issue.labels.iter().map(|l| l.to_lowercase()).collect();
-                    required.iter().all(|r| issue_labels.contains(r))
-                });
-            }
+        if filter.labels_operator.as_deref() == Some("and")
+            && let Some(ref required_labels) = filter.labels
+        {
+            let required: Vec<String> = required_labels.iter().map(|l| l.to_lowercase()).collect();
+            issues.retain(|issue| {
+                let issue_labels: Vec<String> =
+                    issue.labels.iter().map(|l| l.to_lowercase()).collect();
+                required.iter().all(|r| issue_labels.contains(r))
+            });
         }
 
         // Client-side search filtering (ClickUp API has no search endpoint for tasks)
@@ -946,10 +953,83 @@ impl IssueProvider for ClickUpClient {
             status,
             priority,
             parent,
+            tags: None, // Tags updated via separate API below
         };
 
         let task: ClickUpTask = self.put(&url, &request).await?;
+
+        // Update tags via ClickUp Tag API (PUT /task ignores tags field).
+        // POST /task/{id}/tag/{name} to add, DELETE /task/{id}/tag/{name} to remove.
+        if let Some(ref new_labels) = input.labels {
+            let current_tags: Vec<String> = task.tags.iter().map(|t| t.name.clone()).collect();
+            let new_tags: Vec<String> = new_labels.iter().map(|l| l.to_lowercase()).collect();
+
+            // Remove tags not in new list
+            for tag in &current_tags {
+                if !new_tags.iter().any(|t| t.eq_ignore_ascii_case(tag)) {
+                    let tag_url =
+                        format!("{}/task/{}/tag/{}", self.base_url, task.id, encode_tag(tag));
+                    if let Err(e) = self.delete(&tag_url).await {
+                        warn!(tag = tag, error = %e, "Failed to remove tag");
+                    }
+                }
+            }
+
+            // Add tags not in current list
+            for tag in &new_tags {
+                if !current_tags.iter().any(|t| t.eq_ignore_ascii_case(tag)) {
+                    let tag_url =
+                        format!("{}/task/{}/tag/{}", self.base_url, task.id, encode_tag(tag));
+                    let resp = self
+                        .request(reqwest::Method::POST, &tag_url)
+                        .send()
+                        .await
+                        .map_err(|e| Error::Http(e.to_string()))?;
+                    if !resp.status().is_success() {
+                        warn!(
+                            tag = tag,
+                            status = resp.status().as_u16(),
+                            "Failed to add tag"
+                        );
+                    }
+                }
+            }
+
+            // Re-fetch task to get updated tags
+            let updated_task: ClickUpTask = self.get(&url).await?;
+            return Ok(map_task(&updated_task));
+        }
+
         Ok(map_task(&task))
+    }
+
+    async fn set_custom_fields(&self, issue_key: &str, fields: &[serde_json::Value]) -> Result<()> {
+        let task_id = self.resolve_to_native_id(issue_key).await?;
+        for field in fields {
+            let field_id = field["id"].as_str().unwrap_or_default();
+            if field_id.is_empty() {
+                continue;
+            }
+            let url = format!("{}/task/{}/field/{}", self.base_url, task_id, field_id);
+            let body = serde_json::json!({ "value": field["value"] });
+            let resp = self
+                .request(reqwest::Method::POST, &url)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| Error::Http(e.to_string()))?;
+            if !resp.status().is_success() {
+                let status = resp.status().as_u16();
+                let msg = resp.text().await.unwrap_or_default();
+                warn!(
+                    field_id = field_id,
+                    status = status,
+                    "Failed to set custom field: {}",
+                    msg
+                );
+            }
+        }
+        Ok(())
     }
 
     async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>> {

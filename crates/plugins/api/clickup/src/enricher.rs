@@ -98,20 +98,38 @@ impl ToolEnricher for ClickUpSchemaEnricher {
             schema.remove_params(&["customFields"]);
 
             for field in &self.metadata.custom_fields {
-                let param_name = sanitize_field_name(&field.name);
                 let field_schema = custom_field_to_schema(field);
+                if field_schema.is_null() {
+                    continue; // Skip unsupported field types
+                }
+                let param_name = sanitize_field_name(&field.name);
                 schema.add_param(&param_name, field_schema);
             }
         }
     }
 
     fn transform_args(&self, tool_name: &str, args: &mut Value) {
-        if tool_name != "create_issue" && tool_name != "update_issue" {
+        let is_issue_tool = tool_name == "create_issue" || tool_name == "update_issue";
+        let is_epic_tool = tool_name == "create_epic" || tool_name == "update_epic";
+
+        if !is_issue_tool && !is_epic_tool {
             return;
         }
 
-        // Transform priority name to ClickUp numeric value
-        if let Some(obj) = args.as_object_mut()
+        // For epic tools: copy goalId → cf_goals so custom field transform picks it up.
+        // Keep goalId in args — executor needs it for tag transition.
+        if is_epic_tool
+            && let Some(obj) = args.as_object_mut()
+            && let Some(goal_id) = obj.get("goalId").cloned()
+        {
+            let cf_name = sanitize_field_name("Goals");
+            obj.insert(cf_name, goal_id);
+        }
+
+        // Transform priority name to ClickUp numeric value (only for direct issue tools,
+        // epic tools pass priority as string to executor which handles conversion).
+        if is_issue_tool
+            && let Some(obj) = args.as_object_mut()
             && let Some(priority) = obj.get("priority").and_then(|v| v.as_str())
         {
             let numeric = match priority {
@@ -194,6 +212,7 @@ fn custom_field_to_schema(field: &crate::metadata::ClickUpCustomField) -> Value 
         ClickUpFieldType::Email => "email",
         ClickUpFieldType::Url => "url",
         ClickUpFieldType::Phone => "phone",
+        ClickUpFieldType::Unknown => return json!(null), // Skip unsupported field types
     };
 
     json!({

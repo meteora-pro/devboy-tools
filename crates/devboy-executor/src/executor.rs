@@ -354,24 +354,24 @@ async fn execute_get_issue(
     let mut result = serde_json::to_value(&issue).unwrap_or_default();
     let mut has_extras = false;
 
-    if params.include_comments {
-        if let Ok(comments_result) = provider.get_comments(&params.key).await {
-            result["comments"] = serde_json::to_value(&comments_result.items).unwrap_or_default();
-            result["comments_count"] = serde_json::json!(comments_result.items.len());
-            has_extras = true;
-        }
+    if params.include_comments
+        && let Ok(comments_result) = provider.get_comments(&params.key).await
+    {
+        result["comments"] = serde_json::to_value(&comments_result.items).unwrap_or_default();
+        result["comments_count"] = serde_json::json!(comments_result.items.len());
+        has_extras = true;
     }
 
-    if params.include_relations {
-        if let Ok(relations) = provider.get_issue_relations(&params.key).await {
-            result["relations"] = serde_json::to_value(&relations).unwrap_or_default();
-            if issue.subtasks.is_empty() && !relations.subtasks.is_empty() {
-                result["subtasks"] = serde_json::to_value(&relations.subtasks).unwrap_or_default();
-            }
-            result["subtasks_count"] =
-                serde_json::json!(issue.subtasks.len().max(relations.subtasks.len()));
-            has_extras = true;
+    if params.include_relations
+        && let Ok(relations) = provider.get_issue_relations(&params.key).await
+    {
+        result["relations"] = serde_json::to_value(&relations).unwrap_or_default();
+        if issue.subtasks.is_empty() && !relations.subtasks.is_empty() {
+            result["subtasks"] = serde_json::to_value(&relations.subtasks).unwrap_or_default();
         }
+        result["subtasks_count"] =
+            serde_json::json!(issue.subtasks.len().max(relations.subtasks.len()));
+        has_extras = true;
     }
 
     // If no extras were actually fetched, return simple issue
@@ -437,6 +437,15 @@ async fn execute_create_issue(
         markdown: params.markdown.unwrap_or(true),
     };
     let issue = provider.create_issue(input).await?;
+
+    // Set custom fields injected by enricher (e.g., cf_goals → customFields)
+    if let Some(cf) = args.get("customFields").and_then(|v| v.as_array())
+        && !cf.is_empty()
+        && let Err(e) = provider.set_custom_fields(&issue.key, cf).await
+    {
+        tracing::warn!(error = %e, "Failed to set custom fields on created issue");
+    }
+
     Ok(ToolOutput::SingleIssue(Box::new(issue)))
 }
 
@@ -471,6 +480,14 @@ async fn execute_update_issue(
         markdown: params.markdown.unwrap_or(true),
     };
     let issue = provider.update_issue(&params.key, input).await?;
+
+    // Set custom fields injected by enricher (e.g., cf_goals → customFields)
+    if let Some(cf) = args.get("customFields").and_then(|v| v.as_array())
+        && !cf.is_empty()
+        && let Err(e) = provider.set_custom_fields(&params.key, cf).await
+    {
+        tracing::warn!(error = %e, "Failed to set custom fields on updated issue");
+    }
     Ok(ToolOutput::SingleIssue(Box::new(issue)))
 }
 
@@ -992,11 +1009,21 @@ async fn execute_create_epic(
         markdown: params.markdown.unwrap_or(true),
     };
     let issue = provider.create_issue(input).await?;
+
+    // Set custom fields (e.g., Goals) injected by enricher via goalId → cf_goals → customFields
+    if let Some(cf) = args.get("customFields").and_then(|v| v.as_array())
+        && !cf.is_empty()
+        && let Err(e) = provider.set_custom_fields(&issue.key, cf).await
+    {
+        tracing::warn!(error = %e, "Failed to set custom fields on created epic");
+    }
+
     Ok(ToolOutput::SingleIssue(Box::new(issue)))
 }
 
 #[derive(Deserialize)]
 struct UpdateEpicParams {
+    #[serde(alias = "epicKey")]
     key: String,
     title: Option<String>,
     description: Option<String>,
@@ -1066,6 +1093,15 @@ async fn execute_update_epic(
         markdown: params.markdown.unwrap_or(true),
     };
     let issue = provider.update_issue(&params.key, input).await?;
+
+    // Set custom fields (e.g., Goals) injected by enricher via goalId → cf_goals → customFields
+    if let Some(cf) = args.get("customFields").and_then(|v| v.as_array())
+        && !cf.is_empty()
+        && let Err(e) = provider.set_custom_fields(&params.key, cf).await
+    {
+        tracing::warn!(error = %e, "Failed to set custom fields on updated epic");
+    }
+
     Ok(ToolOutput::SingleIssue(Box::new(issue)))
 }
 
@@ -1341,7 +1377,8 @@ mod tests {
         assert!(matches!(result, ToolOutput::Text(_)));
 
         // Without extras, returns SingleIssue
-        let args = serde_json::json!({"key": "gh#1", "includeComments": false, "includeRelations": false});
+        let args =
+            serde_json::json!({"key": "gh#1", "includeComments": false, "includeRelations": false});
         let result = dispatch_tool("get_issue", &args, &provider).await.unwrap();
         assert!(matches!(result, ToolOutput::SingleIssue(_)));
     }
