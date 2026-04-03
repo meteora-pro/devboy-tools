@@ -134,7 +134,9 @@ impl DiagnosticCheck for CredentialStoreCheck {
                 name: self.name().to_string(),
                 status: CheckStatus::Pass,
                 message: "Credential store available".to_string(),
-                details: ctx.verbose.then(|| json!({ "backend": "os-keychain" })),
+                details: ctx
+                    .verbose
+                    .then(|| json!({ "backend": "credential-chain" })),
                 fix_command: None,
                 fix_url: None,
             },
@@ -245,7 +247,7 @@ mod tests {
         let result = CredentialStoreCheck.run(&ctx).await;
 
         assert_eq!(result.status, CheckStatus::Pass);
-        assert_eq!(result.details.unwrap()["backend"], "os-keychain");
+        assert_eq!(result.details.unwrap()["backend"], "credential-chain");
     }
 
     #[tokio::test]

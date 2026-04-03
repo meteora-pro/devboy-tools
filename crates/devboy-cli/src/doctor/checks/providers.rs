@@ -1,7 +1,7 @@
 use crate::doctor::checks::{resolve_active_provider_context, resolve_secret};
 use crate::doctor::{CheckResult, CheckStatus, DiagnosticCheck, DiagnosticContext};
 use async_trait::async_trait;
-use devboy_core::{ClickUpConfig, GitHubConfig, GitLabConfig, JiraConfig};
+use devboy_core::{ClickUpConfig, ContextConfig, GitHubConfig, GitLabConfig, JiraConfig};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, USER_AGENT};
 use reqwest::{Client, Method};
 use serde::Deserialize;
@@ -89,6 +89,7 @@ struct JiraUserResponse {
     #[serde(rename = "emailAddress")]
     email_address: Option<String>,
     #[serde(default)]
+    #[serde(rename = "accountId")]
     account_id: Option<String>,
 }
 
@@ -410,13 +411,21 @@ async fn jira_connectivity(
     })
 }
 
-async fn run_provider_check(
+use std::pin::Pin;
+
+type ConnectFuture<'a> =
+    Pin<Box<dyn std::future::Future<Output = Result<ConnectivityOutcome, String>> + Send + 'a>>;
+
+async fn run_provider_check<C, F>(
     check: &dyn DiagnosticCheck,
     ctx: &DiagnosticContext,
     provider: &'static str,
-    configured: bool,
-    connect: impl std::future::Future<Output = Result<ConnectivityOutcome, String>>,
-) -> CheckResult {
+    extract_config: F,
+    connect: impl for<'a> FnOnce(&'a C, &'a str) -> ConnectFuture<'a>,
+) -> CheckResult
+where
+    F: FnOnce(&ContextConfig) -> Option<C>,
+{
     let Some(config) = &ctx.config else {
         return skipped(check, "Skipped because config could not be loaded");
     };
@@ -425,7 +434,7 @@ async fn run_provider_check(
         return skipped(check, "Skipped because no active context could be resolved");
     };
 
-    if !configured {
+    let Some(provider_config) = extract_config(&active.config) else {
         return skipped(
             check,
             &format!(
@@ -433,7 +442,7 @@ async fn run_provider_check(
                 provider, active.name
             ),
         );
-    }
+    };
 
     let secret = match resolve_secret(ctx, Some(&active.name), provider) {
         Ok(Some(secret)) => secret,
@@ -462,7 +471,7 @@ async fn run_provider_check(
         }
     };
 
-    match connect.await {
+    match connect(&provider_config, &secret.value).await {
         Ok(outcome) => {
             let details = ctx.verbose.then(|| {
                 connectivity_details(provider, &active.name, &secret.key, secret.source, &outcome)
@@ -515,57 +524,12 @@ impl DiagnosticCheck for GitHubApiCheck {
     }
 
     async fn run(&self, ctx: &DiagnosticContext) -> CheckResult {
-        let Some(active) = ctx
-            .config
-            .as_ref()
-            .and_then(resolve_active_provider_context)
-        else {
-            return skipped(self, "Skipped because no active context could be resolved");
-        };
-
-        let Some(config) = active.config.github else {
-            return skipped(
-                self,
-                &format!(
-                    "Skipped because github is not configured in context '{}'",
-                    active.name
-                ),
-            );
-        };
-
-        let token = match resolve_secret(ctx, Some(&active.name), "github") {
-            Ok(Some(secret)) => secret.value,
-            Ok(None) => {
-                return skipped(
-                    self,
-                    &format!(
-                        "Skipped because github credentials are missing for context '{}'",
-                        active.name
-                    ),
-                );
-            }
-            Err(error) => {
-                return CheckResult {
-                    id: self.id().to_string(),
-                    category: self.category().to_string(),
-                    name: self.name().to_string(),
-                    status: CheckStatus::Error,
-                    message: format!("Could not read github credentials: {error}"),
-                    details: ctx
-                        .verbose
-                        .then(|| json!({ "provider": "github", "error": error })),
-                    fix_command: None,
-                    fix_url: None,
-                };
-            }
-        };
-
         run_provider_check(
             self,
             ctx,
             "github",
-            true,
-            github_connectivity(&config, &token),
+            |c| c.github.clone(),
+            |cfg, token| Box::pin(github_connectivity(cfg, token)),
         )
         .await
     }
@@ -586,57 +550,12 @@ impl DiagnosticCheck for GitLabApiCheck {
     }
 
     async fn run(&self, ctx: &DiagnosticContext) -> CheckResult {
-        let Some(active) = ctx
-            .config
-            .as_ref()
-            .and_then(resolve_active_provider_context)
-        else {
-            return skipped(self, "Skipped because no active context could be resolved");
-        };
-
-        let Some(config) = active.config.gitlab else {
-            return skipped(
-                self,
-                &format!(
-                    "Skipped because gitlab is not configured in context '{}'",
-                    active.name
-                ),
-            );
-        };
-
-        let token = match resolve_secret(ctx, Some(&active.name), "gitlab") {
-            Ok(Some(secret)) => secret.value,
-            Ok(None) => {
-                return skipped(
-                    self,
-                    &format!(
-                        "Skipped because gitlab credentials are missing for context '{}'",
-                        active.name
-                    ),
-                );
-            }
-            Err(error) => {
-                return CheckResult {
-                    id: self.id().to_string(),
-                    category: self.category().to_string(),
-                    name: self.name().to_string(),
-                    status: CheckStatus::Error,
-                    message: format!("Could not read gitlab credentials: {error}"),
-                    details: ctx
-                        .verbose
-                        .then(|| json!({ "provider": "gitlab", "error": error })),
-                    fix_command: None,
-                    fix_url: None,
-                };
-            }
-        };
-
         run_provider_check(
             self,
             ctx,
             "gitlab",
-            true,
-            gitlab_connectivity(&config, &token),
+            |c| c.gitlab.clone(),
+            |cfg, token| Box::pin(gitlab_connectivity(cfg, token)),
         )
         .await
     }
@@ -657,57 +576,12 @@ impl DiagnosticCheck for ClickUpApiCheck {
     }
 
     async fn run(&self, ctx: &DiagnosticContext) -> CheckResult {
-        let Some(active) = ctx
-            .config
-            .as_ref()
-            .and_then(resolve_active_provider_context)
-        else {
-            return skipped(self, "Skipped because no active context could be resolved");
-        };
-
-        let Some(config) = active.config.clickup else {
-            return skipped(
-                self,
-                &format!(
-                    "Skipped because clickup is not configured in context '{}'",
-                    active.name
-                ),
-            );
-        };
-
-        let token = match resolve_secret(ctx, Some(&active.name), "clickup") {
-            Ok(Some(secret)) => secret.value,
-            Ok(None) => {
-                return skipped(
-                    self,
-                    &format!(
-                        "Skipped because clickup credentials are missing for context '{}'",
-                        active.name
-                    ),
-                );
-            }
-            Err(error) => {
-                return CheckResult {
-                    id: self.id().to_string(),
-                    category: self.category().to_string(),
-                    name: self.name().to_string(),
-                    status: CheckStatus::Error,
-                    message: format!("Could not read clickup credentials: {error}"),
-                    details: ctx
-                        .verbose
-                        .then(|| json!({ "provider": "clickup", "error": error })),
-                    fix_command: None,
-                    fix_url: None,
-                };
-            }
-        };
-
         run_provider_check(
             self,
             ctx,
             "clickup",
-            true,
-            clickup_connectivity(&config, &token),
+            |c| c.clickup.clone(),
+            |cfg, token| Box::pin(clickup_connectivity(cfg, token)),
         )
         .await
     }
@@ -728,52 +602,14 @@ impl DiagnosticCheck for JiraApiCheck {
     }
 
     async fn run(&self, ctx: &DiagnosticContext) -> CheckResult {
-        let Some(active) = ctx
-            .config
-            .as_ref()
-            .and_then(resolve_active_provider_context)
-        else {
-            return skipped(self, "Skipped because no active context could be resolved");
-        };
-
-        let Some(config) = active.config.jira else {
-            return skipped(
-                self,
-                &format!(
-                    "Skipped because jira is not configured in context '{}'",
-                    active.name
-                ),
-            );
-        };
-
-        let token = match resolve_secret(ctx, Some(&active.name), "jira") {
-            Ok(Some(secret)) => secret.value,
-            Ok(None) => {
-                return skipped(
-                    self,
-                    &format!(
-                        "Skipped because jira credentials are missing for context '{}'",
-                        active.name
-                    ),
-                );
-            }
-            Err(error) => {
-                return CheckResult {
-                    id: self.id().to_string(),
-                    category: self.category().to_string(),
-                    name: self.name().to_string(),
-                    status: CheckStatus::Error,
-                    message: format!("Could not read jira credentials: {error}"),
-                    details: ctx
-                        .verbose
-                        .then(|| json!({ "provider": "jira", "error": error })),
-                    fix_command: None,
-                    fix_url: None,
-                };
-            }
-        };
-
-        run_provider_check(self, ctx, "jira", true, jira_connectivity(&config, &token)).await
+        run_provider_check(
+            self,
+            ctx,
+            "jira",
+            |c| c.jira.clone(),
+            |cfg, token| Box::pin(jira_connectivity(cfg, token)),
+        )
+        .await
     }
 }
 
@@ -977,7 +813,7 @@ mod tests {
             then.status(200).json_body(json!({
                 "name": "",
                 "displayName": "Jira User",
-                "account_id": "acct-123"
+                "accountId": "acct-123"
             }));
         });
 
@@ -993,6 +829,20 @@ mod tests {
         .unwrap();
 
         assert_eq!(outcome.user.unwrap().username, "acct-123");
+    }
+
+    fn github_extractor(c: &ContextConfig) -> Option<GitHubConfig> {
+        c.github.clone()
+    }
+
+    fn dummy_connect<'a>(_cfg: &'a GitHubConfig, _token: &'a str) -> ConnectFuture<'a> {
+        Box::pin(async {
+            Ok(ConnectivityOutcome {
+                message: "ok".to_string(),
+                user: None,
+                rate_limit: None,
+            })
+        })
     }
 
     #[tokio::test]
@@ -1012,14 +862,8 @@ mod tests {
             &GitHubApiCheck,
             &ctx_without_config,
             "github",
-            true,
-            async {
-                Ok(ConnectivityOutcome {
-                    message: "ok".to_string(),
-                    user: None,
-                    rate_limit: None,
-                })
-            },
+            github_extractor,
+            dummy_connect,
         )
         .await;
         assert_eq!(skipped_result.status, CheckStatus::Skipped);
@@ -1028,17 +872,17 @@ mod tests {
             config: Some(Config::default()),
             ..ctx_without_config
         };
-        let skipped_result =
-            run_provider_check(&GitHubApiCheck, &no_active_ctx, "github", true, async {
-                Ok(ConnectivityOutcome {
-                    message: "ok".to_string(),
-                    user: None,
-                    rate_limit: None,
-                })
-            })
-            .await;
+        let skipped_result = run_provider_check(
+            &GitHubApiCheck,
+            &no_active_ctx,
+            "github",
+            github_extractor,
+            dummy_connect,
+        )
+        .await;
         assert_eq!(skipped_result.status, CheckStatus::Skipped);
 
+        // not-configured: extractor returns None
         let configured_ctx = context_with_provider(
             Arc::new(MemoryStore::new()),
             ContextConfig {
@@ -1050,26 +894,25 @@ mod tests {
                 ..Default::default()
             },
         );
-        let skipped_result =
-            run_provider_check(&GitHubApiCheck, &configured_ctx, "github", false, async {
-                Ok(ConnectivityOutcome {
-                    message: "ok".to_string(),
-                    user: None,
-                    rate_limit: None,
-                })
-            })
-            .await;
+        let skipped_result = run_provider_check(
+            &GitHubApiCheck,
+            &configured_ctx,
+            "github",
+            |_| None::<GitHubConfig>,
+            dummy_connect,
+        )
+        .await;
         assert_eq!(skipped_result.status, CheckStatus::Skipped);
 
-        let missing_secret =
-            run_provider_check(&GitHubApiCheck, &configured_ctx, "github", true, async {
-                Ok(ConnectivityOutcome {
-                    message: "ok".to_string(),
-                    user: None,
-                    rate_limit: None,
-                })
-            })
-            .await;
+        // missing secret
+        let missing_secret = run_provider_check(
+            &GitHubApiCheck,
+            &configured_ctx,
+            "github",
+            github_extractor,
+            dummy_connect,
+        )
+        .await;
         assert_eq!(missing_secret.status, CheckStatus::Skipped);
 
         let store_error_ctx = context_with_provider(
@@ -1083,15 +926,14 @@ mod tests {
                 ..Default::default()
             },
         );
-        let error_result =
-            run_provider_check(&GitHubApiCheck, &store_error_ctx, "github", true, async {
-                Ok(ConnectivityOutcome {
-                    message: "ok".to_string(),
-                    user: None,
-                    rate_limit: None,
-                })
-            })
-            .await;
+        let error_result = run_provider_check(
+            &GitHubApiCheck,
+            &store_error_ctx,
+            "github",
+            github_extractor,
+            dummy_connect,
+        )
+        .await;
         assert_eq!(error_result.status, CheckStatus::Error);
 
         let success_ctx = context_with_provider(
@@ -1108,33 +950,45 @@ mod tests {
                 ..Default::default()
             },
         );
-        let success_result =
-            run_provider_check(&GitHubApiCheck, &success_ctx, "github", true, async {
-                Ok(ConnectivityOutcome {
-                    message: "connected".to_string(),
-                    user: Some(ProviderIdentity {
-                        username: "octocat".to_string(),
-                        name: Some("Octo Cat".to_string()),
-                        email: None,
-                    }),
-                    rate_limit: Some(RateLimitInfo {
-                        limit: Some("5000".to_string()),
-                        remaining: Some("4999".to_string()),
-                        reset: None,
-                        used: None,
-                        resource: None,
-                    }),
+        let success_result = run_provider_check(
+            &GitHubApiCheck,
+            &success_ctx,
+            "github",
+            github_extractor,
+            |_cfg: &GitHubConfig, _token: &str| -> ConnectFuture<'_> {
+                Box::pin(async {
+                    Ok(ConnectivityOutcome {
+                        message: "connected".to_string(),
+                        user: Some(ProviderIdentity {
+                            username: "octocat".to_string(),
+                            name: Some("Octo Cat".to_string()),
+                            email: None,
+                        }),
+                        rate_limit: Some(RateLimitInfo {
+                            limit: Some("5000".to_string()),
+                            remaining: Some("4999".to_string()),
+                            reset: None,
+                            used: None,
+                            resource: None,
+                        }),
+                    })
                 })
-            })
-            .await;
+            },
+        )
+        .await;
         assert_eq!(success_result.status, CheckStatus::Pass);
         assert_eq!(success_result.details.unwrap()["token_source"], "context");
 
-        let failure_result =
-            run_provider_check(&GitHubApiCheck, &success_ctx, "github", true, async {
-                Err("boom".to_string())
-            })
-            .await;
+        let failure_result = run_provider_check(
+            &GitHubApiCheck,
+            &success_ctx,
+            "github",
+            github_extractor,
+            |_cfg: &GitHubConfig, _token: &str| -> ConnectFuture<'_> {
+                Box::pin(async { Err("boom".to_string()) })
+            },
+        )
+        .await;
         assert_eq!(failure_result.status, CheckStatus::Error);
         assert_eq!(failure_result.details.unwrap()["error"], "boom");
     }
