@@ -937,7 +937,7 @@ fn extract_goal_id(labels: &[String]) -> Option<String> {
         let lower = l.to_lowercase();
         if lower.len() == 2
             && lower.starts_with('g')
-            && lower.chars().nth(1).is_some_and(|c| matches!(c, '1'..='9'))
+            && lower.chars().nth(1).is_some_and(|c| c.is_ascii_digit())
         {
             Some(lower.to_uppercase())
         } else {
@@ -1097,7 +1097,7 @@ async fn execute_update_epic(
                 let lower = l.to_lowercase();
                 !(lower.len() == 2
                     && lower.starts_with('g')
-                    && lower.chars().nth(1).is_some_and(|c| matches!(c, '1'..='9')))
+                    && lower.chars().nth(1).is_some_and(|c| c.is_ascii_digit()))
             })
             .cloned()
             .collect();
