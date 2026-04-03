@@ -93,6 +93,16 @@ pub trait IssueProvider: Send + Sync {
         })
     }
 
+    /// Set custom fields on an issue. Each entry: {"id": "field_id", "value": <value>}.
+    /// Default is no-op — override in providers that support custom fields (e.g., ClickUp).
+    async fn set_custom_fields(
+        &self,
+        _issue_key: &str,
+        _fields: &[serde_json::Value],
+    ) -> Result<()> {
+        Ok(()) // No-op by default
+    }
+
     /// Get issue relations (parent, subtasks, linked issues).
     async fn get_issue_relations(&self, _issue_key: &str) -> Result<IssueRelations> {
         Err(Error::ProviderUnsupported {

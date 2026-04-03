@@ -301,10 +301,10 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
             category: ToolCategory::Epics,
             input_schema: {
                 let mut s = ToolSchema::new();
-                s.add_property("key", PropertySchema::string("Epic key"));
+                s.add_property("epicKey", PropertySchema::string("Epic key (e.g., 'CU-abc', 'DEV-123')"));
                 s.add_property("title", PropertySchema::string("New title"));
                 s.add_property("description", PropertySchema::string("New description"));
-                s.set_required("key", true);
+                s.set_required("epicKey", true);
                 s
             },
         },

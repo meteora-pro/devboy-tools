@@ -12,7 +12,7 @@ pub struct ClickUpMetadata {
     #[serde(default)]
     pub statuses: Vec<ClickUpStatus>,
     /// Custom fields defined for the list.
-    #[serde(default)]
+    #[serde(default, alias = "customFields")]
     pub custom_fields: Vec<ClickUpCustomField>,
 }
 
@@ -33,6 +33,7 @@ pub struct ClickUpCustomField {
     /// Human-readable name.
     pub name: String,
     /// Field type.
+    #[serde(alias = "type")]
     pub field_type: ClickUpFieldType,
     /// Whether this field is required.
     #[serde(default)]
@@ -47,6 +48,7 @@ pub struct ClickUpCustomField {
 #[serde(rename_all = "snake_case")]
 pub enum ClickUpFieldType {
     /// Single select dropdown → value is name, transforms to orderindex.
+    #[serde(alias = "drop_down")]
     Dropdown,
     /// Multi-select labels → value is name array, transforms to id array.
     Labels,
@@ -66,6 +68,9 @@ pub enum ClickUpFieldType {
     Url,
     /// Phone → pass-through as string.
     Phone,
+    /// Catch-all for unknown/unsupported field types (automatic_progress, etc.)
+    #[serde(other)]
+    Unknown,
 }
 
 /// Option for dropdown/labels custom fields.
