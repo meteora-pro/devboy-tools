@@ -32,7 +32,7 @@ impl ClickUpSchemaEnricher {
 const REMOVE_PARAMS: &[&str] = &["issueType", "components", "projectId"];
 
 /// Parameters to remove from get_issues.
-const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery", "stateCategory"];
+const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery"];
 
 impl ToolEnricher for ClickUpSchemaEnricher {
     fn supported_categories(&self) -> &[ToolCategory] {
@@ -44,6 +44,20 @@ impl ToolEnricher for ClickUpSchemaEnricher {
 
         if tool_name == "get_issues" {
             schema.remove_params(GET_ISSUES_REMOVE_PARAMS);
+
+            // Add stateCategory enum for semantic status filtering
+            schema.add_enum_param(
+                "stateCategory",
+                &["backlog", "todo", "in_progress", "done", "cancelled"],
+                "Filter by semantic status category. Maps to provider-specific statuses using name heuristics.",
+            );
+
+            // Add labelsOperator enum
+            schema.add_enum_param(
+                "labelsOperator",
+                &["and", "or"],
+                "Label matching logic: 'and' requires all labels, 'or' requires any (default: 'or').",
+            );
         }
 
         // Add status enum from metadata
@@ -84,20 +98,38 @@ impl ToolEnricher for ClickUpSchemaEnricher {
             schema.remove_params(&["customFields"]);
 
             for field in &self.metadata.custom_fields {
-                let param_name = sanitize_field_name(&field.name);
                 let field_schema = custom_field_to_schema(field);
+                if field_schema.is_null() {
+                    continue; // Skip unsupported field types
+                }
+                let param_name = sanitize_field_name(&field.name);
                 schema.add_param(&param_name, field_schema);
             }
         }
     }
 
     fn transform_args(&self, tool_name: &str, args: &mut Value) {
-        if tool_name != "create_issue" && tool_name != "update_issue" {
+        let is_issue_tool = tool_name == "create_issue" || tool_name == "update_issue";
+        let is_epic_tool = tool_name == "create_epic" || tool_name == "update_epic";
+
+        if !is_issue_tool && !is_epic_tool {
             return;
         }
 
-        // Transform priority name to ClickUp numeric value
-        if let Some(obj) = args.as_object_mut()
+        // For epic tools: copy goalId → cf_goals so custom field transform picks it up.
+        // Keep goalId in args — executor needs it for tag transition.
+        if is_epic_tool
+            && let Some(obj) = args.as_object_mut()
+            && let Some(goal_id) = obj.get("goalId").cloned()
+        {
+            let cf_name = sanitize_field_name("Goals");
+            obj.insert(cf_name, goal_id);
+        }
+
+        // Transform priority name to ClickUp numeric value (only for direct issue tools,
+        // epic tools pass priority as string to executor which handles conversion).
+        if is_issue_tool
+            && let Some(obj) = args.as_object_mut()
             && let Some(priority) = obj.get("priority").and_then(|v| v.as_str())
         {
             let numeric = match priority {
@@ -180,6 +212,7 @@ fn custom_field_to_schema(field: &crate::metadata::ClickUpCustomField) -> Value 
         ClickUpFieldType::Email => "email",
         ClickUpFieldType::Url => "url",
         ClickUpFieldType::Phone => "phone",
+        ClickUpFieldType::Unknown => return json!(null), // Skip unsupported field types
     };
 
     json!({
@@ -433,5 +466,38 @@ mod tests {
         let mut args = json!({"title": "Test", "priority": "unknown_value"});
         enricher.transform_args("create_issue", &mut args);
         assert_eq!(args["priority"], 3); // default to normal
+    }
+
+    #[test]
+    fn test_clickup_enricher_state_category_not_removed() {
+        let enricher = ClickUpSchemaEnricher::new(sample_metadata());
+        let mut schema = ToolSchema::from_json(&json!({
+            "type": "object",
+            "properties": {
+                "stateCategory": { "type": "string" },
+                "nativeQuery": { "type": "string" },
+                "projectKey": { "type": "string" },
+            },
+        }));
+
+        enricher.enrich_schema("get_issues", &mut schema);
+
+        // stateCategory should be enriched with enum, NOT removed
+        assert!(schema.properties.contains_key("stateCategory"));
+        let sc = schema.properties.get("stateCategory").unwrap();
+        assert_eq!(
+            sc.enum_values,
+            Some(vec![
+                "backlog".into(),
+                "todo".into(),
+                "in_progress".into(),
+                "done".into(),
+                "cancelled".into(),
+            ])
+        );
+
+        // These should still be removed
+        assert!(!schema.properties.contains_key("nativeQuery"));
+        assert!(!schema.properties.contains_key("projectKey"));
     }
 }

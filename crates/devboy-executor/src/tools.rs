@@ -37,11 +37,13 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "get_issue".into(),
-            description: "Get a single issue by key (e.g., 'gh#123', 'gitlab#456', 'CU-abc', 'jira#PROJ-123').".into(),
+            description: "Get a single issue by key with optional comments and relations.".into(),
             category: ToolCategory::IssueTracker,
             input_schema: {
                 let mut s = ToolSchema::new();
-                s.add_property("key", PropertySchema::string("Issue key"));
+                s.add_property("key", PropertySchema::string("Issue key (e.g., 'gh#123', 'gitlab#456', 'CU-abc', 'DEV-42', 'jira#PROJ-123')"));
+                s.add_property("includeComments", PropertySchema::boolean("Include issue comments (default: true)"));
+                s.add_property("includeRelations", PropertySchema::boolean("Include issue relations — parent, subtasks, dependencies (default: true)"));
                 s.set_required("key", true);
                 s
             },
@@ -104,12 +106,16 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "add_issue_comment".into(),
-            description: "Add a comment to an issue.".into(),
+            description: "Add a comment to an issue with optional file attachments (ClickUp only).".into(),
             category: ToolCategory::IssueTracker,
             input_schema: {
                 let mut s = ToolSchema::new();
                 s.add_property("key", PropertySchema::string("Issue key"));
                 s.add_property("body", PropertySchema::string("Comment text"));
+                s.add_property("attachments", PropertySchema::array(
+                    PropertySchema::string("Attachment object with fileData (base64) and filename"),
+                    "File attachments (ClickUp only, max 10MB per file). Each: {fileData: base64, filename: string}",
+                ));
                 s.set_required("key", true);
                 s.set_required("body", true);
                 s
@@ -301,10 +307,15 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
             category: ToolCategory::Epics,
             input_schema: {
                 let mut s = ToolSchema::new();
-                s.add_property("key", PropertySchema::string("Epic key"));
+                s.add_property("epicKey", PropertySchema::string("Epic key (e.g., 'CU-abc', 'DEV-123')"));
                 s.add_property("title", PropertySchema::string("New title"));
                 s.add_property("description", PropertySchema::string("New description"));
-                s.set_required("key", true);
+                s.add_property("state", PropertySchema::string("New epic state"));
+                s.add_property("goalId", PropertySchema::string("Goal ID (G1-G9) to associate with the epic"));
+                s.add_property("priority", PropertySchema::string("New priority (urgent/high/normal/low)"));
+                s.add_property("labels", PropertySchema::array(PropertySchema::string("label"), "Labels to set"));
+                s.add_property("assignees", PropertySchema::array(PropertySchema::string("assignee"), "Assignees to set"));
+                s.set_required("epicKey", true);
                 s
             },
         },

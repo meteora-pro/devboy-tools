@@ -145,7 +145,7 @@ define_tools! {
 
     "get_issue" => handle_get_issue {
         category: ToolCategory::Issues,
-        description: "Get a single issue by key (e.g., 'gh#123', 'gitlab#456', 'CU-abc', 'DEV-42', 'jira#PROJ-123'). Returns full issue details.",
+        description: "Get a single issue by key (e.g., 'gh#123', 'gitlab#456', 'CU-abc', 'DEV-42', 'jira#PROJ-123'). Returns full issue details with optional comments and relations.",
         schema: {
             "type": "object",
             "required": ["key"],
@@ -153,6 +153,16 @@ define_tools! {
                 "key": {
                     "type": "string",
                     "description": "Issue key (e.g., 'gh#123' for GitHub, 'gitlab#456' for GitLab, 'CU-abc' or custom ID like 'DEV-42' for ClickUp, 'jira#PROJ-123' for Jira)"
+                },
+                "includeComments": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Include issue comments in the response (default: true)"
+                },
+                "includeRelations": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Include issue relations (parent, subtasks, dependencies) in the response (default: true)"
                 }
             }
         }
@@ -753,8 +763,10 @@ impl ToolHandler {
 
         let filter = IssueFilter {
             state: params.state,
+            state_category: params.state_category,
             search: params.search,
             labels: params.labels,
+            labels_operator: params.labels_operator,
             assignee: params.assignee,
             limit: Some(params.limit.unwrap_or(20) as u32),
             offset: Some(params.offset.unwrap_or(0) as u32),
@@ -831,6 +843,40 @@ impl ToolHandler {
         for provider in &self.providers {
             match provider.get_issue(&params.key).await {
                 Ok(issue) => {
+                    // Optionally fetch comments and relations
+                    let comments = if params.include_comments {
+                        provider
+                            .get_comments(&params.key)
+                            .await
+                            .ok()
+                            .map(|r| r.items)
+                    } else {
+                        None
+                    };
+
+                    let relations = if params.include_relations {
+                        provider.get_issue_relations(&params.key).await.ok()
+                    } else {
+                        None
+                    };
+
+                    // If extras were requested, build composite JSON
+                    if comments.is_some() || relations.is_some() {
+                        let mut result = serde_json::to_value(&issue).unwrap_or_default();
+                        if let Some(ref c) = comments {
+                            result["comments"] = serde_json::to_value(c).unwrap_or_default();
+                            result["comments_count"] = serde_json::json!(c.len());
+                        }
+                        if let Some(ref rel) = relations {
+                            result["relations"] = serde_json::to_value(rel).unwrap_or_default();
+                            let subtask_count = issue.subtasks.len().max(rel.subtasks.len());
+                            result["subtasks_count"] = serde_json::json!(subtask_count);
+                        }
+                        return ToolCallResult::text(
+                            serde_json::to_string_pretty(&result).unwrap_or_default(),
+                        );
+                    }
+
                     let pipeline =
                         self.create_pipeline(&params.format, params.budget, params.chunk);
                     return match pipeline.transform_issues(vec![issue]) {
@@ -1828,8 +1874,12 @@ impl ToolHandler {
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct GetIssuesParams {
     state: Option<String>,
+    #[serde(rename = "stateCategory")]
+    state_category: Option<String>,
     search: Option<String>,
     labels: Option<Vec<String>>,
+    #[serde(rename = "labelsOperator")]
+    labels_operator: Option<String>,
     assignee: Option<String>,
     limit: Option<usize>,
     offset: Option<usize>,
@@ -1844,9 +1894,17 @@ struct GetIssuesParams {
 #[derive(Debug, Serialize, Deserialize)]
 struct GetIssueParams {
     key: String,
+    #[serde(default = "default_true_fn", rename = "includeComments")]
+    include_comments: bool,
+    #[serde(default = "default_true_fn", rename = "includeRelations")]
+    include_relations: bool,
     format: Option<String>,
     budget: Option<usize>,
     chunk: Option<usize>,
+}
+
+fn default_true_fn() -> bool {
+    true
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -102,10 +102,15 @@ pub struct IssueRelations {
 pub struct IssueFilter {
     /// Filter by state (e.g., "opened", "closed", "all")
     pub state: Option<String>,
+    /// Filter by semantic state category (e.g., "backlog", "todo", "in_progress", "done", "cancelled").
+    /// Maps to provider-specific statuses using name heuristics.
+    pub state_category: Option<String>,
     /// Search query for title and description
     pub search: Option<String>,
     /// Filter by labels
     pub labels: Option<Vec<String>>,
+    /// Label matching logic: "and" requires all labels, "or" requires any (default: "or")
+    pub labels_operator: Option<String>,
     /// Filter by assignee username
     pub assignee: Option<String>,
     /// Maximum number of results
