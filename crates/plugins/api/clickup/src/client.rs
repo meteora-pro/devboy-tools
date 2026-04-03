@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use devboy_core::{
     Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueLink, IssueProvider, IssueRelations,
     IssueStatus, MergeRequestProvider, PipelineProvider, Provider, ProviderResult, Result,
-    UpdateIssueInput, User,
+    SortInfo, SortOrder, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
@@ -332,6 +332,56 @@ fn map_state(task: &ClickUpTask) -> String {
     }
 }
 
+/// Map a ClickUp status to a semantic category using both the status type field
+/// and name-based heuristics (for custom statuses where the type is always "custom").
+///
+/// Categories: "backlog", "todo", "in_progress", "done", "cancelled"
+fn map_status_category(status_type: Option<&str>, status_name: &str) -> String {
+    // First, use the explicit type from ClickUp
+    match status_type {
+        Some("closed") | Some("done") => return "done".to_string(),
+        // "open" type in ClickUp is the initial/default status — map via name heuristics below
+        // "custom" type covers most user-defined statuses — also use name heuristics
+        _ => {}
+    }
+
+    // Name-based heuristic matching (case-insensitive)
+    let name_lower = status_name.to_lowercase();
+
+    if name_lower.contains("backlog") {
+        "backlog".to_string()
+    } else if name_lower.contains("cancel")
+        || name_lower.contains("archived")
+        || name_lower.contains("rejected")
+    {
+        "cancelled".to_string()
+    } else if name_lower.contains("done")
+        || name_lower.contains("complete")
+        || name_lower.contains("closed")
+        || name_lower.contains("resolved")
+    {
+        "done".to_string()
+    } else if name_lower.contains("progress")
+        || name_lower.contains("doing")
+        || name_lower.contains("active")
+        || name_lower.contains("review")
+    {
+        "in_progress".to_string()
+    } else if name_lower.contains("todo")
+        || name_lower.contains("to do")
+        || name_lower.contains("open")
+        || name_lower.contains("new")
+    {
+        "todo".to_string()
+    } else {
+        // Unknown custom status — default based on type
+        match status_type {
+            Some("open") => "todo".to_string(),
+            _ => "in_progress".to_string(),
+        }
+    }
+}
+
 /// Build the unified issue key for a task.
 /// Uses `custom_id` when available (e.g., `DEV-42`), otherwise `CU-{id}`.
 fn map_task_key(task: &ClickUpTask) -> String {
@@ -426,6 +476,18 @@ fn map_comment(cu_comment: &ClickUpComment) -> Comment {
         created_at: map_timestamp(&cu_comment.date),
         updated_at: None,
         position: None,
+    }
+}
+
+/// Sorting key for priority (lower = more urgent).
+/// urgent=1, high=2, normal=3, low=4, None=5
+fn priority_sort_key(priority: Option<&str>) -> u8 {
+    match priority {
+        Some("urgent") => 1,
+        Some("high") => 2,
+        Some("normal") => 3,
+        Some("low") => 4,
+        _ => 5,
     }
 }
 
@@ -569,7 +631,11 @@ impl IssueProvider for ClickUpClient {
         // Values are properly URL-encoded by reqwest's .query() method.
         let mut base_params: Vec<(&str, String)> = vec![];
 
-        let include_closed = matches!(filter.state.as_deref(), Some("closed") | Some("all"));
+        let include_closed = matches!(filter.state.as_deref(), Some("closed") | Some("all"))
+            || matches!(
+                filter.state_category.as_deref(),
+                Some("done") | Some("cancelled")
+            );
         if include_closed {
             base_params.push(("include_closed", "true".to_string()));
         }
@@ -593,18 +659,32 @@ impl IssueProvider for ClickUpClient {
             }
         }
 
+        // Track whether client-side sorting is needed for unsupported fields
+        let mut client_side_sort: Option<String> = None;
+
         if let Some(order_by) = &filter.sort_by {
-            let cu_order_by = match order_by.as_str() {
-                "created_at" | "created" => "created",
-                "updated_at" | "updated" => "updated",
-                _ => "updated",
-            };
-            base_params.push(("order_by", cu_order_by.to_string()));
+            match order_by.as_str() {
+                "created_at" | "created" => {
+                    base_params.push(("order_by", "created".to_string()));
+                }
+                "updated_at" | "updated" => {
+                    base_params.push(("order_by", "updated".to_string()));
+                }
+                other => {
+                    // Unsupported by ClickUp API — will sort client-side after fetch
+                    client_side_sort = Some(other.to_string());
+                    warn!(
+                        sort_by = other,
+                        "ClickUp API does not support sorting by '{}', applying client-side sort",
+                        other
+                    );
+                }
+            }
         }
 
-        if let Some(order) = &filter.sort_order
-            && order == "asc"
-        {
+        let sort_order_is_asc = filter.sort_order.as_deref().is_some_and(|o| o == "asc");
+
+        if sort_order_is_asc && client_side_sort.is_none() {
             base_params.push(("reverse", "true".to_string()));
         }
 
@@ -628,6 +708,21 @@ impl IssueProvider for ClickUpClient {
             }
         }
 
+        // Filter by stateCategory if provided (semantic status filtering).
+        // This must happen on raw ClickUp tasks before mapping, since the actual
+        // status name (e.g., "Backlog", "In Progress") is lost during map_task().
+        if let Some(ref state_category) = filter.state_category {
+            let statuses = self.get_statuses().await?;
+            let matching_status_names: Vec<String> = statuses
+                .items
+                .iter()
+                .filter(|s| s.category == *state_category)
+                .map(|s| s.name.to_lowercase())
+                .collect();
+
+            all_tasks.retain(|t| matching_status_names.contains(&t.status.status.to_lowercase()));
+        }
+
         let mut issues: Vec<Issue> = all_tasks.iter().map(map_task).collect();
 
         // Filter by state client-side if needed
@@ -643,6 +738,62 @@ impl IssueProvider for ClickUpClient {
             }
         }
 
+        // Labels AND operator: ClickUp API uses OR by default. For AND, post-filter.
+        if filter.labels_operator.as_deref() == Some("and") {
+            if let Some(ref required_labels) = filter.labels {
+                let required: Vec<String> =
+                    required_labels.iter().map(|l| l.to_lowercase()).collect();
+                issues.retain(|issue| {
+                    let issue_labels: Vec<String> =
+                        issue.labels.iter().map(|l| l.to_lowercase()).collect();
+                    required.iter().all(|r| issue_labels.contains(r))
+                });
+            }
+        }
+
+        // Client-side search filtering (ClickUp API has no search endpoint for tasks)
+        if let Some(ref query) = filter.search {
+            let q = query.to_lowercase();
+            issues.retain(|issue| {
+                issue.title.to_lowercase().contains(&q)
+                    || issue
+                        .description
+                        .as_ref()
+                        .is_some_and(|d| d.to_lowercase().contains(&q))
+                    || issue.key.to_lowercase().contains(&q)
+            });
+        }
+
+        // Client-side sorting for fields unsupported by ClickUp API
+        if let Some(ref sort_field) = client_side_sort {
+            match sort_field.as_str() {
+                "priority" => {
+                    issues.sort_by(|a, b| {
+                        let pa = priority_sort_key(a.priority.as_deref());
+                        let pb = priority_sort_key(b.priority.as_deref());
+                        if sort_order_is_asc {
+                            pa.cmp(&pb)
+                        } else {
+                            pb.cmp(&pa)
+                        }
+                    });
+                }
+                "title" => {
+                    issues.sort_by(|a, b| {
+                        let cmp = a.title.to_lowercase().cmp(&b.title.to_lowercase());
+                        if sort_order_is_asc {
+                            cmp
+                        } else {
+                            cmp.reverse()
+                        }
+                    });
+                }
+                _ => {
+                    // Unknown sort field — leave as-is (API default order)
+                }
+            }
+        }
+
         // Apply offset within first page and limit
         let offset_in_first_page = offset % PAGE_SIZE as usize;
         if offset_in_first_page < issues.len() {
@@ -653,7 +804,23 @@ impl IssueProvider for ClickUpClient {
 
         issues.truncate(limit);
 
-        Ok(issues.into())
+        // Build sort info metadata
+        let sort_info = SortInfo {
+            sort_by: filter.sort_by.clone(),
+            sort_order: if sort_order_is_asc {
+                SortOrder::Asc
+            } else {
+                SortOrder::Desc
+            },
+            available_sorts: vec![
+                "created_at".into(),
+                "updated_at".into(),
+                "priority".into(),
+                "title".into(),
+            ],
+        };
+
+        Ok(ProviderResult::new(issues).with_sort_info(sort_info))
     }
 
     async fn get_issue(&self, key: &str) -> Result<Issue> {
@@ -827,6 +994,53 @@ impl IssueProvider for ClickUpClient {
         })
     }
 
+    async fn upload_attachment(
+        &self,
+        issue_key: &str,
+        filename: &str,
+        data: &[u8],
+    ) -> Result<String> {
+        let task_id = self.resolve_to_native_id(issue_key).await?;
+        let url = format!("{}/task/{}/attachment", self.base_url, task_id);
+
+        let part = reqwest::multipart::Part::bytes(data.to_vec())
+            .file_name(filename.to_string())
+            .mime_str("application/octet-stream")
+            .map_err(|e| Error::Http(format!("Failed to create multipart: {}", e)))?;
+
+        let form = reqwest::multipart::Form::new().part("attachment", part);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", &self.token)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_default();
+            return Err(Error::from_status(status.as_u16(), message));
+        }
+
+        // ClickUp returns: { "attachment": { "url": "..." } } or similar
+        let body: serde_json::Value = response.json().await.map_err(|e| {
+            Error::InvalidData(format!("Failed to parse attachment response: {}", e))
+        })?;
+
+        // Extract URL from response
+        let download_url = body
+            .pointer("/url")
+            .or_else(|| body.pointer("/attachment/url"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        Ok(download_url)
+    }
+
     async fn get_statuses(&self) -> Result<ProviderResult<IssueStatus>> {
         let url = format!("{}/list/{}", self.base_url, self.list_id);
         let list_info: ClickUpListInfo = self.get(&url).await?;
@@ -836,12 +1050,7 @@ impl IssueProvider for ClickUpClient {
             .iter()
             .enumerate()
             .map(|(idx, s)| {
-                let category = match s.status_type.as_deref() {
-                    Some("open") => "open".to_string(),
-                    Some("closed") | Some("done") => "done".to_string(),
-                    Some("custom") => "in_progress".to_string(),
-                    _ => "custom".to_string(),
-                };
+                let category = map_status_category(s.status_type.as_deref(), &s.status);
                 IssueStatus {
                     id: s.status.clone(),
                     name: s.status.clone(),
@@ -1609,6 +1818,59 @@ mod tests {
         let issue = map_task(&task);
         assert!(issue.parent.is_none());
         assert!(issue.subtasks.is_empty());
+    }
+
+    #[test]
+    fn test_map_status_category_name_heuristics() {
+        // Explicit types
+        assert_eq!(map_status_category(Some("closed"), "Done"), "done");
+        assert_eq!(map_status_category(Some("done"), "Complete"), "done");
+
+        // Custom statuses — name-based mapping
+        assert_eq!(map_status_category(Some("custom"), "Backlog"), "backlog");
+        assert_eq!(
+            map_status_category(Some("custom"), "Product Backlog"),
+            "backlog"
+        );
+        assert_eq!(map_status_category(Some("custom"), "To Do"), "todo");
+        assert_eq!(map_status_category(Some("custom"), "New"), "todo");
+        assert_eq!(
+            map_status_category(Some("custom"), "In Progress"),
+            "in_progress"
+        );
+        assert_eq!(
+            map_status_category(Some("custom"), "Code Review"),
+            "in_progress"
+        );
+        assert_eq!(map_status_category(Some("custom"), "Doing"), "in_progress");
+        assert_eq!(map_status_category(Some("custom"), "Active"), "in_progress");
+        assert_eq!(map_status_category(Some("custom"), "Done"), "done");
+        assert_eq!(map_status_category(Some("custom"), "Completed"), "done");
+        assert_eq!(map_status_category(Some("custom"), "Resolved"), "done");
+        assert_eq!(
+            map_status_category(Some("custom"), "Cancelled"),
+            "cancelled"
+        );
+        assert_eq!(map_status_category(Some("custom"), "Archived"), "cancelled");
+        assert_eq!(map_status_category(Some("custom"), "Rejected"), "cancelled");
+
+        // Open type — defaults to "todo"
+        assert_eq!(map_status_category(Some("open"), "Open"), "todo");
+
+        // Unknown custom status — defaults to "in_progress"
+        assert_eq!(
+            map_status_category(Some("custom"), "Some Custom Status"),
+            "in_progress"
+        );
+    }
+
+    #[test]
+    fn test_priority_sort_key() {
+        assert_eq!(priority_sort_key(Some("urgent")), 1);
+        assert_eq!(priority_sort_key(Some("high")), 2);
+        assert_eq!(priority_sort_key(Some("normal")), 3);
+        assert_eq!(priority_sort_key(Some("low")), 4);
+        assert_eq!(priority_sort_key(None), 5);
     }
 
     // =========================================================================
@@ -2628,6 +2890,302 @@ mod tests {
 
             assert_eq!(issue.key, "DEV-701");
             assert_eq!(issue.parent, Some("CU-parent_id".to_string()));
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_search_filter() {
+            let server = MockServer::start_async().await;
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345/task");
+                then.status(200).json_body(serde_json::json!({
+                    "tasks": [
+                        {
+                            "id": "1", "name": "Fix login bug",
+                            "description": "Authentication fails",
+                            "text_content": "Authentication fails",
+                            "status": {"status": "open", "type": "open"},
+                            "tags": [], "assignees": [],
+                            "url": "https://app.clickup.com/t/1"
+                        },
+                        {
+                            "id": "2", "name": "Add dark mode",
+                            "description": "Theme support",
+                            "text_content": "Theme support",
+                            "status": {"status": "open", "type": "open"},
+                            "tags": [], "assignees": [],
+                            "url": "https://app.clickup.com/t/2"
+                        },
+                        {
+                            "id": "3", "name": "Update docs",
+                            "description": "Fix login instructions",
+                            "text_content": "Fix login instructions",
+                            "status": {"status": "open", "type": "open"},
+                            "tags": [], "assignees": [],
+                            "url": "https://app.clickup.com/t/3"
+                        }
+                    ]
+                }));
+            });
+
+            let client = create_test_client(&server);
+
+            // Search by title
+            let issues = client
+                .get_issues(IssueFilter {
+                    search: Some("login".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+            assert_eq!(issues.len(), 2);
+            assert!(issues.iter().any(|i| i.title == "Fix login bug"));
+            assert!(issues.iter().any(|i| i.title == "Update docs")); // matches description
+
+            // Search by key
+            let issues = client
+                .get_issues(IssueFilter {
+                    search: Some("CU-2".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+            assert_eq!(issues.len(), 1);
+            assert_eq!(issues[0].title, "Add dark mode");
+
+            // Search — no matches
+            let issues = client
+                .get_issues(IssueFilter {
+                    search: Some("nonexistent".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+            assert!(issues.is_empty());
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_sort_by_priority() {
+            let server = MockServer::start_async().await;
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345/task");
+                then.status(200).json_body(serde_json::json!({
+                    "tasks": [
+                        {
+                            "id": "1", "name": "Low task",
+                            "status": {"status": "open", "type": "open"},
+                            "priority": {"id": "4", "priority": "low"},
+                            "tags": [], "assignees": [],
+                            "url": "https://app.clickup.com/t/1"
+                        },
+                        {
+                            "id": "2", "name": "Urgent task",
+                            "status": {"status": "open", "type": "open"},
+                            "priority": {"id": "1", "priority": "urgent"},
+                            "tags": [], "assignees": [],
+                            "url": "https://app.clickup.com/t/2"
+                        },
+                        {
+                            "id": "3", "name": "Normal task",
+                            "status": {"status": "open", "type": "open"},
+                            "priority": {"id": "3", "priority": "normal"},
+                            "tags": [], "assignees": [],
+                            "url": "https://app.clickup.com/t/3"
+                        }
+                    ]
+                }));
+            });
+
+            let client = create_test_client(&server);
+
+            // Sort by priority descending (most urgent first)
+            let result = client
+                .get_issues(IssueFilter {
+                    sort_by: Some("priority".to_string()),
+                    sort_order: Some("asc".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(result.items[0].priority, Some("urgent".to_string()));
+            assert_eq!(result.items[1].priority, Some("normal".to_string()));
+            assert_eq!(result.items[2].priority, Some("low".to_string()));
+
+            // Verify sort_info is populated
+            let sort_info = result.sort_info.unwrap();
+            assert_eq!(sort_info.sort_by, Some("priority".to_string()));
+            assert!(sort_info.available_sorts.contains(&"priority".into()));
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_sort_by_title() {
+            let server = MockServer::start_async().await;
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345/task");
+                then.status(200).json_body(serde_json::json!({
+                    "tasks": [
+                        {
+                            "id": "1", "name": "Charlie",
+                            "status": {"status": "open", "type": "open"},
+                            "tags": [], "assignees": [],
+                            "url": "https://app.clickup.com/t/1"
+                        },
+                        {
+                            "id": "2", "name": "Alpha",
+                            "status": {"status": "open", "type": "open"},
+                            "tags": [], "assignees": [],
+                            "url": "https://app.clickup.com/t/2"
+                        },
+                        {
+                            "id": "3", "name": "Bravo",
+                            "status": {"status": "open", "type": "open"},
+                            "tags": [], "assignees": [],
+                            "url": "https://app.clickup.com/t/3"
+                        }
+                    ]
+                }));
+            });
+
+            let client = create_test_client(&server);
+
+            let result = client
+                .get_issues(IssueFilter {
+                    sort_by: Some("title".to_string()),
+                    sort_order: Some("asc".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(result.items[0].title, "Alpha");
+            assert_eq!(result.items[1].title, "Bravo");
+            assert_eq!(result.items[2].title, "Charlie");
+        }
+
+        #[tokio::test]
+        async fn test_get_statuses_category_mapping() {
+            let server = MockServer::start_async().await;
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(serde_json::json!({
+                    "statuses": [
+                        {"status": "Backlog", "type": "custom", "color": "#aaa", "orderindex": 0},
+                        {"status": "To Do", "type": "open", "color": "#bbb", "orderindex": 1},
+                        {"status": "In Progress", "type": "custom", "color": "#ccc", "orderindex": 2},
+                        {"status": "In Review", "type": "custom", "color": "#ddd", "orderindex": 3},
+                        {"status": "Done", "type": "closed", "color": "#eee", "orderindex": 4},
+                        {"status": "Cancelled", "type": "custom", "color": "#fff", "orderindex": 5},
+                        {"status": "Archived", "type": "custom", "color": "#000", "orderindex": 6}
+                    ]
+                }));
+            });
+
+            let client = create_test_client(&server);
+            let statuses = client.get_statuses().await.unwrap().items;
+
+            assert_eq!(statuses.len(), 7);
+            assert_eq!(statuses[0].name, "Backlog");
+            assert_eq!(statuses[0].category, "backlog");
+            assert_eq!(statuses[1].name, "To Do");
+            assert_eq!(statuses[1].category, "todo");
+            assert_eq!(statuses[2].name, "In Progress");
+            assert_eq!(statuses[2].category, "in_progress");
+            assert_eq!(statuses[3].name, "In Review");
+            assert_eq!(statuses[3].category, "in_progress");
+            assert_eq!(statuses[4].name, "Done");
+            assert_eq!(statuses[4].category, "done");
+            assert_eq!(statuses[5].name, "Cancelled");
+            assert_eq!(statuses[5].category, "cancelled");
+            assert_eq!(statuses[6].name, "Archived");
+            assert_eq!(statuses[6].category, "cancelled");
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_state_category_filter() {
+            let server = MockServer::start_async().await;
+
+            // Mock for get_statuses (called by stateCategory filter)
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345").query_param_exists("!");
+                then.status(200).json_body(serde_json::json!({
+                    "statuses": [
+                        {"status": "Backlog", "type": "custom"},
+                        {"status": "To Do", "type": "open"},
+                        {"status": "In Progress", "type": "custom"},
+                        {"status": "Done", "type": "closed"}
+                    ]
+                }));
+            });
+
+            // This exact path mock for list info (no query params)
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(serde_json::json!({
+                    "statuses": [
+                        {"status": "Backlog", "type": "custom"},
+                        {"status": "To Do", "type": "open"},
+                        {"status": "In Progress", "type": "custom"},
+                        {"status": "Done", "type": "closed"}
+                    ]
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345/task");
+                then.status(200).json_body(serde_json::json!({
+                    "tasks": [
+                        {
+                            "id": "1", "name": "Backlog task",
+                            "status": {"status": "Backlog", "type": "custom"},
+                            "tags": [], "assignees": [],
+                            "url": "https://app.clickup.com/t/1"
+                        },
+                        {
+                            "id": "2", "name": "In progress task",
+                            "status": {"status": "In Progress", "type": "custom"},
+                            "tags": [], "assignees": [],
+                            "url": "https://app.clickup.com/t/2"
+                        },
+                        {
+                            "id": "3", "name": "Todo task",
+                            "status": {"status": "To Do", "type": "open"},
+                            "tags": [], "assignees": [],
+                            "url": "https://app.clickup.com/t/3"
+                        }
+                    ]
+                }));
+            });
+
+            let client = create_test_client(&server);
+
+            // Filter by in_progress category
+            let issues = client
+                .get_issues(IssueFilter {
+                    state_category: Some("in_progress".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+            assert_eq!(issues.len(), 1);
+            assert_eq!(issues[0].title, "In progress task");
+
+            // Filter by backlog category
+            let issues = client
+                .get_issues(IssueFilter {
+                    state_category: Some("backlog".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+            assert_eq!(issues.len(), 1);
+            assert_eq!(issues[0].title, "Backlog task");
         }
     }
 }

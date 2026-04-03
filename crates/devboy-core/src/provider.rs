@@ -79,6 +79,20 @@ pub trait IssueProvider: Send + Sync {
         })
     }
 
+    /// Upload a file attachment to an issue. Returns the download URL.
+    /// Default returns ProviderUnsupported — override in providers that support attachments.
+    async fn upload_attachment(
+        &self,
+        _issue_key: &str,
+        _filename: &str,
+        _data: &[u8],
+    ) -> Result<String> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "upload_attachment".to_string(),
+        })
+    }
+
     /// Get issue relations (parent, subtasks, linked issues).
     async fn get_issue_relations(&self, _issue_key: &str) -> Result<IssueRelations> {
         Err(Error::ProviderUnsupported {

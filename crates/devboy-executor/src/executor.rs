@@ -271,8 +271,12 @@ async fn execute_search_meeting_notes(
 #[derive(Deserialize, Default)]
 struct GetIssuesParams {
     state: Option<String>,
+    #[serde(rename = "stateCategory")]
+    state_category: Option<String>,
     search: Option<String>,
     labels: Option<Vec<String>>,
+    #[serde(rename = "labelsOperator")]
+    labels_operator: Option<String>,
     assignee: Option<String>,
     limit: Option<u32>,
     offset: Option<u32>,
@@ -290,8 +294,10 @@ async fn execute_get_issues(
     let params: GetIssuesParams = serde_json::from_value(args.clone()).unwrap_or_default();
     let filter = IssueFilter {
         state: params.state,
+        state_category: params.state_category,
         search: params.search,
         labels: params.labels,
+        labels_operator: params.labels_operator,
         assignee: params.assignee,
         limit: params.limit.or(Some(20)),
         offset: params.offset,
@@ -315,14 +321,67 @@ struct KeyParam {
     budget: Option<usize>,
 }
 
+#[derive(Deserialize)]
+struct GetIssueParams {
+    key: String,
+    #[serde(default = "default_true", rename = "includeComments")]
+    include_comments: bool,
+    #[serde(default = "default_true", rename = "includeRelations")]
+    include_relations: bool,
+    #[serde(default)]
+    #[allow(dead_code)]
+    budget: Option<usize>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 async fn execute_get_issue(
     provider: &dyn devboy_core::Provider,
     args: &Value,
 ) -> Result<ToolOutput> {
-    let params: KeyParam = serde_json::from_value(args.clone())
+    let params: GetIssueParams = serde_json::from_value(args.clone())
         .map_err(|e| Error::InvalidData(format!("missing 'key' parameter: {e}")))?;
     let issue = provider.get_issue(&params.key).await?;
-    Ok(ToolOutput::SingleIssue(Box::new(issue)))
+
+    // If no extras requested, return just the issue
+    if !params.include_comments && !params.include_relations {
+        return Ok(ToolOutput::SingleIssue(Box::new(issue)));
+    }
+
+    // Build a composite JSON with issue + optional comments/relations
+    let mut result = serde_json::to_value(&issue).unwrap_or_default();
+    let mut has_extras = false;
+
+    if params.include_comments {
+        if let Ok(comments_result) = provider.get_comments(&params.key).await {
+            result["comments"] = serde_json::to_value(&comments_result.items).unwrap_or_default();
+            result["comments_count"] = serde_json::json!(comments_result.items.len());
+            has_extras = true;
+        }
+    }
+
+    if params.include_relations {
+        if let Ok(relations) = provider.get_issue_relations(&params.key).await {
+            result["relations"] = serde_json::to_value(&relations).unwrap_or_default();
+            if issue.subtasks.is_empty() && !relations.subtasks.is_empty() {
+                result["subtasks"] = serde_json::to_value(&relations.subtasks).unwrap_or_default();
+            }
+            result["subtasks_count"] =
+                serde_json::json!(issue.subtasks.len().max(relations.subtasks.len()));
+            has_extras = true;
+        }
+    }
+
+    // If no extras were actually fetched, return simple issue
+    if !has_extras {
+        return Ok(ToolOutput::SingleIssue(Box::new(issue)));
+    }
+
+    Ok(ToolOutput::Text(
+        serde_json::to_string_pretty(&result).unwrap_or_default(),
+    ))
 }
 
 async fn execute_get_issue_comments(
@@ -419,6 +478,17 @@ async fn execute_update_issue(
 struct AddCommentParams {
     key: String,
     body: String,
+    #[serde(default)]
+    attachments: Vec<AttachmentParam>,
+}
+
+#[derive(Deserialize)]
+struct AttachmentParam {
+    /// Base64-encoded file content
+    #[serde(rename = "fileData")]
+    file_data: String,
+    /// Filename (e.g., "screenshot.png")
+    filename: String,
 }
 
 async fn execute_add_issue_comment(
@@ -427,12 +497,52 @@ async fn execute_add_issue_comment(
 ) -> Result<ToolOutput> {
     let params: AddCommentParams = serde_json::from_value(args.clone())
         .map_err(|e| Error::InvalidData(format!("invalid add_issue_comment params: {e}")))?;
-    let comment =
-        devboy_core::IssueProvider::add_comment(provider, &params.key, &params.body).await?;
-    Ok(ToolOutput::Text(format!(
-        "Comment added to {} (id: {})",
-        params.key, comment.id
-    )))
+
+    let mut body = params.body.clone();
+    let mut uploaded = 0;
+    let mut upload_errors = Vec::new();
+
+    // Upload attachments and append links to comment body
+    for att in &params.attachments {
+        use base64::Engine;
+        let data = match base64::engine::general_purpose::STANDARD.decode(&att.file_data) {
+            Ok(d) => d,
+            Err(e) => {
+                upload_errors.push(format!("{}: decode error: {}", att.filename, e));
+                continue;
+            }
+        };
+
+        match provider
+            .upload_attachment(&params.key, &att.filename, &data)
+            .await
+        {
+            Ok(url) => {
+                if !url.is_empty() {
+                    body.push_str(&format!("\n\n[{}]({})", att.filename, url));
+                }
+                uploaded += 1;
+            }
+            Err(e) => {
+                upload_errors.push(format!("{}: {}", att.filename, e));
+            }
+        }
+    }
+
+    let comment = devboy_core::IssueProvider::add_comment(provider, &params.key, &body).await?;
+
+    let mut msg = format!("Comment added to {} (id: {})", params.key, comment.id);
+    if uploaded > 0 {
+        msg.push_str(&format!(", {} attachment(s) uploaded", uploaded));
+    }
+    if !upload_errors.is_empty() {
+        msg.push_str(&format!(
+            ", {} attachment error(s): {}",
+            upload_errors.len(),
+            upload_errors.join("; ")
+        ));
+    }
+    Ok(ToolOutput::Text(msg))
 }
 
 // --- Merge request tool handlers ---
@@ -758,8 +868,41 @@ struct GetEpicsParams {
     state: Option<String>,
     search: Option<String>,
     assignee: Option<String>,
+    #[serde(rename = "goalId")]
+    goal_id: Option<String>,
     limit: Option<u32>,
     offset: Option<u32>,
+}
+
+/// Extract goal ID (G1-G9) from issue labels/tags.
+fn extract_goal_id(labels: &[String]) -> Option<String> {
+    labels.iter().find_map(|l| {
+        let lower = l.to_lowercase();
+        if lower.len() == 2
+            && lower.starts_with('g')
+            && lower.chars().nth(1).is_some_and(|c| c.is_ascii_digit())
+        {
+            Some(lower.to_uppercase())
+        } else {
+            None
+        }
+    })
+}
+
+/// Calculate epic progress from subtasks.
+fn epic_progress(subtasks: &[devboy_core::Issue]) -> serde_json::Value {
+    let total = subtasks.len();
+    let completed = subtasks.iter().filter(|s| s.state == "closed").count();
+    let percentage = if total > 0 {
+        (completed as f64 / total as f64 * 100.0).round() as u32
+    } else {
+        0
+    };
+    serde_json::json!({
+        "total_subtasks": total,
+        "completed_subtasks": completed,
+        "percentage": percentage,
+    })
 }
 
 async fn execute_get_epics(
@@ -769,26 +912,47 @@ async fn execute_get_epics(
     let params: GetEpicsParams = serde_json::from_value(args.clone()).unwrap_or_default();
     let filter = IssueFilter {
         state: params.state,
+        state_category: None,
         search: params.search,
         labels: Some(vec!["epic".to_string()]),
+        labels_operator: None,
         assignee: params.assignee,
-        limit: params.limit.or(Some(20)),
+        limit: params.limit.or(Some(50)),
         offset: params.offset,
         sort_by: None,
         sort_order: None,
     };
     let result = provider.get_issues(filter).await?;
-    let meta = ResultMeta {
-        pagination: result.pagination,
-        sort_info: result.sort_info,
-    };
-    Ok(ToolOutput::Issues(result.items, Some(meta)))
+    let mut epics = result.items;
+
+    // Filter by goalId if provided
+    if let Some(ref goal) = params.goal_id {
+        let goal_lower = goal.to_lowercase();
+        epics.retain(|e| e.labels.iter().any(|l| l.to_lowercase() == goal_lower));
+    }
+
+    // Enrich each epic with goal ID and progress
+    let enriched: Vec<serde_json::Value> = epics
+        .iter()
+        .map(|epic| {
+            let mut v = serde_json::to_value(epic).unwrap_or_default();
+            v["goal_id"] = serde_json::json!(extract_goal_id(&epic.labels));
+            v["progress"] = epic_progress(&epic.subtasks);
+            v
+        })
+        .collect();
+
+    Ok(ToolOutput::Text(
+        serde_json::to_string_pretty(&enriched).unwrap_or_default(),
+    ))
 }
 
 #[derive(Deserialize)]
 struct CreateEpicParams {
     title: String,
     description: Option<String>,
+    #[serde(rename = "goalId")]
+    goal_id: Option<String>,
     #[serde(default)]
     labels: Vec<String>,
     #[serde(default)]
@@ -810,6 +974,14 @@ async fn execute_create_epic(
         labels.push("epic".to_string());
     }
 
+    // Add goal tag if goalId provided (e.g., "G1" → tag "g1")
+    if let Some(ref goal) = params.goal_id {
+        let goal_tag = goal.to_lowercase();
+        if !labels.iter().any(|l| l.to_lowercase() == goal_tag) {
+            labels.push(goal_tag);
+        }
+    }
+
     let input = CreateIssueInput {
         title: params.title,
         description: params.description,
@@ -823,20 +995,74 @@ async fn execute_create_epic(
     Ok(ToolOutput::SingleIssue(Box::new(issue)))
 }
 
+#[derive(Deserialize)]
+struct UpdateEpicParams {
+    key: String,
+    title: Option<String>,
+    description: Option<String>,
+    state: Option<String>,
+    #[serde(rename = "goalId")]
+    goal_id: Option<String>,
+    labels: Option<Vec<String>>,
+    assignees: Option<Vec<String>>,
+    priority: Option<String>,
+    markdown: Option<bool>,
+}
+
 async fn execute_update_epic(
     provider: &dyn devboy_core::Provider,
     args: &Value,
 ) -> Result<ToolOutput> {
-    let params: UpdateIssueParams = serde_json::from_value(args.clone())
+    let params: UpdateEpicParams = serde_json::from_value(args.clone())
         .map_err(|e| Error::InvalidData(format!("invalid update_epic params: {e}")))?;
+
+    // Handle goal tag transition: if goalId is changing, update labels
+    let labels = if let Some(ref new_goal) = params.goal_id {
+        // Fetch current issue to get existing labels
+        let current = provider.get_issue(&params.key).await?;
+        let mut labels: Vec<String> = current
+            .labels
+            .iter()
+            // Remove old goal tags (g1-g9)
+            .filter(|l| {
+                let lower = l.to_lowercase();
+                !(lower.len() == 2
+                    && lower.starts_with('g')
+                    && lower.chars().nth(1).is_some_and(|c| c.is_ascii_digit()))
+            })
+            .cloned()
+            .collect();
+
+        // Add new goal tag
+        let goal_tag = new_goal.to_lowercase();
+        if !labels.iter().any(|l| l.to_lowercase() == goal_tag) {
+            labels.push(goal_tag);
+        }
+
+        // Merge with explicitly provided labels
+        if let Some(extra) = params.labels {
+            for l in extra {
+                if !labels
+                    .iter()
+                    .any(|existing| existing.eq_ignore_ascii_case(&l))
+                {
+                    labels.push(l);
+                }
+            }
+        }
+        Some(labels)
+    } else {
+        params.labels
+    };
+
     let input = UpdateIssueInput {
         title: params.title,
         description: params.description,
         state: params.state,
-        labels: params.labels,
+        labels,
         assignees: params.assignees,
         priority: params.priority,
-        parent_id: params.parent_id,
+        parent_id: None,
         markdown: params.markdown.unwrap_or(true),
     };
     let issue = provider.update_issue(&params.key, input).await?;
@@ -1109,7 +1335,13 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_get_issue() {
         let provider = MockProvider;
+        // With includeComments/includeRelations defaulting to true, returns composite Text
         let args = serde_json::json!({"key": "gh#1"});
+        let result = dispatch_tool("get_issue", &args, &provider).await.unwrap();
+        assert!(matches!(result, ToolOutput::Text(_)));
+
+        // Without extras, returns SingleIssue
+        let args = serde_json::json!({"key": "gh#1", "includeComments": false, "includeRelations": false});
         let result = dispatch_tool("get_issue", &args, &provider).await.unwrap();
         assert!(matches!(result, ToolOutput::SingleIssue(_)));
     }
@@ -1403,7 +1635,8 @@ mod tests {
         let provider = MockProvider;
         let args = serde_json::json!({"state": "open", "limit": 10});
         let result = dispatch_tool("get_epics", &args, &provider).await.unwrap();
-        assert!(matches!(result, ToolOutput::Issues(v, _) if v.len() == 1));
+        // Returns enriched JSON with goal_id and progress
+        assert!(matches!(result, ToolOutput::Text(_)));
     }
 
     #[tokio::test]
@@ -1412,7 +1645,7 @@ mod tests {
         let result = dispatch_tool("get_epics", &Value::Null, &provider)
             .await
             .unwrap();
-        assert!(matches!(result, ToolOutput::Issues(_, _)));
+        assert!(matches!(result, ToolOutput::Text(_)));
     }
 
     #[tokio::test]
