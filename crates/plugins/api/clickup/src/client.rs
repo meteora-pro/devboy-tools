@@ -20,10 +20,7 @@ const PAGE_SIZE: u32 = 100;
 
 /// Percent-encode a tag name for use in ClickUp URL paths.
 fn encode_tag(tag: &str) -> String {
-    tag.replace('%', "%25")
-        .replace(' ', "%20")
-        .replace('#', "%23")
-        .replace('/', "%2F")
+    urlencoding::encode(tag).into_owned()
 }
 
 /// ClickUp API client.

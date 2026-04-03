@@ -537,6 +537,18 @@ async fn execute_add_issue_comment(
     let mut uploaded = 0;
     let mut upload_errors = Vec::new();
 
+    // Validate attachment limits
+    const MAX_ATTACHMENTS: usize = 10;
+    const MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10MB
+
+    if params.attachments.len() > MAX_ATTACHMENTS {
+        return Err(Error::InvalidData(format!(
+            "Too many attachments: {} (max {})",
+            params.attachments.len(),
+            MAX_ATTACHMENTS
+        )));
+    }
+
     // Upload attachments and append links to comment body
     for att in &params.attachments {
         use base64::Engine;
@@ -547,6 +559,16 @@ async fn execute_add_issue_comment(
                 continue;
             }
         };
+
+        if data.len() > MAX_FILE_SIZE {
+            upload_errors.push(format!(
+                "{}: file too large ({} bytes, max {})",
+                att.filename,
+                data.len(),
+                MAX_FILE_SIZE
+            ));
+            continue;
+        }
 
         match provider
             .upload_attachment(&params.key, &att.filename, &data)
@@ -915,7 +937,7 @@ fn extract_goal_id(labels: &[String]) -> Option<String> {
         let lower = l.to_lowercase();
         if lower.len() == 2
             && lower.starts_with('g')
-            && lower.chars().nth(1).is_some_and(|c| c.is_ascii_digit())
+            && lower.chars().nth(1).is_some_and(|c| matches!(c, '1'..='9'))
         {
             Some(lower.to_uppercase())
         } else {
@@ -1075,7 +1097,7 @@ async fn execute_update_epic(
                 let lower = l.to_lowercase();
                 !(lower.len() == 2
                     && lower.starts_with('g')
-                    && lower.chars().nth(1).is_some_and(|c| c.is_ascii_digit()))
+                    && lower.chars().nth(1).is_some_and(|c| matches!(c, '1'..='9')))
             })
             .cloned()
             .collect();
