@@ -213,6 +213,10 @@ devboy context use <name>               # Switch active context
 devboy issues                           # List issues
 devboy mrs                              # List merge requests
 devboy test <provider>                  # Test provider connection
+devboy doctor                           # Run all diagnostic checks
+devboy doctor --list-checks             # List available doctor check IDs
+devboy doctor --checks <checks...>      # Run only selected checks
+devboy doctor --format json             # Emit JSON output
 devboy mcp                              # Start MCP server (stdio)
 devboy tools                            # Interactive tool management (TUI)
 devboy tools list                       # List tools with enabled/disabled status
@@ -220,6 +224,23 @@ devboy tools disable <names...>         # Disable specific built-in tools
 devboy tools enable <names...>          # Re-enable specific tools
 devboy tools reset                      # Reset all filtering
 devboy tools call <name> [args]         # Call a built-in tool directly
+```
+
+### Doctor command
+
+```bash
+# Run the full diagnostic suite
+devboy doctor
+
+# List all available checks
+devboy doctor --list-checks
+
+# Run a subset of checks (comma-delimited or repeated --checks flags)
+devboy doctor --checks config.exists,config.valid_toml
+
+# Machine-readable output for CI or scripts
+devboy doctor --format json
+devboy doctor --format json --checks providers.github
 ```
 
 ## Development
