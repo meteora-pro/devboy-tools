@@ -36,6 +36,21 @@ pub(crate) struct VersionCache {
     pub(crate) checked_at: u64,
 }
 
+/// Resolved version information for the current installation.
+#[derive(Debug, Clone, Serialize)]
+pub struct VersionStatus {
+    /// Current CLI version.
+    pub current_version: String,
+    /// Latest version from cache or GitHub, when available.
+    pub latest_version: Option<String>,
+    /// Whether an update is available.
+    pub update_available: bool,
+    /// Human-readable installation method.
+    pub install_method: String,
+    /// Recommended update command for this installation.
+    pub update_command: String,
+}
+
 /// Detected installation method.
 #[derive(Debug, PartialEq)]
 pub enum InstallMethod {
@@ -253,6 +268,33 @@ async fn fetch_latest_version() -> Option<String> {
     Some(version.to_string())
 }
 
+/// Resolve version status using the cache first, then GitHub as a fallback.
+pub async fn resolve_version_status() -> VersionStatus {
+    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    let install_method = detect_install_method();
+    let latest_version = if let Some(cache) = read_cache() {
+        Some(cache.latest_version)
+    } else {
+        let fetched = fetch_latest_version().await;
+        if let Some(version) = &fetched {
+            write_cache(version);
+        }
+        fetched
+    };
+
+    let update_available = latest_version
+        .as_deref()
+        .is_some_and(|latest| is_newer_version(&current_version, latest));
+
+    VersionStatus {
+        current_version,
+        latest_version,
+        update_available,
+        install_method: install_method.name().to_string(),
+        update_command: install_method.update_command().to_string(),
+    }
+}
+
 /// Compare two semver-like version strings.
 /// Returns true if `latest` is newer than `current`.
 pub fn is_newer_version(current: &str, latest: &str) -> bool {
@@ -286,31 +328,19 @@ pub async fn check_and_notify() {
         return;
     }
 
-    let current_version = env!("CARGO_PKG_VERSION");
-
-    // Try cache first
-    let latest_version = if let Some(cache) = read_cache() {
-        cache.latest_version
-    } else {
-        // Fetch from GitHub
-        let Some(version) = fetch_latest_version().await else {
-            return;
-        };
-        write_cache(&version);
-        version
+    let version_status = resolve_version_status().await;
+    let Some(latest_version) = version_status.latest_version.as_deref() else {
+        return;
     };
 
-    if is_newer_version(current_version, &latest_version) {
-        let install_method = detect_install_method();
-        let update_cmd = install_method.update_command();
-
+    if version_status.update_available {
         let _ = writeln!(
             io::stderr(),
             "\n\x1b[33m⚠ A new version of devboy is available: {} → {}\x1b[0m\n  \
              Update with: \x1b[1m{}\x1b[0m\n",
-            current_version,
+            version_status.current_version,
             latest_version,
-            update_cmd
+            version_status.update_command
         );
     }
 }

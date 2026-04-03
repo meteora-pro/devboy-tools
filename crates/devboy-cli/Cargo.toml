@@ -28,6 +28,7 @@ clap.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
+async-trait.workspace = true
 reqwest.workspace = true
 dialoguer = "0.11"
 chrono = "0.4"
@@ -40,10 +41,8 @@ zip = "8.4"
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tempfile.workspace = true
+httpmock.workspace = true
 temp-env = { version = "0.3", features = ["async_closure"] }
-async-trait.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true
