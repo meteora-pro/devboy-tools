@@ -201,6 +201,8 @@ pub struct UpdateTaskRequest {
     pub priority: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 /// Request body for creating a comment.
