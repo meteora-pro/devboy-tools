@@ -50,13 +50,24 @@ pub enum InstallMethod {
 }
 
 impl InstallMethod {
-    /// Returns the appropriate update command for this installation method.
+    /// Returns the appropriate update command as a display string.
     pub fn update_command(&self) -> &'static str {
         match self {
             InstallMethod::Npm => "npm update -g @devboy-tools/cli",
             InstallMethod::Pnpm => "pnpm update -g @devboy-tools/cli",
             InstallMethod::Yarn => "yarn global upgrade @devboy-tools/cli",
             InstallMethod::Standalone => "devboy upgrade",
+        }
+    }
+
+    /// Returns the update command as structured `(program, args)` for execution.
+    #[cfg(not(windows))]
+    pub fn update_command_parts(&self) -> (&'static str, &'static [&'static str]) {
+        match self {
+            InstallMethod::Npm => ("npm", &["update", "-g", "@devboy-tools/cli"]),
+            InstallMethod::Pnpm => ("pnpm", &["update", "-g", "@devboy-tools/cli"]),
+            InstallMethod::Yarn => ("yarn", &["global", "upgrade", "@devboy-tools/cli"]),
+            InstallMethod::Standalone => ("devboy", &["upgrade"]),
         }
     }
 
@@ -365,6 +376,27 @@ mod tests {
             "yarn global upgrade @devboy-tools/cli"
         );
         assert_eq!(InstallMethod::Standalone.update_command(), "devboy upgrade");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_install_method_update_command_parts() {
+        assert_eq!(
+            InstallMethod::Npm.update_command_parts(),
+            ("npm", &["update", "-g", "@devboy-tools/cli"][..])
+        );
+        assert_eq!(
+            InstallMethod::Pnpm.update_command_parts(),
+            ("pnpm", &["update", "-g", "@devboy-tools/cli"][..])
+        );
+        assert_eq!(
+            InstallMethod::Yarn.update_command_parts(),
+            ("yarn", &["global", "upgrade", "@devboy-tools/cli"][..])
+        );
+        assert_eq!(
+            InstallMethod::Standalone.update_command_parts(),
+            ("devboy", &["upgrade"][..])
+        );
     }
 
     #[test]

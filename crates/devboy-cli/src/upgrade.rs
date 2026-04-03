@@ -220,6 +220,77 @@ fn replace_binary(new_binary: &[u8]) -> Result<PathBuf> {
     Ok(current_exe)
 }
 
+/// Run upgrade via the detected package manager (npm/pnpm/yarn).
+///
+/// Spawns the package manager as a child process, inheriting
+/// stdout/stderr so the user sees real-time progress.
+///
+/// On Windows, the running executable is locked by the OS, so the
+/// package manager cannot replace it in-place. In that case we fall
+/// back to printing the command for the user to run manually.
+fn run_managed_upgrade(install_method: &crate::update_check::InstallMethod) -> Result<()> {
+    let cmd_str = install_method.update_command();
+
+    println!(
+        "Installation managed by {}. Running: \x1b[1m{}\x1b[0m\n",
+        install_method.name(),
+        cmd_str
+    );
+
+    #[cfg(windows)]
+    {
+        // Windows locks the running .exe, so the package manager cannot
+        // replace it while we are alive. Spawn a detached `cmd.exe` that
+        // waits for this process to exit and then runs the update.
+        // 3 pings ≈ 2 seconds — classic Windows sleep-without-console trick.
+        let script = format!("ping 127.0.0.1 -n 3 >nul & {}", cmd_str);
+
+        std::process::Command::new("cmd")
+            .args(["/C", &script])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .context("Failed to spawn helper process for upgrade")?;
+
+        println!("\x1b[33mThe upgrade will run in the background after this process exits.\x1b[0m");
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        let (program, args) = install_method.update_command_parts();
+        let status = std::process::Command::new(program)
+            .args(args)
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+            .with_context(|| {
+                format!(
+                    "Failed to run '{}'. Is {} installed?",
+                    program,
+                    install_method.name()
+                )
+            })?;
+
+        if !status.success() {
+            bail!(
+                "{} exited with {}. You can try manually: {}",
+                program,
+                status,
+                cmd_str
+            );
+        }
+
+        println!(
+            "\n\x1b[32m✓ Successfully upgraded via {}\x1b[0m",
+            install_method.name()
+        );
+        Ok(())
+    }
+}
+
 /// Run the upgrade command.
 ///
 /// If `check_only` is true, only checks for updates without installing.
@@ -230,13 +301,7 @@ pub async fn run_upgrade(check_only: bool) -> Result<()> {
     let install_method = detect_install_method();
 
     if install_method.is_managed() && !check_only {
-        println!(
-            "This installation is managed by {}.\n\
-             Run: \x1b[1m{}\x1b[0m",
-            install_method.name(),
-            install_method.update_command()
-        );
-        return Ok(());
+        return run_managed_upgrade(&install_method);
     }
 
     println!("Current version: {}", current_version);
