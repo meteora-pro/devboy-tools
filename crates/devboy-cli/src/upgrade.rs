@@ -228,7 +228,6 @@ fn replace_binary(new_binary: &[u8]) -> Result<PathBuf> {
 /// back to printing the command for the user to run manually.
 fn run_managed_upgrade(install_method: &crate::update_check::InstallMethod) -> Result<()> {
     let cmd_str = install_method.update_command();
-    let (program, args) = install_method.update_command_parts();
 
     println!(
         "Installation managed by {}. Running: \x1b[1m{}\x1b[0m\n",
@@ -258,6 +257,7 @@ fn run_managed_upgrade(install_method: &crate::update_check::InstallMethod) -> R
 
     #[cfg(not(windows))]
     {
+        let (program, args) = install_method.update_command_parts();
         let status = std::process::Command::new(program)
             .args(args)
             .stdin(std::process::Stdio::inherit())
