@@ -32,7 +32,7 @@ impl ClickUpSchemaEnricher {
 const REMOVE_PARAMS: &[&str] = &["issueType", "components", "projectId"];
 
 /// Parameters to remove from get_issues.
-const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery", "stateCategory"];
+const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery"];
 
 impl ToolEnricher for ClickUpSchemaEnricher {
     fn supported_categories(&self) -> &[ToolCategory] {
@@ -44,6 +44,20 @@ impl ToolEnricher for ClickUpSchemaEnricher {
 
         if tool_name == "get_issues" {
             schema.remove_params(GET_ISSUES_REMOVE_PARAMS);
+
+            // Add stateCategory enum for semantic status filtering
+            schema.add_enum_param(
+                "stateCategory",
+                &["backlog", "todo", "in_progress", "done", "cancelled"],
+                "Filter by semantic status category. Maps to provider-specific statuses using name heuristics.",
+            );
+
+            // Add labelsOperator enum
+            schema.add_enum_param(
+                "labelsOperator",
+                &["and", "or"],
+                "Label matching logic: 'and' requires all labels, 'or' requires any (default: 'or').",
+            );
         }
 
         // Add status enum from metadata
@@ -433,5 +447,38 @@ mod tests {
         let mut args = json!({"title": "Test", "priority": "unknown_value"});
         enricher.transform_args("create_issue", &mut args);
         assert_eq!(args["priority"], 3); // default to normal
+    }
+
+    #[test]
+    fn test_clickup_enricher_state_category_not_removed() {
+        let enricher = ClickUpSchemaEnricher::new(sample_metadata());
+        let mut schema = ToolSchema::from_json(&json!({
+            "type": "object",
+            "properties": {
+                "stateCategory": { "type": "string" },
+                "nativeQuery": { "type": "string" },
+                "projectKey": { "type": "string" },
+            },
+        }));
+
+        enricher.enrich_schema("get_issues", &mut schema);
+
+        // stateCategory should be enriched with enum, NOT removed
+        assert!(schema.properties.contains_key("stateCategory"));
+        let sc = schema.properties.get("stateCategory").unwrap();
+        assert_eq!(
+            sc.enum_values,
+            Some(vec![
+                "backlog".into(),
+                "todo".into(),
+                "in_progress".into(),
+                "done".into(),
+                "cancelled".into(),
+            ])
+        );
+
+        // These should still be removed
+        assert!(!schema.properties.contains_key("nativeQuery"));
+        assert!(!schema.properties.contains_key("projectKey"));
     }
 }
