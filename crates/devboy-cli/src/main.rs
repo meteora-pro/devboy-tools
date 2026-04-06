@@ -15,7 +15,7 @@ use devboy_clickup::ClickUpClient;
 use devboy_core::{
     BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, GitHubConfig, GitLabConfig,
     IssueFilter, IssueProvider, JiraConfig, MergeRequestProvider, MrFilter, Provider,
-    ProxyMcpServerConfig,
+    ProxyMcpServerConfig, SlackConfig,
 };
 use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
@@ -24,6 +24,7 @@ use devboy_mcp::{
     JSONRPC_VERSION, JsonRpcRequest, KNOWN_BUILTIN_TOOLS, McpProxyClient, McpServer, ProxyManager,
     ProxyTransport, RequestId,
 };
+use devboy_slack::SlackClient;
 use devboy_storage::{ChainStore, CredentialStore};
 use dialoguer::{Confirm, Input, MultiSelect, Password};
 use doctor::{DoctorOptions, OutputFormat};
@@ -179,7 +180,7 @@ enum Commands {
 
     /// Test provider connection
     Test {
-        /// Provider to test (github, gitlab, clickup, jira)
+        /// Provider to test (github, gitlab, clickup, jira, slack)
         provider: String,
     },
 
@@ -625,6 +626,7 @@ struct InitOptions {
     gitlab: Option<GitLabConfig>,
     clickup: Option<ClickUpConfig>,
     jira: Option<JiraConfig>,
+    slack: Option<SlackConfig>,
     tokens: Vec<(String, String)>, // (key, value) pairs for keychain
     proxy: Option<ProxyMcpServerConfig>,
 }
@@ -1196,6 +1198,7 @@ fn build_config(options: &InitOptions) -> Config {
         || options.gitlab.is_some()
         || options.clickup.is_some()
         || options.jira.is_some()
+        || options.slack.is_some()
     {
         let context = ContextConfig {
             github: options.github.clone(),
@@ -1203,6 +1206,7 @@ fn build_config(options: &InitOptions) -> Config {
             clickup: options.clickup.clone(),
             jira: options.jira.clone(),
             fireflies: None,
+            slack: options.slack.clone(),
         };
         config.contexts.insert(context_name, context);
     }
@@ -1437,6 +1441,32 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
                 println!();
             }
 
+            if let Some(slack) = &config.slack {
+                println!("[slack]");
+                if let Some(team_id) = &slack.team_id {
+                    println!("  team_id = {}", team_id);
+                }
+                if let Some(workspace) = &slack.workspace {
+                    println!("  workspace = {}", workspace);
+                }
+                if let Some(base_url) = &slack.base_url {
+                    println!("  base_url = {}", base_url);
+                }
+                if let Some(client_id) = &slack.client_id {
+                    println!("  client_id = {}", client_id);
+                }
+                if let Some(redirect_uri) = &slack.redirect_uri {
+                    println!("  redirect_uri = {}", redirect_uri);
+                }
+                println!("  required_scopes = {}", slack.required_scopes.join(", "));
+                if store.exists("slack.token") {
+                    println!("  token = ******* (in keychain)");
+                } else {
+                    println!("  token = (not set)");
+                }
+                println!();
+            }
+
             if !config.has_any_provider() {
                 println!("No providers configured.");
                 println!();
@@ -1444,6 +1474,9 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
                 println!("  devboy config set github.owner <owner>");
                 println!("  devboy config set github.repo <repo>");
                 println!("  devboy config set-secret github.token <token>");
+                println!("To configure Slack:");
+                println!("  devboy config set slack.workspace <workspace>");
+                println!("  devboy config set-secret slack.token <xoxb-token>");
             }
         }
 
@@ -1792,9 +1825,69 @@ async fn handle_test_command(provider: &str) -> Result<()> {
             }
         }
 
+        "slack" => {
+            let slack = config
+                .slack
+                .as_ref()
+                .context("Slack not configured. Run: devboy config set slack.workspace <name>")?;
+
+            let token = store
+                .get("slack.token")
+                .context("Failed to get token")?
+                .context(
+                    "Slack bot token not set. Run: devboy config set-secret slack.token <xoxb-token>",
+                )?;
+
+            println!("Testing Slack connection...");
+            if let Some(workspace) = &slack.workspace {
+                println!("  Workspace: {}", workspace);
+            }
+            if let Some(team_id) = &slack.team_id {
+                println!("  Team ID: {}", team_id);
+            }
+
+            let mut client =
+                SlackClient::new(token).with_required_scopes(slack.required_scopes.clone());
+            if let Some(base_url) = &slack.base_url {
+                client = client.with_base_url(base_url);
+            }
+
+            match client.auth_info().await {
+                Ok(info) => {
+                    println!("  Team: {} ({})", info.team_name, info.team_id);
+                    if let Some(user_name) = info.user_name.as_deref() {
+                        println!("  Authenticated as: {} ({})", info.user_id, user_name);
+                    } else {
+                        println!("  Authenticated as: {}", info.user_id);
+                    }
+                    if let Some(bot_id) = info.bot_id.as_deref() {
+                        println!("  Bot ID: {}", bot_id);
+                    }
+                    println!("  Scopes: {}", info.scopes.join(", "));
+                    if !info.missing_scopes.is_empty() {
+                        println!("  Missing scopes: {}", info.missing_scopes.join(", "));
+                        println!();
+                        println!("Slack connection failed health check!");
+                        anyhow::bail!(
+                            "Slack token is missing required scopes: {}",
+                            info.missing_scopes.join(", ")
+                        );
+                    }
+                    println!();
+                    println!("Slack connection successful!");
+                }
+                Err(e) => {
+                    println!("  Error: {}", e);
+                    println!();
+                    println!("Slack connection failed!");
+                    return Err(e.into());
+                }
+            }
+        }
+
         _ => {
             println!("Unknown provider: {}", provider);
-            println!("Supported providers: github, gitlab, clickup, jira");
+            println!("Supported providers: github, gitlab, clickup, jira, slack");
         }
     }
 
@@ -2162,6 +2255,7 @@ fn get_proxy_url_from_env(name: &str) -> Option<String> {
 /// - `DEVBOY_CONTEXTS_{NAME}_GITLAB_URL` + `_PROJECT_ID` -> GitLab provider
 /// - `DEVBOY_CONTEXTS_{NAME}_CLICKUP_LIST_ID` -> ClickUp provider
 /// - `DEVBOY_CONTEXTS_{NAME}_JIRA_URL` + `_PROJECT_KEY` + `_EMAIL` -> Jira provider
+/// - `DEVBOY_CONTEXTS_{NAME}_SLACK_WORKSPACE` or `_TEAM_ID` -> Slack provider
 ///
 /// Tokens are resolved via the credential store (which checks env vars first).
 ///
@@ -2250,7 +2344,7 @@ fn add_env_only_contexts(
 /// - "MY_PROJECT_GITLAB_URL" -> ("MY_PROJECT", "GITLAB", "URL")
 fn parse_context_env_key(key: &str) -> Option<(String, String, String)> {
     // Known provider prefixes (in order of specificity)
-    let providers = ["GITHUB", "GITLAB", "CLICKUP", "JIRA"];
+    let providers = ["GITHUB", "GITLAB", "CLICKUP", "JIRA", "SLACK"];
 
     for provider in providers {
         // Look for _PROVIDER_ in the key
@@ -2288,6 +2382,12 @@ struct EnvContextBuilder {
     jira_url: Option<String>,
     jira_project_key: Option<String>,
     jira_email: Option<String>,
+    // Slack
+    slack_team_id: Option<String>,
+    slack_workspace: Option<String>,
+    slack_base_url: Option<String>,
+    slack_client_id: Option<String>,
+    slack_redirect_uri: Option<String>,
 }
 
 impl EnvContextBuilder {
@@ -2316,6 +2416,12 @@ impl EnvContextBuilder {
             ("JIRA", "URL") => self.jira_url = Some(value),
             ("JIRA", "PROJECT_KEY") | ("JIRA", "PROJECT") => self.jira_project_key = Some(value),
             ("JIRA", "EMAIL") => self.jira_email = Some(value),
+            // Slack
+            ("SLACK", "TEAM_ID") | ("SLACK", "TEAM") => self.slack_team_id = Some(value),
+            ("SLACK", "WORKSPACE") => self.slack_workspace = Some(value),
+            ("SLACK", "BASE_URL") | ("SLACK", "URL") => self.slack_base_url = Some(value),
+            ("SLACK", "CLIENT_ID") => self.slack_client_id = Some(value),
+            ("SLACK", "REDIRECT_URI") => self.slack_redirect_uri = Some(value),
             // Unknown fields are silently ignored
             _ => {
                 tracing::debug!(
@@ -2380,6 +2486,23 @@ impl EnvContextBuilder {
             clickup,
             jira,
             fireflies: None,
+            slack: if self.slack_team_id.is_some()
+                || self.slack_workspace.is_some()
+                || self.slack_base_url.is_some()
+                || self.slack_client_id.is_some()
+                || self.slack_redirect_uri.is_some()
+            {
+                Some(SlackConfig {
+                    team_id: self.slack_team_id.clone(),
+                    workspace: self.slack_workspace.clone(),
+                    base_url: self.slack_base_url.clone(),
+                    client_id: self.slack_client_id.clone(),
+                    redirect_uri: self.slack_redirect_uri.clone(),
+                    required_scopes: devboy_core::default_slack_required_scopes(),
+                })
+            } else {
+                None
+            },
         };
 
         if context.has_any_provider() {
@@ -2489,6 +2612,24 @@ fn add_context_providers_from_env(
         } else {
             tracing::warn!(
                 "Fireflies configured for context '{}' but no API key found",
+                context_name
+            );
+        }
+    }
+
+    if let Some(slack) = &context.slack {
+        if let Some(token) = get_token_for_context(store, context_name, "slack") {
+            let mut client =
+                SlackClient::new(token).with_required_scopes(slack.required_scopes.clone());
+            if let Some(base_url) = &slack.base_url {
+                client = client.with_base_url(base_url);
+            }
+            server.add_messenger_provider(Arc::new(client));
+            tracing::info!("Added Slack provider to context '{}'", context_name);
+            added = true;
+        } else {
+            tracing::warn!(
+                "Slack configured for context '{}' but no bot token found",
                 context_name
             );
         }
@@ -2690,6 +2831,25 @@ fn add_context_providers(
         } else {
             tracing::warn!(
                 "Fireflies configured for context '{}' but no API key found",
+                context_name
+            );
+        }
+    }
+
+    if let Some(slack) = &context.slack {
+        if let Some(token) = get_token_for_context(store, context_name, "slack") {
+            let mut client =
+                SlackClient::new(token).with_required_scopes(slack.required_scopes.clone());
+            if let Some(base_url) = &slack.base_url {
+                client = client.with_base_url(base_url);
+            }
+            server.add_messenger_provider(Arc::new(client));
+            tracing::info!("Added Slack provider to context '{}'", context_name);
+            added = true;
+        } else {
+            tracing::warn!(
+                "Slack configured in context '{}' but no token found (tried contexts.{}.slack.token then slack.token)",
+                context_name,
                 context_name
             );
         }

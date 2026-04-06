@@ -64,6 +64,10 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fireflies: Option<FirefliesConfig>,
 
+    /// Slack configuration (messenger)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slack: Option<SlackConfig>,
+
     /// Named contexts (profiles) configuration.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub contexts: BTreeMap<String, ContextConfig>,
@@ -136,6 +140,10 @@ pub struct ContextConfig {
     /// Fireflies.ai configuration (meeting notes)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fireflies: Option<FirefliesConfig>,
+
+    /// Slack configuration (messenger)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slack: Option<SlackConfig>,
 }
 
 /// GitHub provider configuration.
@@ -186,6 +194,58 @@ pub struct JiraConfig {
 pub struct FirefliesConfig {
     // API key is stored in OS keychain (key: "fireflies.token")
     // No fields needed — config just enables the provider
+}
+
+/// Slack provider configuration (messenger).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlackConfig {
+    /// Optional Slack workspace/team ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    /// Optional human-readable workspace name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    /// Slack API base URL override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// OAuth app client ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    /// OAuth redirect URI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redirect_uri: Option<String>,
+    /// Required bot scopes expected by devboy Slack integration.
+    #[serde(
+        default = "default_slack_required_scopes",
+        skip_serializing_if = "is_default_slack_required_scopes"
+    )]
+    pub required_scopes: Vec<String>,
+}
+
+impl Default for SlackConfig {
+    fn default() -> Self {
+        Self {
+            team_id: None,
+            workspace: None,
+            base_url: None,
+            client_id: None,
+            redirect_uri: None,
+            required_scopes: default_slack_required_scopes(),
+        }
+    }
+}
+
+pub fn default_slack_required_scopes() -> Vec<String> {
+    vec![
+        "channels:read".to_string(),
+        "channels:history".to_string(),
+        "chat:write".to_string(),
+        "users:read".to_string(),
+    ]
+}
+
+fn is_default_slack_required_scopes(scopes: &[String]) -> bool {
+    scopes == default_slack_required_scopes().as_slice()
 }
 
 /// Configuration for controlling which built-in tools are available.
@@ -438,6 +498,7 @@ impl Config {
             || self.clickup.is_some()
             || self.jira.is_some()
             || self.fireflies.is_some()
+            || self.slack.is_some()
             || self.contexts.values().any(ContextConfig::has_any_provider)
     }
 
@@ -455,6 +516,9 @@ impl Config {
         }
         if self.jira.is_some() {
             providers.push("jira");
+        }
+        if self.slack.is_some() {
+            providers.push("slack");
         }
         providers
     }
@@ -516,6 +580,7 @@ impl Config {
             clickup: self.clickup.clone(),
             jira: self.jira.clone(),
             fireflies: self.fireflies.clone(),
+            slack: self.slack.clone(),
         };
 
         if ctx.has_any_provider() {
@@ -608,6 +673,22 @@ impl Config {
                     }
                 }
             }
+            "slack" => {
+                let config = self.slack.get_or_insert_with(SlackConfig::default);
+                match field {
+                    "team_id" | "team" => config.team_id = Some(value.to_string()),
+                    "workspace" => config.workspace = Some(value.to_string()),
+                    "base_url" | "url" => config.base_url = Some(value.to_string()),
+                    "client_id" => config.client_id = Some(value.to_string()),
+                    "redirect_uri" => config.redirect_uri = Some(value.to_string()),
+                    _ => {
+                        return Err(Error::Config(format!(
+                            "Unknown Slack config field: {}",
+                            field
+                        )));
+                    }
+                }
+            }
             _ => {
                 return Err(Error::Config(format!("Unknown provider: {}", provider)));
             }
@@ -685,6 +766,22 @@ impl Config {
                     ))),
                 }
             }
+            "slack" => {
+                let Some(config) = &self.slack else {
+                    return Ok(None);
+                };
+                match field {
+                    "team_id" | "team" => Ok(config.team_id.clone()),
+                    "workspace" => Ok(config.workspace.clone()),
+                    "base_url" | "url" => Ok(config.base_url.clone()),
+                    "client_id" => Ok(config.client_id.clone()),
+                    "redirect_uri" => Ok(config.redirect_uri.clone()),
+                    _ => Err(Error::Config(format!(
+                        "Unknown Slack config field: {}",
+                        field
+                    ))),
+                }
+            }
             _ => Err(Error::Config(format!("Unknown provider: {}", provider))),
         }
     }
@@ -698,6 +795,7 @@ impl ContextConfig {
             || self.clickup.is_some()
             || self.jira.is_some()
             || self.fireflies.is_some()
+            || self.slack.is_some()
     }
 
     /// Return configured provider names for this context.
@@ -714,6 +812,9 @@ impl ContextConfig {
         }
         if self.jira.is_some() {
             providers.push("jira");
+        }
+        if self.slack.is_some() {
+            providers.push("slack");
         }
         providers
     }
@@ -1052,6 +1153,7 @@ mod tests {
                 email: "e".to_string(),
             }),
             fireflies: None,
+            slack: None,
             contexts: BTreeMap::new(),
             active_context: None,
             proxy_mcp_servers: Vec::new(),
@@ -1131,6 +1233,7 @@ mod tests {
             clickup: None,
             jira: None,
             fireflies: None,
+            slack: None,
             contexts: BTreeMap::new(),
             active_context: None,
             proxy_mcp_servers: Vec::new(),

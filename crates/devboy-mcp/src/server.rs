@@ -28,6 +28,7 @@ pub struct McpServer {
     proxy_manager: ProxyManager,
     builtin_tools_config: BuiltinToolsConfig,
     meeting_providers: Vec<Arc<dyn devboy_core::MeetingNotesProvider>>,
+    messenger_providers: Vec<Arc<dyn devboy_core::MessengerProvider>>,
 }
 
 impl McpServer {
@@ -42,6 +43,7 @@ impl McpServer {
             proxy_manager: ProxyManager::new(),
             builtin_tools_config: BuiltinToolsConfig::default(),
             meeting_providers: Vec::new(),
+            messenger_providers: Vec::new(),
         }
     }
 
@@ -64,6 +66,10 @@ impl McpServer {
 
     pub fn add_meeting_provider(&mut self, provider: Arc<dyn devboy_core::MeetingNotesProvider>) {
         self.meeting_providers.push(provider);
+    }
+
+    pub fn add_messenger_provider(&mut self, provider: Arc<dyn devboy_core::MessengerProvider>) {
+        self.messenger_providers.push(provider);
     }
 
     /// Add a provider to the server.
