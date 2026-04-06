@@ -58,5 +58,5 @@ pub use tool_category::ToolCategory;
 pub use config::{
     BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, FirefliesConfig,
     FormatPipelineConfig, GitHubConfig, GitLabConfig, JiraConfig, ProxyMatchingConfig,
-    ProxyMcpServerConfig,
+    ProxyMcpServerConfig, SlackConfig, default_slack_required_scopes,
 };

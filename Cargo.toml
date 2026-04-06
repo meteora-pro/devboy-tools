@@ -13,6 +13,7 @@ members = [
     "crates/plugins/api/clickup",
     "crates/plugins/api/jira",
     "crates/plugins/api/fireflies",
+    "crates/plugins/api/slack",
     # Pipeline plugins
     "crates/plugins/format-pipeline",
 ]
