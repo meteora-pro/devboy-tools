@@ -19,11 +19,15 @@ pub enum ToolCategory {
     MergeRequests,
     /// Tools that require a meeting notes provider (Fireflies).
     MeetingNotes,
+    /// Tools that require a messenger provider (Slack).
+    Messenger,
 }
 
+use devboy_core::types::ChatType;
 use devboy_core::{
-    CodePosition, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, IssueFilter,
-    IssueProvider, MergeRequestProvider, MrFilter, Provider, UpdateIssueInput,
+    CodePosition, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, GetChatsParams,
+    GetMessagesParams, IssueFilter, IssueProvider, MergeRequestProvider, MrFilter, Provider,
+    SearchMessagesParams, SendMessageParams, UpdateIssueInput,
 };
 use devboy_format_pipeline::{OutputFormat, Pipeline, PipelineConfig};
 use serde::{Deserialize, Serialize};
@@ -700,6 +704,140 @@ define_tools! {
             },
             "required": ["query"]
         }
+    },
+
+    "get_messenger_chats" => handle_get_messenger_chats {
+        category: ToolCategory::Messenger,
+        description: "List available messenger chats, channels, groups, or direct messages.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "search": {
+                    "type": "string",
+                    "description": "Optional chat name search"
+                },
+                "chat_type": {
+                    "type": "string",
+                    "enum": ["direct", "group", "channel"],
+                    "description": "Optional chat type filter"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of chats to return",
+                    "minimum": 1,
+                    "maximum": 1000
+                },
+                "cursor": {
+                    "type": "string",
+                    "description": "Provider pagination cursor"
+                },
+                "include_inactive": {
+                    "type": "boolean",
+                    "description": "Include archived or inactive chats"
+                }
+            }
+        }
+    },
+
+    "get_chat_messages" => handle_get_chat_messages {
+        category: ToolCategory::Messenger,
+        description: "Get message history for a chat or fetch replies for a specific thread.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "chat_id": {
+                    "type": "string",
+                    "description": "Messenger chat ID"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of messages to return",
+                    "minimum": 1,
+                    "maximum": 1000
+                },
+                "cursor": {
+                    "type": "string",
+                    "description": "Provider pagination cursor"
+                },
+                "thread_id": {
+                    "type": "string",
+                    "description": "Thread identifier to fetch replies for"
+                },
+                "since": {
+                    "type": "string",
+                    "description": "Only include messages after this provider timestamp"
+                },
+                "until": {
+                    "type": "string",
+                    "description": "Only include messages before this provider timestamp"
+                }
+            },
+            "required": ["chat_id"]
+        }
+    },
+
+    "search_chat_messages" => handle_search_chat_messages {
+        category: ToolCategory::Messenger,
+        description: "Search messages across accessible chats or within a specific chat.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Message search query"
+                },
+                "chat_id": {
+                    "type": "string",
+                    "description": "Optional chat ID to scope the search"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of matches to return",
+                    "minimum": 1,
+                    "maximum": 1000
+                },
+                "cursor": {
+                    "type": "string",
+                    "description": "Provider pagination cursor"
+                },
+                "since": {
+                    "type": "string",
+                    "description": "Only include messages after this provider timestamp"
+                },
+                "until": {
+                    "type": "string",
+                    "description": "Only include messages before this provider timestamp"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+
+    "send_message" => handle_send_message {
+        category: ToolCategory::Messenger,
+        description: "Send a message to a chat or as a threaded reply.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "chat_id": {
+                    "type": "string",
+                    "description": "Messenger chat ID"
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Message body"
+                },
+                "thread_id": {
+                    "type": "string",
+                    "description": "Optional thread identifier for replies"
+                },
+                "reply_to_id": {
+                    "type": "string",
+                    "description": "Optional provider-specific parent message ID"
+                }
+            },
+            "required": ["chat_id", "text"]
+        }
     };
 
     // Context management (handled by McpServer, not ToolHandler)
@@ -715,6 +853,7 @@ fn get_provider_name(provider: &dyn Provider) -> &'static str {
 pub struct ToolHandler {
     providers: Vec<Arc<dyn Provider>>,
     meeting_providers: Vec<Arc<dyn devboy_core::MeetingNotesProvider>>,
+    messenger_providers: Vec<Arc<dyn devboy_core::MessengerProvider>>,
     pipeline_config: PipelineConfig,
 }
 
@@ -724,6 +863,7 @@ impl ToolHandler {
         Self {
             providers,
             meeting_providers: Vec::new(),
+            messenger_providers: Vec::new(),
             pipeline_config: PipelineConfig::default(),
         }
     }
@@ -737,6 +877,15 @@ impl ToolHandler {
         self
     }
 
+    /// Add messenger providers (e.g., Slack).
+    pub fn with_messenger_providers(
+        mut self,
+        providers: Vec<Arc<dyn devboy_core::MessengerProvider>>,
+    ) -> Self {
+        self.messenger_providers = providers;
+        self
+    }
+
     /// Create with custom pipeline configuration.
     pub fn with_pipeline_config(mut self, config: PipelineConfig) -> Self {
         self.pipeline_config = config;
@@ -746,6 +895,11 @@ impl ToolHandler {
     /// Check if meeting notes providers are configured.
     pub fn has_meeting_providers(&self) -> bool {
         !self.meeting_providers.is_empty()
+    }
+
+    /// Check if messenger providers are configured.
+    pub fn has_messenger_providers(&self) -> bool {
+        !self.messenger_providers.is_empty()
     }
 
     // =========================================================================
@@ -1830,6 +1984,178 @@ impl ToolHandler {
     }
 
     // =========================================================================
+    // MESSENGER HANDLERS
+    // =========================================================================
+
+    async fn handle_get_messenger_chats(&self, arguments: Option<Value>) -> ToolCallResult {
+        if self.messenger_providers.is_empty() {
+            return ToolCallResult::error("No messenger providers configured".to_string());
+        }
+
+        let params: GetMessengerChatsParams = arguments
+            .map(|value| serde_json::from_value(value).unwrap_or_default())
+            .unwrap_or_default();
+
+        let request = GetChatsParams {
+            search: params.search,
+            chat_type: params.chat_type,
+            limit: params.limit,
+            cursor: params.cursor,
+            include_inactive: params.include_inactive,
+        };
+
+        let mut last_error: Option<String> = None;
+        for provider in &self.messenger_providers {
+            match provider.get_chats(request.clone()).await {
+                Ok(result) => return ToolCallResult::text(format_messenger_chats(&result.items)),
+                Err(e) => {
+                    tracing::warn!(
+                        "Messenger provider {} failed: {}",
+                        provider.provider_name(),
+                        e
+                    );
+                    last_error = Some(format!("{}: {}", provider.provider_name(), e));
+                }
+            }
+        }
+
+        ToolCallResult::error(
+            last_error.unwrap_or_else(|| "No messenger providers configured".to_string()),
+        )
+    }
+
+    async fn handle_get_chat_messages(&self, arguments: Option<Value>) -> ToolCallResult {
+        if self.messenger_providers.is_empty() {
+            return ToolCallResult::error("No messenger providers configured".to_string());
+        }
+
+        let params: GetChatMessagesParams = match arguments {
+            Some(value) => match serde_json::from_value(value) {
+                Ok(params) => params,
+                Err(e) => return ToolCallResult::error(format!("Invalid params: {e}")),
+            },
+            None => return ToolCallResult::error("chat_id is required".to_string()),
+        };
+
+        let request = GetMessagesParams {
+            chat_id: params.chat_id,
+            limit: params.limit,
+            cursor: params.cursor,
+            thread_id: params.thread_id,
+            since: params.since,
+            until: params.until,
+        };
+
+        let mut last_error: Option<String> = None;
+        for provider in &self.messenger_providers {
+            match provider.get_messages(request.clone()).await {
+                Ok(result) => {
+                    return ToolCallResult::text(format_messenger_messages(&result.items));
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "Messenger provider {} failed: {}",
+                        provider.provider_name(),
+                        e
+                    );
+                    last_error = Some(format!("{}: {}", provider.provider_name(), e));
+                }
+            }
+        }
+
+        ToolCallResult::error(
+            last_error.unwrap_or_else(|| "No messenger providers configured".to_string()),
+        )
+    }
+
+    async fn handle_search_chat_messages(&self, arguments: Option<Value>) -> ToolCallResult {
+        if self.messenger_providers.is_empty() {
+            return ToolCallResult::error("No messenger providers configured".to_string());
+        }
+
+        let params: SearchChatMessagesParams = match arguments {
+            Some(value) => match serde_json::from_value(value) {
+                Ok(params) => params,
+                Err(e) => return ToolCallResult::error(format!("Invalid params: {e}")),
+            },
+            None => return ToolCallResult::error("query is required".to_string()),
+        };
+
+        let request = SearchMessagesParams {
+            query: params.query,
+            chat_id: params.chat_id,
+            limit: params.limit,
+            cursor: params.cursor,
+            since: params.since,
+            until: params.until,
+        };
+
+        let mut last_error: Option<String> = None;
+        for provider in &self.messenger_providers {
+            match provider.search_messages(request.clone()).await {
+                Ok(result) => {
+                    return ToolCallResult::text(format_messenger_messages(&result.items));
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "Messenger provider {} failed: {}",
+                        provider.provider_name(),
+                        e
+                    );
+                    last_error = Some(format!("{}: {}", provider.provider_name(), e));
+                }
+            }
+        }
+
+        ToolCallResult::error(
+            last_error.unwrap_or_else(|| "No messenger providers configured".to_string()),
+        )
+    }
+
+    async fn handle_send_message(&self, arguments: Option<Value>) -> ToolCallResult {
+        if self.messenger_providers.is_empty() {
+            return ToolCallResult::error("No messenger providers configured".to_string());
+        }
+
+        let params: SendMessengerMessageParams = match arguments {
+            Some(value) => match serde_json::from_value(value) {
+                Ok(params) => params,
+                Err(e) => return ToolCallResult::error(format!("Invalid params: {e}")),
+            },
+            None => return ToolCallResult::error("chat_id and text are required".to_string()),
+        };
+
+        let request = SendMessageParams {
+            chat_id: params.chat_id,
+            text: params.text,
+            thread_id: params.thread_id,
+            reply_to_id: params.reply_to_id,
+            attachments: vec![],
+        };
+
+        let mut last_error: Option<String> = None;
+        for provider in &self.messenger_providers {
+            match provider.send_message(request.clone()).await {
+                Ok(message) => {
+                    return ToolCallResult::text(format_single_messenger_message(&message));
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "Messenger provider {} failed: {}",
+                        provider.provider_name(),
+                        e
+                    );
+                    last_error = Some(format!("{}: {}", provider.provider_name(), e));
+                }
+            }
+        }
+
+        ToolCallResult::error(
+            last_error.unwrap_or_else(|| "No messenger providers configured".to_string()),
+        )
+    }
+
+    // =========================================================================
     // HELPER METHODS
     // =========================================================================
 
@@ -1865,6 +2191,63 @@ impl ToolHandler {
 
         Pipeline::with_config(config)
     }
+}
+
+fn format_messenger_chats(chats: &[devboy_core::MessengerChat]) -> String {
+    if chats.is_empty() {
+        return "No chats found.".to_string();
+    }
+
+    let mut output = format!("# Messenger Chats ({})\n\n", chats.len());
+    for chat in chats {
+        let description = chat.description.as_deref().unwrap_or("-");
+        let members = chat
+            .member_count
+            .map(|count| count.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let active = if chat.is_active { "active" } else { "inactive" };
+        output.push_str(&format!(
+            "- {} [{}] id=`{}` members={} status={} desc={}\n",
+            chat.name,
+            match chat.chat_type {
+                ChatType::Direct => "direct",
+                ChatType::Group => "group",
+                ChatType::Channel => "channel",
+            },
+            chat.id,
+            members,
+            active,
+            description
+        ));
+    }
+    output
+}
+
+fn format_messenger_messages(messages: &[devboy_core::MessengerMessage]) -> String {
+    if messages.is_empty() {
+        return "No messages found.".to_string();
+    }
+
+    let mut output = format!("# Messages ({})\n\n", messages.len());
+    for message in messages {
+        output.push_str(&format_single_messenger_message(message));
+        output.push('\n');
+    }
+    output
+}
+
+fn format_single_messenger_message(message: &devboy_core::MessengerMessage) -> String {
+    let mut line = format!(
+        "- [{}] {} ({}) in `{}`: {}",
+        message.timestamp, message.author.name, message.author.id, message.chat_id, message.text
+    );
+    if let Some(thread_id) = message.thread_id.as_deref() {
+        line.push_str(&format!(" thread=`{}`", thread_id));
+    }
+    if !message.attachments.is_empty() {
+        line.push_str(&format!(" attachments={}", message.attachments.len()));
+    }
+    line
 }
 
 // =============================================================================
@@ -2080,6 +2463,43 @@ struct SearchMeetingNotesParams {
     host_email: Option<String>,
     limit: Option<u32>,
     offset: Option<u32>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct GetMessengerChatsParams {
+    search: Option<String>,
+    chat_type: Option<ChatType>,
+    limit: Option<u32>,
+    cursor: Option<String>,
+    include_inactive: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GetChatMessagesParams {
+    chat_id: String,
+    limit: Option<u32>,
+    cursor: Option<String>,
+    thread_id: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchChatMessagesParams {
+    query: String,
+    chat_id: Option<String>,
+    limit: Option<u32>,
+    cursor: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SendMessengerMessageParams {
+    chat_id: String,
+    text: String,
+    thread_id: Option<String>,
+    reply_to_id: Option<String>,
 }
 
 // =============================================================================
@@ -2795,8 +3215,8 @@ mod tests {
         let handler = ToolHandler::new(vec![]);
         let tools = handler.available_tools();
 
-        // 9 issue tools + 6 MR tools + 2 pipeline tools + 3 meeting tools = 20 total
-        assert_eq!(tools.len(), 20);
+        // 9 issue tools + 6 MR tools + 2 pipeline tools + 3 meeting tools + 4 messenger tools = 24 total
+        assert_eq!(tools.len(), 24);
     }
 
     #[tokio::test]

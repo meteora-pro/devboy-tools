@@ -275,7 +275,8 @@ impl McpServer {
     pub fn handle_tools_list(&self, id: RequestId) -> JsonRpcResponse {
         let providers = self.active_providers();
         let handler = ToolHandler::new(providers.clone())
-            .with_meeting_providers(self.meeting_providers.clone());
+            .with_meeting_providers(self.meeting_providers.clone())
+            .with_messenger_providers(self.messenger_providers.clone());
         let mut tools = handler.available_tools();
 
         // Pre-compute category availability to avoid repeated provider lookups.
@@ -288,6 +289,7 @@ impl McpServer {
             )
         });
         let has_meeting_providers = handler.has_meeting_providers();
+        let has_messenger_providers = handler.has_messenger_providers();
 
         // Filter tools based on available providers (dynamic filtering).
         // This prevents exposing tools that would always fail due to missing providers.
@@ -297,6 +299,7 @@ impl McpServer {
                     ToolCategory::Issues => has_issue_providers,
                     ToolCategory::MergeRequests => has_mr_providers,
                     ToolCategory::MeetingNotes => has_meeting_providers,
+                    ToolCategory::Messenger => has_messenger_providers,
                 })
                 .unwrap_or(true) // Tools without category are always available
         });
@@ -433,7 +436,8 @@ impl McpServer {
                     proxy_result
                 } else {
                     let handler = ToolHandler::new(self.active_providers())
-                        .with_meeting_providers(self.meeting_providers.clone());
+                        .with_meeting_providers(self.meeting_providers.clone())
+                        .with_messenger_providers(self.messenger_providers.clone());
                     handler.execute(&params.name, params.arguments).await
                 }
             }
