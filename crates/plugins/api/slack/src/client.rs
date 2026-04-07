@@ -326,12 +326,14 @@ impl SlackClient {
             .as_ref()
             .map(|meta| !meta.next_cursor.is_empty())
             .unwrap_or(false);
+        let next_cursor = slack_next_cursor(payload.response_metadata.as_ref());
 
         Ok(ProviderResult::new(items).with_pagination(Pagination {
             offset: 0,
             limit,
             total: None,
             has_more,
+            next_cursor,
         }))
     }
 
@@ -374,12 +376,14 @@ impl SlackClient {
                 .as_ref()
                 .map(|meta| !meta.next_cursor.is_empty())
                 .unwrap_or(false);
+        let next_cursor = slack_next_cursor(payload.response_metadata.as_ref());
 
         Ok(ProviderResult::new(items).with_pagination(Pagination {
             offset: 0,
             limit,
             total: None,
             has_more,
+            next_cursor,
         }))
     }
 
@@ -506,7 +510,7 @@ impl MessengerProvider for SlackClient {
         let limit = params.limit.unwrap_or(20) as usize;
         let mut found = Vec::new();
 
-        let has_more = if let Some(chat_id) = params.chat_id.as_ref() {
+        let (has_more, next_cursor) = if let Some(chat_id) = params.chat_id.as_ref() {
             let messages = self
                 .get_messages_page(&GetMessagesParams {
                     chat_id: chat_id.clone(),
@@ -517,6 +521,7 @@ impl MessengerProvider for SlackClient {
                     until: params.until.clone(),
                 })
                 .await?;
+            let pagination = messages.pagination.clone();
             for message in messages.items {
                 if message.text.to_lowercase().contains(&query) {
                     found.push(message);
@@ -525,7 +530,10 @@ impl MessengerProvider for SlackClient {
                     }
                 }
             }
-            messages.pagination.map(|p| p.has_more).unwrap_or(false)
+            (
+                pagination.as_ref().map(|p| p.has_more).unwrap_or(false),
+                pagination.and_then(|p| p.next_cursor),
+            )
         } else {
             let chats = self
                 .get_conversations(&GetChatsParams {
@@ -536,6 +544,7 @@ impl MessengerProvider for SlackClient {
                     include_inactive: Some(false),
                 })
                 .await?;
+            let chats_pagination = chats.pagination.clone();
             let mut has_more = chats
                 .pagination
                 .as_ref()
@@ -568,7 +577,7 @@ impl MessengerProvider for SlackClient {
                     break;
                 }
             }
-            has_more
+            (has_more, chats_pagination.and_then(|p| p.next_cursor))
         };
 
         Ok(ProviderResult::new(found).with_pagination(Pagination {
@@ -576,6 +585,7 @@ impl MessengerProvider for SlackClient {
             limit: limit as u32,
             total: None,
             has_more,
+            next_cursor,
         }))
     }
 
@@ -729,6 +739,13 @@ fn slack_conversation_types(chat_type: Option<ChatType>) -> &'static str {
         Some(ChatType::Channel) => "public_channel,private_channel",
         None => "public_channel,private_channel,mpim,im",
     }
+}
+
+fn slack_next_cursor(metadata: Option<&SlackResponseMetadata>) -> Option<String> {
+    metadata
+        .map(|metadata| metadata.next_cursor.trim())
+        .filter(|cursor| !cursor.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn normalize_ts_param(value: Option<&str>) -> Option<Cow<'_, str>> {
@@ -940,7 +957,7 @@ mod tests {
                         "purpose": { "value": "Team chat" }
                     }
                 ],
-                "response_metadata": { "next_cursor": "" }
+                "response_metadata": { "next_cursor": "chat-cursor-1" }
             }));
         });
 
@@ -953,6 +970,13 @@ mod tests {
         assert_eq!(result.items.len(), 1);
         assert_eq!(result.items[0].name, "engineering");
         assert_eq!(result.items[0].chat_type, ChatType::Channel);
+        assert_eq!(
+            result
+                .pagination
+                .as_ref()
+                .and_then(|pagination| pagination.next_cursor.as_deref()),
+            Some("chat-cursor-1")
+        );
     }
 
     #[tokio::test]
@@ -975,7 +999,8 @@ mod tests {
                         "user": "U123",
                         "thread_ts": "1710000000.000100"
                     }
-                ]
+                ],
+                "response_metadata": { "next_cursor": "reply-cursor-1" }
             }));
         });
         server.mock(|when, then| {
@@ -1013,6 +1038,13 @@ mod tests {
             Some("1710000000.000100")
         );
         assert_eq!(result.items[0].author.name, "Andrey");
+        assert_eq!(
+            result
+                .pagination
+                .as_ref()
+                .and_then(|pagination| pagination.next_cursor.as_deref()),
+            Some("reply-cursor-1")
+        );
     }
 
     #[tokio::test]

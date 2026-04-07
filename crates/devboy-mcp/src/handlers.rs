@@ -2007,7 +2007,12 @@ impl ToolHandler {
         let mut last_error: Option<String> = None;
         for provider in &self.messenger_providers {
             match provider.get_chats(request.clone()).await {
-                Ok(result) => return ToolCallResult::text(format_messenger_chats(&result.items)),
+                Ok(result) => {
+                    return ToolCallResult::text(format_messenger_chats(
+                        &result.items,
+                        result.pagination.as_ref(),
+                    ));
+                }
                 Err(e) => {
                     tracing::warn!(
                         "Messenger provider {} failed: {}",
@@ -2050,7 +2055,10 @@ impl ToolHandler {
         for provider in &self.messenger_providers {
             match provider.get_messages(request.clone()).await {
                 Ok(result) => {
-                    return ToolCallResult::text(format_messenger_messages(&result.items));
+                    return ToolCallResult::text(format_messenger_messages(
+                        &result.items,
+                        result.pagination.as_ref(),
+                    ));
                 }
                 Err(e) => {
                     tracing::debug!(
@@ -2094,7 +2102,10 @@ impl ToolHandler {
         for provider in &self.messenger_providers {
             match provider.search_messages(request.clone()).await {
                 Ok(result) => {
-                    return ToolCallResult::text(format_messenger_messages(&result.items));
+                    return ToolCallResult::text(format_messenger_messages(
+                        &result.items,
+                        result.pagination.as_ref(),
+                    ));
                 }
                 Err(e) => {
                     tracing::debug!(
@@ -2193,9 +2204,12 @@ impl ToolHandler {
     }
 }
 
-fn format_messenger_chats(chats: &[devboy_core::MessengerChat]) -> String {
+fn format_messenger_chats(
+    chats: &[devboy_core::MessengerChat],
+    pagination: Option<&devboy_core::Pagination>,
+) -> String {
     if chats.is_empty() {
-        return "No chats found.".to_string();
+        return format_messenger_pagination("No chats found.".to_string(), pagination);
     }
 
     let mut output = format!("# Messenger Chats ({})\n\n", chats.len());
@@ -2220,12 +2234,15 @@ fn format_messenger_chats(chats: &[devboy_core::MessengerChat]) -> String {
             description
         ));
     }
-    output
+    format_messenger_pagination(output, pagination)
 }
 
-fn format_messenger_messages(messages: &[devboy_core::MessengerMessage]) -> String {
+fn format_messenger_messages(
+    messages: &[devboy_core::MessengerMessage],
+    pagination: Option<&devboy_core::Pagination>,
+) -> String {
     if messages.is_empty() {
-        return "No messages found.".to_string();
+        return format_messenger_pagination("No messages found.".to_string(), pagination);
     }
 
     let mut output = format!("# Messages ({})\n\n", messages.len());
@@ -2233,7 +2250,7 @@ fn format_messenger_messages(messages: &[devboy_core::MessengerMessage]) -> Stri
         output.push_str(&format_single_messenger_message(message));
         output.push('\n');
     }
-    output
+    format_messenger_pagination(output, pagination)
 }
 
 fn format_single_messenger_message(message: &devboy_core::MessengerMessage) -> String {
@@ -2248,6 +2265,26 @@ fn format_single_messenger_message(message: &devboy_core::MessengerMessage) -> S
         line.push_str(&format!(" attachments={}", message.attachments.len()));
     }
     line
+}
+
+fn format_messenger_pagination(
+    mut output: String,
+    pagination: Option<&devboy_core::Pagination>,
+) -> String {
+    let Some(pagination) = pagination else {
+        return output;
+    };
+
+    if pagination.has_more || pagination.next_cursor.is_some() {
+        output.push_str("\nPagination:");
+        output.push_str(&format!(" has_more={}", pagination.has_more));
+        if let Some(cursor) = pagination.next_cursor.as_deref() {
+            output.push_str(&format!(" next_cursor=`{}`", cursor));
+        }
+        output.push('\n');
+    }
+
+    output
 }
 
 // =============================================================================
@@ -3309,6 +3346,65 @@ mod tests {
             crate::protocol::ToolResultContent::Text { text } => text,
         };
         assert!(content.contains("Missing required parameter: key"));
+    }
+
+    #[test]
+    fn test_format_messenger_chats_includes_next_cursor() {
+        let output = format_messenger_chats(
+            &[devboy_core::MessengerChat {
+                id: "C123".into(),
+                key: "slack:C123".into(),
+                name: "engineering".into(),
+                chat_type: devboy_core::types::ChatType::Channel,
+                source: "slack".into(),
+                member_count: Some(4),
+                description: Some("Team chat".into()),
+                is_active: true,
+            }],
+            Some(&devboy_core::Pagination {
+                offset: 0,
+                limit: 1,
+                total: None,
+                has_more: true,
+                next_cursor: Some("chat-cursor-1".into()),
+            }),
+        );
+
+        assert!(output.contains("engineering"));
+        assert!(output.contains("next_cursor=`chat-cursor-1`"));
+    }
+
+    #[test]
+    fn test_format_messenger_messages_includes_next_cursor() {
+        let output = format_messenger_messages(
+            &[devboy_core::MessengerMessage {
+                id: "1710000000.000100".into(),
+                chat_id: "C123".into(),
+                text: "hello".into(),
+                author: devboy_core::MessageAuthor {
+                    id: "U123".into(),
+                    name: "Andrey".into(),
+                    username: Some("andrey".into()),
+                    avatar_url: None,
+                },
+                source: "slack".into(),
+                timestamp: "1710000000.000100".into(),
+                thread_id: None,
+                reply_to_id: None,
+                attachments: vec![],
+                is_edited: false,
+            }],
+            Some(&devboy_core::Pagination {
+                offset: 0,
+                limit: 1,
+                total: None,
+                has_more: true,
+                next_cursor: Some("msg-cursor-1".into()),
+            }),
+        );
+
+        assert!(output.contains("hello"));
+        assert!(output.contains("next_cursor=`msg-cursor-1`"));
     }
 
     #[tokio::test]
