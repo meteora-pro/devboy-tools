@@ -100,8 +100,6 @@ jobs:
             --team-id "$APPLE_TEAM_ID" \
             --wait
           rm devboy-notarize.zip
-          xcrun stapler staple target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
-          xcrun stapler validate target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
 
       - name: Cleanup keychain
         if: contains(matrix.target, 'apple-darwin') && always()
