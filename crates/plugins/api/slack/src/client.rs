@@ -1,4 +1,6 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use devboy_core::types::ChatType;
@@ -32,6 +34,7 @@ pub struct SlackClient {
     base_url: String,
     http: reqwest::Client,
     required_scopes: Vec<String>,
+    user_cache: Arc<RwLock<HashMap<String, MessageAuthor>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,6 +183,7 @@ impl SlackClient {
             base_url: DEFAULT_SLACK_API_URL.to_string(),
             http: reqwest::Client::new(),
             required_scopes: devboy_core::default_slack_required_scopes(),
+            user_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -448,6 +452,16 @@ impl SlackClient {
     }
 
     async fn get_user(&self, user_id: &str) -> Result<MessageAuthor> {
+        if let Some(cached) = self
+            .user_cache
+            .read()
+            .map_err(|_| Error::Config("Slack user cache lock poisoned".to_string()))?
+            .get(user_id)
+            .cloned()
+        {
+            return Ok(cached);
+        }
+
         let payload: SlackUsersInfoResponse = self
             .post_form("users.info", &[("user", user_id.to_string())])
             .await?;
@@ -470,12 +484,19 @@ impl SlackClient {
             .or_else(|| username.clone())
             .unwrap_or_else(|| user.id.clone());
 
-        Ok(MessageAuthor {
+        let author = MessageAuthor {
             id: user.id,
             name,
             username,
             avatar_url: profile.and_then(|profile| profile.image_72.clone()),
-        })
+        };
+
+        self.user_cache
+            .write()
+            .map_err(|_| Error::Config("Slack user cache lock poisoned".to_string()))?
+            .insert(user_id.to_string(), author.clone());
+
+        Ok(author)
     }
 }
 
@@ -1083,6 +1104,60 @@ mod tests {
         assert_eq!(result.chat_id, "C123");
         assert_eq!(result.text, "hello world");
         assert_eq!(result.author.name, "Devboy");
+    }
+
+    #[tokio::test]
+    async fn get_messages_caches_resolved_users() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/conversations.history");
+            then.status(200).json_body(serde_json::json!({
+                "ok": true,
+                "messages": [
+                    {
+                        "ts": "1710000000.000100",
+                        "text": "First",
+                        "user": "U123"
+                    },
+                    {
+                        "ts": "1710000001.000100",
+                        "text": "Second",
+                        "user": "U123"
+                    }
+                ]
+            }));
+        });
+        let users_info = server.mock(|when, then| {
+            when.method(POST).path("/users.info");
+            then.status(200).json_body(serde_json::json!({
+                "ok": true,
+                "user": {
+                    "id": "U123",
+                    "name": "andrey",
+                    "profile": {
+                        "display_name": "Andrey"
+                    }
+                }
+            }));
+        });
+
+        let client = SlackClient::new("xoxb-test").with_base_url(server.base_url());
+        let result = client
+            .get_messages(GetMessagesParams {
+                chat_id: "C123".to_string(),
+                limit: Some(20),
+                cursor: None,
+                thread_id: None,
+                since: None,
+                until: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.items.len(), 2);
+        assert_eq!(result.items[0].author.name, "Andrey");
+        assert_eq!(result.items[1].author.name, "Andrey");
+        users_info.assert_calls(1);
     }
 
     #[test]
