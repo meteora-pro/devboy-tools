@@ -384,6 +384,9 @@ pub struct Pagination {
     pub total: Option<u32>,
     /// Whether there are more items
     pub has_more: bool,
+    /// Provider pagination cursor/token for fetching the next page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 // =============================================================================
@@ -580,6 +583,7 @@ mod tests {
             limit: 10,
             total: Some(100),
             has_more: true,
+            next_cursor: Some("cursor-1".into()),
         };
         let result = ProviderResult::new(vec!["a", "b"]).with_pagination(pagination);
         assert_eq!(result.items, vec!["a", "b"]);
@@ -588,6 +592,7 @@ mod tests {
         assert!(pag.has_more);
         assert_eq!(pag.offset, 0);
         assert_eq!(pag.limit, 10);
+        assert_eq!(pag.next_cursor.as_deref(), Some("cursor-1"));
     }
 
     #[test]
@@ -622,6 +627,7 @@ mod tests {
                 limit: 5,
                 total: Some(50),
                 has_more: true,
+                next_cursor: Some("cursor-2".into()),
             })
             .with_sort_info(SortInfo {
                 sort_by: Some("priority".into()),
@@ -631,6 +637,13 @@ mod tests {
         assert!(result.pagination.is_some());
         assert!(result.sort_info.is_some());
         assert_eq!(result.items, vec!["x"]);
+        assert_eq!(
+            result
+                .pagination
+                .as_ref()
+                .and_then(|pagination| pagination.next_cursor.as_deref()),
+            Some("cursor-2")
+        );
     }
 }
 
