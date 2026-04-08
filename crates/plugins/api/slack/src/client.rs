@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use devboy_core::types::ChatType;
@@ -12,6 +13,8 @@ use devboy_core::{
 use reqwest::header::HeaderMap;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use tokio::sync::Mutex;
+use tokio::time::{Instant, sleep_until};
 use tracing::debug;
 
 use crate::DEFAULT_SLACK_API_URL;
@@ -35,6 +38,29 @@ pub struct SlackClient {
     http: reqwest::Client,
     required_scopes: Vec<String>,
     user_cache: Arc<RwLock<HashMap<String, MessageAuthor>>>,
+    rate_limiter: Arc<SlackRateLimiter>,
+}
+
+const SLACK_READ_INTERVAL: Duration = Duration::from_millis(1200);
+const SLACK_WRITE_INTERVAL: Duration = Duration::from_secs(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SlackRateLimitBucket {
+    Read,
+    Write,
+}
+
+#[derive(Debug)]
+struct SlackRateLimiter {
+    state: Mutex<SlackRateLimitState>,
+    read_interval: Duration,
+    write_interval: Duration,
+}
+
+#[derive(Debug)]
+struct SlackRateLimitState {
+    read_ready_at: Instant,
+    write_ready_at: Instant,
 }
 
 #[derive(Debug, Deserialize)]
@@ -184,6 +210,10 @@ impl SlackClient {
             http: reqwest::Client::new(),
             required_scopes: devboy_core::default_slack_required_scopes(),
             user_cache: Arc::new(RwLock::new(HashMap::new())),
+            rate_limiter: Arc::new(SlackRateLimiter::new(
+                SLACK_READ_INTERVAL,
+                SLACK_WRITE_INTERVAL,
+            )),
         }
     }
 
@@ -205,13 +235,7 @@ impl SlackClient {
         let url = format!("{}/auth.test", self.base_url);
         debug!(url, "slack auth.test request");
 
-        let response = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.token)
-            .send()
-            .await
-            .map_err(|e| Error::Network(e.to_string()))?;
+        let response = self.send_form_request("auth.test", &[]).await?;
 
         let status = response.status();
         let headers = response.headers().clone();
@@ -275,19 +299,53 @@ impl SlackClient {
     where
         T: DeserializeOwned,
     {
-        let url = format!("{}/{}", self.base_url, method);
-        debug!(url, "slack api request");
-
-        let response = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.token)
-            .form(params)
-            .send()
-            .await
-            .map_err(|e| Error::Network(e.to_string()))?;
-
+        let response = self.send_form_request(method, params).await?;
         map_http_error(response).await
+    }
+
+    async fn send_form_request(
+        &self,
+        method: &str,
+        params: &[(&str, String)],
+    ) -> Result<reqwest::Response> {
+        let url = format!("{}/{}", self.base_url, method);
+        let bucket = slack_rate_limit_bucket(method);
+        debug!(url, ?bucket, "slack api request");
+
+        for attempt in 0..2 {
+            self.rate_limiter.acquire(bucket).await;
+
+            let response = self
+                .http
+                .post(&url)
+                .bearer_auth(&self.token)
+                .form(params)
+                .send()
+                .await
+                .map_err(|e| Error::Network(e.to_string()))?;
+
+            if response.status().as_u16() != 429 {
+                return Ok(response);
+            }
+
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok());
+
+            self.rate_limiter
+                .on_rate_limited(bucket, retry_after.map(Duration::from_secs))
+                .await;
+
+            if attempt == 0 && retry_after.is_some() {
+                continue;
+            }
+
+            return Ok(response);
+        }
+
+        unreachable!("slack request retry loop should always return");
     }
 
     async fn get_conversations(
@@ -769,6 +827,13 @@ fn slack_next_cursor(metadata: Option<&SlackResponseMetadata>) -> Option<String>
         .map(ToOwned::to_owned)
 }
 
+fn slack_rate_limit_bucket(method: &str) -> SlackRateLimitBucket {
+    match method {
+        "chat.postMessage" => SlackRateLimitBucket::Write,
+        _ => SlackRateLimitBucket::Read,
+    }
+}
+
 fn normalize_ts_param(value: Option<&str>) -> Option<Cow<'_, str>> {
     let value = value?.trim();
     if value.is_empty() {
@@ -794,6 +859,61 @@ fn parse_scopes(headers: &HeaderMap) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+impl SlackRateLimiter {
+    fn new(read_interval: Duration, write_interval: Duration) -> Self {
+        let now = Instant::now();
+        Self {
+            state: Mutex::new(SlackRateLimitState {
+                read_ready_at: now,
+                write_ready_at: now,
+            }),
+            read_interval,
+            write_interval,
+        }
+    }
+
+    async fn acquire(&self, bucket: SlackRateLimitBucket) {
+        let (wait_until, interval) = {
+            let mut state = self.state.lock().await;
+            let now = Instant::now();
+            let (ready_at, interval) = match bucket {
+                SlackRateLimitBucket::Read => (&mut state.read_ready_at, self.read_interval),
+                SlackRateLimitBucket::Write => (&mut state.write_ready_at, self.write_interval),
+            };
+            let wait_until = (*ready_at).max(now);
+            *ready_at = wait_until + interval;
+            (wait_until, interval)
+        };
+
+        debug!(
+            ?bucket,
+            ?wait_until,
+            ?interval,
+            "slack rate limiter acquired slot"
+        );
+
+        if wait_until > Instant::now() {
+            sleep_until(wait_until).await;
+        }
+    }
+
+    async fn on_rate_limited(&self, bucket: SlackRateLimitBucket, retry_after: Option<Duration>) {
+        let delay = retry_after.unwrap_or_else(|| match bucket {
+            SlackRateLimitBucket::Read => self.read_interval,
+            SlackRateLimitBucket::Write => self.write_interval,
+        });
+        let next_ready = Instant::now() + delay;
+        let mut state = self.state.lock().await;
+        let ready_at = match bucket {
+            SlackRateLimitBucket::Read => &mut state.read_ready_at,
+            SlackRateLimitBucket::Write => &mut state.write_ready_at,
+        };
+        if next_ready > *ready_at {
+            *ready_at = next_ready;
+        }
+    }
 }
 
 async fn map_http_error<T>(response: reqwest::Response) -> Result<T>
@@ -1168,5 +1288,40 @@ mod tests {
         assert!(text.contains("[docs](https://example.com)"));
         assert!(text.contains("@U123"));
         assert!(text.contains("#general"));
+    }
+
+    #[test]
+    fn rate_limit_bucket_matches_write_method() {
+        assert_eq!(
+            slack_rate_limit_bucket("chat.postMessage"),
+            SlackRateLimitBucket::Write
+        );
+        assert_eq!(
+            slack_rate_limit_bucket("conversations.history"),
+            SlackRateLimitBucket::Read
+        );
+    }
+
+    #[tokio::test]
+    async fn rate_limiter_spaces_same_bucket_requests() {
+        let limiter = SlackRateLimiter::new(Duration::from_millis(25), Duration::from_millis(10));
+
+        let start = std::time::Instant::now();
+        limiter.acquire(SlackRateLimitBucket::Read).await;
+        limiter.acquire(SlackRateLimitBucket::Read).await;
+
+        assert!(start.elapsed() >= Duration::from_millis(20));
+    }
+
+    #[tokio::test]
+    async fn rate_limiter_keeps_read_and_write_buckets_independent() {
+        let limiter = SlackRateLimiter::new(Duration::from_millis(50), Duration::from_millis(10));
+
+        limiter.acquire(SlackRateLimitBucket::Read).await;
+
+        let start = std::time::Instant::now();
+        limiter.acquire(SlackRateLimitBucket::Write).await;
+
+        assert!(start.elapsed() < Duration::from_millis(25));
     }
 }
