@@ -2624,7 +2624,7 @@ fn add_context_providers_from_env(
             if let Some(base_url) = &slack.base_url {
                 client = client.with_base_url(base_url);
             }
-            server.add_messenger_provider(Arc::new(client));
+            server.add_messenger_provider_to_context(context_name, Arc::new(client));
             tracing::info!("Added Slack provider to context '{}'", context_name);
             added = true;
         } else {
@@ -2843,7 +2843,7 @@ fn add_context_providers(
             if let Some(base_url) = &slack.base_url {
                 client = client.with_base_url(base_url);
             }
-            server.add_messenger_provider(Arc::new(client));
+            server.add_messenger_provider_to_context(context_name, Arc::new(client));
             tracing::info!("Added Slack provider to context '{}'", context_name);
             added = true;
         } else {
