@@ -14,10 +14,10 @@ serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 tracing.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 httpmock.workspace = true
-tokio.workspace = true
 
 [lints]
 workspace = true
