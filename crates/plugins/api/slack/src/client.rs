@@ -98,11 +98,9 @@ struct SlackConversation {
     id: String,
     name: Option<String>,
     user: Option<String>,
-    is_channel: Option<bool>,
     is_group: Option<bool>,
     is_im: Option<bool>,
     is_mpim: Option<bool>,
-    is_private: Option<bool>,
     is_archived: Option<bool>,
     num_members: Option<u32>,
     purpose: Option<SlackTextValue>,
@@ -905,8 +903,6 @@ fn slack_chat_type(chat: &SlackConversation) -> ChatType {
         ChatType::Direct
     } else if chat.is_group.unwrap_or(false) || chat.is_mpim.unwrap_or(false) {
         ChatType::Group
-    } else if chat.is_channel.unwrap_or(false) || chat.is_private.unwrap_or(false) {
-        ChatType::Channel
     } else {
         ChatType::Channel
     }
@@ -1009,7 +1005,7 @@ impl SlackRateLimiter {
     }
 
     async fn on_rate_limited(&self, bucket: SlackRateLimitBucket, retry_after: Option<Duration>) {
-        let delay = retry_after.unwrap_or_else(|| match bucket {
+        let delay = retry_after.unwrap_or(match bucket {
             SlackRateLimitBucket::Read => self.read_interval,
             SlackRateLimitBucket::Write => self.write_interval,
         });
@@ -1548,11 +1544,9 @@ mod tests {
             id: "C1".to_string(),
             name: Some("Project Alpha".to_string()),
             user: None,
-            is_channel: None,
             is_group: Some(true),
             is_im: None,
             is_mpim: None,
-            is_private: None,
             is_archived: Some(true),
             num_members: Some(3),
             purpose: Some(SlackTextValue {
@@ -1588,11 +1582,9 @@ mod tests {
             id: "D1".to_string(),
             name: None,
             user: Some("U123".to_string()),
-            is_channel: None,
             is_group: None,
             is_im: Some(true),
             is_mpim: None,
-            is_private: None,
             is_archived: Some(false),
             num_members: None,
             purpose: None,
