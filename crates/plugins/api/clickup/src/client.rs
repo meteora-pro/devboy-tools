@@ -993,9 +993,19 @@ impl IssueProvider for ClickUpClient {
             }
         }
 
-        // Always re-fetch after PUT — ClickUp returns stale status in PUT response (#117)
-        let updated_task: ClickUpTask = self.get(&url).await?;
-        Ok(map_task(&updated_task))
+        // Re-fetch after PUT because ClickUp can return stale status in the PUT response (#117),
+        // but do not fail the whole update if the refresh itself is transiently unavailable.
+        match self.get::<ClickUpTask>(&url).await {
+            Ok(updated_task) => Ok(map_task(&updated_task)),
+            Err(e) => {
+                warn!(
+                    issue_key = key,
+                    error = %e,
+                    "Task updated successfully, but failed to re-fetch fresh state; falling back to PUT response"
+                );
+                Ok(map_task(&task))
+            }
+        }
     }
 
     async fn set_custom_fields(&self, issue_key: &str, fields: &[serde_json::Value]) -> Result<()> {
