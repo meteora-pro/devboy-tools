@@ -1481,7 +1481,9 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(error, Error::InvalidData(message) if message.contains("must not be empty")));
+        assert!(
+            matches!(error, Error::InvalidData(message) if message.contains("must not be empty"))
+        );
     }
 
     #[tokio::test]
@@ -1637,10 +1639,16 @@ mod tests {
         );
         assert_eq!(attachments[1].id.as_deref(), Some("42"));
         assert_eq!(attachments[1].name.as_deref(), Some("Fallback title"));
-        assert_eq!(attachments[1].url.as_deref(), Some("https://example.com/doc"));
+        assert_eq!(
+            attachments[1].url.as_deref(),
+            Some("https://example.com/doc")
+        );
 
         assert_eq!(slack_conversation_types(Some(ChatType::Direct)), "im");
-        assert_eq!(slack_conversation_types(Some(ChatType::Group)), "mpim,private_channel");
+        assert_eq!(
+            slack_conversation_types(Some(ChatType::Group)),
+            "mpim,private_channel"
+        );
         assert_eq!(
             slack_conversation_types(Some(ChatType::Channel)),
             "public_channel,private_channel"
@@ -1666,7 +1674,10 @@ mod tests {
             " channels:read, , chat:write ".parse().unwrap(),
         );
 
-        assert_eq!(normalize_ts_param(Some(" 1710000000.000100 ")).as_deref(), Some("1710000000.000100"));
+        assert_eq!(
+            normalize_ts_param(Some(" 1710000000.000100 ")).as_deref(),
+            Some("1710000000.000100")
+        );
         assert_eq!(normalize_ts_param(Some("not-a-ts")), None);
         assert_eq!(normalize_ts_param(Some("   ")), None);
         assert_eq!(
@@ -1678,9 +1689,15 @@ mod tests {
         assert_eq!(normalize_slack_token("@U123"), "@U123");
         assert_eq!(normalize_slack_token("#C123|general"), "#general");
         assert_eq!(normalize_slack_token("!here"), "here");
-        assert_eq!(normalize_slack_token("https://example.com|docs"), "[docs](https://example.com)");
+        assert_eq!(
+            normalize_slack_token("https://example.com|docs"),
+            "[docs](https://example.com)"
+        );
         assert_eq!(normalize_slack_token("plain-token"), "plain-token");
-        assert_eq!(normalize_mrkdwn("unterminated <https://example.com"), "unterminated <https://example.com");
+        assert_eq!(
+            normalize_mrkdwn("unterminated <https://example.com"),
+            "unterminated <https://example.com"
+        );
     }
 
     #[test]
