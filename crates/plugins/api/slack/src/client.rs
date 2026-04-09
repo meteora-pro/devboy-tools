@@ -669,13 +669,17 @@ impl MessengerProvider for SlackClient {
     }
 
     async fn send_message(&self, params: SendMessageParams) -> Result<MessengerMessage> {
+        let thread_ts = params
+            .thread_id
+            .clone()
+            .or_else(|| params.reply_to_id.clone());
         let mut form = vec![
             ("channel", params.chat_id.clone()),
             ("text", params.text.clone()),
             ("unfurl_links", "false".to_string()),
             ("unfurl_media", "false".to_string()),
         ];
-        if let Some(thread_id) = params.thread_id.as_ref() {
+        if let Some(thread_id) = thread_ts.as_ref() {
             form.push(("thread_ts", thread_id.clone()));
         }
 
@@ -688,7 +692,7 @@ impl MessengerProvider for SlackClient {
             user: None,
             username: None,
             bot_id: None,
-            thread_ts: params.thread_id.clone(),
+            thread_ts: thread_ts.clone(),
             parent_user_id: None,
             subtype: None,
             edited: None,
@@ -698,7 +702,7 @@ impl MessengerProvider for SlackClient {
         });
 
         if message.thread_ts.is_none() {
-            message.thread_ts = params.thread_id;
+            message.thread_ts = thread_ts;
         }
 
         self.map_message(
@@ -1224,6 +1228,39 @@ mod tests {
         assert_eq!(result.chat_id, "C123");
         assert_eq!(result.text, "hello world");
         assert_eq!(result.author.name, "Devboy");
+    }
+
+    #[tokio::test]
+    async fn send_message_uses_reply_to_id_as_thread_ts_when_thread_id_missing() {
+        let server = MockServer::start();
+        let post_message = server.mock(|when, then| {
+            when.method(POST).path("/chat.postMessage");
+            then.status(200).json_body(serde_json::json!({
+                "ok": true,
+                "channel": "C123",
+                "ts": "1710000100.000200",
+                "message": {
+                    "ts": "1710000100.000200",
+                    "text": "reply message"
+                }
+            }));
+        });
+
+        let result = SlackClient::new("xoxb-test")
+            .with_base_url(server.base_url())
+            .send_message(SendMessageParams {
+                chat_id: "C123".to_string(),
+                text: "reply message".to_string(),
+                thread_id: None,
+                reply_to_id: Some("1710000000.000100".to_string()),
+                attachments: vec![],
+            })
+            .await
+            .unwrap();
+
+        post_message.assert_calls(1);
+        assert_eq!(result.thread_id.as_deref(), Some("1710000000.000100"));
+        assert_eq!(result.reply_to_id.as_deref(), Some("1710000000.000100"));
     }
 
     #[tokio::test]

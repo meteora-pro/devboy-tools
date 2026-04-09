@@ -1992,9 +1992,13 @@ impl ToolHandler {
             return ToolCallResult::error("No messenger providers configured".to_string());
         }
 
-        let params: GetMessengerChatsParams = arguments
-            .map(|value| serde_json::from_value(value).unwrap_or_default())
-            .unwrap_or_default();
+        let params: GetMessengerChatsParams = match arguments {
+            Some(value) => match serde_json::from_value(value) {
+                Ok(params) => params,
+                Err(e) => return ToolCallResult::error(format!("Invalid params: {e}")),
+            },
+            None => GetMessengerChatsParams::default(),
+        };
 
         let request = GetChatsParams {
             search: params.search,
