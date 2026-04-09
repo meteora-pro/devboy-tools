@@ -11,8 +11,8 @@ use devboy_core::{
     SendMessageParams,
 };
 use reqwest::header::HeaderMap;
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tokio::time::{Instant, sleep_until};
 use tracing::debug;
@@ -122,6 +122,18 @@ struct SlackMessagesResponse {
     messages: Vec<SlackMessage>,
     has_more: Option<bool>,
     response_metadata: Option<SlackResponseMetadata>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct SlackSearchCursor {
+    version: u8,
+    current_chat_id: Option<String>,
+    current_message_cursor: Option<String>,
+    #[serde(default)]
+    current_message_offset: usize,
+    #[serde(default)]
+    pending_chat_ids: Vec<String>,
+    next_chats_cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -614,49 +626,115 @@ impl MessengerProvider for SlackClient {
                 pagination.and_then(|p| p.next_cursor),
             )
         } else {
-            let chats = self
-                .get_conversations(&GetChatsParams {
-                    search: None,
-                    chat_type: None,
-                    limit: Some(100),
-                    cursor: params.cursor.clone(),
-                    include_inactive: Some(false),
-                })
-                .await?;
-            let chats_pagination = chats.pagination.clone();
-            let mut has_more = chats
-                .pagination
-                .as_ref()
-                .map(|p| p.has_more)
-                .unwrap_or(false);
+            let mut state = parse_search_cursor(params.cursor.as_deref())?;
+            let mut chats_loaded = state.current_chat_id.is_some()
+                || !state.pending_chat_ids.is_empty()
+                || state.next_chats_cursor.is_some()
+                || params.cursor.is_some();
 
-            for chat in chats.items {
-                let messages = self
-                    .get_messages_page(&GetMessagesParams {
-                        chat_id: chat.id.clone(),
-                        limit: Some(100),
-                        cursor: None,
-                        thread_id: None,
-                        since: params.since.clone(),
-                        until: params.until.clone(),
-                    })
-                    .await?;
-
-                for message in messages.items {
-                    if message.text.to_lowercase().contains(&query) {
-                        found.push(message);
-                        if found.len() >= limit {
-                            break;
-                        }
-                    }
-                }
-
-                has_more = has_more || messages.pagination.map(|p| p.has_more).unwrap_or(false);
+            loop {
                 if found.len() >= limit {
                     break;
                 }
+
+                if let Some(chat_id) = state.current_chat_id.clone() {
+                    let messages = self
+                        .get_messages_page(&GetMessagesParams {
+                            chat_id,
+                            limit: Some(100),
+                            cursor: state.current_message_cursor.clone(),
+                            thread_id: None,
+                            since: params.since.clone(),
+                            until: params.until.clone(),
+                        })
+                        .await?;
+                    let pagination = messages.pagination.clone();
+                    let page_len = messages.items.len();
+
+                    for message in messages
+                        .items
+                        .into_iter()
+                        .skip(state.current_message_offset)
+                    {
+                        state.current_message_offset += 1;
+                        if message.text.to_lowercase().contains(&query) {
+                            found.push(message);
+                            if found.len() >= limit {
+                                break;
+                            }
+                        }
+                    }
+
+                    if found.len() >= limit {
+                        if state.current_message_offset >= page_len {
+                            let next_message_cursor = pagination
+                                .as_ref()
+                                .and_then(|page| page.next_cursor.clone());
+                            if pagination
+                                .as_ref()
+                                .map(|page| page.has_more)
+                                .unwrap_or(false)
+                            {
+                                state.current_message_cursor = next_message_cursor;
+                                state.current_message_offset = 0;
+                            } else {
+                                state.current_chat_id = None;
+                                state.current_message_cursor = None;
+                                state.current_message_offset = 0;
+                            }
+                        }
+                        break;
+                    }
+
+                    let next_message_cursor = pagination
+                        .as_ref()
+                        .and_then(|page| page.next_cursor.clone());
+                    if pagination
+                        .as_ref()
+                        .map(|page| page.has_more)
+                        .unwrap_or(false)
+                    {
+                        state.current_message_cursor = next_message_cursor;
+                        state.current_message_offset = 0;
+                        continue;
+                    }
+
+                    state.current_chat_id = None;
+                    state.current_message_cursor = None;
+                    state.current_message_offset = 0;
+                    continue;
+                }
+
+                if !state.pending_chat_ids.is_empty() {
+                    state.current_chat_id = Some(state.pending_chat_ids.remove(0));
+                    state.current_message_cursor = None;
+                    state.current_message_offset = 0;
+                    continue;
+                }
+
+                if chats_loaded && state.next_chats_cursor.is_none() {
+                    break;
+                }
+
+                let chats = self
+                    .get_conversations(&GetChatsParams {
+                        search: None,
+                        chat_type: None,
+                        limit: Some(100),
+                        cursor: state.next_chats_cursor.clone(),
+                        include_inactive: Some(false),
+                    })
+                    .await?;
+                state.pending_chat_ids = chats.items.into_iter().map(|chat| chat.id).collect();
+                state.next_chats_cursor = chats.pagination.and_then(|page| page.next_cursor);
+                chats_loaded = true;
             }
-            (has_more, chats_pagination.and_then(|p| p.next_cursor))
+
+            let has_more = state.current_chat_id.is_some()
+                || !state.pending_chat_ids.is_empty()
+                || state.next_chats_cursor.is_some();
+            let next_cursor = serialize_search_cursor(&state)?;
+            (has_more, next_cursor)
         };
 
         Ok(ProviderResult::new(found).with_pagination(Pagination {
@@ -711,6 +789,33 @@ impl MessengerProvider for SlackClient {
         )
         .await
     }
+}
+
+fn parse_search_cursor(cursor: Option<&str>) -> Result<SlackSearchCursor> {
+    let Some(cursor) = cursor.map(str::trim).filter(|cursor| !cursor.is_empty()) else {
+        return Ok(SlackSearchCursor::default());
+    };
+
+    match serde_json::from_str::<SlackSearchCursor>(cursor) {
+        Ok(state) => Ok(state),
+        Err(_) => Ok(SlackSearchCursor {
+            next_chats_cursor: Some(cursor.to_string()),
+            ..SlackSearchCursor::default()
+        }),
+    }
+}
+
+fn serialize_search_cursor(state: &SlackSearchCursor) -> Result<Option<String>> {
+    let has_more = state.current_chat_id.is_some()
+        || !state.pending_chat_ids.is_empty()
+        || state.next_chats_cursor.is_some();
+    if !has_more {
+        return Ok(None);
+    }
+
+    serde_json::to_string(state)
+        .map(Some)
+        .map_err(|e| Error::InvalidData(format!("failed to serialize Slack search cursor: {e}")))
 }
 
 fn map_chat(chat: SlackConversation) -> MessengerChat {
@@ -1318,6 +1423,304 @@ mod tests {
     }
 
     #[test]
+    fn client_configuration_helpers_update_settings() {
+        let client = SlackClient::new("xoxb-test")
+            .with_base_url("https://slack.example.test/")
+            .with_required_scopes(vec!["search:read".to_string(), "chat:write".to_string()]);
+
+        assert_eq!(client.base_url, "https://slack.example.test");
+        assert_eq!(
+            client.required_scopes(),
+            ["search:read".to_string(), "chat:write".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_info_maps_invalid_auth_to_unauthorized() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/auth.test");
+            then.status(200).json_body(serde_json::json!({
+                "ok": false,
+                "error": "invalid_auth"
+            }));
+        });
+
+        let error = SlackClient::new("xoxb-test")
+            .with_base_url(server.base_url())
+            .auth_info()
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, Error::Unauthorized(message) if message == "invalid_auth"));
+    }
+
+    #[tokio::test]
+    async fn auth_info_maps_missing_scope_to_forbidden() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/auth.test");
+            then.status(200).json_body(serde_json::json!({
+                "ok": false,
+                "error": "missing_scope"
+            }));
+        });
+
+        let error = SlackClient::new("xoxb-test")
+            .with_base_url(server.base_url())
+            .auth_info()
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, Error::Forbidden(message) if message == "missing_scope"));
+    }
+
+    #[tokio::test]
+    async fn search_messages_rejects_empty_query() {
+        let error = SlackClient::new("xoxb-test")
+            .search_messages(SearchMessagesParams {
+                query: "   ".to_string(),
+                ..SearchMessagesParams::default()
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, Error::InvalidData(message) if message.contains("must not be empty")));
+    }
+
+    #[tokio::test]
+    async fn search_messages_global_cursor_resumes_within_chat_before_next_chat_page() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/conversations.list");
+            then.status(200).json_body(serde_json::json!({
+                "ok": true,
+                "channels": [
+                    { "id": "C1", "name": "general", "is_channel": true, "is_archived": false },
+                    { "id": "C2", "name": "random", "is_channel": true, "is_archived": false }
+                ],
+                "response_metadata": { "next_cursor": "chat-page-2" }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(POST).path("/conversations.history");
+            then.status(200).json_body(serde_json::json!({
+                "ok": true,
+                "messages": [
+                    { "ts": "1710000000.000100", "text": "no match", "username": "bot" },
+                    { "ts": "1710000001.000100", "text": "Needle on first page", "username": "bot" }
+                ],
+                "has_more": true,
+                "response_metadata": { "next_cursor": "msg-page-2" }
+            }));
+        });
+
+        let client = SlackClient::new("xoxb-test").with_base_url(server.base_url());
+        let first = client
+            .search_messages(SearchMessagesParams {
+                query: "needle".to_string(),
+                limit: Some(1),
+                ..SearchMessagesParams::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(first.items.len(), 1);
+        assert_eq!(first.items[0].chat_id, "C1");
+        assert!(first.pagination.as_ref().unwrap().has_more);
+
+        let cursor = first
+            .pagination
+            .as_ref()
+            .and_then(|pagination| pagination.next_cursor.clone())
+            .unwrap();
+        let state = parse_search_cursor(Some(&cursor)).unwrap();
+        assert_eq!(state.current_chat_id.as_deref(), Some("C1"));
+        assert_eq!(state.current_message_cursor.as_deref(), Some("msg-page-2"));
+        assert_eq!(state.current_message_offset, 0);
+        assert_eq!(state.pending_chat_ids, vec!["C2"]);
+        assert_eq!(state.next_chats_cursor.as_deref(), Some("chat-page-2"));
+    }
+
+    #[test]
+    fn helper_functions_cover_filtering_and_mapping_cases() {
+        let archived_group = SlackConversation {
+            id: "C1".to_string(),
+            name: Some("Project Alpha".to_string()),
+            user: None,
+            is_channel: None,
+            is_group: Some(true),
+            is_im: None,
+            is_mpim: None,
+            is_private: None,
+            is_archived: Some(true),
+            num_members: Some(3),
+            purpose: Some(SlackTextValue {
+                value: Some("".to_string()),
+            }),
+            topic: Some(SlackTextValue {
+                value: Some("Topic text".to_string()),
+            }),
+        };
+
+        assert_eq!(slack_chat_type(&archived_group), ChatType::Group);
+        assert_eq!(conversation_name(&archived_group), "Project Alpha");
+        assert!(!matches_chat_filter(
+            &archived_group,
+            &GetChatsParams {
+                search: Some("alpha".to_string()),
+                chat_type: Some(ChatType::Group),
+                include_inactive: Some(false),
+                ..GetChatsParams::default()
+            }
+        ));
+        assert!(matches_chat_filter(
+            &archived_group,
+            &GetChatsParams {
+                search: Some("alpha".to_string()),
+                chat_type: Some(ChatType::Group),
+                include_inactive: Some(true),
+                ..GetChatsParams::default()
+            }
+        ));
+
+        let direct_chat = SlackConversation {
+            id: "D1".to_string(),
+            name: None,
+            user: Some("U123".to_string()),
+            is_channel: None,
+            is_group: None,
+            is_im: Some(true),
+            is_mpim: None,
+            is_private: None,
+            is_archived: Some(false),
+            num_members: None,
+            purpose: None,
+            topic: None,
+        };
+        assert_eq!(slack_chat_type(&direct_chat), ChatType::Direct);
+        assert_eq!(conversation_name(&direct_chat), "dm-U123");
+
+        let mapped = map_chat(archived_group);
+        assert_eq!(mapped.description.as_deref(), Some("Topic text"));
+        assert!(!mapped.is_active);
+    }
+
+    #[test]
+    fn attachment_and_cursor_helpers_cover_fallback_paths() {
+        let attachments = map_attachments(&SlackMessage {
+            ts: "1710000000.000100".to_string(),
+            text: None,
+            user: None,
+            username: None,
+            bot_id: None,
+            thread_ts: None,
+            parent_user_id: None,
+            subtype: None,
+            edited: None,
+            files: Some(vec![SlackFile {
+                id: Some("F1".to_string()),
+                name: Some("report.pdf".to_string()),
+                mimetype: Some("application/pdf".to_string()),
+                filetype: None,
+                url_private: Some("https://private.example/report.pdf".to_string()),
+                permalink: None,
+            }]),
+            attachments: Some(vec![SlackRichAttachment {
+                id: Some(42),
+                title: None,
+                fallback: Some("Fallback title".to_string()),
+                service_name: Some("docs".to_string()),
+                title_link: None,
+                from_url: Some("https://example.com/doc".to_string()),
+            }]),
+            bot_profile: None,
+        });
+
+        assert_eq!(attachments.len(), 2);
+        assert_eq!(attachments[0].attachment_type.as_deref(), Some("file"));
+        assert_eq!(
+            attachments[0].url.as_deref(),
+            Some("https://private.example/report.pdf")
+        );
+        assert_eq!(attachments[1].id.as_deref(), Some("42"));
+        assert_eq!(attachments[1].name.as_deref(), Some("Fallback title"));
+        assert_eq!(attachments[1].url.as_deref(), Some("https://example.com/doc"));
+
+        assert_eq!(slack_conversation_types(Some(ChatType::Direct)), "im");
+        assert_eq!(slack_conversation_types(Some(ChatType::Group)), "mpim,private_channel");
+        assert_eq!(
+            slack_conversation_types(Some(ChatType::Channel)),
+            "public_channel,private_channel"
+        );
+        assert_eq!(
+            slack_conversation_types(None),
+            "public_channel,private_channel,mpim,im"
+        );
+        assert_eq!(
+            slack_next_cursor(Some(&SlackResponseMetadata {
+                next_cursor: " cursor-1 ".to_string(),
+            })),
+            Some("cursor-1".to_string())
+        );
+        assert_eq!(slack_next_cursor(None), None);
+    }
+
+    #[test]
+    fn ts_scope_and_markdown_helpers_cover_edge_cases() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-oauth-scopes",
+            " channels:read, , chat:write ".parse().unwrap(),
+        );
+
+        assert_eq!(normalize_ts_param(Some(" 1710000000.000100 ")).as_deref(), Some("1710000000.000100"));
+        assert_eq!(normalize_ts_param(Some("not-a-ts")), None);
+        assert_eq!(normalize_ts_param(Some("   ")), None);
+        assert_eq!(
+            parse_scopes(&headers),
+            vec!["channels:read".to_string(), "chat:write".to_string()]
+        );
+        assert!(parse_scopes(&HeaderMap::new()).is_empty());
+
+        assert_eq!(normalize_slack_token("@U123"), "@U123");
+        assert_eq!(normalize_slack_token("#C123|general"), "#general");
+        assert_eq!(normalize_slack_token("!here"), "here");
+        assert_eq!(normalize_slack_token("https://example.com|docs"), "[docs](https://example.com)");
+        assert_eq!(normalize_slack_token("plain-token"), "plain-token");
+        assert_eq!(normalize_mrkdwn("unterminated <https://example.com"), "unterminated <https://example.com");
+    }
+
+    #[test]
+    fn slack_error_helpers_map_expected_variants() {
+        assert!(ensure_ok(true, None).is_ok());
+        assert!(matches!(
+            ensure_ok(false, Some("missing_scope".to_string())).unwrap_err(),
+            Error::Forbidden(message) if message == "missing_scope"
+        ));
+        assert!(matches!(
+            map_slack_error("invalid_auth".to_string()),
+            Error::Unauthorized(message) if message == "invalid_auth"
+        ));
+        assert!(matches!(
+            map_slack_error("not_allowed_token_type".to_string()),
+            Error::Forbidden(message) if message == "not_allowed_token_type"
+        ));
+        assert!(matches!(
+            map_slack_error("channel_not_found".to_string()),
+            Error::NotFound(message) if message == "channel_not_found"
+        ));
+        assert!(matches!(
+            map_slack_error("ratelimited".to_string()),
+            Error::RateLimited { retry_after: None }
+        ));
+        assert!(matches!(
+            map_slack_error("other".to_string()),
+            Error::Api { status: 200, message } if message == "other"
+        ));
+    }
+
+    #[test]
     fn normalize_slack_markup_to_markdownish_text() {
         let text = normalize_mrkdwn(
             "See <https://example.com|docs> and talk to <@U123> in <#C123|general>",
@@ -1360,5 +1763,46 @@ mod tests {
         limiter.acquire(SlackRateLimitBucket::Write).await;
 
         assert!(start.elapsed() < Duration::from_millis(25));
+    }
+
+    #[test]
+    fn parse_search_cursor_accepts_legacy_chat_cursor() {
+        let state = parse_search_cursor(Some("chat-cursor-1")).unwrap();
+
+        assert_eq!(state.next_chats_cursor.as_deref(), Some("chat-cursor-1"));
+        assert!(state.current_chat_id.is_none());
+        assert!(state.pending_chat_ids.is_empty());
+    }
+
+    #[test]
+    fn search_cursor_round_trips_with_message_progress() {
+        let cursor = SlackSearchCursor {
+            version: 1,
+            current_chat_id: Some("C123".to_string()),
+            current_message_cursor: Some("msg-cursor-2".to_string()),
+            current_message_offset: 37,
+            pending_chat_ids: vec!["C124".to_string(), "C125".to_string()],
+            next_chats_cursor: Some("chat-cursor-9".to_string()),
+        };
+
+        let encoded = serialize_search_cursor(&cursor).unwrap().unwrap();
+        let decoded = parse_search_cursor(Some(&encoded)).unwrap();
+
+        assert_eq!(decoded.version, 1);
+        assert_eq!(decoded.current_chat_id.as_deref(), Some("C123"));
+        assert_eq!(
+            decoded.current_message_cursor.as_deref(),
+            Some("msg-cursor-2")
+        );
+        assert_eq!(decoded.current_message_offset, 37);
+        assert_eq!(decoded.pending_chat_ids, vec!["C124", "C125"]);
+        assert_eq!(decoded.next_chats_cursor.as_deref(), Some("chat-cursor-9"));
+    }
+
+    #[test]
+    fn serialize_search_cursor_omits_finished_state() {
+        let encoded = serialize_search_cursor(&SlackSearchCursor::default()).unwrap();
+
+        assert!(encoded.is_none());
     }
 }
