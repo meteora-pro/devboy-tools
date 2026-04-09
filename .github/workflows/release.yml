@@ -55,6 +55,56 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Import Apple certificate
+        if: contains(matrix.target, 'apple-darwin')
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+
+          echo -n "$APPLE_CERTIFICATE_BASE64" | base64 -D -o "$CERTIFICATE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          EXISTING_KEYCHAINS=$(security list-keychains -d user | sed 's/^[[:space:]]*"//; s/"$//')
+          security list-keychains -d user -s $EXISTING_KEYCHAINS "$KEYCHAIN_PATH"
+
+      - name: Sign macOS binary
+        if: contains(matrix.target, 'apple-darwin')
+        run: |
+          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          codesign --force --options runtime \
+            --sign "$IDENTITY" \
+            --timestamp \
+            target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+
+      - name: Notarize macOS binary
+        if: contains(matrix.target, 'apple-darwin')
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          zip -j devboy-notarize.zip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          xcrun notarytool submit devboy-notarize.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          rm devboy-notarize.zip
+
+      - name: Cleanup keychain
+        if: contains(matrix.target, 'apple-darwin') && always()
+        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
+
       - name: Prepare artifact (Unix)
         if: runner.os != 'Windows'
         run: |
