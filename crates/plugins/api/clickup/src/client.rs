@@ -991,13 +991,21 @@ impl IssueProvider for ClickUpClient {
                     }
                 }
             }
-
-            // Re-fetch task to get updated tags
-            let updated_task: ClickUpTask = self.get(&url).await?;
-            return Ok(map_task(&updated_task));
         }
 
-        Ok(map_task(&task))
+        // Re-fetch after PUT because ClickUp can return stale status in the PUT response (#117),
+        // but do not fail the whole update if the refresh itself is transiently unavailable.
+        match self.get::<ClickUpTask>(&url).await {
+            Ok(updated_task) => Ok(map_task(&updated_task)),
+            Err(e) => {
+                warn!(
+                    issue_key = key,
+                    error = %e,
+                    "Task updated successfully, but failed to re-fetch fresh state; falling back to PUT response"
+                );
+                Ok(map_task(&task))
+            }
+        }
     }
 
     async fn set_custom_fields(&self, issue_key: &str, fields: &[serde_json::Value]) -> Result<()> {
@@ -2418,6 +2426,11 @@ mod tests {
                 then.status(200).json_body(sample_task_json());
             });
 
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_json());
+            });
+
             let client = create_test_client(&server);
             let issue = client
                 .update_issue(
@@ -2439,6 +2452,15 @@ mod tests {
 
             server.mock(|when, then| {
                 when.method(PUT)
+                    .path("/task/DEV-42")
+                    .query_param("custom_task_ids", "true")
+                    .query_param("team_id", "9876");
+                then.status(200)
+                    .json_body(sample_task_with_custom_id_json());
+            });
+
+            server.mock(|when, then| {
+                when.method(GET)
                     .path("/task/DEV-42")
                     .query_param("custom_task_ids", "true")
                     .query_param("team_id", "9876");
@@ -2484,6 +2506,11 @@ mod tests {
                 then.status(200).json_body(sample_task_json());
             });
 
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_json());
+            });
+
             let client = create_test_client(&server);
             let result = client
                 .update_issue(
@@ -2496,6 +2523,63 @@ mod tests {
                 .await;
 
             assert!(result.is_ok());
+        }
+
+        /// Regression test for #117: PUT response returns stale status,
+        /// but re-fetched GET response reflects the actual closed state.
+        #[tokio::test]
+        async fn test_update_issue_state_refetch_returns_fresh_state() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(serde_json::json!({
+                    "statuses": [
+                        {"status": "to do", "type": "open"},
+                        {"status": "complete", "type": "closed"}
+                    ]
+                }));
+            });
+
+            // PUT returns stale "open" status (ClickUp behavior)
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"status\":\"complete\"");
+                then.status(200).json_body(sample_task_json()); // status.type = "open"
+            });
+
+            // GET returns the updated "closed" status
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "abc123",
+                    "name": "Test Task",
+                    "status": {
+                        "status": "complete",
+                        "type": "closed"
+                    },
+                    "tags": [{"name": "bug"}],
+                    "assignees": [{"id": 1, "username": "dev1"}],
+                    "url": "https://app.clickup.com/t/abc123",
+                    "date_created": "1704067200000",
+                    "date_updated": "1704153600000"
+                }));
+            });
+
+            let client = create_test_client(&server);
+            let issue = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        state: Some("closed".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(issue.state, "closed");
         }
 
         #[tokio::test]
@@ -2516,6 +2600,11 @@ mod tests {
                 when.method(PUT)
                     .path("/task/abc123")
                     .body_includes("\"status\":\"to do\"");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
                 then.status(200).json_body(sample_task_json());
             });
 
@@ -2542,6 +2631,11 @@ mod tests {
                 when.method(PUT)
                     .path("/task/abc123")
                     .body_includes("\"status\":\"in progress\"");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
                 then.status(200).json_body(sample_task_json());
             });
 
@@ -2894,6 +2988,14 @@ mod tests {
                     .query_param("custom_task_ids", "true")
                     .query_param("team_id", "9876")
                     .body_includes("\"parent\":\"parent_native_id\"");
+                then.status(200).json_body(updated_task.clone());
+            });
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/task/DEV-601")
+                    .query_param("custom_task_ids", "true")
+                    .query_param("team_id", "9876");
                 then.status(200).json_body(updated_task);
             });
 
