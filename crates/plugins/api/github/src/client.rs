@@ -2,11 +2,12 @@
 
 use async_trait::async_trait;
 use devboy_core::{
-    CodePosition, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
-    Discussion, Error, FailedJob, FileDiff, GetPipelineInput, Issue, IssueFilter, IssueProvider,
-    JobLogMode, JobLogOptions, JobLogOutput, MergeRequest, MergeRequestProvider, MrFilter,
-    PipelineInfo, PipelineJob, PipelineProvider, PipelineStage, PipelineStatus, PipelineSummary,
-    Provider, ProviderResult, Result, UpdateIssueInput, User,
+    AssetCapabilities, AssetMeta, CodePosition, Comment, ContextCapabilities, CreateCommentInput,
+    CreateIssueInput, CreateMergeRequestInput, Discussion, Error, FailedJob, FileDiff,
+    GetPipelineInput, Issue, IssueFilter, IssueProvider, JobLogMode, JobLogOptions, JobLogOutput,
+    MergeRequest, MergeRequestProvider, MrFilter, PipelineInfo, PipelineJob, PipelineProvider,
+    PipelineStage, PipelineStatus, PipelineSummary, Provider, ProviderResult, Result,
+    UpdateIssueInput, User, parse_markdown_attachments,
 };
 use serde::Deserialize;
 use tracing::{debug, warn};
@@ -440,6 +441,71 @@ impl IssueProvider for GitHubClient {
         Ok(map_comment(&gh_comment))
     }
 
+    async fn get_issue_attachments(&self, issue_key: &str) -> Result<Vec<AssetMeta>> {
+        // GitHub does not expose an attachment API for issues; we parse the
+        // issue body and all comment bodies for markdown-embedded files.
+        let issue = self.get_issue(issue_key).await?;
+        let comments = self.get_comments(issue_key).await?;
+
+        let mut attachments: Vec<AssetMeta> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut collect = |source: &str| {
+            for att in parse_markdown_attachments(source) {
+                if seen.insert(att.url.clone()) {
+                    attachments.push(markdown_to_meta(&att));
+                }
+            }
+        };
+        if let Some(body) = issue.description.as_deref() {
+            collect(body);
+        }
+        for comment in &comments.items {
+            collect(&comment.body);
+        }
+        Ok(attachments)
+    }
+
+    async fn download_attachment(&self, _issue_key: &str, asset_id: &str) -> Result<Vec<u8>> {
+        // GitHub's user-content CDN (e.g. `user-images.githubusercontent.com`)
+        // serves attachment bytes anonymously — but we still attach our
+        // normal auth headers so repo-local hosts work too.
+        let response = self
+            .request(reqwest::Method::GET, asset_id)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_default();
+            return Err(Error::from_status(status.as_u16(), message));
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| Error::Http(format!("failed to read attachment bytes: {e}")))?;
+        Ok(bytes.to_vec())
+    }
+
+    fn asset_capabilities(&self) -> AssetCapabilities {
+        // GitHub has no public file upload API for issues / PRs (files are
+        // only uploaded through the web UI to a CDN). We support download
+        // and list via markdown parsing; upload / delete stay false.
+        let caps = ContextCapabilities {
+            upload: false,
+            download: true,
+            delete: false,
+            list: true,
+            max_file_size: None,
+            allowed_types: Vec::new(),
+        };
+        AssetCapabilities {
+            issue: caps.clone(),
+            issue_comment: caps.clone(),
+            merge_request: caps.clone(),
+            mr_comment: caps,
+        }
+    }
+
     fn provider_name(&self) -> &'static str {
         "github"
     }
@@ -708,8 +774,71 @@ impl MergeRequestProvider for GitHubClient {
         Ok(map_pull_request(&gh_pr))
     }
 
+    async fn get_mr_attachments(&self, mr_key: &str) -> Result<Vec<AssetMeta>> {
+        // PR body + discussions, same strategy as issues.
+        let mr = self.get_merge_request(mr_key).await?;
+        let discussions = self.get_discussions(mr_key).await?;
+
+        let mut attachments: Vec<AssetMeta> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut collect = |source: &str| {
+            for att in parse_markdown_attachments(source) {
+                if seen.insert(att.url.clone()) {
+                    attachments.push(markdown_to_meta(&att));
+                }
+            }
+        };
+        if let Some(body) = mr.description.as_deref() {
+            collect(body);
+        }
+        for discussion in &discussions.items {
+            for comment in &discussion.comments {
+                collect(&comment.body);
+            }
+        }
+        Ok(attachments)
+    }
+
+    async fn download_mr_attachment(&self, _mr_key: &str, asset_id: &str) -> Result<Vec<u8>> {
+        let response = self
+            .request(reqwest::Method::GET, asset_id)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_default();
+            return Err(Error::from_status(status.as_u16(), message));
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| Error::Http(format!("failed to read attachment bytes: {e}")))?;
+        Ok(bytes.to_vec())
+    }
+
     fn provider_name(&self) -> &'static str {
         "github"
+    }
+}
+
+/// Convert a parsed markdown attachment into an [`AssetMeta`] record.
+///
+/// GitHub has no stable attachment id — the URL itself doubles as both the
+/// lookup key and the download target.
+fn markdown_to_meta(att: &devboy_core::MarkdownAttachment) -> AssetMeta {
+    AssetMeta {
+        id: att.url.clone(),
+        filename: att.filename.clone(),
+        mime_type: None,
+        size: None,
+        url: Some(att.url.clone()),
+        created_at: None,
+        author: None,
+        cached: false,
+        local_path: None,
+        checksum_sha256: None,
+        analysis: None,
     }
 }
 
@@ -2532,6 +2661,76 @@ mod tests {
             assert!(result.content.contains("Line 3"));
             assert!(!result.content.contains("Line 1"));
             assert!(!result.content.contains("Line 4"));
+        }
+
+        // =================================================================
+        // Attachment tests (Phase 2)
+        // =================================================================
+
+        #[tokio::test]
+        async fn test_get_issue_attachments_parses_body_and_comments() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/issues/42");
+                then.status(200).json_body(serde_json::json!({
+                    "id": 1,
+                    "number": 42,
+                    "title": "bug",
+                    "body": "Error: ![screen](https://user-images.githubusercontent.com/1/screen.png)",
+                    "state": "open",
+                    "html_url": "https://github.com/owner/repo/issues/42",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "updated_at": "2024-01-02T00:00:00Z"
+                }));
+            });
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/issues/42/comments");
+                then.status(200).json_body(serde_json::json!([
+                    {
+                        "id": 10,
+                        "body": "Log [here](https://user-images.githubusercontent.com/1/log.txt)",
+                        "html_url": "https://github.com/owner/repo/issues/42#issuecomment-10",
+                        "created_at": "2024-01-03T00:00:00Z",
+                        "updated_at": "2024-01-03T00:00:00Z"
+                    }
+                ]));
+            });
+
+            let client = create_test_client(&server);
+            let attachments = client.get_issue_attachments("gh#42").await.unwrap();
+            assert_eq!(attachments.len(), 2);
+            assert_eq!(attachments[0].filename, "screen");
+            assert_eq!(attachments[1].filename, "here");
+        }
+
+        #[tokio::test]
+        async fn test_download_attachment_fetches_url() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/cdn/file.txt");
+                then.status(200).body("github-bytes");
+            });
+
+            let client = create_test_client(&server);
+            let url = format!("{}/cdn/file.txt", server.base_url());
+            let bytes = client.download_attachment("gh#42", &url).await.unwrap();
+            assert_eq!(bytes, b"github-bytes");
+        }
+
+        #[tokio::test]
+        async fn test_github_asset_capabilities() {
+            let server = MockServer::start();
+            let client = create_test_client(&server);
+            let caps = client.asset_capabilities();
+            assert!(!caps.issue.upload, "GitHub has no public upload API");
+            assert!(caps.issue.download);
+            assert!(caps.issue.list);
+            assert!(!caps.issue.delete);
+            assert!(!caps.merge_request.upload);
+            assert!(caps.merge_request.download);
         }
     }
 

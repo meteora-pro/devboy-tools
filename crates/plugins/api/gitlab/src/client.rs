@@ -2,11 +2,12 @@
 
 use async_trait::async_trait;
 use devboy_core::{
-    CodePosition, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
-    Discussion, Error, FailedJob, FileDiff, GetPipelineInput, Issue, IssueFilter, IssueProvider,
-    JobLogMode, JobLogOptions, JobLogOutput, MergeRequest, MergeRequestProvider, MrFilter,
-    PipelineInfo, PipelineJob, PipelineProvider, PipelineStage, PipelineStatus, PipelineSummary,
-    Provider, ProviderResult, Result, UpdateIssueInput, User,
+    AssetCapabilities, AssetMeta, CodePosition, Comment, ContextCapabilities, CreateCommentInput,
+    CreateIssueInput, CreateMergeRequestInput, Discussion, Error, FailedJob, FileDiff,
+    GetPipelineInput, Issue, IssueFilter, IssueProvider, JobLogMode, JobLogOptions, JobLogOutput,
+    MergeRequest, MergeRequestProvider, MrFilter, PipelineInfo, PipelineJob, PipelineProvider,
+    PipelineStage, PipelineStatus, PipelineSummary, Provider, ProviderResult, Result,
+    UpdateIssueInput, User, parse_markdown_attachments,
 };
 use tracing::{debug, warn};
 
@@ -208,6 +209,51 @@ impl GitLabClient {
             total: x_total,
             has_more,
         })
+    }
+
+    /// Upload a raw file to the project's shared uploads bucket and
+    /// return an absolute download URL for the uploaded blob.
+    ///
+    /// GitLab does not expose a per-issue attachment API — instead all
+    /// uploads share a project-wide `/projects/{id}/uploads` endpoint and
+    /// get embedded into issue / MR / note bodies via a markdown snippet
+    /// that links back to that URL.
+    async fn upload_project_file(&self, filename: &str, data: &[u8]) -> Result<String> {
+        let url = self.project_url("/uploads");
+
+        let part = reqwest::multipart::Part::bytes(data.to_vec())
+            .file_name(filename.to_string())
+            .mime_str("application/octet-stream")
+            .map_err(|e| Error::Http(format!("failed to build multipart: {e}")))?;
+        let form = reqwest::multipart::Form::new().part("file", part);
+
+        let response = self
+            .request(reqwest::Method::POST, &url)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_default();
+            return Err(Error::from_status(status.as_u16(), message));
+        }
+
+        let body: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| Error::InvalidData(format!("failed to parse upload response: {e}")))?;
+
+        // GitLab returns: { "alt": "screen", "url": "/uploads/<hash>/screen.png",
+        //                   "full_path": "/namespace/project/uploads/<hash>/screen.png",
+        //                   "markdown": "![screen](/uploads/...)" }
+        let relative = body
+            .get("full_path")
+            .or_else(|| body.get("url"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        Ok(absolutize_gitlab_url(&self.base_url, relative))
     }
 
     /// Handle response and map errors.
@@ -579,6 +625,85 @@ impl IssueProvider for GitLabClient {
         Ok(map_note(&gl_note))
     }
 
+    async fn upload_attachment(
+        &self,
+        _issue_key: &str,
+        filename: &str,
+        data: &[u8],
+    ) -> Result<String> {
+        // GitLab has no per-issue attachment endpoint. Instead we upload to
+        // the project's shared uploads bucket and return the absolute URL
+        // that can be embedded into any issue / MR / note body.
+        self.upload_project_file(filename, data).await
+    }
+
+    async fn get_issue_attachments(&self, issue_key: &str) -> Result<Vec<AssetMeta>> {
+        // GitLab does not expose an attachment listing — we reconstruct it
+        // from the markdown of the issue body and all comments.
+        let issue = self.get_issue(issue_key).await?;
+        let comments = self.get_comments(issue_key).await?;
+
+        let mut attachments: Vec<AssetMeta> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        let mut collect = |source: &str| {
+            for att in parse_markdown_attachments(source) {
+                if seen.insert(att.url.clone()) {
+                    attachments.push(markdown_to_meta(&att, &self.base_url));
+                }
+            }
+        };
+
+        if let Some(body) = issue.description.as_deref() {
+            collect(body);
+        }
+        for comment in &comments.items {
+            collect(&comment.body);
+        }
+
+        Ok(attachments)
+    }
+
+    async fn download_attachment(&self, _issue_key: &str, asset_id: &str) -> Result<Vec<u8>> {
+        // In GitLab the `asset_id` for an uploaded file is the URL itself
+        // (relative `/uploads/...` path or a full URL). Normalize to an
+        // absolute URL against the configured base and download with auth.
+        let absolute = absolutize_gitlab_url(&self.base_url, asset_id);
+        let response = self
+            .request(reqwest::Method::GET, &absolute)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_default();
+            return Err(Error::from_status(status.as_u16(), message));
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| Error::Http(format!("failed to read attachment bytes: {e}")))?;
+        Ok(bytes.to_vec())
+    }
+
+    fn asset_capabilities(&self) -> AssetCapabilities {
+        // GitLab project uploads are immutable, so `delete` stays false.
+        let caps = ContextCapabilities {
+            upload: true,
+            download: true,
+            delete: false,
+            list: true,
+            max_file_size: None,
+            allowed_types: Vec::new(),
+        };
+        AssetCapabilities {
+            issue: caps.clone(),
+            issue_comment: caps.clone(),
+            merge_request: caps.clone(),
+            mr_comment: caps,
+        }
+    }
+
     fn provider_name(&self) -> &'static str {
         "gitlab"
     }
@@ -794,8 +919,91 @@ impl MergeRequestProvider for GitLabClient {
         Ok(map_merge_request(&gl_mr))
     }
 
+    async fn get_mr_attachments(&self, mr_key: &str) -> Result<Vec<AssetMeta>> {
+        let mr = self.get_merge_request(mr_key).await?;
+        let discussions = self.get_discussions(mr_key).await?;
+
+        let mut attachments: Vec<AssetMeta> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        let mut collect = |source: &str| {
+            for att in parse_markdown_attachments(source) {
+                if seen.insert(att.url.clone()) {
+                    attachments.push(markdown_to_meta(&att, &self.base_url));
+                }
+            }
+        };
+
+        if let Some(body) = mr.description.as_deref() {
+            collect(body);
+        }
+        for discussion in &discussions.items {
+            for comment in &discussion.comments {
+                collect(&comment.body);
+            }
+        }
+
+        Ok(attachments)
+    }
+
+    async fn download_mr_attachment(&self, _mr_key: &str, asset_id: &str) -> Result<Vec<u8>> {
+        // Same as download_attachment on the issue side — GitLab uploads
+        // are shared across issues and MRs at the project level.
+        let absolute = absolutize_gitlab_url(&self.base_url, asset_id);
+        let response = self
+            .request(reqwest::Method::GET, &absolute)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_default();
+            return Err(Error::from_status(status.as_u16(), message));
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| Error::Http(format!("failed to read attachment bytes: {e}")))?;
+        Ok(bytes.to_vec())
+    }
+
     fn provider_name(&self) -> &'static str {
         "gitlab"
+    }
+}
+
+/// Convert a relative GitLab upload path to an absolute URL.
+///
+/// Pass-through for URLs that already contain a scheme.
+fn absolutize_gitlab_url(base: &str, url_or_path: &str) -> String {
+    if url_or_path.starts_with("http://") || url_or_path.starts_with("https://") {
+        return url_or_path.to_string();
+    }
+    let base = base.trim_end_matches('/');
+    if url_or_path.starts_with('/') {
+        format!("{base}{url_or_path}")
+    } else {
+        format!("{base}/{url_or_path}")
+    }
+}
+
+/// Convert a parsed markdown attachment into an [`AssetMeta`] record.
+fn markdown_to_meta(att: &devboy_core::MarkdownAttachment, base_url: &str) -> AssetMeta {
+    let absolute = absolutize_gitlab_url(base_url, &att.url);
+    AssetMeta {
+        // For GitLab there's no stable attachment id — the URL doubles as
+        // both the lookup key and the download target.
+        id: att.url.clone(),
+        filename: att.filename.clone(),
+        mime_type: None,
+        size: None,
+        url: Some(absolute),
+        created_at: None,
+        author: None,
+        cached: false,
+        local_path: None,
+        checksum_sha256: None,
+        analysis: None,
     }
 }
 
@@ -2257,6 +2465,114 @@ mod tests {
             assert!(result.content.contains("L3"));
             assert!(result.content.contains("L4"));
             assert!(!result.content.contains("L1"));
+        }
+
+        // =================================================================
+        // Attachment tests (Phase 2)
+        // =================================================================
+
+        #[tokio::test]
+        async fn test_upload_attachment_returns_absolute_url() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST).path("/api/v4/projects/123/uploads");
+                then.status(201).json_body(serde_json::json!({
+                    "alt": "screen",
+                    "url": "/uploads/abc/screen.png",
+                    "full_path": "/ns/proj/uploads/abc/screen.png",
+                    "markdown": "![screen](/uploads/abc/screen.png)"
+                }));
+            });
+
+            let client = create_test_client(&server);
+            let url = client
+                .upload_attachment("gitlab#42", "screen.png", b"data")
+                .await
+                .unwrap();
+            assert!(url.starts_with(&server.base_url()));
+            assert!(url.contains("/uploads/abc/screen.png"));
+        }
+
+        #[tokio::test]
+        async fn test_get_issue_attachments_parses_body_and_notes() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/api/v4/projects/123/issues/42");
+                then.status(200).json_body(serde_json::json!({
+                    "id": 1,
+                    "iid": 42,
+                    "title": "bug",
+                    "description": "See ![screen](/uploads/hash1/screen.png)",
+                    "state": "opened",
+                    "web_url": "https://example/gl/ns/proj/-/issues/42",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "updated_at": "2024-01-02T00:00:00Z"
+                }));
+            });
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/v4/projects/123/issues/42/notes");
+                then.status(200).json_body(serde_json::json!([
+                    {
+                        "id": 10,
+                        "body": "Also [log](/uploads/hash2/trace.log)",
+                        "system": false,
+                        "created_at": "2024-01-01T00:00:00Z"
+                    },
+                    {
+                        "id": 11,
+                        "body": "Duplicate ![screen](/uploads/hash1/screen.png)",
+                        "system": false,
+                        "created_at": "2024-01-02T00:00:00Z"
+                    }
+                ]));
+            });
+
+            let client = create_test_client(&server);
+            let attachments = client.get_issue_attachments("gitlab#42").await.unwrap();
+            assert_eq!(attachments.len(), 2, "duplicates should be dropped");
+            assert_eq!(attachments[0].filename, "screen");
+            assert!(
+                attachments[0]
+                    .url
+                    .as_deref()
+                    .unwrap()
+                    .contains("/uploads/hash1/screen.png")
+            );
+            assert_eq!(attachments[1].filename, "log");
+        }
+
+        #[tokio::test]
+        async fn test_download_attachment_relative_path() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/uploads/hash/file.txt");
+                then.status(200).body("hello");
+            });
+
+            let client = create_test_client(&server);
+            let bytes = client
+                .download_attachment("gitlab#42", "/uploads/hash/file.txt")
+                .await
+                .unwrap();
+            assert_eq!(bytes, b"hello");
+        }
+
+        #[tokio::test]
+        async fn test_gitlab_asset_capabilities() {
+            let server = MockServer::start();
+            let client = create_test_client(&server);
+            let caps = client.asset_capabilities();
+            assert!(caps.issue.upload);
+            assert!(caps.issue.download);
+            assert!(caps.issue.list);
+            assert!(!caps.issue.delete);
+            // GitLab uploads are shared, so MR caps match issue caps.
+            assert!(caps.merge_request.upload);
+            assert!(caps.merge_request.list);
         }
     }
 
