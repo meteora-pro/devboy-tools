@@ -35,8 +35,10 @@ pub enum AssetContext {
     },
     /// Attachment on a merge request / pull request body.
     MergeRequest {
-        /// MR / PR identifier.
-        id: String,
+        /// MR / PR identifier. Named `mr_id` for consistency with
+        /// [`AssetContext::MrComment`] so JSON-wire field names are the
+        /// same across both variants.
+        mr_id: String,
     },
     /// Attachment on a comment/note of a merge request.
     MrComment {
@@ -72,7 +74,7 @@ impl AssetContext {
             AssetContext::IssueComment { key, comment_id } => {
                 format!("issue:{key}:comment:{comment_id}")
             }
-            AssetContext::MergeRequest { id } => format!("mr:{id}"),
+            AssetContext::MergeRequest { mr_id } => format!("mr:{mr_id}"),
             AssetContext::MrComment { mr_id, note_id } => format!("mr:{mr_id}:note:{note_id}"),
             AssetContext::Chat {
                 chat_id,
@@ -363,7 +365,7 @@ mod tests {
         };
         assert_eq!(issue.slug(), "issue:DEV-123");
 
-        let mr = AssetContext::MergeRequest { id: "42".into() };
+        let mr = AssetContext::MergeRequest { mr_id: "42".into() };
         assert_eq!(mr.slug(), "mr:42");
 
         let mr_note = AssetContext::MrComment {
@@ -397,7 +399,7 @@ mod tests {
             AssetContextKind::Issue,
         );
         assert_eq!(
-            AssetContext::MergeRequest { id: "1".into() }.kind(),
+            AssetContext::MergeRequest { mr_id: "1".into() }.kind(),
             AssetContextKind::MergeRequest,
         );
     }
@@ -582,7 +584,7 @@ mod tests {
                 key: "DEV-1".into(),
                 comment_id: "c1".into(),
             },
-            AssetContext::MergeRequest { id: "42".into() },
+            AssetContext::MergeRequest { mr_id: "42".into() },
             AssetContext::MrComment {
                 mr_id: "42".into(),
                 note_id: "n1".into(),

@@ -8,8 +8,15 @@
 //!
 //! The manager wraps its mutable state in a [`std::sync::Mutex`] so it can
 //! be freely cloned via an `Arc` (e.g. to be shared across tokio tasks).
-//! All on-disk writes go through the mutex, which is acceptable given the
-//! low frequency of cache mutations in the expected workload.
+//!
+//! The mutex serializes updates to the in-memory [`AssetIndex`] and
+//! rotation bookkeeping: every read, write, touch, rotate, and persist of
+//! the index happens inside the critical section. File I/O on the
+//! physical cache (the `CacheManager::store` / `delete` calls) runs
+//! **outside** that critical section — each asset has a unique,
+//! asset-id-prefixed path so two concurrent writes cannot collide, but
+//! callers should not assume every on-disk operation is ordered against
+//! every index update.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -163,33 +170,52 @@ impl AssetManager {
     /// Look up an asset by id and return the absolute path on disk if it
     /// is still cached. Also touches `last_accessed` and persists the
     /// index if the asset was found.
+    ///
+    /// The returned [`ResolvedAsset::asset`] reflects the *post-touch*
+    /// state, so `asset.last_accessed_ms` is the timestamp just written
+    /// to the index rather than the stale pre-touch value.
     pub fn get(&self, asset_id: &str) -> Result<Option<ResolvedAsset>> {
         let mut index = self.state_lock();
-        let Some(asset) = index.get(asset_id).cloned() else {
-            return Ok(None);
+        // Resolve the path using a borrowed lookup first — no clone yet.
+        let (abs_path, remove_stale) = match index.get(asset_id) {
+            Some(asset) => {
+                match resolve_under_root(&self.inner.config.cache_dir, &asset.local_path) {
+                    Some(abs) => (Some(abs), false),
+                    None => {
+                        tracing::warn!(
+                            asset_id,
+                            path = ?asset.local_path,
+                            "dropping index entry with unsafe local_path",
+                        );
+                        (None, true)
+                    }
+                }
+            }
+            None => return Ok(None),
         };
-        // Validate the stored path stays under the cache root before
-        // touching the filesystem. A tampered index entry with an absolute
-        // or traversing path gets dropped and reported as `None`.
-        let Some(abs_path) = resolve_under_root(&self.inner.config.cache_dir, &asset.local_path)
-        else {
-            tracing::warn!(
-                asset_id,
-                path = ?asset.local_path,
-                "dropping index entry with unsafe local_path",
-            );
+
+        if remove_stale {
             index.remove(asset_id);
             index.save(&self.inner.config.cache_dir)?;
             return Ok(None);
-        };
+        }
+        let abs_path = abs_path.expect("abs_path set when remove_stale is false");
+
         if !abs_path.is_file() {
             // File vanished — drop the stale entry.
             index.remove(asset_id);
             index.save(&self.inner.config.cache_dir)?;
             return Ok(None);
         }
+
+        // Touch first, then clone so the returned metadata carries the
+        // freshly-written `last_accessed_ms`.
         index.touch(asset_id);
         index.save(&self.inner.config.cache_dir)?;
+        let asset = index
+            .get(asset_id)
+            .cloned()
+            .expect("asset still present after touch");
         Ok(Some(ResolvedAsset {
             asset,
             absolute_path: abs_path,
@@ -517,6 +543,32 @@ mod tests {
         // Nothing should have been written or tracked.
         assert!(mgr.list().is_empty());
         assert_eq!(mgr.total_size(), 0);
+    }
+
+    #[test]
+    fn get_returns_fresh_last_accessed() {
+        let tmp = tempdir().unwrap();
+        let mgr = manager(tmp.path().to_path_buf());
+        let ctx = AssetContext::Issue {
+            key: "DEV-1".into(),
+        };
+        let stored = mgr.store(store_simple(ctx, "a1", "a.bin", b"xyz")).unwrap();
+        let stored_at = stored.last_accessed_ms;
+
+        // Wait a few ms so the touch produces a strictly newer timestamp.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+
+        let resolved = mgr.get("a1").unwrap().expect("asset present");
+        assert!(
+            resolved.asset.last_accessed_ms > stored_at,
+            "expected ResolvedAsset to reflect the post-touch timestamp: \
+             stored={stored_at}, returned={}",
+            resolved.asset.last_accessed_ms,
+        );
+
+        // And the index value matches what `get` returned.
+        let from_list = mgr.list().into_iter().find(|a| a.id == "a1").unwrap();
+        assert_eq!(from_list.last_accessed_ms, resolved.asset.last_accessed_ms);
     }
 
     #[test]

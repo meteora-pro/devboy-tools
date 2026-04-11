@@ -77,8 +77,8 @@ impl CacheManager {
                 .join(DIR_ISSUE_COMMENTS)
                 .join(sanitize_key(key))
                 .join(sanitize_key(comment_id)),
-            AssetContext::MergeRequest { id } => {
-                self.root.join(DIR_MERGE_REQUESTS).join(sanitize_key(id))
+            AssetContext::MergeRequest { mr_id } => {
+                self.root.join(DIR_MERGE_REQUESTS).join(sanitize_key(mr_id))
             }
             AssetContext::MrComment { mr_id, note_id } => self
                 .root
@@ -369,7 +369,7 @@ mod tests {
         });
         assert!(issue_dir.ends_with("issues/DEV-1"));
 
-        let mr_dir = cache.dir_for(&AssetContext::MergeRequest { id: "42".into() });
+        let mr_dir = cache.dir_for(&AssetContext::MergeRequest { mr_id: "42".into() });
         assert!(mr_dir.ends_with("merge-requests/42"));
 
         let kb_dir = cache.dir_for(&AssetContext::KbPage {
