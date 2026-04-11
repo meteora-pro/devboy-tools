@@ -4,19 +4,33 @@
 //! hides the split between the physical cache directory and the in-memory
 //! index, and enforces the rotation policy on every write.
 //!
-//! ## Concurrency
+//! ## Concurrency and blocking
 //!
 //! The manager wraps its mutable state in a [`std::sync::Mutex`] so it can
 //! be freely cloned via an `Arc` (e.g. to be shared across tokio tasks).
-//!
 //! The mutex serializes updates to the in-memory [`AssetIndex`] and
-//! rotation bookkeeping: every read, write, touch, rotate, and persist of
-//! the index happens inside the critical section. File I/O on the
-//! physical cache (the `CacheManager::store` / `delete` calls) runs
-//! **outside** that critical section — each asset has a unique,
-//! asset-id-prefixed path so two concurrent writes cannot collide, but
-//! callers should not assume every on-disk operation is ordered against
-//! every index update.
+//! rotation bookkeeping: reads, writes, touches, rotation, and index
+//! persistence all synchronize through the same critical section.
+//!
+//! **Several code paths also perform filesystem I/O while holding the
+//! lock**, including:
+//!
+//! - [`AssetManager::get`] — `is_file()` existence check on the target
+//!   file before returning the metadata
+//! - [`AssetManager::delete`] — `CacheManager::delete` on the target file
+//! - [`AssetManager::store`] — rotation may delete evicted files, and
+//!   `AssetIndex::save` writes `index.json` atomically (temp file + rename)
+//! - [`AssetManager::rotate_now`] — same rotation + persist path
+//!
+//! The only filesystem write that intentionally runs **before** the lock
+//! is acquired is the initial `CacheManager::store` inside
+//! [`AssetManager::store`], which writes the new blob through a unique
+//! per-asset path so two concurrent writes cannot collide.
+//!
+//! Because of the above, callers must not assume these methods are free
+//! from blocking filesystem work — if they are invoked from an async
+//! context, wrap them in `tokio::task::spawn_blocking` (or equivalent)
+//! so the executor's worker thread isn't stalled on disk I/O.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -158,7 +172,7 @@ impl AssetManager {
         });
 
         {
-            let mut index = self.state_lock();
+            let mut index = self.state_lock()?;
             index.upsert(asset.clone());
             self.inner.rotator.rotate(&mut index, &self.inner.cache)?;
             index.save(&self.inner.config.cache_dir)?;
@@ -175,7 +189,7 @@ impl AssetManager {
     /// state, so `asset.last_accessed_ms` is the timestamp just written
     /// to the index rather than the stale pre-touch value.
     pub fn get(&self, asset_id: &str) -> Result<Option<ResolvedAsset>> {
-        let mut index = self.state_lock();
+        let mut index = self.state_lock()?;
         // Resolve the path using a borrowed lookup first — no clone yet.
         let (abs_path, remove_stale) = match index.get(asset_id) {
             Some(asset) => {
@@ -225,7 +239,7 @@ impl AssetManager {
     /// Delete an asset from the cache (both the index entry and the file).
     /// Returns `true` if the asset was present.
     pub fn delete(&self, asset_id: &str) -> Result<bool> {
-        let mut index = self.state_lock();
+        let mut index = self.state_lock()?;
         let Some(asset) = index.remove(asset_id) else {
             return Ok(false);
         };
@@ -244,18 +258,25 @@ impl AssetManager {
     }
 
     /// List all assets currently tracked.
-    pub fn list(&self) -> Vec<CachedAsset> {
-        self.state_lock().assets.values().cloned().collect()
+    ///
+    /// Returns [`AssetError::Poisoned`] if the in-memory index mutex is
+    /// poisoned; callers that want a best-effort snapshot can
+    /// `.unwrap_or_default()` on the result.
+    pub fn list(&self) -> Result<Vec<CachedAsset>> {
+        Ok(self.state_lock()?.assets.values().cloned().collect())
     }
 
     /// Total tracked bytes in the cache.
-    pub fn total_size(&self) -> u64 {
-        self.state_lock().total_size()
+    ///
+    /// Returns [`AssetError::Poisoned`] if the in-memory index mutex is
+    /// poisoned.
+    pub fn total_size(&self) -> Result<u64> {
+        Ok(self.state_lock()?.total_size())
     }
 
     /// Force a rotation pass immediately.
     pub fn rotate_now(&self) -> Result<RotationStats> {
-        let mut index = self.state_lock();
+        let mut index = self.state_lock()?;
         let stats = self.inner.rotator.rotate(&mut index, &self.inner.cache)?;
         index.save(&self.inner.config.cache_dir)?;
         Ok(stats)
@@ -263,7 +284,7 @@ impl AssetManager {
 
     /// Re-check index vs filesystem. Returns the number of dropped entries.
     pub fn integrity_check(&self) -> Result<usize> {
-        let mut index = self.state_lock();
+        let mut index = self.state_lock()?;
         let removed = prune_stale_entries(&mut index, &self.inner.cache);
         if removed > 0 {
             index.save(&self.inner.config.cache_dir)?;
@@ -276,8 +297,16 @@ impl AssetManager {
         self.inner.config.cache_dir.join(INDEX_FILENAME)
     }
 
-    fn state_lock(&self) -> std::sync::MutexGuard<'_, AssetIndex> {
-        self.inner.state.lock().expect("asset index mutex poisoned")
+    /// Acquire the in-memory index lock.
+    ///
+    /// Returns [`AssetError::Poisoned`] if the mutex was poisoned by a
+    /// panic in another thread, giving callers a chance to recover or
+    /// propagate the error gracefully instead of crashing.
+    fn state_lock(&self) -> Result<std::sync::MutexGuard<'_, AssetIndex>> {
+        self.inner
+            .state
+            .lock()
+            .map_err(|e| AssetError::poisoned(e.to_string()))
     }
 }
 
@@ -392,7 +421,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(asset.size, 5);
-        assert_eq!(mgr.total_size(), 5);
+        assert_eq!(mgr.total_size().unwrap(), 5);
 
         let resolved = mgr.get("a1").unwrap().expect("asset present");
         assert_eq!(resolved.asset.id, "a1");
@@ -402,7 +431,7 @@ mod tests {
         assert!(mgr.delete("a1").unwrap());
         assert!(mgr.get("a1").unwrap().is_none());
         assert!(!mgr.delete("a1").unwrap(), "second delete is a no-op");
-        assert_eq!(mgr.total_size(), 0);
+        assert_eq!(mgr.total_size().unwrap(), 0);
     }
 
     #[test]
@@ -417,7 +446,7 @@ mod tests {
         }
 
         let mgr = manager(tmp.path().to_path_buf());
-        let list = mgr.list();
+        let list = mgr.list().unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].id, "a1");
         let resolved = mgr.get("a1").unwrap().unwrap();
@@ -439,7 +468,7 @@ mod tests {
 
         let removed = mgr.integrity_check().unwrap();
         assert_eq!(removed, 1);
-        assert!(mgr.list().is_empty());
+        assert!(mgr.list().unwrap().is_empty());
     }
 
     #[test]
@@ -454,7 +483,7 @@ mod tests {
         std::fs::remove_file(tmp.path().join(&asset.local_path)).unwrap();
 
         assert!(mgr.get("a1").unwrap().is_none());
-        assert!(mgr.list().is_empty());
+        assert!(mgr.list().unwrap().is_empty());
     }
 
     #[test]
@@ -477,8 +506,8 @@ mod tests {
         // so one of them should be evicted.
         mgr.store(store_simple(ctx, "b", "b.bin", &[0u8; 60]))
             .unwrap();
-        assert!(mgr.total_size() <= 100);
-        assert_eq!(mgr.list().len(), 1);
+        assert!(mgr.total_size().unwrap() <= 100);
+        assert_eq!(mgr.list().unwrap().len(), 1);
 
         // Explicit rotate_now is a no-op now that we are within budget.
         let stats = mgr.rotate_now().unwrap();
@@ -512,8 +541,8 @@ mod tests {
         let big = vec![0u8; 2_000_000];
         mgr.store(store_simple(ctx, "big", "big.bin", &big))
             .unwrap();
-        assert_eq!(mgr.total_size(), big.len() as u64);
-        assert_eq!(mgr.list().len(), 1);
+        assert_eq!(mgr.total_size().unwrap(), big.len() as u64);
+        assert_eq!(mgr.list().unwrap().len(), 1);
 
         // Explicit rotate_now is a no-op under the zero budget.
         let stats = mgr.rotate_now().unwrap();
@@ -541,8 +570,8 @@ mod tests {
         assert!(msg.contains("exceeds the cache"), "unexpected msg: {msg}");
 
         // Nothing should have been written or tracked.
-        assert!(mgr.list().is_empty());
-        assert_eq!(mgr.total_size(), 0);
+        assert!(mgr.list().unwrap().is_empty());
+        assert_eq!(mgr.total_size().unwrap(), 0);
     }
 
     #[test]
@@ -567,7 +596,12 @@ mod tests {
         );
 
         // And the index value matches what `get` returned.
-        let from_list = mgr.list().into_iter().find(|a| a.id == "a1").unwrap();
+        let from_list = mgr
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|a| a.id == "a1")
+            .unwrap();
         assert_eq!(from_list.last_accessed_ms, resolved.asset.last_accessed_ms);
     }
 
@@ -585,7 +619,7 @@ mod tests {
                 .unwrap();
             mgr.store(store_simple(ctx, "b", "b.bin", &[0u8; 60]))
                 .unwrap();
-            assert_eq!(mgr.total_size(), 120);
+            assert_eq!(mgr.total_size().unwrap(), 120);
         }
 
         // Re-open with a tight budget — startup rotation should trim the
@@ -597,8 +631,11 @@ mod tests {
             eviction_policy: EvictionPolicy::Lru,
         };
         let mgr = AssetManager::from_resolved(tight).unwrap();
-        assert!(mgr.total_size() <= 100, "cache still over budget on open");
-        assert_eq!(mgr.list().len(), 1);
+        assert!(
+            mgr.total_size().unwrap() <= 100,
+            "cache still over budget on open"
+        );
+        assert_eq!(mgr.list().unwrap().len(), 1);
     }
 
     #[test]
