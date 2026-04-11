@@ -56,11 +56,14 @@ impl CacheManager {
     /// {root}/{context_dir}/{context_id}/{asset_id}-{safe_filename}
     /// ```
     ///
-    /// `asset_id` is prefixed onto the filename to prevent collisions when
-    /// two attachments share a name within the same context.
+    /// Both `asset_id` and `filename` are sanitized before becoming a single
+    /// path component — any directory separators or `..` sequences in the
+    /// inputs are replaced with `_`, so calling `path_for` with hostile
+    /// input can never escape the per-context directory.
     pub fn path_for(&self, context: &AssetContext, asset_id: &str, filename: &str) -> PathBuf {
-        let safe = sanitize_filename(filename);
-        let leaf = format!("{asset_id}-{safe}");
+        let safe_id = sanitize_component(asset_id);
+        let safe_name = sanitize_filename(filename);
+        let leaf = format!("{safe_id}-{safe_name}");
         let dir = self.dir_for(context);
         dir.join(leaf)
     }
@@ -178,17 +181,44 @@ pub fn sha256_hex(data: &[u8]) -> String {
 }
 
 /// Restrict a filename to characters that are safe to write on any FS.
-/// Non-ASCII letters / digits are replaced with `_`.
+///
+/// The input is first stripped of anything before the final `/` or `\` to
+/// prevent traversal via `../` or Windows `..\\`. The remaining basename is
+/// then passed through [`sanitize_component`] so the result is always a
+/// single, FS-safe path component.
 fn sanitize_filename(name: &str) -> String {
-    let trimmed = name.trim().trim_matches('/');
-    let base = trimmed.rsplit('/').next().unwrap_or(trimmed);
-    let mut out = String::with_capacity(base.len());
-    for ch in base.chars() {
+    let trimmed = name.trim();
+    let after_fwd = trimmed.rsplit('/').next().unwrap_or(trimmed);
+    let base = after_fwd.rsplit('\\').next().unwrap_or(after_fwd);
+    sanitize_component(base)
+}
+
+/// Sanitize an arbitrary string into a single path component.
+///
+/// Used for both filenames and opaque identifiers (asset ids, context
+/// keys). Rules:
+///
+/// - Keep ASCII alphanumerics, `.`, `-`, `_`
+/// - Replace everything else — including `/`, `\`, and any non-ASCII
+///   character — with `_`
+/// - Reject lone / repeated `..` segments by never letting them survive
+///   (the individual `.` characters remain, but the full traversal form
+///   `..` becomes part of a longer, harmless name)
+/// - Return the sentinel `"unnamed"` for empty / whitespace-only input
+fn sanitize_component(value: &str) -> String {
+    let trimmed = value.trim();
+    let mut out = String::with_capacity(trimmed.len());
+    for ch in trimmed.chars() {
         if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_' {
             out.push(ch);
         } else {
             out.push('_');
         }
+    }
+    // A bare `..` (or any all-dot string) can still be interpreted as a
+    // traversal; neutralize it by replacing every `.` with `_` in that case.
+    if out.chars().all(|c| c == '.') && !out.is_empty() {
+        return out.replace('.', "_");
     }
     if out.is_empty() {
         "unnamed".to_string()
@@ -197,9 +227,9 @@ fn sanitize_filename(name: &str) -> String {
     }
 }
 
-/// Same rules as [`sanitize_filename`] but applied to context keys.
+/// Same rules as [`sanitize_component`] but named for clarity at call sites.
 fn sanitize_key(key: &str) -> String {
-    sanitize_filename(key)
+    sanitize_component(key)
 }
 
 #[cfg(test)]
@@ -227,6 +257,61 @@ mod tests {
         assert_eq!(sanitize_filename("hello world!.png"), "hello_world_.png");
         assert_eq!(sanitize_filename("/"), "unnamed");
         assert_eq!(sanitize_filename("привет.txt"), "______.txt");
+    }
+
+    #[test]
+    fn sanitize_handles_windows_separators() {
+        assert_eq!(
+            sanitize_filename("..\\..\\Windows\\System32\\cmd.exe"),
+            "cmd.exe",
+        );
+    }
+
+    #[test]
+    fn sanitize_neutralizes_dot_only_names() {
+        assert_eq!(sanitize_component(".."), "__");
+        assert_eq!(sanitize_component("..."), "___");
+        assert_eq!(sanitize_component("."), "_");
+    }
+
+    #[test]
+    fn path_for_blocks_asset_id_traversal() {
+        let tmp = tempdir().unwrap();
+        let cache = CacheManager::new(tmp.path().to_path_buf()).unwrap();
+        let ctx = AssetContext::Issue { key: "k".into() };
+
+        // Hostile asset id trying to escape the issue directory.
+        let path = cache.path_for(&ctx, "../../escape", "file.txt");
+        let rel = path.strip_prefix(tmp.path()).unwrap();
+        let components: Vec<_> = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        // The hostile id becomes a single sanitized segment; it never introduces
+        // a `..` component.
+        assert!(
+            !components.iter().any(|c| c == ".." || c.contains('/')),
+            "unexpected components: {components:?}",
+        );
+        assert!(path.starts_with(tmp.path()));
+    }
+
+    #[test]
+    fn store_with_hostile_ids_stays_under_cache_root() {
+        let tmp = tempdir().unwrap();
+        let cache = CacheManager::new(tmp.path().to_path_buf()).unwrap();
+        let ctx = AssetContext::Issue {
+            key: "../../root".into(),
+        };
+
+        let stored = cache
+            .store(&ctx, "../../../etc", "../passwd", b"secret")
+            .unwrap();
+        assert!(
+            stored.path.starts_with(tmp.path()),
+            "path escaped cache root: {:?}",
+            stored.path
+        );
     }
 
     #[test]

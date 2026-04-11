@@ -84,6 +84,12 @@ impl AssetManager {
 
     /// Store a new asset, persisting the updated index and running a
     /// rotation pass. Returns the newly created [`CachedAsset`].
+    ///
+    /// If the payload is larger than the configured
+    /// [`ResolvedAssetConfig::max_cache_size`] this returns an
+    /// [`AssetError::Config`] error *without* touching the filesystem —
+    /// otherwise rotation would immediately evict the just-written file and
+    /// we'd hand back an asset id that no longer resolves.
     pub fn store(&self, request: StoreRequest<'_>) -> Result<CachedAsset> {
         let StoreRequest {
             context,
@@ -93,6 +99,16 @@ impl AssetManager {
             remote_url,
             data,
         } = request;
+
+        let size = data.len() as u64;
+        let max = self.inner.config.max_cache_size;
+        if max > 0 && size > max {
+            return Err(AssetError::config(format!(
+                "asset '{asset_id}' is {size} bytes, which exceeds the cache \
+                 budget of {max} bytes; increase `[assets] max_cache_size` or \
+                 split the file",
+            )));
+        }
 
         let stored = self.inner.cache.store(&context, asset_id, filename, data)?;
         let rel_path = stored
@@ -398,6 +414,31 @@ mod tests {
         let mgr = manager(tmp.path().to_path_buf());
         assert_eq!(mgr.index_path(), tmp.path().join(INDEX_FILENAME));
         assert_eq!(mgr.cache_dir(), tmp.path());
+    }
+
+    #[test]
+    fn store_rejects_oversized_payload() {
+        let tmp = tempdir().unwrap();
+        let cfg = ResolvedAssetConfig {
+            cache_dir: tmp.path().to_path_buf(),
+            max_cache_size: 10,
+            max_file_age: Duration::from_secs(100 * 86_400),
+            eviction_policy: EvictionPolicy::Lru,
+        };
+        let mgr = AssetManager::from_resolved(cfg).unwrap();
+        let ctx = AssetContext::Issue {
+            key: "DEV-1".into(),
+        };
+
+        let err = mgr
+            .store(store_simple(ctx, "a1", "big.bin", &[0u8; 100]))
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("exceeds the cache"), "unexpected msg: {msg}");
+
+        // Nothing should have been written or tracked.
+        assert!(mgr.list().is_empty());
+        assert_eq!(mgr.total_size(), 0);
     }
 
     #[test]
