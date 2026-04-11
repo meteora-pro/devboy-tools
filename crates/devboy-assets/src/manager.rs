@@ -45,13 +45,31 @@ impl AssetManager {
 
     /// Build a new manager from a validated [`ResolvedAssetConfig`].
     ///
-    /// Loads the on-disk index and runs an integrity check so that any
-    /// stale entries (referring to files that no longer exist) are dropped.
+    /// Startup flow:
+    ///
+    /// 1. Load the on-disk index (recovering an empty one if the file is
+    ///    missing or corrupt).
+    /// 2. **Integrity check** — drop entries whose file is gone or whose
+    ///    stored path resolves outside the cache root.
+    /// 3. **Rotate** — enforce `max_file_age` and `max_cache_size` on the
+    ///    loaded state so a cache that was closed over budget comes back
+    ///    up within limits before any new writes.
+    /// 4. Persist the resulting index.
     pub fn from_resolved(config: ResolvedAssetConfig) -> Result<Self> {
         let cache = CacheManager::new(config.cache_dir.clone())?;
         let rotator = Rotator::new(&config);
         let mut index = AssetIndex::load(&config.cache_dir)?;
-        let _removed = prune_stale_entries(&mut index, &cache);
+        let pruned = prune_stale_entries(&mut index, &cache);
+        let rotated = rotator.rotate(&mut index, &cache)?;
+        if pruned > 0 || rotated.removed() > 0 {
+            tracing::debug!(
+                pruned,
+                aged_out = rotated.aged_out,
+                lru_evicted = rotated.lru_evicted,
+                bytes_freed = rotated.bytes_freed,
+                "asset cache startup cleanup",
+            );
+        }
         index.save(&config.cache_dir)?;
 
         Ok(Self {
@@ -499,6 +517,36 @@ mod tests {
         // Nothing should have been written or tracked.
         assert!(mgr.list().is_empty());
         assert_eq!(mgr.total_size(), 0);
+    }
+
+    #[test]
+    fn from_resolved_rotates_on_startup() {
+        let tmp = tempdir().unwrap();
+
+        // Seed the cache with two entries under a generous budget.
+        {
+            let mgr = manager(tmp.path().to_path_buf());
+            let ctx = AssetContext::Issue {
+                key: "DEV-1".into(),
+            };
+            mgr.store(store_simple(ctx.clone(), "a", "a.bin", &[0u8; 60]))
+                .unwrap();
+            mgr.store(store_simple(ctx, "b", "b.bin", &[0u8; 60]))
+                .unwrap();
+            assert_eq!(mgr.total_size(), 120);
+        }
+
+        // Re-open with a tight budget — startup rotation should trim the
+        // cache back under the limit *before* we hand it to the caller.
+        let tight = ResolvedAssetConfig {
+            cache_dir: tmp.path().to_path_buf(),
+            max_cache_size: 100,
+            max_file_age: Duration::from_secs(100 * 86_400),
+            eviction_policy: EvictionPolicy::Lru,
+        };
+        let mgr = AssetManager::from_resolved(tight).unwrap();
+        assert!(mgr.total_size() <= 100, "cache still over budget on open");
+        assert_eq!(mgr.list().len(), 1);
     }
 
     #[test]

@@ -140,8 +140,10 @@ impl Rotator {
 }
 
 /// Resolve and delete a cached file belonging to an index entry, bumping
-/// `bytes_freed` on success. Stale entries whose path has already been
-/// removed externally are ignored so rotation stays idempotent.
+/// `bytes_freed` **only** when a file that actually existed was removed
+/// from disk. Stale entries whose file has already been removed externally,
+/// or whose stored path resolves outside the cache root, are dropped from
+/// the index but their size is not counted as "bytes freed".
 ///
 /// The resolution goes through [`crate::cache::resolve_under_root`], which
 /// validates that the target stays inside the cache directory — a safety
@@ -152,19 +154,23 @@ fn remove_cached_file(
     asset: &CachedAsset,
     bytes_freed: &mut u64,
 ) -> Result<()> {
-    match crate::cache::resolve_under_root(cache.root(), &asset.local_path) {
-        Some(abs) => {
-            cache.delete(&abs)?;
-        }
-        None => {
-            tracing::warn!(
-                asset_id = asset.id.as_str(),
-                path = ?asset.local_path,
-                "skipping eviction — index entry points outside the cache root",
-            );
-        }
+    let Some(abs) = crate::cache::resolve_under_root(cache.root(), &asset.local_path) else {
+        tracing::warn!(
+            asset_id = asset.id.as_str(),
+            path = ?asset.local_path,
+            "skipping eviction — index entry points outside the cache root",
+        );
+        return Ok(());
+    };
+
+    // Only count bytes we actually freed. `CacheManager::delete` is
+    // idempotent and treats `NotFound` as success, so we need to check
+    // upfront whether the file is really there.
+    let existed = cache.exists(&abs);
+    cache.delete(&abs)?;
+    if existed {
+        *bytes_freed += asset.size;
     }
-    *bytes_freed += asset.size;
     Ok(())
 }
 
@@ -374,5 +380,87 @@ mod tests {
         // The big one should be evicted first.
         assert!(index.get("big").is_none());
         assert!(index.get("small").is_some());
+    }
+
+    #[test]
+    fn bytes_freed_only_counts_existing_files() {
+        let tmp = tempdir().unwrap();
+        let cache = CacheManager::new(tmp.path().to_path_buf()).unwrap();
+        let mut index = AssetIndex::empty();
+
+        // Real, on-disk asset — eviction should count its bytes.
+        let mut real = store_asset(&cache, "real", 100);
+        real.last_accessed_ms = 1_000;
+        index.upsert(real);
+
+        // Phantom asset — index entry exists but the file is gone. The
+        // rotator must still drop it from the index but must not count it
+        // as "freed" since there was nothing on disk to free.
+        let phantom = CachedAsset::new(NewCachedAsset {
+            id: "phantom".into(),
+            filename: "phantom.bin".into(),
+            mime_type: None,
+            size: 999,
+            local_path: PathBuf::from("issues/ghost/phantom.bin"),
+            context: AssetContext::Issue {
+                key: "ghost".into(),
+            },
+            checksum_sha256: "abcd".into(),
+            remote_url: None,
+        });
+        index.upsert(CachedAsset {
+            last_accessed_ms: 1_000,
+            ..phantom
+        });
+
+        // Budget tiny so both entries get considered; ages equal.
+        let resolved = cfg(
+            tmp.path().to_path_buf(),
+            50,
+            Duration::from_secs(100 * 365 * 86_400),
+        );
+        let rotator = Rotator::new(&resolved);
+        let stats = rotator.rotate(&mut index, &cache).unwrap();
+
+        // Both were dropped from the index…
+        assert!(index.get("real").is_none());
+        assert!(index.get("phantom").is_none());
+        // …but only the real file counted.
+        assert_eq!(stats.bytes_freed, 100);
+    }
+
+    #[test]
+    fn bytes_freed_skips_unsafe_paths() {
+        let tmp = tempdir().unwrap();
+        let cache = CacheManager::new(tmp.path().to_path_buf()).unwrap();
+        let mut index = AssetIndex::empty();
+
+        // Tampered index entry pointing outside the cache root.
+        index.upsert(CachedAsset {
+            last_accessed_ms: 1_000,
+            ..CachedAsset::new(NewCachedAsset {
+                id: "hostile".into(),
+                filename: "passwd".into(),
+                mime_type: None,
+                size: 4096,
+                local_path: PathBuf::from("../../etc/passwd"),
+                context: AssetContext::Issue { key: "x".into() },
+                checksum_sha256: "dead".into(),
+                remote_url: None,
+            })
+        });
+
+        let resolved = cfg(
+            tmp.path().to_path_buf(),
+            1,
+            Duration::from_secs(100 * 365 * 86_400),
+        );
+        let rotator = Rotator::new(&resolved);
+        let stats = rotator.rotate(&mut index, &cache).unwrap();
+
+        // Entry dropped from the index but bytes_freed stays at 0 — we
+        // never touched the outside path.
+        assert!(index.get("hostile").is_none());
+        assert_eq!(stats.bytes_freed, 0);
     }
 }
