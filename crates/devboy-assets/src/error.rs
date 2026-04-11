@@ -29,6 +29,12 @@ pub enum AssetError {
     #[error("Cache directory error: {0}")]
     CacheDir(String),
 
+    /// The in-memory index mutex was poisoned by a panic in another
+    /// thread. Callers can decide whether to recover (rebuild index) or
+    /// bubble the error up to the user.
+    #[error("Asset index mutex poisoned: {0}")]
+    Poisoned(String),
+
     /// Anything surfaced from [`devboy_core::Error`].
     #[error(transparent)]
     Core(#[from] devboy_core::Error),
@@ -51,6 +57,11 @@ impl AssetError {
     /// Create a new not-found error.
     pub fn not_found(id: impl Into<String>) -> Self {
         AssetError::NotFound(id.into())
+    }
+
+    /// Create a new poisoned-mutex error.
+    pub fn poisoned(msg: impl Into<String>) -> Self {
+        AssetError::Poisoned(msg.into())
     }
 }
 

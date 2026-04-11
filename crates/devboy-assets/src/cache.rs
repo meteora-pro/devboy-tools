@@ -178,8 +178,14 @@ pub struct StoredFile {
 ///   `root` for any absolute RHS).
 /// - Paths containing `..` components are rejected — we never generate
 ///   them, so anything with traversal came from outside the crate.
-/// - Any other path must, after joining, still start with `root` when both
-///   sides are canonicalized lexically.
+/// - Lexical containment: the joined path's components must start with
+///   the root's components.
+/// - **Symlink guard**: when the resolved path exists on disk, both
+///   `root` and the resolved path are [`canonicalize`]d so that any
+///   symlink within the cache directory is dereferenced. The
+///   canonicalized resolved path must still start with the canonicalized
+///   root; if it doesn't (e.g. a symlink inside the cache dir points
+///   outside), the path is rejected.
 ///
 /// Returns `None` when the path is unsafe; callers drop the index entry
 /// instead of touching the filesystem.
@@ -195,10 +201,9 @@ pub fn resolve_under_root(root: &Path, relative: &Path) -> Option<PathBuf> {
         }
     }
     let joined = root.join(relative);
-    // Lexical containment check: the joined path's components must start
-    // with the root's components. We do not canonicalize because the file
-    // may legitimately be missing (stale entry) and `canonicalize` would
-    // fail in that case.
+
+    // Lexical containment — fast path for non-existent files (stale
+    // entries) where canonicalize would fail.
     let root_components: Vec<_> = root.components().collect();
     let joined_components: Vec<_> = joined.components().collect();
     if joined_components.len() < root_components.len() {
@@ -209,6 +214,17 @@ pub fn resolve_under_root(root: &Path, relative: &Path) -> Option<PathBuf> {
             return None;
         }
     }
+
+    // Symlink guard — when both paths exist, canonicalize to resolve
+    // any intermediate symlinks and re-verify containment so a symlink
+    // inside the cache dir that points outside can't be followed.
+    if joined.exists()
+        && let (Ok(canon_root), Ok(canon_target)) = (root.canonicalize(), joined.canonicalize())
+        && !canon_target.starts_with(&canon_root)
+    {
+        return None;
+    }
+
     Some(joined)
 }
 
