@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use devboy_core::asset::AssetContext;
 
-use crate::cache::CacheManager;
+use crate::cache::{CacheManager, resolve_under_root};
 use crate::config::{AssetConfig, ResolvedAssetConfig};
 use crate::error::{AssetError, Result};
 use crate::index::{AssetIndex, CachedAsset, INDEX_FILENAME, NewCachedAsset};
@@ -90,6 +90,10 @@ impl AssetManager {
     /// [`AssetError::Config`] error *without* touching the filesystem —
     /// otherwise rotation would immediately evict the just-written file and
     /// we'd hand back an asset id that no longer resolves.
+    ///
+    /// A `max_cache_size` of `0` is treated as **unlimited**. Both this
+    /// method and [`Rotator::rotate`] share that convention so the two
+    /// cannot disagree about whether the budget is exhausted.
     pub fn store(&self, request: StoreRequest<'_>) -> Result<CachedAsset> {
         let StoreRequest {
             context,
@@ -146,7 +150,20 @@ impl AssetManager {
         let Some(asset) = index.get(asset_id).cloned() else {
             return Ok(None);
         };
-        let abs_path = self.inner.config.cache_dir.join(&asset.local_path);
+        // Validate the stored path stays under the cache root before
+        // touching the filesystem. A tampered index entry with an absolute
+        // or traversing path gets dropped and reported as `None`.
+        let Some(abs_path) = resolve_under_root(&self.inner.config.cache_dir, &asset.local_path)
+        else {
+            tracing::warn!(
+                asset_id,
+                path = ?asset.local_path,
+                "dropping index entry with unsafe local_path",
+            );
+            index.remove(asset_id);
+            index.save(&self.inner.config.cache_dir)?;
+            return Ok(None);
+        };
         if !abs_path.is_file() {
             // File vanished — drop the stale entry.
             index.remove(asset_id);
@@ -168,8 +185,16 @@ impl AssetManager {
         let Some(asset) = index.remove(asset_id) else {
             return Ok(false);
         };
-        let abs_path = self.inner.config.cache_dir.join(&asset.local_path);
-        self.inner.cache.delete(&abs_path)?;
+        if let Some(abs_path) = resolve_under_root(&self.inner.config.cache_dir, &asset.local_path)
+        {
+            self.inner.cache.delete(&abs_path)?;
+        } else {
+            tracing::warn!(
+                asset_id,
+                path = ?asset.local_path,
+                "skipping filesystem delete for unsafe local_path",
+            );
+        }
         index.save(&self.inner.config.cache_dir)?;
         Ok(true)
     }
@@ -239,21 +264,29 @@ pub struct StoreRequest<'a> {
     pub data: &'a [u8],
 }
 
-/// Drop index entries whose underlying file is missing. Returns the count
-/// of removed entries. Used by both `from_resolved` (startup check) and
+/// Drop index entries whose underlying file is missing (or whose stored
+/// path is unsafe). Returns the count of removed entries.
+///
+/// Used by both `from_resolved` (startup check) and
 /// [`AssetManager::integrity_check`].
 fn prune_stale_entries(index: &mut AssetIndex, cache: &CacheManager) -> usize {
     let stale: Vec<String> = index
         .assets
         .iter()
-        .filter_map(|(id, asset)| {
-            let abs = cache.root().join(&asset.local_path);
-            if cache.exists(&abs) {
-                None
-            } else {
-                Some(id.clone())
-            }
-        })
+        .filter_map(
+            |(id, asset)| match resolve_under_root(cache.root(), &asset.local_path) {
+                Some(abs) if cache.exists(&abs) => None,
+                Some(_) => Some(id.clone()),
+                None => {
+                    tracing::warn!(
+                        asset_id = id.as_str(),
+                        path = ?asset.local_path,
+                        "dropping index entry with unsafe local_path",
+                    );
+                    Some(id.clone())
+                }
+            },
+        )
         .collect();
     let count = stale.len();
     for id in stale {
@@ -414,6 +447,33 @@ mod tests {
         let mgr = manager(tmp.path().to_path_buf());
         assert_eq!(mgr.index_path(), tmp.path().join(INDEX_FILENAME));
         assert_eq!(mgr.cache_dir(), tmp.path());
+    }
+
+    #[test]
+    fn store_treats_zero_max_cache_size_as_unlimited() {
+        let tmp = tempdir().unwrap();
+        let cfg = ResolvedAssetConfig {
+            cache_dir: tmp.path().to_path_buf(),
+            max_cache_size: 0, // "unlimited"
+            max_file_age: Duration::from_secs(100 * 86_400),
+            eviction_policy: EvictionPolicy::Lru,
+        };
+        let mgr = AssetManager::from_resolved(cfg).unwrap();
+        let ctx = AssetContext::Issue {
+            key: "DEV-1".into(),
+        };
+
+        // Storing a multi-megabyte blob under a zero budget must succeed
+        // and stay in the cache (no rotation eviction).
+        let big = vec![0u8; 2_000_000];
+        mgr.store(store_simple(ctx, "big", "big.bin", &big))
+            .unwrap();
+        assert_eq!(mgr.total_size(), big.len() as u64);
+        assert_eq!(mgr.list().len(), 1);
+
+        // Explicit rotate_now is a no-op under the zero budget.
+        let stats = mgr.rotate_now().unwrap();
+        assert_eq!(stats.removed(), 0);
     }
 
     #[test]

@@ -144,6 +144,11 @@ pub fn parse_size(input: &str) -> Result<u64> {
         .parse()
         .map_err(|_| AssetError::config(format!("invalid size number: {number_part}")))?;
 
+    if !number.is_finite() {
+        return Err(AssetError::config(format!(
+            "non-finite size number: {input}",
+        )));
+    }
     if number < 0.0 {
         return Err(AssetError::config(format!("negative size: {input}")));
     }
@@ -172,7 +177,15 @@ pub fn parse_size(input: &str) -> Result<u64> {
         }
     };
 
-    Ok((number * multiplier) as u64)
+    // Check the result is still in range. `as u64` would otherwise clamp
+    // NaN to 0 and silently cap anything past `u64::MAX`.
+    let bytes = number * multiplier;
+    if !bytes.is_finite() || bytes < 0.0 || bytes > u64::MAX as f64 {
+        return Err(AssetError::config(format!(
+            "size overflows u64 bytes: {input}",
+        )));
+    }
+    Ok(bytes as u64)
 }
 
 /// Parse a human-readable duration such as `"7d"`, `"24h"`, `"30m"`, `"45s"`.
@@ -265,6 +278,22 @@ mod tests {
         assert!(parse_size("abc").is_err());
         assert!(parse_size("1Zi").is_err());
         assert!(parse_size("-1Gi").is_err());
+    }
+
+    #[test]
+    fn size_rejects_non_finite_values() {
+        // NaN / infinity parse as f64 but must be rejected — otherwise
+        // `as u64` would silently cast them to 0 or clamp.
+        assert!(parse_size("NaN").is_err());
+        assert!(parse_size("NaNGi").is_err());
+        assert!(parse_size("inf").is_err());
+        assert!(parse_size("infGi").is_err());
+    }
+
+    #[test]
+    fn size_rejects_overflow() {
+        // 1e30 bytes is far beyond u64::MAX (~1.8e19).
+        assert!(parse_size("1e30").is_err());
     }
 
     #[test]

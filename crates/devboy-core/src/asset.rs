@@ -157,13 +157,20 @@ pub struct AssetMeta {
 }
 
 /// Input data for uploading a new asset.
-#[derive(Debug, Clone)]
+///
+/// This type is part of the public `devboy_core::asset` API and is
+/// (de)serializable so it can cross crate and MCP tool boundaries. File
+/// bytes go through serde's default `Vec<u8>` encoding, which is a JSON
+/// array of numbers — MCP tools typically base64-encode the payload in a
+/// wrapper struct rather than serializing this type directly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetInput {
     /// Filename to use on the provider side.
     pub filename: String,
     /// Raw file bytes.
     pub data: Vec<u8>,
     /// Optional MIME type hint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
 }
 
@@ -425,6 +432,179 @@ mod tests {
         assert_eq!(input.filename, "a.png");
         assert_eq!(input.data, vec![1, 2, 3]);
         assert_eq!(input.mime_type.as_deref(), Some("image/png"));
+    }
+
+    #[test]
+    fn asset_input_serde_roundtrip() {
+        let input = AssetInput::new("x.bin", vec![0, 1, 2]).with_mime_type("application/octet");
+        let json = serde_json::to_string(&input).unwrap();
+        let back: AssetInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.filename, "x.bin");
+        assert_eq!(back.data, vec![0, 1, 2]);
+        assert_eq!(back.mime_type.as_deref(), Some("application/octet"));
+
+        // mime_type omitted when None — the shape stays small on the wire.
+        let without_mime = AssetInput::new("y.txt", vec![]);
+        let json = serde_json::to_string(&without_mime).unwrap();
+        assert!(!json.contains("mime_type"), "unexpected field: {json}");
+    }
+
+    #[test]
+    fn asset_meta_serde_roundtrip() {
+        let mut meta = AssetMeta {
+            id: "a1".into(),
+            filename: "screen.png".into(),
+            mime_type: Some("image/png".into()),
+            size: Some(1234),
+            url: Some("https://x/y".into()),
+            created_at: Some("2026-04-11T00:00:00Z".into()),
+            author: Some("alice".into()),
+            cached: true,
+            local_path: Some("/tmp/cache/a1.png".into()),
+            checksum_sha256: Some("deadbeef".into()),
+            analysis: None,
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        let back: AssetMeta = serde_json::from_str(&json).unwrap();
+        assert_eq!(meta, back);
+
+        // With analysis attached.
+        meta.analysis = Some(AssetAnalysis {
+            summary: "1 error".into(),
+            content_kind: ContentKind::Text,
+            extractable_text: Some("ERROR line".into()),
+            key_findings: vec!["panic".into()],
+            metadata: HashMap::new(),
+            semantic: None,
+        });
+        let json = serde_json::to_string(&meta).unwrap();
+        let back: AssetMeta = serde_json::from_str(&json).unwrap();
+        assert_eq!(meta, back);
+    }
+
+    #[test]
+    fn asset_meta_skips_empty_optionals_when_serialized() {
+        let meta = AssetMeta {
+            id: "a1".into(),
+            filename: "x".into(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        // `cached` defaults to false and we don't add skip_serializing_if
+        // for it, but optional fields should not appear.
+        assert!(!json.contains("mime_type"));
+        assert!(!json.contains("analysis"));
+        assert!(!json.contains("author"));
+    }
+
+    #[test]
+    fn asset_capabilities_serde_roundtrip() {
+        let caps = AssetCapabilities {
+            issue: ContextCapabilities::full(),
+            issue_comment: ContextCapabilities::read_only(),
+            merge_request: ContextCapabilities {
+                upload: true,
+                download: true,
+                delete: false,
+                list: true,
+                max_file_size: Some(10_485_760),
+                allowed_types: vec!["image/*".into()],
+            },
+            mr_comment: ContextCapabilities::default(),
+        };
+        let json = serde_json::to_string(&caps).unwrap();
+        let back: AssetCapabilities = serde_json::from_str(&json).unwrap();
+        assert_eq!(caps, back);
+    }
+
+    #[test]
+    fn asset_analysis_with_semantic_serde_roundtrip() {
+        let mut metadata = HashMap::new();
+        metadata.insert("line_count".into(), serde_json::json!(5432));
+        let analysis = AssetAnalysis {
+            summary: "error log with 12 ERRORs".into(),
+            content_kind: ContentKind::Text,
+            extractable_text: Some("ERROR at line 147".into()),
+            key_findings: vec!["12 ERROR lines".into(), "race condition suspected".into()],
+            metadata,
+            semantic: Some(SemanticAnalysis {
+                summary: "Redis connection drops under load.".into(),
+                findings: vec!["timeout after 30s".into()],
+                prompt_used: "find db errors".into(),
+                model: "claude-sonnet-4".into(),
+                cached: false,
+            }),
+        };
+        let json = serde_json::to_string(&analysis).unwrap();
+        let back: AssetAnalysis = serde_json::from_str(&json).unwrap();
+        assert_eq!(analysis, back);
+    }
+
+    #[test]
+    fn content_kind_serde() {
+        for kind in [
+            ContentKind::Text,
+            ContentKind::Image,
+            ContentKind::Video,
+            ContentKind::Document,
+            ContentKind::Data,
+            ContentKind::Binary,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let back: ContentKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(kind, back);
+        }
+    }
+
+    #[test]
+    fn asset_context_kind_serde() {
+        for kind in [
+            AssetContextKind::Issue,
+            AssetContextKind::IssueComment,
+            AssetContextKind::MergeRequest,
+            AssetContextKind::MrComment,
+            AssetContextKind::Chat,
+            AssetContextKind::KbPage,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let back: AssetContextKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(kind, back);
+        }
+    }
+
+    #[test]
+    fn asset_context_all_variants_roundtrip() {
+        let variants = vec![
+            AssetContext::Issue {
+                key: "DEV-1".into(),
+            },
+            AssetContext::IssueComment {
+                key: "DEV-1".into(),
+                comment_id: "c1".into(),
+            },
+            AssetContext::MergeRequest { id: "42".into() },
+            AssetContext::MrComment {
+                mr_id: "42".into(),
+                note_id: "n1".into(),
+            },
+            AssetContext::Chat {
+                chat_id: "C1".into(),
+                message_id: "m1".into(),
+            },
+            AssetContext::KbPage {
+                page_id: "p1".into(),
+            },
+        ];
+        for ctx in variants {
+            let json = serde_json::to_string(&ctx).unwrap();
+            let back: AssetContext = serde_json::from_str(&json).unwrap();
+            assert_eq!(ctx, back);
+
+            // Also exercise `kind()` / `slug()` for every variant so the
+            // match arms stay covered.
+            assert!(!ctx.slug().is_empty());
+            let _ = ctx.kind();
+        }
     }
 
     #[test]
