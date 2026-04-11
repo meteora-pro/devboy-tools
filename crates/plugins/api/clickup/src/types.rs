@@ -60,6 +60,40 @@ pub struct ClickUpTask {
     /// Linked tasks (non-dependency relationships).
     #[serde(default)]
     pub linked_tasks: Option<Vec<ClickUpLinkedTask>>,
+    /// Attachments uploaded to the task.
+    ///
+    /// The ClickUp API returns this under `attachments` on the task object.
+    /// It may be absent for older tasks or tasks without uploads.
+    #[serde(default)]
+    pub attachments: Vec<ClickUpAttachment>,
+}
+
+/// ClickUp task attachment entry as returned on the task payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClickUpAttachment {
+    /// Attachment id.
+    pub id: String,
+    /// File title / original filename.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Direct download URL.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Size in bytes (API sometimes returns a string).
+    #[serde(default)]
+    pub size: Option<serde_json::Value>,
+    /// File extension (e.g. "png").
+    #[serde(default)]
+    pub extension: Option<String>,
+    /// MIME type.
+    #[serde(default)]
+    pub mimetype: Option<String>,
+    /// Creation timestamp (epoch ms as string in ClickUp's responses).
+    #[serde(default)]
+    pub date: Option<String>,
+    /// Author display info, if present.
+    #[serde(default)]
+    pub user: Option<ClickUpUser>,
 }
 
 /// ClickUp task status.

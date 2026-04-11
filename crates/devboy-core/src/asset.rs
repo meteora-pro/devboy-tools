@@ -358,6 +358,158 @@ pub enum ContentKind {
     Binary,
 }
 
+// =============================================================================
+// Markdown parsing helpers
+// =============================================================================
+
+/// Extract attachments embedded in a markdown string.
+///
+/// Recognizes both image syntax (`![alt](url)`) and link syntax
+/// (`[text](url)`). The result is deduplicated by URL and returned in the
+/// order the references appear in the source. Inputs without any markdown
+/// links produce an empty vector.
+///
+/// This helper is used by providers like GitLab and GitHub that embed
+/// attachments directly into issue / MR bodies and comments rather than
+/// exposing a dedicated attachments API.
+///
+/// Only URLs that look like downloadable attachments are returned — bare
+/// links to HTML pages (e.g. `https://example.com/`) are kept, but the
+/// caller can filter further if desired. The extracted `filename` is
+/// derived from the markdown alt text / link text when available and
+/// falls back to the final path segment of the URL.
+pub fn parse_markdown_attachments(markdown: &str) -> Vec<MarkdownAttachment> {
+    let mut out: Vec<MarkdownAttachment> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let bytes = markdown.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // Look for `[` (link) or `![` (image).
+        let is_image = i + 1 < bytes.len() && bytes[i] == b'!' && bytes[i + 1] == b'[';
+        let is_link = bytes[i] == b'[';
+        if !is_image && !is_link {
+            i += 1;
+            continue;
+        }
+
+        let text_start = if is_image { i + 2 } else { i + 1 };
+        let Some(text_end_rel) = find_matching(&bytes[text_start..], b'[', b']') else {
+            i += 1;
+            continue;
+        };
+        let text_end = text_start + text_end_rel;
+
+        // Must be immediately followed by `(`.
+        if text_end + 1 >= bytes.len() || bytes[text_end + 1] != b'(' {
+            i = text_end + 1;
+            continue;
+        }
+        let url_start = text_end + 2;
+        let Some(url_end_rel) = find_matching(&bytes[url_start..], b'(', b')') else {
+            i = text_end + 1;
+            continue;
+        };
+        let url_end = url_start + url_end_rel;
+
+        let text = std::str::from_utf8(&bytes[text_start..text_end])
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let url_raw = std::str::from_utf8(&bytes[url_start..url_end])
+            .unwrap_or("")
+            .trim();
+        // Strip optional title: `[foo](url "title")`
+        let url = match url_raw.split_once(char::is_whitespace) {
+            Some((head, _tail)) => head.trim().to_string(),
+            None => url_raw.to_string(),
+        };
+
+        if !url.is_empty() && seen.insert(url.clone()) {
+            let filename = if !text.is_empty() && !looks_like_url(&text) {
+                text
+            } else {
+                filename_from_url(&url)
+            };
+            out.push(MarkdownAttachment {
+                filename,
+                url,
+                is_image,
+            });
+        }
+
+        i = url_end + 1;
+    }
+
+    out
+}
+
+/// A single attachment reference found in a markdown document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownAttachment {
+    /// Best-effort filename (from alt text or URL path).
+    pub filename: String,
+    /// Absolute or relative URL as written in the markdown.
+    pub url: String,
+    /// `true` if the reference was an image (`![]()`), `false` for a link.
+    pub is_image: bool,
+}
+
+/// Find the index of the matching `close` byte for an open character, with
+/// simple bracket/parenthesis nesting support. Returns `None` if unmatched.
+fn find_matching(bytes: &[u8], open: u8, close: u8) -> Option<usize> {
+    let mut depth: usize = 1;
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'\\' && i + 1 < bytes.len() {
+            i += 2;
+            continue;
+        }
+        if c == open {
+            depth += 1;
+        } else if c == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Cheap heuristic — is a string "a URL" (we use this to decide whether the
+/// link text is informative enough to be used as a filename).
+fn looks_like_url(s: &str) -> bool {
+    s.starts_with("http://") || s.starts_with("https://") || s.starts_with("www.")
+}
+
+/// Derive a filename from the final path segment of a URL. Query strings
+/// and fragments are stripped. Returns `"attachment"` if nothing sensible
+/// can be extracted (e.g. the URL has no path beyond the host).
+pub fn filename_from_url(url: &str) -> String {
+    let no_query = url.split_once('?').map(|(p, _)| p).unwrap_or(url);
+    let no_frag = no_query.split_once('#').map(|(p, _)| p).unwrap_or(no_query);
+
+    // Strip scheme + host so that `https://x/` does not incorrectly surface
+    // the host `x` as a filename. We only look at the path portion.
+    let path = match no_frag.split_once("://") {
+        Some((_scheme, rest)) => rest.split_once('/').map(|(_host, p)| p).unwrap_or(""),
+        None => no_frag,
+    };
+
+    let last = path
+        .rsplit('/')
+        .find(|segment| !segment.is_empty())
+        .unwrap_or("");
+    if last.is_empty() {
+        "attachment".to_string()
+    } else {
+        last.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -627,5 +779,68 @@ mod tests {
     #[test]
     fn content_kind_default_is_binary() {
         assert_eq!(ContentKind::default(), ContentKind::Binary);
+    }
+
+    #[test]
+    fn filename_from_url_strips_query_and_fragment() {
+        assert_eq!(
+            filename_from_url("https://x/y/z/report.log?token=abc#top"),
+            "report.log"
+        );
+        assert_eq!(filename_from_url("https://x/"), "attachment");
+        assert_eq!(filename_from_url(""), "attachment");
+    }
+
+    #[test]
+    fn markdown_parses_image_and_link_syntax() {
+        let md = "Hello ![screenshot](https://cdn.example.com/a/b/screen.png) and \
+                  a [log](https://cdn.example.com/run-42.log).";
+        let attachments = parse_markdown_attachments(md);
+        assert_eq!(attachments.len(), 2);
+        assert_eq!(attachments[0].filename, "screenshot");
+        assert_eq!(attachments[0].url, "https://cdn.example.com/a/b/screen.png");
+        assert!(attachments[0].is_image);
+        assert_eq!(attachments[1].filename, "log");
+        assert!(!attachments[1].is_image);
+    }
+
+    #[test]
+    fn markdown_deduplicates_by_url() {
+        let md = "![a](https://x/1.png) and again ![b](https://x/1.png)";
+        let attachments = parse_markdown_attachments(md);
+        assert_eq!(attachments.len(), 1);
+        // The first reference wins.
+        assert_eq!(attachments[0].filename, "a");
+    }
+
+    #[test]
+    fn markdown_handles_titles_and_spaces() {
+        let md = "[spec](https://x/spec.pdf \"Specification\")";
+        let attachments = parse_markdown_attachments(md);
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].url, "https://x/spec.pdf");
+        assert_eq!(attachments[0].filename, "spec");
+    }
+
+    #[test]
+    fn markdown_ignores_unmatched_brackets() {
+        let md = "Unclosed [foo( and then a good ![g](https://x/g.png)";
+        let attachments = parse_markdown_attachments(md);
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].url, "https://x/g.png");
+    }
+
+    #[test]
+    fn markdown_falls_back_to_url_when_text_is_url() {
+        let md = "[https://x/a.png](https://x/a.png)";
+        let attachments = parse_markdown_attachments(md);
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].filename, "a.png");
+    }
+
+    #[test]
+    fn markdown_empty_and_plain_text() {
+        assert!(parse_markdown_attachments("").is_empty());
+        assert!(parse_markdown_attachments("no links here at all").is_empty());
     }
 }
