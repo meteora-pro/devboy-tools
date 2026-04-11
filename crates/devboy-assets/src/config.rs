@@ -19,10 +19,10 @@ pub const DEFAULT_MAX_FILE_AGE: &str = "7d";
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum EvictionPolicy {
-    /// Least-recently-used (based on `last_accessed` in the index).
+    /// Least-recently-used (based on `last_accessed_ms` in the index).
     #[default]
     Lru,
-    /// First-in-first-out (based on `created_at`).
+    /// First-in-first-out (based on `downloaded_at_ms` in the index).
     Fifo,
     /// Do not evict anything — useful for tests or when an external janitor
     /// is managing cache size.
@@ -196,18 +196,24 @@ pub fn parse_duration(input: &str) -> Result<Duration> {
         .parse()
         .map_err(|_| AssetError::config(format!("invalid duration number: {number_part}")))?;
 
-    let seconds = match unit_part.to_ascii_lowercase().as_str() {
-        "s" => number,
-        "m" => number * 60,
-        "h" => number * 3600,
-        "d" => number * 86_400,
-        "w" => number * 604_800,
+    let multiplier: u64 = match unit_part.to_ascii_lowercase().as_str() {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3_600,
+        "d" => 86_400,
+        "w" => 604_800,
         other => {
             return Err(AssetError::config(format!(
                 "unknown duration unit: {other}"
             )));
         }
     };
+
+    // Use checked_mul so comically large inputs surface as a config error
+    // instead of silently wrapping in release builds.
+    let seconds = number
+        .checked_mul(multiplier)
+        .ok_or_else(|| AssetError::config(format!("duration overflows u64 seconds: {input}",)))?;
 
     Ok(Duration::from_secs(seconds))
 }
@@ -282,6 +288,15 @@ mod tests {
         assert!(parse_duration("10").is_err(), "missing unit");
         assert!(parse_duration("abc").is_err());
         assert!(parse_duration("1y").is_err(), "years not supported");
+    }
+
+    #[test]
+    fn duration_detects_overflow() {
+        // u64::MAX weeks is guaranteed to overflow: 604_800 * MAX >> u64::MAX.
+        let huge = format!("{}w", u64::MAX);
+        let err = parse_duration(&huge).unwrap_err();
+        assert!(matches!(err, AssetError::Config(_)));
+        assert!(err.to_string().contains("overflows"));
     }
 
     #[test]
