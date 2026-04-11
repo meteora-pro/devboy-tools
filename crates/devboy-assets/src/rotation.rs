@@ -93,15 +93,24 @@ impl Rotator {
 
         // Phase 2 — size budget. A budget of 0 is treated as "unlimited",
         // matching the semantics enforced in `AssetManager::store`.
-        if self.max_cache_size > 0 && index.total_size() > self.max_cache_size {
+        //
+        // We track a running `current_size` instead of recomputing
+        // `index.total_size()` on every iteration: the naive version is
+        // O(n²) because each call re-sums every remaining asset, and a
+        // large cache can pay that cost repeatedly during a single
+        // eviction pass. Subtracting removed sizes keeps the loop
+        // O(n log n) dominated by the sort.
+        let mut current_size = index.total_size();
+        if self.max_cache_size > 0 && current_size > self.max_cache_size {
             let mut entries: Vec<CachedAsset> = index.assets.values().cloned().collect();
             self.sort_for_eviction(&mut entries);
 
             for asset in entries {
-                if index.total_size() <= self.max_cache_size {
+                if current_size <= self.max_cache_size {
                     break;
                 }
                 if let Some(removed) = index.remove(&asset.id) {
+                    current_size = current_size.saturating_sub(removed.size);
                     remove_cached_file(cache, &removed, &mut stats.bytes_freed)?;
                     stats.lru_evicted += 1;
                 }
