@@ -284,7 +284,19 @@ mod tests {
         };
         let stored = cache.store(&ctx, "a1", "x.bin", b"x").unwrap();
         let rel = stored.path.strip_prefix(tmp.path()).unwrap();
-        assert!(rel.to_string_lossy().contains("mr-comments/42/7"));
+
+        // Use path components so the assertion is agnostic to the OS path
+        // separator (`/` on Unix, `\` on Windows).
+        let components: Vec<_> = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            components
+                .windows(3)
+                .any(|w| w == ["mr-comments", "42", "7"]),
+            "unexpected path components: {components:?}",
+        );
     }
 
     #[test]
