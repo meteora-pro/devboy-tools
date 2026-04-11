@@ -70,7 +70,14 @@ impl Rotator {
         }
 
         // Phase 1 — age / TTL.
-        let cutoff_ms = now_ms().saturating_sub(self.max_file_age.as_millis() as u64);
+        //
+        // `Duration::as_millis()` returns `u128`, so very large values would
+        // silently truncate on the `as u64` cast. Clamp to `u64::MAX`
+        // explicitly — in practice that means "effectively infinite" and
+        // the saturating subtraction below yields a `cutoff_ms` of 0,
+        // disabling the TTL check.
+        let max_age_ms: u64 = self.max_file_age.as_millis().min(u128::from(u64::MAX)) as u64;
+        let cutoff_ms = now_ms().saturating_sub(max_age_ms);
         let expired: Vec<String> = index
             .assets
             .iter()
@@ -79,15 +86,14 @@ impl Rotator {
             .collect();
         for id in expired {
             if let Some(asset) = index.remove(&id) {
-                let abs = cache.root().join(&asset.local_path);
-                cache.delete(&abs)?;
+                remove_cached_file(cache, &asset, &mut stats.bytes_freed)?;
                 stats.aged_out += 1;
-                stats.bytes_freed += asset.size;
             }
         }
 
-        // Phase 2 — size budget.
-        if index.total_size() > self.max_cache_size {
+        // Phase 2 — size budget. A budget of 0 is treated as "unlimited",
+        // matching the semantics enforced in `AssetManager::store`.
+        if self.max_cache_size > 0 && index.total_size() > self.max_cache_size {
             let mut entries: Vec<CachedAsset> = index.assets.values().cloned().collect();
             self.sort_for_eviction(&mut entries);
 
@@ -96,10 +102,8 @@ impl Rotator {
                     break;
                 }
                 if let Some(removed) = index.remove(&asset.id) {
-                    let abs = cache.root().join(&removed.local_path);
-                    cache.delete(&abs)?;
+                    remove_cached_file(cache, &removed, &mut stats.bytes_freed)?;
                     stats.lru_evicted += 1;
-                    stats.bytes_freed += removed.size;
                 }
             }
         }
@@ -129,10 +133,39 @@ impl Rotator {
     /// Check whether the index is already within the configured budget.
     ///
     /// Provided as a cheap fast-path so callers can skip `rotate` when the
-    /// cache is empty / small.
+    /// cache is empty / small. A budget of 0 is treated as "unlimited".
     pub fn within_budget(&self, index: &AssetIndex, _root: &Path) -> bool {
-        index.total_size() <= self.max_cache_size
+        self.max_cache_size == 0 || index.total_size() <= self.max_cache_size
     }
+}
+
+/// Resolve and delete a cached file belonging to an index entry, bumping
+/// `bytes_freed` on success. Stale entries whose path has already been
+/// removed externally are ignored so rotation stays idempotent.
+///
+/// The resolution goes through [`crate::cache::resolve_under_root`], which
+/// validates that the target stays inside the cache directory — a safety
+/// guard against tampered `index.json` entries with absolute or traversing
+/// paths.
+fn remove_cached_file(
+    cache: &CacheManager,
+    asset: &CachedAsset,
+    bytes_freed: &mut u64,
+) -> Result<()> {
+    match crate::cache::resolve_under_root(cache.root(), &asset.local_path) {
+        Some(abs) => {
+            cache.delete(&abs)?;
+        }
+        None => {
+            tracing::warn!(
+                asset_id = asset.id.as_str(),
+                path = ?asset.local_path,
+                "skipping eviction — index entry points outside the cache root",
+            );
+        }
+    }
+    *bytes_freed += asset.size;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -167,6 +167,51 @@ pub struct StoredFile {
     pub checksum_sha256: String,
 }
 
+/// Validate that a cached-asset `local_path` stays under `root` and return
+/// the absolute path on success.
+///
+/// The index is trusted to hold **relative** paths produced by
+/// [`CacheManager::store`]. This helper defends against corrupted or
+/// tampered `index.json` entries that try to point elsewhere:
+///
+/// - Absolute paths are rejected (because `PathBuf::join` would discard
+///   `root` for any absolute RHS).
+/// - Paths containing `..` components are rejected — we never generate
+///   them, so anything with traversal came from outside the crate.
+/// - Any other path must, after joining, still start with `root` when both
+///   sides are canonicalized lexically.
+///
+/// Returns `None` when the path is unsafe; callers drop the index entry
+/// instead of touching the filesystem.
+pub fn resolve_under_root(root: &Path, relative: &Path) -> Option<PathBuf> {
+    if relative.is_absolute() {
+        return None;
+    }
+    for component in relative.components() {
+        match component {
+            std::path::Component::ParentDir => return None,
+            std::path::Component::Prefix(_) | std::path::Component::RootDir => return None,
+            _ => {}
+        }
+    }
+    let joined = root.join(relative);
+    // Lexical containment check: the joined path's components must start
+    // with the root's components. We do not canonicalize because the file
+    // may legitimately be missing (stale entry) and `canonicalize` would
+    // fail in that case.
+    let root_components: Vec<_> = root.components().collect();
+    let joined_components: Vec<_> = joined.components().collect();
+    if joined_components.len() < root_components.len() {
+        return None;
+    }
+    for (a, b) in root_components.iter().zip(joined_components.iter()) {
+        if a != b {
+            return None;
+        }
+    }
+    Some(joined)
+}
+
 /// Compute SHA-256 of a byte slice, returned as lower-case hex.
 pub fn sha256_hex(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
@@ -394,6 +439,43 @@ mod tests {
         assert_eq!(
             stored.checksum_sha256,
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn resolve_under_root_accepts_relative_paths() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path();
+        let rel = PathBuf::from("issues/DEV-1/screen.png");
+        let abs = resolve_under_root(root, &rel).unwrap();
+        assert!(abs.starts_with(root));
+        assert!(abs.ends_with("issues/DEV-1/screen.png"));
+    }
+
+    #[test]
+    fn resolve_under_root_rejects_absolute() {
+        let tmp = tempdir().unwrap();
+        let abs = PathBuf::from("/etc/passwd");
+        assert!(resolve_under_root(tmp.path(), &abs).is_none());
+    }
+
+    #[test]
+    fn resolve_under_root_rejects_parent_dir() {
+        let tmp = tempdir().unwrap();
+        let traversal = PathBuf::from("../../etc/passwd");
+        assert!(resolve_under_root(tmp.path(), &traversal).is_none());
+
+        let nested = PathBuf::from("issues/../../etc/passwd");
+        assert!(resolve_under_root(tmp.path(), &nested).is_none());
+    }
+
+    #[test]
+    fn resolve_under_root_accepts_empty_and_single_segment() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path();
+        assert_eq!(
+            resolve_under_root(root, &PathBuf::from("a.txt")).unwrap(),
+            root.join("a.txt"),
         );
     }
 
