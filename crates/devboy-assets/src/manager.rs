@@ -140,12 +140,34 @@ impl AssetManager {
     pub fn store(&self, request: StoreRequest<'_>) -> Result<CachedAsset> {
         let StoreRequest {
             context,
-            asset_id,
+            asset_id: asset_id_opt,
             filename,
             mime_type,
             remote_url,
             data,
         } = request;
+
+        // Resolve the asset ID: caller-provided or content-addressed.
+        let asset_id_owned: String;
+        let asset_id: &str = match asset_id_opt {
+            Some(id) => {
+                let trimmed = id.trim();
+                if trimmed.is_empty() {
+                    return Err(AssetError::config("asset_id must not be empty"));
+                }
+                if trimmed.len() > MAX_ASSET_ID_LEN {
+                    return Err(AssetError::config(format!(
+                        "asset_id is {} chars, max allowed is {MAX_ASSET_ID_LEN}",
+                        trimmed.len(),
+                    )));
+                }
+                trimmed
+            }
+            None => {
+                asset_id_owned = Self::content_id(data);
+                &asset_id_owned
+            }
+        };
 
         let size = data.len() as u64;
         let max = self.inner.config.max_cache_size;
@@ -344,6 +366,24 @@ impl AssetManager {
         self.inner.config.cache_dir.join(INDEX_FILENAME)
     }
 
+    /// Compute a content-addressed asset ID from raw bytes.
+    ///
+    /// The returned string has the form `sha256:{16 hex chars}` (64-bit
+    /// prefix of the SHA-256 digest). This is the same ID that
+    /// [`AssetManager::store`] generates when `asset_id` is `None`.
+    ///
+    /// Use this to check whether a file is already cached before
+    /// downloading it:
+    ///
+    /// ```ignore
+    /// let id = AssetManager::content_id(data);
+    /// if manager.get(&id)?.is_some() { /* already cached */ }
+    /// ```
+    pub fn content_id(data: &[u8]) -> String {
+        let hash = crate::cache::sha256_hex(data);
+        format!("sha256:{}", &hash[..16])
+    }
+
     /// Acquire the in-memory index lock.
     ///
     /// Returns [`AssetError::Poisoned`] if the mutex was poisoned by a
@@ -372,8 +412,22 @@ pub struct ResolvedAsset {
 pub struct StoreRequest<'a> {
     /// Context the asset is attached to.
     pub context: AssetContext,
-    /// Stable id to use for the asset. Caller is responsible for uniqueness.
-    pub asset_id: &'a str,
+    /// Stable identifier for the asset.
+    ///
+    /// **Dual-mode:**
+    /// - `Some("att-42")` — caller-provided ID, typically the provider's
+    ///   native attachment identifier (ClickUp attachment id, Jira
+    ///   attachment id, GitLab upload URL, etc.). This enables cache-hit
+    ///   lookups when the same attachment is requested again.
+    /// - `None` — auto-generate a content-addressed ID from the SHA-256
+    ///   of `data`. The generated ID has the form `sha256:{16 hex chars}`
+    ///   and provides natural deduplication: storing the same bytes twice
+    ///   hits the same cache entry.
+    ///
+    /// Callers can also pre-compute a content ID via
+    /// [`AssetManager::content_id`] if they want to check for existence
+    /// before downloading.
+    pub asset_id: Option<&'a str>,
     /// Original filename.
     pub filename: &'a str,
     /// MIME type if known.
@@ -383,6 +437,11 @@ pub struct StoreRequest<'a> {
     /// Raw bytes to cache.
     pub data: &'a [u8],
 }
+
+/// Maximum allowed length for an asset ID (after sanitization the
+/// on-disk component will be shorter, but we reject clearly absurd
+/// inputs early).
+const MAX_ASSET_ID_LEN: usize = 200;
 
 /// Drop index entries whose underlying file is missing (or whose stored
 /// path is unsafe). Returns the count of removed entries.
@@ -441,7 +500,7 @@ mod tests {
     ) -> StoreRequest<'a> {
         StoreRequest {
             context,
-            asset_id,
+            asset_id: Some(asset_id),
             filename,
             mime_type: None,
             remote_url: None,
@@ -460,7 +519,7 @@ mod tests {
         let asset = mgr
             .store(StoreRequest {
                 context: ctx.clone(),
-                asset_id: "a1",
+                asset_id: Some("a1"),
                 filename: "file.txt",
                 mime_type: Some("text/plain".into()),
                 remote_url: None,
@@ -691,5 +750,136 @@ mod tests {
         let mgr = AssetManager::with_root(tmp.path().to_path_buf()).unwrap();
         assert_eq!(mgr.cache_dir(), tmp.path());
         assert!(mgr.config().max_cache_size > 0);
+    }
+
+    // =================================================================
+    // Dual-mode asset_id tests
+    // =================================================================
+
+    #[test]
+    fn store_auto_generates_content_addressed_id() {
+        let tmp = tempdir().unwrap();
+        let mgr = manager(tmp.path().to_path_buf());
+        let ctx = AssetContext::Issue {
+            key: "DEV-1".into(),
+        };
+
+        let asset = mgr
+            .store(StoreRequest {
+                context: ctx,
+                asset_id: None, // auto-generate
+                filename: "trace.log",
+                mime_type: None,
+                remote_url: None,
+                data: b"stack trace here",
+            })
+            .unwrap();
+
+        assert!(
+            asset.id.starts_with("sha256:"),
+            "auto-generated id should have sha256: prefix, got: {}",
+            asset.id,
+        );
+        assert_eq!(asset.id.len(), 7 + 16); // "sha256:" + 16 hex chars
+
+        // Same content → same id (dedup).
+        let expected = AssetManager::content_id(b"stack trace here");
+        assert_eq!(asset.id, expected);
+
+        // Retrievable by the generated id.
+        let resolved = mgr.get(&asset.id).unwrap().expect("should be cached");
+        assert_eq!(
+            std::fs::read(&resolved.absolute_path).unwrap(),
+            b"stack trace here",
+        );
+    }
+
+    #[test]
+    fn store_deduplicates_by_content_id() {
+        let tmp = tempdir().unwrap();
+        let mgr = manager(tmp.path().to_path_buf());
+        let ctx = AssetContext::Issue {
+            key: "DEV-1".into(),
+        };
+
+        let a = mgr
+            .store(StoreRequest {
+                context: ctx.clone(),
+                asset_id: None,
+                filename: "a.log",
+                mime_type: None,
+                remote_url: None,
+                data: b"same content",
+            })
+            .unwrap();
+
+        let b = mgr
+            .store(StoreRequest {
+                context: ctx,
+                asset_id: None,
+                filename: "b.log",
+                mime_type: None,
+                remote_url: None,
+                data: b"same content",
+            })
+            .unwrap();
+
+        // Same content → same id, single cache entry.
+        assert_eq!(a.id, b.id);
+        assert_eq!(mgr.list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn store_rejects_empty_asset_id() {
+        let tmp = tempdir().unwrap();
+        let mgr = manager(tmp.path().to_path_buf());
+        let ctx = AssetContext::Issue {
+            key: "DEV-1".into(),
+        };
+
+        let err = mgr
+            .store(StoreRequest {
+                context: ctx,
+                asset_id: Some(""),
+                filename: "x.txt",
+                mime_type: None,
+                remote_url: None,
+                data: b"x",
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("empty"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn store_rejects_overly_long_asset_id() {
+        let tmp = tempdir().unwrap();
+        let mgr = manager(tmp.path().to_path_buf());
+        let ctx = AssetContext::Issue {
+            key: "DEV-1".into(),
+        };
+
+        let long_id = "x".repeat(MAX_ASSET_ID_LEN + 1);
+        let err = mgr
+            .store(StoreRequest {
+                context: ctx,
+                asset_id: Some(&long_id),
+                filename: "x.txt",
+                mime_type: None,
+                remote_url: None,
+                data: b"x",
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("200"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn content_id_is_deterministic() {
+        let a = AssetManager::content_id(b"hello");
+        let b = AssetManager::content_id(b"hello");
+        assert_eq!(a, b);
+        assert!(a.starts_with("sha256:"));
+
+        let c = AssetManager::content_id(b"world");
+        assert_ne!(a, c);
     }
 }
