@@ -211,7 +211,7 @@ define_tools! {
                 },
                 "description": {
                     "type": "string",
-                    "description": "Issue description/body"
+                    "description": "Issue description/body. For Jira Server (self-hosted, API v2) use Jira wiki markup (h2. Heading, *bold*, {code:java}...{code}, * list item). For Jira Cloud and other providers use markdown."
                 },
                 "labels": {
                     "type": "array",
@@ -257,7 +257,7 @@ define_tools! {
                 },
                 "description": {
                     "type": "string",
-                    "description": "New description"
+                    "description": "New description. For Jira Server (self-hosted, API v2) use Jira wiki markup (h2. Heading, *bold*, {code:java}...{code}, * list item). For Jira Cloud and other providers use markdown."
                 },
                 "state": {
                     "type": "string",
@@ -299,7 +299,7 @@ define_tools! {
                 },
                 "body": {
                     "type": "string",
-                    "description": "Comment text"
+                    "description": "Comment text. For Jira Server (self-hosted, API v2) use Jira wiki markup. For Jira Cloud and other providers use markdown."
                 }
             }
         }
