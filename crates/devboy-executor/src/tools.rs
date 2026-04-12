@@ -32,6 +32,8 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("offset", PropertySchema::integer("Number of results to skip (default: 0)", Some(0.0), None));
                 s.add_property("sort_by", PropertySchema::string_enum(&["created_at", "updated_at"], "Sort by field (default: updated_at)"));
                 s.add_property("sort_order", PropertySchema::string_enum(&["asc", "desc"], "Sort order (default: desc)"));
+                s.add_property("projectKey", PropertySchema::string("Project key to filter issues (e.g., \"PROJ\"). Overrides default project. Removed by providers that don't support it."));
+                s.add_property("nativeQuery", PropertySchema::string("Native query passed directly to provider (e.g., Jira JQL). Takes precedence over other filters except projectKey injection."));
                 s
             },
         },
@@ -514,12 +516,14 @@ mod tests {
         let get_issues = tools.iter().find(|t| t.name == "get_issues").unwrap();
         let json = serde_json::to_string_pretty(get_issues).unwrap();
 
-        // get_issues should have state, search, labels, assignee, limit, offset, sort_by, sort_order
+        // get_issues should have state, search, labels, assignee, limit, offset, sort_by, sort_order, projectKey, nativeQuery
         assert!(json.contains("state"));
         assert!(json.contains("search"));
         assert!(json.contains("labels"));
         assert!(json.contains("assignee"));
         assert!(json.contains("limit"));
+        assert!(json.contains("projectKey"));
+        assert!(json.contains("nativeQuery"));
     }
 
     #[test]

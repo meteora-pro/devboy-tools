@@ -772,6 +772,7 @@ impl ToolHandler {
             offset: Some(params.offset.unwrap_or(0) as u32),
             sort_by: params.sort_by,
             sort_order: params.sort_order,
+            ..Default::default()
         };
 
         let mut all_issues = Vec::new();
