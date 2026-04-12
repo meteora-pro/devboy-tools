@@ -175,17 +175,19 @@ impl AssetManager {
         // restore the in-memory index to its pre-mutation state *and*
         // remove the orphaned blob from disk so the cache stays
         // transactional and doesn't leak disk space.
+        let mut deferred_delete: Option<PathBuf> = None;
         let result: Result<()> = (|| {
             let mut index = self.state_lock()?;
 
             // When re-using an existing asset_id with a different path,
-            // delete the old blob so it doesn't become orphaned.
+            // record the old blob for deferred deletion *after* the commit
+            // succeeds. Deleting before the commit would leave the
+            // snapshot pointing at a missing file on rollback.
             if let Some(previous) = index.get(asset.id.as_str())
                 && previous.local_path != asset.local_path
-                && let Some(old_abs) =
-                    resolve_under_root(&self.inner.config.cache_dir, &previous.local_path)
             {
-                let _ = self.inner.cache.delete(&old_abs);
+                deferred_delete =
+                    resolve_under_root(&self.inner.config.cache_dir, &previous.local_path);
             }
 
             // Snapshot the index so we can restore on failure.
@@ -201,6 +203,7 @@ impl AssetManager {
                 // Restore the snapshot so list()/total_size() stay
                 // consistent with what's actually on disk.
                 *index = snapshot;
+                deferred_delete = None; // don't delete old blob on rollback
                 return Err(e);
             }
             Ok(())
@@ -211,6 +214,11 @@ impl AssetManager {
             // during cleanup — the primary error is more important.
             let _ = self.inner.cache.delete(&stored.path);
             return Err(e);
+        }
+
+        // Commit succeeded — now safe to clean up the replaced blob.
+        if let Some(old_path) = deferred_delete {
+            let _ = self.inner.cache.delete(&old_path);
         }
 
         Ok(asset)
