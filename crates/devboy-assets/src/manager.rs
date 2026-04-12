@@ -24,8 +24,12 @@
 //!
 //! The only filesystem write that intentionally runs **before** the lock
 //! is acquired is the initial `CacheManager::store` inside
-//! [`AssetManager::store`], which writes the new blob through a unique
-//! per-asset path so two concurrent writes cannot collide.
+//! [`AssetManager::store`], which writes the new blob to a path derived
+//! from the caller-supplied `asset_id` and `filename`. Assuming the
+//! caller provides unique `asset_id` values (which is part of the API
+//! contract), two concurrent writes target different paths and cannot
+//! collide. Reusing the same `asset_id` concurrently is unsupported and
+//! may race on the underlying file.
 //!
 //! Because of the above, callers must not assume these methods are free
 //! from blocking filesystem work — if they are invoked from an async
