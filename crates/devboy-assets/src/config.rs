@@ -368,17 +368,36 @@ mod tests {
 
     #[test]
     fn resolve_honors_user_values() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_string_lossy().to_string();
         let cfg = AssetConfig {
-            cache_dir: Some("/tmp/devboy-test".into()),
+            cache_dir: Some(dir.clone()),
             max_cache_size: Some("500Mi".into()),
             max_file_age: Some("24h".into()),
             eviction_policy: Some(EvictionPolicy::Fifo),
         };
         let resolved = cfg.resolve().unwrap();
-        assert_eq!(resolved.cache_dir, PathBuf::from("/tmp/devboy-test"));
+        // The resolved path must be absolute and match the configured dir.
+        assert!(resolved.cache_dir.is_absolute());
+        assert_eq!(resolved.cache_dir, PathBuf::from(&dir));
         assert_eq!(resolved.max_cache_size, 500 * 1024 * 1024);
         assert_eq!(resolved.max_file_age, Duration::from_secs(86_400));
         assert_eq!(resolved.eviction_policy, EvictionPolicy::Fifo);
+    }
+
+    #[test]
+    fn resolve_absolutizes_relative_cache_dir() {
+        let cfg = AssetConfig {
+            cache_dir: Some("relative/path".into()),
+            ..Default::default()
+        };
+        let resolved = cfg.resolve().unwrap();
+        assert!(
+            resolved.cache_dir.is_absolute(),
+            "relative cache_dir should be absolutized: {:?}",
+            resolved.cache_dir,
+        );
+        assert!(resolved.cache_dir.ends_with("relative/path"));
     }
 
     #[test]
