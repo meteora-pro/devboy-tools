@@ -848,14 +848,33 @@ fn escape_jql(value: &str) -> String {
 }
 
 /// Check whether a JQL string already contains a project filter clause.
-/// Matches patterns like `project = KEY`, `project IN (...)`, `project ~ ...`.
+/// Matches `project` as a JQL field name (word boundary) followed by an operator.
+/// Avoids false positives like `summary ~ "project information"`.
 fn has_project_clause(jql: &str) -> bool {
     let lower = jql.to_lowercase();
-    // Look for "project" followed by optional whitespace and an operator
-    lower.contains("project =")
-        || lower.contains("project in")
-        || lower.contains("project in(")
-        || lower.contains("project ~")
+    let bytes = lower.as_bytes();
+    let keyword = b"project";
+
+    for (i, window) in bytes.windows(keyword.len()).enumerate() {
+        if window != keyword {
+            continue;
+        }
+        // Check word boundary before "project"
+        if i > 0 && bytes[i - 1].is_ascii_alphanumeric() {
+            continue;
+        }
+        // Check what follows "project" — skip whitespace, then expect operator
+        let after = &lower[i + keyword.len()..];
+        let trimmed = after.trim_start();
+        if trimmed.starts_with('=')
+            || trimmed.starts_with('~')
+            || trimmed.starts_with("in ")
+            || trimmed.starts_with("in(")
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// This maps user-friendly aliases to the correct category key, used as fallback
@@ -894,16 +913,19 @@ impl IssueProvider for JiraClient {
         let effective_project = filter.project_key.as_deref().unwrap_or(&self.project_key);
 
         // Build JQL query — native_query takes precedence over filter-based construction
-        let jql = if let Some(native) = &filter.native_query {
+        let escaped_project = escape_jql(effective_project);
+        let jql = if let Some(native) = &filter.native_query
+            && !native.trim().is_empty()
+        {
             // If native query doesn't mention a project clause, prepend one
             // (Jira Cloud requires a project filter)
             if has_project_clause(native) {
                 native.clone()
             } else {
-                format!("project = \"{}\" AND {}", effective_project, native)
+                format!("project = \"{}\" AND {}", escaped_project, native)
             }
         } else {
-            let mut jql_parts: Vec<String> = vec![format!("project = \"{}\"", effective_project)];
+            let mut jql_parts: Vec<String> = vec![format!("project = \"{}\"", escaped_project)];
 
             // State filter
             if let Some(state) = &filter.state {
@@ -2278,6 +2300,68 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn test_get_issues_project_key_with_native_query() {
+            let server = MockServer::start();
+
+            // project_key override + native_query without project clause
+            // → should inject the overridden project key, not the default one
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "project = \"OVERRIDE\" AND sprint = 42");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [sample_issue_json()],
+                    "startAt": 0,
+                    "maxResults": 20,
+                    "total": 1
+                }));
+            });
+
+            let client = create_self_hosted_client(&server); // default project = "PROJ"
+            let issues = client
+                .get_issues(IssueFilter {
+                    project_key: Some("OVERRIDE".to_string()),
+                    native_query: Some("sprint = 42".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+
+            assert_eq!(issues.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_empty_native_query_falls_back() {
+            let server = MockServer::start();
+
+            // Empty native_query should fall back to normal filter-based JQL
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "project = \"PROJ\"");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [sample_issue_json()],
+                    "startAt": 0,
+                    "maxResults": 20,
+                    "total": 1
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issues = client
+                .get_issues(IssueFilter {
+                    native_query: Some("".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+
+            assert_eq!(issues.len(), 1);
+        }
+
+        #[tokio::test]
         async fn test_get_issue() {
             let server = MockServer::start();
 
@@ -3255,6 +3339,7 @@ mod tests {
             // Negative cases
             assert!(!has_project_clause("fixVersion = \"1.0\""));
             assert!(!has_project_clause("summary ~ \"project plan\""));
+            assert!(!has_project_clause("summary ~ \"project information\""));
             assert!(!has_project_clause("status = Done"));
         }
 
