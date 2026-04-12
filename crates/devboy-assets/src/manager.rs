@@ -107,11 +107,25 @@ impl AssetManager {
         })
     }
 
-    /// Convenience constructor for tests and standalone usage.
+    /// Convenience constructor for tests, standalone usage, and minimal
+    /// environments (containers, CI) where `dirs::cache_dir()` may return
+    /// `None`.
+    ///
+    /// Unlike [`AssetManager::from_config`], this bypasses OS cache-dir
+    /// discovery entirely and uses sensible defaults for all other
+    /// settings (1 GiB budget, 7-day TTL, LRU eviction).
     pub fn with_root(root: PathBuf) -> Result<Self> {
-        let cfg = AssetConfig::default();
-        let mut resolved = cfg.resolve()?;
-        resolved.cache_dir = root;
+        use crate::config::{
+            DEFAULT_MAX_CACHE_SIZE, DEFAULT_MAX_FILE_AGE, EvictionPolicy, ResolvedAssetConfig,
+            parse_duration, parse_size,
+        };
+        let resolved = ResolvedAssetConfig {
+            cache_dir: root,
+            max_cache_size: parse_size(DEFAULT_MAX_CACHE_SIZE)
+                .expect("default cache size is valid"),
+            max_file_age: parse_duration(DEFAULT_MAX_FILE_AGE).expect("default file age is valid"),
+            eviction_policy: EvictionPolicy::Lru,
+        };
         Self::from_resolved(resolved)
     }
 
@@ -236,9 +250,18 @@ impl AssetManager {
         })();
 
         if let Err(e) = result {
-            // Roll back: remove the orphaned blob. Ignore any I/O error
-            // during cleanup — the primary error is more important.
-            let _ = self.inner.cache.delete(&stored.path);
+            // Roll back: remove the orphaned blob — but only when it's a
+            // truly new path. If the asset_id, context, and filename are
+            // the same as the previous entry, `CacheManager::store` wrote
+            // the replacement bytes to the *same* on-disk path. Deleting
+            // it would destroy the content that the restored snapshot
+            // still references.
+            let overwrote_same_path = deferred_delete
+                .as_ref()
+                .is_some_and(|old| *old == stored.path);
+            if !overwrote_same_path {
+                let _ = self.inner.cache.delete(&stored.path);
+            }
             return Err(e);
         }
 

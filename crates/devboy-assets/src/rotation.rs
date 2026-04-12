@@ -122,13 +122,12 @@ impl Rotator {
 
     /// Sort entries so that the first element is the best eviction candidate.
     ///
-    /// Rust's `slice::sort_by` is a **stable** sort, so assets with equal
-    /// keys retain their insertion order. Within the same `last_accessed_ms`
-    /// (or `downloaded_at_ms`) bucket, LRU uses a secondary tie-breaker on
-    /// descending `size` so that one large video is preferred over many
-    /// small text files. Millisecond-resolution ties are rare in practice
-    /// and the stable-sort guarantee ensures that the most recently
-    /// inserted asset is evicted last among equals.
+    /// Sort entries so that the first element is the best eviction
+    /// candidate. A deterministic final tie-breaker on `asset.id` ensures
+    /// the order is fully reproducible even when timestamps and sizes are
+    /// equal (which can happen with rapid consecutive stores or in tests).
+    /// Without this, `HashMap::values()` iteration order would leak into
+    /// eviction decisions, making `store()` unreliable under tight budgets.
     fn sort_for_eviction(&self, entries: &mut [CachedAsset]) {
         match self.policy {
             EvictionPolicy::Lru => {
@@ -136,10 +135,15 @@ impl Rotator {
                     a.last_accessed_ms
                         .cmp(&b.last_accessed_ms)
                         .then_with(|| b.size.cmp(&a.size))
+                        .then_with(|| a.id.cmp(&b.id))
                 });
             }
             EvictionPolicy::Fifo => {
-                entries.sort_by(|a, b| a.downloaded_at_ms.cmp(&b.downloaded_at_ms));
+                entries.sort_by(|a, b| {
+                    a.downloaded_at_ms
+                        .cmp(&b.downloaded_at_ms)
+                        .then_with(|| a.id.cmp(&b.id))
+                });
             }
             EvictionPolicy::None => {}
         }
