@@ -63,7 +63,12 @@ impl CacheManager {
     pub fn path_for(&self, context: &AssetContext, asset_id: &str, filename: &str) -> PathBuf {
         let safe_id = sanitize_component(asset_id);
         let safe_name = sanitize_filename(filename);
-        let leaf = format!("{safe_id}-{safe_name}");
+        // Append a short hash of the *raw* (pre-sanitization) asset_id so
+        // that two IDs differing only in characters collapsed by
+        // sanitization (e.g. `a/b` → `a_b` vs `a?b` → `a_b`) never map
+        // to the same on-disk path.
+        let id_hash = &sha256_hex(asset_id.as_bytes())[..8];
+        let leaf = format!("{safe_id}-{id_hash}-{safe_name}");
         let dir = self.dir_for(context);
         dir.join(leaf)
     }
@@ -496,11 +501,32 @@ mod tests {
     }
 
     #[test]
-    fn path_for_prefixes_asset_id() {
+    fn path_for_prefixes_asset_id_and_hash() {
         let tmp = tempdir().unwrap();
         let cache = CacheManager::new(tmp.path().to_path_buf()).unwrap();
         let ctx = AssetContext::Issue { key: "k".into() };
         let path = cache.path_for(&ctx, "abc123", "report.log");
-        assert!(path.to_string_lossy().ends_with("abc123-report.log"));
+        let leaf = path.file_name().unwrap().to_string_lossy();
+        // Format: {sanitized_id}-{8-char hash}-{sanitized_filename}
+        assert!(leaf.starts_with("abc123-"), "unexpected leaf: {leaf}");
+        assert!(leaf.ends_with("-report.log"), "unexpected leaf: {leaf}");
+        // The hash is 8 hex chars between the id and filename.
+        let parts: Vec<&str> = leaf.splitn(3, '-').collect();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[1].len(), 8, "hash should be 8 hex chars");
+    }
+
+    #[test]
+    fn path_for_avoids_collision_on_sanitized_ids() {
+        let tmp = tempdir().unwrap();
+        let cache = CacheManager::new(tmp.path().to_path_buf()).unwrap();
+        let ctx = AssetContext::Issue { key: "k".into() };
+        // These two IDs sanitize to the same string but differ pre-sanitization.
+        let p1 = cache.path_for(&ctx, "a/b", "f.txt");
+        let p2 = cache.path_for(&ctx, "a?b", "f.txt");
+        assert_ne!(
+            p1, p2,
+            "different raw IDs must produce different paths even when sanitized form matches"
+        );
     }
 }
