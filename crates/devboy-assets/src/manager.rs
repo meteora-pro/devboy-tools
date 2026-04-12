@@ -256,6 +256,13 @@ impl AssetManager {
             // the replacement bytes to the *same* on-disk path. Deleting
             // it would destroy the content that the restored snapshot
             // still references.
+            //
+            // Trade-off: when same-path overwrite is rolled back, the
+            // file on disk contains the *new* bytes, not the original
+            // ones — the pre-existing content is lost. Full byte-level
+            // restoration (backup + restore, or write-to-temp + rename)
+            // is intentionally not implemented: this is an ephemeral
+            // cache and any file can be re-downloaded from the provider.
             let overwrote_same_path = deferred_delete
                 .as_ref()
                 .is_some_and(|old| *old == stored.path);
