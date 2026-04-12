@@ -82,6 +82,8 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("assignees", PropertySchema::array(PropertySchema::string("assignee"), "Assignee usernames"));
                 s.add_property("parent", PropertySchema::string("Parent issue key to create a subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp."));
                 s.add_property("markdown", PropertySchema::boolean("Whether the description is markdown (default: true). When true, ClickUp renders formatted text."));
+                s.add_property("projectId", PropertySchema::string("Project key for issue creation (e.g., \"PROJ\"). Overrides default project. Required when multiple projects configured."));
+                s.add_property("issueType", PropertySchema::string("Issue type (e.g., \"Task\", \"Bug\", \"Story\"). Default: \"Task\". Removed by providers that don't support it."));
                 s.set_required("title", true);
                 s
             },
