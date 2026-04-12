@@ -245,7 +245,18 @@ fn purge_cache_blobs(cache_dir: &Path) {
         if path.file_name().is_some_and(|n| n == INDEX_FILENAME) {
             continue;
         }
-        let result = if path.is_dir() {
+        // Use `symlink_metadata` (lstat) instead of `is_dir()` so that
+        // symlinks are never followed. A symlink pointing outside the
+        // cache root must be unlinked with `remove_file`, not chased
+        // into with `remove_dir_all`.
+        let is_real_dir = match std::fs::symlink_metadata(&path) {
+            Ok(meta) => meta.is_dir(),
+            Err(e) => {
+                tracing::warn!(?e, path = ?path, "failed to stat cached entry");
+                continue;
+            }
+        };
+        let result = if is_real_dir {
             std::fs::remove_dir_all(&path)
         } else {
             std::fs::remove_file(&path)
