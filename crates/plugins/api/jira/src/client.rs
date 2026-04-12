@@ -855,11 +855,11 @@ fn merge_custom_fields_into_payload<T: serde::Serialize>(
     custom_fields: &Option<serde_json::Value>,
 ) -> serde_json::Value {
     let mut value = serde_json::to_value(payload).unwrap_or_default();
-    if let Some(serde_json::Value::Object(cf)) = custom_fields {
-        if let Some(fields) = value.get_mut("fields").and_then(|f| f.as_object_mut()) {
-            for (k, v) in cf {
-                fields.insert(k.clone(), v.clone());
-            }
+    if let Some(serde_json::Value::Object(cf)) = custom_fields
+        && let Some(fields) = value.get_mut("fields").and_then(|f| f.as_object_mut())
+    {
+        for (k, v) in cf {
+            fields.insert(k.clone(), v.clone());
         }
     }
     value
@@ -3221,9 +3221,7 @@ mod tests {
             use crate::types::*;
             let payload = CreateIssuePayload {
                 fields: CreateIssueFields {
-                    project: ProjectKey {
-                        key: "PROJ".into(),
-                    },
+                    project: ProjectKey { key: "PROJ".into() },
                     summary: "Test".into(),
                     issuetype: IssueType {
                         name: "Task".into(),
@@ -3250,9 +3248,7 @@ mod tests {
             use crate::types::*;
             let payload = CreateIssuePayload {
                 fields: CreateIssueFields {
-                    project: ProjectKey {
-                        key: "PROJ".into(),
-                    },
+                    project: ProjectKey { key: "PROJ".into() },
                     summary: "Test".into(),
                     issuetype: IssueType {
                         name: "Task".into(),
