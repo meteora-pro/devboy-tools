@@ -123,9 +123,10 @@ impl AssetIndex {
     /// Load the index from `cache_dir/index.json`, returning an empty index
     /// if the file does not exist.
     ///
-    /// If the file exists but cannot be parsed, an empty index is returned
-    /// and a warning is logged — this is the first line of the integrity
-    /// check and is preferable to refusing to start.
+    /// If the file exists but cannot be parsed (or has a version mismatch),
+    /// an empty index is returned and all non-index files under
+    /// `cache_dir` are purged so that blobs that are no longer tracked by
+    /// the index cannot accumulate indefinitely on disk.
     pub fn load(cache_dir: &Path) -> Result<Self> {
         let path = cache_dir.join(INDEX_FILENAME);
         if !path.exists() {
@@ -139,14 +140,19 @@ impl AssetIndex {
                     tracing::warn!(
                         expected = INDEX_VERSION,
                         found = index.version,
-                        "asset index version mismatch, rebuilding"
+                        "asset index version mismatch, purging cache and rebuilding"
                     );
+                    purge_cache_blobs(cache_dir);
                     index = Self::empty();
                 }
                 Ok(index)
             }
             Err(err) => {
-                tracing::warn!(?err, "failed to parse asset index, starting fresh");
+                tracing::warn!(
+                    ?err,
+                    "failed to parse asset index, purging cache and starting fresh"
+                );
+                purge_cache_blobs(cache_dir);
                 Ok(Self::empty())
             }
         }
@@ -214,6 +220,39 @@ impl AssetIndex {
     /// Whether the index contains no assets.
     pub fn is_empty(&self) -> bool {
         self.assets.is_empty()
+    }
+}
+
+/// Remove all files and subdirectories under `cache_dir` except the index
+/// file itself. Called when the index is unrecoverable (corrupt or version
+/// mismatch) so that orphaned blobs don't accumulate on disk.
+///
+/// Best-effort: individual I/O errors are logged and skipped — we would
+/// rather start with a fresh (possibly partially cleaned) cache than fail
+/// to open the manager entirely.
+fn purge_cache_blobs(cache_dir: &Path) {
+    let entries = match std::fs::read_dir(cache_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::warn!(?e, "failed to list cache directory for purge");
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // Keep the index file itself — it will be overwritten by the
+        // caller with an empty index.
+        if path.file_name().is_some_and(|n| n == INDEX_FILENAME) {
+            continue;
+        }
+        let result = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        if let Err(e) = result {
+            tracing::warn!(?e, path = ?path, "failed to purge cached file");
+        }
     }
 }
 
