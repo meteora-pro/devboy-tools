@@ -891,10 +891,7 @@ impl IssueProvider for JiraClient {
         let offset = filter.offset.unwrap_or(0);
 
         // Resolve effective project key: filter override → self.project_key
-        let effective_project = filter
-            .project_key
-            .as_deref()
-            .unwrap_or(&self.project_key);
+        let effective_project = filter.project_key.as_deref().unwrap_or(&self.project_key);
 
         // Build JQL query — native_query takes precedence over filter-based construction
         let jql = if let Some(native) = &filter.native_query {
@@ -903,14 +900,10 @@ impl IssueProvider for JiraClient {
             if has_project_clause(native) {
                 native.clone()
             } else {
-                format!(
-                    "project = \"{}\" AND {}",
-                    effective_project, native
-                )
+                format!("project = \"{}\" AND {}", effective_project, native)
             }
         } else {
-            let mut jql_parts: Vec<String> =
-                vec![format!("project = \"{}\"", effective_project)];
+            let mut jql_parts: Vec<String> = vec![format!("project = \"{}\"", effective_project)];
 
             // State filter
             if let Some(state) = &filter.state {
@@ -2211,9 +2204,7 @@ mod tests {
             let client = create_self_hosted_client(&server);
             let issues = client
                 .get_issues(IssueFilter {
-                    native_query: Some(
-                        "project = \"CUSTOM\" AND fixVersion = \"1.0\"".to_string(),
-                    ),
+                    native_query: Some("project = \"CUSTOM\" AND fixVersion = \"1.0\"".to_string()),
                     ..Default::default()
                 })
                 .await
@@ -2260,10 +2251,9 @@ mod tests {
 
             // Native query already has "project IN (...)" — should NOT prepend another project clause
             server.mock(|when, then| {
-                when.method(GET).path("/search").query_param_includes(
-                    "jql",
-                    "project IN (\"A\", \"B\") AND status = \"Open\"",
-                );
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "project IN (\"A\", \"B\") AND status = \"Open\"");
                 then.status(200).json_body(serde_json::json!({
                     "issues": [sample_issue_json()],
                     "startAt": 0,
