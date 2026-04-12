@@ -86,7 +86,7 @@ impl AssetManager {
             tracing::debug!(
                 pruned,
                 aged_out = rotated.aged_out,
-                lru_evicted = rotated.lru_evicted,
+                size_evicted = rotated.size_evicted,
                 bytes_freed = rotated.bytes_freed,
                 "asset cache startup cleanup",
             );
@@ -171,11 +171,23 @@ impl AssetManager {
             remote_url,
         });
 
-        {
+        // Index upsert + rotation + persist. If any of these steps fail
+        // the blob written above would remain on disk but not be tracked
+        // in `index.json`, causing unbounded growth. Best-effort delete
+        // on the error path keeps the cache transactional.
+        let result: Result<()> = (|| {
             let mut index = self.state_lock()?;
             index.upsert(asset.clone());
             self.inner.rotator.rotate(&mut index, &self.inner.cache)?;
             index.save(&self.inner.config.cache_dir)?;
+            Ok(())
+        })();
+
+        if let Err(e) = result {
+            // Roll back: remove the orphaned blob. Ignore any I/O error
+            // during cleanup — the primary error is more important.
+            let _ = self.inner.cache.delete(&stored.path);
+            return Err(e);
         }
 
         Ok(asset)

@@ -28,8 +28,9 @@ use crate::index::{AssetIndex, CachedAsset, now_ms};
 pub struct RotationStats {
     /// Number of assets removed by age / TTL.
     pub aged_out: usize,
-    /// Number of assets removed by LRU size enforcement.
-    pub lru_evicted: usize,
+    /// Number of assets removed by cache-size enforcement (LRU or FIFO,
+    /// depending on the configured [`EvictionPolicy`]).
+    pub size_evicted: usize,
     /// Total bytes freed.
     pub bytes_freed: u64,
 }
@@ -37,7 +38,7 @@ pub struct RotationStats {
 impl RotationStats {
     /// Total number of assets removed.
     pub fn removed(&self) -> usize {
-        self.aged_out + self.lru_evicted
+        self.aged_out + self.size_evicted
     }
 }
 
@@ -112,7 +113,7 @@ impl Rotator {
                 if let Some(removed) = index.remove(&asset.id) {
                     current_size = current_size.saturating_sub(removed.size);
                     remove_cached_file(cache, &removed, &mut stats.bytes_freed)?;
-                    stats.lru_evicted += 1;
+                    stats.size_evicted += 1;
                 }
             }
         }
@@ -121,10 +122,17 @@ impl Rotator {
     }
 
     /// Sort entries so that the first element is the best eviction candidate.
+    ///
+    /// Rust's `slice::sort_by` is a **stable** sort, so assets with equal
+    /// keys retain their insertion order. Within the same `last_accessed_ms`
+    /// (or `downloaded_at_ms`) bucket, LRU uses a secondary tie-breaker on
+    /// descending `size` so that one large video is preferred over many
+    /// small text files. Millisecond-resolution ties are rare in practice
+    /// and the stable-sort guarantee ensures that the most recently
+    /// inserted asset is evicted last among equals.
     fn sort_for_eviction(&self, entries: &mut [CachedAsset]) {
         match self.policy {
             EvictionPolicy::Lru => {
-                // Oldest `last_accessed` first, then largest size first.
                 entries.sort_by(|a, b| {
                     a.last_accessed_ms
                         .cmp(&b.last_accessed_ms)
@@ -132,7 +140,6 @@ impl Rotator {
                 });
             }
             EvictionPolicy::Fifo => {
-                // Oldest `downloaded_at` first.
                 entries.sort_by(|a, b| a.downloaded_at_ms.cmp(&b.downloaded_at_ms));
             }
             EvictionPolicy::None => {}
@@ -268,7 +275,7 @@ mod tests {
 
         let stats = rotator.rotate(&mut index, &cache).unwrap();
         assert_eq!(stats.aged_out, 1);
-        assert_eq!(stats.lru_evicted, 0);
+        assert_eq!(stats.size_evicted, 0);
         assert!(index.get("old").is_none());
         assert!(index.get("fresh").is_some());
     }
@@ -302,7 +309,7 @@ mod tests {
 
         let stats = rotator.rotate(&mut index, &cache).unwrap();
         assert_eq!(stats.aged_out, 0);
-        assert_eq!(stats.lru_evicted, 2);
+        assert_eq!(stats.size_evicted, 2);
         assert!(index.get("a").is_none());
         assert!(index.get("b").is_none());
         assert!(index.get("c").is_some());
