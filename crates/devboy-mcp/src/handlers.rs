@@ -997,6 +997,7 @@ impl ToolHandler {
             priority: None,
             parent: params.parent,
             markdown: params.markdown.unwrap_or(true),
+            ..Default::default()
         };
 
         let provider = if let Some(ref name) = params.provider {
@@ -1054,6 +1055,7 @@ impl ToolHandler {
             priority: None,
             parent_id: params.parent_id,
             markdown: params.markdown.unwrap_or(true),
+            ..Default::default()
         };
 
         for provider in &self.providers {
