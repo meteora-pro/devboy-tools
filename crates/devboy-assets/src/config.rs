@@ -67,9 +67,22 @@ pub struct ResolvedAssetConfig {
 impl AssetConfig {
     /// Parse and validate the configuration, applying defaults where needed.
     pub fn resolve(&self) -> Result<ResolvedAssetConfig> {
-        let cache_dir = match self.cache_dir.as_deref() {
+        let raw_dir = match self.cache_dir.as_deref() {
             Some(path) => expand_path(path),
             None => default_cache_dir()?,
+        };
+        // Ensure the resolved path is always absolute. A relative path
+        // would make the cache location depend on the process working
+        // directory and violate the documented contract on
+        // `ResolvedAssetConfig::cache_dir`.
+        let cache_dir = if raw_dir.is_relative() {
+            std::env::current_dir()
+                .map_err(|e| {
+                    AssetError::cache_dir(format!("cannot resolve relative cache_dir: {e}"))
+                })?
+                .join(raw_dir)
+        } else {
+            raw_dir
         };
 
         let max_cache_size = parse_size(

@@ -14,7 +14,6 @@
 //!    is met. Within the same timestamp bucket, larger files go first so
 //!    one multi-GB video is preferred over many small logs.
 
-use std::path::Path;
 use std::time::Duration;
 
 use crate::cache::CacheManager;
@@ -148,9 +147,10 @@ impl Rotator {
 
     /// Check whether the index is already within the configured budget.
     ///
-    /// Provided as a cheap fast-path so callers can skip `rotate` when the
-    /// cache is empty / small. A budget of 0 is treated as "unlimited".
-    pub fn within_budget(&self, index: &AssetIndex, _root: &Path) -> bool {
+    /// This is an index-only check: it compares the total tracked size
+    /// against the configured limit without touching the filesystem. A
+    /// budget of 0 is treated as "unlimited".
+    pub fn within_budget(&self, index: &AssetIndex) -> bool {
         self.max_cache_size == 0 || index.total_size() <= self.max_cache_size
     }
 }
@@ -356,7 +356,7 @@ mod tests {
             Duration::from_secs(100 * 365 * 86_400),
         );
         let rotator = Rotator::new(&resolved);
-        assert!(rotator.within_budget(&index, tmp.path()));
+        assert!(rotator.within_budget(&index));
 
         index.upsert(CachedAsset::new(NewCachedAsset {
             id: "a".into(),
@@ -368,7 +368,7 @@ mod tests {
             checksum_sha256: "deadbeef".into(),
             remote_url: None,
         }));
-        assert!(rotator.within_budget(&index, tmp.path()));
+        assert!(rotator.within_budget(&index));
     }
 
     #[test]

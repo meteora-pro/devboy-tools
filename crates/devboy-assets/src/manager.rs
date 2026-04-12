@@ -171,15 +171,38 @@ impl AssetManager {
             remote_url,
         });
 
-        // Index upsert + rotation + persist. If any of these steps fail
-        // the blob written above would remain on disk but not be tracked
-        // in `index.json`, causing unbounded growth. Best-effort delete
-        // on the error path keeps the cache transactional.
+        // Index upsert + rotation + persist. If any step fails we must
+        // restore the in-memory index to its pre-mutation state *and*
+        // remove the orphaned blob from disk so the cache stays
+        // transactional and doesn't leak disk space.
         let result: Result<()> = (|| {
             let mut index = self.state_lock()?;
+
+            // When re-using an existing asset_id with a different path,
+            // delete the old blob so it doesn't become orphaned.
+            if let Some(previous) = index.get(asset.id.as_str())
+                && previous.local_path != asset.local_path
+                && let Some(old_abs) =
+                    resolve_under_root(&self.inner.config.cache_dir, &previous.local_path)
+            {
+                let _ = self.inner.cache.delete(&old_abs);
+            }
+
+            // Snapshot the index so we can restore on failure.
+            let snapshot = index.clone();
+
             index.upsert(asset.clone());
-            self.inner.rotator.rotate(&mut index, &self.inner.cache)?;
-            index.save(&self.inner.config.cache_dir)?;
+            if let Err(e) = self
+                .inner
+                .rotator
+                .rotate(&mut index, &self.inner.cache)
+                .and_then(|_| index.save(&self.inner.config.cache_dir))
+            {
+                // Restore the snapshot so list()/total_size() stay
+                // consistent with what's actually on disk.
+                *index = snapshot;
+                return Err(e);
+            }
             Ok(())
         })();
 
