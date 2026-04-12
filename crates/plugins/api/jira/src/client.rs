@@ -847,6 +847,17 @@ fn escape_jql(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// Check whether a JQL string already contains a project filter clause.
+/// Matches patterns like `project = KEY`, `project IN (...)`, `project ~ ...`.
+fn has_project_clause(jql: &str) -> bool {
+    let lower = jql.to_lowercase();
+    // Look for "project" followed by optional whitespace and an operator
+    lower.contains("project =")
+        || lower.contains("project in")
+        || lower.contains("project in(")
+        || lower.contains("project ~")
+}
+
 /// This maps user-friendly aliases to the correct category key, used as fallback
 /// when the exact status name is not found in available transitions.
 fn generic_status_to_category(status: &str) -> Option<&'static str> {
@@ -879,41 +890,61 @@ impl IssueProvider for JiraClient {
         }
         let offset = filter.offset.unwrap_or(0);
 
-        // Build JQL query
-        let mut jql_parts: Vec<String> = vec![format!("project = \"{}\"", self.project_key)];
+        // Resolve effective project key: filter override → self.project_key
+        let effective_project = filter
+            .project_key
+            .as_deref()
+            .unwrap_or(&self.project_key);
 
-        // State filter
-        if let Some(state) = &filter.state {
-            match state.as_str() {
-                "open" | "opened" => {
-                    jql_parts.push("statusCategory != Done".to_string());
-                }
-                "closed" | "done" => {
-                    jql_parts.push("statusCategory = Done".to_string());
-                }
-                "all" => {} // No filter
-                other => {
-                    // Exact status name
-                    jql_parts.push(format!("status = \"{}\"", other));
+        // Build JQL query — native_query takes precedence over filter-based construction
+        let jql = if let Some(native) = &filter.native_query {
+            // If native query doesn't mention a project clause, prepend one
+            // (Jira Cloud requires a project filter)
+            if has_project_clause(native) {
+                native.clone()
+            } else {
+                format!(
+                    "project = \"{}\" AND {}",
+                    effective_project, native
+                )
+            }
+        } else {
+            let mut jql_parts: Vec<String> =
+                vec![format!("project = \"{}\"", effective_project)];
+
+            // State filter
+            if let Some(state) = &filter.state {
+                match state.as_str() {
+                    "open" | "opened" => {
+                        jql_parts.push("statusCategory != Done".to_string());
+                    }
+                    "closed" | "done" => {
+                        jql_parts.push("statusCategory = Done".to_string());
+                    }
+                    "all" => {} // No filter
+                    other => {
+                        // Exact status name
+                        jql_parts.push(format!("status = \"{}\"", other));
+                    }
                 }
             }
-        }
 
-        if let Some(search) = &filter.search {
-            jql_parts.push(format!("summary ~ \"{}\"", escape_jql(search)));
-        }
-
-        if let Some(labels) = &filter.labels {
-            for label in labels {
-                jql_parts.push(format!("labels = \"{}\"", escape_jql(label)));
+            if let Some(search) = &filter.search {
+                jql_parts.push(format!("summary ~ \"{}\"", escape_jql(search)));
             }
-        }
 
-        if let Some(assignee) = &filter.assignee {
-            jql_parts.push(format!("assignee = \"{}\"", escape_jql(assignee)));
-        }
+            if let Some(labels) = &filter.labels {
+                for label in labels {
+                    jql_parts.push(format!("labels = \"{}\"", escape_jql(label)));
+                }
+            }
 
-        let jql = jql_parts.join(" AND ");
+            if let Some(assignee) = &filter.assignee {
+                jql_parts.push(format!("assignee = \"{}\"", escape_jql(assignee)));
+            }
+
+            jql_parts.join(" AND ")
+        };
 
         // Add ORDER BY
         let order_by = match filter.sort_by.as_deref() {
@@ -2133,6 +2164,130 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn test_get_issues_project_key_override() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "project = \"OTHER\"");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [sample_issue_json()],
+                    "startAt": 0,
+                    "maxResults": 20,
+                    "total": 1
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issues = client
+                .get_issues(IssueFilter {
+                    project_key: Some("OTHER".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+
+            assert_eq!(issues.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_native_query_passthrough() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "project = \"CUSTOM\" AND fixVersion = \"1.0\"");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [sample_issue_json()],
+                    "startAt": 0,
+                    "maxResults": 20,
+                    "total": 1
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issues = client
+                .get_issues(IssueFilter {
+                    native_query: Some(
+                        "project = \"CUSTOM\" AND fixVersion = \"1.0\"".to_string(),
+                    ),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+
+            assert_eq!(issues.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_native_query_auto_injects_project() {
+            let server = MockServer::start();
+
+            // Client is configured with project_key = "PROJ", native_query has no project clause
+            // → should auto-prepend project = "PROJ"
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "project = \"PROJ\" AND fixVersion = \"2.0\"");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [sample_issue_json()],
+                    "startAt": 0,
+                    "maxResults": 20,
+                    "total": 1
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issues = client
+                .get_issues(IssueFilter {
+                    native_query: Some("fixVersion = \"2.0\"".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+
+            assert_eq!(issues.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_native_query_with_project_in() {
+            let server = MockServer::start();
+
+            // Native query already has "project IN (...)" — should NOT prepend another project clause
+            server.mock(|when, then| {
+                when.method(GET).path("/search").query_param_includes(
+                    "jql",
+                    "project IN (\"A\", \"B\") AND status = \"Open\"",
+                );
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [sample_issue_json()],
+                    "startAt": 0,
+                    "maxResults": 20,
+                    "total": 1
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issues = client
+                .get_issues(IssueFilter {
+                    native_query: Some(
+                        "project IN (\"A\", \"B\") AND status = \"Open\"".to_string(),
+                    ),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+
+            assert_eq!(issues.len(), 1);
+        }
+
+        #[tokio::test]
         async fn test_get_issue() {
             let server = MockServer::start();
 
@@ -3096,6 +3251,21 @@ mod tests {
                 escape_jql(r#"both "and" \ here"#),
                 r#"both \"and\" \\ here"#
             );
+        }
+
+        #[test]
+        fn test_has_project_clause() {
+            // Positive cases
+            assert!(has_project_clause("project = \"PROJ\""));
+            assert!(has_project_clause("project = PROJ AND status = Open"));
+            assert!(has_project_clause("project IN (\"A\", \"B\")"));
+            assert!(has_project_clause("project in(A, B)"));
+            assert!(has_project_clause("PROJECT = KEY")); // case-insensitive
+            assert!(has_project_clause("status = Open AND project = X"));
+            // Negative cases
+            assert!(!has_project_clause("fixVersion = \"1.0\""));
+            assert!(!has_project_clause("summary ~ \"project plan\""));
+            assert!(!has_project_clause("status = Done"));
         }
 
         // =================================================================
