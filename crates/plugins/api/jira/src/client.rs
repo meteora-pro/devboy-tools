@@ -1091,9 +1091,7 @@ impl IssueProvider for JiraClient {
             }
         });
 
-        let effective_project = input
-            .project_id
-            .unwrap_or_else(|| self.project_key.clone());
+        let effective_project = input.project_id.unwrap_or_else(|| self.project_key.clone());
         let effective_issue_type = input.issue_type.unwrap_or_else(|| "Task".to_string());
 
         let payload = CreateIssuePayload {
