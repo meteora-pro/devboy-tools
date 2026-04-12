@@ -62,7 +62,11 @@ pub enum AssetContext {
 }
 
 impl AssetContext {
-    /// Short string form used for cache directory layout and logging.
+    /// Short colon-separated string for logging and debugging.
+    ///
+    /// **Note:** The cache directory layout is handled by
+    /// `devboy_assets::CacheManager::dir_for` / `path_for` — this method
+    /// is intentionally *not* used for on-disk paths.
     ///
     /// Examples:
     /// - `issue:DEV-123`
