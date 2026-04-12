@@ -847,6 +847,24 @@ fn escape_jql(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// Merge custom fields (Object format) into a serializable payload.
+/// Custom field entries like `{"customfield_10001": value}` become top-level keys
+/// in the `fields` object of the Jira API payload.
+fn merge_custom_fields_into_payload<T: serde::Serialize>(
+    payload: T,
+    custom_fields: &Option<serde_json::Value>,
+) -> serde_json::Value {
+    let mut value = serde_json::to_value(payload).unwrap_or_default();
+    if let Some(serde_json::Value::Object(cf)) = custom_fields {
+        if let Some(fields) = value.get_mut("fields").and_then(|f| f.as_object_mut()) {
+            for (k, v) in cf {
+                fields.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    value
+}
+
 /// This maps user-friendly aliases to the correct category key, used as fallback
 /// when the exact status name is not found in available transitions.
 fn generic_status_to_category(status: &str) -> Option<&'static str> {
@@ -1107,6 +1125,10 @@ impl IssueProvider for JiraClient {
             },
         };
 
+        // Merge custom fields into the payload (Jira expects them as top-level
+        // keys in `fields`, e.g., `customfield_10001: value`)
+        let payload = merge_custom_fields_into_payload(payload, &input.custom_fields);
+
         let url = format!("{}/issue", self.base_url);
         let create_resp: CreateIssueResponse = self.post(&url, &payload).await?;
 
@@ -1149,16 +1171,23 @@ impl IssueProvider for JiraClient {
             assignee,
         };
 
+        let has_custom_fields = input
+            .custom_fields
+            .as_ref()
+            .is_some_and(|v| v.is_object() && !v.as_object().unwrap().is_empty());
+
         // Only call PUT if there are field updates
         let has_field_updates = fields.summary.is_some()
             || fields.description.is_some()
             || fields.labels.is_some()
             || fields.priority.is_some()
-            || fields.assignee.is_some();
+            || fields.assignee.is_some()
+            || has_custom_fields;
 
         if has_field_updates {
             let url = format!("{}/issue/{}", self.base_url, jira_key);
             let payload = UpdateIssuePayload { fields };
+            let payload = merge_custom_fields_into_payload(payload, &input.custom_fields);
             self.put(&url, &payload).await?;
         }
 
@@ -2191,6 +2220,95 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn test_create_issue_with_custom_fields() {
+            let server = MockServer::start();
+
+            // Verify custom fields are merged into the payload
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issue")
+                    .body_includes("\"customfield_10001\":8")
+                    .body_includes("\"customfield_10002\":\"goal-a\"");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10005",
+                    "key": "PROJ-5"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-5");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10005",
+                    "key": "PROJ-5",
+                    "fields": {
+                        "summary": "With custom fields",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-03T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "With custom fields".to_string(),
+                    custom_fields: Some(serde_json::json!({
+                        "customfield_10001": 8,
+                        "customfield_10002": "goal-a"
+                    })),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-5");
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_with_custom_fields() {
+            let server = MockServer::start();
+
+            // Verify custom fields are merged into the update payload
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/issue/PROJ-1")
+                    .body_includes("\"customfield_10001\":5");
+                then.status(204);
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "summary": "Fix login bug",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .update_issue(
+                    "PROJ-1",
+                    UpdateIssueInput {
+                        custom_fields: Some(serde_json::json!({
+                            "customfield_10001": 5
+                        })),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        #[tokio::test]
         async fn test_update_issue() {
             let server = MockServer::start();
 
@@ -3096,6 +3214,60 @@ mod tests {
                 escape_jql(r#"both "and" \ here"#),
                 r#"both \"and\" \\ here"#
             );
+        }
+
+        #[test]
+        fn test_merge_custom_fields_into_payload() {
+            use crate::types::*;
+            let payload = CreateIssuePayload {
+                fields: CreateIssueFields {
+                    project: ProjectKey {
+                        key: "PROJ".into(),
+                    },
+                    summary: "Test".into(),
+                    issuetype: IssueType {
+                        name: "Task".into(),
+                    },
+                    description: None,
+                    labels: None,
+                    priority: None,
+                    assignee: None,
+                },
+            };
+
+            let cf = Some(serde_json::json!({"customfield_10001": 8, "customfield_10002": "x"}));
+            let merged = merge_custom_fields_into_payload(payload, &cf);
+
+            let fields = merged.get("fields").unwrap();
+            assert_eq!(fields["customfield_10001"], 8);
+            assert_eq!(fields["customfield_10002"], "x");
+            assert_eq!(fields["summary"], "Test");
+            assert_eq!(fields["project"]["key"], "PROJ");
+        }
+
+        #[test]
+        fn test_merge_custom_fields_none_is_noop() {
+            use crate::types::*;
+            let payload = CreateIssuePayload {
+                fields: CreateIssueFields {
+                    project: ProjectKey {
+                        key: "PROJ".into(),
+                    },
+                    summary: "Test".into(),
+                    issuetype: IssueType {
+                        name: "Task".into(),
+                    },
+                    description: None,
+                    labels: None,
+                    priority: None,
+                    assignee: None,
+                },
+            };
+
+            let merged = merge_custom_fields_into_payload(payload, &None);
+            let fields = merged.get("fields").unwrap();
+            assert_eq!(fields["summary"], "Test");
+            assert!(fields.get("customfield_10001").is_none());
         }
 
         // =================================================================
