@@ -245,7 +245,20 @@ impl AssetManager {
                 .inner
                 .rotator
                 .rotate(&mut index, &self.inner.cache)
-                .and_then(|_| index.save(&self.inner.config.cache_dir))
+                .and_then(|_| {
+                    // Guard: if rotation evicted the asset we just stored,
+                    // roll back rather than returning metadata that
+                    // immediately misses on `get()`.
+                    if index.get(asset.id.as_str()).is_none() {
+                        return Err(AssetError::config(format!(
+                            "asset '{}' was evicted immediately after store — \
+                             the cache budget ({} bytes) is too small for this file \
+                             ({} bytes) alongside existing entries",
+                            asset.id, self.inner.config.max_cache_size, asset.size,
+                        )));
+                    }
+                    index.save(&self.inner.config.cache_dir)
+                })
             {
                 // Restore the snapshot so list()/total_size() stay
                 // consistent with what's actually on disk.
