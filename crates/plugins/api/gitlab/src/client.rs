@@ -252,7 +252,12 @@ impl GitLabClient {
             .get("full_path")
             .or_else(|| body.get("url"))
             .and_then(|v| v.as_str())
-            .unwrap_or("");
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                Error::InvalidData(
+                    "GitLab upload response contains no usable url or full_path".to_string(),
+                )
+            })?;
         Ok(absolutize_gitlab_url(&self.base_url, relative))
     }
 
@@ -279,6 +284,61 @@ impl GitLabClient {
             .await
             .map_err(|e| Error::InvalidData(format!("Failed to parse response: {}", e)))
     }
+
+    /// Download a URL that is expected to belong to this GitLab instance.
+    ///
+    /// Auth headers (`PRIVATE-TOKEN` / proxy headers) are only sent when
+    /// the URL host matches the configured `base_url`. For cross-origin
+    /// URLs (which can appear in markdown via user-supplied links) the
+    /// request is made anonymously to prevent token leakage.
+    async fn download_trusted_url(&self, url: &str) -> Result<Vec<u8>> {
+        let request = if is_same_origin(&self.base_url, url) {
+            self.request(reqwest::Method::GET, url)
+        } else {
+            tracing::warn!(
+                url,
+                "downloading cross-origin attachment without auth headers"
+            );
+            self.client.get(url)
+        };
+        let response = request
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_default();
+            return Err(Error::from_status(status.as_u16(), message));
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| Error::Http(format!("failed to read attachment bytes: {e}")))?;
+        Ok(bytes.to_vec())
+    }
+}
+
+/// Check whether a URL belongs to the same origin as the configured
+/// base URL. Relative URLs and paths always count as same-origin.
+fn is_same_origin(base_url: &str, url: &str) -> bool {
+    if !url.contains("://") {
+        return true; // relative path
+    }
+    let base_host = base_url
+        .split("://")
+        .nth(1)
+        .unwrap_or(base_url)
+        .split('/')
+        .next()
+        .unwrap_or("");
+    let url_host = url
+        .split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split('/')
+        .next()
+        .unwrap_or("");
+    base_host.eq_ignore_ascii_case(url_host)
 }
 
 // =============================================================================
@@ -665,25 +725,8 @@ impl IssueProvider for GitLabClient {
     }
 
     async fn download_attachment(&self, _issue_key: &str, asset_id: &str) -> Result<Vec<u8>> {
-        // In GitLab the `asset_id` for an uploaded file is the URL itself
-        // (relative `/uploads/...` path or a full URL). Normalize to an
-        // absolute URL against the configured base and download with auth.
         let absolute = absolutize_gitlab_url(&self.base_url, asset_id);
-        let response = self
-            .request(reqwest::Method::GET, &absolute)
-            .send()
-            .await
-            .map_err(|e| Error::Http(e.to_string()))?;
-        let status = response.status();
-        if !status.is_success() {
-            let message = response.text().await.unwrap_or_default();
-            return Err(Error::from_status(status.as_u16(), message));
-        }
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| Error::Http(format!("failed to read attachment bytes: {e}")))?;
-        Ok(bytes.to_vec())
+        self.download_trusted_url(&absolute).await
     }
 
     fn asset_capabilities(&self) -> AssetCapabilities {
@@ -947,24 +990,8 @@ impl MergeRequestProvider for GitLabClient {
     }
 
     async fn download_mr_attachment(&self, _mr_key: &str, asset_id: &str) -> Result<Vec<u8>> {
-        // Same as download_attachment on the issue side — GitLab uploads
-        // are shared across issues and MRs at the project level.
         let absolute = absolutize_gitlab_url(&self.base_url, asset_id);
-        let response = self
-            .request(reqwest::Method::GET, &absolute)
-            .send()
-            .await
-            .map_err(|e| Error::Http(e.to_string()))?;
-        let status = response.status();
-        if !status.is_success() {
-            let message = response.text().await.unwrap_or_default();
-            return Err(Error::from_status(status.as_u16(), message));
-        }
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| Error::Http(format!("failed to read attachment bytes: {e}")))?;
-        Ok(bytes.to_vec())
+        self.download_trusted_url(&absolute).await
     }
 
     fn provider_name(&self) -> &'static str {
