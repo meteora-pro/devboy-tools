@@ -4,6 +4,7 @@ resolver = "2"
 members = [
     "crates/devboy-core",
     "crates/devboy-storage",
+    "crates/devboy-assets",
     "crates/devboy-executor",
     "crates/devboy-mcp",
     "crates/devboy-cli",
@@ -65,6 +66,9 @@ mockall = "0.13"
 insta = { version = "1.41", features = ["json", "yaml"] }
 httpmock = "0.8"
 tempfile = "3.15"
+
+# Asset management
+sha2 = "0.10"
 
 [profile.release]
 lto = true
