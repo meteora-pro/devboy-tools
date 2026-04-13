@@ -783,9 +783,7 @@ impl MergeRequestProvider for GitHubClient {
     }
 
     async fn download_mr_attachment(&self, _mr_key: &str, asset_id: &str) -> Result<Vec<u8>> {
-        let bytes =
-            download_github_url(&self.client, &self.base_url, &self.token, asset_id).await?;
-        Ok(bytes.to_vec())
+        download_github_url(&self.client, &self.base_url, &self.token, asset_id).await
     }
 
     fn provider_name(&self) -> &'static str {
@@ -849,15 +847,14 @@ async fn download_github_url(
 
 /// Check whether a URL is a known GitHub host or matches the configured
 /// base URL (for GitHub Enterprise instances).
+///
+/// Only HTTPS URLs are trusted — a `http://github.com/...` link would
+/// send credentials over plaintext and is rejected.
 fn is_github_trusted_host(base_url: &str, url: &str) -> bool {
-    let url_host = url
-        .split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let (url_scheme, url_host) = split_scheme_host(url);
+    if url_scheme != "https" {
+        return false;
+    }
 
     // Check against well-known GitHub CDN hosts.
     for trusted in GITHUB_TRUSTED_HOSTS {
@@ -867,15 +864,18 @@ fn is_github_trusted_host(base_url: &str, url: &str) -> bool {
     }
 
     // Check against the configured base URL (GitHub Enterprise).
-    let base_host = base_url
-        .split("://")
-        .nth(1)
-        .unwrap_or(base_url)
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let (_base_scheme, base_host) = split_scheme_host(base_url);
     url_host == base_host
+}
+
+/// Extract (scheme, host) from a URL string, both lowercased.
+fn split_scheme_host(url: &str) -> (String, String) {
+    let (scheme, rest) = match url.split_once("://") {
+        Some((s, r)) => (s.to_ascii_lowercase(), r),
+        None => return (String::new(), String::new()),
+    };
+    let host = rest.split('/').next().unwrap_or("").to_ascii_lowercase();
+    (scheme, host)
 }
 
 fn markdown_to_meta(att: &devboy_core::MarkdownAttachment) -> AssetMeta {
