@@ -466,24 +466,7 @@ impl IssueProvider for GitHubClient {
     }
 
     async fn download_attachment(&self, _issue_key: &str, asset_id: &str) -> Result<Vec<u8>> {
-        // GitHub's user-content CDN (e.g. `user-images.githubusercontent.com`)
-        // serves attachment bytes anonymously — but we still attach our
-        // normal auth headers so repo-local hosts work too.
-        let response = self
-            .request(reqwest::Method::GET, asset_id)
-            .send()
-            .await
-            .map_err(|e| Error::Http(e.to_string()))?;
-        let status = response.status();
-        if !status.is_success() {
-            let message = response.text().await.unwrap_or_default();
-            return Err(Error::from_status(status.as_u16(), message));
-        }
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| Error::Http(format!("failed to read attachment bytes: {e}")))?;
-        Ok(bytes.to_vec())
+        download_github_url(&self.client, &self.base_url, &self.token, asset_id).await
     }
 
     fn asset_capabilities(&self) -> AssetCapabilities {
@@ -800,20 +783,8 @@ impl MergeRequestProvider for GitHubClient {
     }
 
     async fn download_mr_attachment(&self, _mr_key: &str, asset_id: &str) -> Result<Vec<u8>> {
-        let response = self
-            .request(reqwest::Method::GET, asset_id)
-            .send()
-            .await
-            .map_err(|e| Error::Http(e.to_string()))?;
-        let status = response.status();
-        if !status.is_success() {
-            let message = response.text().await.unwrap_or_default();
-            return Err(Error::from_status(status.as_u16(), message));
-        }
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| Error::Http(format!("failed to read attachment bytes: {e}")))?;
+        let bytes =
+            download_github_url(&self.client, &self.base_url, &self.token, asset_id).await?;
         Ok(bytes.to_vec())
     }
 
@@ -826,6 +797,87 @@ impl MergeRequestProvider for GitHubClient {
 ///
 /// GitHub has no stable attachment id — the URL itself doubles as both the
 /// lookup key and the download target.
+/// Known GitHub-owned hosts that are safe to send auth headers to.
+const GITHUB_TRUSTED_HOSTS: &[&str] = &[
+    "github.com",
+    "api.github.com",
+    "githubusercontent.com",
+    "user-images.githubusercontent.com",
+    "raw.githubusercontent.com",
+    "objects.githubusercontent.com",
+    "camo.githubusercontent.com",
+];
+
+/// Download a URL, attaching GitHub auth headers only if the host is a
+/// known GitHub domain. For cross-origin URLs (which can appear in
+/// markdown via user-supplied links) the request is made anonymously to
+/// prevent token leakage.
+async fn download_github_url(
+    client: &reqwest::Client,
+    base_url: &str,
+    token: &str,
+    url: &str,
+) -> Result<Vec<u8>> {
+    let is_trusted = is_github_trusted_host(base_url, url);
+    let mut request = client
+        .get(url)
+        .header("Accept", "application/octet-stream")
+        .header("User-Agent", "devboy-tools");
+    if is_trusted && !token.is_empty() {
+        request = request.header("Authorization", format!("Bearer {token}"));
+    } else if !is_trusted {
+        tracing::warn!(
+            url,
+            "downloading cross-origin attachment without auth headers"
+        );
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|e| Error::Http(e.to_string()))?;
+    let status = response.status();
+    if !status.is_success() {
+        let message = response.text().await.unwrap_or_default();
+        return Err(Error::from_status(status.as_u16(), message));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| Error::Http(format!("failed to read attachment bytes: {e}")))?;
+    Ok(bytes.to_vec())
+}
+
+/// Check whether a URL is a known GitHub host or matches the configured
+/// base URL (for GitHub Enterprise instances).
+fn is_github_trusted_host(base_url: &str, url: &str) -> bool {
+    let url_host = url
+        .split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    // Check against well-known GitHub CDN hosts.
+    for trusted in GITHUB_TRUSTED_HOSTS {
+        if url_host == *trusted || url_host.ends_with(&format!(".{trusted}")) {
+            return true;
+        }
+    }
+
+    // Check against the configured base URL (GitHub Enterprise).
+    let base_host = base_url
+        .split("://")
+        .nth(1)
+        .unwrap_or(base_url)
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    url_host == base_host
+}
+
 fn markdown_to_meta(att: &devboy_core::MarkdownAttachment) -> AssetMeta {
     AssetMeta {
         id: att.url.clone(),

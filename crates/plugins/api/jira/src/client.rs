@@ -828,14 +828,13 @@ fn map_comment(jira_comment: &JiraComment, flavor: JiraFlavor) -> Comment {
 
 /// Map a Jira attachment payload to the provider-agnostic [`AssetMeta`].
 fn map_jira_attachment(raw: &JiraAttachment) -> AssetMeta {
+    // Prefer the explicit `filename` from Jira. Don't fall back to
+    // `filename_from_url(content)` because Jira content URLs typically
+    // end with `/attachment/content/{id}`, producing useless filenames
+    // like "42". Fall back to `attachment-{id}` instead.
     let filename = raw
         .filename
         .clone()
-        .or_else(|| {
-            raw.content
-                .as_deref()
-                .map(devboy_core::asset::filename_from_url)
-        })
         .unwrap_or_else(|| format!("attachment-{}", raw.id));
     let author = raw
         .author
@@ -1383,7 +1382,12 @@ impl IssueProvider for JiraClient {
             .into_iter()
             .next()
             .and_then(|a| a.content)
-            .unwrap_or_default();
+            .filter(|u| !u.is_empty())
+            .ok_or_else(|| {
+                Error::InvalidData(
+                    "Jira upload returned no attachment with a content URL".to_string(),
+                )
+            })?;
         Ok(url)
     }
 
