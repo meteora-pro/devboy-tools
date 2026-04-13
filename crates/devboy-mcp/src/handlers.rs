@@ -1954,7 +1954,7 @@ impl ToolHandler {
                         serde_json::to_string_pretty(&output).unwrap_or_default(),
                     );
                 }
-                Err(e) if e.to_string().contains("does not support") => continue,
+                Err(e) if should_try_next_provider(&e) => continue,
                 Err(e) => return ToolCallResult::error(format!("{e}")),
             }
         }
@@ -1966,10 +1966,24 @@ impl ToolHandler {
             Ok(p) => p,
             Err(e) => return e,
         };
+        if params.context_type != "issue" {
+            return ToolCallResult::error(format!(
+                "Upload not supported for context_type '{}', use 'issue'",
+                params.context_type
+            ));
+        }
         let data = match base64_decode_param(&params.file_data) {
             Ok(d) => d,
             Err(e) => return e,
         };
+        if data.len() > MAX_UPLOAD_SIZE {
+            return ToolCallResult::error(format!(
+                "File '{}' is {} bytes, max allowed is {} bytes",
+                params.filename,
+                data.len(),
+                MAX_UPLOAD_SIZE,
+            ));
+        }
         for provider in &self.providers {
             match IssueProvider::upload_attachment(
                 provider.as_ref(),
@@ -1988,7 +2002,7 @@ impl ToolHandler {
                         serde_json::to_string_pretty(&output).unwrap_or_default(),
                     );
                 }
-                Err(e) if e.to_string().contains("does not support") => continue,
+                Err(e) if should_try_next_provider(&e) => continue,
                 Err(e) => return ToolCallResult::error(format!("{e}")),
             }
         }
@@ -2039,7 +2053,7 @@ impl ToolHandler {
                         serde_json::to_string_pretty(&output).unwrap_or_default(),
                     );
                 }
-                Err(e) if e.to_string().contains("does not support") => continue,
+                Err(e) if should_try_next_provider(&e) => continue,
                 Err(e) => return ToolCallResult::error(format!("{e}")),
             }
         }
@@ -2065,7 +2079,7 @@ impl ToolHandler {
                         serde_json::to_string_pretty(&output).unwrap_or_default(),
                     );
                 }
-                Err(e) if e.to_string().contains("does not support") => continue,
+                Err(e) if should_try_next_provider(&e) => continue,
                 Err(e) => return ToolCallResult::error(format!("{e}")),
             }
         }
@@ -2337,7 +2351,6 @@ struct AssetContextParams {
 
 #[derive(Deserialize)]
 struct UploadAssetParams {
-    #[allow(dead_code)]
     context_type: String,
     key: String,
     filename: String,
@@ -2370,6 +2383,21 @@ fn parse_params<T: serde::de::DeserializeOwned>(
         )),
     }
 }
+
+/// Check whether an error should cause the asset handler to try the next
+/// provider. We match on `devboy_core::Error` variants instead of
+/// string-matching `.to_string()` for robustness.
+fn should_try_next_provider(e: &devboy_core::Error) -> bool {
+    matches!(
+        e,
+        devboy_core::Error::ProviderUnsupported { .. }
+            | devboy_core::Error::ProviderNotFound(_)
+            | devboy_core::Error::NotFound(_)
+    )
+}
+
+/// Maximum upload size (10 MB), matching the executor limit.
+const MAX_UPLOAD_SIZE: usize = 10 * 1024 * 1024;
 
 /// Decode base64 file data from a tool parameter.
 fn base64_decode_param(input: &str) -> std::result::Result<Vec<u8>, ToolCallResult> {
