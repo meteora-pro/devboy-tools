@@ -22,6 +22,7 @@
 //! }
 //! ```
 
+pub mod asset;
 pub mod config;
 pub mod enricher;
 pub mod error;
@@ -50,6 +51,12 @@ pub use types::{
 // Re-export enricher traits and utilities
 pub use enricher::{PropertySchema, ToolEnricher, ToolSchema, sanitize_field_name};
 pub use tool_category::ToolCategory;
+
+// Re-export asset management types
+pub use asset::{
+    AssetAnalysis, AssetCapabilities, AssetContext, AssetContextKind, AssetInput, AssetMeta,
+    ContentKind, ContextCapabilities, SemanticAnalysis,
+};
 
 // Re-export config types
 pub use config::{
