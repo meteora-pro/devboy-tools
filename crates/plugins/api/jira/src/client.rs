@@ -3336,6 +3336,7 @@ mod tests {
             assert!(has_project_clause("project in(A, B)"));
             assert!(has_project_clause("PROJECT = KEY")); // case-insensitive
             assert!(has_project_clause("status = Open AND project = X"));
+            assert!(has_project_clause("project ~ KEY")); // contains operator
             // Negative cases
             assert!(!has_project_clause("fixVersion = \"1.0\""));
             assert!(!has_project_clause("summary ~ \"project plan\""));
