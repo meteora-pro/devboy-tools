@@ -422,9 +422,15 @@ pub fn parse_markdown_attachments(markdown: &str) -> Vec<MarkdownAttachment> {
             .trim();
         // Strip optional title: `[foo](url "title")`
         let url = match url_raw.split_once(char::is_whitespace) {
-            Some((head, _tail)) => head.trim().to_string(),
-            None => url_raw.to_string(),
+            Some((head, _tail)) => head.trim(),
+            None => url_raw,
         };
+        // Handle angle-bracket wrapped URLs: `[text](<url>)`
+        let url = url
+            .strip_prefix('<')
+            .and_then(|s| s.strip_suffix('>'))
+            .unwrap_or(url)
+            .to_string();
 
         if !url.is_empty() && seen.insert(url.clone()) {
             let filename = if !text.is_empty() && !looks_like_url(&text) {
@@ -843,5 +849,20 @@ mod tests {
     fn markdown_empty_and_plain_text() {
         assert!(parse_markdown_attachments("").is_empty());
         assert!(parse_markdown_attachments("no links here at all").is_empty());
+    }
+
+    #[test]
+    fn markdown_strips_angle_bracket_urls() {
+        let md = "[spec](<https://example.com/spec.pdf>)";
+        let attachments = parse_markdown_attachments(md);
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].url, "https://example.com/spec.pdf");
+        assert_eq!(attachments[0].filename, "spec");
+
+        // Image variant
+        let md = "![shot](<https://cdn.example.com/img.png>)";
+        let attachments = parse_markdown_attachments(md);
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].url, "https://cdn.example.com/img.png");
     }
 }

@@ -130,15 +130,21 @@ impl JiraClient {
         }
     }
 
-    /// Build request with auth headers.
+    /// Build request with auth headers and JSON content type.
     ///
     /// When proxy is configured, provider's own auth is suppressed and
     /// proxy headers are added instead. The proxy handles authentication.
     fn request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
-        let mut builder = self
-            .client
-            .request(method, url)
-            .header("Content-Type", "application/json");
+        self.request_raw(method, url)
+            .header("Content-Type", "application/json")
+    }
+
+    /// Build request with auth headers but **no** Content-Type header.
+    ///
+    /// Use this for multipart uploads where reqwest must set its own
+    /// `Content-Type: multipart/form-data; boundary=...` header.
+    fn request_raw(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
+        let mut builder = self.client.request(method, url);
 
         if let Some(headers) = &self.proxy_headers {
             for (key, value) in headers {
@@ -1357,8 +1363,11 @@ impl IssueProvider for JiraClient {
             .map_err(|e| Error::Http(format!("failed to build multipart: {e}")))?;
         let form = reqwest::multipart::Form::new().part("file", part);
 
+        // Use request_raw (no Content-Type) so reqwest can set its own
+        // multipart/form-data boundary header. self.request() sets
+        // Content-Type: application/json which conflicts with multipart.
         let response = self
-            .request(reqwest::Method::POST, &url)
+            .request_raw(reqwest::Method::POST, &url)
             // Jira requires the X-Atlassian-Token header to bypass its XSRF check
             // on file uploads: https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-attachments/
             .header("X-Atlassian-Token", "no-check")
