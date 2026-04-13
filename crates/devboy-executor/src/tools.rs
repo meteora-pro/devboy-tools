@@ -363,6 +363,67 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s
             },
         },
+        // =====================================================================
+        // Asset tools
+        // =====================================================================
+        ToolDefinition {
+            name: "get_assets".into(),
+            description: "List file attachments for an issue or merge request.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("context_type", PropertySchema::string_enum(&["issue", "mr"], "Context type: 'issue' or 'mr' (merge request / pull request)"));
+                s.add_property("key", PropertySchema::string("Issue key (e.g. 'DEV-123', 'gitlab#42') or MR key (e.g. 'mr#42', 'pr#42')"));
+                s.set_required("context_type", true);
+                s.set_required("key", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "upload_asset".into(),
+            description: "Upload a file attachment to an issue. Returns the download URL.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("context_type", PropertySchema::string_enum(&["issue"], "Context type (currently only 'issue' is supported for uploads)"));
+                s.add_property("key", PropertySchema::string("Issue key (e.g. 'DEV-123')"));
+                s.add_property("filename", PropertySchema::string("Original filename (e.g. 'screenshot.png')"));
+                s.add_property("fileData", PropertySchema::string("Base64-encoded file content"));
+                s.set_required("context_type", true);
+                s.set_required("key", true);
+                s.set_required("filename", true);
+                s.set_required("fileData", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "download_asset".into(),
+            description: "Download a file attachment from an issue or merge request. Returns base64-encoded content.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("context_type", PropertySchema::string_enum(&["issue", "mr"], "Context type: 'issue' or 'mr'"));
+                s.add_property("key", PropertySchema::string("Issue key or MR key"));
+                s.add_property("asset_id", PropertySchema::string("Asset identifier from get_assets response"));
+                s.set_required("context_type", true);
+                s.set_required("key", true);
+                s.set_required("asset_id", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "delete_asset".into(),
+            description: "Delete a file attachment from an issue. Not all providers support this — check asset_capabilities first.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("key", PropertySchema::string("Issue key (e.g. 'PROJ-123')"));
+                s.add_property("asset_id", PropertySchema::string("Asset identifier to delete"));
+                s.set_required("key", true);
+                s.set_required("asset_id", true);
+                s
+            },
+        },
     ]
 }
 
@@ -373,7 +434,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 24);
+        assert_eq!(tools.len(), 28);
     }
 
     #[test]
@@ -399,6 +460,10 @@ mod tests {
             "get_available_statuses",
             "get_users",
             "link_issues",
+            "get_assets",
+            "upload_asset",
+            "download_asset",
+            "delete_asset",
         ];
         let git_repository_tools = [
             "get_merge_requests",

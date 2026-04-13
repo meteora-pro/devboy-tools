@@ -181,6 +181,12 @@ async fn dispatch_tool(
         "create_epic" => execute_create_epic(provider, args).await,
         "update_epic" => execute_update_epic(provider, args).await,
 
+        // Asset tools
+        "get_assets" => execute_get_assets(provider, args).await,
+        "upload_asset" => execute_upload_asset(provider, args).await,
+        "download_asset" => execute_download_asset(provider, args).await,
+        "delete_asset" => execute_delete_asset(provider, args).await,
+
         _ => Err(Error::NotFound(format!("unknown tool: {tool}"))),
     }
 }
@@ -1174,7 +1180,187 @@ pub const SUPPORTED_TOOLS: &[&str] = &[
     "get_meeting_notes",
     "get_meeting_transcript",
     "search_meeting_notes",
+    // Asset tools
+    "get_assets",
+    "upload_asset",
+    "download_asset",
+    "delete_asset",
 ];
+
+// =============================================================================
+// Asset tool handlers
+// =============================================================================
+
+#[derive(Deserialize)]
+struct GetAssetsParams {
+    /// "issue" or "mr"
+    context_type: String,
+    /// Issue key (e.g. "DEV-123") or MR key (e.g. "mr#42")
+    key: String,
+}
+
+async fn execute_get_assets(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetAssetsParams = serde_json::from_value(args.clone())?;
+    debug!(context_type = %params.context_type, key = %params.key, "get_assets");
+
+    let assets = match params.context_type.as_str() {
+        "issue" => IssueProvider::get_issue_attachments(provider, &params.key).await?,
+        "mr" | "merge_request" | "pull_request" => {
+            MergeRequestProvider::get_mr_attachments(provider, &params.key).await?
+        }
+        other => {
+            return Err(Error::InvalidData(format!(
+                "unsupported context_type: '{other}', expected 'issue' or 'mr'"
+            )));
+        }
+    };
+
+    let capabilities = IssueProvider::asset_capabilities(provider);
+    let output = serde_json::json!({
+        "attachments": assets,
+        "count": assets.len(),
+        "capabilities": capabilities,
+    });
+    Ok(ToolOutput::Text(serde_json::to_string_pretty(&output)?))
+}
+
+#[derive(Deserialize)]
+struct UploadAssetParams {
+    /// "issue" or "mr"
+    context_type: String,
+    /// Issue key or MR key
+    key: String,
+    /// Original filename
+    filename: String,
+    /// Base64-encoded file data
+    #[serde(rename = "fileData")]
+    file_data: String,
+}
+
+async fn execute_upload_asset(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: UploadAssetParams = serde_json::from_value(args.clone())?;
+    debug!(context_type = %params.context_type, key = %params.key, filename = %params.filename, "upload_asset");
+
+    let data = base64_decode(&params.file_data)?;
+
+    // Validate size (max 10 MB)
+    const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
+    if data.len() > MAX_FILE_SIZE {
+        return Err(Error::InvalidData(format!(
+            "file '{}' is {} bytes, max allowed is {} bytes",
+            params.filename,
+            data.len(),
+            MAX_FILE_SIZE,
+        )));
+    }
+
+    let url = match params.context_type.as_str() {
+        "issue" => {
+            IssueProvider::upload_attachment(provider, &params.key, &params.filename, &data).await?
+        }
+        other => {
+            return Err(Error::InvalidData(format!(
+                "upload not supported for context_type: '{other}', use 'issue'"
+            )));
+        }
+    };
+
+    let output = serde_json::json!({
+        "success": true,
+        "url": url,
+        "filename": params.filename,
+        "size": data.len(),
+    });
+    Ok(ToolOutput::Text(serde_json::to_string_pretty(&output)?))
+}
+
+#[derive(Deserialize)]
+struct DownloadAssetParams {
+    /// "issue" or "mr"
+    context_type: String,
+    /// Issue key or MR key
+    key: String,
+    /// Asset identifier (provider-specific)
+    asset_id: String,
+}
+
+async fn execute_download_asset(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: DownloadAssetParams = serde_json::from_value(args.clone())?;
+    debug!(context_type = %params.context_type, key = %params.key, asset_id = %params.asset_id, "download_asset");
+
+    let bytes = match params.context_type.as_str() {
+        "issue" => {
+            IssueProvider::download_attachment(provider, &params.key, &params.asset_id).await?
+        }
+        "mr" | "merge_request" | "pull_request" => {
+            MergeRequestProvider::download_mr_attachment(provider, &params.key, &params.asset_id)
+                .await?
+        }
+        other => {
+            return Err(Error::InvalidData(format!(
+                "unsupported context_type: '{other}', expected 'issue' or 'mr'"
+            )));
+        }
+    };
+
+    let encoded = base64_encode(&bytes);
+    let output = serde_json::json!({
+        "success": true,
+        "asset_id": params.asset_id,
+        "size": bytes.len(),
+        "data": encoded,
+    });
+    Ok(ToolOutput::Text(serde_json::to_string_pretty(&output)?))
+}
+
+#[derive(Deserialize)]
+struct DeleteAssetParams {
+    /// Issue key
+    key: String,
+    /// Asset identifier
+    asset_id: String,
+}
+
+async fn execute_delete_asset(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: DeleteAssetParams = serde_json::from_value(args.clone())?;
+    debug!(key = %params.key, asset_id = %params.asset_id, "delete_asset");
+
+    IssueProvider::delete_attachment(provider, &params.key, &params.asset_id).await?;
+
+    let output = serde_json::json!({
+        "success": true,
+        "asset_id": params.asset_id,
+        "message": format!("Attachment '{}' deleted from {}", params.asset_id, params.key),
+    });
+    Ok(ToolOutput::Text(serde_json::to_string_pretty(&output)?))
+}
+
+/// Decode base64 with standard or URL-safe alphabet.
+fn base64_decode(input: &str) -> Result<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(input.trim())
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(input.trim()))
+        .map_err(|e| Error::InvalidData(format!("invalid base64: {e}")))
+}
+
+/// Encode bytes as standard base64.
+fn base64_encode(data: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(data)
+}
 
 #[cfg(test)]
 mod tests {
@@ -1388,7 +1574,7 @@ mod tests {
         assert!(SUPPORTED_TOOLS.contains(&"get_meeting_notes"));
         assert!(SUPPORTED_TOOLS.contains(&"get_meeting_transcript"));
         assert!(SUPPORTED_TOOLS.contains(&"search_meeting_notes"));
-        assert_eq!(SUPPORTED_TOOLS.len(), 25);
+        assert_eq!(SUPPORTED_TOOLS.len(), 29);
     }
 
     // --- Issue tool dispatch tests ---

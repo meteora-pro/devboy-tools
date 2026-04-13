@@ -700,6 +700,95 @@ define_tools! {
             },
             "required": ["query"]
         }
+    },
+
+    // Asset tools
+    "get_assets" => handle_get_assets {
+        category: ToolCategory::Issues,
+        description: "List file attachments for an issue or merge request.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "context_type": {
+                    "type": "string",
+                    "enum": ["issue", "mr"],
+                    "description": "Context type: 'issue' or 'mr' (merge request / pull request)"
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Issue key (e.g. 'DEV-123') or MR key (e.g. 'mr#42')"
+                }
+            },
+            "required": ["context_type", "key"]
+        }
+    },
+    "upload_asset" => handle_upload_asset {
+        category: ToolCategory::Issues,
+        description: "Upload a file attachment to an issue. Returns the download URL.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "context_type": {
+                    "type": "string",
+                    "enum": ["issue"],
+                    "description": "Context type (currently only 'issue' is supported)"
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Issue key (e.g. 'DEV-123')"
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Original filename (e.g. 'screenshot.png')"
+                },
+                "fileData": {
+                    "type": "string",
+                    "description": "Base64-encoded file content"
+                }
+            },
+            "required": ["context_type", "key", "filename", "fileData"]
+        }
+    },
+    "download_asset" => handle_download_asset {
+        category: ToolCategory::Issues,
+        description: "Download a file attachment. Returns base64-encoded content.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "context_type": {
+                    "type": "string",
+                    "enum": ["issue", "mr"],
+                    "description": "Context type: 'issue' or 'mr'"
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Issue key or MR key"
+                },
+                "asset_id": {
+                    "type": "string",
+                    "description": "Asset identifier from get_assets response"
+                }
+            },
+            "required": ["context_type", "key", "asset_id"]
+        }
+    },
+    "delete_asset" => handle_delete_asset {
+        category: ToolCategory::Issues,
+        description: "Delete a file attachment from an issue. Not all providers support this.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Issue key (e.g. 'PROJ-123')"
+                },
+                "asset_id": {
+                    "type": "string",
+                    "description": "Asset identifier to delete"
+                }
+            },
+            "required": ["key", "asset_id"]
+        }
     };
 
     // Context management (handled by McpServer, not ToolHandler)
@@ -1830,6 +1919,160 @@ impl ToolHandler {
     }
 
     // =========================================================================
+    // ASSET HANDLERS
+    // =========================================================================
+
+    async fn handle_get_assets(&self, arguments: Option<Value>) -> ToolCallResult {
+        let params: AssetContextParams = match parse_params(arguments) {
+            Ok(p) => p,
+            Err(e) => return e,
+        };
+        for provider in &self.providers {
+            let result = match params.context_type.as_str() {
+                "issue" => {
+                    IssueProvider::get_issue_attachments(provider.as_ref(), &params.key).await
+                }
+                "mr" => {
+                    MergeRequestProvider::get_mr_attachments(provider.as_ref(), &params.key).await
+                }
+                _ => {
+                    return ToolCallResult::error(format!(
+                        "Unsupported context_type: '{}', use 'issue' or 'mr'",
+                        params.context_type
+                    ));
+                }
+            };
+            match result {
+                Ok(assets) => {
+                    let caps = IssueProvider::asset_capabilities(provider.as_ref());
+                    let output = serde_json::json!({
+                        "attachments": assets,
+                        "count": assets.len(),
+                        "capabilities": caps,
+                    });
+                    return ToolCallResult::text(
+                        serde_json::to_string_pretty(&output).unwrap_or_default(),
+                    );
+                }
+                Err(e) if e.to_string().contains("does not support") => continue,
+                Err(e) => return ToolCallResult::error(format!("{e}")),
+            }
+        }
+        ToolCallResult::error("No provider supports get_assets".to_string())
+    }
+
+    async fn handle_upload_asset(&self, arguments: Option<Value>) -> ToolCallResult {
+        let params: UploadAssetParams = match parse_params(arguments) {
+            Ok(p) => p,
+            Err(e) => return e,
+        };
+        let data = match base64_decode_param(&params.file_data) {
+            Ok(d) => d,
+            Err(e) => return e,
+        };
+        for provider in &self.providers {
+            match IssueProvider::upload_attachment(
+                provider.as_ref(),
+                &params.key,
+                &params.filename,
+                &data,
+            )
+            .await
+            {
+                Ok(url) => {
+                    let output = serde_json::json!({
+                        "success": true, "url": url,
+                        "filename": params.filename, "size": data.len(),
+                    });
+                    return ToolCallResult::text(
+                        serde_json::to_string_pretty(&output).unwrap_or_default(),
+                    );
+                }
+                Err(e) if e.to_string().contains("does not support") => continue,
+                Err(e) => return ToolCallResult::error(format!("{e}")),
+            }
+        }
+        ToolCallResult::error("No provider supports upload_asset".to_string())
+    }
+
+    async fn handle_download_asset(&self, arguments: Option<Value>) -> ToolCallResult {
+        let params: DownloadAssetParams = match parse_params(arguments) {
+            Ok(p) => p,
+            Err(e) => return e,
+        };
+        for provider in &self.providers {
+            let result = match params.context_type.as_str() {
+                "issue" => {
+                    IssueProvider::download_attachment(
+                        provider.as_ref(),
+                        &params.key,
+                        &params.asset_id,
+                    )
+                    .await
+                }
+                "mr" => {
+                    MergeRequestProvider::download_mr_attachment(
+                        provider.as_ref(),
+                        &params.key,
+                        &params.asset_id,
+                    )
+                    .await
+                }
+                _ => {
+                    return ToolCallResult::error(format!(
+                        "Unsupported context_type: '{}'",
+                        params.context_type
+                    ));
+                }
+            };
+            match result {
+                Ok(bytes) => {
+                    use base64::Engine;
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                    let output = serde_json::json!({
+                        "success": true,
+                        "asset_id": params.asset_id,
+                        "size": bytes.len(),
+                        "data": encoded,
+                    });
+                    return ToolCallResult::text(
+                        serde_json::to_string_pretty(&output).unwrap_or_default(),
+                    );
+                }
+                Err(e) if e.to_string().contains("does not support") => continue,
+                Err(e) => return ToolCallResult::error(format!("{e}")),
+            }
+        }
+        ToolCallResult::error("No provider supports download_asset".to_string())
+    }
+
+    async fn handle_delete_asset(&self, arguments: Option<Value>) -> ToolCallResult {
+        let params: DeleteAssetParams = match parse_params(arguments) {
+            Ok(p) => p,
+            Err(e) => return e,
+        };
+        for provider in &self.providers {
+            match IssueProvider::delete_attachment(provider.as_ref(), &params.key, &params.asset_id)
+                .await
+            {
+                Ok(()) => {
+                    let output = serde_json::json!({
+                        "success": true,
+                        "asset_id": params.asset_id,
+                        "message": format!("Deleted attachment '{}' from {}", params.asset_id, params.key),
+                    });
+                    return ToolCallResult::text(
+                        serde_json::to_string_pretty(&output).unwrap_or_default(),
+                    );
+                }
+                Err(e) if e.to_string().contains("does not support") => continue,
+                Err(e) => return ToolCallResult::error(format!("{e}")),
+            }
+        }
+        ToolCallResult::error("No provider supports delete_asset".to_string())
+    }
+
+    // =========================================================================
     // HELPER METHODS
     // =========================================================================
 
@@ -2080,6 +2323,61 @@ struct SearchMeetingNotesParams {
     host_email: Option<String>,
     limit: Option<u32>,
     offset: Option<u32>,
+}
+
+// =============================================================================
+// ASSET TOOL PARAMS
+// =============================================================================
+
+#[derive(Deserialize)]
+struct AssetContextParams {
+    context_type: String,
+    key: String,
+}
+
+#[derive(Deserialize)]
+struct UploadAssetParams {
+    #[allow(dead_code)]
+    context_type: String,
+    key: String,
+    filename: String,
+    #[serde(rename = "fileData")]
+    file_data: String,
+}
+
+#[derive(Deserialize)]
+struct DownloadAssetParams {
+    context_type: String,
+    key: String,
+    asset_id: String,
+}
+
+#[derive(Deserialize)]
+struct DeleteAssetParams {
+    key: String,
+    asset_id: String,
+}
+
+/// Parse tool parameters from the arguments JSON.
+fn parse_params<T: serde::de::DeserializeOwned>(
+    arguments: Option<Value>,
+) -> std::result::Result<T, ToolCallResult> {
+    match arguments {
+        Some(v) => serde_json::from_value(v)
+            .map_err(|e| ToolCallResult::error(format!("Invalid parameters: {e}"))),
+        None => Err(ToolCallResult::error(
+            "Missing required parameters".to_string(),
+        )),
+    }
+}
+
+/// Decode base64 file data from a tool parameter.
+fn base64_decode_param(input: &str) -> std::result::Result<Vec<u8>, ToolCallResult> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(input.trim())
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(input.trim()))
+        .map_err(|e| ToolCallResult::error(format!("Invalid base64 data: {e}")))
 }
 
 // =============================================================================
@@ -2795,8 +3093,8 @@ mod tests {
         let handler = ToolHandler::new(vec![]);
         let tools = handler.available_tools();
 
-        // 9 issue tools + 6 MR tools + 2 pipeline tools + 3 meeting tools = 20 total
-        assert_eq!(tools.len(), 20);
+        // 9 issue tools + 4 asset tools + 6 MR tools + 2 pipeline tools + 3 meeting tools = 24 total
+        assert_eq!(tools.len(), 24);
     }
 
     #[tokio::test]

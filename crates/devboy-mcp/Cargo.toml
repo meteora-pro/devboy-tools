@@ -23,6 +23,7 @@ reqwest.workspace = true
 reqwest-eventsource.workspace = true
 futures.workspace = true
 tokio-util = { version = "0.7", features = ["io"] }
+base64 = "0.22"
 
 [dev-dependencies]
 mockall.workspace = true
