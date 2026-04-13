@@ -505,6 +505,7 @@ mod tests {
             url: Some("https://github.com/test/repo/issues/1".into()),
             created_at: Some("2024-01-01T00:00:00Z".into()),
             updated_at: Some("2024-01-02T00:00:00Z".into()),
+            attachments_count: None,
             parent: None,
             subtasks: vec![],
         }

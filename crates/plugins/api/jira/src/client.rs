@@ -761,6 +761,11 @@ fn map_issue(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> Issue
         url: Some(format!("{}/browse/{}", instance_url, issue.key)),
         created_at: issue.fields.created.clone(),
         updated_at: issue.fields.updated.clone(),
+        attachments_count: if issue.fields.attachment.is_empty() {
+            None
+        } else {
+            Some(issue.fields.attachment.len() as u32)
+        },
         parent: None,
         subtasks: vec![],
     }

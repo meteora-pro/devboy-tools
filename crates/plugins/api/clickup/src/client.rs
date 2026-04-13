@@ -463,6 +463,11 @@ fn map_task(task: &ClickUpTask) -> Issue {
         url: Some(task.url.clone()),
         created_at: map_timestamp(&task.date_created),
         updated_at: map_timestamp(&task.date_updated),
+        attachments_count: if task.attachments.is_empty() {
+            None
+        } else {
+            Some(task.attachments.len() as u32)
+        },
         parent: task.parent.as_ref().map(|id| format!("CU-{id}")),
         subtasks: task
             .subtasks

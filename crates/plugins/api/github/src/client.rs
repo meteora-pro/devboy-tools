@@ -182,6 +182,18 @@ fn map_labels(labels: &[GitHubLabel]) -> Vec<String> {
 }
 
 fn map_issue(gh_issue: &GitHubIssue) -> Issue {
+    // Count GitHub CDN attachment references in the body (no extra API call).
+    let attachments_count = gh_issue
+        .body
+        .as_deref()
+        .map(|body| {
+            parse_markdown_attachments(body)
+                .iter()
+                .filter(|a| is_github_attachment_url("https://api.github.com", &a.url))
+                .count() as u32
+        })
+        .filter(|&c| c > 0);
+
     Issue {
         key: format!("gh#{}", gh_issue.number),
         title: gh_issue.title.clone(),
@@ -199,6 +211,7 @@ fn map_issue(gh_issue: &GitHubIssue) -> Issue {
         url: Some(gh_issue.html_url.clone()),
         created_at: Some(gh_issue.created_at.clone()),
         updated_at: Some(gh_issue.updated_at.clone()),
+        attachments_count,
         parent: None,
         subtasks: vec![],
     }

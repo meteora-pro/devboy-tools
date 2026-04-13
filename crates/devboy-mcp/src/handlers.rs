@@ -2414,6 +2414,7 @@ mod tests {
                     url: Some("https://github.com/test/repo/issues/1".to_string()),
                     created_at: Some("2024-01-01T00:00:00Z".to_string()),
                     updated_at: Some("2024-01-02T00:00:00Z".to_string()),
+                    attachments_count: None,
                     parent: None,
                     subtasks: vec![],
                 }],
