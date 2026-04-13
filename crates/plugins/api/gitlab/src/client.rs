@@ -318,27 +318,32 @@ impl GitLabClient {
     }
 }
 
-/// Check whether a URL belongs to the same origin as the configured
-/// base URL. Relative URLs and paths always count as same-origin.
+/// Check whether a URL belongs to the same origin (scheme + host) as
+/// the configured base URL. Relative URLs and paths always count as
+/// same-origin. Scheme-relative `//host/...` URLs are treated as
+/// cross-origin to avoid ambiguity.
+///
+/// This prevents sending auth headers (PRIVATE-TOKEN / proxy) over
+/// plaintext HTTP when the base URL uses HTTPS.
 fn is_same_origin(base_url: &str, url: &str) -> bool {
-    if !url.contains("://") {
+    if !url.contains("://") && !url.starts_with("//") {
         return true; // relative path
     }
-    let base_host = base_url
-        .split("://")
-        .nth(1)
-        .unwrap_or(base_url)
-        .split('/')
-        .next()
-        .unwrap_or("");
-    let url_host = url
-        .split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("");
-    base_host.eq_ignore_ascii_case(url_host)
+    let (base_scheme, base_host) = split_scheme_host(base_url);
+    let (url_scheme, url_host) = split_scheme_host(url);
+
+    base_scheme.eq_ignore_ascii_case(&url_scheme) && base_host.eq_ignore_ascii_case(&url_host)
+}
+
+/// Extract (scheme, host) from a URL string. Returns empty strings for
+/// components that cannot be parsed.
+fn split_scheme_host(url: &str) -> (String, String) {
+    let (scheme, rest) = match url.split_once("://") {
+        Some((s, r)) => (s.to_ascii_lowercase(), r),
+        None => return (String::new(), String::new()),
+    };
+    let host = rest.split('/').next().unwrap_or("").to_ascii_lowercase();
+    (scheme, host)
 }
 
 // =============================================================================
