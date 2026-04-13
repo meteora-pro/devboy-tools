@@ -60,6 +60,14 @@ impl CacheManager {
     /// path component — any directory separators or `..` sequences in the
     /// inputs are replaced with `_`, so calling `path_for` with hostile
     /// input can never escape the per-context directory.
+    ///
+    /// An 8-character SHA-256 prefix of the raw asset_id is embedded in
+    /// the filename to avoid collisions between IDs that differ only in
+    /// characters collapsed by sanitization. 8 hex chars = 32 bits gives
+    /// ~4 billion buckets — collision probability via birthday paradox is
+    /// negligible for a rotated local cache (< 0.0001% with 100 files per
+    /// context). We intentionally keep the hash short to stay well within
+    /// the 255-char filename limit on ext4 / NTFS / APFS.
     pub fn path_for(&self, context: &AssetContext, asset_id: &str, filename: &str) -> PathBuf {
         let safe_id = sanitize_component(asset_id);
         let safe_name = sanitize_filename(filename);
@@ -115,13 +123,10 @@ impl CacheManager {
         data: &[u8],
     ) -> Result<StoredFile> {
         let path = self.path_for(context, asset_id, filename);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
         let parent = path
             .parent()
             .ok_or_else(|| AssetError::cache_dir(format!("no parent for {path:?}")))?;
+        std::fs::create_dir_all(parent)?;
 
         let mut tmp = tempfile::NamedTempFile::new_in(parent)
             .map_err(|e| AssetError::cache_dir(format!("temp file: {e}")))?;
