@@ -246,6 +246,13 @@ pub fn sha256_hex(data: &[u8]) -> String {
     let mut out = String::with_capacity(digest.len() * 2);
     for byte in digest {
         use std::fmt::Write as _;
+        // `let _ =` is intentional: `<String as fmt::Write>::write_fmt` is
+        // infallible — its `write_str` impl is just `self.push_str(s); Ok(())`
+        // (see https://doc.rust-lang.org/std/string/struct.String.html#impl-Write-for-String).
+        // The only theoretical failure is OOM, which aborts the process
+        // rather than returning `Err`. We suppress the `#[must_use]` lint
+        // with `let _ =` instead of `.unwrap()` to avoid emitting a dead
+        // panic path for an unreachable case.
         let _ = write!(out, "{byte:02x}");
     }
     out
