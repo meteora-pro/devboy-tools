@@ -713,7 +713,10 @@ impl IssueProvider for GitLabClient {
 
         let mut collect = |source: &str| {
             for att in parse_markdown_attachments(source) {
-                if seen.insert(att.url.clone()) {
+                // Only include URLs that contain `/uploads/` — GitLab
+                // project uploads always have this path segment.
+                // Ordinary links (issues, docs, MRs) are excluded.
+                if is_gitlab_upload_url(&att.url) && seen.insert(att.url.clone()) {
                     attachments.push(markdown_to_meta(&att, &self.base_url));
                 }
             }
@@ -976,7 +979,7 @@ impl MergeRequestProvider for GitLabClient {
 
         let mut collect = |source: &str| {
             for att in parse_markdown_attachments(source) {
-                if seen.insert(att.url.clone()) {
+                if is_gitlab_upload_url(&att.url) && seen.insert(att.url.clone()) {
                     attachments.push(markdown_to_meta(&att, &self.base_url));
                 }
             }
@@ -1007,6 +1010,14 @@ impl MergeRequestProvider for GitLabClient {
 /// Convert a relative GitLab upload path to an absolute URL.
 ///
 /// Pass-through for URLs that already contain a scheme.
+/// Check whether a markdown URL looks like a real GitLab project upload.
+///
+/// GitLab uploads always contain `/uploads/` in the path. Ordinary links
+/// to issues, MRs, docs pages, wikis, etc. do not.
+fn is_gitlab_upload_url(url: &str) -> bool {
+    url.contains("/uploads/")
+}
+
 fn absolutize_gitlab_url(base: &str, url_or_path: &str) -> String {
     if url_or_path.starts_with("http://") || url_or_path.starts_with("https://") {
         return url_or_path.to_string();

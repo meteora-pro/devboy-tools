@@ -30,6 +30,16 @@ pub const DIR_CHATS: &str = "chats";
 /// Directory name used for knowledge base attachments.
 pub const DIR_KB: &str = "kb";
 
+/// Maximum length for the sanitized asset ID component in a cache
+/// filename. Together with the 8-char hash and `MAX_NAME_LEN`, the
+/// total leaf stays well under the 255-byte filesystem limit.
+const MAX_ID_LEN: usize = 80;
+
+/// Maximum length for the sanitized filename component.
+const MAX_NAME_LEN: usize = 120;
+
+// Layout: {safe_id}-{8_hash}-{safe_name} + 2 dashes = MAX_ID_LEN + 8 + MAX_NAME_LEN + 2 = 210 < 255
+
 /// Manages the physical cache directory layout and file I/O.
 #[derive(Debug, Clone)]
 pub struct CacheManager {
@@ -69,8 +79,8 @@ impl CacheManager {
     /// context). We intentionally keep the hash short to stay well within
     /// the 255-char filename limit on ext4 / NTFS / APFS.
     pub fn path_for(&self, context: &AssetContext, asset_id: &str, filename: &str) -> PathBuf {
-        let safe_id = sanitize_component(asset_id);
-        let safe_name = sanitize_filename(filename);
+        let safe_id = truncate_component(&sanitize_component(asset_id), MAX_ID_LEN);
+        let safe_name = truncate_component(&sanitize_filename(filename), MAX_NAME_LEN);
         // Append a short hash of the *raw* (pre-sanitization) asset_id so
         // that two IDs differing only in characters collapsed by
         // sanitization (e.g. `a/b` → `a_b` vs `a?b` → `a_b`) never map
@@ -308,6 +318,19 @@ fn sanitize_component(value: &str) -> String {
 /// Same rules as [`sanitize_component`] but named for clarity at call sites.
 fn sanitize_key(key: &str) -> String {
     sanitize_component(key)
+}
+
+/// Truncate a string to at most `max_len` bytes on a char boundary.
+fn truncate_component(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        return s.to_string();
+    }
+    // Find a char boundary at or before max_len.
+    let mut end = max_len;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
 }
 
 #[cfg(test)]
