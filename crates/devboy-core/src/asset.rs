@@ -373,10 +373,11 @@ pub enum ContentKind {
 /// attachments directly into issue / MR bodies and comments rather than
 /// exposing a dedicated attachments API.
 ///
-/// Only URLs that look like downloadable attachments are returned — bare
-/// links to HTML pages (e.g. `https://example.com/`) are kept, but the
-/// caller can filter further if desired. The extracted `filename` is
-/// derived from the markdown alt text / link text when available and
+/// **No filtering is applied** — every `[text](url)` and `![alt](url)`
+/// reference is returned, including plain web links. Callers that only
+/// want downloadable files should filter by scheme, host, or file
+/// extension as appropriate for their provider. The extracted `filename`
+/// is derived from the markdown alt text / link text when available and
 /// falls back to the final path segment of the URL.
 pub fn parse_markdown_attachments(markdown: &str) -> Vec<MarkdownAttachment> {
     let mut out: Vec<MarkdownAttachment> = Vec::new();
