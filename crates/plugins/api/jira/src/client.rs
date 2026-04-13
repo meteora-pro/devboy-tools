@@ -943,6 +943,8 @@ impl IssueProvider for JiraClient {
             // (Jira Cloud requires a project filter)
             if has_project_clause(native) {
                 native.clone()
+            } else if native.trim_start().to_lowercase().starts_with("order by") {
+                format!("project = \"{}\" {}", escaped_project, native)
             } else {
                 format!("project = \"{}\" AND {}", escaped_project, native)
             }
@@ -2379,6 +2381,37 @@ mod tests {
             let issues = client
                 .get_issues(IssueFilter {
                     native_query: Some("".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+
+            assert_eq!(issues.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_native_query_order_by_only() {
+            let server = MockServer::start();
+
+            // native_query = "ORDER BY created ASC" without filters
+            // → should produce "project = "PROJ" ORDER BY created ASC" (no AND)
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "project = \"PROJ\" ORDER BY created ASC");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [sample_issue_json()],
+                    "startAt": 0,
+                    "maxResults": 20,
+                    "total": 1
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issues = client
+                .get_issues(IssueFilter {
+                    native_query: Some("ORDER BY created ASC".to_string()),
                     ..Default::default()
                 })
                 .await
