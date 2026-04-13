@@ -449,9 +449,13 @@ impl IssueProvider for GitHubClient {
 
         let mut attachments: Vec<AssetMeta> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let base = self.base_url.clone();
         let mut collect = |source: &str| {
             for att in parse_markdown_attachments(source) {
-                if seen.insert(att.url.clone()) {
+                // Only include URLs that point to known GitHub CDN /
+                // upload hosts. Ordinary markdown links (docs, issues,
+                // dashboards) must not appear as downloadable attachments.
+                if is_github_attachment_url(&base, &att.url) && seen.insert(att.url.clone()) {
                     attachments.push(markdown_to_meta(&att));
                 }
             }
@@ -758,15 +762,15 @@ impl MergeRequestProvider for GitHubClient {
     }
 
     async fn get_mr_attachments(&self, mr_key: &str) -> Result<Vec<AssetMeta>> {
-        // PR body + discussions, same strategy as issues.
         let mr = self.get_merge_request(mr_key).await?;
         let discussions = self.get_discussions(mr_key).await?;
 
         let mut attachments: Vec<AssetMeta> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let base = self.base_url.clone();
         let mut collect = |source: &str| {
             for att in parse_markdown_attachments(source) {
-                if seen.insert(att.url.clone()) {
+                if is_github_attachment_url(&base, &att.url) && seen.insert(att.url.clone()) {
                     attachments.push(markdown_to_meta(&att));
                 }
             }
@@ -876,6 +880,37 @@ fn split_scheme_host(url: &str) -> (String, String) {
     };
     let host = rest.split('/').next().unwrap_or("").to_ascii_lowercase();
     (scheme, host)
+}
+
+/// Check whether a URL looks like a real GitHub file attachment (CDN
+/// upload, user-content image, etc.) as opposed to an ordinary markdown
+/// link to a docs page, issue, or dashboard.
+///
+/// GitHub user-uploaded attachments are hosted on `githubusercontent.com`
+/// subdomains. We also accept `/assets/` paths on the configured host
+/// (GitHub Enterprise may serve uploads from the same domain).
+fn is_github_attachment_url(base_url: &str, url: &str) -> bool {
+    let (scheme, host) = split_scheme_host(url);
+    if scheme.is_empty() {
+        return false; // relative path — not a CDN upload
+    }
+    // Well-known GitHub CDN hosts for user-uploaded content.
+    if host.ends_with("githubusercontent.com") {
+        return true;
+    }
+    // On the base host: only `/assets/` paths are real uploads.
+    let (_base_scheme, base_host) = split_scheme_host(base_url);
+    if host == base_host {
+        let path = url
+            .split("://")
+            .nth(1)
+            .unwrap_or("")
+            .split_once('/')
+            .map(|(_, p)| p)
+            .unwrap_or("");
+        return path.contains("/assets/");
+    }
+    false
 }
 
 fn markdown_to_meta(att: &devboy_core::MarkdownAttachment) -> AssetMeta {
