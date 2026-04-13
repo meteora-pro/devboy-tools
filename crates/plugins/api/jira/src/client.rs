@@ -849,30 +849,52 @@ fn escape_jql(value: &str) -> String {
 
 /// Check whether a JQL string already contains a project filter clause.
 /// Matches `project` as a JQL field name (word boundary) followed by an operator.
-/// Avoids false positives like `summary ~ "project information"`.
+/// Skips occurrences inside quoted strings to avoid false positives.
 fn has_project_clause(jql: &str) -> bool {
     let lower = jql.to_lowercase();
     let bytes = lower.as_bytes();
     let keyword = b"project";
+    let mut in_quote = false;
+    let mut i = 0;
 
-    for (i, window) in bytes.windows(keyword.len()).enumerate() {
-        if window != keyword {
+    while i < bytes.len() {
+        // Track quoted strings — skip content inside quotes
+        if bytes[i] == b'\\' && in_quote && i + 1 < bytes.len() {
+            i += 2; // skip escaped character
             continue;
         }
-        // Check word boundary before "project"
-        if i > 0 && bytes[i - 1].is_ascii_alphanumeric() {
+        if bytes[i] == b'"' {
+            in_quote = !in_quote;
+            i += 1;
             continue;
         }
-        // Check what follows "project" — skip whitespace, then expect operator
-        let after = &lower[i + keyword.len()..];
-        let trimmed = after.trim_start();
-        if trimmed.starts_with('=')
-            || trimmed.starts_with('~')
-            || trimmed.starts_with("in ")
-            || trimmed.starts_with("in(")
-        {
-            return true;
+        if in_quote {
+            i += 1;
+            continue;
         }
+
+        // Check for "project" keyword at position i
+        if i + keyword.len() <= bytes.len() && &bytes[i..i + keyword.len()] == keyword {
+            // Word boundary before: not preceded by alphanumeric or underscore
+            if i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_') {
+                i += 1;
+                continue;
+            }
+            // Check what follows — skip whitespace, then expect a JQL operator
+            let after = &lower[i + keyword.len()..];
+            let trimmed = after.trim_start();
+            if trimmed.starts_with("!=")
+                || trimmed.starts_with("not in ")
+                || trimmed.starts_with("not in(")
+                || trimmed.starts_with('=')
+                || trimmed.starts_with('~')
+                || trimmed.starts_with("in ")
+                || trimmed.starts_with("in(")
+            {
+                return true;
+            }
+        }
+        i += 1;
     }
     false
 }
@@ -939,7 +961,7 @@ impl IssueProvider for JiraClient {
                     "all" => {} // No filter
                     other => {
                         // Exact status name
-                        jql_parts.push(format!("status = \"{}\"", other));
+                        jql_parts.push(format!("status = \"{}\"", escape_jql(other)));
                     }
                 }
             }
@@ -961,7 +983,7 @@ impl IssueProvider for JiraClient {
             jql_parts.join(" AND ")
         };
 
-        // Add ORDER BY
+        // Add ORDER BY — skip if native_query already contains one
         let order_by = match filter.sort_by.as_deref() {
             Some("created_at" | "created") => "created",
             Some("priority") => "priority",
@@ -971,7 +993,12 @@ impl IssueProvider for JiraClient {
             Some("asc") => "ASC",
             _ => "DESC",
         };
-        let jql_with_order = format!("{} ORDER BY {} {}", jql, order_by, order);
+        let has_order_by = jql.to_lowercase().contains("order by");
+        let jql_with_order = if has_order_by {
+            jql
+        } else {
+            format!("{} ORDER BY {} {}", jql, order_by, order)
+        };
 
         let instance_url = &self.instance_url;
 
@@ -3329,7 +3356,7 @@ mod tests {
 
         #[test]
         fn test_has_project_clause() {
-            // Positive cases
+            // Positive cases — standard operators
             assert!(has_project_clause("project = \"PROJ\""));
             assert!(has_project_clause("project = PROJ AND status = Open"));
             assert!(has_project_clause("project IN (\"A\", \"B\")"));
@@ -3337,11 +3364,19 @@ mod tests {
             assert!(has_project_clause("PROJECT = KEY")); // case-insensitive
             assert!(has_project_clause("status = Open AND project = X"));
             assert!(has_project_clause("project ~ KEY")); // contains operator
-            // Negative cases
+            // Positive cases — negation operators
+            assert!(has_project_clause("project != \"PROJ\""));
+            assert!(has_project_clause("project NOT IN (\"A\", \"B\")"));
+            assert!(has_project_clause("project not in(A)"));
+            // Negative cases — no project clause
             assert!(!has_project_clause("fixVersion = \"1.0\""));
+            assert!(!has_project_clause("status = Done"));
+            // Negative cases — "project" inside quoted strings
             assert!(!has_project_clause("summary ~ \"project plan\""));
             assert!(!has_project_clause("summary ~ \"project information\""));
-            assert!(!has_project_clause("status = Done"));
+            assert!(!has_project_clause("summary ~ \"project = foo\""));
+            // Negative cases — underscore word boundary
+            assert!(!has_project_clause("my_project = X"));
         }
 
         // =================================================================
