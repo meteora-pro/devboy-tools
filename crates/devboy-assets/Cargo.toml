@@ -21,8 +21,5 @@ sha2.workspace = true
 # Atomic file writes for the index
 tempfile.workspace = true
 
-[dev-dependencies]
-tempfile.workspace = true
-
 [lints]
 workspace = true

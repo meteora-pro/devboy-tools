@@ -120,8 +120,6 @@ impl Rotator {
         Ok(stats)
     }
 
-    /// Sort entries so that the first element is the best eviction candidate.
-    ///
     /// Sort entries so that the first element is the best eviction
     /// candidate. A deterministic final tie-breaker on `asset.id` ensures
     /// the order is fully reproducible even when timestamps and sizes are
