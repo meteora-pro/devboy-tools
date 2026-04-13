@@ -216,18 +216,25 @@ impl AssetManager {
         // remove the orphaned blob from disk so the cache stays
         // transactional and doesn't leak disk space.
         let mut deferred_delete: Option<PathBuf> = None;
+        // Track whether a previous entry occupied the same on-disk path.
+        // When true, CacheManager::store already overwrote the old blob
+        // in-place, so the rollback path must NOT delete stored.path —
+        // it's the only copy left and the restored snapshot still points
+        // at it.
+        let mut overwrote_same_path = false;
         let result: Result<()> = (|| {
             let mut index = self.state_lock()?;
 
-            // When re-using an existing asset_id with a different path,
-            // record the old blob for deferred deletion *after* the commit
-            // succeeds. Deleting before the commit would leave the
-            // snapshot pointing at a missing file on rollback.
-            if let Some(previous) = index.get(asset.id.as_str())
-                && previous.local_path != asset.local_path
-            {
-                deferred_delete =
-                    resolve_under_root(&self.inner.config.cache_dir, &previous.local_path);
+            if let Some(previous) = index.get(asset.id.as_str()) {
+                if previous.local_path == asset.local_path {
+                    // Same on-disk path — blob was overwritten in-place.
+                    overwrote_same_path = true;
+                } else {
+                    // Different path — record the old blob for deferred
+                    // deletion *after* the commit succeeds.
+                    deferred_delete =
+                        resolve_under_root(&self.inner.config.cache_dir, &previous.local_path);
+                }
             }
 
             // Snapshot the index so we can restore on failure.
@@ -251,11 +258,10 @@ impl AssetManager {
 
         if let Err(e) = result {
             // Roll back: remove the orphaned blob — but only when it's a
-            // truly new path. If the asset_id, context, and filename are
-            // the same as the previous entry, `CacheManager::store` wrote
-            // the replacement bytes to the *same* on-disk path. Deleting
-            // it would destroy the content that the restored snapshot
-            // still references.
+            // truly new path. If the previous entry occupied the same
+            // on-disk location, CacheManager::store already overwrote the
+            // old bytes in-place, so deleting the file would leave the
+            // restored snapshot pointing at nothing.
             //
             // Trade-off: when same-path overwrite is rolled back, the
             // file on disk contains the *new* bytes, not the original
@@ -263,9 +269,6 @@ impl AssetManager {
             // restoration (backup + restore, or write-to-temp + rename)
             // is intentionally not implemented: this is an ephemeral
             // cache and any file can be re-downloaded from the provider.
-            let overwrote_same_path = deferred_delete
-                .as_ref()
-                .is_some_and(|old| *old == stored.path);
             if !overwrote_same_path {
                 let _ = self.inner.cache.delete(&stored.path);
             }
