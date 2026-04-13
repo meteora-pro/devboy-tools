@@ -55,6 +55,10 @@ pub struct Issue {
     pub created_at: Option<String>,
     /// Updated at timestamp (ISO 8601)
     pub updated_at: Option<String>,
+    /// Number of file attachments on this issue (populated from the
+    /// provider response when available, without extra API calls).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments_count: Option<u32>,
     /// Parent issue key (for subtasks)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,

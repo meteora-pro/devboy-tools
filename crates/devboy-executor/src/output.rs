@@ -127,6 +127,7 @@ mod tests {
             url: None,
             created_at: None,
             updated_at: None,
+            attachments_count: None,
             parent: None,
             subtasks: vec![],
         }

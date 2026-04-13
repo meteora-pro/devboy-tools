@@ -370,6 +370,18 @@ fn map_user_required(gl_user: Option<&GitLabUser>) -> User {
 }
 
 fn map_issue(gl_issue: &GitLabIssue) -> Issue {
+    // Count upload references in the issue body (no extra API call).
+    let attachments_count = gl_issue
+        .description
+        .as_deref()
+        .map(|body| {
+            parse_markdown_attachments(body)
+                .iter()
+                .filter(|a| is_gitlab_upload_url(&a.url))
+                .count() as u32
+        })
+        .filter(|&c| c > 0);
+
     Issue {
         key: format!("gitlab#{}", gl_issue.iid),
         title: gl_issue.title.clone(),
@@ -387,6 +399,7 @@ fn map_issue(gl_issue: &GitLabIssue) -> Issue {
         url: Some(gl_issue.web_url.clone()),
         created_at: Some(gl_issue.created_at.clone()),
         updated_at: Some(gl_issue.updated_at.clone()),
+        attachments_count,
         parent: None,
         subtasks: vec![],
     }
