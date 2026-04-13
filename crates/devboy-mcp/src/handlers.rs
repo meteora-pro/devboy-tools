@@ -997,7 +997,7 @@ impl ToolHandler {
             priority: None,
             parent: params.parent,
             markdown: params.markdown.unwrap_or(true),
-            ..Default::default()
+            custom_fields: params.custom_fields,
         };
 
         let provider = if let Some(ref name) = params.provider {
@@ -1055,7 +1055,7 @@ impl ToolHandler {
             priority: None,
             parent_id: params.parent_id,
             markdown: params.markdown.unwrap_or(true),
-            ..Default::default()
+            custom_fields: params.custom_fields,
         };
 
         for provider in &self.providers {
@@ -1931,6 +1931,8 @@ struct CreateIssueParams {
     parent: Option<String>,
     markdown: Option<bool>,
     provider: Option<String>,
+    #[serde(rename = "customFields")]
+    custom_fields: Option<Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1944,6 +1946,8 @@ struct UpdateIssueParams {
     #[serde(rename = "parentId")]
     parent_id: Option<String>,
     markdown: Option<bool>,
+    #[serde(rename = "customFields")]
+    custom_fields: Option<Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
