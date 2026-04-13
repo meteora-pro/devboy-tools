@@ -848,18 +848,23 @@ fn escape_jql(value: &str) -> String {
 }
 
 /// Merge custom fields (Object format) into a serializable payload.
-/// Custom field entries like `{"customfield_10001": value}` become top-level keys
-/// in the `fields` object of the Jira API payload.
+/// Only keys with `customfield_` prefix are merged to prevent overwriting
+/// core Jira fields like `project`, `summary`, `issuetype`.
 fn merge_custom_fields_into_payload<T: serde::Serialize>(
     payload: T,
     custom_fields: &Option<serde_json::Value>,
 ) -> serde_json::Value {
-    let mut value = serde_json::to_value(payload).unwrap_or_default();
+    let mut value = serde_json::to_value(payload)
+        .expect("failed to serialize Jira issue payload before merging custom fields");
     if let Some(serde_json::Value::Object(cf)) = custom_fields
         && let Some(fields) = value.get_mut("fields").and_then(|f| f.as_object_mut())
     {
         for (k, v) in cf {
-            fields.insert(k.clone(), v.clone());
+            if k.starts_with("customfield_") {
+                fields.insert(k.clone(), v.clone());
+            } else {
+                tracing::warn!(field = %k, "Skipping non-custom field in customFields (expected customfield_* prefix)");
+            }
         }
     }
     value
@@ -3264,6 +3269,32 @@ mod tests {
             let fields = merged.get("fields").unwrap();
             assert_eq!(fields["summary"], "Test");
             assert!(fields.get("customfield_10001").is_none());
+        }
+
+        #[test]
+        fn test_merge_custom_fields_rejects_non_custom_keys() {
+            use crate::types::*;
+            let payload = CreateIssuePayload {
+                fields: CreateIssueFields {
+                    project: ProjectKey { key: "PROJ".into() },
+                    summary: "Test".into(),
+                    issuetype: IssueType {
+                        name: "Task".into(),
+                    },
+                    description: None,
+                    labels: None,
+                    priority: None,
+                    assignee: None,
+                },
+            };
+
+            // "summary" should be rejected, "customfield_10001" should pass
+            let cf = Some(serde_json::json!({"summary": "HACKED", "customfield_10001": 5}));
+            let merged = merge_custom_fields_into_payload(payload, &cf);
+
+            let fields = merged.get("fields").unwrap();
+            assert_eq!(fields["summary"], "Test"); // NOT overwritten
+            assert_eq!(fields["customfield_10001"], 5); // custom field applied
         }
 
         // =================================================================
