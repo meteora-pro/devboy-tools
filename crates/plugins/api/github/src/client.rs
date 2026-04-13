@@ -183,13 +183,20 @@ fn map_labels(labels: &[GitHubLabel]) -> Vec<String> {
 
 fn map_issue(gh_issue: &GitHubIssue) -> Issue {
     // Count GitHub CDN attachment references in the body (no extra API call).
+    // We check for `*.githubusercontent.com` hosts which cover all
+    // user-uploaded content. The base_url isn't available in this free
+    // function, but GHE uploads also land on a CDN subdomain, so this
+    // heuristic covers the vast majority of real attachments.
     let attachments_count = gh_issue
         .body
         .as_deref()
         .map(|body| {
             parse_markdown_attachments(body)
                 .iter()
-                .filter(|a| is_github_attachment_url("https://api.github.com", &a.url))
+                .filter(|a| {
+                    let (_, host) = split_scheme_host(&a.url);
+                    host.ends_with("githubusercontent.com")
+                })
                 .count() as u32
         })
         .filter(|&c| c > 0);
