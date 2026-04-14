@@ -1233,8 +1233,12 @@ impl IssueProvider for JiraClient {
 
         let create_resp = match create_result {
             Ok(resp) => resp,
-            Err(e) if has_labels && e.to_string().contains("labels") => {
-                // Labels field may not be available on the Jira create screen
+            Err(e)
+                if has_labels
+                    && e.to_string().contains("labels")
+                    && e.to_string().contains("not on the appropriate screen") =>
+            {
+                // Labels field is not on the Jira create screen
                 // (common on Self-Hosted). Retry without labels and set them via
                 // update afterwards.
                 tracing::warn!("Create issue failed with labels, retrying without: {e}");

@@ -999,7 +999,10 @@ fn extract_goal_id(labels: &[String]) -> Option<String> {
 /// Calculate epic progress from subtasks.
 fn epic_progress(subtasks: &[devboy_core::Issue]) -> serde_json::Value {
     let total = subtasks.len();
-    let completed = subtasks.iter().filter(|s| s.state == "closed").count();
+    let completed = subtasks
+        .iter()
+        .filter(|s| matches!(s.state.to_lowercase().as_str(), "closed" | "done"))
+        .count();
     let percentage = if total > 0 {
         (completed as f64 / total as f64 * 100.0).round() as u32
     } else {
@@ -1762,13 +1765,20 @@ impl ToolHandler {
 
         // Handle goal tag transition: if goalId is changing, update labels
         let labels = if let Some(ref new_goal) = params.goal_id {
-            // Fetch current issue to get existing labels
-            let current = match self.providers[0].get_issue(&params.key).await {
-                Ok(issue) => issue,
-                Err(e) => {
+            // Fetch current issue to get existing labels — try each provider
+            let mut current = None;
+            for provider in &self.providers {
+                if let Ok(issue) = provider.get_issue(&params.key).await {
+                    current = Some(issue);
+                    break;
+                }
+            }
+            let current = match current {
+                Some(issue) => issue,
+                None => {
                     return ToolCallResult::error(format!(
-                        "Failed to fetch epic {}: {}",
-                        params.key, e
+                        "Failed to fetch epic {}: not found in any provider",
+                        params.key
                     ));
                 }
             };
@@ -1804,7 +1814,13 @@ impl ToolHandler {
             }
             Some(labels)
         } else {
-            params.labels
+            // Ensure "epic" label is preserved when caller provides explicit labels
+            params.labels.map(|mut lbl| {
+                if !lbl.iter().any(|l| l.eq_ignore_ascii_case("epic")) {
+                    lbl.push("epic".to_string());
+                }
+                lbl
+            })
         };
 
         let input = UpdateIssueInput {
