@@ -325,9 +325,24 @@ impl McpServer {
         let has_meeting_providers = !self.meeting_providers.is_empty();
         let has_messenger_providers = !self.active_messenger_providers().is_empty();
 
+        // Pre-compute per-tool asset capability flags.
+        // If no provider supports upload/delete, hide those tools entirely.
+        let any_upload = providers
+            .iter()
+            .any(|p| p.asset_capabilities().issue.upload);
+        let any_delete = providers
+            .iter()
+            .any(|p| p.asset_capabilities().issue.delete);
+
         // Filter tools based on available providers (dynamic filtering).
         // This prevents exposing tools that would always fail due to missing providers.
         tools.retain(|t| {
+            // Per-tool capability checks (asset tools).
+            match t.name.as_str() {
+                "upload_asset" => return any_upload,
+                "delete_asset" => return any_delete,
+                _ => {}
+            }
             t.category
                 .map(|cat| match cat {
                     devboy_core::ToolCategory::IssueTracker => has_issue_providers,
