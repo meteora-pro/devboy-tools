@@ -12,7 +12,6 @@
 //! - `DEVBOY_SENTRY_TRACES_SAMPLE_RATE` → `sentry.traces_sample_rate`
 
 use crate::config::SentryConfig;
-use tracing::{info, warn};
 
 /// Sensitive header/field names to scrub from Sentry events.
 const SENSITIVE_KEYS: &[&str] = &[
@@ -54,11 +53,13 @@ pub fn init_sentry(
         .or_else(|| config.dsn.as_ref().map(|s| s.trim().to_string()))
         .filter(|s| !s.is_empty())?;
 
-    // Validate DSN is parseable (don't log the full DSN — it may contain credentials)
+    // Validate DSN is parseable (don't log the full DSN — it may contain credentials).
+    // Use eprintln! instead of tracing::warn! because this runs before the tracing
+    // subscriber is initialized, so tracing events would be silently dropped.
     let parsed_dsn = match dsn.parse::<sentry::types::Dsn>() {
         Ok(d) => Some(d),
         Err(e) => {
-            warn!("Invalid Sentry DSN: {e}. Sentry will be disabled.");
+            eprintln!("[devboy] Invalid Sentry DSN: {e}. Sentry will be disabled.");
             return None;
         }
     };
@@ -95,11 +96,13 @@ pub fn init_sentry(
         sample_rate,
         traces_sample_rate,
         before_send: Some(std::sync::Arc::new(scrub_sensitive_data)),
+        before_breadcrumb: Some(std::sync::Arc::new(scrub_breadcrumb)),
         ..Default::default()
     });
 
     if guard.is_enabled() {
-        info!("Sentry error reporting enabled");
+        // Use eprintln! because tracing subscriber is not yet initialized at this point.
+        eprintln!("[devboy] Sentry error reporting enabled");
     }
 
     Some(guard)
@@ -129,6 +132,70 @@ fn scrub_sensitive_data(
     }
 
     Some(event)
+}
+
+/// Scrub sensitive data from breadcrumbs before attaching to events.
+///
+/// Breadcrumbs are created from `tracing` info/warn logs and may contain
+/// URLs with embedded credentials or query tokens (e.g., proxy URLs).
+fn scrub_breadcrumb(
+    mut breadcrumb: sentry::protocol::Breadcrumb,
+) -> Option<sentry::protocol::Breadcrumb> {
+    if let Some(ref mut message) = breadcrumb.message {
+        *message = scrub_url_credentials(message);
+    }
+    // Scrub breadcrumb data values
+    for value in breadcrumb.data.values_mut() {
+        if let sentry::protocol::Value::String(s) = value {
+            *s = scrub_url_credentials(s);
+        }
+    }
+    Some(breadcrumb)
+}
+
+/// Scrub credentials from URLs in a string.
+///
+/// Replaces `user:password@host` patterns and sensitive query parameters
+/// (token, key, secret, password) with `[Filtered]`.
+fn scrub_url_credentials(input: &str) -> String {
+    let mut result = input.to_string();
+    // Scrub userinfo in URLs: https://user:pass@host → https://[Filtered]@host
+    if let Some(start) = result.find("://") {
+        let after_scheme = start + 3;
+        if let Some(at_pos) = result[after_scheme..].find('@') {
+            let abs_at = after_scheme + at_pos;
+            // Only scrub if there's a colon before @ (looks like user:pass)
+            if result[after_scheme..abs_at].contains(':') {
+                result = format!("{}[Filtered]{}", &result[..after_scheme], &result[abs_at..]);
+            }
+        }
+    }
+    // Scrub sensitive query params: ?token=xxx&key=yyy
+    for param in &["token", "key", "secret", "password", "api_key", "apikey"] {
+        let patterns = [format!("{param}="), format!("{}_=", param.to_uppercase())];
+        for pat in &patterns {
+            let mut search_from = 0;
+            let pat_lower = pat.to_lowercase();
+            while let Some(rel_pos) = result[search_from..].to_lowercase().find(&pat_lower) {
+                let pos = search_from + rel_pos;
+                let value_start = pos + pat.len();
+                let value_end = result[value_start..]
+                    .find(['&', '#', ' '])
+                    .map(|i| value_start + i)
+                    .unwrap_or(result.len());
+                let replacement = format!(
+                    "{}{}[Filtered]{}",
+                    &result[..pos],
+                    pat,
+                    &result[value_end..]
+                );
+                // Advance past the replacement to avoid re-matching
+                search_from = pos + pat.len() + "[Filtered]".len();
+                result = replacement;
+            }
+        }
+    }
+    result
 }
 
 /// Check if a key name looks like it contains sensitive data.
@@ -165,9 +232,34 @@ mod tests {
         assert!(!is_sensitive_key("tool_name"));
     }
 
-    // Note: init_sentry tests that depend on env vars are in devboy-cli
-    // integration tests which use temp-env for safe env var manipulation.
-    // Here we only test the pure logic that doesn't depend on env state.
+    #[test]
+    fn test_scrub_url_credentials() {
+        // Userinfo in URL
+        assert_eq!(
+            scrub_url_credentials("https://user:pass@sentry.io/123"),
+            "https://[Filtered]@sentry.io/123"
+        );
+        // Query param token
+        assert_eq!(
+            scrub_url_credentials("https://host.com/api?token=secret123&foo=bar"),
+            "https://host.com/api?token=[Filtered]&foo=bar"
+        );
+        // Multiple sensitive params
+        assert_eq!(
+            scrub_url_credentials("https://host.com?key=abc&password=xyz"),
+            "https://host.com?key=[Filtered]&password=[Filtered]"
+        );
+        // No credentials — unchanged
+        assert_eq!(
+            scrub_url_credentials("https://host.com/path?page=1"),
+            "https://host.com/path?page=1"
+        );
+        // Plain text without URL — unchanged
+        assert_eq!(
+            scrub_url_credentials("Connected to proxy at host:8080"),
+            "Connected to proxy at host:8080"
+        );
+    }
 
     #[test]
     fn test_sentry_config_default() {
