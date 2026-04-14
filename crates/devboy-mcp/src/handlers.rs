@@ -1352,6 +1352,14 @@ impl ToolHandler {
             return ToolCallResult::error("No providers configured".to_string());
         }
 
+        // Extract Array-format custom fields for ClickUp set_custom_fields call
+        let cf_array = params
+            .custom_fields
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .filter(|a| !a.is_empty())
+            .cloned();
+
         let input = CreateIssueInput {
             title: params.title,
             description: params.description,
@@ -1360,6 +1368,9 @@ impl ToolHandler {
             priority: None,
             parent: params.parent,
             markdown: params.markdown.unwrap_or(true),
+            project_id: params.project_id,
+            issue_type: params.issue_type,
+            custom_fields: params.custom_fields,
         };
 
         let provider = if let Some(ref name) = params.provider {
@@ -1383,6 +1394,12 @@ impl ToolHandler {
         };
         match provider.create_issue(input).await {
             Ok(issue) => {
+                // Set custom fields via separate API call (ClickUp uses Array format)
+                if let Some(cf) = &cf_array
+                    && let Err(e) = provider.set_custom_fields(&issue.key, cf).await
+                {
+                    tracing::warn!(error = %e, "Failed to set custom fields on created issue");
+                }
                 let msg = format!(
                     "Created issue {} - {}\nURL: {}",
                     issue.key,
@@ -1408,6 +1425,14 @@ impl ToolHandler {
             return ToolCallResult::error("No providers configured".to_string());
         }
 
+        // Extract Array-format custom fields for ClickUp set_custom_fields call
+        let cf_array = params
+            .custom_fields
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .filter(|a| !a.is_empty())
+            .cloned();
+
         let input = UpdateIssueInput {
             title: params.title,
             description: params.description,
@@ -1417,11 +1442,18 @@ impl ToolHandler {
             priority: None,
             parent_id: params.parent_id,
             markdown: params.markdown.unwrap_or(true),
+            custom_fields: params.custom_fields,
         };
 
         for provider in &self.providers {
             match provider.update_issue(&params.key, input.clone()).await {
                 Ok(issue) => {
+                    // Set custom fields via separate API call (ClickUp uses Array format)
+                    if let Some(cf) = &cf_array
+                        && let Err(e) = provider.set_custom_fields(&params.key, cf).await
+                    {
+                        tracing::warn!(error = %e, "Failed to set custom fields on updated issue");
+                    }
                     let msg = format!("Updated issue {} - {}", issue.key, issue.title);
                     return ToolCallResult::text(msg);
                 }
@@ -1775,6 +1807,9 @@ impl ToolHandler {
                 priority: priority.clone(),
                 parent: None,
                 markdown,
+                project_id: None,
+                issue_type: None,
+                custom_fields: None,
             };
 
             match provider.create_issue(input).await {
@@ -1894,6 +1929,7 @@ impl ToolHandler {
             priority: params.priority,
             parent_id: None,
             markdown: params.markdown.unwrap_or(true),
+            custom_fields: None,
         };
 
         for provider in &self.providers {
@@ -2917,6 +2953,12 @@ struct CreateIssueParams {
     parent: Option<String>,
     markdown: Option<bool>,
     provider: Option<String>,
+    #[serde(rename = "projectId")]
+    project_id: Option<String>,
+    #[serde(rename = "issueType")]
+    issue_type: Option<String>,
+    #[serde(rename = "customFields")]
+    custom_fields: Option<Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2930,6 +2972,8 @@ struct UpdateIssueParams {
     #[serde(rename = "parentId")]
     parent_id: Option<String>,
     markdown: Option<bool>,
+    #[serde(rename = "customFields")]
+    custom_fields: Option<Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
