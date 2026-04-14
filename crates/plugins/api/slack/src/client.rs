@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -30,7 +31,7 @@ pub struct SlackAuthInfo {
     pub missing_scopes: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SlackClient {
     token: String,
     base_url: String,
@@ -38,6 +39,19 @@ pub struct SlackClient {
     required_scopes: Vec<String>,
     user_cache: Arc<RwLock<HashMap<String, MessageAuthor>>>,
     rate_limiter: Arc<SlackRateLimiter>,
+}
+
+impl fmt::Debug for SlackClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SlackClient")
+            .field("token", &"<redacted>")
+            .field("base_url", &self.base_url)
+            .field("http", &self.http)
+            .field("required_scopes", &self.required_scopes)
+            .field("user_cache", &self.user_cache)
+            .field("rate_limiter", &self.rate_limiter)
+            .finish()
+    }
 }
 
 const SLACK_READ_INTERVAL: Duration = Duration::from_millis(1200);
