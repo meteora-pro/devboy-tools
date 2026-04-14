@@ -7,7 +7,7 @@ use devboy_core::{
     GetPipelineInput, Issue, IssueFilter, IssueProvider, JobLogMode, JobLogOptions, JobLogOutput,
     MergeRequest, MergeRequestProvider, MrFilter, PipelineInfo, PipelineJob, PipelineProvider,
     PipelineStage, PipelineStatus, PipelineSummary, Provider, ProviderResult, Result,
-    UpdateIssueInput, User, parse_markdown_attachments,
+    UpdateIssueInput, UpdateMergeRequestInput, User, parse_markdown_attachments,
 };
 use serde::Deserialize;
 use tracing::{debug, warn};
@@ -16,7 +16,7 @@ use crate::DEFAULT_GITHUB_URL;
 use crate::types::{
     CreateCommentRequest, CreateIssueRequest, CreatePullRequestRequest, CreateReviewCommentRequest,
     GitHubComment, GitHubFile, GitHubIssue, GitHubLabel, GitHubPullRequest, GitHubReview,
-    GitHubReviewComment, GitHubUser, UpdateIssueRequest,
+    GitHubReviewComment, GitHubUser, UpdateIssueRequest, UpdatePullRequestRequest,
 };
 
 /// GitHub API client.
@@ -767,6 +767,61 @@ impl MergeRequestProvider for GitHubClient {
                     warn!(
                         error = ?err,
                         pr_number = gh_pr.number,
+                        "Failed to re-fetch GitHub pull request"
+                    );
+                }
+            }
+        }
+
+        Ok(map_pull_request(&gh_pr))
+    }
+
+    async fn update_merge_request(
+        &self,
+        key: &str,
+        input: UpdateMergeRequestInput,
+    ) -> Result<MergeRequest> {
+        let number = parse_pr_key(key)?;
+        let url = self.repo_url(&format!("/pulls/{}", number));
+
+        // Map state: GitHub uses "open" / "closed".
+        let state = input.state.map(|s| match s.as_str() {
+            "opened" | "open" | "reopen" => "open".to_string(),
+            "closed" | "close" => "closed".to_string(),
+            _ => s,
+        });
+
+        let request = UpdatePullRequestRequest {
+            title: input.title,
+            body: input.description,
+            state,
+            draft: input.draft,
+        };
+
+        let gh_pr: GitHubPullRequest = self.patch(&url, &request).await?;
+
+        // Update labels if provided (best-effort: PR is already updated).
+        if let Some(labels) = input.labels {
+            let labels_url = self.repo_url(&format!("/issues/{}/labels", number));
+            let result: Result<serde_json::Value> = self
+                .patch(&labels_url, &serde_json::json!({ "labels": labels }))
+                .await;
+            if let Err(err) = result {
+                warn!(
+                    error = ?err,
+                    pr_number = number,
+                    "Failed to update labels on GitHub pull request"
+                );
+            }
+
+            // Re-fetch to include updated labels.
+            let pr_url = self.repo_url(&format!("/pulls/{}", number));
+            match self.get::<GitHubPullRequest>(&pr_url).await {
+                Ok(updated_pr) => return Ok(map_pull_request(&updated_pr)),
+                Err(err) => {
+                    warn!(
+                        error = ?err,
+                        pr_number = number,
                         "Failed to re-fetch GitHub pull request"
                     );
                 }

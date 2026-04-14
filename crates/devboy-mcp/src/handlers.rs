@@ -788,7 +788,7 @@ define_tools! {
     },
     "download_asset" => handle_download_asset {
         category: ToolCategory::Issues,
-        description: "Download a file attachment. Returns base64-encoded content.",
+        description: "Download a file attachment to local cache. Returns local file path when cache is available, base64-encoded content as fallback.",
         schema: {
             "type": "object",
             "properties": {
@@ -2424,6 +2424,13 @@ impl ToolHandler {
                 .await
             {
                 Ok(()) => {
+                    // Evict from local cache so stale files aren't served.
+                    if let Some(ref mgr) = self.asset_manager {
+                        let mgr_clone = mgr.clone();
+                        let aid = params.asset_id.clone();
+                        let _ = tokio::task::spawn_blocking(move || mgr_clone.delete(&aid)).await;
+                    }
+
                     let output = serde_json::json!({
                         "success": true,
                         "asset_id": params.asset_id,
