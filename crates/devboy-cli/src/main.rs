@@ -137,6 +137,14 @@ enum Commands {
         /// Proxy auth type (default: bearer if token provided, else none)
         #[arg(long, requires = "proxy", value_enum)]
         proxy_auth_type: Option<AuthType>,
+
+        /// Remote config URL (fetched on startup, TOML response merged with local config)
+        #[arg(long)]
+        remote_config_url: Option<String>,
+
+        /// Bearer token for remote config endpoint
+        #[arg(long, requires = "remote_config_url")]
+        remote_config_token: Option<String>,
     },
 
     /// Start the MCP server (stdio mode for AI assistants)
@@ -471,6 +479,10 @@ async fn main() -> Result<()> {
     // Initialize Sentry (must happen before tracing subscriber init).
     // Respects --no-config / DEVBOY_NO_CONFIG=1: in env-only mode, only env vars
     // are used for Sentry config (config file is not loaded).
+    // Note: remote config is NOT fetched here (requires async I/O before tracing
+    // init). If Sentry DSN comes from remote config, it will be applied when
+    // handle_mcp_command runs. For early Sentry init, use DEVBOY_SENTRY_DSN env var
+    // or local [sentry] config section.
     #[cfg(feature = "sentry")]
     let _sentry_guard = {
         let config = if is_no_config_enabled() {
@@ -561,6 +573,8 @@ async fn main() -> Result<()> {
                 proxy_token_key,
                 proxy_token,
                 proxy_auth_type,
+                remote_config_url,
+                remote_config_token,
             }) => {
                 handle_init_command(
                     yes,
@@ -575,6 +589,8 @@ async fn main() -> Result<()> {
                     proxy_token_key,
                     proxy_token,
                     proxy_auth_type,
+                    remote_config_url,
+                    remote_config_token,
                 )
                 .await?;
             }
@@ -706,6 +722,7 @@ struct InitOptions {
     slack: Option<SlackConfig>,
     tokens: Vec<(String, String)>, // (key, value) pairs for keychain
     proxy: Option<ProxyMcpServerConfig>,
+    remote_config: Option<devboy_core::RemoteConfigSettings>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -722,6 +739,8 @@ async fn handle_init_command(
     proxy_token_key: Option<String>,
     proxy_token: Option<String>,
     proxy_auth_type: Option<AuthType>,
+    remote_config_url: Option<String>,
+    remote_config_token: Option<String>,
 ) -> Result<()> {
     let config_path = PathBuf::from(INIT_CONFIG_FILE);
     let is_tty = io::stdin().is_terminal();
@@ -812,6 +831,21 @@ async fn handle_init_command(
             token_key,
             tool_prefix: None,
             transport,
+        });
+    }
+
+    // Add remote config settings if provided
+    if let Some(url) = remote_config_url {
+        let token_key = if let Some(token_value) = remote_config_token {
+            let key = "remote_config.token".to_string();
+            options.tokens.push((key.clone(), token_value));
+            Some(key)
+        } else {
+            None
+        };
+        options.remote_config = Some(devboy_core::RemoteConfigSettings {
+            url: Some(url),
+            token_key,
         });
     }
 
@@ -1291,6 +1325,11 @@ fn build_config(options: &InitOptions) -> Config {
     // Add proxy configuration if provided
     if let Some(proxy) = &options.proxy {
         config.proxy_mcp_servers.push(proxy.clone());
+    }
+
+    // Add remote config settings if provided
+    if let Some(remote_config) = &options.remote_config {
+        config.remote_config = Some(remote_config.clone());
     }
 
     config
@@ -1989,17 +2028,28 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
     } else {
         let (cfg, config_path) = load_runtime_config()?;
         tracing::debug!("Config loaded from: {}", config_path.display());
-
-        // Apply built-in tools filtering config.
-        if !cfg.builtin_tools.is_empty() {
-            cfg.builtin_tools.warn_unknown_tools(KNOWN_BUILTIN_TOOLS);
-            server
-                .set_builtin_tools_config(cfg.builtin_tools.clone())
-                .context("Invalid builtin_tools configuration")?;
-        }
-
         cfg
     };
+
+    // Fetch and merge remote config (if configured via [remote_config] or env vars).
+    // This must happen before Sentry init and provider setup since remote config
+    // may provide sentry DSN, builtin_tools overrides, etc.
+    let token_from_keychain = config
+        .remote_config
+        .as_ref()
+        .and_then(|rc| rc.token_key.as_ref())
+        .and_then(|key| store.get(key).ok())
+        .flatten();
+    let config =
+        devboy_core::remote_config::fetch_and_merge(config, token_from_keychain.as_deref()).await;
+
+    // Apply built-in tools filtering config.
+    if !config.builtin_tools.is_empty() {
+        config.builtin_tools.warn_unknown_tools(KNOWN_BUILTIN_TOOLS);
+        server
+            .set_builtin_tools_config(config.builtin_tools.clone())
+            .context("Invalid builtin_tools configuration")?;
+    }
 
     let mut any_provider_added = false;
 

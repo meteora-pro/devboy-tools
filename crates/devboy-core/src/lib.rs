@@ -27,6 +27,7 @@ pub mod config;
 pub mod enricher;
 pub mod error;
 pub mod provider;
+pub mod remote_config;
 #[cfg(feature = "sentry")]
 pub mod sentry_integration;
 pub mod tool_category;
@@ -68,5 +69,6 @@ pub use asset::{
 pub use config::{
     BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, FirefliesConfig,
     FormatPipelineConfig, GitHubConfig, GitLabConfig, JiraConfig, ProxyMatchingConfig,
-    ProxyMcpServerConfig, SentryConfig, SlackConfig, default_slack_required_scopes,
+    ProxyMcpServerConfig, RemoteConfigSettings, SentryConfig, SlackConfig,
+    default_slack_required_scopes,
 };
