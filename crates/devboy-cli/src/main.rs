@@ -673,6 +673,11 @@ async fn main() -> Result<()> {
     #[cfg(feature = "sentry")]
     if let Err(ref e) = result {
         sentry::capture_message(&format!("{e:#}"), sentry::protocol::Level::Error);
+        // Flush pending events to ensure they are sent before process exits.
+        // The guard's Drop also flushes, but with a very short default timeout.
+        if let Some(client) = sentry::Hub::current().client() {
+            client.flush(Some(std::time::Duration::from_secs(5)));
+        }
     }
 
     // Wait for background update check to finish so the notification can print
