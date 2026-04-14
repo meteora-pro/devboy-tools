@@ -87,6 +87,10 @@ pub struct Config {
     /// Format pipeline configuration (TOON encoding, budget trimming, strategies).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format_pipeline: Option<FormatPipelineConfig>,
+
+    /// Sentry error reporting configuration (optional, disabled by default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sentry: Option<SentryConfig>,
 }
 
 /// Configuration for an upstream MCP server to proxy.
@@ -416,6 +420,39 @@ impl Default for ProxyMatchingConfig {
 
 fn default_true() -> bool {
     true
+}
+
+/// Sentry error reporting configuration.
+///
+/// By default Sentry is disabled. Setting `dsn` (or the `DEVBOY_SENTRY_DSN` env var)
+/// is sufficient to enable error reporting.
+///
+/// # Example
+///
+/// ```toml
+/// [sentry]
+/// dsn = "https://examplePublicKey@o0.ingest.sentry.io/0"
+/// environment = "production"
+/// sample_rate = 1.0
+/// traces_sample_rate = 0.0
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SentryConfig {
+    /// Sentry DSN endpoint. When empty, Sentry is disabled (no-op).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dsn: Option<String>,
+
+    /// Environment tag (e.g., "production", "staging", "development").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
+
+    /// Error sample rate (0.0 - 1.0). Default: 1.0 (send all errors).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_rate: Option<f32>,
+
+    /// Performance tracing sample rate (0.0 - 1.0). Default: 0.0 (disabled).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traces_sample_rate: Option<f32>,
 }
 
 fn default_gitlab_url() -> String {
@@ -1179,6 +1216,7 @@ mod tests {
             proxy_mcp_servers: Vec::new(),
             builtin_tools: BuiltinToolsConfig::default(),
             format_pipeline: None,
+            sentry: None,
         };
 
         let providers = config.configured_providers();
@@ -1259,6 +1297,7 @@ mod tests {
             proxy_mcp_servers: Vec::new(),
             builtin_tools: BuiltinToolsConfig::default(),
             format_pipeline: None,
+            sentry: None,
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();

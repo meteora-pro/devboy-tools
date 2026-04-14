@@ -11,6 +11,10 @@ authors.workspace = true
 name = "devboy"
 path = "src/main.rs"
 
+[features]
+default = []
+sentry = ["devboy-core/sentry", "dep:sentry-tracing"]
+
 [dependencies]
 devboy-core = { path = "../devboy-core" }
 devboy-mcp = { path = "../devboy-mcp" }
@@ -38,6 +42,7 @@ dirs.workspace = true
 flate2 = "1.1"
 tar = "0.4"
 zip = "8.4"
+sentry-tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

@@ -29,6 +29,8 @@ use devboy_storage::{ChainStore, CredentialStore};
 use dialoguer::{Confirm, Input, MultiSelect, Password};
 use doctor::{DoctorOptions, OutputFormat};
 use tracing_subscriber::EnvFilter;
+#[cfg(feature = "sentry")]
+use tracing_subscriber::prelude::*;
 
 /// Proxy transport type for MCP servers.
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -466,6 +468,17 @@ fn get_credential_store_for_init() -> Box<dyn CredentialStore> {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Initialize Sentry (must happen before tracing subscriber init).
+    // Reads config from DEVBOY_SENTRY_DSN env var or [sentry] config section.
+    #[cfg(feature = "sentry")]
+    let _sentry_guard = {
+        let config = devboy_core::Config::load().ok();
+        devboy_core::sentry_integration::init_sentry(
+            config.as_ref().and_then(|c| c.sentry.as_ref()),
+            env!("CARGO_PKG_VERSION"),
+        )
+    };
+
     // Initialize logging
     let filter = if cli.verbose {
         EnvFilter::new("debug")
@@ -475,11 +488,31 @@ async fn main() -> Result<()> {
 
     let is_mcp_command = matches!(cli.command, Some(Commands::Mcp { .. }));
 
-    let builder = tracing_subscriber::fmt().with_env_filter(filter);
-    if is_mcp_command {
-        builder.with_writer(std::io::stderr).init();
-    } else {
-        builder.init();
+    // When sentry feature is enabled, use layered subscriber with sentry-tracing.
+    // This captures tracing::error! as Sentry events and tracing::warn! as breadcrumbs.
+    #[cfg(feature = "sentry")]
+    {
+        let fmt_layer = if is_mcp_command {
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .boxed()
+        } else {
+            tracing_subscriber::fmt::layer().boxed()
+        };
+        tracing_subscriber::registry()
+            .with(fmt_layer.with_filter(filter))
+            .with(sentry_tracing::layer())
+            .init();
+    }
+
+    #[cfg(not(feature = "sentry"))]
+    {
+        let builder = tracing_subscriber::fmt().with_env_filter(filter);
+        if is_mcp_command {
+            builder.with_writer(std::io::stderr).init();
+        } else {
+            builder.init();
+        }
     }
 
     // Run update check in background for interactive commands (skip for mcp, upgrade, and no-command).

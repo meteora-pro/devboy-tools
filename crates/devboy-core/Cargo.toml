@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+sentry = ["dep:sentry"]
+
 [dependencies]
 thiserror.workspace = true
 anyhow.workspace = true
@@ -16,6 +20,7 @@ async-trait.workspace = true
 tracing.workspace = true
 toml.workspace = true
 dirs.workspace = true
+sentry = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
