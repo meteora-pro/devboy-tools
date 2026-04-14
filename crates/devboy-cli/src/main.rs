@@ -469,10 +469,10 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize Sentry (must happen before tracing subscriber init).
-    // Reads config from DEVBOY_SENTRY_DSN env var or [sentry] config section.
+    // Uses load_runtime_config() to respect .devboy.toml, consistent with the rest of CLI.
     #[cfg(feature = "sentry")]
     let _sentry_guard = {
-        let config = devboy_core::Config::load().ok();
+        let config = load_runtime_config().ok().map(|(c, _)| c);
         devboy_core::sentry_integration::init_sentry(
             config.as_ref().and_then(|c| c.sentry.as_ref()),
             env!("CARGO_PKG_VERSION"),
@@ -488,10 +488,14 @@ async fn main() -> Result<()> {
 
     let is_mcp_command = matches!(cli.command, Some(Commands::Mcp { .. }));
 
-    // When sentry feature is enabled, use layered subscriber with sentry-tracing.
-    // This captures tracing::error! as Sentry events and tracing::warn! as breadcrumbs.
+    // When sentry feature is enabled AND Sentry is actually active, use layered
+    // subscriber with sentry-tracing. Otherwise fall back to plain fmt subscriber
+    // to avoid any per-event overhead from the sentry layer.
     #[cfg(feature = "sentry")]
-    {
+    let sentry_enabled = _sentry_guard.as_ref().is_some_and(|g| g.is_enabled());
+
+    #[cfg(feature = "sentry")]
+    if sentry_enabled {
         let fmt_layer = if is_mcp_command {
             tracing_subscriber::fmt::layer()
                 .with_writer(std::io::stderr)
@@ -503,6 +507,16 @@ async fn main() -> Result<()> {
             .with(fmt_layer.with_filter(filter))
             .with(sentry_tracing::layer())
             .init();
+    } else {
+        #[cfg(feature = "sentry")]
+        {
+            let builder = tracing_subscriber::fmt().with_env_filter(filter);
+            if is_mcp_command {
+                builder.with_writer(std::io::stderr).init();
+            } else {
+                builder.init();
+            }
+        }
     }
 
     #[cfg(not(feature = "sentry"))]
