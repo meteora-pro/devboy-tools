@@ -247,18 +247,8 @@ impl SlackClient {
         debug!(url, "slack auth.test request");
 
         let response = self.send_form_request("auth.test", &[]).await?;
-
-        let status = response.status();
         let headers = response.headers().clone();
-        if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
-            return Err(Error::from_status(status.as_u16(), text));
-        }
-
-        let payload: SlackAuthTestResponse = response
-            .json()
-            .await
-            .map_err(|e| Error::InvalidData(e.to_string()))?;
+        let payload: SlackAuthTestResponse = map_http_error(response).await?;
 
         if !payload.ok {
             let message = payload
@@ -1137,7 +1127,13 @@ fn normalize_mrkdwn(text: &str) -> String {
 
 fn normalize_slack_token(token: &str) -> String {
     if let Some(user) = token.strip_prefix('@') {
-        return format!("@{}", user);
+        let mut parts = user.splitn(2, '|');
+        let user_id = parts.next().unwrap_or(user);
+        let label = parts
+            .next()
+            .filter(|label| !label.is_empty())
+            .unwrap_or(user_id);
+        return format!("@{}", label);
     }
     if let Some(rest) = token.strip_prefix('#') {
         let mut parts = rest.splitn(2, '|');
@@ -1168,7 +1164,7 @@ mod tests {
             then.status(200)
                 .header(
                     "x-oauth-scopes",
-                    "channels:read, channels:history, chat:write, users:read",
+                    "channels:read, channels:history, groups:read, groups:history, im:read, im:history, mpim:read, mpim:history, chat:write, users:read",
                 )
                 .json_body(serde_json::json!({
                     "ok": true,
@@ -1528,6 +1524,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn auth_info_maps_rate_limit_to_rate_limited_error() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/auth.test");
+            then.status(429).header("retry-after", "7");
+        });
+
+        let error = SlackClient::new("xoxb-test")
+            .with_base_url(server.base_url())
+            .auth_info()
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::RateLimited {
+                retry_after: Some(7)
+            }
+        ));
+    }
+
+    #[tokio::test]
     async fn search_messages_rejects_empty_query() {
         let error = SlackClient::new("xoxb-test")
             .search_messages(SearchMessagesParams {
@@ -1749,6 +1767,7 @@ mod tests {
         assert!(parse_scopes(&HeaderMap::new()).is_empty());
 
         assert_eq!(normalize_slack_token("@U123"), "@U123");
+        assert_eq!(normalize_slack_token("@U123|andrey"), "@andrey");
         assert_eq!(normalize_slack_token("#C123|general"), "#general");
         assert_eq!(normalize_slack_token("!here"), "here");
         assert_eq!(

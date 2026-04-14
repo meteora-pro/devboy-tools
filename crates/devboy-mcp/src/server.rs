@@ -79,6 +79,7 @@ impl McpServer {
         context: &str,
         provider: Arc<dyn devboy_core::MessengerProvider>,
     ) {
+        self.contexts.entry(context.to_string()).or_default();
         self.messenger_contexts
             .entry(context.to_string())
             .or_default()
@@ -1315,5 +1316,18 @@ mod tests {
                 .iter()
                 .any(|tool| tool.name == "get_messenger_chats")
         );
+    }
+
+    #[test]
+    fn test_add_messenger_provider_creates_context_for_activation() {
+        let mut server = McpServer::new();
+        server.add_messenger_provider_to_context("messenger-only", Arc::new(TestMessengerProvider));
+
+        assert!(
+            server
+                .context_names()
+                .contains(&"messenger-only".to_string())
+        );
+        assert!(server.set_active_context("messenger-only").is_ok());
     }
 }

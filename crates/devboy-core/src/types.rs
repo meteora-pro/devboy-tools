@@ -1054,9 +1054,9 @@ pub struct GetMessagesParams {
     pub cursor: Option<String>,
     /// Optional thread identifier to fetch replies for a thread.
     pub thread_id: Option<String>,
-    /// Only include messages after this timestamp/date.
+    /// Only include messages after this provider timestamp string.
     pub since: Option<String>,
-    /// Only include messages before this timestamp/date.
+    /// Only include messages before this provider timestamp string.
     pub until: Option<String>,
 }
 
@@ -1071,9 +1071,9 @@ pub struct SearchMessagesParams {
     pub limit: Option<u32>,
     /// Cursor/token for provider pagination.
     pub cursor: Option<String>,
-    /// Only include messages after this timestamp/date.
+    /// Only include messages after this provider timestamp string.
     pub since: Option<String>,
-    /// Only include messages before this timestamp/date.
+    /// Only include messages before this provider timestamp string.
     pub until: Option<String>,
 }
 

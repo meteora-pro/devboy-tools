@@ -239,6 +239,12 @@ pub fn default_slack_required_scopes() -> Vec<String> {
     vec![
         "channels:read".to_string(),
         "channels:history".to_string(),
+        "groups:read".to_string(),
+        "groups:history".to_string(),
+        "im:read".to_string(),
+        "im:history".to_string(),
+        "mpim:read".to_string(),
+        "mpim:history".to_string(),
         "chat:write".to_string(),
         "users:read".to_string(),
     ]
@@ -872,6 +878,20 @@ mod tests {
         let providers = config.configured_providers();
         assert!(providers.contains(&"github"));
         assert!(providers.contains(&"gitlab"));
+    }
+
+    #[test]
+    fn test_default_slack_required_scopes_cover_default_conversation_types() {
+        let scopes = default_slack_required_scopes();
+
+        assert!(scopes.contains(&"channels:read".to_string()));
+        assert!(scopes.contains(&"channels:history".to_string()));
+        assert!(scopes.contains(&"groups:read".to_string()));
+        assert!(scopes.contains(&"groups:history".to_string()));
+        assert!(scopes.contains(&"im:read".to_string()));
+        assert!(scopes.contains(&"im:history".to_string()));
+        assert!(scopes.contains(&"mpim:read".to_string()));
+        assert!(scopes.contains(&"mpim:history".to_string()));
     }
 
     #[test]
