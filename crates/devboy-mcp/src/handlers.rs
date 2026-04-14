@@ -1025,10 +1025,7 @@ fn extract_goal_id(labels: &[String]) -> Option<String> {
         let lower = l.to_lowercase();
         if lower.len() == 2
             && lower.starts_with('g')
-            && lower
-                .chars()
-                .nth(1)
-                .is_some_and(|c| matches!(c, '1'..='9'))
+            && lower.chars().nth(1).is_some_and(|c| matches!(c, '1'..='9'))
         {
             Some(lower.to_uppercase())
         } else {
@@ -1628,10 +1625,7 @@ impl ToolHandler {
         }
 
         if all_statuses.is_empty() && !errors.is_empty() {
-            return ToolCallResult::error(format!(
-                "Failed to get statuses: {}",
-                errors.join(", ")
-            ));
+            return ToolCallResult::error(format!("Failed to get statuses: {}", errors.join(", ")));
         }
 
         let output = devboy_executor::ToolOutput::Statuses(all_statuses, None);
@@ -1676,10 +1670,7 @@ impl ToolHandler {
         }
 
         if all_users.is_empty() && !errors.is_empty() {
-            return ToolCallResult::error(format!(
-                "Failed to get users: {}",
-                errors.join(", ")
-            ));
+            return ToolCallResult::error(format!("Failed to get users: {}", errors.join(", ")));
         }
 
         let output = devboy_executor::ToolOutput::Users(all_users, None);
@@ -1734,10 +1725,7 @@ impl ToolHandler {
         }
 
         if all_epics.is_empty() && !errors.is_empty() {
-            return ToolCallResult::error(format!(
-                "Failed to get epics: {}",
-                errors.join(", ")
-            ));
+            return ToolCallResult::error(format!("Failed to get epics: {}", errors.join(", ")));
         }
 
         // Filter by goalId if provided
@@ -1847,7 +1835,7 @@ impl ToolHandler {
         let args = match arguments {
             Some(v) => v,
             None => {
-                return ToolCallResult::error("Missing required parameter: epicKey".to_string())
+                return ToolCallResult::error("Missing required parameter: epicKey".to_string());
             }
         };
 
