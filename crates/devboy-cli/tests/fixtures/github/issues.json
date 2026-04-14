@@ -86,10 +86,7 @@
     "state": "open",
     "source": "github",
     "priority": null,
-    "labels": [
-      "test",
-      "mcp"
-    ],
+    "labels": ["test", "mcp"],
     "author": {
       "id": "233059123",
       "username": "andreymaznyakthailand-bot",

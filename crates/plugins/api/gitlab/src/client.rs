@@ -207,6 +207,7 @@ impl GitLabClient {
             limit,
             total: x_total,
             has_more,
+            next_cursor: None,
         })
     }
 

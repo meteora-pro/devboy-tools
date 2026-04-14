@@ -8,9 +8,10 @@ use async_trait::async_trait;
 use crate::error::{Error, Result};
 use crate::types::{
     Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Discussion, FileDiff,
-    GetPipelineInput, GetUsersOptions, Issue, IssueFilter, IssueRelations, IssueStatus,
-    JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote, MeetingTranscript, MergeRequest,
-    MrFilter, PipelineInfo, ProviderResult, Release, UpdateIssueInput, User,
+    GetChatsParams, GetMessagesParams, GetPipelineInput, GetUsersOptions, Issue, IssueFilter,
+    IssueRelations, IssueStatus, JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote,
+    MeetingTranscript, MergeRequest, MessengerChat, MessengerMessage, MrFilter, PipelineInfo,
+    ProviderResult, Release, SearchMessagesParams, SendMessageParams, UpdateIssueInput, User,
 };
 
 /// Provider for working with issues.
@@ -237,4 +238,31 @@ pub trait MeetingNotesProvider: Send + Sync {
         query: &str,
         filter: MeetingFilter,
     ) -> Result<ProviderResult<MeetingNote>>;
+}
+
+/// Provider for team messenger systems.
+///
+/// Implementations include Slack.
+#[async_trait]
+pub trait MessengerProvider: Send + Sync {
+    /// Get the provider name for logging (e.g. "slack").
+    fn provider_name(&self) -> &'static str;
+
+    /// Get available chats, channels, groups, or DMs.
+    async fn get_chats(&self, params: GetChatsParams) -> Result<ProviderResult<MessengerChat>>;
+
+    /// Get message history for a specific chat.
+    async fn get_messages(
+        &self,
+        params: GetMessagesParams,
+    ) -> Result<ProviderResult<MessengerMessage>>;
+
+    /// Search messages across chats.
+    async fn search_messages(
+        &self,
+        params: SearchMessagesParams,
+    ) -> Result<ProviderResult<MessengerMessage>>;
+
+    /// Send a message to a chat or thread.
+    async fn send_message(&self, params: SendMessageParams) -> Result<MessengerMessage>;
 }

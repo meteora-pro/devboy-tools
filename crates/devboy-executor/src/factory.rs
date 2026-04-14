@@ -1,8 +1,8 @@
-use devboy_core::{Error, MeetingNotesProvider, Provider, Result, ToolEnricher};
+use devboy_core::{Error, MeetingNotesProvider, MessengerProvider, Provider, Result, ToolEnricher};
 
 use crate::context::{
     ClickUpScope, GitHubScope, GitLabScope, JiraScope, ProviderConfig, ProviderMetadata,
-    ProxyConfig,
+    ProxyConfig, SlackScope,
 };
 
 /// Create a provider instance from a typed `ProviderConfig`.
@@ -112,6 +112,11 @@ pub fn create_provider(
             operation: "Fireflies is a MeetingNotesProvider, not a Provider. Use create_meeting_notes_provider() instead.".into(),
         }),
 
+        ProviderConfig::Slack { .. } => Err(Error::ProviderUnsupported {
+            provider: "slack".into(),
+            operation: "Slack is a MessengerProvider, not a Provider. Use create_messenger_provider() instead.".into(),
+        }),
+
         ProviderConfig::Custom { name, .. } => Err(Error::ProviderNotFound(format!(
             "custom provider '{name}' not yet supported"
         ))),
@@ -132,6 +137,27 @@ pub fn create_meeting_notes_provider(
         other => Err(Error::ProviderUnsupported {
             provider: other.provider_name().into(),
             operation: "not a meeting notes provider".into(),
+        }),
+    }
+}
+
+/// Create a messenger provider from config.
+pub fn create_messenger_provider(config: &ProviderConfig) -> Result<Box<dyn MessengerProvider>> {
+    match config {
+        ProviderConfig::Slack {
+            base_url,
+            access_token,
+            scope: SlackScope::Workspace { .. },
+            required_scopes,
+            ..
+        } => Ok(Box::new(
+            devboy_slack::SlackClient::new(access_token)
+                .with_base_url(base_url)
+                .with_required_scopes(required_scopes.clone()),
+        )),
+        other => Err(Error::ProviderUnsupported {
+            provider: other.provider_name().into(),
+            operation: "not a messenger provider".into(),
         }),
     }
 }
@@ -166,6 +192,7 @@ pub fn create_enricher(
         ProviderConfig::Fireflies { .. } => {
             Some(Box::new(devboy_fireflies::FirefliesSchemaEnricher))
         }
+        ProviderConfig::Slack { .. } => None,
         ProviderConfig::Custom { .. } => None,
     }
 }
