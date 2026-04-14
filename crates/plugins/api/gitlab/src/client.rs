@@ -614,7 +614,10 @@ impl IssueProvider for GitLabClient {
         let (gl_issues, pagination): (Vec<GitLabIssue>, _) = self
             .get_with_pagination(&url, filter.offset, filter.limit)
             .await?;
-        let issues: Vec<Issue> = gl_issues.iter().map(|i| map_issue(i, &self.base_url)).collect();
+        let issues: Vec<Issue> = gl_issues
+            .iter()
+            .map(|i| map_issue(i, &self.base_url))
+            .collect();
         let mut result = ProviderResult::new(issues);
         result.pagination = pagination;
         result.sort_info = Some(devboy_core::SortInfo {
@@ -721,9 +724,7 @@ impl IssueProvider for GitLabClient {
         let iid = parse_issue_key(issue_key)?;
         let note_url = self.project_url(&format!("/issues/{}/notes", iid));
         let markdown = format!("![{}]({})", filename, upload_url);
-        let request = CreateNoteRequest {
-            body: markdown,
-        };
+        let request = CreateNoteRequest { body: markdown };
         if let Err(err) = self.post::<GitLabNote, _>(&note_url, &request).await {
             warn!(
                 error = ?err,

@@ -485,11 +485,7 @@ impl McpServer {
     /// - MeetingNotes -> meeting providers
     /// - Messenger -> messenger providers
     /// - Everything else -> standard providers (issues, MRs, pipelines, assets, epics)
-    async fn dispatch_builtin_tool(
-        &self,
-        name: &str,
-        arguments: Option<Value>,
-    ) -> ToolCallResult {
+    async fn dispatch_builtin_tool(&self, name: &str, arguments: Option<Value>) -> ToolCallResult {
         let executor = self.create_executor();
         let args = arguments.unwrap_or(Value::Null);
         let category = devboy_executor::Executor::tool_category(name);
