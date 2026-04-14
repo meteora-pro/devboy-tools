@@ -1,9 +1,11 @@
 use devboy_core::{
-    CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Error, GetPipelineInput,
-    GetUsersOptions, IssueFilter, IssueProvider, JobLogMode, JobLogOptions, MeetingFilter,
-    MeetingNotesProvider, MergeRequestProvider, MrFilter, PipelineProvider, Result, ToolCategory,
+    CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Error, GetChatsParams,
+    GetMessagesParams, GetPipelineInput, GetUsersOptions, IssueFilter, IssueProvider, JobLogMode,
+    JobLogOptions, MeetingFilter, MeetingNotesProvider, MergeRequestProvider, MessengerProvider,
+    MrFilter, PipelineProvider, Result, SearchMessagesParams, SendMessageParams, ToolCategory,
     UpdateIssueInput,
 };
+use devboy_core::types::ChatType;
 use serde::Deserialize;
 use serde_json::Value;
 use tracing::debug;
@@ -38,13 +40,21 @@ where
 /// Stateless per call — provider is created from `AdditionalContext` each time.
 pub struct Executor {
     enrichers: Vec<Box<dyn ToolEnricher>>,
+    asset_manager: Option<devboy_assets::AssetManager>,
 }
 
 impl Executor {
     pub fn new() -> Self {
         Self {
             enrichers: Vec::new(),
+            asset_manager: None,
         }
+    }
+
+    /// Configure an optional local asset cache for download/delete operations.
+    pub fn with_asset_manager(mut self, mgr: devboy_assets::AssetManager) -> Self {
+        self.asset_manager = Some(mgr);
+        self
     }
 
     /// Register an enricher (provider, pipeline, or custom).
@@ -124,9 +134,12 @@ impl Executor {
         let output = if tool_category == Some(ToolCategory::MeetingNotes) {
             let provider = factory::create_meeting_notes_provider(&ctx.provider)?;
             dispatch_meeting_tool(tool, &args, provider.as_ref()).await?
+        } else if tool_category == Some(ToolCategory::Messenger) {
+            let provider = factory::create_messenger_provider(&ctx.provider)?;
+            dispatch_messenger_tool(tool, &args, provider.as_ref()).await?
         } else {
             let provider = factory::create_provider(&ctx.provider, ctx.proxy.as_ref())?;
-            dispatch_tool(tool, &args, provider.as_ref()).await?
+            dispatch_tool(tool, &args, provider.as_ref(), self.asset_manager.as_ref()).await?
         };
 
         Ok(output)
@@ -139,6 +152,143 @@ impl Default for Executor {
     }
 }
 
+// --- Messenger tool dispatch ---
+
+/// Dispatch a messenger tool call.
+async fn dispatch_messenger_tool(
+    tool: &str,
+    args: &Value,
+    provider: &dyn MessengerProvider,
+) -> Result<ToolOutput> {
+    match tool {
+        "get_messenger_chats" => execute_get_messenger_chats(provider, args).await,
+        "get_chat_messages" => execute_get_chat_messages(provider, args).await,
+        "search_chat_messages" => execute_search_chat_messages(provider, args).await,
+        "send_message" => execute_send_message(provider, args).await,
+        _ => Err(Error::NotFound(format!("unknown messenger tool: {tool}"))),
+    }
+}
+
+// --- Messenger tool handlers ---
+
+#[derive(Deserialize, Default)]
+struct GetMessengerChatsParams {
+    search: Option<String>,
+    chat_type: Option<ChatType>,
+    limit: Option<u32>,
+    cursor: Option<String>,
+    include_inactive: Option<bool>,
+}
+
+async fn execute_get_messenger_chats(
+    provider: &dyn MessengerProvider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetMessengerChatsParams = serde_json::from_value(args.clone()).unwrap_or_default();
+    let request = GetChatsParams {
+        search: params.search,
+        chat_type: params.chat_type,
+        limit: params.limit,
+        cursor: params.cursor,
+        include_inactive: params.include_inactive,
+    };
+    let result = provider.get_chats(request).await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::MessengerChats(result.items, Some(meta)))
+}
+
+#[derive(Deserialize)]
+struct GetChatMessagesParams {
+    chat_id: String,
+    limit: Option<u32>,
+    cursor: Option<String>,
+    thread_id: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+}
+
+async fn execute_get_chat_messages(
+    provider: &dyn MessengerProvider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetChatMessagesParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("missing 'chat_id' parameter: {e}")))?;
+    let request = GetMessagesParams {
+        chat_id: params.chat_id,
+        limit: params.limit,
+        cursor: params.cursor,
+        thread_id: params.thread_id,
+        since: params.since,
+        until: params.until,
+    };
+    let result = provider.get_messages(request).await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::MessengerMessages(result.items, Some(meta)))
+}
+
+#[derive(Deserialize)]
+struct SearchChatMessagesParams {
+    query: String,
+    chat_id: Option<String>,
+    limit: Option<u32>,
+    cursor: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+}
+
+async fn execute_search_chat_messages(
+    provider: &dyn MessengerProvider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: SearchChatMessagesParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("missing 'query' parameter: {e}")))?;
+    let request = SearchMessagesParams {
+        query: params.query,
+        chat_id: params.chat_id,
+        limit: params.limit,
+        cursor: params.cursor,
+        since: params.since,
+        until: params.until,
+    };
+    let result = provider.search_messages(request).await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::MessengerMessages(result.items, Some(meta)))
+}
+
+#[derive(Deserialize)]
+struct SendMessengerMessageParams {
+    chat_id: String,
+    text: String,
+    thread_id: Option<String>,
+    reply_to_id: Option<String>,
+}
+
+async fn execute_send_message(
+    provider: &dyn MessengerProvider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: SendMessengerMessageParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid send_message params: {e}")))?;
+    let request = SendMessageParams {
+        chat_id: params.chat_id,
+        text: params.text,
+        thread_id: params.thread_id,
+        reply_to_id: params.reply_to_id,
+        attachments: vec![],
+    };
+    let message = provider.send_message(request).await?;
+    Ok(ToolOutput::SingleMessage(Box::new(message)))
+}
+
 // --- Tool dispatch ---
 
 /// Dispatch a tool call to the appropriate provider method.
@@ -146,6 +296,7 @@ async fn dispatch_tool(
     tool: &str,
     args: &Value,
     provider: &dyn devboy_core::Provider,
+    asset_manager: Option<&devboy_assets::AssetManager>,
 ) -> Result<ToolOutput> {
     match tool {
         // Issue tools
@@ -190,8 +341,8 @@ async fn dispatch_tool(
         // Asset tools
         "get_assets" => execute_get_assets(provider, args).await,
         "upload_asset" => execute_upload_asset(provider, args).await,
-        "download_asset" => execute_download_asset(provider, args).await,
-        "delete_asset" => execute_delete_asset(provider, args).await,
+        "download_asset" => execute_download_asset(provider, args, asset_manager).await,
+        "delete_asset" => execute_delete_asset(provider, args, asset_manager).await,
 
         _ => Err(Error::NotFound(format!("unknown tool: {tool}"))),
     }
@@ -1210,6 +1361,11 @@ pub const SUPPORTED_TOOLS: &[&str] = &[
     "get_meeting_notes",
     "get_meeting_transcript",
     "search_meeting_notes",
+    // Messenger tools
+    "get_messenger_chats",
+    "get_chat_messages",
+    "search_chat_messages",
+    "send_message",
     // Asset tools
     "get_assets",
     "upload_asset",
@@ -1286,13 +1442,18 @@ async fn execute_get_assets(
         }
     };
 
-    let capabilities = IssueProvider::asset_capabilities(provider);
-    let output = serde_json::json!({
-        "attachments": assets,
-        "count": assets.len(),
-        "capabilities": capabilities,
-    });
-    Ok(ToolOutput::Text(serde_json::to_string_pretty(&output)?))
+    let capabilities = serde_json::to_value(IssueProvider::asset_capabilities(provider))
+        .unwrap_or_default();
+    let count = assets.len();
+    let attachments: Vec<serde_json::Value> = assets
+        .into_iter()
+        .map(|a| serde_json::to_value(a).unwrap_or_default())
+        .collect();
+    Ok(ToolOutput::AssetList {
+        attachments,
+        count,
+        capabilities,
+    })
 }
 
 #[derive(Deserialize)]
@@ -1326,6 +1487,7 @@ async fn execute_upload_asset(
         )));
     }
 
+    let size = data.len();
     let url = match params.context_type.as_str() {
         "issue" => {
             IssueProvider::upload_attachment(provider, &params.key, &params.filename, &data).await?
@@ -1337,13 +1499,11 @@ async fn execute_upload_asset(
         }
     };
 
-    let output = serde_json::json!({
-        "success": true,
-        "url": url,
-        "filename": params.filename,
-        "size": data.len(),
-    });
-    Ok(ToolOutput::Text(serde_json::to_string_pretty(&output)?))
+    Ok(ToolOutput::AssetUploaded {
+        url,
+        filename: params.filename,
+        size,
+    })
 }
 
 #[derive(Deserialize)]
@@ -1359,10 +1519,25 @@ struct DownloadAssetParams {
 async fn execute_download_asset(
     provider: &dyn devboy_core::Provider,
     args: &Value,
+    asset_manager: Option<&devboy_assets::AssetManager>,
 ) -> Result<ToolOutput> {
     let params: DownloadAssetParams = serde_json::from_value(args.clone())?;
     debug!(context_type = %params.context_type, key = %params.key, asset_id = %params.asset_id, "download_asset");
 
+    // Check local cache first.
+    if let Some(mgr) = asset_manager
+        && let Ok(Some(resolved)) = mgr.get(&params.asset_id)
+    {
+        return Ok(ToolOutput::AssetDownloaded {
+            asset_id: params.asset_id,
+            size: resolved.asset.size as usize,
+            local_path: Some(resolved.absolute_path.to_string_lossy().into_owned()),
+            data: None,
+            cached: true,
+        });
+    }
+
+    // Not cached — download from provider.
     let bytes = match params.context_type.as_str() {
         "issue" => {
             IssueProvider::download_attachment(provider, &params.key, &params.asset_id).await?
@@ -1378,6 +1553,44 @@ async fn execute_download_asset(
         }
     };
 
+    // Store in cache if available.
+    if let Some(mgr) = asset_manager {
+        let context = match params.context_type.as_str() {
+            "mr" | "merge_request" | "pull_request" => {
+                devboy_core::AssetContext::MergeRequest {
+                    mr_id: params.key.clone(),
+                }
+            }
+            _ => devboy_core::AssetContext::Issue {
+                key: params.key.clone(),
+            },
+        };
+        let filename = devboy_core::filename_from_url(&params.asset_id);
+        match mgr.store(devboy_assets::StoreRequest {
+            context,
+            asset_id: Some(&params.asset_id),
+            filename: &filename,
+            mime_type: None,
+            remote_url: None,
+            data: &bytes,
+        }) {
+            Ok(cached) => {
+                let abs = mgr.cache_dir().join(&cached.local_path);
+                return Ok(ToolOutput::AssetDownloaded {
+                    asset_id: cached.id,
+                    size: cached.size as usize,
+                    local_path: Some(abs.to_string_lossy().into_owned()),
+                    data: None,
+                    cached: true,
+                });
+            }
+            Err(e) => {
+                tracing::warn!(?e, "failed to cache asset, returning base64 fallback");
+            }
+        }
+    }
+
+    // Fallback: return base64-encoded content.
     if bytes.len() > MAX_FILE_SIZE {
         return Err(Error::InvalidData(format!(
             "downloaded attachment is {} bytes, max allowed for base64 response is {} bytes",
@@ -1387,13 +1600,13 @@ async fn execute_download_asset(
     }
 
     let encoded = base64_encode(&bytes);
-    let output = serde_json::json!({
-        "success": true,
-        "asset_id": params.asset_id,
-        "size": bytes.len(),
-        "data": encoded,
-    });
-    Ok(ToolOutput::Text(serde_json::to_string_pretty(&output)?))
+    Ok(ToolOutput::AssetDownloaded {
+        asset_id: params.asset_id,
+        size: bytes.len(),
+        local_path: None,
+        data: Some(encoded),
+        cached: false,
+    })
 }
 
 #[derive(Deserialize)]
@@ -1407,18 +1620,25 @@ struct DeleteAssetParams {
 async fn execute_delete_asset(
     provider: &dyn devboy_core::Provider,
     args: &Value,
+    asset_manager: Option<&devboy_assets::AssetManager>,
 ) -> Result<ToolOutput> {
     let params: DeleteAssetParams = serde_json::from_value(args.clone())?;
     debug!(key = %params.key, asset_id = %params.asset_id, "delete_asset");
 
     IssueProvider::delete_attachment(provider, &params.key, &params.asset_id).await?;
 
-    let output = serde_json::json!({
-        "success": true,
-        "asset_id": params.asset_id,
-        "message": format!("Attachment '{}' deleted from {}", params.asset_id, params.key),
-    });
-    Ok(ToolOutput::Text(serde_json::to_string_pretty(&output)?))
+    // Evict from local cache so stale files aren't served.
+    if let Some(mgr) = asset_manager
+        && let Err(e) = mgr.delete(&params.asset_id)
+    {
+        tracing::warn!(?e, asset_id = %params.asset_id, "failed to evict deleted asset from cache");
+    }
+
+    let message = format!("Attachment '{}' deleted from {}", params.asset_id, params.key);
+    Ok(ToolOutput::AssetDeleted {
+        asset_id: params.asset_id,
+        message,
+    })
 }
 
 /// Maximum base64 encoded length for MAX_FILE_SIZE bytes.
@@ -1661,7 +1881,11 @@ mod tests {
         assert!(SUPPORTED_TOOLS.contains(&"get_meeting_notes"));
         assert!(SUPPORTED_TOOLS.contains(&"get_meeting_transcript"));
         assert!(SUPPORTED_TOOLS.contains(&"search_meeting_notes"));
-        assert_eq!(SUPPORTED_TOOLS.len(), 30);
+        assert!(SUPPORTED_TOOLS.contains(&"get_messenger_chats"));
+        assert!(SUPPORTED_TOOLS.contains(&"get_chat_messages"));
+        assert!(SUPPORTED_TOOLS.contains(&"search_chat_messages"));
+        assert!(SUPPORTED_TOOLS.contains(&"send_message"));
+        assert_eq!(SUPPORTED_TOOLS.len(), 34);
     }
 
     // --- Issue tool dispatch tests ---
@@ -1670,14 +1894,14 @@ mod tests {
     async fn test_dispatch_get_issues() {
         let provider = MockProvider;
         let args = serde_json::json!({"state": "open", "limit": 10});
-        let result = dispatch_tool("get_issues", &args, &provider).await.unwrap();
+        let result = dispatch_tool("get_issues", &args, &provider, None).await.unwrap();
         assert!(matches!(result, ToolOutput::Issues(v, _) if v.len() == 1));
     }
 
     #[tokio::test]
     async fn test_dispatch_get_issues_empty_args() {
         let provider = MockProvider;
-        let result = dispatch_tool("get_issues", &Value::Null, &provider)
+        let result = dispatch_tool("get_issues", &Value::Null, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::Issues(_, _)));
@@ -1688,20 +1912,20 @@ mod tests {
         let provider = MockProvider;
         // With includeComments/includeRelations defaulting to true, returns composite Text
         let args = serde_json::json!({"key": "gh#1"});
-        let result = dispatch_tool("get_issue", &args, &provider).await.unwrap();
+        let result = dispatch_tool("get_issue", &args, &provider, None).await.unwrap();
         assert!(matches!(result, ToolOutput::Text(_)));
 
         // Without extras, returns SingleIssue
         let args =
             serde_json::json!({"key": "gh#1", "includeComments": false, "includeRelations": false});
-        let result = dispatch_tool("get_issue", &args, &provider).await.unwrap();
+        let result = dispatch_tool("get_issue", &args, &provider, None).await.unwrap();
         assert!(matches!(result, ToolOutput::SingleIssue(_)));
     }
 
     #[tokio::test]
     async fn test_dispatch_get_issue_missing_key() {
         let provider = MockProvider;
-        let result = dispatch_tool("get_issue", &serde_json::json!({}), &provider).await;
+        let result = dispatch_tool("get_issue", &serde_json::json!({}), &provider, None).await;
         assert!(result.is_err());
     }
 
@@ -1709,7 +1933,7 @@ mod tests {
     async fn test_dispatch_get_issue_comments() {
         let provider = MockProvider;
         let args = serde_json::json!({"key": "gh#1"});
-        let result = dispatch_tool("get_issue_comments", &args, &provider)
+        let result = dispatch_tool("get_issue_comments", &args, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::Comments(v, _) if v.len() == 1));
@@ -1720,7 +1944,7 @@ mod tests {
         let provider = MockProvider;
         let args =
             serde_json::json!({"title": "New issue", "description": "Body", "labels": ["bug"]});
-        let result = dispatch_tool("create_issue", &args, &provider)
+        let result = dispatch_tool("create_issue", &args, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::SingleIssue(_)));
@@ -1730,7 +1954,7 @@ mod tests {
     async fn test_dispatch_update_issue() {
         let provider = MockProvider;
         let args = serde_json::json!({"key": "gh#1", "title": "Updated"});
-        let result = dispatch_tool("update_issue", &args, &provider)
+        let result = dispatch_tool("update_issue", &args, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::SingleIssue(_)));
@@ -1740,7 +1964,7 @@ mod tests {
     async fn test_dispatch_add_issue_comment() {
         let provider = MockProvider;
         let args = serde_json::json!({"key": "gh#1", "body": "A comment"});
-        let result = dispatch_tool("add_issue_comment", &args, &provider)
+        let result = dispatch_tool("add_issue_comment", &args, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::Text(ref t) if t.contains("Comment added")));
@@ -1750,7 +1974,7 @@ mod tests {
     async fn test_dispatch_get_issue_relations() {
         let provider = MockProvider;
         let args = serde_json::json!({"key": "gh#1"});
-        let result = dispatch_tool("get_issue_relations", &args, &provider)
+        let result = dispatch_tool("get_issue_relations", &args, &provider, None)
             .await
             .unwrap();
         match result {
@@ -1766,7 +1990,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_get_issue_relations_missing_key() {
         let provider = MockProvider;
-        let result = dispatch_tool("get_issue_relations", &serde_json::json!({}), &provider).await;
+        let result = dispatch_tool("get_issue_relations", &serde_json::json!({}), &provider, None).await;
         assert!(result.is_err());
     }
 
@@ -1776,7 +2000,7 @@ mod tests {
     async fn test_dispatch_get_merge_requests() {
         let provider = MockProvider;
         let args = serde_json::json!({"state": "open", "limit": 5});
-        let result = dispatch_tool("get_merge_requests", &args, &provider)
+        let result = dispatch_tool("get_merge_requests", &args, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::MergeRequests(v, _) if v.len() == 1));
@@ -1785,7 +2009,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_get_merge_requests_empty_args() {
         let provider = MockProvider;
-        let result = dispatch_tool("get_merge_requests", &Value::Null, &provider)
+        let result = dispatch_tool("get_merge_requests", &Value::Null, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::MergeRequests(_, _)));
@@ -1795,7 +2019,7 @@ mod tests {
     async fn test_dispatch_get_merge_request() {
         let provider = MockProvider;
         let args = serde_json::json!({"key": "pr#1"});
-        let result = dispatch_tool("get_merge_request", &args, &provider)
+        let result = dispatch_tool("get_merge_request", &args, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::SingleMergeRequest(_)));
@@ -1805,7 +2029,7 @@ mod tests {
     async fn test_dispatch_get_merge_request_discussions() {
         let provider = MockProvider;
         let args = serde_json::json!({"key": "pr#1"});
-        let result = dispatch_tool("get_merge_request_discussions", &args, &provider)
+        let result = dispatch_tool("get_merge_request_discussions", &args, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::Discussions(v, _) if v.len() == 1));
@@ -1815,7 +2039,7 @@ mod tests {
     async fn test_dispatch_get_merge_request_diffs() {
         let provider = MockProvider;
         let args = serde_json::json!({"key": "pr#1"});
-        let result = dispatch_tool("get_merge_request_diffs", &args, &provider)
+        let result = dispatch_tool("get_merge_request_diffs", &args, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::Diffs(v, _) if v.len() == 1));
@@ -1830,7 +2054,7 @@ mod tests {
             "target_branch": "main",
             "draft": false
         });
-        let result = dispatch_tool("create_merge_request", &args, &provider)
+        let result = dispatch_tool("create_merge_request", &args, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::SingleMergeRequest(_)));
@@ -1840,7 +2064,7 @@ mod tests {
     async fn test_dispatch_create_merge_request_comment_general() {
         let provider = MockProvider;
         let args = serde_json::json!({"key": "pr#1", "body": "LGTM"});
-        let result = dispatch_tool("create_merge_request_comment", &args, &provider)
+        let result = dispatch_tool("create_merge_request_comment", &args, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::Text(ref t) if t.contains("Comment added")));
@@ -1857,7 +2081,7 @@ mod tests {
             "line_type": "new",
             "commit_sha": "abc123"
         });
-        let result = dispatch_tool("create_merge_request_comment", &args, &provider)
+        let result = dispatch_tool("create_merge_request_comment", &args, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::Text(ref t) if t.contains("Comment added")));
@@ -1866,7 +2090,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_unknown_tool() {
         let provider = MockProvider;
-        let result = dispatch_tool("nonexistent_tool", &Value::Null, &provider).await;
+        let result = dispatch_tool("nonexistent_tool", &Value::Null, &provider, None).await;
         assert!(result.is_err());
     }
 
@@ -1900,7 +2124,7 @@ mod tests {
     async fn test_dispatch_get_pipeline_unsupported() {
         let provider = MockProvider;
         let args = serde_json::json!({"branch": "main"});
-        let result = dispatch_tool("get_pipeline", &args, &provider).await;
+        let result = dispatch_tool("get_pipeline", &args, &provider, None).await;
         // MockProvider doesn't implement get_pipeline → ProviderUnsupported
         assert!(result.is_err());
     }
@@ -1909,7 +2133,7 @@ mod tests {
     async fn test_dispatch_get_job_logs_unsupported() {
         let provider = MockProvider;
         let args = serde_json::json!({"jobId": "123"});
-        let result = dispatch_tool("get_job_logs", &args, &provider).await;
+        let result = dispatch_tool("get_job_logs", &args, &provider, None).await;
         assert!(result.is_err());
     }
 
@@ -1917,7 +2141,7 @@ mod tests {
     async fn test_dispatch_get_pipeline_with_mr_key() {
         let provider = MockProvider;
         let args = serde_json::json!({"mrKey": "pr#1", "includeFailedLogs": false});
-        let result = dispatch_tool("get_pipeline", &args, &provider).await;
+        let result = dispatch_tool("get_pipeline", &args, &provider, None).await;
         assert!(result.is_err());
     }
 
@@ -1925,7 +2149,7 @@ mod tests {
     async fn test_dispatch_get_job_logs_with_pattern() {
         let provider = MockProvider;
         let args = serde_json::json!({"jobId": "123", "pattern": "ERROR", "context": 3});
-        let result = dispatch_tool("get_job_logs", &args, &provider).await;
+        let result = dispatch_tool("get_job_logs", &args, &provider, None).await;
         assert!(result.is_err());
     }
 
@@ -1933,7 +2157,7 @@ mod tests {
     async fn test_dispatch_get_job_logs_paginated() {
         let provider = MockProvider;
         let args = serde_json::json!({"jobId": "123", "offset": 10, "limit": 50});
-        let result = dispatch_tool("get_job_logs", &args, &provider).await;
+        let result = dispatch_tool("get_job_logs", &args, &provider, None).await;
         assert!(result.is_err());
     }
 
@@ -1941,7 +2165,7 @@ mod tests {
     async fn test_dispatch_get_job_logs_full() {
         let provider = MockProvider;
         let args = serde_json::json!({"jobId": "123", "full": true});
-        let result = dispatch_tool("get_job_logs", &args, &provider).await;
+        let result = dispatch_tool("get_job_logs", &args, &provider, None).await;
         assert!(result.is_err());
     }
 
@@ -1956,7 +2180,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_get_available_statuses_unsupported() {
         let provider = MockProvider;
-        let result = dispatch_tool("get_available_statuses", &Value::Null, &provider).await;
+        let result = dispatch_tool("get_available_statuses", &Value::Null, &provider, None).await;
         // MockProvider returns ProviderUnsupported for get_statuses
         assert!(result.is_err());
     }
@@ -1965,7 +2189,7 @@ mod tests {
     async fn test_dispatch_get_users_unsupported() {
         let provider = MockProvider;
         let args = serde_json::json!({"search": "test"});
-        let result = dispatch_tool("get_users", &args, &provider).await;
+        let result = dispatch_tool("get_users", &args, &provider, None).await;
         // MockProvider uses default impl which returns ProviderUnsupported
         assert!(result.is_err());
     }
@@ -1978,7 +2202,7 @@ mod tests {
             "target_key": "gh#2",
             "link_type": "blocks"
         });
-        let result = dispatch_tool("link_issues", &args, &provider).await;
+        let result = dispatch_tool("link_issues", &args, &provider, None).await;
         assert!(result.is_err());
     }
 
@@ -1986,7 +2210,7 @@ mod tests {
     async fn test_dispatch_get_epics() {
         let provider = MockProvider;
         let args = serde_json::json!({"state": "open", "limit": 10});
-        let result = dispatch_tool("get_epics", &args, &provider).await.unwrap();
+        let result = dispatch_tool("get_epics", &args, &provider, None).await.unwrap();
         // Returns enriched JSON with goal_id and progress
         assert!(matches!(result, ToolOutput::Text(_)));
     }
@@ -1994,7 +2218,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_get_epics_empty_args() {
         let provider = MockProvider;
-        let result = dispatch_tool("get_epics", &Value::Null, &provider)
+        let result = dispatch_tool("get_epics", &Value::Null, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::Text(_)));
@@ -2004,7 +2228,7 @@ mod tests {
     async fn test_dispatch_create_epic() {
         let provider = MockProvider;
         let args = serde_json::json!({"title": "New Epic", "description": "Epic description"});
-        let result = dispatch_tool("create_epic", &args, &provider)
+        let result = dispatch_tool("create_epic", &args, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::SingleIssue(_)));
@@ -2014,7 +2238,7 @@ mod tests {
     async fn test_dispatch_update_epic() {
         let provider = MockProvider;
         let args = serde_json::json!({"key": "gh#1", "title": "Updated Epic"});
-        let result = dispatch_tool("update_epic", &args, &provider)
+        let result = dispatch_tool("update_epic", &args, &provider, None)
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::SingleIssue(_)));
@@ -2024,7 +2248,7 @@ mod tests {
     async fn test_dispatch_link_issues_missing_params() {
         let provider = MockProvider;
         let args = serde_json::json!({"source_key": "gh#1"});
-        let result = dispatch_tool("link_issues", &args, &provider).await;
+        let result = dispatch_tool("link_issues", &args, &provider, None).await;
         assert!(result.is_err());
     }
 

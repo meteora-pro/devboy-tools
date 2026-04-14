@@ -430,6 +430,70 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s
             },
         },
+        // =====================================================================
+        // Messenger tools
+        // =====================================================================
+        ToolDefinition {
+            name: "get_messenger_chats".into(),
+            description: "List available messenger chats, channels, groups, or direct messages.".into(),
+            category: ToolCategory::Messenger,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("search", PropertySchema::string("Optional chat name search"));
+                s.add_property("chat_type", PropertySchema::string_enum(&["direct", "group", "channel"], "Optional chat type filter"));
+                s.add_property("limit", PropertySchema::integer("Maximum number of chats to return", Some(1.0), Some(1000.0)));
+                s.add_property("cursor", PropertySchema::string("Provider pagination cursor"));
+                s.add_property("include_inactive", PropertySchema::boolean("Include archived or inactive chats"));
+                s
+            },
+        },
+        ToolDefinition {
+            name: "get_chat_messages".into(),
+            description: "Get message history for a chat or fetch replies for a specific thread.".into(),
+            category: ToolCategory::Messenger,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("chat_id", PropertySchema::string("Messenger chat ID"));
+                s.add_property("limit", PropertySchema::integer("Maximum number of messages to return", Some(1.0), Some(1000.0)));
+                s.add_property("cursor", PropertySchema::string("Provider pagination cursor"));
+                s.add_property("thread_id", PropertySchema::string("Thread identifier to fetch replies for"));
+                s.add_property("since", PropertySchema::string("Only include messages after this provider timestamp"));
+                s.add_property("until", PropertySchema::string("Only include messages before this provider timestamp"));
+                s.set_required("chat_id", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "search_chat_messages".into(),
+            description: "Search messages across accessible chats or within a specific chat.".into(),
+            category: ToolCategory::Messenger,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("query", PropertySchema::string("Message search query"));
+                s.add_property("chat_id", PropertySchema::string("Optional chat ID to scope the search"));
+                s.add_property("limit", PropertySchema::integer("Maximum number of matches to return", Some(1.0), Some(1000.0)));
+                s.add_property("cursor", PropertySchema::string("Provider pagination cursor"));
+                s.add_property("since", PropertySchema::string("Only include messages after this provider timestamp"));
+                s.add_property("until", PropertySchema::string("Only include messages before this provider timestamp"));
+                s.set_required("query", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "send_message".into(),
+            description: "Send a message to a chat or as a threaded reply.".into(),
+            category: ToolCategory::Messenger,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("chat_id", PropertySchema::string("Messenger chat ID"));
+                s.add_property("text", PropertySchema::string("Message body"));
+                s.add_property("thread_id", PropertySchema::string("Thread identifier to post as a threaded reply"));
+                s.add_property("reply_to_id", PropertySchema::string("Direct parent message ID when supported"));
+                s.set_required("chat_id", true);
+                s.set_required("text", true);
+                s
+            },
+        },
         ToolDefinition {
             name: "delete_asset".into(),
             description: "Delete a file attachment from an issue. Not all providers support this — check asset_capabilities first.".into(),
@@ -453,7 +517,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 29);
+        assert_eq!(tools.len(), 33);
     }
 
     #[test]
@@ -501,6 +565,12 @@ mod tests {
             "get_meeting_transcript",
             "search_meeting_notes",
         ];
+        let messenger_tools = [
+            "get_messenger_chats",
+            "get_chat_messages",
+            "search_chat_messages",
+            "send_message",
+        ];
 
         for tool in &tools {
             if issue_tracker_tools.contains(&tool.name.as_str()) {
@@ -529,6 +599,13 @@ mod tests {
                     tool.category,
                     ToolCategory::MeetingNotes,
                     "tool {} should be MeetingNotes",
+                    tool.name
+                );
+            } else if messenger_tools.contains(&tool.name.as_str()) {
+                assert_eq!(
+                    tool.category,
+                    ToolCategory::Messenger,
+                    "tool {} should be Messenger",
                     tool.name
                 );
             } else {
