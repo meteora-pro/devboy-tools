@@ -830,24 +830,24 @@ const GITHUB_TRUSTED_HOSTS: &[&str] = &[
     "camo.githubusercontent.com",
 ];
 
-/// Download a URL, attaching GitHub auth headers only if the host is a
-/// known GitHub domain. For cross-origin URLs (which can appear in
-/// markdown via user-supplied links) the request is made anonymously to
-/// prevent token leakage.
+/// Download a URL, attaching GitHub auth headers only when the host
+/// requires it. CDN hosts (`*.githubusercontent.com`) serve content
+/// anonymously — sending a Bearer token to their S3 backend causes
+/// `400 Unsupported Authorization Type`.
 async fn download_github_url(
     client: &reqwest::Client,
     base_url: &str,
     token: &str,
     url: &str,
 ) -> Result<Vec<u8>> {
-    let is_trusted = is_github_trusted_host(base_url, url);
+    let needs_auth = is_github_api_host(base_url, url);
     let mut request = client
         .get(url)
         .header("Accept", "application/octet-stream")
         .header("User-Agent", "devboy-tools");
-    if is_trusted && !token.is_empty() {
+    if needs_auth && !token.is_empty() {
         request = request.header("Authorization", format!("Bearer {token}"));
-    } else if !is_trusted {
+    } else if !is_github_trusted_host(base_url, url) {
         tracing::warn!(
             url,
             "downloading cross-origin attachment without auth headers"
@@ -867,6 +867,24 @@ async fn download_github_url(
         .await
         .map_err(|e| Error::Http(format!("failed to read attachment bytes: {e}")))?;
     Ok(bytes.to_vec())
+}
+
+/// Check whether a URL points to a GitHub API host that needs
+/// Authorization headers. CDN hosts (*.githubusercontent.com) do NOT
+/// need auth — they serve content anonymously via S3-style presigned
+/// URLs and reject Bearer tokens.
+fn is_github_api_host(base_url: &str, url: &str) -> bool {
+    let (url_scheme, url_host) = split_scheme_host(url);
+    if url_scheme != "https" {
+        return false;
+    }
+    // API hosts that accept Bearer tokens.
+    if url_host == "api.github.com" || url_host == "github.com" {
+        return true;
+    }
+    // GitHub Enterprise: base_url host.
+    let (_base_scheme, base_host) = split_scheme_host(base_url);
+    url_host == base_host
 }
 
 /// Check whether a URL is a known GitHub host or matches the configured
