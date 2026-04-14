@@ -448,7 +448,57 @@ pub fn parse_markdown_attachments(markdown: &str) -> Vec<MarkdownAttachment> {
         i = url_end + 1;
     }
 
+    // Also parse HTML <img> tags — GitHub's Web UI inserts attachments
+    // as `<img src="..." alt="..." />` rather than markdown `![]()`.
+    parse_html_img_tags(markdown, &mut out, &mut seen);
+
     out
+}
+
+/// Extract `src` URLs from HTML `<img>` tags.
+fn parse_html_img_tags(
+    html: &str,
+    out: &mut Vec<MarkdownAttachment>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    let lower = html.to_ascii_lowercase();
+    let mut search_from = 0;
+    while let Some(tag_start) = lower[search_from..].find("<img ") {
+        let abs_start = search_from + tag_start;
+        let Some(tag_end_rel) = html[abs_start..].find('>') else {
+            break;
+        };
+        let tag = &html[abs_start..abs_start + tag_end_rel + 1];
+
+        // Extract src="..."
+        let url = extract_html_attr(tag, "src").unwrap_or_default();
+        let alt = extract_html_attr(tag, "alt").unwrap_or_default();
+
+        if !url.is_empty() && seen.insert(url.clone()) {
+            let filename = if !alt.is_empty() && alt != "Image" && !looks_like_url(&alt) {
+                alt
+            } else {
+                filename_from_url(&url)
+            };
+            out.push(MarkdownAttachment {
+                filename,
+                url,
+                is_image: true,
+            });
+        }
+
+        search_from = abs_start + tag_end_rel + 1;
+    }
+}
+
+/// Extract the value of an HTML attribute from a tag string.
+fn extract_html_attr(tag: &str, attr_name: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    let pattern = format!("{attr_name}=\"");
+    let start = lower.find(&pattern)? + pattern.len();
+    let rest = &tag[start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
 }
 
 /// A single attachment reference found in a markdown document.

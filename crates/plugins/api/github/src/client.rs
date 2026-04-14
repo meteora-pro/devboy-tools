@@ -936,6 +936,19 @@ fn is_github_attachment_url(base_url: &str, url: &str) -> bool {
     if host.ends_with("githubusercontent.com") {
         return true;
     }
+    // github.com/user-attachments/assets/ — new upload format (Web UI).
+    if host == "github.com" {
+        let path = url
+            .split("://")
+            .nth(1)
+            .unwrap_or("")
+            .split_once('/')
+            .map(|(_, p)| p)
+            .unwrap_or("");
+        if path.starts_with("user-attachments/assets/") {
+            return true;
+        }
+    }
     // On the base host: only `/assets/` paths are real uploads.
     let (_base_scheme, base_host) = split_scheme_host(base_url);
     if host == base_host {
