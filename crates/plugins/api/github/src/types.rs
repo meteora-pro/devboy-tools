@@ -241,6 +241,19 @@ pub struct CreatePullRequestRequest {
     pub draft: Option<bool>,
 }
 
+/// Request body for updating a pull request.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct UpdatePullRequestRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft: Option<bool>,
+}
+
 /// Request body for creating a comment.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateCommentRequest {

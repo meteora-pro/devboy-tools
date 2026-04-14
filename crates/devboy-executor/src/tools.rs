@@ -417,7 +417,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "download_asset".into(),
-            description: "Download a file attachment from an issue or merge request. Returns base64-encoded content.".into(),
+            description: "Download a file attachment to local cache. Returns local file path when cache is available, base64-encoded content as fallback.".into(),
             category: ToolCategory::IssueTracker,
             input_schema: {
                 let mut s = ToolSchema::new();
