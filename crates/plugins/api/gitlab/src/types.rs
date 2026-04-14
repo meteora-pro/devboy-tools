@@ -200,6 +200,21 @@ pub struct UpdateIssueRequest {
     pub assignee_ids: Option<Vec<u64>>,
 }
 
+/// Request body for updating a merge request.
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateMergeRequestRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// GitLab uses state_event: "close" or "reopen"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_event: Option<String>,
+    /// Comma-separated labels
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<String>,
+}
+
 /// Request body for creating a merge request.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateMergeRequestRequest {

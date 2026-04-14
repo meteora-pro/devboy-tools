@@ -363,6 +363,21 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s
             },
         },
+        ToolDefinition {
+            name: "update_merge_request".into(),
+            description: "Update a merge request / pull request (title, description, state, labels, draft).".into(),
+            category: ToolCategory::GitRepository,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("key", PropertySchema::string("MR key (e.g. 'mr#1', 'pr#42')"));
+                s.add_property("title", PropertySchema::string("New title"));
+                s.add_property("description", PropertySchema::string("New description / body (supports markdown)"));
+                s.add_property("state", PropertySchema::string_enum(&["close", "reopen"], "Change MR state"));
+                s.add_property("labels", PropertySchema::array(PropertySchema::string("label"), "New labels (replaces existing)"));
+                s.set_required("key", true);
+                s
+            },
+        },
         // =====================================================================
         // Asset tools
         // =====================================================================
@@ -434,7 +449,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 28);
+        assert_eq!(tools.len(), 29);
     }
 
     #[test]
@@ -472,6 +487,7 @@ mod tests {
             "get_merge_request_diffs",
             "create_merge_request",
             "create_merge_request_comment",
+            "update_merge_request",
             "get_pipeline",
             "get_job_logs",
         ];

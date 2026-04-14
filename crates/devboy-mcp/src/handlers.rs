@@ -537,6 +537,39 @@ define_tools! {
         }
     },
 
+    "update_merge_request" => handle_update_merge_request {
+        category: ToolCategory::MergeRequests,
+        description: "Update a merge request / pull request (title, description, state, labels).",
+        schema: {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "MR key (e.g. 'mr#1', 'pr#42')"
+                },
+                "title": {
+                    "type": "string",
+                    "description": "New title"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "New description / body (supports markdown)"
+                },
+                "state": {
+                    "type": "string",
+                    "enum": ["close", "reopen"],
+                    "description": "Change MR state"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "New labels (replaces existing)"
+                }
+            },
+            "required": ["key"]
+        }
+    },
+
     // =====================================================================
     // Pipeline / CI
     // =====================================================================
@@ -1590,6 +1623,47 @@ impl ToolHandler {
         ToolCallResult::error(format!("Failed to create merge request: {}", last_error))
     }
 
+    async fn handle_update_merge_request(&self, arguments: Option<Value>) -> ToolCallResult {
+        let params: UpdateMergeRequestParams = match parse_params(arguments) {
+            Ok(p) => p,
+            Err(e) => return e,
+        };
+
+        let input = devboy_core::UpdateMergeRequestInput {
+            title: params.title,
+            description: params.description,
+            state: params.state,
+            labels: params.labels,
+            draft: params.draft,
+        };
+
+        for provider in &self.providers {
+            match MergeRequestProvider::update_merge_request(
+                provider.as_ref(),
+                &params.key,
+                input.clone(),
+            )
+            .await
+            {
+                Ok(mr) => {
+                    let output = devboy_executor::ToolOutput::SingleMergeRequest(Box::new(mr));
+                    return match devboy_executor::format_output(
+                        output,
+                        None,
+                        Some("update_merge_request"),
+                        None,
+                    ) {
+                        Ok(result) => ToolCallResult::text(result.content),
+                        Err(e) => ToolCallResult::error(format!("Format error: {e}")),
+                    };
+                }
+                Err(e) if should_try_next_provider(&e) => continue,
+                Err(e) => return ToolCallResult::error(format!("{e}")),
+            }
+        }
+        ToolCallResult::error("No provider supports update_merge_request".to_string())
+    }
+
     async fn handle_create_merge_request_comment(
         &self,
         arguments: Option<Value>,
@@ -2452,6 +2526,16 @@ struct DeleteAssetParams {
     asset_id: String,
 }
 
+#[derive(Deserialize)]
+struct UpdateMergeRequestParams {
+    key: String,
+    title: Option<String>,
+    description: Option<String>,
+    state: Option<String>,
+    labels: Option<Vec<String>>,
+    draft: Option<bool>,
+}
+
 /// Parse tool parameters from the arguments JSON.
 fn parse_params<T: serde::de::DeserializeOwned>(
     arguments: Option<Value>,
@@ -3222,7 +3306,7 @@ mod tests {
         let tools = handler.available_tools();
 
         // 9 issue tools + 4 asset tools + 6 MR tools + 2 pipeline tools + 3 meeting tools = 24 total
-        assert_eq!(tools.len(), 24);
+        assert_eq!(tools.len(), 25);
     }
 
     #[tokio::test]

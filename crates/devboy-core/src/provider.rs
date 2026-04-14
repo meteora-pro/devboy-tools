@@ -11,7 +11,8 @@ use crate::types::{
     Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Discussion, FileDiff,
     GetPipelineInput, GetUsersOptions, Issue, IssueFilter, IssueRelations, IssueStatus,
     JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote, MeetingTranscript, MergeRequest,
-    MrFilter, PipelineInfo, ProviderResult, Release, UpdateIssueInput, User,
+    MrFilter, PipelineInfo, ProviderResult, Release, UpdateIssueInput, UpdateMergeRequestInput,
+    User,
 };
 
 /// Provider for working with issues.
@@ -216,6 +217,18 @@ pub trait MergeRequestProvider: Send + Sync {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "create_merge_request".to_string(),
+        })
+    }
+
+    /// Update an existing merge request / pull request.
+    async fn update_merge_request(
+        &self,
+        _key: &str,
+        _input: UpdateMergeRequestInput,
+    ) -> Result<MergeRequest> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "update_merge_request".to_string(),
         })
     }
 
