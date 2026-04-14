@@ -113,9 +113,10 @@ fn scrub_sensitive_data(
         .cloned()
         .collect();
     for key in keys_to_scrub {
-        event
-            .extra
-            .insert(key, sentry::protocol::Value::String("[Filtered]".to_string()));
+        event.extra.insert(
+            key,
+            sentry::protocol::Value::String("[Filtered]".to_string()),
+        );
     }
 
     Some(event)
