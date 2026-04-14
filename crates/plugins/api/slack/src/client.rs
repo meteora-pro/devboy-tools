@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -131,6 +130,8 @@ struct SlackSearchCursor {
     current_message_offset: usize,
     #[serde(default)]
     pending_chat_ids: Vec<String>,
+    #[serde(default)]
+    pending_chat_index: usize,
     next_chats_cursor: Option<String>,
 }
 
@@ -422,11 +423,11 @@ impl SlackClient {
         if let Some(cursor) = params.cursor.as_ref() {
             form.push(("cursor", cursor.clone()));
         }
-        if let Some(since) = normalize_ts_param(params.since.as_deref()) {
-            form.push(("oldest", since.into_owned()));
+        if let Some(since) = normalize_ts_param("since", params.since.as_deref())? {
+            form.push(("oldest", since));
         }
-        if let Some(until) = normalize_ts_param(params.until.as_deref()) {
-            form.push(("latest", until.into_owned()));
+        if let Some(until) = normalize_ts_param("until", params.until.as_deref())? {
+            form.push(("latest", until));
         }
 
         let payload: SlackMessagesResponse = if let Some(thread_id) = params.thread_id.as_ref() {
@@ -626,7 +627,7 @@ impl MessengerProvider for SlackClient {
         } else {
             let mut state = parse_search_cursor(params.cursor.as_deref())?;
             let mut chats_loaded = state.current_chat_id.is_some()
-                || !state.pending_chat_ids.is_empty()
+                || has_pending_chat_ids(&state)
                 || state.next_chats_cursor.is_some()
                 || params.cursor.is_some();
 
@@ -703,8 +704,8 @@ impl MessengerProvider for SlackClient {
                     continue;
                 }
 
-                if !state.pending_chat_ids.is_empty() {
-                    state.current_chat_id = Some(state.pending_chat_ids.remove(0));
+                if let Some(next_chat_id) = take_next_pending_chat_id(&mut state) {
+                    state.current_chat_id = Some(next_chat_id);
                     state.current_message_cursor = None;
                     state.current_message_offset = 0;
                     continue;
@@ -724,12 +725,13 @@ impl MessengerProvider for SlackClient {
                     })
                     .await?;
                 state.pending_chat_ids = chats.items.into_iter().map(|chat| chat.id).collect();
+                state.pending_chat_index = 0;
                 state.next_chats_cursor = chats.pagination.and_then(|page| page.next_cursor);
                 chats_loaded = true;
             }
 
             let has_more = state.current_chat_id.is_some()
-                || !state.pending_chat_ids.is_empty()
+                || has_pending_chat_ids(&state)
                 || state.next_chats_cursor.is_some();
             let next_cursor = serialize_search_cursor(&state)?;
             (has_more, next_cursor)
@@ -745,6 +747,13 @@ impl MessengerProvider for SlackClient {
     }
 
     async fn send_message(&self, params: SendMessageParams) -> Result<MessengerMessage> {
+        if !params.attachments.is_empty() {
+            return Err(Error::ProviderUnsupported {
+                provider: self.provider_name().to_string(),
+                operation: "send_message attachments".to_string(),
+            });
+        }
+
         let thread_ts = params
             .thread_id
             .clone()
@@ -805,7 +814,7 @@ fn parse_search_cursor(cursor: Option<&str>) -> Result<SlackSearchCursor> {
 
 fn serialize_search_cursor(state: &SlackSearchCursor) -> Result<Option<String>> {
     let has_more = state.current_chat_id.is_some()
-        || !state.pending_chat_ids.is_empty()
+        || has_pending_chat_ids(state)
         || state.next_chats_cursor.is_some();
     if !has_more {
         return Ok(None);
@@ -939,16 +948,37 @@ fn slack_rate_limit_bucket(method: &str) -> SlackRateLimitBucket {
     }
 }
 
-fn normalize_ts_param(value: Option<&str>) -> Option<Cow<'_, str>> {
-    let value = value?.trim();
+fn normalize_ts_param(field_name: &str, value: Option<&str>) -> Result<Option<String>> {
+    let Some(value) = value.map(str::trim) else {
+        return Ok(None);
+    };
     if value.is_empty() {
-        return None;
+        return Ok(None);
     }
     if value.parse::<f64>().is_ok() {
-        Some(Cow::Borrowed(value))
+        Ok(Some(value.to_string()))
     } else {
-        None
+        Err(Error::InvalidData(format!(
+            "{field_name} must be a Slack timestamp string"
+        )))
     }
+}
+
+fn has_pending_chat_ids(state: &SlackSearchCursor) -> bool {
+    state.pending_chat_index < state.pending_chat_ids.len()
+}
+
+fn take_next_pending_chat_id(state: &mut SlackSearchCursor) -> Option<String> {
+    let next_chat_id = state
+        .pending_chat_ids
+        .get(state.pending_chat_index)
+        .cloned()?;
+    state.pending_chat_index += 1;
+    if state.pending_chat_index >= state.pending_chat_ids.len() {
+        state.pending_chat_ids.clear();
+        state.pending_chat_index = 0;
+    }
+    Some(next_chat_id)
 }
 
 fn parse_scopes(headers: &HeaderMap) -> Vec<String> {
@@ -1365,6 +1395,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn send_message_rejects_attachments() {
+        let err = SlackClient::new("xoxb-test")
+            .send_message(SendMessageParams {
+                chat_id: "C123".to_string(),
+                text: "reply message".to_string(),
+                thread_id: None,
+                reply_to_id: None,
+                attachments: vec![MessageAttachment {
+                    id: Some("att-1".to_string()),
+                    name: Some("report.txt".to_string()),
+                    attachment_type: None,
+                    url: None,
+                    mime_type: None,
+                }],
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::ProviderUnsupported { provider, operation }
+                if provider == "slack" && operation == "send_message attachments"
+        ));
+    }
+
+    #[tokio::test]
     async fn get_messages_caches_resolved_users() {
         let server = MockServer::start();
         server.mock(|when, then| {
@@ -1536,7 +1592,8 @@ mod tests {
         assert_eq!(state.current_chat_id.as_deref(), Some("C1"));
         assert_eq!(state.current_message_cursor.as_deref(), Some("msg-page-2"));
         assert_eq!(state.current_message_offset, 0);
-        assert_eq!(state.pending_chat_ids, vec!["C2"]);
+        assert_eq!(state.pending_chat_ids, vec!["C1", "C2"]);
+        assert_eq!(state.pending_chat_index, 1);
         assert_eq!(state.next_chats_cursor.as_deref(), Some("chat-page-2"));
     }
 
@@ -1675,11 +1732,16 @@ mod tests {
         );
 
         assert_eq!(
-            normalize_ts_param(Some(" 1710000000.000100 ")).as_deref(),
+            normalize_ts_param("since", Some(" 1710000000.000100 "))
+                .unwrap()
+                .as_deref(),
             Some("1710000000.000100")
         );
-        assert_eq!(normalize_ts_param(Some("not-a-ts")), None);
-        assert_eq!(normalize_ts_param(Some("   ")), None);
+        assert!(matches!(
+            normalize_ts_param("until", Some("not-a-ts")).unwrap_err(),
+            Error::InvalidData(message) if message == "until must be a Slack timestamp string"
+        ));
+        assert_eq!(normalize_ts_param("since", Some("   ")).unwrap(), None);
         assert_eq!(
             parse_scopes(&headers),
             vec!["channels:read".to_string(), "chat:write".to_string()]
@@ -1791,6 +1853,7 @@ mod tests {
             current_message_cursor: Some("msg-cursor-2".to_string()),
             current_message_offset: 37,
             pending_chat_ids: vec!["C124".to_string(), "C125".to_string()],
+            pending_chat_index: 1,
             next_chats_cursor: Some("chat-cursor-9".to_string()),
         };
 
@@ -1805,7 +1868,32 @@ mod tests {
         );
         assert_eq!(decoded.current_message_offset, 37);
         assert_eq!(decoded.pending_chat_ids, vec!["C124", "C125"]);
+        assert_eq!(decoded.pending_chat_index, 1);
         assert_eq!(decoded.next_chats_cursor.as_deref(), Some("chat-cursor-9"));
+    }
+
+    #[test]
+    fn take_next_pending_chat_id_advances_without_shifting() {
+        let mut state = SlackSearchCursor {
+            pending_chat_ids: vec!["C124".to_string(), "C125".to_string()],
+            ..SlackSearchCursor::default()
+        };
+
+        assert_eq!(
+            take_next_pending_chat_id(&mut state).as_deref(),
+            Some("C124")
+        );
+        assert_eq!(state.pending_chat_ids, vec!["C124", "C125"]);
+        assert_eq!(state.pending_chat_index, 1);
+        assert!(has_pending_chat_ids(&state));
+
+        assert_eq!(
+            take_next_pending_chat_id(&mut state).as_deref(),
+            Some("C125")
+        );
+        assert!(state.pending_chat_ids.is_empty());
+        assert_eq!(state.pending_chat_index, 0);
+        assert!(!has_pending_chat_ids(&state));
     }
 
     #[test]
