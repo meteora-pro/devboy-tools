@@ -1418,9 +1418,26 @@ impl IssueProvider for JiraClient {
     }
 
     async fn download_attachment(&self, _issue_key: &str, asset_id: &str) -> Result<Vec<u8>> {
-        // Jira exposes attachment content by id:
-        //   GET /rest/api/{v}/attachment/content/{id}
-        let url = format!("{}/attachment/content/{}", self.base_url, asset_id);
+        // Cloud: GET /rest/api/3/attachment/content/{id}
+        // Self-Hosted: the Cloud endpoint doesn't exist; fetch attachment
+        // metadata first and download from its `content` URL.
+        let url = match self.flavor {
+            JiraFlavor::Cloud => {
+                format!("{}/attachment/content/{}", self.base_url, asset_id)
+            }
+            JiraFlavor::SelfHosted => {
+                let meta_url = format!("{}/attachment/{}", self.base_url, asset_id);
+                let meta: serde_json::Value = self.get(&meta_url).await?;
+                meta.get("content")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        Error::InvalidData(format!(
+                            "attachment {asset_id} metadata has no content URL"
+                        ))
+                    })?
+                    .to_string()
+            }
+        };
         let response = self
             .request(reqwest::Method::GET, &url)
             .send()
@@ -3384,8 +3401,19 @@ mod tests {
         async fn test_download_attachment_returns_bytes() {
             let server = MockServer::start();
 
+            // Self-Hosted: first fetches metadata, then downloads from content URL.
+            let content_url = server.url("/secure/attachment/42/trace.log");
             server.mock(|when, then| {
-                when.method(GET).path("/attachment/content/42");
+                when.method(GET).path("/attachment/42");
+                then.status(200).json_body(serde_json::json!({
+                    "self": "http://localhost/rest/api/2/attachment/42",
+                    "id": "42",
+                    "filename": "trace.log",
+                    "content": content_url,
+                }));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/secure/attachment/42/trace.log");
                 then.status(200).body("stack trace here");
             });
 
