@@ -772,7 +772,8 @@ impl ToolHandler {
             offset: Some(params.offset.unwrap_or(0) as u32),
             sort_by: params.sort_by,
             sort_order: params.sort_order,
-            ..Default::default()
+            project_key: params.project_key,
+            native_query: params.native_query,
         };
 
         let mut all_issues = Vec::new();
@@ -1888,6 +1889,10 @@ struct GetIssuesParams {
     provider: Option<String>,
     sort_by: Option<String>,
     sort_order: Option<String>,
+    #[serde(rename = "projectKey")]
+    project_key: Option<String>,
+    #[serde(rename = "nativeQuery")]
+    native_query: Option<String>,
     budget: Option<usize>,
     chunk: Option<usize>,
 }

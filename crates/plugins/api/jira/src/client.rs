@@ -914,6 +914,7 @@ fn generic_status_to_category(status: &str) -> Option<&'static str> {
 fn has_unquoted_keyword(jql: &str, keyword: &str) -> bool {
     let lower = jql.to_lowercase();
     let kw = keyword.to_lowercase();
+    let kw_bytes = kw.as_bytes();
     let bytes = lower.as_bytes();
     let mut in_quote = false;
     let mut i = 0;
@@ -928,7 +929,10 @@ fn has_unquoted_keyword(jql: &str, keyword: &str) -> bool {
             i += 1;
             continue;
         }
-        if !in_quote && i + kw.len() <= bytes.len() && lower[i..i + kw.len()] == kw {
+        if !in_quote
+            && i + kw_bytes.len() <= bytes.len()
+            && bytes[i..i + kw_bytes.len()] == *kw_bytes
+        {
             return true;
         }
         i += 1;
