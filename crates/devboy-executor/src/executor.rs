@@ -144,6 +144,73 @@ impl Executor {
 
         Ok(output)
     }
+
+    /// Execute a tool with a pre-created Provider (for MCP server).
+    /// Enrichers are applied if configured.
+    pub async fn execute_direct(
+        &self,
+        tool: &str,
+        args: Value,
+        provider: &dyn devboy_core::Provider,
+    ) -> Result<ToolOutput> {
+        let mut args = args;
+        // Apply enricher transforms (same as execute())
+        let tool_category = Self::tool_category(tool);
+        for enricher in &self.enrichers {
+            if let Some(cat) = tool_category
+                && enricher.supported_categories().contains(&cat)
+            {
+                enricher.transform_args(tool, &mut args);
+            }
+        }
+        dispatch_tool(tool, &args, provider, self.asset_manager.as_ref()).await
+    }
+
+    /// Execute a meeting tool with a pre-created MeetingNotesProvider.
+    pub async fn execute_direct_meeting(
+        &self,
+        tool: &str,
+        args: Value,
+        provider: &dyn MeetingNotesProvider,
+    ) -> Result<ToolOutput> {
+        let mut args = args;
+        let tool_category = Self::tool_category(tool);
+        for enricher in &self.enrichers {
+            if let Some(cat) = tool_category
+                && enricher.supported_categories().contains(&cat)
+            {
+                enricher.transform_args(tool, &mut args);
+            }
+        }
+        dispatch_meeting_tool(tool, &args, provider).await
+    }
+
+    /// Execute a messenger tool with a pre-created MessengerProvider.
+    pub async fn execute_direct_messenger(
+        &self,
+        tool: &str,
+        args: Value,
+        provider: &dyn MessengerProvider,
+    ) -> Result<ToolOutput> {
+        let mut args = args;
+        let tool_category = Self::tool_category(tool);
+        for enricher in &self.enrichers {
+            if let Some(cat) = tool_category
+                && enricher.supported_categories().contains(&cat)
+            {
+                enricher.transform_args(tool, &mut args);
+            }
+        }
+        dispatch_messenger_tool(tool, &args, provider).await
+    }
+
+    /// Get the tool category for a tool name, if known.
+    pub fn tool_category(tool: &str) -> Option<ToolCategory> {
+        crate::tools::base_tool_definitions()
+            .iter()
+            .find(|t| t.name == tool)
+            .map(|t| t.category)
+    }
 }
 
 impl Default for Executor {
