@@ -121,6 +121,13 @@ pub struct IssueFilter {
     pub sort_by: Option<String>,
     /// Sort order ("asc" or "desc")
     pub sort_order: Option<String>,
+    /// Project key override (e.g., "PROJ"). When set, overrides the default project
+    /// configured for the provider. Ignored by providers that don't support it.
+    pub project_key: Option<String>,
+    /// Native query passed directly to the provider (e.g., Jira JQL).
+    /// Takes precedence over other filters. If the query doesn't contain a project
+    /// clause, the provider may inject one automatically.
+    pub native_query: Option<String>,
 }
 
 /// Input for creating a new issue.
