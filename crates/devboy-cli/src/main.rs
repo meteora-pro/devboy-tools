@@ -1836,7 +1836,9 @@ async fn handle_test_command(provider: &str) -> Result<()> {
             let slack = config
                 .slack
                 .as_ref()
-                .context("Slack not configured. Run: devboy config set slack.workspace <name>")?;
+                .context(
+                    "Slack not configured. Run: devboy config set slack.team_id <team-id> or devboy config set slack.workspace <name>",
+                )?;
 
             let token = store
                 .get("slack.token")
