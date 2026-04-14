@@ -184,6 +184,9 @@ async fn dispatch_tool(
         "create_epic" => execute_create_epic(provider, args).await,
         "update_epic" => execute_update_epic(provider, args).await,
 
+        // MR update
+        "update_merge_request" => execute_update_merge_request(provider, args).await,
+
         // Asset tools
         "get_assets" => execute_get_assets(provider, args).await,
         "upload_asset" => execute_upload_asset(provider, args).await,
@@ -1170,6 +1173,7 @@ pub const SUPPORTED_TOOLS: &[&str] = &[
     "get_merge_request_diffs",
     "create_merge_request",
     "create_merge_request_comment",
+    "update_merge_request",
     "get_pipeline",
     "get_job_logs",
     "get_available_statuses",
@@ -1188,6 +1192,44 @@ pub const SUPPORTED_TOOLS: &[&str] = &[
     "download_asset",
     "delete_asset",
 ];
+
+// =============================================================================
+// Update Merge Request handler
+// =============================================================================
+
+#[derive(Deserialize)]
+struct UpdateMergeRequestParams {
+    key: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
+    labels: Option<Vec<String>>,
+    #[serde(default)]
+    draft: Option<bool>,
+}
+
+async fn execute_update_merge_request(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: UpdateMergeRequestParams = serde_json::from_value(args.clone())?;
+    debug!(key = %params.key, "update_merge_request");
+
+    let input = devboy_core::UpdateMergeRequestInput {
+        title: params.title,
+        description: params.description,
+        state: params.state,
+        labels: params.labels,
+        draft: params.draft,
+    };
+
+    let mr = MergeRequestProvider::update_merge_request(provider, &params.key, input).await?;
+    Ok(ToolOutput::SingleMergeRequest(Box::new(mr)))
+}
 
 // =============================================================================
 // Asset tool handlers
@@ -1595,7 +1637,7 @@ mod tests {
         assert!(SUPPORTED_TOOLS.contains(&"get_meeting_notes"));
         assert!(SUPPORTED_TOOLS.contains(&"get_meeting_transcript"));
         assert!(SUPPORTED_TOOLS.contains(&"search_meeting_notes"));
-        assert_eq!(SUPPORTED_TOOLS.len(), 29);
+        assert_eq!(SUPPORTED_TOOLS.len(), 30);
     }
 
     // --- Issue tool dispatch tests ---

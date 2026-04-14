@@ -991,6 +991,33 @@ impl MergeRequestProvider for GitLabClient {
         Ok(map_merge_request(&gl_mr))
     }
 
+    async fn update_merge_request(
+        &self,
+        key: &str,
+        input: devboy_core::UpdateMergeRequestInput,
+    ) -> Result<MergeRequest> {
+        let iid = parse_mr_key(key)?;
+        let url = self.project_url(&format!("/merge_requests/{}", iid));
+
+        let state_event = input.state.map(|s| match s.as_str() {
+            "opened" | "open" | "reopen" => "reopen".to_string(),
+            "closed" | "close" => "close".to_string(),
+            _ => s,
+        });
+
+        let labels = input.labels.map(|l| l.join(","));
+
+        let request = crate::types::UpdateMergeRequestRequest {
+            title: input.title,
+            description: input.description,
+            state_event,
+            labels,
+        };
+
+        let gl_mr: GitLabMergeRequest = self.put(&url, &request).await?;
+        Ok(map_merge_request(&gl_mr))
+    }
+
     async fn get_mr_attachments(&self, mr_key: &str) -> Result<Vec<AssetMeta>> {
         let mr = self.get_merge_request(mr_key).await?;
         let discussions = self.get_discussions(mr_key).await?;

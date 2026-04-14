@@ -265,6 +265,21 @@ pub struct CreateMergeRequestInput {
     pub reviewers: Vec<String>,
 }
 
+/// Input for updating an existing merge request / pull request.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdateMergeRequestInput {
+    /// New title (None = keep current).
+    pub title: Option<String>,
+    /// New description / body (None = keep current).
+    pub description: Option<String>,
+    /// New state: "close" or "reopen" (None = keep current).
+    pub state: Option<String>,
+    /// New labels (None = keep current).
+    pub labels: Option<Vec<String>>,
+    /// Mark as draft / WIP (None = keep current).
+    pub draft: Option<bool>,
+}
+
 /// Filter parameters for listing merge requests.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MrFilter {
