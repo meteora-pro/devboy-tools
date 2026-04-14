@@ -9,6 +9,7 @@ authors.workspace = true
 
 [dependencies]
 devboy-core = { path = "../devboy-core" }
+devboy-assets = { path = "../devboy-assets" }
 devboy-gitlab = { path = "../plugins/api/gitlab" }
 devboy-github = { path = "../plugins/api/github" }
 devboy-clickup = { path = "../plugins/api/clickup" }
