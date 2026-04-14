@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -12,7 +12,7 @@ use devboy_core::{
 use reqwest::header::HeaderMap;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Instant, sleep_until};
 use tracing::debug;
 
@@ -511,13 +511,7 @@ impl SlackClient {
     }
 
     async fn get_user(&self, user_id: &str) -> Result<MessageAuthor> {
-        if let Some(cached) = self
-            .user_cache
-            .read()
-            .map_err(|_| Error::Config("Slack user cache lock poisoned".to_string()))?
-            .get(user_id)
-            .cloned()
-        {
+        if let Some(cached) = self.user_cache.read().await.get(user_id).cloned() {
             return Ok(cached);
         }
 
@@ -552,7 +546,7 @@ impl SlackClient {
 
         self.user_cache
             .write()
-            .map_err(|_| Error::Config("Slack user cache lock poisoned".to_string()))?
+            .await
             .insert(user_id.to_string(), author.clone());
 
         Ok(author)
