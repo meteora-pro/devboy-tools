@@ -294,6 +294,7 @@ mod tests {
                 limit: 10,
                 total: Some(50),
                 has_more: true,
+                next_cursor: None,
             }),
             sort_info: Some(devboy_core::SortInfo {
                 sort_by: Some("created_at".into()),

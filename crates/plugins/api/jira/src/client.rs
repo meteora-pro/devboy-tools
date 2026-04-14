@@ -890,6 +890,84 @@ fn escape_jql(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// Merge custom fields (Object format) into a serializable payload.
+/// Only keys with `customfield_` prefix are merged to prevent overwriting
+/// core Jira fields like `project`, `summary`, `issuetype`.
+/// Returns the number of custom fields actually merged.
+fn merge_custom_fields_into_payload<T: serde::Serialize>(
+    payload: T,
+    custom_fields: &Option<serde_json::Value>,
+) -> Result<(serde_json::Value, usize)> {
+    let mut value = serde_json::to_value(payload)
+        .map_err(|e| Error::InvalidData(format!("failed to serialize issue payload: {e}")))?;
+    let mut merged_count = 0;
+    if let Some(serde_json::Value::Object(cf)) = custom_fields
+        && let Some(fields) = value.get_mut("fields").and_then(|f| f.as_object_mut())
+    {
+        for (k, v) in cf {
+            if k.starts_with("customfield_") {
+                fields.insert(k.clone(), v.clone());
+                merged_count += 1;
+            } else {
+                tracing::warn!(field = %k, "Skipping non-custom field in customFields (expected customfield_* prefix)");
+            }
+        }
+    }
+    Ok((value, merged_count))
+}
+
+/// Check whether a JQL string already contains a project filter clause.
+/// Matches `project` as a JQL field name (word boundary) followed by an operator.
+/// Skips occurrences inside quoted strings to avoid false positives.
+fn has_project_clause(jql: &str) -> bool {
+    let lower = jql.to_lowercase();
+    let bytes = lower.as_bytes();
+    let keyword = b"project";
+    let mut in_quote = false;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        // Track quoted strings — skip content inside quotes
+        if bytes[i] == b'\\' && in_quote && i + 1 < bytes.len() {
+            i += 2; // skip escaped character
+            continue;
+        }
+        if bytes[i] == b'"' {
+            in_quote = !in_quote;
+            i += 1;
+            continue;
+        }
+        if in_quote {
+            i += 1;
+            continue;
+        }
+
+        // Check for "project" keyword at position i
+        if i + keyword.len() <= bytes.len() && &bytes[i..i + keyword.len()] == keyword {
+            // Word boundary before: not preceded by alphanumeric or underscore
+            if i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_') {
+                i += 1;
+                continue;
+            }
+            // Check what follows — skip whitespace, then expect a JQL operator
+            let after = &lower[i + keyword.len()..];
+            let trimmed = after.trim_start();
+            if trimmed.starts_with("!=")
+                || trimmed.starts_with("not in ")
+                || trimmed.starts_with("not in(")
+                || trimmed.starts_with('=')
+                || trimmed.starts_with('~')
+                || trimmed.starts_with("in ")
+                || trimmed.starts_with("in(")
+            {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
 /// This maps user-friendly aliases to the correct category key, used as fallback
 /// when the exact status name is not found in available transitions.
 fn generic_status_to_category(status: &str) -> Option<&'static str> {
@@ -899,6 +977,36 @@ fn generic_status_to_category(status: &str) -> Option<&'static str> {
         "in_progress" | "in progress" | "in-progress" => Some("indeterminate"),
         _ => None,
     }
+}
+
+/// Check if a keyword appears outside quoted strings in JQL.
+fn has_unquoted_keyword(jql: &str, keyword: &str) -> bool {
+    let lower = jql.to_lowercase();
+    let kw = keyword.to_lowercase();
+    let kw_bytes = kw.as_bytes();
+    let bytes = lower.as_bytes();
+    let mut in_quote = false;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && in_quote && i + 1 < bytes.len() {
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            in_quote = !in_quote;
+            i += 1;
+            continue;
+        }
+        if !in_quote
+            && i + kw_bytes.len() <= bytes.len()
+            && bytes[i..i + kw_bytes.len()] == *kw_bytes
+        {
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 /// Get the Jira instance URL from the API base URL.
@@ -922,43 +1030,66 @@ impl IssueProvider for JiraClient {
         }
         let offset = filter.offset.unwrap_or(0);
 
-        // Build JQL query
-        let mut jql_parts: Vec<String> = vec![format!("project = \"{}\"", self.project_key)];
+        // Resolve effective project key: filter override → self.project_key
+        // Treat blank project_key as unset
+        let effective_project = filter
+            .project_key
+            .as_deref()
+            .filter(|k| !k.trim().is_empty())
+            .unwrap_or(&self.project_key);
 
-        // State filter
-        if let Some(state) = &filter.state {
-            match state.as_str() {
-                "open" | "opened" => {
-                    jql_parts.push("statusCategory != Done".to_string());
-                }
-                "closed" | "done" => {
-                    jql_parts.push("statusCategory = Done".to_string());
-                }
-                "all" => {} // No filter
-                other => {
-                    // Exact status name
-                    jql_parts.push(format!("status = \"{}\"", other));
+        // Build JQL query — native_query takes precedence over filter-based construction
+        let escaped_project = escape_jql(effective_project);
+        let jql = if let Some(native) = &filter.native_query
+            && !native.trim().is_empty()
+        {
+            // If native query doesn't mention a project clause, prepend one
+            // (Jira Cloud requires a project filter)
+            if has_project_clause(native) {
+                native.clone()
+            } else if native.trim_start().to_lowercase().starts_with("order by") {
+                format!("project = \"{}\" {}", escaped_project, native)
+            } else {
+                format!("project = \"{}\" AND {}", escaped_project, native)
+            }
+        } else {
+            let mut jql_parts: Vec<String> = vec![format!("project = \"{}\"", escaped_project)];
+
+            // State filter
+            if let Some(state) = &filter.state {
+                match state.as_str() {
+                    "open" | "opened" => {
+                        jql_parts.push("statusCategory != Done".to_string());
+                    }
+                    "closed" | "done" => {
+                        jql_parts.push("statusCategory = Done".to_string());
+                    }
+                    "all" => {} // No filter
+                    other => {
+                        // Exact status name
+                        jql_parts.push(format!("status = \"{}\"", escape_jql(other)));
+                    }
                 }
             }
-        }
 
-        if let Some(search) = &filter.search {
-            jql_parts.push(format!("summary ~ \"{}\"", escape_jql(search)));
-        }
-
-        if let Some(labels) = &filter.labels {
-            for label in labels {
-                jql_parts.push(format!("labels = \"{}\"", escape_jql(label)));
+            if let Some(search) = &filter.search {
+                jql_parts.push(format!("summary ~ \"{}\"", escape_jql(search)));
             }
-        }
 
-        if let Some(assignee) = &filter.assignee {
-            jql_parts.push(format!("assignee = \"{}\"", escape_jql(assignee)));
-        }
+            if let Some(labels) = &filter.labels {
+                for label in labels {
+                    jql_parts.push(format!("labels = \"{}\"", escape_jql(label)));
+                }
+            }
 
-        let jql = jql_parts.join(" AND ");
+            if let Some(assignee) = &filter.assignee {
+                jql_parts.push(format!("assignee = \"{}\"", escape_jql(assignee)));
+            }
 
-        // Add ORDER BY
+            jql_parts.join(" AND ")
+        };
+
+        // Add ORDER BY — skip if native_query already contains one
         let order_by = match filter.sort_by.as_deref() {
             Some("created_at" | "created") => "created",
             Some("priority") => "priority",
@@ -968,7 +1099,12 @@ impl IssueProvider for JiraClient {
             Some("asc") => "ASC",
             _ => "DESC",
         };
-        let jql_with_order = format!("{} ORDER BY {} {}", jql, order_by, order);
+        let has_order_by = has_unquoted_keyword(&jql, "order by");
+        let jql_with_order = if has_order_by {
+            jql
+        } else {
+            format!("{} ORDER BY {} {}", jql, order_by, order)
+        };
 
         let instance_url = &self.instance_url;
 
@@ -1033,6 +1169,7 @@ impl IssueProvider for JiraClient {
                     limit,
                     total: None, // Jira Cloud cursor-based, no total
                     has_more: next_page_token.is_some(),
+                    next_cursor: next_page_token,
                 });
                 result.sort_info = Some(devboy_core::SortInfo {
                     sort_by: Some(order_by.into()),
@@ -1086,6 +1223,7 @@ impl IssueProvider for JiraClient {
                     limit,
                     total,
                     has_more,
+                    next_cursor: None,
                 });
                 result.sort_info = Some(devboy_core::SortInfo {
                     sort_by: Some(order_by.into()),
@@ -1134,14 +1272,17 @@ impl IssueProvider for JiraClient {
             }
         });
 
+        let effective_project = input.project_id.unwrap_or_else(|| self.project_key.clone());
+        let effective_issue_type = input.issue_type.unwrap_or_else(|| "Task".to_string());
+
         let payload = CreateIssuePayload {
             fields: CreateIssueFields {
                 project: ProjectKey {
-                    key: self.project_key.clone(),
+                    key: effective_project,
                 },
                 summary: input.title,
                 issuetype: IssueType {
-                    name: "Task".to_string(),
+                    name: effective_issue_type,
                 },
                 description,
                 labels,
@@ -1149,6 +1290,8 @@ impl IssueProvider for JiraClient {
                 assignee,
             },
         };
+
+        let (payload, _) = merge_custom_fields_into_payload(payload, &input.custom_fields)?;
 
         let url = format!("{}/issue", self.base_url);
         let create_resp: CreateIssueResponse = self.post(&url, &payload).await?;
@@ -1192,16 +1335,23 @@ impl IssueProvider for JiraClient {
             assignee,
         };
 
+        let has_custom_fields = input.custom_fields.as_ref().is_some_and(|v| {
+            v.as_object()
+                .is_some_and(|obj| obj.keys().any(|k| k.starts_with("customfield_")))
+        });
+
         // Only call PUT if there are field updates
         let has_field_updates = fields.summary.is_some()
             || fields.description.is_some()
             || fields.labels.is_some()
             || fields.priority.is_some()
-            || fields.assignee.is_some();
+            || fields.assignee.is_some()
+            || has_custom_fields;
 
         if has_field_updates {
             let url = format!("{}/issue/{}", self.base_url, jira_key);
             let payload = UpdateIssuePayload { fields };
+            let (payload, _) = merge_custom_fields_into_payload(payload, &input.custom_fields)?;
             self.put(&url, &payload).await?;
         }
 
@@ -2315,6 +2465,220 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn test_get_issues_project_key_override() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "project = \"OTHER\"");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [sample_issue_json()],
+                    "startAt": 0,
+                    "maxResults": 20,
+                    "total": 1
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issues = client
+                .get_issues(IssueFilter {
+                    project_key: Some("OTHER".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+
+            assert_eq!(issues.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_native_query_passthrough() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "project = \"CUSTOM\" AND fixVersion = \"1.0\"");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [sample_issue_json()],
+                    "startAt": 0,
+                    "maxResults": 20,
+                    "total": 1
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issues = client
+                .get_issues(IssueFilter {
+                    native_query: Some("project = \"CUSTOM\" AND fixVersion = \"1.0\"".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+
+            assert_eq!(issues.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_native_query_auto_injects_project() {
+            let server = MockServer::start();
+
+            // Client is configured with project_key = "PROJ", native_query has no project clause
+            // → should auto-prepend project = "PROJ"
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "project = \"PROJ\" AND fixVersion = \"2.0\"");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [sample_issue_json()],
+                    "startAt": 0,
+                    "maxResults": 20,
+                    "total": 1
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issues = client
+                .get_issues(IssueFilter {
+                    native_query: Some("fixVersion = \"2.0\"".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+
+            assert_eq!(issues.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_native_query_with_project_in() {
+            let server = MockServer::start();
+
+            // Native query already has "project IN (...)" — should NOT prepend another project clause
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "project IN (\"A\", \"B\") AND status = \"Open\"");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [sample_issue_json()],
+                    "startAt": 0,
+                    "maxResults": 20,
+                    "total": 1
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issues = client
+                .get_issues(IssueFilter {
+                    native_query: Some(
+                        "project IN (\"A\", \"B\") AND status = \"Open\"".to_string(),
+                    ),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+
+            assert_eq!(issues.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_project_key_with_native_query() {
+            let server = MockServer::start();
+
+            // project_key override + native_query without project clause
+            // → should inject the overridden project key, not the default one
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "project = \"OVERRIDE\" AND sprint = 42");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [sample_issue_json()],
+                    "startAt": 0,
+                    "maxResults": 20,
+                    "total": 1
+                }));
+            });
+
+            let client = create_self_hosted_client(&server); // default project = "PROJ"
+            let issues = client
+                .get_issues(IssueFilter {
+                    project_key: Some("OVERRIDE".to_string()),
+                    native_query: Some("sprint = 42".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+
+            assert_eq!(issues.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_empty_native_query_falls_back() {
+            let server = MockServer::start();
+
+            // Empty native_query should fall back to normal filter-based JQL
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "project = \"PROJ\"");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [sample_issue_json()],
+                    "startAt": 0,
+                    "maxResults": 20,
+                    "total": 1
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issues = client
+                .get_issues(IssueFilter {
+                    native_query: Some("".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+
+            assert_eq!(issues.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn test_get_issues_native_query_order_by_only() {
+            let server = MockServer::start();
+
+            // native_query = "ORDER BY created ASC" without filters
+            // → should produce "project = "PROJ" ORDER BY created ASC" (no AND)
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "project = \"PROJ\" ORDER BY created ASC");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [sample_issue_json()],
+                    "startAt": 0,
+                    "maxResults": 20,
+                    "total": 1
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issues = client
+                .get_issues(IssueFilter {
+                    native_query: Some("ORDER BY created ASC".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .items;
+
+            assert_eq!(issues.len(), 1);
+        }
+
+        #[tokio::test]
         async fn test_get_issue() {
             let server = MockServer::start();
 
@@ -2370,6 +2734,179 @@ mod tests {
 
             assert_eq!(issue.key, "jira#PROJ-2");
             assert_eq!(issue.title, "New task");
+        }
+
+        #[tokio::test]
+        async fn test_create_issue_with_project_id_override() {
+            let server = MockServer::start();
+
+            // Verify the payload uses the overridden project key
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issue")
+                    .body_includes("\"key\":\"OTHER\"");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10003",
+                    "key": "OTHER-1"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/OTHER-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10003",
+                    "key": "OTHER-1",
+                    "fields": {
+                        "summary": "Task in other project",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-03T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server); // default project = "PROJ"
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "Task in other project".to_string(),
+                    project_id: Some("OTHER".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#OTHER-1");
+        }
+
+        #[tokio::test]
+        async fn test_create_issue_with_issue_type() {
+            let server = MockServer::start();
+
+            // Verify the payload uses the specified issue type, not hardcoded "Task"
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issue")
+                    .body_includes("\"name\":\"Bug\"");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10004",
+                    "key": "PROJ-3"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-3");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10004",
+                    "key": "PROJ-3",
+                    "fields": {
+                        "summary": "Bug report",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-03T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "Bug report".to_string(),
+                    issue_type: Some("Bug".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-3");
+        }
+
+        #[tokio::test]
+        async fn test_create_issue_with_custom_fields() {
+            let server = MockServer::start();
+
+            // Verify custom fields are merged into the payload
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issue")
+                    .body_includes("\"customfield_10001\":8")
+                    .body_includes("\"customfield_10002\":\"goal-a\"");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10005",
+                    "key": "PROJ-5"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-5");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10005",
+                    "key": "PROJ-5",
+                    "fields": {
+                        "summary": "With custom fields",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-03T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "With custom fields".to_string(),
+                    custom_fields: Some(serde_json::json!({
+                        "customfield_10001": 8,
+                        "customfield_10002": "goal-a"
+                    })),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-5");
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_with_custom_fields() {
+            let server = MockServer::start();
+
+            // Verify custom fields are merged into the update payload
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/issue/PROJ-1")
+                    .body_includes("\"customfield_10001\":5");
+                then.status(204);
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "summary": "Fix login bug",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .update_issue(
+                    "PROJ-1",
+                    UpdateIssueInput {
+                        custom_fields: Some(serde_json::json!({
+                            "customfield_10001": 5
+                        })),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-1");
         }
 
         #[tokio::test]
@@ -3278,6 +3815,114 @@ mod tests {
                 escape_jql(r#"both "and" \ here"#),
                 r#"both \"and\" \\ here"#
             );
+        }
+
+        #[test]
+        fn test_has_project_clause() {
+            // Positive cases — standard operators
+            assert!(has_project_clause("project = \"PROJ\""));
+            assert!(has_project_clause("project = PROJ AND status = Open"));
+            assert!(has_project_clause("project IN (\"A\", \"B\")"));
+            assert!(has_project_clause("project in(A, B)"));
+            assert!(has_project_clause("PROJECT = KEY")); // case-insensitive
+            assert!(has_project_clause("status = Open AND project = X"));
+            assert!(has_project_clause("project ~ KEY")); // contains operator
+            // Positive cases — negation operators
+            assert!(has_project_clause("project != \"PROJ\""));
+            assert!(has_project_clause("project NOT IN (\"A\", \"B\")"));
+            assert!(has_project_clause("project not in(A)"));
+            // Negative cases — no project clause
+            assert!(!has_project_clause("fixVersion = \"1.0\""));
+            assert!(!has_project_clause("status = Done"));
+            // Negative cases — "project" inside quoted strings
+            assert!(!has_project_clause("summary ~ \"project plan\""));
+            assert!(!has_project_clause("summary ~ \"project information\""));
+            assert!(!has_project_clause("summary ~ \"project = foo\""));
+            // Negative cases — underscore word boundary
+            assert!(!has_project_clause("my_project = X"));
+        }
+
+        // =================================================================
+        // merge_custom_fields unit tests
+        // =================================================================
+
+        #[test]
+        fn test_merge_custom_fields_into_payload() {
+            use crate::types::*;
+            let payload = CreateIssuePayload {
+                fields: CreateIssueFields {
+                    project: ProjectKey { key: "PROJ".into() },
+                    summary: "Test".into(),
+                    issuetype: IssueType {
+                        name: "Task".into(),
+                    },
+                    description: None,
+                    labels: None,
+                    priority: None,
+                    assignee: None,
+                },
+            };
+
+            let cf = Some(serde_json::json!({"customfield_10001": 8, "customfield_10002": "x"}));
+            let (merged, count) = merge_custom_fields_into_payload(payload, &cf).unwrap();
+
+            let fields = merged.get("fields").unwrap();
+            assert_eq!(fields["customfield_10001"], 8);
+            assert_eq!(fields["customfield_10002"], "x");
+            assert_eq!(count, 2);
+            assert_eq!(fields["summary"], "Test");
+            assert_eq!(fields["project"]["key"], "PROJ");
+        }
+
+        #[test]
+        fn test_merge_custom_fields_none_is_noop() {
+            use crate::types::*;
+            let payload = CreateIssuePayload {
+                fields: CreateIssueFields {
+                    project: ProjectKey { key: "PROJ".into() },
+                    summary: "Test".into(),
+                    issuetype: IssueType {
+                        name: "Task".into(),
+                    },
+                    description: None,
+                    labels: None,
+                    priority: None,
+                    assignee: None,
+                },
+            };
+
+            let (merged, count) = merge_custom_fields_into_payload(payload, &None).unwrap();
+            assert_eq!(count, 0);
+            let fields = merged.get("fields").unwrap();
+            assert_eq!(fields["summary"], "Test");
+            assert!(fields.get("customfield_10001").is_none());
+        }
+
+        #[test]
+        fn test_merge_custom_fields_rejects_non_custom_keys() {
+            use crate::types::*;
+            let payload = CreateIssuePayload {
+                fields: CreateIssueFields {
+                    project: ProjectKey { key: "PROJ".into() },
+                    summary: "Test".into(),
+                    issuetype: IssueType {
+                        name: "Task".into(),
+                    },
+                    description: None,
+                    labels: None,
+                    priority: None,
+                    assignee: None,
+                },
+            };
+
+            // "summary" should be rejected, "customfield_10001" should pass
+            let cf = Some(serde_json::json!({"summary": "HACKED", "customfield_10001": 5}));
+            let (merged, count) = merge_custom_fields_into_payload(payload, &cf).unwrap();
+
+            let fields = merged.get("fields").unwrap();
+            assert_eq!(fields["summary"], "Test"); // NOT overwritten
+            assert_eq!(fields["customfield_10001"], 5); // custom field applied
+            assert_eq!(count, 1); // only customfield_10001 counted
         }
 
         // =================================================================
