@@ -32,6 +32,8 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("offset", PropertySchema::integer("Number of results to skip (default: 0)", Some(0.0), None));
                 s.add_property("sort_by", PropertySchema::string_enum(&["created_at", "updated_at"], "Sort by field (default: updated_at)"));
                 s.add_property("sort_order", PropertySchema::string_enum(&["asc", "desc"], "Sort order (default: desc)"));
+                s.add_property("projectKey", PropertySchema::string("Project key to filter issues (e.g., \"PROJ\"). Overrides default project. Removed by providers that don't support it."));
+                s.add_property("nativeQuery", PropertySchema::string("Native query passed directly to provider (e.g., Jira JQL). Replaces auto-generated filters. If the query omits a project clause, the default project is auto-injected."));
                 s
             },
         },
@@ -82,6 +84,8 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("assignees", PropertySchema::array(PropertySchema::string("assignee"), "Assignee usernames"));
                 s.add_property("parent", PropertySchema::string("Parent issue key to create a subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp."));
                 s.add_property("markdown", PropertySchema::boolean("Whether the description is markdown (default: true). When true, ClickUp renders formatted text."));
+                s.add_property("projectId", PropertySchema::string("Jira project key (not numeric ID) for issue creation (e.g., \"PROJ\"). Optional — overrides the default project."));
+                s.add_property("issueType", PropertySchema::string("Issue type (e.g., \"Task\", \"Bug\", \"Story\"). Default: \"Task\". Removed by providers that don't support it."));
                 s.set_required("title", true);
                 s
             },
@@ -595,12 +599,14 @@ mod tests {
         let get_issues = tools.iter().find(|t| t.name == "get_issues").unwrap();
         let json = serde_json::to_string_pretty(get_issues).unwrap();
 
-        // get_issues should have state, search, labels, assignee, limit, offset, sort_by, sort_order
+        // get_issues should have state, search, labels, assignee, limit, offset, sort_by, sort_order, projectKey, nativeQuery
         assert!(json.contains("state"));
         assert!(json.contains("search"));
         assert!(json.contains("labels"));
         assert!(json.contains("assignee"));
         assert!(json.contains("limit"));
+        assert!(json.contains("projectKey"));
+        assert!(json.contains("nativeQuery"));
     }
 
     #[test]
