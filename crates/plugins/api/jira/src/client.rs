@@ -1203,14 +1203,17 @@ impl IssueProvider for JiraClient {
             }
         });
 
+        let effective_project = input.project_id.unwrap_or_else(|| self.project_key.clone());
+        let effective_issue_type = input.issue_type.unwrap_or_else(|| "Task".to_string());
+
         let payload = CreateIssuePayload {
             fields: CreateIssueFields {
                 project: ProjectKey {
-                    key: self.project_key.clone(),
+                    key: effective_project,
                 },
                 summary: input.title,
                 issuetype: IssueType {
-                    name: "Task".to_string(),
+                    name: effective_issue_type,
                 },
                 description,
                 labels,
@@ -2514,6 +2517,90 @@ mod tests {
 
             assert_eq!(issue.key, "jira#PROJ-2");
             assert_eq!(issue.title, "New task");
+        }
+
+        #[tokio::test]
+        async fn test_create_issue_with_project_id_override() {
+            let server = MockServer::start();
+
+            // Verify the payload uses the overridden project key
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issue")
+                    .body_includes("\"key\":\"OTHER\"");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10003",
+                    "key": "OTHER-1"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/OTHER-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10003",
+                    "key": "OTHER-1",
+                    "fields": {
+                        "summary": "Task in other project",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-03T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server); // default project = "PROJ"
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "Task in other project".to_string(),
+                    project_id: Some("OTHER".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#OTHER-1");
+        }
+
+        #[tokio::test]
+        async fn test_create_issue_with_issue_type() {
+            let server = MockServer::start();
+
+            // Verify the payload uses the specified issue type, not hardcoded "Task"
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issue")
+                    .body_includes("\"name\":\"Bug\"");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10004",
+                    "key": "PROJ-3"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-3");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10004",
+                    "key": "PROJ-3",
+                    "fields": {
+                        "summary": "Bug report",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-03T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "Bug report".to_string(),
+                    issue_type: Some("Bug".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-3");
         }
 
         #[tokio::test]

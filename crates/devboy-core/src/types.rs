@@ -150,6 +150,12 @@ pub struct CreateIssueInput {
     /// markdown rendering for the description.
     #[serde(default = "default_true")]
     pub markdown: bool,
+    /// Project key for issue creation (e.g., "PROJ"). Overrides default project.
+    /// Ignored by providers that don't support multi-project (GitHub, GitLab, ClickUp).
+    pub project_id: Option<String>,
+    /// Issue type (e.g., "Task", "Bug", "Story"). Provider-specific.
+    /// Jira defaults to "Task" if not specified.
+    pub issue_type: Option<String>,
 }
 
 impl Default for CreateIssueInput {
@@ -162,6 +168,8 @@ impl Default for CreateIssueInput {
             priority: None,
             parent: None,
             markdown: true,
+            project_id: None,
+            issue_type: None,
         }
     }
 }
