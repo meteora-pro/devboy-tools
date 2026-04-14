@@ -1049,10 +1049,16 @@ impl IssueProvider for JiraClient {
                 let total_needed = offset.saturating_add(limit);
                 let mut fetched_count = 0u32;
 
+                // Explicitly request required fields — without this, Jira Cloud
+                // may return minimal responses (only `id`) for certain JQL queries
+                // (e.g., label filters), causing deserialization failures.
+                let fields = "summary,status,priority,assignee,reporter,labels,created,updated,parent,subtasks".to_string();
+
                 loop {
                     let mut params: Vec<(&str, String)> = vec![
                         ("jql", jql_with_order.clone()),
                         ("maxResults", std::cmp::min(limit, 50).to_string()),
+                        ("fields", fields.clone()),
                     ];
 
                     if let Some(token) = &next_page_token {
@@ -1120,6 +1126,7 @@ impl IssueProvider for JiraClient {
                     ("jql", jql_with_order),
                     ("startAt", offset.to_string()),
                     ("maxResults", limit.to_string()),
+                    ("fields", "summary,status,priority,assignee,reporter,labels,created,updated,parent,subtasks".to_string()),
                 ];
 
                 let param_refs: Vec<(&str, &str)> =
@@ -1190,6 +1197,7 @@ impl IssueProvider for JiraClient {
         } else {
             Some(input.labels)
         };
+        let has_labels = labels.is_some();
 
         let priority = input.priority.as_deref().map(|p| PriorityName {
             name: priority_to_jira(p),
@@ -1203,7 +1211,7 @@ impl IssueProvider for JiraClient {
             }
         });
 
-        let payload = CreateIssuePayload {
+        let mut payload = CreateIssuePayload {
             fields: CreateIssueFields {
                 project: ProjectKey {
                     key: self.project_key.clone(),
@@ -1220,7 +1228,33 @@ impl IssueProvider for JiraClient {
         };
 
         let url = format!("{}/issue", self.base_url);
-        let create_resp: CreateIssueResponse = self.post(&url, &payload).await?;
+        let create_result: std::result::Result<CreateIssueResponse, Error> =
+            self.post(&url, &payload).await;
+
+        let create_resp = match create_result {
+            Ok(resp) => resp,
+            Err(e) if has_labels && e.to_string().contains("labels") => {
+                // Labels field may not be available on the Jira create screen
+                // (common on Self-Hosted). Retry without labels and set them via
+                // update afterwards.
+                tracing::warn!("Create issue failed with labels, retrying without: {e}");
+                let saved_labels = payload.fields.labels.take();
+                let resp: CreateIssueResponse = self.post(&url, &payload).await?;
+
+                // Best-effort: try to set labels via PUT update
+                if let Some(lbl) = saved_labels {
+                    let update = UpdateIssueInput {
+                        labels: Some(lbl),
+                        ..Default::default()
+                    };
+                    if let Err(e) = self.update_issue(&resp.key, update).await {
+                        tracing::warn!("Failed to set labels after create: {e}");
+                    }
+                }
+                resp
+            }
+            Err(e) => return Err(e),
+        };
 
         // Fetch the full issue to return
         self.get_issue(&create_resp.key).await
