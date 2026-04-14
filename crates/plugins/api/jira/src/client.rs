@@ -850,24 +850,27 @@ fn escape_jql(value: &str) -> String {
 /// Merge custom fields (Object format) into a serializable payload.
 /// Only keys with `customfield_` prefix are merged to prevent overwriting
 /// core Jira fields like `project`, `summary`, `issuetype`.
+/// Returns the number of custom fields actually merged.
 fn merge_custom_fields_into_payload<T: serde::Serialize>(
     payload: T,
     custom_fields: &Option<serde_json::Value>,
-) -> serde_json::Value {
+) -> Result<(serde_json::Value, usize)> {
     let mut value = serde_json::to_value(payload)
-        .expect("failed to serialize Jira issue payload before merging custom fields");
+        .map_err(|e| Error::InvalidData(format!("failed to serialize issue payload: {e}")))?;
+    let mut merged_count = 0;
     if let Some(serde_json::Value::Object(cf)) = custom_fields
         && let Some(fields) = value.get_mut("fields").and_then(|f| f.as_object_mut())
     {
         for (k, v) in cf {
             if k.starts_with("customfield_") {
                 fields.insert(k.clone(), v.clone());
+                merged_count += 1;
             } else {
                 tracing::warn!(field = %k, "Skipping non-custom field in customFields (expected customfield_* prefix)");
             }
         }
     }
-    value
+    Ok((value, merged_count))
 }
 
 /// This maps user-friendly aliases to the correct category key, used as fallback
@@ -1132,7 +1135,7 @@ impl IssueProvider for JiraClient {
 
         // Merge custom fields into the payload (Jira expects them as top-level
         // keys in `fields`, e.g., `customfield_10001: value`)
-        let payload = merge_custom_fields_into_payload(payload, &input.custom_fields);
+        let (payload, _) = merge_custom_fields_into_payload(payload, &input.custom_fields)?;
 
         let url = format!("{}/issue", self.base_url);
         let create_resp: CreateIssueResponse = self.post(&url, &payload).await?;
@@ -1176,10 +1179,10 @@ impl IssueProvider for JiraClient {
             assignee,
         };
 
-        let has_custom_fields = input
-            .custom_fields
-            .as_ref()
-            .is_some_and(|v| v.is_object() && !v.as_object().unwrap().is_empty());
+        let has_custom_fields = input.custom_fields.as_ref().is_some_and(|v| {
+            v.as_object()
+                .is_some_and(|obj| obj.keys().any(|k| k.starts_with("customfield_")))
+        });
 
         // Only call PUT if there are field updates
         let has_field_updates = fields.summary.is_some()
@@ -1192,7 +1195,7 @@ impl IssueProvider for JiraClient {
         if has_field_updates {
             let url = format!("{}/issue/{}", self.base_url, jira_key);
             let payload = UpdateIssuePayload { fields };
-            let payload = merge_custom_fields_into_payload(payload, &input.custom_fields);
+            let (payload, _) = merge_custom_fields_into_payload(payload, &input.custom_fields)?;
             self.put(&url, &payload).await?;
         }
 
@@ -3239,11 +3242,12 @@ mod tests {
             };
 
             let cf = Some(serde_json::json!({"customfield_10001": 8, "customfield_10002": "x"}));
-            let merged = merge_custom_fields_into_payload(payload, &cf);
+            let (merged, count) = merge_custom_fields_into_payload(payload, &cf).unwrap();
 
             let fields = merged.get("fields").unwrap();
             assert_eq!(fields["customfield_10001"], 8);
             assert_eq!(fields["customfield_10002"], "x");
+            assert_eq!(count, 2);
             assert_eq!(fields["summary"], "Test");
             assert_eq!(fields["project"]["key"], "PROJ");
         }
@@ -3265,7 +3269,8 @@ mod tests {
                 },
             };
 
-            let merged = merge_custom_fields_into_payload(payload, &None);
+            let (merged, count) = merge_custom_fields_into_payload(payload, &None).unwrap();
+            assert_eq!(count, 0);
             let fields = merged.get("fields").unwrap();
             assert_eq!(fields["summary"], "Test");
             assert!(fields.get("customfield_10001").is_none());
@@ -3290,11 +3295,12 @@ mod tests {
 
             // "summary" should be rejected, "customfield_10001" should pass
             let cf = Some(serde_json::json!({"summary": "HACKED", "customfield_10001": 5}));
-            let merged = merge_custom_fields_into_payload(payload, &cf);
+            let (merged, count) = merge_custom_fields_into_payload(payload, &cf).unwrap();
 
             let fields = merged.get("fields").unwrap();
             assert_eq!(fields["summary"], "Test"); // NOT overwritten
             assert_eq!(fields["customfield_10001"], 5); // custom field applied
+            assert_eq!(count, 1); // only customfield_10001 counted
         }
 
         // =================================================================
