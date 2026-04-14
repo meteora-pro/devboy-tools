@@ -2258,9 +2258,10 @@ fn format_messenger_messages(
 }
 
 fn format_single_messenger_message(message: &devboy_core::MessengerMessage) -> String {
+    let text = message.text.replace('\r', "\\r").replace('\n', "\\n");
     let mut line = format!(
         "- [{}] {} ({}) in `{}`: {}",
-        message.timestamp, message.author.name, message.author.id, message.chat_id, message.text
+        message.timestamp, message.author.name, message.author.id, message.chat_id, text
     );
     if let Some(thread_id) = message.thread_id.as_deref() {
         line.push_str(&format!(" thread=`{}`", thread_id));
@@ -3409,6 +3410,30 @@ mod tests {
 
         assert!(output.contains("hello"));
         assert!(output.contains("next_cursor=`msg-cursor-1`"));
+    }
+
+    #[test]
+    fn test_format_single_messenger_message_escapes_newlines() {
+        let output = format_single_messenger_message(&devboy_core::MessengerMessage {
+            id: "1710000000.000100".into(),
+            chat_id: "C123".into(),
+            text: "hello\nworld\r\nnext".into(),
+            author: devboy_core::MessageAuthor {
+                id: "U123".into(),
+                name: "Andrey".into(),
+                username: Some("andrey".into()),
+                avatar_url: None,
+            },
+            source: "slack".into(),
+            timestamp: "1710000000.000100".into(),
+            thread_id: None,
+            reply_to_id: None,
+            attachments: vec![],
+            is_edited: false,
+        });
+
+        assert!(output.contains("hello\\nworld\\r\\nnext"));
+        assert!(!output.contains("hello\nworld"));
     }
 
     #[tokio::test]

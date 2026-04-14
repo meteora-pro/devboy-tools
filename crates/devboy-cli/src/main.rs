@@ -473,7 +473,14 @@ async fn main() -> Result<()> {
         EnvFilter::new("info")
     };
 
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    let is_mcp_command = matches!(cli.command, Some(Commands::Mcp { .. }));
+
+    let builder = tracing_subscriber::fmt().with_env_filter(filter);
+    if is_mcp_command {
+        builder.with_writer(std::io::stderr).init();
+    } else {
+        builder.init();
+    }
 
     // Run update check in background for interactive commands (skip for mcp, upgrade, and no-command).
     // Spawned as a background task to avoid blocking CLI startup on network calls.
