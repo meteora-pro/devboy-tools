@@ -251,10 +251,16 @@ pub fn format_output(
             provider_pagination,
             provider_sort,
         )),
-        ToolOutput::SingleMessage(message) => {
-            Ok(text_result(format_single_messenger_message(&message), None, None))
-        }
-        ToolOutput::AssetList { attachments, count, capabilities } => {
+        ToolOutput::SingleMessage(message) => Ok(text_result(
+            format_single_messenger_message(&message),
+            None,
+            None,
+        )),
+        ToolOutput::AssetList {
+            attachments,
+            count,
+            capabilities,
+        } => {
             let output = serde_json::json!({
                 "attachments": attachments,
                 "count": count,
@@ -266,7 +272,13 @@ pub fn format_output(
                 None,
             ))
         }
-        ToolOutput::AssetDownloaded { asset_id, size, local_path, data, cached } => {
+        ToolOutput::AssetDownloaded {
+            asset_id,
+            size,
+            local_path,
+            data,
+            cached,
+        } => {
             let output = serde_json::json!({
                 "success": true,
                 "asset_id": asset_id,
@@ -281,7 +293,11 @@ pub fn format_output(
                 None,
             ))
         }
-        ToolOutput::AssetUploaded { url, filename, size } => {
+        ToolOutput::AssetUploaded {
+            url,
+            filename,
+            size,
+        } => {
             let output = serde_json::json!({
                 "success": true,
                 "url": url,

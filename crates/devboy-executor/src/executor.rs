@@ -1,3 +1,4 @@
+use devboy_core::types::ChatType;
 use devboy_core::{
     CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Error, GetChatsParams,
     GetMessagesParams, GetPipelineInput, GetUsersOptions, IssueFilter, IssueProvider, JobLogMode,
@@ -5,7 +6,6 @@ use devboy_core::{
     MrFilter, PipelineProvider, Result, SearchMessagesParams, SendMessageParams, ToolCategory,
     UpdateIssueInput,
 };
-use devboy_core::types::ChatType;
 use serde::Deserialize;
 use serde_json::Value;
 use tracing::debug;
@@ -1509,8 +1509,8 @@ async fn execute_get_assets(
         }
     };
 
-    let capabilities = serde_json::to_value(IssueProvider::asset_capabilities(provider))
-        .unwrap_or_default();
+    let capabilities =
+        serde_json::to_value(IssueProvider::asset_capabilities(provider)).unwrap_or_default();
     let count = assets.len();
     let attachments: Vec<serde_json::Value> = assets
         .into_iter()
@@ -1623,11 +1623,9 @@ async fn execute_download_asset(
     // Store in cache if available.
     if let Some(mgr) = asset_manager {
         let context = match params.context_type.as_str() {
-            "mr" | "merge_request" | "pull_request" => {
-                devboy_core::AssetContext::MergeRequest {
-                    mr_id: params.key.clone(),
-                }
-            }
+            "mr" | "merge_request" | "pull_request" => devboy_core::AssetContext::MergeRequest {
+                mr_id: params.key.clone(),
+            },
             _ => devboy_core::AssetContext::Issue {
                 key: params.key.clone(),
             },
@@ -1701,7 +1699,10 @@ async fn execute_delete_asset(
         tracing::warn!(?e, asset_id = %params.asset_id, "failed to evict deleted asset from cache");
     }
 
-    let message = format!("Attachment '{}' deleted from {}", params.asset_id, params.key);
+    let message = format!(
+        "Attachment '{}' deleted from {}",
+        params.asset_id, params.key
+    );
     Ok(ToolOutput::AssetDeleted {
         asset_id: params.asset_id,
         message,
@@ -1961,7 +1962,9 @@ mod tests {
     async fn test_dispatch_get_issues() {
         let provider = MockProvider;
         let args = serde_json::json!({"state": "open", "limit": 10});
-        let result = dispatch_tool("get_issues", &args, &provider, None).await.unwrap();
+        let result = dispatch_tool("get_issues", &args, &provider, None)
+            .await
+            .unwrap();
         assert!(matches!(result, ToolOutput::Issues(v, _) if v.len() == 1));
     }
 
@@ -1979,13 +1982,17 @@ mod tests {
         let provider = MockProvider;
         // With includeComments/includeRelations defaulting to true, returns composite Text
         let args = serde_json::json!({"key": "gh#1"});
-        let result = dispatch_tool("get_issue", &args, &provider, None).await.unwrap();
+        let result = dispatch_tool("get_issue", &args, &provider, None)
+            .await
+            .unwrap();
         assert!(matches!(result, ToolOutput::Text(_)));
 
         // Without extras, returns SingleIssue
         let args =
             serde_json::json!({"key": "gh#1", "includeComments": false, "includeRelations": false});
-        let result = dispatch_tool("get_issue", &args, &provider, None).await.unwrap();
+        let result = dispatch_tool("get_issue", &args, &provider, None)
+            .await
+            .unwrap();
         assert!(matches!(result, ToolOutput::SingleIssue(_)));
     }
 
@@ -2057,7 +2064,13 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_get_issue_relations_missing_key() {
         let provider = MockProvider;
-        let result = dispatch_tool("get_issue_relations", &serde_json::json!({}), &provider, None).await;
+        let result = dispatch_tool(
+            "get_issue_relations",
+            &serde_json::json!({}),
+            &provider,
+            None,
+        )
+        .await;
         assert!(result.is_err());
     }
 
@@ -2277,7 +2290,9 @@ mod tests {
     async fn test_dispatch_get_epics() {
         let provider = MockProvider;
         let args = serde_json::json!({"state": "open", "limit": 10});
-        let result = dispatch_tool("get_epics", &args, &provider, None).await.unwrap();
+        let result = dispatch_tool("get_epics", &args, &provider, None)
+            .await
+            .unwrap();
         // Returns enriched JSON with goal_id and progress
         assert!(matches!(result, ToolOutput::Text(_)));
     }
