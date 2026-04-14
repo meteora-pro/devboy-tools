@@ -746,8 +746,16 @@ impl IssueProvider for GitLabClient {
     }
 
     async fn download_attachment(&self, _issue_key: &str, asset_id: &str) -> Result<Vec<u8>> {
-        let absolute = absolutize_gitlab_url(&self.base_url, asset_id);
-        self.download_trusted_url(&absolute).await
+        // GitLab uploads with a relative `/uploads/{secret}/{filename}` path
+        // must be fetched through the project API, not the web URL — the
+        // web URL requires the namespace/project path which we don't have
+        // (only the numeric project_id).
+        let url = if asset_id.starts_with("/uploads/") {
+            self.project_url(asset_id)
+        } else {
+            absolutize_gitlab_url(&self.base_url, asset_id)
+        };
+        self.download_trusted_url(&url).await
     }
 
     fn asset_capabilities(&self) -> AssetCapabilities {
@@ -1011,8 +1019,12 @@ impl MergeRequestProvider for GitLabClient {
     }
 
     async fn download_mr_attachment(&self, _mr_key: &str, asset_id: &str) -> Result<Vec<u8>> {
-        let absolute = absolutize_gitlab_url(&self.base_url, asset_id);
-        self.download_trusted_url(&absolute).await
+        let url = if asset_id.starts_with("/uploads/") {
+            self.project_url(asset_id)
+        } else {
+            absolutize_gitlab_url(&self.base_url, asset_id)
+        };
+        self.download_trusted_url(&url).await
     }
 
     fn provider_name(&self) -> &'static str {
@@ -2604,8 +2616,11 @@ mod tests {
         async fn test_download_attachment_relative_path() {
             let server = MockServer::start();
 
+            // Relative `/uploads/...` paths are routed through the project
+            // API: `/api/v4/projects/{id}/uploads/{secret}/{filename}`.
             server.mock(|when, then| {
-                when.method(GET).path("/uploads/hash/file.txt");
+                when.method(GET)
+                    .path("/api/v4/projects/123/uploads/hash/file.txt");
                 then.status(200).body("hello");
             });
 

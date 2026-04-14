@@ -2468,12 +2468,17 @@ fn parse_params<T: serde::de::DeserializeOwned>(
 /// Check whether an error should cause the asset handler to try the next
 /// provider. We match on `devboy_core::Error` variants instead of
 /// string-matching `.to_string()` for robustness.
+/// Check whether an error from one provider should cause the handler to
+/// try the next. In multi-provider setups, a key like `gitlab#1` is
+/// invalid for GitHub but valid for GitLab — we need to keep trying.
 fn should_try_next_provider(e: &devboy_core::Error) -> bool {
     matches!(
         e,
         devboy_core::Error::ProviderUnsupported { .. }
             | devboy_core::Error::ProviderNotFound(_)
             | devboy_core::Error::NotFound(_)
+            | devboy_core::Error::InvalidData(_)
+            | devboy_core::Error::Http(_)
     )
 }
 
