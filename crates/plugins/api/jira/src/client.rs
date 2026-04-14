@@ -910,6 +910,32 @@ fn generic_status_to_category(status: &str) -> Option<&'static str> {
     }
 }
 
+/// Check if a keyword appears outside quoted strings in JQL.
+fn has_unquoted_keyword(jql: &str, keyword: &str) -> bool {
+    let lower = jql.to_lowercase();
+    let kw = keyword.to_lowercase();
+    let bytes = lower.as_bytes();
+    let mut in_quote = false;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && in_quote && i + 1 < bytes.len() {
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            in_quote = !in_quote;
+            i += 1;
+            continue;
+        }
+        if !in_quote && i + kw.len() <= bytes.len() && lower[i..i + kw.len()] == kw {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 /// Get the Jira instance URL from the API base URL.
 fn instance_url_from_base(base_url: &str) -> String {
     base_url
@@ -932,7 +958,12 @@ impl IssueProvider for JiraClient {
         let offset = filter.offset.unwrap_or(0);
 
         // Resolve effective project key: filter override → self.project_key
-        let effective_project = filter.project_key.as_deref().unwrap_or(&self.project_key);
+        // Treat blank project_key as unset
+        let effective_project = filter
+            .project_key
+            .as_deref()
+            .filter(|k| !k.trim().is_empty())
+            .unwrap_or(&self.project_key);
 
         // Build JQL query — native_query takes precedence over filter-based construction
         let escaped_project = escape_jql(effective_project);
@@ -995,7 +1026,7 @@ impl IssueProvider for JiraClient {
             Some("asc") => "ASC",
             _ => "DESC",
         };
-        let has_order_by = jql.to_lowercase().contains("order by");
+        let has_order_by = has_unquoted_keyword(&jql, "order by");
         let jql_with_order = if has_order_by {
             jql
         } else {
