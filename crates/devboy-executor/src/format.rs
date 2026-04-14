@@ -241,8 +241,130 @@ pub fn format_output(
             })?;
             Ok(text_result(json, None, None))
         }
+        ToolOutput::MessengerChats(chats, _) => Ok(text_result(
+            format_messenger_chats(&chats),
+            provider_pagination,
+            provider_sort,
+        )),
+        ToolOutput::MessengerMessages(messages, _) => Ok(text_result(
+            format_messenger_messages(&messages),
+            provider_pagination,
+            provider_sort,
+        )),
+        ToolOutput::SingleMessage(message) => {
+            Ok(text_result(format_single_messenger_message(&message), None, None))
+        }
+        ToolOutput::AssetList { attachments, count, capabilities } => {
+            let output = serde_json::json!({
+                "attachments": attachments,
+                "count": count,
+                "capabilities": capabilities,
+            });
+            Ok(text_result(
+                serde_json::to_string_pretty(&output).unwrap_or_default(),
+                None,
+                None,
+            ))
+        }
+        ToolOutput::AssetDownloaded { asset_id, size, local_path, data, cached } => {
+            let output = serde_json::json!({
+                "success": true,
+                "asset_id": asset_id,
+                "size": size,
+                "local_path": local_path,
+                "data": data,
+                "cached": cached,
+            });
+            Ok(text_result(
+                serde_json::to_string_pretty(&output).unwrap_or_default(),
+                None,
+                None,
+            ))
+        }
+        ToolOutput::AssetUploaded { url, filename, size } => {
+            let output = serde_json::json!({
+                "success": true,
+                "url": url,
+                "filename": filename,
+                "size": size,
+            });
+            Ok(text_result(
+                serde_json::to_string_pretty(&output).unwrap_or_default(),
+                None,
+                None,
+            ))
+        }
+        ToolOutput::AssetDeleted { asset_id, message } => {
+            let output = serde_json::json!({
+                "success": true,
+                "asset_id": asset_id,
+                "message": message,
+            });
+            Ok(text_result(
+                serde_json::to_string_pretty(&output).unwrap_or_default(),
+                None,
+                None,
+            ))
+        }
         ToolOutput::Text(text) => Ok(text_result(text, None, None)),
     }
+}
+
+/// Format messenger chats as readable text.
+fn format_messenger_chats(chats: &[devboy_core::MessengerChat]) -> String {
+    if chats.is_empty() {
+        return "No chats found.".to_string();
+    }
+
+    let mut output = format!("# Messenger Chats ({})\n\n", chats.len());
+    for chat in chats {
+        let description = chat.description.as_deref().unwrap_or("-");
+        let members = chat
+            .member_count
+            .map(|count| count.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let active = if chat.is_active { "active" } else { "inactive" };
+        let chat_type = match chat.chat_type {
+            devboy_core::types::ChatType::Direct => "direct",
+            devboy_core::types::ChatType::Group => "group",
+            devboy_core::types::ChatType::Channel => "channel",
+        };
+        output.push_str(&format!(
+            "- {} [{}] id=`{}` members={} status={} desc={}\n",
+            chat.name, chat_type, chat.id, members, active, description
+        ));
+    }
+    output
+}
+
+/// Format messenger messages as readable text.
+fn format_messenger_messages(messages: &[devboy_core::MessengerMessage]) -> String {
+    if messages.is_empty() {
+        return "No messages found.".to_string();
+    }
+
+    let mut output = format!("# Messages ({})\n\n", messages.len());
+    for message in messages {
+        output.push_str(&format_single_messenger_message(message));
+        output.push('\n');
+    }
+    output
+}
+
+/// Format a single messenger message as one line.
+fn format_single_messenger_message(message: &devboy_core::MessengerMessage) -> String {
+    let text = message.text.replace('\r', "\\r").replace('\n', "\\n");
+    let mut line = format!(
+        "- [{}] {} ({}) in `{}`: {}",
+        message.timestamp, message.author.name, message.author.id, message.chat_id, text
+    );
+    if let Some(thread_id) = message.thread_id.as_deref() {
+        line.push_str(&format!(" thread=`{}`", thread_id));
+    }
+    if !message.attachments.is_empty() {
+        line.push_str(&format!(" attachments={}", message.attachments.len()));
+    }
+    line
 }
 
 /// Format issue statuses as a markdown table.
