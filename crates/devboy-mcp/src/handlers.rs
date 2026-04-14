@@ -805,15 +805,25 @@ pub struct ToolHandler {
     providers: Vec<Arc<dyn Provider>>,
     meeting_providers: Vec<Arc<dyn devboy_core::MeetingNotesProvider>>,
     pipeline_config: PipelineConfig,
+    /// Local asset cache for downloaded attachments.
+    asset_manager: Option<devboy_assets::AssetManager>,
 }
 
 impl ToolHandler {
     /// Create a new tool handler with providers.
     pub fn new(providers: Vec<Arc<dyn Provider>>) -> Self {
+        // Best-effort: create asset cache in default location.
+        // If the OS cache dir is unavailable, asset caching is disabled.
+        let asset_manager =
+            devboy_assets::AssetManager::from_config(devboy_assets::AssetConfig::default()).ok();
+        if asset_manager.is_none() {
+            tracing::warn!("asset cache unavailable — downloads will not be cached locally");
+        }
         Self {
             providers,
             meeting_providers: Vec::new(),
             pipeline_config: PipelineConfig::default(),
+            asset_manager,
         }
     }
 
@@ -2014,6 +2024,23 @@ impl ToolHandler {
             Ok(p) => p,
             Err(e) => return e,
         };
+
+        // Check local cache first — return immediately if the file is
+        // already on disk from a previous download.
+        if let Some(ref mgr) = self.asset_manager
+            && let Ok(Some(resolved)) = mgr.get(&params.asset_id)
+        {
+            let output = serde_json::json!({
+                "success": true,
+                "asset_id": params.asset_id,
+                "size": resolved.asset.size,
+                "local_path": resolved.absolute_path.to_string_lossy(),
+                "cached": true,
+            });
+            return ToolCallResult::text(serde_json::to_string_pretty(&output).unwrap_or_default());
+        }
+
+        // Not cached — download from provider.
         for provider in &self.providers {
             let result = match params.context_type.as_str() {
                 "issue" => {
@@ -2041,11 +2068,55 @@ impl ToolHandler {
             };
             match result {
                 Ok(bytes) => {
+                    // Store in local cache and return the path.
+                    let context = match params.context_type.as_str() {
+                        "mr" => devboy_core::AssetContext::MergeRequest {
+                            mr_id: params.key.clone(),
+                        },
+                        _ => devboy_core::AssetContext::Issue {
+                            key: params.key.clone(),
+                        },
+                    };
+
+                    // Derive filename from asset_id (last path segment or
+                    // the id itself).
+                    let filename = devboy_core::filename_from_url(&params.asset_id);
+
+                    if let Some(ref mgr) = self.asset_manager {
+                        match mgr.store(devboy_assets::StoreRequest {
+                            context,
+                            asset_id: Some(&params.asset_id),
+                            filename: &filename,
+                            mime_type: None,
+                            remote_url: None,
+                            data: &bytes,
+                        }) {
+                            Ok(cached) => {
+                                let abs = mgr.cache_dir().join(&cached.local_path);
+                                let output = serde_json::json!({
+                                    "success": true,
+                                    "asset_id": cached.id,
+                                    "size": cached.size,
+                                    "local_path": abs.to_string_lossy(),
+                                    "cached": true,
+                                });
+                                return ToolCallResult::text(
+                                    serde_json::to_string_pretty(&output).unwrap_or_default(),
+                                );
+                            }
+                            Err(e) => {
+                                // Cache failed but we still have bytes — fall
+                                // back to base64 response.
+                                tracing::warn!(?e, "failed to cache asset, returning base64");
+                            }
+                        }
+                    }
+
+                    // Fallback: no cache or cache error — return base64.
                     if bytes.len() > MAX_ASSET_SIZE {
                         return ToolCallResult::error(format!(
                             "Downloaded attachment is {} bytes, max allowed for \
-                             base64 response is {} bytes. Use get_assets to inspect \
-                             metadata without downloading.",
+                             base64 response is {} bytes.",
                             bytes.len(),
                             MAX_ASSET_SIZE,
                         ));
@@ -2057,6 +2128,7 @@ impl ToolHandler {
                         "asset_id": params.asset_id,
                         "size": bytes.len(),
                         "data": encoded,
+                        "cached": false,
                     });
                     return ToolCallResult::text(
                         serde_json::to_string_pretty(&output).unwrap_or_default(),
