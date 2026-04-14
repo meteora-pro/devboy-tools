@@ -504,8 +504,9 @@ async fn main() -> Result<()> {
             tracing_subscriber::fmt::layer().boxed()
         };
         tracing_subscriber::registry()
-            .with(fmt_layer.with_filter(filter))
+            .with(fmt_layer)
             .with(sentry_tracing::layer())
+            .with(filter)
             .init();
     } else {
         #[cfg(feature = "sentry")]
