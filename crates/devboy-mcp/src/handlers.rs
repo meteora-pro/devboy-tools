@@ -1976,12 +1976,12 @@ impl ToolHandler {
             Ok(d) => d,
             Err(e) => return e,
         };
-        if data.len() > MAX_UPLOAD_SIZE {
+        if data.len() > MAX_ASSET_SIZE {
             return ToolCallResult::error(format!(
                 "File '{}' is {} bytes, max allowed is {} bytes",
                 params.filename,
                 data.len(),
-                MAX_UPLOAD_SIZE,
+                MAX_ASSET_SIZE,
             ));
         }
         for provider in &self.providers {
@@ -2041,6 +2041,15 @@ impl ToolHandler {
             };
             match result {
                 Ok(bytes) => {
+                    if bytes.len() > MAX_ASSET_SIZE {
+                        return ToolCallResult::error(format!(
+                            "Downloaded attachment is {} bytes, max allowed for \
+                             base64 response is {} bytes. Use get_assets to inspect \
+                             metadata without downloading.",
+                            bytes.len(),
+                            MAX_ASSET_SIZE,
+                        ));
+                    }
                     use base64::Engine;
                     let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
                     let output = serde_json::json!({
@@ -2396,15 +2405,28 @@ fn should_try_next_provider(e: &devboy_core::Error) -> bool {
     )
 }
 
-/// Maximum upload size (10 MB), matching the executor limit.
-const MAX_UPLOAD_SIZE: usize = 10 * 1024 * 1024;
+/// Maximum upload/download size (10 MB).
+const MAX_ASSET_SIZE: usize = 10 * 1024 * 1024;
 
-/// Decode base64 file data from a tool parameter.
+/// Maximum base64 encoded length for MAX_ASSET_SIZE bytes.
+/// Base64 expands data by ~33%: ceil(n/3)*4 + padding.
+const MAX_BASE64_LEN: usize = (MAX_ASSET_SIZE / 3 + 1) * 4 + 4;
+
+/// Decode base64 file data from a tool parameter, rejecting oversized
+/// inputs *before* allocating the decoded buffer.
 fn base64_decode_param(input: &str) -> std::result::Result<Vec<u8>, ToolCallResult> {
+    let trimmed = input.trim();
+    if trimmed.len() > MAX_BASE64_LEN {
+        return Err(ToolCallResult::error(format!(
+            "Base64 input too large ({} chars), max decoded size is {} bytes",
+            trimmed.len(),
+            MAX_ASSET_SIZE,
+        )));
+    }
     use base64::Engine;
     base64::engine::general_purpose::STANDARD
-        .decode(input.trim())
-        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(input.trim()))
+        .decode(trimmed)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(trimmed))
         .map_err(|e| ToolCallResult::error(format!("Invalid base64 data: {e}")))
 }
 
