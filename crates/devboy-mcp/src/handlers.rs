@@ -2289,17 +2289,27 @@ impl ToolHandler {
 
         // Check local cache first — return immediately if the file is
         // already on disk from a previous download.
-        if let Some(ref mgr) = self.asset_manager
-            && let Ok(Some(resolved)) = mgr.get(&params.asset_id)
-        {
-            let output = serde_json::json!({
-                "success": true,
-                "asset_id": params.asset_id,
-                "size": resolved.asset.size,
-                "local_path": resolved.absolute_path.to_string_lossy(),
-                "cached": true,
-            });
-            return ToolCallResult::text(serde_json::to_string_pretty(&output).unwrap_or_default());
+        // AssetManager does blocking I/O under a mutex, so run on a
+        // blocking thread to avoid stalling the Tokio executor.
+        if let Some(ref mgr) = self.asset_manager {
+            let mgr_clone = mgr.clone();
+            let asset_id = params.asset_id.clone();
+            let cache_result = tokio::task::spawn_blocking(move || mgr_clone.get(&asset_id))
+                .await
+                .ok()
+                .and_then(|r| r.ok().flatten());
+            if let Some(resolved) = cache_result {
+                let output = serde_json::json!({
+                    "success": true,
+                    "asset_id": params.asset_id,
+                    "size": resolved.asset.size,
+                    "local_path": resolved.absolute_path.to_string_lossy(),
+                    "cached": true,
+                });
+                return ToolCallResult::text(
+                    serde_json::to_string_pretty(&output).unwrap_or_default(),
+                );
+            }
         }
 
         // Not cached — download from provider.
@@ -2345,16 +2355,29 @@ impl ToolHandler {
                     let filename = devboy_core::filename_from_url(&params.asset_id);
 
                     if let Some(ref mgr) = self.asset_manager {
-                        match mgr.store(devboy_assets::StoreRequest {
-                            context,
-                            asset_id: Some(&params.asset_id),
-                            filename: &filename,
-                            mime_type: None,
-                            remote_url: None,
-                            data: &bytes,
-                        }) {
-                            Ok(cached) => {
-                                let abs = mgr.cache_dir().join(&cached.local_path);
+                        let mgr_clone = mgr.clone();
+                        let asset_id_owned = params.asset_id.clone();
+                        let filename_owned = filename.clone();
+                        // Move bytes into spawn_blocking; return them on
+                        // error so the fallback base64 path can use them.
+                        let store_result = tokio::task::spawn_blocking(move || {
+                            let cache_dir = mgr_clone.cache_dir().to_path_buf();
+                            match mgr_clone.store(devboy_assets::StoreRequest {
+                                context,
+                                asset_id: Some(&asset_id_owned),
+                                filename: &filename_owned,
+                                mime_type: None,
+                                remote_url: None,
+                                data: &bytes,
+                            }) {
+                                Ok(cached) => Ok((cached, cache_dir)),
+                                Err(e) => Err((e, bytes)),
+                            }
+                        })
+                        .await;
+                        match store_result {
+                            Ok(Ok((cached, cache_dir))) => {
+                                let abs = cache_dir.join(&cached.local_path);
                                 let output = serde_json::json!({
                                     "success": true,
                                     "asset_id": cached.id,
@@ -2366,35 +2389,23 @@ impl ToolHandler {
                                     serde_json::to_string_pretty(&output).unwrap_or_default(),
                                 );
                             }
-                            Err(e) => {
+                            Ok(Err((e, bytes))) => {
                                 // Cache failed but we still have bytes — fall
                                 // back to base64 response.
                                 tracing::warn!(?e, "failed to cache asset, returning base64");
+                                return fallback_base64_response(&params, &bytes);
+                            }
+                            Err(e) => {
+                                tracing::warn!(?e, "spawn_blocking panicked");
+                                return ToolCallResult::error(
+                                    "Internal error caching asset".to_string(),
+                                );
                             }
                         }
                     }
 
-                    // Fallback: no cache or cache error — return base64.
-                    if bytes.len() > MAX_ASSET_SIZE {
-                        return ToolCallResult::error(format!(
-                            "Downloaded attachment is {} bytes, max allowed for \
-                             base64 response is {} bytes.",
-                            bytes.len(),
-                            MAX_ASSET_SIZE,
-                        ));
-                    }
-                    use base64::Engine;
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                    let output = serde_json::json!({
-                        "success": true,
-                        "asset_id": params.asset_id,
-                        "size": bytes.len(),
-                        "data": encoded,
-                        "cached": false,
-                    });
-                    return ToolCallResult::text(
-                        serde_json::to_string_pretty(&output).unwrap_or_default(),
-                    );
+                    // Fallback: no cache configured — return base64.
+                    return fallback_base64_response(&params, &bytes);
                 }
                 Err(e) if should_try_next_provider(&e) => continue,
                 Err(e) => return ToolCallResult::error(format!("{e}")),
@@ -3042,6 +3053,28 @@ struct UpdateMergeRequestParams {
     state: Option<String>,
     labels: Option<Vec<String>>,
     draft: Option<bool>,
+}
+
+/// Return a base64-encoded response when the local cache is unavailable.
+fn fallback_base64_response(params: &DownloadAssetParams, bytes: &[u8]) -> ToolCallResult {
+    if bytes.len() > MAX_ASSET_SIZE {
+        return ToolCallResult::error(format!(
+            "Downloaded attachment is {} bytes, max allowed for \
+             base64 response is {} bytes.",
+            bytes.len(),
+            MAX_ASSET_SIZE,
+        ));
+    }
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let output = serde_json::json!({
+        "success": true,
+        "asset_id": params.asset_id,
+        "size": bytes.len(),
+        "data": encoded,
+        "cached": false,
+    });
+    ToolCallResult::text(serde_json::to_string_pretty(&output).unwrap_or_default())
 }
 
 /// Parse tool parameters from the arguments JSON.
