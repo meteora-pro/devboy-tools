@@ -4,7 +4,9 @@
 //! calling providers and transforming output through the pipeline.
 //!
 //! Tools are organized by category:
-//! - **Issues**: get_issues, get_issue, get_issue_comments, create_issue, update_issue, add_issue_comment
+//! - **Issues**: get_issues, get_issue, get_issue_comments, create_issue, update_issue,
+//!   add_issue_comment, get_available_statuses, get_users
+//! - **Epics**: get_epics, create_epic, update_epic
 //! - **Merge Requests**: get_merge_requests, get_merge_request, get_merge_request_discussions,
 //!   get_merge_request_diffs, create_merge_request, create_merge_request_comment
 
@@ -26,8 +28,8 @@ pub enum ToolCategory {
 use devboy_core::types::ChatType;
 use devboy_core::{
     CodePosition, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, GetChatsParams,
-    GetMessagesParams, IssueFilter, IssueProvider, MergeRequestProvider, MrFilter, Provider,
-    SearchMessagesParams, SendMessageParams, UpdateIssueInput,
+    GetMessagesParams, GetUsersOptions, IssueFilter, IssueProvider, MergeRequestProvider, MrFilter,
+    Provider, SearchMessagesParams, SendMessageParams, UpdateIssueInput,
 };
 use devboy_format_pipeline::{OutputFormat, Pipeline, PipelineConfig};
 use serde::{Deserialize, Serialize};
@@ -352,6 +354,136 @@ define_tools! {
                     "type": "string",
                     "enum": ["blocks", "blocked_by", "relates_to", "subtask"],
                     "description": "Type of link to remove"
+                }
+            }
+        }
+    },
+
+    "get_available_statuses" => handle_get_available_statuses {
+        category: ToolCategory::Issues,
+        description: "Get available statuses for the issue tracker.",
+        schema: {
+            "type": "object",
+            "properties": {}
+        }
+    },
+
+    "get_users" => handle_get_users {
+        category: ToolCategory::Issues,
+        description: "Get users from the issue tracker (Jira). Search by name, project, or ID.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "userId": {
+                    "type": "string",
+                    "description": "Get specific user by ID"
+                },
+                "projectKey": {
+                    "type": "string",
+                    "description": "Get assignable users for project"
+                },
+                "search": {
+                    "type": "string",
+                    "description": "Search by name or email"
+                },
+                "maxResults": {
+                    "type": "integer",
+                    "description": "Max results (default: 50)",
+                    "minimum": 1,
+                    "maximum": 1000
+                }
+            }
+        }
+    },
+
+    // =====================================================================
+    // Epics
+    // =====================================================================
+
+    "get_epics" => handle_get_epics {
+        category: ToolCategory::Issues,
+        description: "Get epics (high-level tasks) from the issue tracker.",
+        schema: {
+            "type": "object",
+            "properties": {
+                "search": {
+                    "type": "string",
+                    "description": "Search in epic title"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results (default: 50)",
+                    "minimum": 1,
+                    "maximum": 100
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Skip N results (default: 0)",
+                    "minimum": 0
+                }
+            }
+        }
+    },
+
+    "create_epic" => handle_create_epic {
+        category: ToolCategory::Issues,
+        description: "Create a new epic.",
+        schema: {
+            "type": "object",
+            "required": ["title"],
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Epic title"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Epic description"
+                }
+            }
+        }
+    },
+
+    "update_epic" => handle_update_epic {
+        category: ToolCategory::Issues,
+        description: "Update an existing epic.",
+        schema: {
+            "type": "object",
+            "required": ["epicKey"],
+            "properties": {
+                "epicKey": {
+                    "type": "string",
+                    "description": "Epic key (e.g., 'CU-abc', 'DEV-123')"
+                },
+                "title": {
+                    "type": "string",
+                    "description": "New title"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "New description"
+                },
+                "state": {
+                    "type": "string",
+                    "description": "New epic state"
+                },
+                "goalId": {
+                    "type": "string",
+                    "description": "Goal ID (G1-G9) to associate with the epic"
+                },
+                "priority": {
+                    "type": "string",
+                    "description": "New priority (urgent/high/normal/low)"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Labels to set"
+                },
+                "assignees": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Assignees to set"
                 }
             }
         }
@@ -847,6 +979,37 @@ define_tools! {
 /// Helper to get provider name without ambiguity.
 fn get_provider_name(provider: &dyn Provider) -> &'static str {
     IssueProvider::provider_name(provider)
+}
+
+/// Extract goal ID (G1-G9) from issue labels/tags.
+fn extract_goal_id(labels: &[String]) -> Option<String> {
+    labels.iter().find_map(|l| {
+        let lower = l.to_lowercase();
+        if lower.len() == 2
+            && lower.starts_with('g')
+            && lower.chars().nth(1).is_some_and(|c| c.is_ascii_digit())
+        {
+            Some(lower.to_uppercase())
+        } else {
+            None
+        }
+    })
+}
+
+/// Calculate epic progress from subtasks.
+fn epic_progress(subtasks: &[devboy_core::Issue]) -> serde_json::Value {
+    let total = subtasks.len();
+    let completed = subtasks.iter().filter(|s| s.state == "closed").count();
+    let percentage = if total > 0 {
+        (completed as f64 / total as f64 * 100.0).round() as u32
+    } else {
+        0
+    };
+    serde_json::json!({
+        "total_subtasks": total,
+        "completed_subtasks": completed,
+        "percentage": percentage,
+    })
 }
 
 /// Tool handler that executes tools using providers.
@@ -1365,6 +1528,322 @@ impl ToolHandler {
             "Failed to unlink issues: {} --[{}]--> {}",
             params.source_issue_key, params.link_type, params.target_issue_key
         ))
+    }
+
+    async fn handle_get_available_statuses(&self, _arguments: Option<Value>) -> ToolCallResult {
+        if self.providers.is_empty() {
+            return ToolCallResult::error("No providers configured".to_string());
+        }
+
+        let mut all_statuses = Vec::new();
+        let mut errors = Vec::new();
+
+        for provider in &self.providers {
+            match IssueProvider::get_statuses(provider.as_ref()).await {
+                Ok(result) => {
+                    all_statuses.extend(result.items);
+                }
+                Err(e) => {
+                    let name = get_provider_name(provider.as_ref());
+                    tracing::warn!("Error getting statuses from {}: {}", name, e);
+                    errors.push(format!("{}: {}", name, e));
+                }
+            }
+        }
+
+        if all_statuses.is_empty() && !errors.is_empty() {
+            return ToolCallResult::error(format!(
+                "Failed to get statuses: {}",
+                errors.join(", ")
+            ));
+        }
+
+        let output = devboy_executor::ToolOutput::Statuses(all_statuses, None);
+        match devboy_executor::format_output(output, None, Some("get_available_statuses"), None) {
+            Ok(result) => ToolCallResult::text(result.content),
+            Err(e) => ToolCallResult::error(format!("Format error: {}", e)),
+        }
+    }
+
+    async fn handle_get_users(&self, arguments: Option<Value>) -> ToolCallResult {
+        let params: GetUsersParams = arguments
+            .map(|v| serde_json::from_value(v).unwrap_or_default())
+            .unwrap_or_default();
+
+        if self.providers.is_empty() {
+            return ToolCallResult::error("No providers configured".to_string());
+        }
+
+        let options = GetUsersOptions {
+            user_id: params.user_id,
+            project_key: params.project_key,
+            search: params.search,
+            include_inactive: None,
+            start_at: None,
+            max_results: params.max_results,
+        };
+
+        let mut all_users = Vec::new();
+        let mut errors = Vec::new();
+
+        for provider in &self.providers {
+            match IssueProvider::get_users(provider.as_ref(), options.clone()).await {
+                Ok(result) => {
+                    all_users.extend(result.items);
+                }
+                Err(e) => {
+                    let name = get_provider_name(provider.as_ref());
+                    tracing::warn!("Error getting users from {}: {}", name, e);
+                    errors.push(format!("{}: {}", name, e));
+                }
+            }
+        }
+
+        if all_users.is_empty() && !errors.is_empty() {
+            return ToolCallResult::error(format!(
+                "Failed to get users: {}",
+                errors.join(", ")
+            ));
+        }
+
+        let output = devboy_executor::ToolOutput::Users(all_users, None);
+        match devboy_executor::format_output(output, None, Some("get_users"), None) {
+            Ok(result) => ToolCallResult::text(result.content),
+            Err(e) => ToolCallResult::error(format!("Format error: {}", e)),
+        }
+    }
+
+    // =========================================================================
+    // EPICS HANDLERS
+    // =========================================================================
+
+    async fn handle_get_epics(&self, arguments: Option<Value>) -> ToolCallResult {
+        let params: GetEpicsParams = arguments
+            .map(|v| serde_json::from_value(v).unwrap_or_default())
+            .unwrap_or_default();
+
+        if self.providers.is_empty() {
+            return ToolCallResult::error("No providers configured".to_string());
+        }
+
+        let filter = IssueFilter {
+            state: None,
+            state_category: None,
+            search: params.search,
+            labels: Some(vec!["epic".to_string()]),
+            labels_operator: None,
+            assignee: None,
+            limit: params.limit.or(Some(50)),
+            offset: params.offset,
+            sort_by: None,
+            sort_order: None,
+            project_key: None,
+            native_query: None,
+        };
+
+        let mut all_epics = Vec::new();
+        let mut errors = Vec::new();
+
+        for provider in &self.providers {
+            match provider.get_issues(filter.clone()).await {
+                Ok(result) => {
+                    all_epics.extend(result.items);
+                }
+                Err(e) => {
+                    let name = get_provider_name(provider.as_ref());
+                    tracing::warn!("Error getting epics from {}: {}", name, e);
+                    errors.push(format!("{}: {}", name, e));
+                }
+            }
+        }
+
+        if all_epics.is_empty() && !errors.is_empty() {
+            return ToolCallResult::error(format!(
+                "Failed to get epics: {}",
+                errors.join(", ")
+            ));
+        }
+
+        // Enrich with goal ID and progress
+        let enriched: Vec<serde_json::Value> = all_epics
+            .iter()
+            .map(|epic| {
+                let mut v = serde_json::to_value(epic).unwrap_or_default();
+                v["goal_id"] = serde_json::json!(extract_goal_id(&epic.labels));
+                v["progress"] = epic_progress(&epic.subtasks);
+                v
+            })
+            .collect();
+
+        match serde_json::to_string_pretty(&enriched) {
+            Ok(json) => ToolCallResult::text(json),
+            Err(e) => ToolCallResult::error(format!("Serialization error: {}", e)),
+        }
+    }
+
+    async fn handle_create_epic(&self, arguments: Option<Value>) -> ToolCallResult {
+        let args = match arguments {
+            Some(v) => v,
+            None => return ToolCallResult::error("Missing required parameter: title".to_string()),
+        };
+
+        let params: CreateEpicParams = match serde_json::from_value(args.clone()) {
+            Ok(p) => p,
+            Err(e) => return ToolCallResult::error(format!("Invalid parameters: {}", e)),
+        };
+
+        if self.providers.is_empty() {
+            return ToolCallResult::error("No providers configured".to_string());
+        }
+
+        // Ensure "epic" label is included
+        let mut labels = params.labels;
+        if !labels.iter().any(|l| l.eq_ignore_ascii_case("epic")) {
+            labels.push("epic".to_string());
+        }
+
+        // Add goal tag if goalId provided (e.g., "G1" → tag "g1")
+        if let Some(ref goal) = params.goal_id {
+            let goal_tag = goal.to_lowercase();
+            if !labels.iter().any(|l| l.to_lowercase() == goal_tag) {
+                labels.push(goal_tag);
+            }
+        }
+
+        let input = CreateIssueInput {
+            title: params.title,
+            description: params.description,
+            labels,
+            assignees: params.assignees,
+            priority: params.priority,
+            parent: None,
+            markdown: params.markdown.unwrap_or(true),
+        };
+
+        let provider = &self.providers[0];
+        match provider.create_issue(input).await {
+            Ok(issue) => {
+                // Set custom fields if present
+                if let Some(cf) = args.get("customFields").and_then(|v| v.as_array())
+                    && !cf.is_empty()
+                    && let Err(e) = provider.set_custom_fields(&issue.key, cf).await
+                {
+                    tracing::warn!(error = %e, "Failed to set custom fields on created epic");
+                }
+
+                let msg = format!(
+                    "Created epic {} - {}\nURL: {}",
+                    issue.key,
+                    issue.title,
+                    issue.url.unwrap_or_default()
+                );
+                ToolCallResult::text(msg)
+            }
+            Err(e) => ToolCallResult::error(format!("Failed to create epic: {}", e)),
+        }
+    }
+
+    async fn handle_update_epic(&self, arguments: Option<Value>) -> ToolCallResult {
+        let args = match arguments {
+            Some(v) => v,
+            None => {
+                return ToolCallResult::error("Missing required parameter: epicKey".to_string())
+            }
+        };
+
+        let params: UpdateEpicParams = match serde_json::from_value(args.clone()) {
+            Ok(p) => p,
+            Err(e) => return ToolCallResult::error(format!("Invalid parameters: {}", e)),
+        };
+
+        if self.providers.is_empty() {
+            return ToolCallResult::error("No providers configured".to_string());
+        }
+
+        // Handle goal tag transition: if goalId is changing, update labels
+        let labels = if let Some(ref new_goal) = params.goal_id {
+            // Fetch current issue to get existing labels
+            let current = match self.providers[0].get_issue(&params.key).await {
+                Ok(issue) => issue,
+                Err(e) => {
+                    return ToolCallResult::error(format!(
+                        "Failed to fetch epic {}: {}",
+                        params.key, e
+                    ));
+                }
+            };
+            let mut labels: Vec<String> = current
+                .labels
+                .iter()
+                // Remove old goal tags (g1-g9)
+                .filter(|l| {
+                    let lower = l.to_lowercase();
+                    !(lower.len() == 2
+                        && lower.starts_with('g')
+                        && lower.chars().nth(1).is_some_and(|c| c.is_ascii_digit()))
+                })
+                .cloned()
+                .collect();
+
+            // Add new goal tag
+            let goal_tag = new_goal.to_lowercase();
+            if !labels.iter().any(|l| l.to_lowercase() == goal_tag) {
+                labels.push(goal_tag);
+            }
+
+            // Merge with explicitly provided labels
+            if let Some(extra) = params.labels {
+                for l in extra {
+                    if !labels
+                        .iter()
+                        .any(|existing| existing.eq_ignore_ascii_case(&l))
+                    {
+                        labels.push(l);
+                    }
+                }
+            }
+            Some(labels)
+        } else {
+            params.labels
+        };
+
+        let input = UpdateIssueInput {
+            title: params.title,
+            description: params.description,
+            state: params.state,
+            labels,
+            assignees: params.assignees,
+            priority: params.priority,
+            parent_id: None,
+            markdown: params.markdown.unwrap_or(true),
+        };
+
+        for provider in &self.providers {
+            match provider.update_issue(&params.key, input.clone()).await {
+                Ok(issue) => {
+                    // Set custom fields if present
+                    if let Some(cf) = args.get("customFields").and_then(|v| v.as_array())
+                        && !cf.is_empty()
+                        && let Err(e) = provider.set_custom_fields(&params.key, cf).await
+                    {
+                        tracing::warn!(error = %e, "Failed to set custom fields on updated epic");
+                    }
+
+                    let msg = format!("Updated epic {} - {}", issue.key, issue.title);
+                    return ToolCallResult::text(msg);
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "Provider {} failed for key {}: {}",
+                        get_provider_name(provider.as_ref()),
+                        params.key,
+                        e
+                    );
+                }
+            }
+        }
+
+        ToolCallResult::error(format!("Failed to update epic: {}", params.key))
     }
 
     // =========================================================================
@@ -2402,6 +2881,53 @@ struct UnlinkIssuesParams {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
+struct GetUsersParams {
+    #[serde(rename = "userId")]
+    user_id: Option<String>,
+    #[serde(rename = "projectKey")]
+    project_key: Option<String>,
+    search: Option<String>,
+    #[serde(rename = "maxResults")]
+    max_results: Option<u32>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct GetEpicsParams {
+    search: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CreateEpicParams {
+    title: String,
+    description: Option<String>,
+    #[serde(rename = "goalId")]
+    goal_id: Option<String>,
+    #[serde(default)]
+    labels: Vec<String>,
+    #[serde(default)]
+    assignees: Vec<String>,
+    priority: Option<String>,
+    markdown: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct UpdateEpicParams {
+    #[serde(alias = "epicKey")]
+    key: String,
+    title: Option<String>,
+    description: Option<String>,
+    state: Option<String>,
+    #[serde(rename = "goalId")]
+    goal_id: Option<String>,
+    labels: Option<Vec<String>>,
+    assignees: Option<Vec<String>>,
+    priority: Option<String>,
+    markdown: Option<bool>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
 struct GetMergeRequestsParams {
     state: Option<String>,
     author: Option<String>,
@@ -3263,8 +3789,8 @@ mod tests {
         let handler = ToolHandler::new(vec![]);
         let tools = handler.available_tools();
 
-        // 9 issue tools + 6 MR tools + 2 pipeline tools + 3 meeting tools + 4 messenger tools = 24 total
-        assert_eq!(tools.len(), 24);
+        // 11 issue tools + 3 epic tools + 6 MR tools + 2 pipeline tools + 3 meeting tools + 4 messenger tools = 29 total
+        assert_eq!(tools.len(), 29);
     }
 
     #[tokio::test]
