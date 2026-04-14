@@ -989,6 +989,14 @@ impl ToolHandler {
             return ToolCallResult::error("No providers configured".to_string());
         }
 
+        // Extract Array-format custom fields for ClickUp set_custom_fields call
+        let cf_array = params
+            .custom_fields
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .filter(|a| !a.is_empty())
+            .cloned();
+
         let input = CreateIssueInput {
             title: params.title,
             description: params.description,
@@ -1021,6 +1029,12 @@ impl ToolHandler {
         };
         match provider.create_issue(input).await {
             Ok(issue) => {
+                // Set custom fields via separate API call (ClickUp uses Array format)
+                if let Some(cf) = &cf_array
+                    && let Err(e) = provider.set_custom_fields(&issue.key, cf).await
+                {
+                    tracing::warn!(error = %e, "Failed to set custom fields on created issue");
+                }
                 let msg = format!(
                     "Created issue {} - {}\nURL: {}",
                     issue.key,
@@ -1046,6 +1060,14 @@ impl ToolHandler {
             return ToolCallResult::error("No providers configured".to_string());
         }
 
+        // Extract Array-format custom fields for ClickUp set_custom_fields call
+        let cf_array = params
+            .custom_fields
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .filter(|a| !a.is_empty())
+            .cloned();
+
         let input = UpdateIssueInput {
             title: params.title,
             description: params.description,
@@ -1061,6 +1083,12 @@ impl ToolHandler {
         for provider in &self.providers {
             match provider.update_issue(&params.key, input.clone()).await {
                 Ok(issue) => {
+                    // Set custom fields via separate API call (ClickUp uses Array format)
+                    if let Some(cf) = &cf_array
+                        && let Err(e) = provider.set_custom_fields(&params.key, cf).await
+                    {
+                        tracing::warn!(error = %e, "Failed to set custom fields on updated issue");
+                    }
                     let msg = format!("Updated issue {} - {}", issue.key, issue.title);
                     return ToolCallResult::text(msg);
                 }
