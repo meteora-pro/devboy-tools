@@ -12,10 +12,10 @@ use devboy_core::{BuiltinToolsConfig, Provider};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::handlers::{ToolCategory, ToolHandler};
 use crate::protocol::{
     InitializeParams, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MCP_VERSION,
-    RequestId, ServerCapabilities, ServerInfo, ToolCallParams, ToolsCapability, ToolsListResult,
+    RequestId, ServerCapabilities, ServerInfo, ToolCallParams, ToolCallResult, ToolsCapability,
+    ToolsListResult,
 };
 use crate::proxy::ProxyManager;
 use crate::transport::{IncomingMessage, StdioTransport};
@@ -300,10 +300,18 @@ impl McpServer {
     /// This method is public to allow integration testing.
     pub fn handle_tools_list(&self, id: RequestId) -> JsonRpcResponse {
         let providers = self.active_providers();
-        let handler = ToolHandler::new(providers.clone())
-            .with_meeting_providers(self.meeting_providers.clone())
-            .with_messenger_providers(self.active_messenger_providers());
-        let mut tools = handler.available_tools();
+
+        // Build tool list from executor's base definitions (source of truth)
+        let base_tools = devboy_executor::tools::base_tool_definitions();
+        let mut tools: Vec<crate::protocol::ToolDefinition> = base_tools
+            .into_iter()
+            .map(|t| crate::protocol::ToolDefinition {
+                name: t.name,
+                description: t.description,
+                input_schema: serde_json::to_value(&t.input_schema).unwrap_or_default(),
+                category: Some(t.category),
+            })
+            .collect();
 
         // Pre-compute category availability to avoid repeated provider lookups.
         use devboy_core::IssueProvider;
@@ -314,18 +322,35 @@ impl McpServer {
                 "github" | "gitlab"
             )
         });
-        let has_meeting_providers = handler.has_meeting_providers();
-        let has_messenger_providers = handler.has_messenger_providers();
+        let has_meeting_providers = !self.meeting_providers.is_empty();
+        let has_messenger_providers = !self.active_messenger_providers().is_empty();
+
+        // Pre-compute per-tool asset capability flags.
+        // If no provider supports upload/delete, hide those tools entirely.
+        let any_upload = providers
+            .iter()
+            .any(|p| p.asset_capabilities().issue.upload);
+        let any_delete = providers
+            .iter()
+            .any(|p| p.asset_capabilities().issue.delete);
 
         // Filter tools based on available providers (dynamic filtering).
         // This prevents exposing tools that would always fail due to missing providers.
         tools.retain(|t| {
+            // Per-tool capability checks (asset tools).
+            match t.name.as_str() {
+                "upload_asset" => return any_upload,
+                "delete_asset" => return any_delete,
+                _ => {}
+            }
             t.category
                 .map(|cat| match cat {
-                    ToolCategory::Issues => has_issue_providers,
-                    ToolCategory::MergeRequests => has_mr_providers,
-                    ToolCategory::MeetingNotes => has_meeting_providers,
-                    ToolCategory::Messenger => has_messenger_providers,
+                    devboy_core::ToolCategory::IssueTracker => has_issue_providers,
+                    devboy_core::ToolCategory::Epics => has_issue_providers,
+                    devboy_core::ToolCategory::GitRepository => has_mr_providers,
+                    devboy_core::ToolCategory::MeetingNotes => has_meeting_providers,
+                    devboy_core::ToolCategory::Messenger => has_messenger_providers,
+                    devboy_core::ToolCategory::Releases => has_mr_providers,
                 })
                 .unwrap_or(true) // Tools without category are always available
         });
@@ -461,20 +486,115 @@ impl McpServer {
                 {
                     proxy_result
                 } else {
-                    let handler = ToolHandler::new(self.active_providers())
-                        .with_meeting_providers(self.meeting_providers.clone())
-                        .with_messenger_providers(self.active_messenger_providers());
-                    handler.execute(&params.name, params.arguments).await
+                    self.dispatch_builtin_tool(&params.name, params.arguments)
+                        .await
                 }
             }
         };
         JsonRpcResponse::success(id, serde_json::to_value(result).unwrap())
     }
 
+    /// Dispatch a built-in tool call through the Executor.
+    ///
+    /// Routes tool calls to the appropriate provider type based on tool category:
+    /// - MeetingNotes -> meeting providers
+    /// - Messenger -> messenger providers
+    /// - Everything else -> standard providers (issues, MRs, pipelines, assets, epics)
+    async fn dispatch_builtin_tool(&self, name: &str, arguments: Option<Value>) -> ToolCallResult {
+        let executor = self.create_executor();
+        let args = arguments.unwrap_or(Value::Null);
+        let category = devboy_executor::Executor::tool_category(name);
+
+        match category {
+            Some(devboy_core::ToolCategory::MeetingNotes) => {
+                for provider in &self.meeting_providers {
+                    match executor
+                        .execute_direct_meeting(name, args.clone(), provider.as_ref())
+                        .await
+                    {
+                        Ok(output) => return output_to_result(output),
+                        Err(e) => {
+                            tracing::debug!("Meeting provider failed: {}", e);
+                            continue;
+                        }
+                    }
+                }
+                ToolCallResult::error(format!("No meeting provider supports '{}'", name))
+            }
+            Some(devboy_core::ToolCategory::Messenger) => {
+                for provider in &self.active_messenger_providers() {
+                    match executor
+                        .execute_direct_messenger(name, args.clone(), provider.as_ref())
+                        .await
+                    {
+                        Ok(output) => return output_to_result(output),
+                        Err(e) => {
+                            tracing::debug!("Messenger provider failed: {}", e);
+                            continue;
+                        }
+                    }
+                }
+                ToolCallResult::error(format!("No messenger provider supports '{}'", name))
+            }
+            _ => {
+                // Issues, MRs, Pipelines, Assets, Epics, etc.
+                let providers = self.active_providers();
+                if providers.is_empty() {
+                    return ToolCallResult::error("No providers configured".to_string());
+                }
+                for provider in &providers {
+                    match executor
+                        .execute_direct(name, args.clone(), provider.as_ref())
+                        .await
+                    {
+                        Ok(output) => return output_to_result(output),
+                        Err(e) if should_try_next_provider(&e) => continue,
+                        Err(e) => return ToolCallResult::error(format!("{e}")),
+                    }
+                }
+                ToolCallResult::error(format!("No provider supports '{}'", name))
+            }
+        }
+    }
+
+    /// Create an Executor instance with best-effort asset cache.
+    fn create_executor(&self) -> devboy_executor::Executor {
+        let mut executor = devboy_executor::Executor::new();
+        // Best-effort asset cache
+        if let Ok(mgr) =
+            devboy_assets::AssetManager::from_config(devboy_assets::AssetConfig::default())
+        {
+            executor = executor.with_asset_manager(mgr);
+        }
+        executor
+    }
+
     /// Handle ping request.
     fn handle_ping(&self, id: RequestId) -> JsonRpcResponse {
         JsonRpcResponse::success(id, serde_json::json!({}))
     }
+}
+
+/// Convert an executor ToolOutput to an MCP ToolCallResult.
+fn output_to_result(output: devboy_executor::ToolOutput) -> ToolCallResult {
+    match devboy_executor::format_output(output, None, None, None) {
+        Ok(formatted) => ToolCallResult::text(formatted.content),
+        Err(e) => ToolCallResult::error(format!("Format error: {e}")),
+    }
+}
+
+/// Check whether an error from one provider should cause the handler to
+/// try the next. In multi-provider setups, a key like `gitlab#1` is
+/// invalid for GitHub but valid for GitLab.
+fn should_try_next_provider(e: &devboy_core::Error) -> bool {
+    matches!(
+        e,
+        devboy_core::Error::ProviderUnsupported { .. }
+            | devboy_core::Error::ProviderNotFound(_)
+            | devboy_core::Error::NotFound(_)
+            | devboy_core::Error::InvalidData(_)
+            | devboy_core::Error::Http(_)
+    )
 }
 
 impl Default for McpServer {

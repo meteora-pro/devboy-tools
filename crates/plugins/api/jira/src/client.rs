@@ -5,19 +5,20 @@
 
 use async_trait::async_trait;
 use devboy_core::{
-    Comment, CreateIssueInput, Error, GetUsersOptions, Issue, IssueFilter, IssueLink,
-    IssueProvider, IssueRelations, IssueStatus, MergeRequestProvider, PipelineProvider, Provider,
-    ProviderResult, Result, UpdateIssueInput, User,
+    AssetCapabilities, AssetMeta, Comment, ContextCapabilities, CreateIssueInput, Error,
+    GetUsersOptions, Issue, IssueFilter, IssueLink, IssueProvider, IssueRelations, IssueStatus,
+    MergeRequestProvider, PipelineProvider, Provider, ProviderResult, Result, UpdateIssueInput,
+    User,
 };
 use tracing::{debug, warn};
 
 use crate::types::{
     AddCommentPayload, CreateIssueFields, CreateIssueLinkPayload, CreateIssuePayload,
-    CreateIssueResponse, IssueKeyRef, IssueLinkTypeName, IssueType, JiraCloudSearchResponse,
-    JiraComment, JiraCommentsResponse, JiraIssue, JiraIssueTypeStatuses, JiraPriority,
-    JiraProjectStatus, JiraSearchResponse, JiraStatus, JiraTransition, JiraTransitionsResponse,
-    JiraUser, PriorityName, ProjectKey, TransitionId, TransitionPayload, UpdateIssueFields,
-    UpdateIssuePayload,
+    CreateIssueResponse, IssueKeyRef, IssueLinkTypeName, IssueType, JiraAttachment,
+    JiraCloudSearchResponse, JiraComment, JiraCommentsResponse, JiraIssue, JiraIssueTypeStatuses,
+    JiraPriority, JiraProjectStatus, JiraSearchResponse, JiraStatus, JiraTransition,
+    JiraTransitionsResponse, JiraUser, PriorityName, ProjectKey, TransitionId, TransitionPayload,
+    UpdateIssueFields, UpdateIssuePayload,
 };
 
 /// Jira deployment flavor.
@@ -129,15 +130,21 @@ impl JiraClient {
         }
     }
 
-    /// Build request with auth headers.
+    /// Build request with auth headers and JSON content type.
     ///
     /// When proxy is configured, provider's own auth is suppressed and
     /// proxy headers are added instead. The proxy handles authentication.
     fn request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
-        let mut builder = self
-            .client
-            .request(method, url)
-            .header("Content-Type", "application/json");
+        self.request_raw(method, url)
+            .header("Content-Type", "application/json")
+    }
+
+    /// Build request with auth headers but **no** Content-Type header.
+    ///
+    /// Use this for multipart uploads where reqwest must set its own
+    /// `Content-Type: multipart/form-data; boundary=...` header.
+    fn request_raw(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
+        let mut builder = self.client.request(method, url);
 
         if let Some(headers) = &self.proxy_headers {
             for (key, value) in headers {
@@ -754,6 +761,11 @@ fn map_issue(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> Issue
         url: Some(format!("{}/browse/{}", instance_url, issue.key)),
         created_at: issue.fields.created.clone(),
         updated_at: issue.fields.updated.clone(),
+        attachments_count: if issue.fields.attachment.is_empty() {
+            None
+        } else {
+            Some(issue.fields.attachment.len() as u32)
+        },
         parent: None,
         subtasks: vec![],
     }
@@ -822,6 +834,37 @@ fn map_comment(jira_comment: &JiraComment, flavor: JiraFlavor) -> Comment {
         created_at: jira_comment.created.clone(),
         updated_at: jira_comment.updated.clone(),
         position: None,
+    }
+}
+
+/// Map a Jira attachment payload to the provider-agnostic [`AssetMeta`].
+fn map_jira_attachment(raw: &JiraAttachment) -> AssetMeta {
+    // Prefer the explicit `filename` from Jira. Don't fall back to
+    // `filename_from_url(content)` because Jira content URLs typically
+    // end with `/attachment/content/{id}`, producing useless filenames
+    // like "42". Fall back to `attachment-{id}` instead.
+    let filename = raw
+        .filename
+        .clone()
+        .unwrap_or_else(|| format!("attachment-{}", raw.id));
+    let author = raw
+        .author
+        .as_ref()
+        .and_then(|u| map_user(Some(u)))
+        .map(|u| u.name.unwrap_or(u.username));
+
+    AssetMeta {
+        id: raw.id.clone(),
+        filename,
+        mime_type: raw.mime_type.clone(),
+        size: raw.size,
+        url: raw.content.clone(),
+        created_at: raw.created.clone(),
+        author,
+        cached: false,
+        local_path: None,
+        checksum_sha256: None,
+        analysis: None,
     }
 }
 
@@ -1503,6 +1546,142 @@ impl IssueProvider for JiraClient {
         Ok(map_relations(&issue, self.flavor, &self.instance_url))
     }
 
+    async fn upload_attachment(
+        &self,
+        issue_key: &str,
+        filename: &str,
+        data: &[u8],
+    ) -> Result<String> {
+        let jira_key = parse_jira_key(issue_key);
+        let url = format!("{}/issue/{}/attachments", self.base_url, jira_key);
+
+        let part = reqwest::multipart::Part::bytes(data.to_vec())
+            .file_name(filename.to_string())
+            .mime_str("application/octet-stream")
+            .map_err(|e| Error::Http(format!("failed to build multipart: {e}")))?;
+        let form = reqwest::multipart::Form::new().part("file", part);
+
+        // Use request_raw (no Content-Type) so reqwest can set its own
+        // multipart/form-data boundary header. self.request() sets
+        // Content-Type: application/json which conflicts with multipart.
+        let response = self
+            .request_raw(reqwest::Method::POST, &url)
+            // Jira requires the X-Atlassian-Token header to bypass its XSRF check
+            // on file uploads: https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-attachments/
+            .header("X-Atlassian-Token", "no-check")
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_default();
+            return Err(Error::from_status(status.as_u16(), message));
+        }
+
+        // Jira returns an array of attachment descriptors; we take the first.
+        let attachments: Vec<JiraAttachment> = response
+            .json()
+            .await
+            .map_err(|e| Error::InvalidData(format!("failed to parse attachment response: {e}")))?;
+        let url = attachments
+            .into_iter()
+            .next()
+            .and_then(|a| a.content)
+            .filter(|u| !u.is_empty())
+            .ok_or_else(|| {
+                Error::InvalidData(
+                    "Jira upload returned no attachment with a content URL".to_string(),
+                )
+            })?;
+        Ok(url)
+    }
+
+    async fn get_issue_attachments(&self, issue_key: &str) -> Result<Vec<AssetMeta>> {
+        let jira_key = parse_jira_key(issue_key);
+        let url = format!("{}/issue/{}?fields=attachment", self.base_url, jira_key);
+        let issue: JiraIssue = self.get(&url).await?;
+        Ok(issue
+            .fields
+            .attachment
+            .iter()
+            .map(map_jira_attachment)
+            .collect())
+    }
+
+    async fn download_attachment(&self, _issue_key: &str, asset_id: &str) -> Result<Vec<u8>> {
+        // Cloud: GET /rest/api/3/attachment/content/{id}
+        // Self-Hosted: the Cloud endpoint doesn't exist; fetch attachment
+        // metadata first and download from its `content` URL.
+        let url = match self.flavor {
+            JiraFlavor::Cloud => {
+                format!("{}/attachment/content/{}", self.base_url, asset_id)
+            }
+            JiraFlavor::SelfHosted => {
+                let meta_url = format!("{}/attachment/{}", self.base_url, asset_id);
+                let meta: serde_json::Value = self.get(&meta_url).await?;
+                meta.get("content")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        Error::InvalidData(format!(
+                            "attachment {asset_id} metadata has no content URL"
+                        ))
+                    })?
+                    .to_string()
+            }
+        };
+        let response = self
+            .request(reqwest::Method::GET, &url)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_default();
+            return Err(Error::from_status(status.as_u16(), message));
+        }
+
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| Error::Http(format!("failed to read attachment bytes: {e}")))?;
+        Ok(bytes.to_vec())
+    }
+
+    async fn delete_attachment(&self, _issue_key: &str, asset_id: &str) -> Result<()> {
+        // DELETE /rest/api/{v}/attachment/{id} — 204 on success.
+        let url = format!("{}/attachment/{}", self.base_url, asset_id);
+        let response = self
+            .request(reqwest::Method::DELETE, &url)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_default();
+            return Err(Error::from_status(status.as_u16(), message));
+        }
+        Ok(())
+    }
+
+    fn asset_capabilities(&self) -> AssetCapabilities {
+        // Jira exposes a full CRUD REST API for attachments on issues.
+        AssetCapabilities {
+            issue: ContextCapabilities {
+                upload: true,
+                download: true,
+                delete: true,
+                list: true,
+                max_file_size: None,
+                allowed_types: Vec::new(),
+            },
+            ..Default::default()
+        }
+    }
+
     fn provider_name(&self) -> &'static str {
         "jira"
     }
@@ -1919,6 +2098,7 @@ mod tests {
                 parent: None,
                 subtasks: vec![],
                 issuelinks: vec![],
+                attachment: vec![],
             },
         };
 
@@ -1977,6 +2157,7 @@ mod tests {
                 parent: None,
                 subtasks: vec![],
                 issuelinks: vec![],
+                attachment: vec![],
             },
         };
 
@@ -2002,6 +2183,7 @@ mod tests {
                 parent: None,
                 subtasks: vec![],
                 issuelinks: vec![],
+                attachment: vec![],
             },
         };
 
@@ -3857,6 +4039,130 @@ mod tests {
             assert_eq!(relations.blocks.len(), 1);
             assert_eq!(relations.blocks[0].issue.key, "jira#PROJ-3");
         }
+
+        // =================================================================
+        // Attachment tests (Phase 2)
+        // =================================================================
+
+        #[tokio::test]
+        async fn test_get_issue_attachments_maps_fields() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/issue/PROJ-1")
+                    .query_param("fields", "attachment");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "attachment": [
+                            {
+                                "id": "42",
+                                "filename": "crash.log",
+                                "content": "https://example/rest/api/2/attachment/content/42",
+                                "size": 2048,
+                                "mimeType": "text/plain",
+                                "created": "2024-01-01T00:00:00.000+0000",
+                                "author": {
+                                    "name": "uploader",
+                                    "displayName": "Upload User"
+                                }
+                            }
+                        ]
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let assets = client.get_issue_attachments("jira#PROJ-1").await.unwrap();
+            assert_eq!(assets.len(), 1);
+            let a = &assets[0];
+            assert_eq!(a.id, "42");
+            assert_eq!(a.filename, "crash.log");
+            assert_eq!(a.mime_type.as_deref(), Some("text/plain"));
+            assert_eq!(a.size, Some(2048));
+            assert_eq!(a.author.as_deref(), Some("Upload User"));
+        }
+
+        #[tokio::test]
+        async fn test_download_attachment_returns_bytes() {
+            let server = MockServer::start();
+
+            // Self-Hosted: first fetches metadata, then downloads from content URL.
+            let content_url = server.url("/secure/attachment/42/trace.log");
+            server.mock(|when, then| {
+                when.method(GET).path("/attachment/42");
+                then.status(200).json_body(serde_json::json!({
+                    "self": "http://localhost/rest/api/2/attachment/42",
+                    "id": "42",
+                    "filename": "trace.log",
+                    "content": content_url,
+                }));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/secure/attachment/42/trace.log");
+                then.status(200).body("stack trace here");
+            });
+
+            let client = create_self_hosted_client(&server);
+            let bytes = client
+                .download_attachment("jira#PROJ-1", "42")
+                .await
+                .unwrap();
+            assert_eq!(bytes, b"stack trace here");
+        }
+
+        #[tokio::test]
+        async fn test_delete_attachment_ok() {
+            let server = MockServer::start();
+
+            let mock = server.mock(|when, then| {
+                when.method(DELETE).path("/attachment/42");
+                then.status(204);
+            });
+
+            let client = create_self_hosted_client(&server);
+            client.delete_attachment("jira#PROJ-1", "42").await.unwrap();
+            mock.assert();
+        }
+
+        #[tokio::test]
+        async fn test_upload_attachment_returns_content_url() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issue/PROJ-1/attachments")
+                    .header("X-Atlassian-Token", "no-check");
+                then.status(200).json_body(serde_json::json!([
+                    {
+                        "id": "99",
+                        "filename": "report.txt",
+                        "content": "https://example/rest/api/2/attachment/content/99",
+                        "size": 10
+                    }
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let url = client
+                .upload_attachment("jira#PROJ-1", "report.txt", b"0123456789")
+                .await
+                .unwrap();
+            assert_eq!(url, "https://example/rest/api/2/attachment/content/99");
+        }
+
+        #[tokio::test]
+        async fn test_jira_asset_capabilities() {
+            let server = MockServer::start();
+            let client = create_self_hosted_client(&server);
+            let caps = client.asset_capabilities();
+            assert!(caps.issue.upload);
+            assert!(caps.issue.download);
+            assert!(caps.issue.delete);
+            assert!(caps.issue.list);
+        }
     }
 
     // =========================================================================
@@ -3881,6 +4187,7 @@ mod tests {
                 parent: None,
                 subtasks: vec![],
                 issuelinks: vec![],
+                attachment: vec![],
             },
         };
 
@@ -3915,6 +4222,7 @@ mod tests {
                 parent: None,
                 subtasks: vec![],
                 issuelinks: vec![],
+                attachment: vec![],
             },
         });
 
@@ -3934,6 +4242,7 @@ mod tests {
                 parent: Some(parent),
                 subtasks: vec![],
                 issuelinks: vec![],
+                attachment: vec![],
             },
         };
 
@@ -3981,6 +4290,7 @@ mod tests {
                             parent: None,
                             subtasks: vec![],
                             issuelinks: vec![],
+                            attachment: vec![],
                         },
                     },
                     JiraIssue {
@@ -3999,10 +4309,12 @@ mod tests {
                             parent: None,
                             subtasks: vec![],
                             issuelinks: vec![],
+                            attachment: vec![],
                         },
                     },
                 ],
                 issuelinks: vec![],
+                attachment: vec![],
             },
         };
 
@@ -4057,6 +4369,7 @@ mod tests {
                                 parent: None,
                                 subtasks: vec![],
                                 issuelinks: vec![],
+                                attachment: vec![],
                             },
                         })),
                         inward_issue: None,
@@ -4086,10 +4399,12 @@ mod tests {
                                 parent: None,
                                 subtasks: vec![],
                                 issuelinks: vec![],
+                                attachment: vec![],
                             },
                         })),
                     },
                 ],
+                attachment: vec![],
             },
         };
 
@@ -4144,6 +4459,7 @@ mod tests {
                                 parent: None,
                                 subtasks: vec![],
                                 issuelinks: vec![],
+                                attachment: vec![],
                             },
                         })),
                         inward_issue: None,
@@ -4173,10 +4489,12 @@ mod tests {
                                 parent: None,
                                 subtasks: vec![],
                                 issuelinks: vec![],
+                                attachment: vec![],
                             },
                         })),
                     },
                 ],
+                attachment: vec![],
             },
         };
 
@@ -4228,10 +4546,12 @@ mod tests {
                             parent: None,
                             subtasks: vec![],
                             issuelinks: vec![],
+                            attachment: vec![],
                         },
                     })),
                     inward_issue: None,
                 }],
+                attachment: vec![],
             },
         };
 
@@ -4273,6 +4593,7 @@ mod tests {
                         parent: None,
                         subtasks: vec![],
                         issuelinks: vec![],
+                        attachment: vec![],
                     },
                 })),
                 subtasks: vec![JiraIssue {
@@ -4291,6 +4612,7 @@ mod tests {
                         parent: None,
                         subtasks: vec![],
                         issuelinks: vec![],
+                        attachment: vec![],
                     },
                 }],
                 issuelinks: vec![JiraIssueLink {
@@ -4316,10 +4638,12 @@ mod tests {
                             parent: None,
                             subtasks: vec![],
                             issuelinks: vec![],
+                            attachment: vec![],
                         },
                     })),
                     inward_issue: None,
                 }],
+                attachment: vec![],
             },
         };
 
