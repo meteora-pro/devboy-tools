@@ -12,7 +12,7 @@
 //! - `DEVBOY_SENTRY_TRACES_SAMPLE_RATE` → `sentry.traces_sample_rate`
 
 use crate::config::SentryConfig;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Sensitive header/field names to scrub from Sentry events.
 const SENSITIVE_KEYS: &[&str] = &[
@@ -31,7 +31,7 @@ const SENSITIVE_KEYS: &[&str] = &[
 
 /// Initialize Sentry error reporting.
 ///
-/// Returns `Some(guard)` if Sentry was initialized, `None` if disabled.
+/// Returns `Some(guard)` if Sentry was initialized and enabled, `None` otherwise.
 /// The guard **must** be kept alive for the entire process lifetime —
 /// dropping it flushes pending events and shuts down the Sentry client.
 ///
@@ -46,41 +46,53 @@ pub fn init_sentry(
     let default_config = SentryConfig::default();
     let config = config.unwrap_or(&default_config);
 
-    // DSN: env var overrides config
+    // DSN: env var overrides config, trim whitespace
     let dsn = std::env::var("DEVBOY_SENTRY_DSN")
         .ok()
+        .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .or_else(|| config.dsn.clone());
+        .or_else(|| config.dsn.as_ref().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())?;
 
-    let dsn = match dsn {
-        Some(dsn) if !dsn.is_empty() => dsn,
-        _ => return None,
+    // Validate DSN is parseable
+    let parsed_dsn = match dsn.parse::<sentry::types::Dsn>() {
+        Ok(d) => Some(d),
+        Err(e) => {
+            warn!(
+                "Invalid Sentry DSN '{}': {e}. Sentry will be disabled.",
+                dsn
+            );
+            return None;
+        }
     };
 
     // Environment: env var overrides config
     let environment = std::env::var("DEVBOY_SENTRY_ENVIRONMENT")
         .ok()
+        .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .or_else(|| config.environment.clone());
 
-    // Sample rate: env var overrides config, default 1.0
+    // Sample rate: env var overrides config, default 1.0, clamped to 0.0–1.0
     let sample_rate = std::env::var("DEVBOY_SENTRY_SAMPLE_RATE")
         .ok()
-        .and_then(|s| s.parse::<f32>().ok())
+        .and_then(|s| s.trim().parse::<f32>().ok())
         .or(config.sample_rate)
-        .unwrap_or(1.0);
+        .unwrap_or(1.0)
+        .clamp(0.0, 1.0);
 
-    // Traces sample rate: env var overrides config, default 0.0
+    // Traces sample rate: env var overrides config, default 0.0, clamped to 0.0–1.0
     let traces_sample_rate = std::env::var("DEVBOY_SENTRY_TRACES_SAMPLE_RATE")
         .ok()
-        .and_then(|s| s.parse::<f32>().ok())
+        .and_then(|s| s.trim().parse::<f32>().ok())
         .or(config.traces_sample_rate)
-        .unwrap_or(0.0);
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0);
 
     let release = format!("devboy-tools@{version}");
 
     let guard = sentry::init(sentry::ClientOptions {
-        dsn: dsn.parse().ok(),
+        dsn: parsed_dsn,
         release: Some(release.into()),
         environment: environment.map(Into::into),
         sample_rate,

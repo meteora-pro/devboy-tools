@@ -347,7 +347,7 @@ docker run -e DEVBOY_SENTRY_DSN="$SENTRY_DSN" devboy-tools mcp
 
 - Sentry is **disabled by default** — no data is sent unless a DSN is configured
 - Sensitive data (tokens, API keys, credentials) is automatically scrubbed from error reports
-- Zero runtime overhead when disabled
+- Zero overhead when the `sentry` feature is not compiled in; minimal overhead when compiled but no DSN is configured (Sentry tracing layer is not installed without a valid DSN)
 
 ## Special environment variables
 
