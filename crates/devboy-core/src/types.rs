@@ -4,6 +4,7 @@
 //! that can be populated from GitLab, GitHub, ClickUp, or Jira APIs.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 // =============================================================================
 // User
@@ -156,6 +157,11 @@ pub struct CreateIssueInput {
     /// Issue type (e.g., "Task", "Bug", "Story"). Provider-specific.
     /// Jira defaults to "Task" if not specified.
     pub issue_type: Option<String>,
+    /// Provider-specific custom fields.
+    /// Jira: Object `{"customfield_10001": value}` — merged into create payload.
+    /// ClickUp: Array `[{"id": "field_id", "value": val}]` — set via separate API.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_fields: Option<Value>,
 }
 
 impl Default for CreateIssueInput {
@@ -170,6 +176,7 @@ impl Default for CreateIssueInput {
             markdown: true,
             project_id: None,
             issue_type: None,
+            custom_fields: None,
         }
     }
 }
@@ -201,6 +208,9 @@ pub struct UpdateIssueInput {
     /// Whether the description is markdown (default: true).
     #[serde(default = "default_true")]
     pub markdown: bool,
+    /// Provider-specific custom fields (same format as CreateIssueInput).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_fields: Option<Value>,
 }
 
 impl Default for UpdateIssueInput {
@@ -214,6 +224,7 @@ impl Default for UpdateIssueInput {
             priority: None,
             parent_id: None,
             markdown: true,
+            custom_fields: None,
         }
     }
 }

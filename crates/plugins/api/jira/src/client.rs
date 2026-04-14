@@ -847,6 +847,32 @@ fn escape_jql(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// Merge custom fields (Object format) into a serializable payload.
+/// Only keys with `customfield_` prefix are merged to prevent overwriting
+/// core Jira fields like `project`, `summary`, `issuetype`.
+/// Returns the number of custom fields actually merged.
+fn merge_custom_fields_into_payload<T: serde::Serialize>(
+    payload: T,
+    custom_fields: &Option<serde_json::Value>,
+) -> Result<(serde_json::Value, usize)> {
+    let mut value = serde_json::to_value(payload)
+        .map_err(|e| Error::InvalidData(format!("failed to serialize issue payload: {e}")))?;
+    let mut merged_count = 0;
+    if let Some(serde_json::Value::Object(cf)) = custom_fields
+        && let Some(fields) = value.get_mut("fields").and_then(|f| f.as_object_mut())
+    {
+        for (k, v) in cf {
+            if k.starts_with("customfield_") {
+                fields.insert(k.clone(), v.clone());
+                merged_count += 1;
+            } else {
+                tracing::warn!(field = %k, "Skipping non-custom field in customFields (expected customfield_* prefix)");
+            }
+        }
+    }
+    Ok((value, merged_count))
+}
+
 /// Check whether a JQL string already contains a project filter clause.
 /// Matches `project` as a JQL field name (word boundary) followed by an operator.
 /// Skips occurrences inside quoted strings to avoid false positives.
@@ -1222,6 +1248,8 @@ impl IssueProvider for JiraClient {
             },
         };
 
+        let (payload, _) = merge_custom_fields_into_payload(payload, &input.custom_fields)?;
+
         let url = format!("{}/issue", self.base_url);
         let create_resp: CreateIssueResponse = self.post(&url, &payload).await?;
 
@@ -1264,16 +1292,23 @@ impl IssueProvider for JiraClient {
             assignee,
         };
 
+        let has_custom_fields = input.custom_fields.as_ref().is_some_and(|v| {
+            v.as_object()
+                .is_some_and(|obj| obj.keys().any(|k| k.starts_with("customfield_")))
+        });
+
         // Only call PUT if there are field updates
         let has_field_updates = fields.summary.is_some()
             || fields.description.is_some()
             || fields.labels.is_some()
             || fields.priority.is_some()
-            || fields.assignee.is_some();
+            || fields.assignee.is_some()
+            || has_custom_fields;
 
         if has_field_updates {
             let url = format!("{}/issue/{}", self.base_url, jira_key);
             let payload = UpdateIssuePayload { fields };
+            let (payload, _) = merge_custom_fields_into_payload(payload, &input.custom_fields)?;
             self.put(&url, &payload).await?;
         }
 
@@ -2604,6 +2639,95 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn test_create_issue_with_custom_fields() {
+            let server = MockServer::start();
+
+            // Verify custom fields are merged into the payload
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issue")
+                    .body_includes("\"customfield_10001\":8")
+                    .body_includes("\"customfield_10002\":\"goal-a\"");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10005",
+                    "key": "PROJ-5"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-5");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10005",
+                    "key": "PROJ-5",
+                    "fields": {
+                        "summary": "With custom fields",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-03T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "With custom fields".to_string(),
+                    custom_fields: Some(serde_json::json!({
+                        "customfield_10001": 8,
+                        "customfield_10002": "goal-a"
+                    })),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-5");
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_with_custom_fields() {
+            let server = MockServer::start();
+
+            // Verify custom fields are merged into the update payload
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/issue/PROJ-1")
+                    .body_includes("\"customfield_10001\":5");
+                then.status(204);
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "summary": "Fix login bug",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .update_issue(
+                    "PROJ-1",
+                    UpdateIssueInput {
+                        custom_fields: Some(serde_json::json!({
+                            "customfield_10001": 5
+                        })),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        #[tokio::test]
         async fn test_update_issue() {
             let server = MockServer::start();
 
@@ -3534,6 +3658,89 @@ mod tests {
             assert!(!has_project_clause("summary ~ \"project = foo\""));
             // Negative cases — underscore word boundary
             assert!(!has_project_clause("my_project = X"));
+        }
+
+        // =================================================================
+        // merge_custom_fields unit tests
+        // =================================================================
+
+        #[test]
+        fn test_merge_custom_fields_into_payload() {
+            use crate::types::*;
+            let payload = CreateIssuePayload {
+                fields: CreateIssueFields {
+                    project: ProjectKey { key: "PROJ".into() },
+                    summary: "Test".into(),
+                    issuetype: IssueType {
+                        name: "Task".into(),
+                    },
+                    description: None,
+                    labels: None,
+                    priority: None,
+                    assignee: None,
+                },
+            };
+
+            let cf = Some(serde_json::json!({"customfield_10001": 8, "customfield_10002": "x"}));
+            let (merged, count) = merge_custom_fields_into_payload(payload, &cf).unwrap();
+
+            let fields = merged.get("fields").unwrap();
+            assert_eq!(fields["customfield_10001"], 8);
+            assert_eq!(fields["customfield_10002"], "x");
+            assert_eq!(count, 2);
+            assert_eq!(fields["summary"], "Test");
+            assert_eq!(fields["project"]["key"], "PROJ");
+        }
+
+        #[test]
+        fn test_merge_custom_fields_none_is_noop() {
+            use crate::types::*;
+            let payload = CreateIssuePayload {
+                fields: CreateIssueFields {
+                    project: ProjectKey { key: "PROJ".into() },
+                    summary: "Test".into(),
+                    issuetype: IssueType {
+                        name: "Task".into(),
+                    },
+                    description: None,
+                    labels: None,
+                    priority: None,
+                    assignee: None,
+                },
+            };
+
+            let (merged, count) = merge_custom_fields_into_payload(payload, &None).unwrap();
+            assert_eq!(count, 0);
+            let fields = merged.get("fields").unwrap();
+            assert_eq!(fields["summary"], "Test");
+            assert!(fields.get("customfield_10001").is_none());
+        }
+
+        #[test]
+        fn test_merge_custom_fields_rejects_non_custom_keys() {
+            use crate::types::*;
+            let payload = CreateIssuePayload {
+                fields: CreateIssueFields {
+                    project: ProjectKey { key: "PROJ".into() },
+                    summary: "Test".into(),
+                    issuetype: IssueType {
+                        name: "Task".into(),
+                    },
+                    description: None,
+                    labels: None,
+                    priority: None,
+                    assignee: None,
+                },
+            };
+
+            // "summary" should be rejected, "customfield_10001" should pass
+            let cf = Some(serde_json::json!({"summary": "HACKED", "customfield_10001": 5}));
+            let (merged, count) = merge_custom_fields_into_payload(payload, &cf).unwrap();
+
+            let fields = merged.get("fields").unwrap();
+            assert_eq!(fields["summary"], "Test"); // NOT overwritten
+            assert_eq!(fields["customfield_10001"], 5); // custom field applied
+            assert_eq!(count, 1); // only customfield_10001 counted
         }
 
         // =================================================================
