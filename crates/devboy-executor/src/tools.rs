@@ -282,6 +282,21 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
             },
         },
         ToolDefinition {
+            name: "unlink_issues".into(),
+            description: "Remove a link between two issues.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("sourceIssueKey", PropertySchema::string("Source issue key"));
+                s.add_property("targetIssueKey", PropertySchema::string("Target issue key"));
+                s.add_property("linkType", PropertySchema::string("Link type to remove (e.g., blocks, relates_to, subtask)"));
+                s.set_required("sourceIssueKey", true);
+                s.set_required("targetIssueKey", true);
+                s.set_required("linkType", true);
+                s
+            },
+        },
+        ToolDefinition {
             name: "get_epics".into(),
             description: "Get epics (high-level tasks) from the issue tracker.".into(),
             category: ToolCategory::Epics,
@@ -517,7 +532,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 33);
+        assert_eq!(tools.len(), 34);
     }
 
     #[test]
@@ -543,6 +558,7 @@ mod tests {
             "get_available_statuses",
             "get_users",
             "link_issues",
+            "unlink_issues",
             "get_assets",
             "upload_asset",
             "download_asset",

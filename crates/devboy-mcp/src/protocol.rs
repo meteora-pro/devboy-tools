@@ -225,7 +225,7 @@ pub struct ToolDefinition {
     pub input_schema: Value,
     /// Tool category for filtering (not serialized to JSON).
     #[serde(skip)]
-    pub category: Option<crate::handlers::ToolCategory>,
+    pub category: Option<devboy_core::ToolCategory>,
 }
 
 /// Tools list response.
