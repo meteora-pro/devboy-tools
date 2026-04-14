@@ -33,7 +33,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("sort_by", PropertySchema::string_enum(&["created_at", "updated_at"], "Sort by field (default: updated_at)"));
                 s.add_property("sort_order", PropertySchema::string_enum(&["asc", "desc"], "Sort order (default: desc)"));
                 s.add_property("projectKey", PropertySchema::string("Project key to filter issues (e.g., \"PROJ\"). Overrides default project. Removed by providers that don't support it."));
-                s.add_property("nativeQuery", PropertySchema::string("Native query passed directly to provider (e.g., Jira JQL). Takes precedence over other filters except projectKey injection."));
+                s.add_property("nativeQuery", PropertySchema::string("Native query passed directly to provider (e.g., Jira JQL). Replaces auto-generated filters. If the query omits a project clause, the default project is auto-injected."));
                 s
             },
         },
