@@ -112,9 +112,30 @@ pub fn init_sentry(
 fn scrub_sensitive_data(
     mut event: sentry::protocol::Event<'static>,
 ) -> Option<sentry::protocol::Event<'static>> {
-    // Scrub request headers
+    // Scrub event message (e.g., from capture_message with error strings)
+    if let Some(ref mut message) = event.message {
+        *message = scrub_url_credentials(message);
+    }
+
+    // Scrub exception values (error messages may contain URLs with tokens)
+    for exception in &mut event.exception.values {
+        if let Some(ref mut value) = exception.value {
+            *value = scrub_url_credentials(value);
+        }
+    }
+
+    // Scrub request headers, URL and query string
     if let Some(ref mut request) = event.request {
         scrub_map(&mut request.headers);
+        if let Some(ref url) = request.url {
+            let scrubbed = scrub_url_credentials(url.as_str());
+            if let Ok(new_url) = scrubbed.parse() {
+                request.url = Some(new_url);
+            }
+        }
+        if let Some(ref mut query) = request.query_string {
+            *query = scrub_url_credentials(query);
+        }
     }
 
     // Scrub extra context for sensitive keys
@@ -171,28 +192,31 @@ fn scrub_url_credentials(input: &str) -> String {
         }
     }
     // Scrub sensitive query params: ?token=xxx&key=yyy
+    // Single case-insensitive pass per param (no separate uppercase pattern needed).
     for param in &["token", "key", "secret", "password", "api_key", "apikey"] {
-        let patterns = [format!("{param}="), format!("{}_=", param.to_uppercase())];
-        for pat in &patterns {
-            let mut search_from = 0;
-            let pat_lower = pat.to_lowercase();
-            while let Some(rel_pos) = result[search_from..].to_lowercase().find(&pat_lower) {
-                let pos = search_from + rel_pos;
-                let value_start = pos + pat.len();
-                let value_end = result[value_start..]
-                    .find(['&', '#', ' '])
-                    .map(|i| value_start + i)
-                    .unwrap_or(result.len());
-                let replacement = format!(
-                    "{}{}[Filtered]{}",
-                    &result[..pos],
-                    pat,
-                    &result[value_end..]
-                );
-                // Advance past the replacement to avoid re-matching
-                search_from = pos + pat.len() + "[Filtered]".len();
-                result = replacement;
-            }
+        let pat = format!("{param}=");
+        let pat_lower = pat.to_lowercase();
+        let mut search_from = 0;
+        // Precompute lowercase once, rebuild only when the string changes
+        let mut result_lower = result.to_lowercase();
+        while let Some(rel_pos) = result_lower[search_from..].find(&pat_lower) {
+            let pos = search_from + rel_pos;
+            let value_start = pos + pat.len();
+            let value_end = result[value_start..]
+                .find(['&', '#', ' '])
+                .map(|i| value_start + i)
+                .unwrap_or(result.len());
+            // Preserve original case of the param name from the input
+            let original_param = result[pos..value_start].to_string();
+            result = format!(
+                "{}{}[Filtered]{}",
+                &result[..pos],
+                original_param,
+                &result[value_end..]
+            );
+            // Advance past the replacement to avoid re-matching
+            search_from = pos + original_param.len() + "[Filtered]".len();
+            result_lower = result.to_lowercase();
         }
     }
     result
@@ -258,6 +282,20 @@ mod tests {
         assert_eq!(
             scrub_url_credentials("Connected to proxy at host:8080"),
             "Connected to proxy at host:8080"
+        );
+        // Case-insensitive param matching (TOKEN=, Token=)
+        assert_eq!(
+            scrub_url_credentials("https://host.com?TOKEN=secret"),
+            "https://host.com?TOKEN=[Filtered]"
+        );
+        assert_eq!(
+            scrub_url_credentials("https://host.com?Token=abc123"),
+            "https://host.com?Token=[Filtered]"
+        );
+        // api_key param
+        assert_eq!(
+            scrub_url_credentials("https://host.com?api_key=xyz&page=1"),
+            "https://host.com?api_key=[Filtered]&page=1"
         );
     }
 
