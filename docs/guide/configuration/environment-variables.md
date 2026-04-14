@@ -310,7 +310,7 @@ Resolution for `staging` context (no context-specific var):
 
 ## Sentry error reporting
 
-DevBoy supports optional [Sentry](https://sentry.io/) integration for error reporting. This requires the `sentry` feature flag at compile time (`cargo build --features sentry`).
+DevBoy supports optional [Sentry](https://sentry.io/) integration for error reporting. This requires the `sentry` feature flag at compile time (`cargo build -p devboy-cli --features sentry`).
 
 ### Configuration
 

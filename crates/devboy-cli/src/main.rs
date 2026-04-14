@@ -469,10 +469,15 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize Sentry (must happen before tracing subscriber init).
-    // Uses load_runtime_config() to respect .devboy.toml, consistent with the rest of CLI.
+    // Respects --no-config / DEVBOY_NO_CONFIG=1: in env-only mode, only env vars
+    // are used for Sentry config (config file is not loaded).
     #[cfg(feature = "sentry")]
     let _sentry_guard = {
-        let config = load_runtime_config().ok().map(|(c, _)| c);
+        let config = if is_no_config_enabled() {
+            None
+        } else {
+            load_runtime_config().ok().map(|(c, _)| c)
+        };
         devboy_core::sentry_integration::init_sentry(
             config.as_ref().and_then(|c| c.sentry.as_ref()),
             env!("CARGO_PKG_VERSION"),
@@ -541,22 +546,9 @@ async fn main() -> Result<()> {
         _ => Some(tokio::spawn(update_check::check_and_notify())),
     };
 
-    match cli.command {
-        Some(Commands::Init {
-            yes,
-            dry_run,
-            force,
-            claude,
-            context,
-            proxy,
-            proxy_only,
-            proxy_name,
-            proxy_transport,
-            proxy_token_key,
-            proxy_token,
-            proxy_auth_type,
-        }) => {
-            handle_init_command(
+    let result: Result<()> = async {
+        match cli.command {
+            Some(Commands::Init {
                 yes,
                 dry_run,
                 force,
@@ -569,93 +561,118 @@ async fn main() -> Result<()> {
                 proxy_token_key,
                 proxy_token,
                 proxy_auth_type,
-            )
-            .await?;
-        }
+            }) => {
+                handle_init_command(
+                    yes,
+                    dry_run,
+                    force,
+                    claude,
+                    context,
+                    proxy,
+                    proxy_only,
+                    proxy_name,
+                    proxy_transport,
+                    proxy_token_key,
+                    proxy_token,
+                    proxy_auth_type,
+                )
+                .await?;
+            }
 
-        Some(Commands::Mcp { no_config }) => {
-            handle_mcp_command(no_config).await?;
-        }
+            Some(Commands::Mcp { no_config }) => {
+                handle_mcp_command(no_config).await?;
+            }
 
-        Some(Commands::Config { command }) => {
-            handle_config_command(command)?;
-        }
+            Some(Commands::Config { command }) => {
+                handle_config_command(command)?;
+            }
 
-        Some(Commands::Context { command }) => {
-            handle_context_command(command)?;
-        }
+            Some(Commands::Context { command }) => {
+                handle_context_command(command)?;
+            }
 
-        Some(Commands::Issues { state, limit }) => {
-            handle_issues_command(&state, limit).await?;
-        }
+            Some(Commands::Issues { state, limit }) => {
+                handle_issues_command(&state, limit).await?;
+            }
 
-        Some(Commands::Mrs { state, limit }) => {
-            handle_mrs_command(&state, limit).await?;
-        }
+            Some(Commands::Mrs { state, limit }) => {
+                handle_mrs_command(&state, limit).await?;
+            }
 
-        Some(Commands::Test { provider }) => {
-            handle_test_command(&provider).await?;
-        }
+            Some(Commands::Test { provider }) => {
+                handle_test_command(&provider).await?;
+            }
 
-        Some(Commands::Proxy { command }) => {
-            handle_proxy_command(command).await?;
-        }
+            Some(Commands::Proxy { command }) => {
+                handle_proxy_command(command).await?;
+            }
 
-        Some(Commands::Tools { command }) => {
-            handle_tools_command(command).await?;
-        }
+            Some(Commands::Tools { command }) => {
+                handle_tools_command(command).await?;
+            }
 
-        Some(Commands::Doctor {
-            format,
-            list_checks,
-            checks,
-        }) => {
-            let exit_code = doctor::handle_doctor_command(DoctorOptions {
-                verbose: cli.verbose,
-                output_format: format.map(Into::into),
+            Some(Commands::Doctor {
+                format,
                 list_checks,
                 checks,
-            })
-            .await?;
-            std::process::exit(exit_code);
-        }
+            }) => {
+                let exit_code = doctor::handle_doctor_command(DoctorOptions {
+                    verbose: cli.verbose,
+                    output_format: format.map(Into::into),
+                    list_checks,
+                    checks,
+                })
+                .await?;
+                std::process::exit(exit_code);
+            }
 
-        Some(Commands::Upgrade { check }) => {
-            upgrade::run_upgrade(check).await?;
-        }
+            Some(Commands::Upgrade { check }) => {
+                upgrade::run_upgrade(check).await?;
+            }
 
-        Some(Commands::Benchmark {
-            owner,
-            repo,
-            budget,
-            limit,
-            token,
-        }) => {
-            run_benchmark(&owner, &repo, budget, limit, token.as_deref()).await?;
-        }
-
-        Some(Commands::FormatPipeline {
-            data_type,
-            budget,
-            strategy,
-            level,
-            format,
-            stats,
-        }) => {
-            run_format_pipeline(
-                data_type.as_deref(),
+            Some(Commands::Benchmark {
+                owner,
+                repo,
                 budget,
-                strategy.as_deref(),
-                &level,
-                &format,
-                stats,
-            )?;
-        }
+                limit,
+                token,
+            }) => {
+                run_benchmark(&owner, &repo, budget, limit, token.as_deref()).await?;
+            }
 
-        None => {
-            println!("DevBoy - AI-powered development tools");
-            println!("Run with --help for usage information");
+            Some(Commands::FormatPipeline {
+                data_type,
+                budget,
+                strategy,
+                level,
+                format,
+                stats,
+            }) => {
+                run_format_pipeline(
+                    data_type.as_deref(),
+                    budget,
+                    strategy.as_deref(),
+                    &level,
+                    &format,
+                    stats,
+                )?;
+            }
+
+            None => {
+                println!("DevBoy - AI-powered development tools");
+                println!("Run with --help for usage information");
+            }
         }
+        Ok(())
+    }
+    .await;
+
+    // Capture top-level errors to Sentry before returning.
+    // Most command handlers propagate errors via `?` without `tracing::error!`,
+    // so without this the common non-panicking error path would never reach Sentry.
+    #[cfg(feature = "sentry")]
+    if let Err(ref e) = result {
+        sentry::capture_message(&format!("{e:#}"), sentry::protocol::Level::Error);
     }
 
     // Wait for background update check to finish so the notification can print
@@ -663,7 +680,7 @@ async fn main() -> Result<()> {
         let _ = handle.await;
     }
 
-    Ok(())
+    result
 }
 
 // =============================================================================

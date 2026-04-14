@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-sentry = ["devboy-core/sentry", "dep:sentry-tracing"]
+sentry = ["devboy-core/sentry", "dep:sentry-tracing", "dep:sentry"]
 
 [dependencies]
 devboy-core = { path = "../devboy-core" }
@@ -42,6 +42,7 @@ dirs.workspace = true
 flate2 = "1.1"
 tar = "0.4"
 zip = "8.4"
+sentry = { workspace = true, optional = true }
 sentry-tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
