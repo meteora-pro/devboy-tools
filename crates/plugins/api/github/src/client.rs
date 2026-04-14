@@ -945,7 +945,9 @@ fn is_github_attachment_url(base_url: &str, url: &str) -> bool {
             .split_once('/')
             .map(|(_, p)| p)
             .unwrap_or("");
-        if path.starts_with("user-attachments/assets/") {
+        if path.starts_with("user-attachments/assets/")
+            || path.starts_with("user-attachments/files/")
+        {
             return true;
         }
     }
