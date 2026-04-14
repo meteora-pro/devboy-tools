@@ -1,11 +1,6 @@
 /* Shimmer effect for hero name */
 .rp-home-hero__title-brand {
-  --rp-home-hero-title-bg: linear-gradient(
-    135deg,
-    #6366f1,
-    #06b6d4,
-    #6366f1
-  );
+  --rp-home-hero-title-bg: linear-gradient(135deg, #6366f1, #06b6d4, #6366f1);
   /* biome-ignore lint: required to override rspress theme styles */
   background-size: 200% 100% !important;
   animation: shimmer 6.5s linear infinite;

@@ -30,4 +30,8 @@ pub enum ToolCategory {
     /// Meeting notes tools: transcripts, summaries, search.
     /// Providers: Fireflies
     MeetingNotes,
+
+    /// Messenger tools: chats, messages, search, sending.
+    /// Providers: Slack
+    Messenger,
 }

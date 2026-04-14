@@ -8,8 +8,14 @@
     "url": "https://github.com/meteora-pro/devboy-tools.git",
     "directory": "npm/devboy-tools-win32-x64"
   },
-  "os": ["win32"],
-  "cpu": ["x64"],
-  "files": ["bin/devboy.exe"],
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/devboy.exe"
+  ],
   "preferUnplugged": true
 }

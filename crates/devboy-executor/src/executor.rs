@@ -298,6 +298,10 @@ struct GetIssuesParams {
     offset: Option<u32>,
     sort_by: Option<String>,
     sort_order: Option<String>,
+    #[serde(rename = "projectKey")]
+    project_key: Option<String>,
+    #[serde(rename = "nativeQuery")]
+    native_query: Option<String>,
     /// Token budget for response size control (consumed by format layer via execute_and_format).
     #[allow(dead_code)]
     budget: Option<usize>,
@@ -319,6 +323,8 @@ async fn execute_get_issues(
         offset: params.offset,
         sort_by: params.sort_by,
         sort_order: params.sort_order,
+        project_key: params.project_key,
+        native_query: params.native_query,
     };
     let result = provider.get_issues(filter).await?;
     let meta = ResultMeta {
@@ -436,6 +442,10 @@ struct CreateIssueParams {
     priority: Option<String>,
     parent: Option<String>,
     markdown: Option<bool>,
+    #[serde(rename = "projectId")]
+    project_id: Option<String>,
+    #[serde(rename = "issueType")]
+    issue_type: Option<String>,
 }
 
 async fn execute_create_issue(
@@ -453,6 +463,8 @@ async fn execute_create_issue(
         priority: params.priority,
         parent: params.parent,
         markdown: params.markdown.unwrap_or(true),
+        project_id: params.project_id,
+        issue_type: params.issue_type,
         custom_fields,
     };
     let issue = provider.create_issue(input).await?;
@@ -983,6 +995,8 @@ async fn execute_get_epics(
         offset: params.offset,
         sort_by: None,
         sort_order: None,
+        project_key: None,
+        native_query: None,
     };
     let result = provider.get_issues(filter).await?;
     let mut epics = result.items;
@@ -1053,6 +1067,8 @@ async fn execute_create_epic(
         priority: params.priority,
         parent: None,
         markdown: params.markdown.unwrap_or(true),
+        project_id: None,
+        issue_type: None,
         custom_fields: args.get("customFields").cloned(),
     };
     let issue = provider.create_issue(input).await?;

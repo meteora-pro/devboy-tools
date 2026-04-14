@@ -39,6 +39,13 @@ pub enum JiraScope {
     MultiProject { keys: Vec<String> },
 }
 
+/// Scope for Slack API calls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SlackScope {
+    /// Single Slack workspace/team.
+    Workspace { team_id: Option<String> },
+}
+
 /// Provider connection configuration with typed scope.
 ///
 /// Each variant carries only the fields relevant to that provider.
@@ -83,6 +90,16 @@ pub enum ProviderConfig {
         #[serde(default)]
         extra: HashMap<String, serde_json::Value>,
     },
+    /// Slack messenger provider.
+    Slack {
+        base_url: String,
+        access_token: String,
+        scope: SlackScope,
+        #[serde(default)]
+        required_scopes: Vec<String>,
+        #[serde(default)]
+        extra: HashMap<String, serde_json::Value>,
+    },
     /// Fully dynamic variant for community/custom provider plugins.
     Custom {
         name: String,
@@ -99,6 +116,7 @@ impl ProviderConfig {
             Self::ClickUp { .. } => "clickup",
             Self::Jira { .. } => "jira",
             Self::Fireflies { .. } => "fireflies",
+            Self::Slack { .. } => "slack",
             Self::Custom { name, .. } => name,
         }
     }

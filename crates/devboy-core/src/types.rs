@@ -122,6 +122,13 @@ pub struct IssueFilter {
     pub sort_by: Option<String>,
     /// Sort order ("asc" or "desc")
     pub sort_order: Option<String>,
+    /// Project key override (e.g., "PROJ"). When set, overrides the default project
+    /// configured for the provider. Ignored by providers that don't support it.
+    pub project_key: Option<String>,
+    /// Native query passed directly to the provider (e.g., Jira JQL).
+    /// Takes precedence over other filters. If the query doesn't contain a project
+    /// clause, the provider may inject one automatically.
+    pub native_query: Option<String>,
 }
 
 /// Input for creating a new issue.
@@ -144,6 +151,12 @@ pub struct CreateIssueInput {
     /// markdown rendering for the description.
     #[serde(default = "default_true")]
     pub markdown: bool,
+    /// Project key for issue creation (e.g., "PROJ"). Overrides default project.
+    /// Ignored by providers that don't support multi-project (GitHub, GitLab, ClickUp).
+    pub project_id: Option<String>,
+    /// Issue type (e.g., "Task", "Bug", "Story"). Provider-specific.
+    /// Jira defaults to "Task" if not specified.
+    pub issue_type: Option<String>,
     /// Provider-specific custom fields.
     /// Jira: Object `{"customfield_10001": value}` — merged into create payload.
     /// ClickUp: Array `[{"id": "field_id", "value": val}]` — set via separate API.
@@ -161,6 +174,8 @@ impl Default for CreateIssueInput {
             priority: None,
             parent: None,
             markdown: true,
+            project_id: None,
+            issue_type: None,
             custom_fields: None,
         }
     }
@@ -395,6 +410,9 @@ pub struct Pagination {
     pub total: Option<u32>,
     /// Whether there are more items
     pub has_more: bool,
+    /// Provider pagination cursor/token for fetching the next page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 // =============================================================================
@@ -591,6 +609,7 @@ mod tests {
             limit: 10,
             total: Some(100),
             has_more: true,
+            next_cursor: Some("cursor-1".into()),
         };
         let result = ProviderResult::new(vec!["a", "b"]).with_pagination(pagination);
         assert_eq!(result.items, vec!["a", "b"]);
@@ -599,6 +618,7 @@ mod tests {
         assert!(pag.has_more);
         assert_eq!(pag.offset, 0);
         assert_eq!(pag.limit, 10);
+        assert_eq!(pag.next_cursor.as_deref(), Some("cursor-1"));
     }
 
     #[test]
@@ -633,6 +653,7 @@ mod tests {
                 limit: 5,
                 total: Some(50),
                 has_more: true,
+                next_cursor: Some("cursor-2".into()),
             })
             .with_sort_info(SortInfo {
                 sort_by: Some("priority".into()),
@@ -642,6 +663,13 @@ mod tests {
         assert!(result.pagination.is_some());
         assert!(result.sort_info.is_some());
         assert_eq!(result.items, vec!["x"]);
+        assert_eq!(
+            result
+                .pagination
+                .as_ref()
+                .and_then(|pagination| pagination.next_cursor.as_deref()),
+            Some("cursor-2")
+        );
     }
 }
 
@@ -933,4 +961,159 @@ pub struct MeetingFilter {
     pub limit: Option<u32>,
     /// Skip N results
     pub skip: Option<u32>,
+}
+
+// =============================================================================
+// Messenger
+// =============================================================================
+
+/// Chat type in a messenger provider.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatType {
+    /// One-to-one direct message.
+    Direct,
+    /// Multi-user private conversation.
+    Group,
+    /// Public or private channel-like room.
+    #[default]
+    Channel,
+}
+
+/// Unified messenger chat/channel representation.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct MessengerChat {
+    /// Provider-specific chat ID.
+    pub id: String,
+    /// Stable display key for the chat.
+    pub key: String,
+    /// Human-readable chat name.
+    pub name: String,
+    /// Kind of chat.
+    pub chat_type: ChatType,
+    /// Source provider name (e.g. "slack").
+    pub source: String,
+    /// Number of members when available.
+    pub member_count: Option<u32>,
+    /// Optional chat/topic description.
+    pub description: Option<String>,
+    /// Whether the chat is currently active / not archived.
+    pub is_active: bool,
+}
+
+/// Author metadata for a messenger message.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct MessageAuthor {
+    /// Provider-specific user ID.
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    /// Username/handle when available.
+    pub username: Option<String>,
+    /// Avatar URL.
+    pub avatar_url: Option<String>,
+}
+
+/// Attached file, link, or rich object on a message.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct MessageAttachment {
+    /// Provider-specific attachment ID when available.
+    pub id: Option<String>,
+    /// Attachment title or filename.
+    pub name: Option<String>,
+    /// Attachment type/kind (e.g. "file", "image", "link").
+    pub attachment_type: Option<String>,
+    /// Direct or canonical URL.
+    pub url: Option<String>,
+    /// Optional mime type.
+    pub mime_type: Option<String>,
+}
+
+/// Unified messenger message representation.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct MessengerMessage {
+    /// Provider-specific message ID.
+    pub id: String,
+    /// Chat ID this message belongs to.
+    pub chat_id: String,
+    /// Message text/body.
+    pub text: String,
+    /// Message author.
+    pub author: MessageAuthor,
+    /// Source provider name (e.g. "slack").
+    pub source: String,
+    /// Message timestamp (ISO 8601 or provider timestamp string).
+    pub timestamp: String,
+    /// Parent thread identifier when this message is in a thread.
+    pub thread_id: Option<String>,
+    /// Direct parent/replied-to message identifier when available.
+    pub reply_to_id: Option<String>,
+    /// Attachments associated with the message.
+    pub attachments: Vec<MessageAttachment>,
+    /// Whether the message was edited after creation.
+    pub is_edited: bool,
+}
+
+/// Parameters for listing available messenger chats.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GetChatsParams {
+    /// Optional free-text search/filter for chat names.
+    pub search: Option<String>,
+    /// Restrict to a specific chat type.
+    pub chat_type: Option<ChatType>,
+    /// Maximum number of results to return.
+    pub limit: Option<u32>,
+    /// Cursor/token for provider pagination.
+    pub cursor: Option<String>,
+    /// Include inactive/archived chats.
+    pub include_inactive: Option<bool>,
+}
+
+/// Parameters for reading message history from a chat.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GetMessagesParams {
+    /// Chat/channel ID to fetch from.
+    pub chat_id: String,
+    /// Maximum number of messages to return.
+    pub limit: Option<u32>,
+    /// Cursor/token for provider pagination.
+    pub cursor: Option<String>,
+    /// Optional thread identifier to fetch replies for a thread.
+    pub thread_id: Option<String>,
+    /// Only include messages after this provider timestamp string.
+    pub since: Option<String>,
+    /// Only include messages before this provider timestamp string.
+    pub until: Option<String>,
+}
+
+/// Parameters for cross-chat message search.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SearchMessagesParams {
+    /// Search query/keyword.
+    pub query: String,
+    /// Restrict search to a specific chat.
+    pub chat_id: Option<String>,
+    /// Maximum number of matches to return.
+    pub limit: Option<u32>,
+    /// Cursor/token for provider pagination.
+    pub cursor: Option<String>,
+    /// Only include messages after this provider timestamp string.
+    pub since: Option<String>,
+    /// Only include messages before this provider timestamp string.
+    pub until: Option<String>,
+}
+
+/// Parameters for sending a new message.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SendMessageParams {
+    /// Destination chat/channel ID.
+    pub chat_id: String,
+    /// Message body text.
+    pub text: String,
+    /// Optional thread identifier to post as a threaded reply.
+    pub thread_id: Option<String>,
+    /// Optional direct parent message ID when supported.
+    pub reply_to_id: Option<String>,
+    /// Optional attachments to include or reference.
+    pub attachments: Vec<MessageAttachment>,
 }
