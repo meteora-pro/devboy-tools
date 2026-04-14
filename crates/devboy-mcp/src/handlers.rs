@@ -1153,6 +1153,8 @@ impl ToolHandler {
             priority: None,
             parent: params.parent,
             markdown: params.markdown.unwrap_or(true),
+            project_id: params.project_id,
+            issue_type: params.issue_type,
         };
 
         let provider = if let Some(ref name) = params.provider {
@@ -2360,6 +2362,10 @@ struct CreateIssueParams {
     parent: Option<String>,
     markdown: Option<bool>,
     provider: Option<String>,
+    #[serde(rename = "projectId")]
+    project_id: Option<String>,
+    #[serde(rename = "issueType")]
+    issue_type: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

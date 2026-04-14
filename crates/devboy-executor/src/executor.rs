@@ -442,6 +442,10 @@ struct CreateIssueParams {
     priority: Option<String>,
     parent: Option<String>,
     markdown: Option<bool>,
+    #[serde(rename = "projectId")]
+    project_id: Option<String>,
+    #[serde(rename = "issueType")]
+    issue_type: Option<String>,
 }
 
 async fn execute_create_issue(
@@ -458,6 +462,8 @@ async fn execute_create_issue(
         priority: params.priority,
         parent: params.parent,
         markdown: params.markdown.unwrap_or(true),
+        project_id: params.project_id,
+        issue_type: params.issue_type,
     };
     let issue = provider.create_issue(input).await?;
 
@@ -1056,6 +1062,8 @@ async fn execute_create_epic(
         priority: params.priority,
         parent: None,
         markdown: params.markdown.unwrap_or(true),
+        project_id: None,
+        issue_type: None,
     };
     let issue = provider.create_issue(input).await?;
 
