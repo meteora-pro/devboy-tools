@@ -13,6 +13,9 @@ use crate::factory;
 use crate::output::{ResultMeta, ToolOutput};
 use devboy_core::ToolEnricher;
 
+/// Maximum file size for upload / download asset operations (10 MB).
+const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
+
 /// Deserialize a value that can be either a string or a number into Option<String>.
 /// Enricher may transform priority "high" → 2 (number), but executor needs String.
 fn deserialize_string_or_number<'de, D>(
@@ -545,7 +548,6 @@ async fn execute_add_issue_comment(
 
     // Validate attachment limits
     const MAX_ATTACHMENTS: usize = 10;
-    const MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10MB
 
     if params.attachments.len() > MAX_ATTACHMENTS {
         return Err(Error::InvalidData(format!(
@@ -1249,8 +1251,6 @@ async fn execute_upload_asset(
 
     let data = base64_decode(&params.file_data)?;
 
-    // Validate size (max 10 MB)
-    const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
     if data.len() > MAX_FILE_SIZE {
         return Err(Error::InvalidData(format!(
             "file '{}' is {} bytes, max allowed is {} bytes",
@@ -1312,6 +1312,14 @@ async fn execute_download_asset(
         }
     };
 
+    if bytes.len() > MAX_FILE_SIZE {
+        return Err(Error::InvalidData(format!(
+            "downloaded attachment is {} bytes, max allowed for base64 response is {} bytes",
+            bytes.len(),
+            MAX_FILE_SIZE,
+        )));
+    }
+
     let encoded = base64_encode(&bytes);
     let output = serde_json::json!({
         "success": true,
@@ -1347,12 +1355,24 @@ async fn execute_delete_asset(
     Ok(ToolOutput::Text(serde_json::to_string_pretty(&output)?))
 }
 
-/// Decode base64 with standard or URL-safe alphabet.
+/// Maximum base64 encoded length for MAX_FILE_SIZE bytes.
+const MAX_BASE64_LEN: usize = (MAX_FILE_SIZE / 3 + 1) * 4 + 4;
+
+/// Decode base64 with standard or URL-safe alphabet, rejecting
+/// oversized inputs *before* allocating the decoded buffer.
 fn base64_decode(input: &str) -> Result<Vec<u8>> {
+    let trimmed = input.trim();
+    if trimmed.len() > MAX_BASE64_LEN {
+        return Err(Error::InvalidData(format!(
+            "base64 input too large ({} chars), max decoded size is {} bytes",
+            trimmed.len(),
+            MAX_FILE_SIZE,
+        )));
+    }
     use base64::Engine;
     base64::engine::general_purpose::STANDARD
-        .decode(input.trim())
-        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(input.trim()))
+        .decode(trimmed)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(trimmed))
         .map_err(|e| Error::InvalidData(format!("invalid base64: {e}")))
 }
 
