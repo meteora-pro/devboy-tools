@@ -5,8 +5,7 @@
 //!
 //! Tools are organized by category:
 //! - **Issues**: get_issues, get_issue, get_issue_comments, create_issue, update_issue,
-//!   add_issue_comment, get_available_statuses, get_users
-//! - **Epics**: get_epics, create_epic, update_epic
+//!   add_issue_comment, get_available_statuses, get_users, get_epics, create_epic, update_epic
 //! - **Merge Requests**: get_merge_requests, get_merge_request, get_merge_request_discussions,
 //!   get_merge_request_diffs, create_merge_request, create_merge_request_comment
 
@@ -410,6 +409,19 @@ define_tools! {
                     "type": "string",
                     "description": "Search in epic title"
                 },
+                "state": {
+                    "type": "string",
+                    "enum": ["open", "closed", "all"],
+                    "description": "Filter by epic state (default: all)"
+                },
+                "assignee": {
+                    "type": "string",
+                    "description": "Filter by assignee username"
+                },
+                "goalId": {
+                    "type": "string",
+                    "description": "Filter by goal ID (G1-G9)"
+                },
                 "limit": {
                     "type": "integer",
                     "description": "Max results (default: 50)",
@@ -439,6 +451,28 @@ define_tools! {
                 "description": {
                     "type": "string",
                     "description": "Epic description"
+                },
+                "goalId": {
+                    "type": "string",
+                    "description": "Goal ID (G1-G9) to associate with the epic"
+                },
+                "priority": {
+                    "type": "string",
+                    "description": "Priority (urgent/high/normal/low)"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Labels to associate with the epic"
+                },
+                "assignees": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Assignees for the epic"
+                },
+                "markdown": {
+                    "type": "boolean",
+                    "description": "Whether the description is markdown (default: true)"
                 }
             }
         }
@@ -484,6 +518,10 @@ define_tools! {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Assignees to set"
+                },
+                "markdown": {
+                    "type": "boolean",
+                    "description": "Whether the description is markdown (default: true)"
                 }
             }
         }
@@ -987,7 +1025,10 @@ fn extract_goal_id(labels: &[String]) -> Option<String> {
         let lower = l.to_lowercase();
         if lower.len() == 2
             && lower.starts_with('g')
-            && lower.chars().nth(1).is_some_and(|c| c.is_ascii_digit())
+            && lower
+                .chars()
+                .nth(1)
+                .is_some_and(|c| matches!(c, '1'..='9'))
         {
             Some(lower.to_uppercase())
         } else {
@@ -1630,12 +1671,12 @@ impl ToolHandler {
         }
 
         let filter = IssueFilter {
-            state: None,
+            state: params.state,
             state_category: None,
             search: params.search,
             labels: Some(vec!["epic".to_string()]),
             labels_operator: None,
-            assignee: None,
+            assignee: params.assignee,
             limit: params.limit.or(Some(50)),
             offset: params.offset,
             sort_by: None,
@@ -1665,6 +1706,12 @@ impl ToolHandler {
                 "Failed to get epics: {}",
                 errors.join(", ")
             ));
+        }
+
+        // Filter by goalId if provided
+        if let Some(ref goal) = params.goal_id {
+            let goal_lower = goal.to_lowercase();
+            all_epics.retain(|e| e.labels.iter().any(|l| l.to_lowercase() == goal_lower));
         }
 
         // Enrich with goal ID and progress
@@ -1713,37 +1760,52 @@ impl ToolHandler {
             }
         }
 
-        let input = CreateIssueInput {
-            title: params.title,
-            description: params.description,
-            labels,
-            assignees: params.assignees,
-            priority: params.priority,
-            parent: None,
-            markdown: params.markdown.unwrap_or(true),
-        };
+        let title = params.title;
+        let description = params.description;
+        let assignees = params.assignees;
+        let priority = params.priority;
+        let markdown = params.markdown.unwrap_or(true);
 
-        let provider = &self.providers[0];
-        match provider.create_issue(input).await {
-            Ok(issue) => {
-                // Set custom fields if present
-                if let Some(cf) = args.get("customFields").and_then(|v| v.as_array())
-                    && !cf.is_empty()
-                    && let Err(e) = provider.set_custom_fields(&issue.key, cf).await
-                {
-                    tracing::warn!(error = %e, "Failed to set custom fields on created epic");
+        for provider in &self.providers {
+            let input = CreateIssueInput {
+                title: title.clone(),
+                description: description.clone(),
+                labels: labels.clone(),
+                assignees: assignees.clone(),
+                priority: priority.clone(),
+                parent: None,
+                markdown,
+            };
+
+            match provider.create_issue(input).await {
+                Ok(issue) => {
+                    // Set custom fields if present
+                    if let Some(cf) = args.get("customFields").and_then(|v| v.as_array())
+                        && !cf.is_empty()
+                        && let Err(e) = provider.set_custom_fields(&issue.key, cf).await
+                    {
+                        tracing::warn!(error = %e, "Failed to set custom fields on created epic");
+                    }
+
+                    let msg = format!(
+                        "Created epic {} - {}\nURL: {}",
+                        issue.key,
+                        issue.title,
+                        issue.url.unwrap_or_default()
+                    );
+                    return ToolCallResult::text(msg);
                 }
-
-                let msg = format!(
-                    "Created epic {} - {}\nURL: {}",
-                    issue.key,
-                    issue.title,
-                    issue.url.unwrap_or_default()
-                );
-                ToolCallResult::text(msg)
+                Err(e) => {
+                    tracing::debug!(
+                        "Provider {} failed to create epic: {}",
+                        get_provider_name(provider.as_ref()),
+                        e
+                    );
+                }
             }
-            Err(e) => ToolCallResult::error(format!("Failed to create epic: {}", e)),
         }
+
+        ToolCallResult::error("Failed to create epic in any provider".to_string())
     }
 
     async fn handle_update_epic(&self, arguments: Option<Value>) -> ToolCallResult {
@@ -2910,6 +2972,10 @@ struct GetUsersParams {
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct GetEpicsParams {
     search: Option<String>,
+    state: Option<String>,
+    assignee: Option<String>,
+    #[serde(rename = "goalId")]
+    goal_id: Option<String>,
     limit: Option<u32>,
     offset: Option<u32>,
 }
