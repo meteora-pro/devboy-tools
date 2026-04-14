@@ -54,14 +54,11 @@ pub fn init_sentry(
         .or_else(|| config.dsn.as_ref().map(|s| s.trim().to_string()))
         .filter(|s| !s.is_empty())?;
 
-    // Validate DSN is parseable
+    // Validate DSN is parseable (don't log the full DSN — it may contain credentials)
     let parsed_dsn = match dsn.parse::<sentry::types::Dsn>() {
         Ok(d) => Some(d),
         Err(e) => {
-            warn!(
-                "Invalid Sentry DSN '{}': {e}. Sentry will be disabled.",
-                dsn
-            );
+            warn!("Invalid Sentry DSN: {e}. Sentry will be disabled.");
             return None;
         }
     };
