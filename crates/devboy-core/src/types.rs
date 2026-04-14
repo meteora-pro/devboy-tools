@@ -56,6 +56,10 @@ pub struct Issue {
     pub created_at: Option<String>,
     /// Updated at timestamp (ISO 8601)
     pub updated_at: Option<String>,
+    /// Number of file attachments on this issue (populated from the
+    /// provider response when available, without extra API calls).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments_count: Option<u32>,
     /// Parent issue key (for subtasks)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
@@ -285,6 +289,21 @@ pub struct CreateMergeRequestInput {
     pub labels: Vec<String>,
     /// Reviewer usernames
     pub reviewers: Vec<String>,
+}
+
+/// Input for updating an existing merge request / pull request.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdateMergeRequestInput {
+    /// New title (None = keep current).
+    pub title: Option<String>,
+    /// New description / body (None = keep current).
+    pub description: Option<String>,
+    /// New state: "close" or "reopen" (None = keep current).
+    pub state: Option<String>,
+    /// New labels (None = keep current).
+    pub labels: Option<Vec<String>>,
+    /// Mark as draft / WIP (None = keep current).
+    pub draft: Option<bool>,
 }
 
 /// Filter parameters for listing merge requests.

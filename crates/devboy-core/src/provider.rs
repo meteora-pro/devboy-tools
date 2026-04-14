@@ -5,13 +5,15 @@
 
 use async_trait::async_trait;
 
+use crate::asset::{AssetCapabilities, AssetMeta};
 use crate::error::{Error, Result};
 use crate::types::{
     Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Discussion, FileDiff,
     GetChatsParams, GetMessagesParams, GetPipelineInput, GetUsersOptions, Issue, IssueFilter,
     IssueRelations, IssueStatus, JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote,
     MeetingTranscript, MergeRequest, MessengerChat, MessengerMessage, MrFilter, PipelineInfo,
-    ProviderResult, Release, SearchMessagesParams, SendMessageParams, UpdateIssueInput, User,
+    ProviderResult, Release, SearchMessagesParams, SendMessageParams, UpdateIssueInput,
+    UpdateMergeRequestInput, User,
 };
 
 /// Provider for working with issues.
@@ -94,6 +96,51 @@ pub trait IssueProvider: Send + Sync {
         })
     }
 
+    /// List attachments currently attached to an issue (body + comments).
+    ///
+    /// Returns provider-agnostic [`AssetMeta`] values. Default returns
+    /// ProviderUnsupported; providers that can parse or fetch their own
+    /// attachment listings override this.
+    async fn get_issue_attachments(&self, _issue_key: &str) -> Result<Vec<AssetMeta>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_issue_attachments".to_string(),
+        })
+    }
+
+    /// Download the raw bytes of an attachment belonging to an issue.
+    ///
+    /// `asset_id` is the provider-specific identifier returned from
+    /// [`IssueProvider::get_issue_attachments`] (ClickUp attachment id,
+    /// Jira attachment id, GitLab upload URL, etc.).
+    async fn download_attachment(&self, _issue_key: &str, _asset_id: &str) -> Result<Vec<u8>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "download_attachment".to_string(),
+        })
+    }
+
+    /// Delete an attachment from an issue.
+    ///
+    /// Not all providers expose a delete endpoint for attachments (ClickUp
+    /// doesn't, GitLab file uploads are immutable) — the default returns
+    /// `ProviderUnsupported` and callers can consult [`asset_capabilities`]
+    /// beforehand.
+    async fn delete_attachment(&self, _issue_key: &str, _asset_id: &str) -> Result<()> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "delete_attachment".to_string(),
+        })
+    }
+
+    /// Describe which asset operations this provider supports for each
+    /// context. Used by the enricher to surface per-provider capabilities
+    /// in tool schemas so agents can adapt their behaviour before making
+    /// calls that would fail with `ProviderUnsupported`.
+    fn asset_capabilities(&self) -> AssetCapabilities {
+        AssetCapabilities::default()
+    }
+
     /// Set custom fields on an issue. Each entry: {"id": "field_id", "value": <value>}.
     /// Default is no-op — override in providers that support custom fields (e.g., ClickUp).
     async fn set_custom_fields(
@@ -174,11 +221,47 @@ pub trait MergeRequestProvider: Send + Sync {
         })
     }
 
+    /// Update an existing merge request / pull request.
+    async fn update_merge_request(
+        &self,
+        _key: &str,
+        _input: UpdateMergeRequestInput,
+    ) -> Result<MergeRequest> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "update_merge_request".to_string(),
+        })
+    }
+
     /// Get releases/tags for the repository.
     async fn get_releases(&self) -> Result<ProviderResult<Release>> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "get_releases".to_string(),
+        })
+    }
+
+    /// List attachments on a merge request (body + discussions).
+    async fn get_mr_attachments(&self, _mr_key: &str) -> Result<Vec<AssetMeta>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_mr_attachments".to_string(),
+        })
+    }
+
+    /// Download an attachment from a merge request.
+    async fn download_mr_attachment(&self, _mr_key: &str, _asset_id: &str) -> Result<Vec<u8>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "download_mr_attachment".to_string(),
+        })
+    }
+
+    /// Delete an attachment from a merge request.
+    async fn delete_mr_attachment(&self, _mr_key: &str, _asset_id: &str) -> Result<()> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "delete_mr_attachment".to_string(),
         })
     }
 }

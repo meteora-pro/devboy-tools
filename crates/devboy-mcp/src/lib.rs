@@ -28,7 +28,7 @@ pub mod server;
 pub mod tools;
 pub mod transport;
 
-pub use handlers::{KNOWN_BUILTIN_TOOLS, ToolHandler};
+pub use handlers::KNOWN_BUILTIN_TOOLS;
 pub use protocol::{JSONRPC_VERSION, JsonRpcRequest, RequestId};
 pub use proxy::{McpProxyClient, ProxyManager, ProxyTransport};
 pub use server::McpServer;
