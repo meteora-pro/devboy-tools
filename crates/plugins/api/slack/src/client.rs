@@ -585,29 +585,84 @@ impl MessengerProvider for SlackClient {
         let mut found = Vec::new();
 
         let (has_more, next_cursor) = if let Some(chat_id) = params.chat_id.as_ref() {
-            let messages = self
-                .get_messages_page(&GetMessagesParams {
-                    chat_id: chat_id.clone(),
-                    limit: Some(params.limit.unwrap_or(100)),
-                    cursor: params.cursor.clone(),
-                    thread_id: None,
-                    since: params.since.clone(),
-                    until: params.until.clone(),
-                })
-                .await?;
-            let pagination = messages.pagination.clone();
-            for message in messages.items {
-                if message.text.to_lowercase().contains(&query) {
-                    found.push(message);
-                    if found.len() >= limit {
-                        break;
+            let mut state = parse_search_cursor(params.cursor.as_deref())?;
+            if state.current_chat_id.is_none() {
+                state.current_chat_id = Some(chat_id.clone());
+            }
+            if state.current_chat_id.as_deref() != Some(chat_id.as_str()) {
+                state = SlackSearchCursor {
+                    current_chat_id: Some(chat_id.clone()),
+                    ..SlackSearchCursor::default()
+                };
+            }
+            if state.current_message_cursor.is_none()
+                && state.current_message_offset == 0
+                && state.next_chats_cursor.is_some()
+                && !has_pending_chat_ids(&state)
+            {
+                state.current_message_cursor = state.next_chats_cursor.take();
+            }
+
+            loop {
+                let messages = self
+                    .get_messages_page(&GetMessagesParams {
+                        chat_id: chat_id.clone(),
+                        limit: Some(params.limit.unwrap_or(100)),
+                        cursor: state.current_message_cursor.clone(),
+                        thread_id: None,
+                        since: params.since.clone(),
+                        until: params.until.clone(),
+                    })
+                    .await?;
+                let pagination = messages.pagination.clone();
+                let page_len = messages.items.len();
+
+                for message in messages
+                    .items
+                    .into_iter()
+                    .skip(state.current_message_offset)
+                {
+                    state.current_message_offset += 1;
+                    if message.text.to_lowercase().contains(&query) {
+                        found.push(message);
+                        if found.len() >= limit {
+                            break;
+                        }
                     }
                 }
+
+                let page_has_more = pagination.as_ref().map(|p| p.has_more).unwrap_or(false);
+                let next_page_cursor = pagination.as_ref().and_then(|p| p.next_cursor.clone());
+
+                if found.len() >= limit {
+                    if state.current_message_offset >= page_len {
+                        if page_has_more {
+                            state.current_message_cursor = next_page_cursor;
+                            state.current_message_offset = 0;
+                        } else {
+                            state.current_chat_id = None;
+                            state.current_message_cursor = None;
+                            state.current_message_offset = 0;
+                        }
+                    }
+                    break;
+                }
+
+                if page_has_more {
+                    state.current_message_cursor = next_page_cursor;
+                    state.current_message_offset = 0;
+                    continue;
+                }
+
+                state.current_chat_id = None;
+                state.current_message_cursor = None;
+                state.current_message_offset = 0;
+                break;
             }
-            (
-                pagination.as_ref().map(|p| p.has_more).unwrap_or(false),
-                pagination.and_then(|p| p.next_cursor),
-            )
+
+            let has_more = state.current_chat_id.is_some();
+            let next_cursor = serialize_search_cursor(&state)?;
+            (has_more, next_cursor)
         } else {
             let mut state = parse_search_cursor(params.cursor.as_deref())?;
             let mut chats_loaded = state.current_chat_id.is_some()
@@ -1607,6 +1662,74 @@ mod tests {
         assert_eq!(state.pending_chat_ids, vec!["C1", "C2"]);
         assert_eq!(state.pending_chat_index, 1);
         assert_eq!(state.next_chats_cursor.as_deref(), Some("chat-page-2"));
+    }
+
+    #[tokio::test]
+    async fn search_messages_chat_cursor_resumes_within_page_before_next_page() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/conversations.history");
+            then.status(200).json_body(serde_json::json!({
+                "ok": true,
+                "messages": [
+                    { "ts": "1710000000.000100", "text": "needle first", "username": "bot" },
+                    { "ts": "1710000001.000100", "text": "needle second", "username": "bot" },
+                    { "ts": "1710000002.000100", "text": "no match", "username": "bot" }
+                ],
+                "has_more": true,
+                "response_metadata": { "next_cursor": "msg-page-2" }
+            }));
+        });
+
+        let client = SlackClient::new("xoxb-test").with_base_url(server.base_url());
+        let first = client
+            .search_messages(SearchMessagesParams {
+                chat_id: Some("C1".to_string()),
+                query: "needle".to_string(),
+                limit: Some(1),
+                ..SearchMessagesParams::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(first.items.len(), 1);
+        assert_eq!(first.items[0].text, "needle first");
+        assert!(first.pagination.as_ref().unwrap().has_more);
+
+        let cursor = first
+            .pagination
+            .as_ref()
+            .and_then(|pagination| pagination.next_cursor.clone())
+            .unwrap();
+        let state = parse_search_cursor(Some(&cursor)).unwrap();
+        assert_eq!(state.current_chat_id.as_deref(), Some("C1"));
+        assert_eq!(state.current_message_cursor, None);
+        assert_eq!(state.current_message_offset, 1);
+
+        let second = client
+            .search_messages(SearchMessagesParams {
+                chat_id: Some("C1".to_string()),
+                query: "needle".to_string(),
+                limit: Some(1),
+                cursor: Some(cursor),
+                ..SearchMessagesParams::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(second.items.len(), 1);
+        assert_eq!(second.items[0].text, "needle second");
+        assert!(second.pagination.as_ref().unwrap().has_more);
+
+        let second_cursor = second
+            .pagination
+            .as_ref()
+            .and_then(|pagination| pagination.next_cursor.clone())
+            .unwrap();
+        let second_state = parse_search_cursor(Some(&second_cursor)).unwrap();
+        assert_eq!(second_state.current_chat_id.as_deref(), Some("C1"));
+        assert_eq!(second_state.current_message_cursor, None);
+        assert_eq!(second_state.current_message_offset, 2);
     }
 
     #[test]
