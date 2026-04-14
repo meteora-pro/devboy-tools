@@ -308,6 +308,47 @@ Resolution for `staging` context (no context-specific var):
 2. `DEVBOY_GITHUB_TOKEN` (found, used)
 3. ~~Keychain~~ (skipped)
 
+## Sentry error reporting
+
+DevBoy supports optional [Sentry](https://sentry.io/) integration for error reporting. This requires the `sentry` feature flag at compile time (`cargo build --features sentry`).
+
+### Configuration
+
+| Variable | Config Equivalent | Description |
+|----------|-------------------|-------------|
+| `DEVBOY_SENTRY_DSN` | `sentry.dsn` | Sentry DSN endpoint. Setting this enables error reporting |
+| `DEVBOY_SENTRY_ENVIRONMENT` | `sentry.environment` | Environment tag (e.g., "production") |
+| `DEVBOY_SENTRY_SAMPLE_RATE` | `sentry.sample_rate` | Error sample rate, 0.0–1.0 (default: 1.0) |
+| `DEVBOY_SENTRY_TRACES_SAMPLE_RATE` | `sentry.traces_sample_rate` | Performance tracing rate, 0.0–1.0 (default: 0.0) |
+
+### Config file
+
+```toml
+[sentry]
+dsn = "https://examplePublicKey@o0.ingest.sentry.io/0"
+environment = "production"
+sample_rate = 1.0
+traces_sample_rate = 0.0
+```
+
+Environment variables take priority over config file values.
+
+### Usage
+
+```bash
+# Enable Sentry via environment variable
+DEVBOY_SENTRY_DSN="https://key@sentry.io/123" devboy mcp
+
+# Or in Docker/Kubernetes
+docker run -e DEVBOY_SENTRY_DSN="$SENTRY_DSN" devboy-tools mcp
+```
+
+### Privacy
+
+- Sentry is **disabled by default** — no data is sent unless a DSN is configured
+- Sensitive data (tokens, API keys, credentials) is automatically scrubbed from error reports
+- Zero runtime overhead when disabled
+
 ## Special environment variables
 
 ### DEVBOY_SKIP_KEYCHAIN
