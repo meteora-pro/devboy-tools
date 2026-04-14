@@ -453,12 +453,12 @@ async fn execute_create_issue(
         priority: params.priority,
         parent: params.parent,
         markdown: params.markdown.unwrap_or(true),
-        custom_fields: custom_fields.clone(),
+        custom_fields,
     };
     let issue = provider.create_issue(input).await?;
 
     // Set custom fields via separate API call (ClickUp uses Array format)
-    if let Some(cf) = custom_fields.as_ref().and_then(|v| v.as_array())
+    if let Some(cf) = args.get("customFields").and_then(|v| v.as_array())
         && !cf.is_empty()
         && let Err(e) = provider.set_custom_fields(&issue.key, cf).await
     {
@@ -499,14 +499,15 @@ async fn execute_update_issue(
         priority: params.priority,
         parent_id: params.parent_id,
         markdown: params.markdown.unwrap_or(true),
-        custom_fields: custom_fields.clone(),
+        custom_fields,
     };
-    let issue = provider.update_issue(&params.key, input).await?;
+    let key = params.key;
+    let issue = provider.update_issue(&key, input).await?;
 
     // Set custom fields via separate API call (ClickUp uses Array format)
-    if let Some(cf) = custom_fields.as_ref().and_then(|v| v.as_array())
+    if let Some(cf) = args.get("customFields").and_then(|v| v.as_array())
         && !cf.is_empty()
-        && let Err(e) = provider.set_custom_fields(&params.key, cf).await
+        && let Err(e) = provider.set_custom_fields(&key, cf).await
     {
         tracing::warn!(error = %e, "Failed to set custom fields on updated issue");
     }
@@ -1044,7 +1045,6 @@ async fn execute_create_epic(
         }
     }
 
-    let custom_fields = args.get("customFields").cloned();
     let input = CreateIssueInput {
         title: params.title,
         description: params.description,
@@ -1053,12 +1053,12 @@ async fn execute_create_epic(
         priority: params.priority,
         parent: None,
         markdown: params.markdown.unwrap_or(true),
-        custom_fields: custom_fields.clone(),
+        custom_fields: args.get("customFields").cloned(),
     };
     let issue = provider.create_issue(input).await?;
 
     // Set custom fields via separate API call (ClickUp uses Array format)
-    if let Some(cf) = custom_fields.as_ref().and_then(|v| v.as_array())
+    if let Some(cf) = args.get("customFields").and_then(|v| v.as_array())
         && !cf.is_empty()
         && let Err(e) = provider.set_custom_fields(&issue.key, cf).await
     {
@@ -1130,7 +1130,6 @@ async fn execute_update_epic(
         params.labels
     };
 
-    let custom_fields = args.get("customFields").cloned();
     let input = UpdateIssueInput {
         title: params.title,
         description: params.description,
@@ -1140,14 +1139,15 @@ async fn execute_update_epic(
         priority: params.priority,
         parent_id: None,
         markdown: params.markdown.unwrap_or(true),
-        custom_fields: custom_fields.clone(),
+        custom_fields: args.get("customFields").cloned(),
     };
-    let issue = provider.update_issue(&params.key, input).await?;
+    let key = params.key;
+    let issue = provider.update_issue(&key, input).await?;
 
     // Set custom fields via separate API call (ClickUp uses Array format)
-    if let Some(cf) = custom_fields.as_ref().and_then(|v| v.as_array())
+    if let Some(cf) = args.get("customFields").and_then(|v| v.as_array())
         && !cf.is_empty()
-        && let Err(e) = provider.set_custom_fields(&params.key, cf).await
+        && let Err(e) = provider.set_custom_fields(&key, cf).await
     {
         tracing::warn!(error = %e, "Failed to set custom fields on updated epic");
     }
