@@ -80,6 +80,35 @@ pub struct JiraIssueFields {
     /// Issue links
     #[serde(default)]
     pub issuelinks: Vec<JiraIssueLink>,
+    /// Attachments on the issue (present when the caller requests
+    /// `fields=attachment` or uses `fields=*all`).
+    #[serde(default)]
+    pub attachment: Vec<JiraAttachment>,
+}
+
+/// Jira attachment as returned inside `fields.attachment`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JiraAttachment {
+    /// Attachment id (numeric string).
+    pub id: String,
+    /// Original filename.
+    #[serde(default)]
+    pub filename: Option<String>,
+    /// Direct download URL (`content` in the Jira API).
+    #[serde(default)]
+    pub content: Option<String>,
+    /// Size in bytes.
+    #[serde(default)]
+    pub size: Option<u64>,
+    /// MIME type.
+    #[serde(default, rename = "mimeType")]
+    pub mime_type: Option<String>,
+    /// Creation timestamp (ISO 8601).
+    #[serde(default)]
+    pub created: Option<String>,
+    /// Author — Jira uses `author` inside the attachment object.
+    #[serde(default)]
+    pub author: Option<JiraUser>,
 }
 
 /// Jira issue status.

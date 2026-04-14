@@ -48,7 +48,7 @@ pub use types::{
     MergeRequest, MessageAttachment, MessageAuthor, MessengerChat, MessengerMessage, MrFilter,
     Pagination, PipelineInfo, PipelineJob, PipelineStage, PipelineStatus, PipelineSummary,
     ProviderResult, Release, ReleaseAsset, SearchMessagesParams, SendMessageParams, SortInfo,
-    SortOrder, TranscriptSentence, UpdateIssueInput, User,
+    SortOrder, TranscriptSentence, UpdateIssueInput, UpdateMergeRequestInput, User,
 };
 
 // Re-export enricher traits and utilities
@@ -58,7 +58,8 @@ pub use tool_category::ToolCategory;
 // Re-export asset management types
 pub use asset::{
     AssetAnalysis, AssetCapabilities, AssetContext, AssetContextKind, AssetInput, AssetMeta,
-    ContentKind, ContextCapabilities, SemanticAnalysis,
+    ContentKind, ContextCapabilities, MarkdownAttachment, SemanticAnalysis, filename_from_url,
+    parse_markdown_attachments,
 };
 
 // Re-export config types
