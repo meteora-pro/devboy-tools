@@ -23,6 +23,7 @@ use crate::transport::{IncomingMessage, StdioTransport};
 /// MCP server for devboy-tools.
 pub struct McpServer {
     contexts: HashMap<String, Vec<Arc<dyn Provider>>>,
+    messenger_contexts: HashMap<String, Vec<Arc<dyn devboy_core::MessengerProvider>>>,
     active_context: RwLock<String>,
     initialized: bool,
     proxy_manager: ProxyManager,
@@ -35,8 +36,11 @@ impl McpServer {
     pub fn new() -> Self {
         let mut contexts = HashMap::new();
         contexts.insert("default".to_string(), Vec::new());
+        let mut messenger_contexts = HashMap::new();
+        messenger_contexts.insert("default".to_string(), Vec::new());
         Self {
             contexts,
+            messenger_contexts,
             active_context: RwLock::new("default".to_string()),
             initialized: false,
             proxy_manager: ProxyManager::new(),
@@ -66,6 +70,22 @@ impl McpServer {
         self.meeting_providers.push(provider);
     }
 
+    pub fn add_messenger_provider(&mut self, provider: Arc<dyn devboy_core::MessengerProvider>) {
+        self.add_messenger_provider_to_context("default", provider);
+    }
+
+    pub fn add_messenger_provider_to_context(
+        &mut self,
+        context: &str,
+        provider: Arc<dyn devboy_core::MessengerProvider>,
+    ) {
+        self.contexts.entry(context.to_string()).or_default();
+        self.messenger_contexts
+            .entry(context.to_string())
+            .or_default()
+            .push(provider);
+    }
+
     /// Add a provider to the server.
     pub fn add_provider(&mut self, provider: Arc<dyn Provider>) {
         self.contexts
@@ -85,6 +105,9 @@ impl McpServer {
     /// Ensure a named context exists, even if it has no providers.
     pub fn ensure_context(&mut self, context: &str) {
         self.contexts.entry(context.to_string()).or_default();
+        self.messenger_contexts
+            .entry(context.to_string())
+            .or_default();
     }
 
     /// Set active context.
@@ -123,6 +146,15 @@ impl McpServer {
     pub fn active_providers(&self) -> Vec<Arc<dyn Provider>> {
         let active = self.active_context_name();
         self.contexts.get(&active).cloned().unwrap_or_default()
+    }
+
+    /// Get messenger providers in active context.
+    pub fn active_messenger_providers(&self) -> Vec<Arc<dyn devboy_core::MessengerProvider>> {
+        let active = self.active_context_name();
+        self.messenger_contexts
+            .get(&active)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Get providers in the default context.
@@ -269,7 +301,8 @@ impl McpServer {
     pub fn handle_tools_list(&self, id: RequestId) -> JsonRpcResponse {
         let providers = self.active_providers();
         let handler = ToolHandler::new(providers.clone())
-            .with_meeting_providers(self.meeting_providers.clone());
+            .with_meeting_providers(self.meeting_providers.clone())
+            .with_messenger_providers(self.active_messenger_providers());
         let mut tools = handler.available_tools();
 
         // Pre-compute category availability to avoid repeated provider lookups.
@@ -282,6 +315,7 @@ impl McpServer {
             )
         });
         let has_meeting_providers = handler.has_meeting_providers();
+        let has_messenger_providers = handler.has_messenger_providers();
 
         // Filter tools based on available providers (dynamic filtering).
         // This prevents exposing tools that would always fail due to missing providers.
@@ -291,6 +325,7 @@ impl McpServer {
                     ToolCategory::Issues => has_issue_providers,
                     ToolCategory::MergeRequests => has_mr_providers,
                     ToolCategory::MeetingNotes => has_meeting_providers,
+                    ToolCategory::Messenger => has_messenger_providers,
                 })
                 .unwrap_or(true) // Tools without category are always available
         });
@@ -427,7 +462,8 @@ impl McpServer {
                     proxy_result
                 } else {
                     let handler = ToolHandler::new(self.active_providers())
-                        .with_meeting_providers(self.meeting_providers.clone());
+                        .with_meeting_providers(self.meeting_providers.clone())
+                        .with_messenger_providers(self.active_messenger_providers());
                     handler.execute(&params.name, params.arguments).await
                 }
             }
@@ -453,9 +489,12 @@ mod tests {
     use crate::protocol::{JSONRPC_VERSION, RequestId, ToolCallResult, ToolResultContent};
 
     use async_trait::async_trait;
+    use devboy_core::types::ChatType;
     use devboy_core::{
-        Comment, CreateCommentInput, CreateIssueInput, Discussion, FileDiff, Issue, IssueFilter,
-        IssueProvider, MergeRequest, MergeRequestProvider, MrFilter, UpdateIssueInput, User,
+        Comment, CreateCommentInput, CreateIssueInput, Discussion, FileDiff, GetChatsParams,
+        GetMessagesParams, Issue, IssueFilter, IssueProvider, MergeRequest, MergeRequestProvider,
+        MessageAuthor, MessengerChat, MessengerMessage, MessengerProvider, MrFilter,
+        SearchMessagesParams, SendMessageParams, UpdateIssueInput, User,
     };
 
     /// Test provider that simulates a GitHub-like provider (supports both issues and MRs).
@@ -547,6 +586,69 @@ mod tests {
                 name: None,
                 email: None,
                 avatar_url: None,
+            })
+        }
+    }
+
+    struct TestMessengerProvider;
+
+    #[async_trait]
+    impl MessengerProvider for TestMessengerProvider {
+        fn provider_name(&self) -> &'static str {
+            "slack"
+        }
+
+        async fn get_chats(
+            &self,
+            _params: GetChatsParams,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<MessengerChat>> {
+            Ok(vec![MessengerChat {
+                id: "C123".to_string(),
+                key: "slack:C123".to_string(),
+                name: "general".to_string(),
+                chat_type: ChatType::Channel,
+                source: "slack".to_string(),
+                member_count: Some(3),
+                description: None,
+                is_active: true,
+            }]
+            .into())
+        }
+
+        async fn get_messages(
+            &self,
+            _params: GetMessagesParams,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<MessengerMessage>> {
+            Ok(vec![].into())
+        }
+
+        async fn search_messages(
+            &self,
+            _params: SearchMessagesParams,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<MessengerMessage>> {
+            Ok(vec![].into())
+        }
+
+        async fn send_message(
+            &self,
+            _params: SendMessageParams,
+        ) -> devboy_core::Result<MessengerMessage> {
+            Ok(MessengerMessage {
+                id: "1710000000.000100".to_string(),
+                chat_id: "C123".to_string(),
+                text: "test".to_string(),
+                author: MessageAuthor {
+                    id: "U123".to_string(),
+                    name: "DevBoy".to_string(),
+                    username: Some("devboy".to_string()),
+                    avatar_url: None,
+                },
+                source: "slack".to_string(),
+                timestamp: "1710000000.000100".to_string(),
+                thread_id: None,
+                reply_to_id: None,
+                attachments: vec![],
+                is_edited: false,
             })
         }
     }
@@ -1176,5 +1278,56 @@ mod tests {
         // Switch to custom context and verify provider is there
         server.set_active_context("custom").unwrap();
         assert_eq!(server.active_providers().len(), 1);
+    }
+
+    #[test]
+    fn test_messenger_providers_are_scoped_to_active_context() {
+        let mut server = McpServer::new();
+        server.ensure_context("slack-context");
+        server.ensure_context("plain-context");
+        server.add_messenger_provider_to_context("slack-context", Arc::new(TestMessengerProvider));
+
+        server.set_active_context("plain-context").unwrap();
+        let plain_result: ToolsListResult = serde_json::from_value(
+            server
+                .handle_tools_list(RequestId::Number(1))
+                .result
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            !plain_result
+                .tools
+                .iter()
+                .any(|tool| tool.name == "get_messenger_chats")
+        );
+
+        server.set_active_context("slack-context").unwrap();
+        let slack_result: ToolsListResult = serde_json::from_value(
+            server
+                .handle_tools_list(RequestId::Number(2))
+                .result
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            slack_result
+                .tools
+                .iter()
+                .any(|tool| tool.name == "get_messenger_chats")
+        );
+    }
+
+    #[test]
+    fn test_add_messenger_provider_creates_context_for_activation() {
+        let mut server = McpServer::new();
+        server.add_messenger_provider_to_context("messenger-only", Arc::new(TestMessengerProvider));
+
+        assert!(
+            server
+                .context_names()
+                .contains(&"messenger-only".to_string())
+        );
+        assert!(server.set_active_context("messenger-only").is_ok());
     }
 }

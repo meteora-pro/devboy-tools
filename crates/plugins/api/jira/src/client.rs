@@ -990,6 +990,7 @@ impl IssueProvider for JiraClient {
                     limit,
                     total: None, // Jira Cloud cursor-based, no total
                     has_more: next_page_token.is_some(),
+                    next_cursor: next_page_token,
                 });
                 result.sort_info = Some(devboy_core::SortInfo {
                     sort_by: Some(order_by.into()),
@@ -1043,6 +1044,7 @@ impl IssueProvider for JiraClient {
                     limit,
                     total,
                     has_more,
+                    next_cursor: None,
                 });
                 result.sort_info = Some(devboy_core::SortInfo {
                     sort_by: Some(order_by.into()),

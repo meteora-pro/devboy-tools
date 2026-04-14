@@ -2,8 +2,8 @@
 //!
 //! This crate provides the foundational abstractions used across all devboy components:
 //!
-//! - **Provider traits**: [`IssueProvider`], [`MergeRequestProvider`], [`Provider`]
-//! - **Unified types**: [`Issue`], [`MergeRequest`], [`Discussion`], [`Comment`], [`FileDiff`]
+//! - **Provider traits**: [`IssueProvider`], [`MergeRequestProvider`], [`MessengerProvider`], [`Provider`]
+//! - **Unified types**: [`Issue`], [`MergeRequest`], [`MessengerChat`], [`MessengerMessage`], [`Discussion`], [`Comment`], [`FileDiff`]
 //! - **Configuration**: [`Config`], [`GitHubConfig`], [`GitLabConfig`]
 //! - **Error handling**: [`Error`], [`Result`]
 //!
@@ -35,17 +35,20 @@ pub use error::{Error, Result};
 
 // Re-export provider traits
 pub use provider::{
-    IssueProvider, MeetingNotesProvider, MergeRequestProvider, PipelineProvider, Provider,
+    IssueProvider, MeetingNotesProvider, MergeRequestProvider, MessengerProvider, PipelineProvider,
+    Provider,
 };
 
 // Re-export all types
 pub use types::{
     CodePosition, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
-    Discussion, FailedJob, FileDiff, GetPipelineInput, GetUsersOptions, Issue, IssueFilter,
-    IssueLink, IssueRelations, IssueStatus, JobLogMode, JobLogOptions, JobLogOutput, MeetingFilter,
-    MeetingNote, MeetingSpeaker, MeetingTranscript, MergeRequest, MrFilter, Pagination,
-    PipelineInfo, PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, ProviderResult,
-    Release, ReleaseAsset, SortInfo, SortOrder, TranscriptSentence, UpdateIssueInput, User,
+    Discussion, FailedJob, FileDiff, GetChatsParams, GetMessagesParams, GetPipelineInput,
+    GetUsersOptions, Issue, IssueFilter, IssueLink, IssueRelations, IssueStatus, JobLogMode,
+    JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote, MeetingSpeaker, MeetingTranscript,
+    MergeRequest, MessageAttachment, MessageAuthor, MessengerChat, MessengerMessage, MrFilter,
+    Pagination, PipelineInfo, PipelineJob, PipelineStage, PipelineStatus, PipelineSummary,
+    ProviderResult, Release, ReleaseAsset, SearchMessagesParams, SendMessageParams, SortInfo,
+    SortOrder, TranscriptSentence, UpdateIssueInput, User,
 };
 
 // Re-export enricher traits and utilities
@@ -62,5 +65,5 @@ pub use asset::{
 pub use config::{
     BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, FirefliesConfig,
     FormatPipelineConfig, GitHubConfig, GitLabConfig, JiraConfig, ProxyMatchingConfig,
-    ProxyMcpServerConfig,
+    ProxyMcpServerConfig, SlackConfig, default_slack_required_scopes,
 };
