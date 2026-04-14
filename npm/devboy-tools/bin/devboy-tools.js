@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
-"use strict";
+'use strict';
 
-const { spawn } = require("child_process");
-const { getBinaryPath } = require("../index");
+const { spawn } = require('child_process');
+const { getBinaryPath } = require('../index');
 
 let binaryPath;
 try {
@@ -14,11 +14,11 @@ try {
 }
 
 const child = spawn(binaryPath, process.argv.slice(2), {
-  stdio: "inherit",
+  stdio: 'inherit',
 });
 
-child.on("error", (err) => {
-  if (err.code === "ENOENT") {
+child.on('error', (err) => {
+  if (err.code === 'ENOENT') {
     console.error(
       `devboy binary not found at: ${binaryPath}\n` +
         "Run 'npm rebuild @devboy-tools/cli' or set DEVBOY_BINARY_PATH.",
@@ -29,7 +29,7 @@ child.on("error", (err) => {
   process.exit(1);
 });
 
-child.on("exit", (code, signal) => {
+child.on('exit', (code, signal) => {
   if (signal) {
     process.kill(process.pid, signal);
   } else {
@@ -38,7 +38,7 @@ child.on("exit", (code, signal) => {
 });
 
 // Forward signals to child process
-for (const sig of ["SIGINT", "SIGTERM"]) {
+for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
     if (!child.killed) {
       child.kill(sig);

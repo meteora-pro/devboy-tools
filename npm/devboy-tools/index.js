@@ -1,14 +1,14 @@
-"use strict";
+'use strict';
 
-const fs = require("fs");
-const path = require("path");
+const fs = require('fs');
+const path = require('path');
 
 const pkg = JSON.parse(
-  fs.readFileSync(path.join(__dirname, "package.json"), "utf8"),
+  fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'),
 );
 
 /** Package name */
-exports.name = "devboy";
+exports.name = 'devboy';
 
 /** Package version */
 exports.version = pkg.version;
@@ -37,12 +37,12 @@ exports.getBinaryPath = function getBinaryPath() {
 
   // 2. Platform-specific package
   const platformPkg = `@devboy-tools/${process.platform}-${process.arch}`;
-  const ext = process.platform === "win32" ? ".exe" : "";
+  const ext = process.platform === 'win32' ? '.exe' : '';
   const binaryName = `devboy${ext}`;
 
   try {
     const pkgJsonPath = require.resolve(`${platformPkg}/package.json`);
-    const binaryPath = path.join(path.dirname(pkgJsonPath), "bin", binaryName);
+    const binaryPath = path.join(path.dirname(pkgJsonPath), 'bin', binaryName);
     if (fs.existsSync(binaryPath)) {
       return binaryPath;
     }
@@ -52,8 +52,8 @@ exports.getBinaryPath = function getBinaryPath() {
 
   throw new Error(
     `devboy binary not found. No package ${platformPkg} installed.\n` +
-      "Your platform might not be supported. " +
-      "Set DEVBOY_BINARY_PATH to point to a devboy binary, or install from source:\n" +
-      "  cargo install --git https://github.com/meteora-pro/devboy-tools.git",
+      'Your platform might not be supported. ' +
+      'Set DEVBOY_BINARY_PATH to point to a devboy binary, or install from source:\n' +
+      '  cargo install --git https://github.com/meteora-pro/devboy-tools.git',
   );
 };
