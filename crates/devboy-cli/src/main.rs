@@ -2139,9 +2139,19 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
                 tracing::warn!("Failed to fetch proxy tools: {}", e);
             }
 
-            let _ = tx.send(proxy_manager);
+            // 4. Send back remote builtin_tools override (if any)
+            let builtin_tools_config = if !merged_config.builtin_tools.is_empty() {
+                Some(merged_config.builtin_tools)
+            } else {
+                None
+            };
+
+            let _ = tx.send(devboy_mcp::DeferredInit {
+                proxy_manager,
+                builtin_tools_config,
+            });
         });
-        server.set_deferred_proxy(rx);
+        server.set_deferred_init(rx);
     }
 
     if !any_provider_added && !skip_config {

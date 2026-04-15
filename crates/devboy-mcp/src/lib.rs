@@ -31,7 +31,7 @@ pub mod transport;
 pub use handlers::KNOWN_BUILTIN_TOOLS;
 pub use protocol::{JSONRPC_VERSION, JsonRpcRequest, RequestId};
 pub use proxy::{McpProxyClient, ProxyManager, ProxyTransport};
-pub use server::McpServer;
+pub use server::{DeferredInit, McpServer};
 
 // Re-export executor types for consumers that use devboy-mcp as entry point
 pub use devboy_executor::{
