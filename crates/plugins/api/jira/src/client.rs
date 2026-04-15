@@ -3,6 +3,18 @@
 //! Supports both Jira Cloud (API v3) and Jira Self-Hosted/Data Center (API v2).
 //! Flavor is auto-detected from the URL: `*.atlassian.net` → Cloud, otherwise → SelfHosted.
 
+/// Find the largest byte index <= `max_bytes` that is on a UTF-8 char boundary.
+fn safe_char_boundary(s: &str, max_bytes: usize) -> usize {
+    if max_bytes >= s.len() {
+        return s.len();
+    }
+    let mut i = max_bytes;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 use async_trait::async_trait;
 use devboy_core::{
     AssetCapabilities, AssetMeta, Comment, ContextCapabilities, CreateIssueInput, Error,
@@ -276,8 +288,10 @@ impl JiraClient {
             .map_err(|e| Error::InvalidData(format!("Failed to read response body: {}", e)))?;
 
         serde_json::from_str::<T>(&body).map_err(|e| {
+            // Use floor_char_boundary to avoid panic on multi-byte UTF-8
             let preview = if body.len() > 500 {
-                format!("{}...(truncated, total {} bytes)", &body[..500], body.len())
+                let end = safe_char_boundary(&body, 500);
+                format!("{}...(truncated, total {} bytes)", &body[..end], body.len())
             } else {
                 body.clone()
             };
@@ -287,7 +301,8 @@ impl JiraClient {
                 "Failed to parse Jira response"
             );
             let preview = if body.len() > 300 {
-                format!("{}...(truncated)", &body[..300])
+                let end = safe_char_boundary(&body, 300);
+                format!("{}...(truncated)", &body[..end])
             } else {
                 body.clone()
             };

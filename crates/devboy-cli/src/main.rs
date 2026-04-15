@@ -1628,10 +1628,13 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
 }
 
 fn mask_secret(value: &str) -> String {
-    if value.len() <= 8 {
-        "*".repeat(value.len())
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= 8 {
+        "*".repeat(chars.len())
     } else {
-        format!("{}...{}", &value[..4], &value[value.len() - 4..])
+        let prefix: String = chars[..4].iter().collect();
+        let suffix: String = chars[chars.len() - 4..].iter().collect();
+        format!("{prefix}...{suffix}")
     }
 }
 
