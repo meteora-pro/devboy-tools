@@ -1,0 +1,22 @@
+[      49ms] [WARNING] [webpack-dev-server] Warnings while compiling. @ http://localhost:4500/polyfills.js:893
+[      49ms] [WARNING] [webpack-dev-server] WARNING
+src/app/meeting-notes/meeting-notes.component.ts:471:54 - warning NG8107: The left side of this optional chain operation does not include 'null' or 'undefined' in its type, therefore the '?.' operator can be replaced with the '.' operator.
+
+471                   [nzCount]="note.participantEmails?.length || 0"
+                                                         ~~~~~~
+
+ @ http://localhost:4500/polyfills.js:893
+[      49ms] [WARNING] [webpack-dev-server] WARNING
+src/app/projects/project-issue-tracker-settings/project-issue-tracker-settings.component.html:47:28 - warning NG8116: A structural directive `nzOptionTemplate` was used in the template without a corresponding import in the component. Make sure that the directive is included in the `@Component.imports` array of this component.
+
+47             <ng-container *nzOptionTemplate>
+                              ~~~~~~~~~~~~~~~~
+
+  src/app/projects/project-issue-tracker-settings/project-issue-tracker-settings.component.ts:41:16
+    41   templateUrl: './project-issue-tracker-settings.component.html',
+                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    Warning occurs in the template of component ProjectIssueTrackerSettingsComponent.
+ @ http://localhost:4500/polyfills.js:893
+[   20820ms] [WARNING] [NG-ZORRO]: [NG-ZORRO]: <nz-tabset> is deprecated, please use <nz-tabs> instead. @ http://localhost:4500/vendor.js:170893
+[   20856ms] [WARNING] Warning: The animation trigger "tabSwitchMotion" is attempting to animate the following not animatable properties: display
+(to check the list of all animatable properties visit https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_animated_properties) @ http://localhost:4500/vendor.js:170893

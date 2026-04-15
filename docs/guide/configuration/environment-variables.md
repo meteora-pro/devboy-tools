@@ -349,6 +349,39 @@ docker run -e DEVBOY_SENTRY_DSN="$SENTRY_DSN" devboy-tools mcp
 - Sensitive data (tokens, API keys, credentials) is automatically scrubbed from error reports
 - Zero overhead when the `sentry` feature is not compiled in; minimal overhead when compiled but no DSN is configured (Sentry tracing layer is not installed without a valid DSN)
 
+## Remote configuration
+
+DevBoy can fetch TOML configuration from a remote URL on startup and merge it with the local config. Remote values override local values.
+
+### Configuration
+
+| Variable | Config Equivalent | Description |
+|----------|-------------------|-------------|
+| `DEVBOY_REMOTE_CONFIG_URL` | `remote_config.url` | URL to fetch TOML config from |
+| `DEVBOY_REMOTE_CONFIG_TOKEN` | `remote_config.token_key` (keychain) | Bearer token for authentication |
+
+### Config file
+
+```toml
+[remote_config]
+url = "https://example.com/api/devboy-config"
+token_key = "remote_config.token"
+```
+
+### CLI setup
+
+```bash
+devboy init --yes --remote-config-url "https://example.com/config" --remote-config-token "token" --claude
+```
+
+### Behavior
+
+- Remote config is fetched on each `devboy mcp` startup
+- TOML response is merged with local config (remote wins)
+- If fetch fails — warning printed, local config used unchanged
+- Timeout: 10 seconds, max response size: 1 MB
+- Environment variables take priority over config file values
+
 ## Special environment variables
 
 ### DEVBOY_SKIP_KEYCHAIN

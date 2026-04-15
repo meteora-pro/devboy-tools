@@ -1,0 +1,12 @@
+2026/04/15-08:48:13.030 9501eb Creating DB /Users/andreymaznyak/projects/meteora/DEV_ENV_4/devboy-env-4/external/devboy-tools/.playwright-cli/profile/Default/IndexedDB/http_localhost_4500.indexeddb.leveldb since it was missing.
+2026/04/15-08:48:13.033 9501eb Reusing MANIFEST /Users/andreymaznyak/projects/meteora/DEV_ENV_4/devboy-env-4/external/devboy-tools/.playwright-cli/profile/Default/IndexedDB/http_localhost_4500.indexeddb.leveldb/MANIFEST-000001
+2026/04/15-08:48:13.037 950203 Manual compaction at level-0 from '\x00\x01\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x02\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/04/15-10:33:49.892 9501eb Level-0 table #5: started
+2026/04/15-10:33:49.903 9501eb Level-0 table #5: 2980 bytes OK
+2026/04/15-10:33:49.905 9501eb Delete type=0 #3
+2026/04/15-10:33:49.906 9501eb Manual compaction at level-0 from '\x00\x04\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x05\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/04/15-10:42:58.155 950203 Manual compaction at level-0 from '\x00\x05\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x06\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/04/15-10:44:14.793 950203 Level-0 table #7: started
+2026/04/15-10:44:14.804 950203 Level-0 table #7: 1812 bytes OK
+2026/04/15-10:44:14.809 950203 Delete type=0 #4
+2026/04/15-10:44:14.809 9501e9 Manual compaction at level-0 from '\x00\x06\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x07\x00\x00\x00' @ 0 : 0; will stop at (end)

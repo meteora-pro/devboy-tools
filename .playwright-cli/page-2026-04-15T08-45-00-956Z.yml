@@ -1,0 +1,319 @@
+- generic [ref=e1]:
+  - generic [ref=e4]:
+    - generic [ref=e6]:
+      - generic [ref=e8]:
+        - img "DevBoy" [ref=e9]
+        - text: DevBoy
+      - list [ref=e10]:
+        - listitem [ref=e11] [cursor=pointer]:
+          - generic [ref=e12]:
+            - img "project" [ref=e13]:
+              - img [ref=e14]
+            - text: MCP Projects
+        - listitem [ref=e16] [cursor=pointer]:
+          - generic [ref=e17]:
+            - img "api" [ref=e18]:
+              - img [ref=e19]
+            - text: Integrations
+        - listitem [ref=e21] [cursor=pointer]:
+          - generic [ref=e22]:
+            - img "key" [ref=e23]:
+              - img [ref=e24]
+            - text: My Credentials
+        - listitem [ref=e26] [cursor=pointer]:
+          - generic [ref=e27]:
+            - img "cloud-server" [ref=e28]:
+              - img [ref=e29]
+            - text: Proxy Servers
+        - listitem [ref=e33] [cursor=pointer]:
+          - generic [ref=e34]:
+            - img "bar-chart" [ref=e35]:
+              - img [ref=e36]
+            - text: MCP Statistics
+        - listitem [ref=e38] [cursor=pointer]:
+          - generic [ref=e39]:
+            - img "calendar" [ref=e40]:
+              - img [ref=e41]
+            - text: Calendar
+        - listitem [ref=e43] [cursor=pointer]:
+          - generic [ref=e44]:
+            - img "tool" [ref=e45]:
+              - img [ref=e46]
+            - text: Organization
+        - listitem [ref=e48] [cursor=pointer]:
+          - generic [ref=e49]:
+            - img "robot" [ref=e50]:
+              - img [ref=e51]
+            - text: Bots
+        - listitem [ref=e53] [cursor=pointer]:
+          - generic [ref=e54]:
+            - img "thunderbolt" [ref=e55]:
+              - img [ref=e56]
+            - text: Triggers
+        - listitem [ref=e58] [cursor=pointer]:
+          - generic [ref=e59]:
+            - img "api" [ref=e60]:
+              - img [ref=e61]
+            - text: Webhooks
+      - img "left" [ref=e64] [cursor=pointer]:
+        - img [ref=e65]
+    - generic [ref=e67]:
+      - generic [ref=e68]:
+        - generic [ref=e69] [cursor=pointer]:
+          - img "team" [ref=e70]:
+            - img [ref=e71]
+          - generic [ref=e73]: E2E Org 0 - GitLab + Sheets
+        - generic [ref=e74] [cursor=pointer]:
+          - img "search" [ref=e75]:
+            - img [ref=e76]
+          - generic [ref=e78]: Search...
+          - generic [ref=e79]: ⌘+K
+        - generic [ref=e81] [cursor=pointer]:
+          - img "user" [ref=e82]:
+            - img [ref=e83]
+          - generic [ref=e85]: e2e-tester
+      - generic [ref=e267]:
+        - generic [ref=e269]:
+          - generic [ref=e270]:
+            - button "arrow-left" [ref=e272] [cursor=pointer]:
+              - img "arrow-left" [ref=e273]:
+                - img [ref=e274]
+            - generic [ref=e276]: Project Details
+            - generic [ref=e278]:
+              - generic [ref=e279]:
+                - img "gitlab" [ref=e280]:
+                  - img [ref=e281]
+                - generic [ref=e283]: "ID: 1002"
+              - generic [ref=e284]:
+                - strong [ref=e285]: "Path:"
+                - link "e2e-test-user/e2e-test-project link" [ref=e286] [cursor=pointer]:
+                  - /url: http://localhost:8929/e2e-test-user/e2e-test-project
+                  - text: e2e-test-user/e2e-test-project
+                  - img "link" [ref=e287]:
+                    - img [ref=e288]
+          - button "arrow-left Back to Projects" [ref=e291] [cursor=pointer]:
+            - img "arrow-left" [ref=e292]:
+              - img [ref=e293]
+            - generic [ref=e295]: Back to Projects
+        - generic [ref=e296]:
+          - generic [ref=e297]:
+            - link "Setup" [ref=e298] [cursor=pointer]:
+              - /url: /org/e2e-org-0-gitlab/projects/1002/mcp-setup
+            - link "Tools" [ref=e299] [cursor=pointer]:
+              - /url: /org/e2e-org-0-gitlab/projects/1002/mcp-tools
+            - link "Settings" [ref=e300] [cursor=pointer]:
+              - /url: /org/e2e-org-0-gitlab/projects/1002/settings
+          - generic [ref=e303]:
+            - generic [ref=e304]:
+              - generic [ref=e307]: MCP Server Setup
+              - generic [ref=e308]:
+                - generic [ref=e309]:
+                  - heading "MCP Server Name" [level=3] [ref=e310]
+                  - paragraph [ref=e311]: Use kebab-case format (e.g., devboy-private, my-project). This name is used in Claude Code commands.
+                  - generic [ref=e312]:
+                    - generic [ref=e313]:
+                      - textbox [ref=e314]: gitlab-clickup
+                      - button "edit" [ref=e316] [cursor=pointer]:
+                        - img "edit" [ref=e317]:
+                          - img [ref=e318]
+                    - generic [ref=e320]: Custom
+                  - generic [ref=e321]:
+                    - generic [ref=e322]: "Server ID:"
+                    - code [ref=e323]: devboy_gitlab-clickup
+                - generic [ref=e325]:
+                  - heading "Connect to Claude Code" [level=3] [ref=e326]
+                  - paragraph [ref=e327]: "Run this command in your project directory. It creates config, stores token in OS keychain, and registers the MCP server in Claude Code:"
+                  - generic [ref=e328]:
+                    - generic [ref=e329]: npm install -g @devboy-tools/cli && devboy init --yes --remote-config-url "http://localhost:4500/api/config/mcp" --remote-config-token "e2e-mcp-token-static-20" --claude
+                    - button "copy Copy" [ref=e330] [cursor=pointer]:
+                      - img "copy" [ref=e331]:
+                        - img [ref=e332]
+                      - generic [ref=e334]: Copy
+                  - generic [ref=e336]:
+                    - button "right Legacy command (deprecated)" [ref=e337] [cursor=pointer]:
+                      - button "right" [ref=e338]:
+                        - img "right" [ref=e339]:
+                          - img [ref=e340]
+                      - generic [ref=e342]: Legacy command (deprecated)
+                    - generic [ref=e343]:
+                      - paragraph [ref=e344]: "Use this command if you have issues with the new setup. Uses the old @devboy/mcp-stdio-server package:"
+                      - generic [ref=e345]:
+                        - generic [ref=e346]: claude mcp add devboy_gitlab-clickup npx --env PROJECT_TOKEN=e2e-mcp-token-static-20 -- @devboy/mcp-stdio-server "http://localhost:4500/api/mcp?name=devboy_gitlab-clickup"
+                        - button "copy Copy" [ref=e347] [cursor=pointer]:
+                          - img "copy" [ref=e348]:
+                            - img [ref=e349]
+                          - generic [ref=e351]: Copy
+                  - generic [ref=e353]:
+                    - img "info-circle" [ref=e355]:
+                      - img [ref=e356]
+                    - generic [ref=e359]:
+                      - generic [ref=e360]: After running the command
+                      - generic [ref=e361]: Restart Claude Code or run '/mcp' to verify the connection. You can then use commands like 'show my open issues' or 'list merge requests'.
+                - generic [ref=e363]:
+                  - heading "Your Project Token" [level=3] [ref=e364]
+                  - generic [ref=e365]:
+                    - generic [ref=e366]:
+                      - textbox [ref=e367]: e2e-mcp-token-static-20
+                      - button "copy" [ref=e369] [cursor=pointer]:
+                        - img "copy" [ref=e370]:
+                          - img [ref=e371]
+                    - button "reload Rotate" [ref=e373] [cursor=pointer]:
+                      - img "reload" [ref=e374]:
+                        - img [ref=e375]
+                      - generic [ref=e377]: Rotate
+                    - generic [ref=e378]: 1356 days left
+                - generic [ref=e380]:
+                  - heading "OAuth Configuration" [level=3] [ref=e381]
+                  - generic [ref=e382]:
+                    - button "message ChatGPT" [ref=e383] [cursor=pointer]:
+                      - img "message" [ref=e384]:
+                        - img [ref=e385]
+                      - generic [ref=e387]: ChatGPT
+                    - button "robot Claude" [ref=e388] [cursor=pointer]:
+                      - img "robot" [ref=e389]:
+                        - img [ref=e390]
+                      - generic [ref=e392]: Claude
+                - generic [ref=e393]:
+                  - generic [ref=e394]:
+                    - button "right Alternative Configurations" [ref=e395] [cursor=pointer]:
+                      - button "right" [ref=e396]:
+                        - img "right" [ref=e397]:
+                          - img [ref=e398]
+                      - generic [ref=e400]: Alternative Configurations
+                    - generic [ref=e403]:
+                      - generic [ref=e404]:
+                        - tablist [ref=e406]:
+                          - tab "Windows" [ref=e408] [cursor=pointer]
+                          - tab "Unix-like (macOS, Linux)" [selected] [ref=e410] [cursor=pointer]
+                        - button [ref=e412]:
+                          - img [ref=e413]:
+                            - img [ref=e414]
+                      - tabpanel "Unix-like (macOS, Linux)" [ref=e418]:
+                        - list [ref=e419]:
+                          - listitem [ref=e420]:
+                            - generic [ref=e421]:
+                              - heading "Claude Code on macOS/Linux" [level=4] [ref=e422]
+                              - paragraph [ref=e423]: "Run this in your terminal to add the MCP server:"
+                            - generic [ref=e424]:
+                              - generic [ref=e425]: claude mcp add devboy_gitlab-clickup -- npx @devboy-tools/cli mcp
+                              - button "copy Copy" [ref=e426] [cursor=pointer]:
+                                - img "copy" [ref=e427]:
+                                  - img [ref=e428]
+                                - generic [ref=e430]: Copy
+                          - listitem [ref=e431]:
+                            - generic [ref=e432]:
+                              - heading "JSON Config" [level=4] [ref=e433]
+                              - paragraph [ref=e434]:
+                                - text: "Edit this file in Claude Desktop/Code:"
+                                - text: "macOS:"
+                                - code [ref=e435]: ~/Library/Application Support/Claude/claude_desktop_config.json
+                                - text: "Linux:"
+                                - code [ref=e436]: ~/.config/claude/claude_desktop_config.json
+                            - generic [ref=e437]:
+                              - generic [ref=e438]: "{ \"mcpServers\": { \"devboy_gitlab-clickup\": { \"command\": \"npx\", \"args\": [ \"@devboy-tools/cli\", \"mcp\" ] } } }"
+                              - button "copy Copy" [ref=e439] [cursor=pointer]:
+                                - img "copy" [ref=e440]:
+                                  - img [ref=e441]
+                                - generic [ref=e443]: Copy
+                          - listitem [ref=e444]:
+                            - generic [ref=e445]:
+                              - heading "Coder Workspace" [level=4] [ref=e446]
+                              - paragraph [ref=e447]: "Add these environment variables to your Coder workspace:"
+                            - generic [ref=e448]:
+                              - generic [ref=e449]: "# Configure MCP server in Claude Code # Uses npx to run devboy-tools without global installation { \"mcpServers\": { \"devboy_gitlab-clickup\": { \"command\": \"npx\", \"args\": [\"@devboy-tools/cli\", \"mcp\"] } } }"
+                              - button "copy Copy" [ref=e450] [cursor=pointer]:
+                                - img "copy" [ref=e451]:
+                                  - img [ref=e452]
+                                - generic [ref=e454]: Copy
+                          - listitem [ref=e455]:
+                            - generic [ref=e456]:
+                              - heading "Codex" [level=4] [ref=e457]
+                              - paragraph [ref=e458]: "For Codex Agents, set DEV_BOY_PROJECT_TOKEN environment variable and run:"
+                            - generic [ref=e459]:
+                              - generic [ref=e460]: codex mcp add devboy_gitlab-clickup --url "http://localhost:4500/api/mcp?name=devboy_gitlab-clickup" --bearer-token-env-var DEVBOY_PROJECT_TOKEN
+                              - button "copy Copy" [ref=e461] [cursor=pointer]:
+                                - img "copy" [ref=e462]:
+                                  - img [ref=e463]
+                                - generic [ref=e465]: Copy
+                            - paragraph [ref=e466]: "Or add to your config.toml:"
+                            - generic [ref=e467]:
+                              - generic [ref=e468]: "[mcp_servers.devboy_gitlab-clickup] transport = \"http\" url = \"http://localhost:4500/api/mcp?name=devboy_gitlab-clickup\" http_headers = { Authorization = \"Bearer e2e-mcp-token-static-20\" }"
+                              - button "copy Copy" [ref=e469] [cursor=pointer]:
+                                - img "copy" [ref=e470]:
+                                  - img [ref=e471]
+                                - generic [ref=e473]: Copy
+                  - generic [ref=e474]:
+                    - button "right Test Connection" [ref=e475] [cursor=pointer]:
+                      - button "right" [ref=e476]:
+                        - img "right" [ref=e477]:
+                          - img [ref=e478]
+                      - generic [ref=e480]: Test Connection
+                    - button "experiment Test MCP Connection" [ref=e483] [cursor=pointer]:
+                      - img "experiment" [ref=e484]:
+                        - img [ref=e485]
+                      - generic [ref=e487]: Test MCP Connection
+                  - generic [ref=e488]:
+                    - button "right OAuth Client Management" [ref=e489] [cursor=pointer]:
+                      - button "right" [ref=e490]:
+                        - img "right" [ref=e491]:
+                          - img [ref=e492]
+                      - generic [ref=e494]: OAuth Client Management
+                    - generic [ref=e495]:
+                      - generic [ref=e496]:
+                        - heading "Authorized OAuth Tokens" [level=4] [ref=e497]
+                        - paragraph [ref=e498]: OAuth tokens are created when external applications (like ChatGPT) authorize access to your project through the OAuth flow. You can manage and revoke these tokens below.
+                        - button "reload Load OAuth Tokens" [ref=e499] [cursor=pointer]:
+                          - img "reload" [ref=e500]:
+                            - img [ref=e501]
+                          - generic [ref=e503]: Load OAuth Tokens
+                        - generic [ref=e504]:
+                          - img [ref=e507]
+                          - paragraph [ref=e519]: No OAuth tokens found. External clients will appear here after they authorize access through OAuth.
+                      - generic [ref=e521]:
+                        - heading "Register OAuth Client" [level=4] [ref=e522]
+                        - paragraph [ref=e523]: Register OAuth clients to allow external applications (like ChatGPT, Claude, or your custom tools) to access your project through OAuth 2.0 with PKCE.
+                        - generic [ref=e524]:
+                          - button "plus Register New Client" [ref=e525] [cursor=pointer]:
+                            - img "plus" [ref=e526]:
+                              - img [ref=e527]
+                            - generic [ref=e530]: Register New Client
+                          - button "reload Refresh List" [ref=e531] [cursor=pointer]:
+                            - img "reload" [ref=e532]:
+                              - img [ref=e533]
+                            - generic [ref=e535]: Refresh List
+                        - generic [ref=e537]:
+                          - button "right Quick Presets" [ref=e538] [cursor=pointer]:
+                            - button "right" [ref=e539]:
+                              - img "right" [ref=e540]:
+                                - img [ref=e541]
+                            - generic [ref=e543]: Quick Presets
+                          - generic [ref=e545]:
+                            - generic [ref=e546] [cursor=pointer]:
+                              - generic [ref=e549]: ChatGPT (OpenAI)
+                              - generic [ref=e550]:
+                                - paragraph [ref=e551]: For GPT Actions and MCP connectors
+                                - generic [ref=e552]: https://chatgpt.com/connector_platform_oauth_redirect
+                            - generic [ref=e553] [cursor=pointer]:
+                              - generic [ref=e556]: Claude (Anthropic)
+                              - generic [ref=e557]:
+                                - paragraph [ref=e558]: Register a client for Claude Desktop/Code integration
+                                - generic [ref=e559]: https://claude.ai/api/mcp/auth_callback
+                            - generic [ref=e560] [cursor=pointer]:
+                              - generic [ref=e563]: Custom Client
+                              - paragraph [ref=e565]: Register a custom OAuth client with your own settings
+                        - generic [ref=e566]:
+                          - img [ref=e569]
+                          - paragraph [ref=e581]: No OAuth clients registered yet. Click 'Register New Client' to create one.
+            - generic [ref=e582]:
+              - generic [ref=e585]: "Debug: Sentry Integration Test"
+              - generic [ref=e586]:
+                - paragraph [ref=e587]: Send test events to all 3 Sentry projects (UI, API, Rust) to verify the full trace chain.
+                - button "bug Test Sentry (all 3 levels)" [active] [ref=e588] [cursor=pointer]:
+                  - img "bug" [ref=e589]:
+                    - img [ref=e590]
+                  - generic [ref=e593]: Test Sentry (all 3 levels)
+                - generic [ref=e594]: "{ \"ui\": { \"status\": \"ok\", \"message\": \"Sentry event sent from UI (project 52)\" }, \"api\": { \"status\": \"ok\", \"message\": \"Sentry event sent from API (project 50)\" }, \"rust\": { \"status\": \"skipped\", \"message\": \"NAPI bridge not available\" }, \"instructions\": \"Check Sentry projects 50 (API) and 55 (Rust) for test events. Call this from browser to also see UI trace (project 52).\" }"
+  - generic [ref=e596]:
+    - img "check-circle" [ref=e597]:
+      - img [ref=e598]
+    - text: Sentry test events sent to all 3 projects!
