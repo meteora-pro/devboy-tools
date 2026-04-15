@@ -841,7 +841,7 @@ mod tests {
             id: RequestId::Number(1),
             method: "initialize".to_string(),
             params: Some(serde_json::json!({
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": "2025-11-25",
                 "capabilities": {},
                 "clientInfo": {
                     "name": "test-client",

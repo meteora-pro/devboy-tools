@@ -452,7 +452,7 @@ impl McpProxyClient {
     /// Send initialize handshake.
     async fn initialize(&self) -> devboy_core::Result<()> {
         let params = serde_json::json!({
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": "2025-11-25",
             "capabilities": {},
             "clientInfo": {
                 "name": "devboy-mcp-proxy",
@@ -674,7 +674,7 @@ mod tests {
                     "jsonrpc": "2.0",
                     "id": 1,
                     "result": {
-                        "protocolVersion": "2024-11-05",
+                        "protocolVersion": "2025-11-25",
                         "capabilities": { "tools": {} },
                         "serverInfo": { "name": "mock-server", "version": "1.0.0" }
                     }
@@ -1026,7 +1026,7 @@ mod tests {
                     "jsonrpc": "2.0",
                     "id": 1,
                     "result": {
-                        "protocolVersion": "2024-11-05",
+                        "protocolVersion": "2025-11-25",
                         "capabilities": {},
                         "serverInfo": { "name": "mock", "version": "1.0" }
                     }
@@ -1083,7 +1083,7 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "result": {
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": "2025-11-25",
                     "capabilities": {},
                     "serverInfo": { "name": "mock", "version": "1.0" }
                 }
@@ -1118,7 +1118,7 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "result": {
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": "2025-11-25",
                     "capabilities": {},
                     "serverInfo": { "name": "mock", "version": "1.0" }
                 }
@@ -1337,7 +1337,7 @@ mod tests {
                 .header("cache-control", "no-cache")
                 .body(
                     "event: endpoint\ndata: /messages\n\n\
-                     event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"serverInfo\":{\"name\":\"mock-sse\",\"version\":\"1.0\"}}}\n\n"
+                     event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"serverInfo\":{\"name\":\"mock-sse\",\"version\":\"1.0\"}}}\n\n"
                 );
         });
 
@@ -1384,7 +1384,7 @@ mod tests {
                 .header("cache-control", "no-cache")
                 .body(
                     "event: endpoint\ndata: /messages\n\n\
-                     event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"serverInfo\":{\"name\":\"mock\",\"version\":\"1.0\"}}}\n\n"
+                     event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"serverInfo\":{\"name\":\"mock\",\"version\":\"1.0\"}}}\n\n"
                 );
         });
 
@@ -1454,7 +1454,7 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "result": {
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": "2025-11-25",
                     "capabilities": {},
                     "serverInfo": { "name": "mock", "version": "1.0" }
                 }
@@ -1502,7 +1502,7 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "result": {
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": "2025-11-25",
                     "capabilities": {},
                     "serverInfo": { "name": "mock", "version": "1.0" }
                 }
@@ -1711,7 +1711,7 @@ mod tests {
                     "jsonrpc": "2.0",
                     "id": 1,
                     "result": {
-                        "protocolVersion": "2024-11-05",
+                        "protocolVersion": "2025-11-25",
                         "capabilities": {},
                         "serverInfo": { "name": "mock", "version": "1.0" }
                     }
