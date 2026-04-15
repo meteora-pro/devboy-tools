@@ -527,7 +527,12 @@ fn format_pipeline(info: &devboy_core::PipelineInfo) -> String {
         status_icon,
         info.status.as_str(),
         info.reference,
-        &info.sha[..7.min(info.sha.len())]
+        &info.sha[..info
+            .sha
+            .char_indices()
+            .nth(7)
+            .map(|(i, _)| i)
+            .unwrap_or(info.sha.len())]
     );
 
     if let Some(url) = &info.url {
