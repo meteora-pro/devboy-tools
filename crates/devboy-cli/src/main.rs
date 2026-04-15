@@ -1778,9 +1778,18 @@ fn register_opencode_mcp(server_name: &str) -> Result<()> {
         .context("Could not determine current directory")?
         .join("opencode.json");
 
+    register_opencode_mcp_to_path(server_name, &config_path)?;
+
+    println!("Successfully registered in opencode.json");
+    Ok(())
+}
+
+/// Internal helper to register OpenCode MCP to a specific config path.
+/// Used by both production code and tests.
+fn register_opencode_mcp_to_path(server_name: &str, config_path: &std::path::Path) -> Result<()> {
     let mut config: serde_json::Value = if config_path.exists() {
         let content =
-            std::fs::read_to_string(&config_path).context("Failed to read opencode config")?;
+            std::fs::read_to_string(config_path).context("Failed to read opencode config")?;
         let parsed: serde_json::Value =
             serde_json::from_str(&content).context("Failed to parse opencode config")?;
 
@@ -1816,9 +1825,8 @@ fn register_opencode_mcp(server_name: &str) -> Result<()> {
 
     let content =
         serde_json::to_string_pretty(&config).context("Failed to serialize opencode config")?;
-    std::fs::write(&config_path, content).context("Failed to write opencode config")?;
+    std::fs::write(config_path, content).context("Failed to write opencode config")?;
 
-    println!("Successfully registered in opencode.json");
     Ok(())
 }
 
@@ -1830,16 +1838,22 @@ fn register_forge_mcp(server_name: &str) -> Result<()> {
         .context("Could not determine current directory")?
         .join(".mcp.json");
 
-    register_json_mcp_config(
-        server_name,
-        &config_path,
-        "mcpServers",
-        serde_json::json!({ "command": "devboy", "args": ["mcp"] }),
-        "forge",
-    )?;
+    register_forge_mcp_to_path(server_name, &config_path)?;
 
     println!("Successfully registered in .mcp.json");
     Ok(())
+}
+
+/// Internal helper to register ForgeCode MCP to a specific config path.
+/// Used by both production code and tests.
+fn register_forge_mcp_to_path(server_name: &str, config_path: &std::path::Path) -> Result<()> {
+    register_json_mcp_config(
+        server_name,
+        config_path,
+        "mcpServers",
+        serde_json::json!({ "command": "devboy", "args": ["mcp"] }),
+        "forge",
+    )
 }
 
 // =============================================================================
@@ -4851,21 +4865,14 @@ args = ["old"]
     // OpenCode MCP registration tests
     // ==========================================================================
 
-    fn register_opencode_mcp_to_test_path(server_name: &str, base: &std::path::Path) -> Result<()> {
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(base).unwrap();
-        let result = register_opencode_mcp(server_name);
-        std::env::set_current_dir(original_dir).unwrap();
-        result
-    }
-
     #[test]
     fn test_register_opencode_mcp_default_name() {
         let tmp_dir = tempfile::tempdir().unwrap();
+        let config_path = tmp_dir.path().join("opencode.json");
 
-        register_opencode_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
+        register_opencode_mcp_to_path("devboy", &config_path).unwrap();
 
-        let content = std::fs::read_to_string(tmp_dir.path().join("opencode.json")).unwrap();
+        let content = std::fs::read_to_string(&config_path).unwrap();
         let config: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         assert!(config["mcp"]["devboy"].is_object());
@@ -4877,15 +4884,12 @@ args = ["old"]
     #[test]
     fn test_register_opencode_mcp_preserves_existing() {
         let tmp_dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            tmp_dir.path().join("opencode.json"),
-            r#"{"existingKey": "value"}"#,
-        )
-        .unwrap();
+        let config_path = tmp_dir.path().join("opencode.json");
+        std::fs::write(&config_path, r#"{"existingKey": "value"}"#).unwrap();
 
-        register_opencode_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
+        register_opencode_mcp_to_path("devboy", &config_path).unwrap();
 
-        let content = std::fs::read_to_string(tmp_dir.path().join("opencode.json")).unwrap();
+        let content = std::fs::read_to_string(&config_path).unwrap();
         let config: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         assert_eq!(config["existingKey"], "value");
@@ -4896,21 +4900,14 @@ args = ["old"]
     // ForgeCode MCP registration tests
     // ==========================================================================
 
-    fn register_forge_mcp_to_test_path(server_name: &str, base: &std::path::Path) -> Result<()> {
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(base).unwrap();
-        let result = register_forge_mcp(server_name);
-        std::env::set_current_dir(original_dir).unwrap();
-        result
-    }
-
     #[test]
     fn test_register_forge_mcp_default_name() {
         let tmp_dir = tempfile::tempdir().unwrap();
+        let config_path = tmp_dir.path().join(".mcp.json");
 
-        register_forge_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
+        register_forge_mcp_to_path("devboy", &config_path).unwrap();
 
-        let content = std::fs::read_to_string(tmp_dir.path().join(".mcp.json")).unwrap();
+        let content = std::fs::read_to_string(&config_path).unwrap();
         let config: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         assert!(config["mcpServers"]["devboy"].is_object());
@@ -4921,15 +4918,12 @@ args = ["old"]
     #[test]
     fn test_register_forge_mcp_preserves_existing() {
         let tmp_dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            tmp_dir.path().join(".mcp.json"),
-            r#"{"existingKey": "value"}"#,
-        )
-        .unwrap();
+        let config_path = tmp_dir.path().join(".mcp.json");
+        std::fs::write(&config_path, r#"{"existingKey": "value"}"#).unwrap();
 
-        register_forge_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
+        register_forge_mcp_to_path("devboy", &config_path).unwrap();
 
-        let content = std::fs::read_to_string(tmp_dir.path().join(".mcp.json")).unwrap();
+        let content = std::fs::read_to_string(&config_path).unwrap();
         let config: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         assert_eq!(config["existingKey"], "value");
