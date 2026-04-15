@@ -1089,10 +1089,7 @@ fn test_init_kimi_flag_help_shows_option() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success());
-    assert!(
-        stdout.contains("--kimi"),
-        "Help should mention --kimi flag"
-    );
+    assert!(stdout.contains("--kimi"), "Help should mention --kimi flag");
     assert!(
         stdout.contains("Register devboy as MCP server"),
         "Help should describe --kimi flag"
@@ -1193,10 +1190,7 @@ fn test_init_with_kimi_creates_kimi_mcp_json_with_custom_name() {
     );
 
     // Check that .kimi/mcp.json was created
-    assert!(
-        kimi_json_path.exists(),
-        ".kimi/mcp.json should be created"
-    );
+    assert!(kimi_json_path.exists(), ".kimi/mcp.json should be created");
 
     let kimi_content = fs::read_to_string(&kimi_json_path).unwrap();
     let kimi_config: serde_json::Value = serde_json::from_str(&kimi_content).unwrap();
@@ -1378,10 +1372,7 @@ fn test_init_with_copilot_creates_config() {
     );
 
     let copilot_json = fake_home.path().join(".copilot").join("mcp-config.json");
-    assert!(
-        copilot_json.exists(),
-        "Copilot config should be created"
-    );
+    assert!(copilot_json.exists(), "Copilot config should be created");
 
     let content = fs::read_to_string(&copilot_json).unwrap();
     let config: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -1431,10 +1422,7 @@ fn test_init_with_gemini_creates_config() {
     );
 
     let gemini_json = temp_dir.path().join(".gemini").join("settings.json");
-    assert!(
-        gemini_json.exists(),
-        "Gemini config should be created"
-    );
+    assert!(gemini_json.exists(), "Gemini config should be created");
 
     let content = fs::read_to_string(&gemini_json).unwrap();
     let config: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -1483,10 +1471,7 @@ fn test_init_with_opencode_creates_config() {
     );
 
     let opencode_json = temp_dir.path().join("opencode.json");
-    assert!(
-        opencode_json.exists(),
-        "OpenCode config should be created"
-    );
+    assert!(opencode_json.exists(), "OpenCode config should be created");
 
     let content = fs::read_to_string(&opencode_json).unwrap();
     let config: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -1535,10 +1520,7 @@ fn test_init_with_forge_creates_config() {
     );
 
     let forge_json = temp_dir.path().join(".mcp.json");
-    assert!(
-        forge_json.exists(),
-        "ForgeCode config should be created"
-    );
+    assert!(forge_json.exists(), "ForgeCode config should be created");
 
     let content = fs::read_to_string(&forge_json).unwrap();
     let config: serde_json::Value = serde_json::from_str(&content).unwrap();

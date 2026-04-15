@@ -1687,8 +1687,7 @@ fn register_codex_mcp_to_path(server_name: &str, config_path: &std::path::Path) 
 
     mcp_table.insert(server_name.to_string(), toml::Value::Table(server_table));
 
-    let content =
-        toml::to_string_pretty(&config).context("Failed to serialize codex config")?;
+    let content = toml::to_string_pretty(&config).context("Failed to serialize codex config")?;
     std::fs::write(config_path, content).context("Failed to write codex config")?;
 
     Ok(())
@@ -1815,8 +1814,8 @@ fn register_opencode_mcp(server_name: &str) -> Result<()> {
         "args": ["mcp"]
     });
 
-    let content = serde_json::to_string_pretty(&config)
-        .context("Failed to serialize opencode config")?;
+    let content =
+        serde_json::to_string_pretty(&config).context("Failed to serialize opencode config")?;
     std::fs::write(&config_path, content).context("Failed to write opencode config")?;
 
     println!("Successfully registered in opencode.json");
@@ -4592,7 +4591,10 @@ mod tests {
     }
 
     /// Helper to call production code with a custom config path for testing
-    fn register_kimi_mcp_to_test_path(server_name: &str, base_path: &std::path::Path) -> Result<()> {
+    fn register_kimi_mcp_to_test_path(
+        server_name: &str,
+        base_path: &std::path::Path,
+    ) -> Result<()> {
         let config_path = base_path.join(".kimi").join("mcp.json");
         // Ensure .kimi directory exists
         if let Some(parent) = config_path.parent() {
@@ -4607,7 +4609,8 @@ mod tests {
 
         register_kimi_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
 
-        let content = std::fs::read_to_string(tmp_dir.path().join(".kimi").join("mcp.json")).unwrap();
+        let content =
+            std::fs::read_to_string(tmp_dir.path().join(".kimi").join("mcp.json")).unwrap();
         let config: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         assert!(config["mcpServers"]["devboy"].is_object());
@@ -4621,7 +4624,8 @@ mod tests {
 
         register_kimi_mcp_to_test_path("my-custom-server", tmp_dir.path()).unwrap();
 
-        let content = std::fs::read_to_string(tmp_dir.path().join(".kimi").join("mcp.json")).unwrap();
+        let content =
+            std::fs::read_to_string(tmp_dir.path().join(".kimi").join("mcp.json")).unwrap();
         let config: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         // Should be registered under custom name, not "devboy"
@@ -4649,7 +4653,8 @@ mod tests {
 
         register_kimi_mcp_to_test_path("my-proxy", tmp_dir.path()).unwrap();
 
-        let content = std::fs::read_to_string(tmp_dir.path().join(".kimi").join("mcp.json")).unwrap();
+        let content =
+            std::fs::read_to_string(tmp_dir.path().join(".kimi").join("mcp.json")).unwrap();
         let config: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         // Existing server should be preserved
@@ -4670,7 +4675,8 @@ mod tests {
 
         register_kimi_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
 
-        let content = std::fs::read_to_string(tmp_dir.path().join(".kimi").join("mcp.json")).unwrap();
+        let content =
+            std::fs::read_to_string(tmp_dir.path().join(".kimi").join("mcp.json")).unwrap();
         let config: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         // Original key should be preserved
@@ -4831,7 +4837,8 @@ args = ["old"]
 
         register_gemini_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
 
-        let content = std::fs::read_to_string(tmp_dir.path().join(".gemini").join("settings.json")).unwrap();
+        let content =
+            std::fs::read_to_string(tmp_dir.path().join(".gemini").join("settings.json")).unwrap();
         let config: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         assert!(config["mcpServers"]["devboy"].is_object());
@@ -4870,7 +4877,11 @@ args = ["old"]
     #[test]
     fn test_register_opencode_mcp_preserves_existing() {
         let tmp_dir = tempfile::tempdir().unwrap();
-        std::fs::write(tmp_dir.path().join("opencode.json"), r#"{"existingKey": "value"}"#).unwrap();
+        std::fs::write(
+            tmp_dir.path().join("opencode.json"),
+            r#"{"existingKey": "value"}"#,
+        )
+        .unwrap();
 
         register_opencode_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
 
@@ -4910,7 +4921,11 @@ args = ["old"]
     #[test]
     fn test_register_forge_mcp_preserves_existing() {
         let tmp_dir = tempfile::tempdir().unwrap();
-        std::fs::write(tmp_dir.path().join(".mcp.json"), r#"{"existingKey": "value"}"#).unwrap();
+        std::fs::write(
+            tmp_dir.path().join(".mcp.json"),
+            r#"{"existingKey": "value"}"#,
+        )
+        .unwrap();
 
         register_forge_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
 
