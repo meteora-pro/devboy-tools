@@ -51,5 +51,8 @@ tempfile.workspace = true
 httpmock.workspace = true
 temp-env = { version = "0.3", features = ["async_closure"] }
 
+[build-dependencies]
+chrono = "0.4"
+
 [lints]
 workspace = true

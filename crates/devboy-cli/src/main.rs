@@ -74,9 +74,31 @@ impl AuthType {
     }
 }
 
+/// Build version string with commit info for --version output.
+const BUILD_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (commit ",
+    env!("DEVBOY_BUILD_COMMIT"),
+    ", built ",
+    env!("DEVBOY_BUILD_TIMESTAMP"),
+    ")",
+);
+
+/// Full release string for Sentry (e.g., "devboy-tools@0.16.0+abc1234").
+#[cfg(feature = "sentry")]
+fn sentry_release() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let commit = env!("DEVBOY_BUILD_COMMIT");
+    if commit.is_empty() {
+        format!("devboy-tools@{version}")
+    } else {
+        format!("devboy-tools@{version}+{commit}")
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "devboy")]
-#[command(author, version, about = "DevBoy - AI-powered development tools", long_about = None)]
+#[command(author, version = BUILD_VERSION, about = "DevBoy - AI-powered development tools", long_about = None)]
 struct Cli {
     /// Enable verbose output
     #[arg(short, long, global = true)]
@@ -492,7 +514,7 @@ async fn main() -> Result<()> {
         };
         devboy_core::sentry_integration::init_sentry(
             config.as_ref().and_then(|c| c.sentry.as_ref()),
-            env!("CARGO_PKG_VERSION"),
+            &sentry_release(),
         )
     };
 
