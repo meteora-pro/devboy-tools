@@ -37,10 +37,10 @@ const SENSITIVE_KEYS: &[&str] = &[
 /// # Arguments
 ///
 /// * `config` - Optional Sentry config from config.toml
-/// * `version` - Application version string for the `release` tag
+/// * `release` - Full release string (e.g., "devboy-tools@0.16.0+abc1234")
 pub fn init_sentry(
     config: Option<&SentryConfig>,
-    version: &str,
+    release: &str,
 ) -> Option<sentry::ClientInitGuard> {
     let default_config = SentryConfig::default();
     let config = config.unwrap_or(&default_config);
@@ -87,11 +87,9 @@ pub fn init_sentry(
         .unwrap_or(0.0)
         .clamp(0.0, 1.0);
 
-    let release = format!("devboy-tools@{version}");
-
     let guard = sentry::init(sentry::ClientOptions {
         dsn: parsed_dsn,
-        release: Some(release.into()),
+        release: Some(release.to_string().into()),
         environment: environment.map(Into::into),
         sample_rate,
         traces_sample_rate,
