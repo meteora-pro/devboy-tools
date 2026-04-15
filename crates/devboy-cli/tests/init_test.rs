@@ -73,6 +73,7 @@ fn test_init_help() {
     assert!(stdout.contains("--dry-run"));
     assert!(stdout.contains("--force"));
     assert!(stdout.contains("--claude"));
+    assert!(stdout.contains("--kimi"));
     assert!(stdout.contains("--context"));
 }
 
@@ -1072,4 +1073,210 @@ fn test_init_with_claude_preserves_existing_mcp_servers() {
         }
         // If neither condition is met, Claude CLI was used but wrote elsewhere - that's OK
     }
+}
+
+// ==========================================================================
+// Kimi CLI registration tests
+// ==========================================================================
+
+#[test]
+fn test_init_kimi_flag_help_shows_option() {
+    let output = Command::new(devboy_bin())
+        .args(["init", "--help"])
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(
+        stdout.contains("--kimi"),
+        "Help should mention --kimi flag"
+    );
+    assert!(
+        stdout.contains("Register devboy as MCP server"),
+        "Help should describe --kimi flag"
+    );
+}
+
+#[test]
+fn test_init_with_kimi_and_proxy_name_uses_custom_name() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "init",
+            "--yes",
+            "--proxy",
+            "https://example.com/mcp",
+            "--proxy-name",
+            "my-custom-server",
+            "--kimi",
+        ])
+        .env("DEVBOY_SKIP_KEYCHAIN", "1")
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Check that config file was created
+    assert!(config_path.exists(), "Config file should be created");
+
+    // Check config content has the custom proxy name
+    let content = fs::read_to_string(&config_path).unwrap();
+    assert!(
+        content.contains("my-custom-server"),
+        "Config should contain custom proxy name"
+    );
+
+    // Verify the output contains the custom server name
+    assert!(
+        stdout.contains("my-custom-server"),
+        "Output should contain the custom server name 'my-custom-server': {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_init_with_kimi_without_proxy_uses_default_name() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    let output = Command::new(devboy_bin())
+        .args(["init", "--yes", "--kimi"])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Check that config file was created
+    assert!(config_path.exists(), "Config file should be created");
+
+    // Verify the output contains "devboy" as the server name
+    assert!(
+        stdout.contains("'devboy'") || stdout.contains("\"devboy\""),
+        "Output should contain 'devboy' as the default server name: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_init_with_kimi_creates_kimi_mcp_json_with_custom_name() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+    let kimi_json_path = temp_dir.path().join(".kimi").join("mcp.json");
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "init",
+            "--yes",
+            "--proxy",
+            "https://example.com/mcp",
+            "--proxy-name",
+            "custom-mcp-server",
+            "--kimi",
+        ])
+        .env("DEVBOY_SKIP_KEYCHAIN", "1")
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Verify output contains the custom server name
+    assert!(
+        stdout.contains("custom-mcp-server"),
+        "Output should contain custom server name: {}",
+        stdout
+    );
+
+    // Check that .kimi/mcp.json was created
+    assert!(
+        kimi_json_path.exists(),
+        ".kimi/mcp.json should be created"
+    );
+
+    let kimi_content = fs::read_to_string(&kimi_json_path).unwrap();
+    let kimi_config: serde_json::Value = serde_json::from_str(&kimi_content).unwrap();
+
+    assert!(
+        kimi_config["mcpServers"]["custom-mcp-server"].is_object(),
+        "MCP server should be registered with custom name 'custom-mcp-server'. Config: {}",
+        kimi_content
+    );
+
+    // Verify "devboy" is NOT registered (when using custom name)
+    assert!(
+        kimi_config["mcpServers"]["devboy"].is_null(),
+        "MCP server should NOT be registered as 'devboy' when --proxy-name is provided"
+    );
+}
+
+#[test]
+fn test_init_with_kimi_preserves_existing_mcp_servers() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+    let kimi_dir = temp_dir.path().join(".kimi");
+    let kimi_json_path = kimi_dir.join("mcp.json");
+
+    // Create existing Kimi config with another MCP server
+    fs::create_dir_all(&kimi_dir).unwrap();
+    let existing_config = r#"{
+        "mcpServers": {
+            "existing-server": {
+                "command": "some-other-cmd",
+                "args": ["arg1", "arg2"]
+            }
+        },
+        "someOtherSetting": "value"
+    }"#;
+    fs::write(&kimi_json_path, existing_config).unwrap();
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "init",
+            "--yes",
+            "--proxy",
+            "https://example.com/mcp",
+            "--proxy-name",
+            "new-server",
+            "--kimi",
+        ])
+        .env("DEVBOY_SKIP_KEYCHAIN", "1")
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(
+        output.status.success(),
+        "Command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let kimi_content = fs::read_to_string(&kimi_json_path).unwrap();
+    let kimi_config: serde_json::Value = serde_json::from_str(&kimi_content).unwrap();
+
+    // Verify existing global MCP server is preserved
+    assert!(
+        kimi_config["mcpServers"]["existing-server"].is_object(),
+        "Existing MCP server should be preserved"
+    );
+    assert_eq!(
+        kimi_config["mcpServers"]["existing-server"]["command"], "some-other-cmd",
+        "Existing server command should be unchanged"
+    );
+
+    // Verify other settings are preserved
+    assert_eq!(
+        kimi_config["someOtherSetting"], "value",
+        "Other settings should be preserved"
+    );
+
+    // Verify new server is added
+    assert!(
+        kimi_config["mcpServers"]["new-server"].is_object(),
+        "New MCP server should be added. Config: {}",
+        kimi_content
+    );
 }
