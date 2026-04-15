@@ -2039,57 +2039,8 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
         cfg
     };
 
-    // Fetch and merge remote config (if configured via [remote_config] or env vars).
-    // This happens before provider setup so remote config can override builtin_tools etc.
-    let token_from_keychain = config
-        .remote_config
-        .as_ref()
-        .and_then(|rc| rc.token_key.as_ref())
-        .and_then(|key| store.get(key).ok())
-        .flatten();
-    let config =
-        devboy_core::remote_config::fetch_and_merge(config, token_from_keychain.as_deref()).await;
-
-    // Re-initialize Sentry if remote config provided a DSN that wasn't available earlier.
-    // The sentry-tracing layer (always installed) automatically picks up the new client.
-    #[cfg(feature = "sentry")]
-    {
-        let remote_dsn = config
-            .sentry
-            .as_ref()
-            .and_then(|s| s.dsn.as_ref())
-            .filter(|s| !s.is_empty());
-        let current_enabled = sentry::Hub::current()
-            .client()
-            .is_some_and(|c| c.is_enabled());
-
-        if remote_dsn.is_some() && !current_enabled {
-            let new_guard = devboy_core::sentry_integration::init_sentry(
-                config.sentry.as_ref(),
-                &sentry_release(),
-            );
-            if new_guard.as_ref().is_some_and(|g| g.is_enabled()) {
-                tracing::info!("Sentry re-initialized with DSN from remote config");
-                // Leak the guard to keep it alive for the process lifetime.
-                // The old guard (None) is already a no-op.
-                if let Some(guard) = new_guard {
-                    std::mem::forget(guard);
-                }
-            }
-        }
-    }
-
-    // Apply built-in tools filtering config.
-    if !config.builtin_tools.is_empty() {
-        config.builtin_tools.warn_unknown_tools(KNOWN_BUILTIN_TOOLS);
-        server
-            .set_builtin_tools_config(config.builtin_tools.clone())
-            .context("Invalid builtin_tools configuration")?;
-    }
-
+    // Set up local providers from config (no network calls — only credential lookups).
     let mut any_provider_added = false;
-
-    // Add configured named contexts (skip if no_config).
     if !skip_config {
         for (context_name, context) in &config.contexts {
             server.ensure_context(context_name);
@@ -2097,7 +2048,6 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
                 add_context_providers(&mut server, store.as_ref(), context_name, context);
         }
 
-        // Backward-compatible implicit default context from top-level provider fields.
         if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME)
             && let Some(default_context) = config.legacy_default_context()
         {
@@ -2109,7 +2059,6 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
             );
         }
 
-        // Set active context (if configured and valid).
         if let Some(active) = config.resolve_active_context_name() {
             if let Err(e) = server.set_active_context(&active) {
                 tracing::warn!("Could not set active context '{}': {}", active, e);
@@ -2118,21 +2067,82 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
             }
         }
     }
-
-    // Also check for env-only contexts (DEVBOY_CONTEXTS_*_* without config entry)
     any_provider_added |= add_env_only_contexts(&mut server, &config, store.as_ref());
 
-    // Connect to upstream MCP proxy servers (from config and/or env vars).
-    let mut proxy_manager = build_proxy_manager(&config, store.as_ref()).await;
+    // Apply built-in tools filtering from local config (remote config may override later).
+    if !config.builtin_tools.is_empty() {
+        config.builtin_tools.warn_unknown_tools(KNOWN_BUILTIN_TOOLS);
+        server
+            .set_builtin_tools_config(config.builtin_tools.clone())
+            .context("Invalid builtin_tools configuration")?;
+    }
 
-    // Also check for env-only proxies (DEVBOY_*_URL without config entry)
-    add_env_only_proxies(&mut proxy_manager, &config, store.as_ref()).await;
+    // Spawn background task for remote config fetch + proxy connection.
+    // This is the slow path (~1-2s of HTTP calls) that we don't want to block stdin.
+    // Proxy tools become available on first tools/list or tools/call.
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let env_snapshot: Vec<(String, String)> = std::env::vars().collect();
+        let bg_config = config.clone();
+        let bg_store = get_credential_store();
+        let bg_token = config
+            .remote_config
+            .as_ref()
+            .and_then(|rc| rc.token_key.as_ref())
+            .and_then(|key| store.get(key).ok())
+            .flatten();
 
-    if !proxy_manager.is_empty() {
-        if let Err(e) = proxy_manager.fetch_all_tools().await {
-            tracing::warn!("Failed to fetch proxy tools: {}", e);
-        }
-        server.set_proxy_manager(proxy_manager);
+        tokio::spawn(async move {
+            // 1. Fetch and merge remote config
+            let merged_config =
+                devboy_core::remote_config::fetch_and_merge(bg_config, bg_token.as_deref()).await;
+
+            // 2. Re-initialize Sentry if remote config provided a DSN
+            #[cfg(feature = "sentry")]
+            {
+                let remote_dsn = merged_config
+                    .sentry
+                    .as_ref()
+                    .and_then(|s| s.dsn.as_ref())
+                    .filter(|s| !s.is_empty());
+                let current_enabled = sentry::Hub::current()
+                    .client()
+                    .is_some_and(|c| c.is_enabled());
+
+                if remote_dsn.is_some() && !current_enabled {
+                    let new_guard = devboy_core::sentry_integration::init_sentry(
+                        merged_config.sentry.as_ref(),
+                        &sentry_release(),
+                    );
+                    if new_guard.as_ref().is_some_and(|g| g.is_enabled()) {
+                        tracing::info!("Sentry re-initialized with DSN from remote config");
+                        if let Some(guard) = new_guard {
+                            std::mem::forget(guard);
+                        }
+                    }
+                }
+            }
+
+            // 3. Build proxy manager and fetch tools
+            let mut proxy_manager =
+                build_proxy_manager(&merged_config, bg_store.as_ref()).await;
+            add_env_only_proxies_from_snapshot(
+                &mut proxy_manager,
+                &merged_config,
+                bg_store.as_ref(),
+                &env_snapshot,
+            )
+            .await;
+
+            if !proxy_manager.is_empty() {
+                if let Err(e) = proxy_manager.fetch_all_tools().await {
+                    tracing::warn!("Failed to fetch proxy tools: {}", e);
+                }
+            }
+
+            let _ = tx.send(proxy_manager);
+        });
+        server.set_deferred_proxy(rx);
     }
 
     if !any_provider_added && !skip_config {
@@ -2140,7 +2150,9 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
         tracing::info!("Configure GitHub: devboy config set github.owner <owner>");
     }
 
-    // Run the MCP server (reads from stdin, writes to stdout)
+    // Run the MCP server (reads from stdin, writes to stdout).
+    // initialize is handled immediately; proxy tools are resolved
+    // lazily on first tools/list or tools/call.
     server.run().await.context("MCP server error")?;
 
     Ok(())
@@ -2811,6 +2823,23 @@ fn add_context_providers_from_env(
 /// Example:
 /// - `DEVBOY_DEVBOY_CLOUD_URL=https://...` creates proxy named "devboy-cloud"
 /// - `DEVBOY_DEVBOY_CLOUD_TOKEN=xxx` provides the token
+/// Check if there are any env-only proxy servers (DEVBOY_*_URL) not already in config.
+fn has_env_only_proxies(config: &Config) -> bool {
+    let existing_names: std::collections::HashSet<_> = config
+        .proxy_mcp_servers
+        .iter()
+        .map(|p| p.name.to_lowercase().replace(['.', '/', '-'], "_"))
+        .collect();
+    std::env::vars().any(|( key, _)| {
+        key.strip_prefix("DEVBOY_")
+            .and_then(|s| s.strip_suffix("_URL"))
+            .is_some_and(|name| {
+                !name.starts_with("CONTEXTS_")
+                    && !existing_names.contains(&name.to_lowercase())
+            })
+    })
+}
+
 async fn add_env_only_proxies(
     proxy_manager: &mut ProxyManager,
     config: &Config,
@@ -2864,6 +2893,66 @@ async fn add_env_only_proxies(
                 None, // no tool prefix override
                 token.as_deref(),
                 "bearer", // default auth type
+                ProxyTransport::StreamableHttp,
+            )
+            .await
+            {
+                Ok(client) => {
+                    tracing::info!("Connected to env-only proxy '{}' at {}", proxy_name, url);
+                    proxy_manager.add_client(client);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to connect to env-only proxy '{}': {}",
+                        proxy_name,
+                        e
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Like `add_env_only_proxies` but uses a pre-collected env var snapshot (Send-safe).
+async fn add_env_only_proxies_from_snapshot(
+    proxy_manager: &mut ProxyManager,
+    config: &Config,
+    store: &dyn CredentialStore,
+    env_vars: &[(String, String)],
+) {
+    let existing_names: std::collections::HashSet<_> = config
+        .proxy_mcp_servers
+        .iter()
+        .map(|p| p.name.to_lowercase().replace(['.', '/', '-'], "_"))
+        .collect();
+
+    for (key, url) in env_vars {
+        if let Some(name) = key
+            .strip_prefix("DEVBOY_")
+            .and_then(|s| s.strip_suffix("_URL"))
+        {
+            if name.starts_with("CONTEXTS_") {
+                continue;
+            }
+            let proxy_name = name.to_lowercase().replace('_', "-");
+            let normalized = name.to_lowercase();
+            if existing_names.contains(&normalized) {
+                continue;
+            }
+            let token_key = format!("{}.token", proxy_name);
+            let token = store.get(&token_key).ok().flatten();
+            tracing::info!(
+                "Found env-only proxy '{}' from {} (token: {})",
+                proxy_name,
+                key,
+                if token.is_some() { "found" } else { "none" }
+            );
+            match McpProxyClient::connect(
+                &proxy_name,
+                url,
+                None,
+                token.as_deref(),
+                "bearer",
                 ProxyTransport::StreamableHttp,
             )
             .await

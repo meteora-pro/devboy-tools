@@ -272,7 +272,11 @@ async fn fetch_latest_version() -> Option<String> {
 pub async fn resolve_version_status() -> VersionStatus {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
     let install_method = detect_install_method();
-    let latest_version = if let Some(cache) = read_cache() {
+    let latest_version = if let Some(cache) = read_cache()
+        .filter(|c| !is_newer_version(&c.latest_version, &current_version))
+    {
+        // Use cache only if current version is not newer than cached latest.
+        // If user upgraded past the cached version, force a re-fetch.
         Some(cache.latest_version)
     } else {
         let fetched = fetch_latest_version().await;
