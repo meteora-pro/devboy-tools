@@ -288,7 +288,7 @@ impl JiraClient {
             .map_err(|e| Error::InvalidData(format!("Failed to read response body: {}", e)))?;
 
         serde_json::from_str::<T>(&body).map_err(|e| {
-            // Use floor_char_boundary to avoid panic on multi-byte UTF-8
+            // Use safe_char_boundary to avoid panic on multi-byte UTF-8
             let preview = if body.len() > 500 {
                 let end = safe_char_boundary(&body, 500);
                 format!("{}...(truncated, total {} bytes)", &body[..end], body.len())

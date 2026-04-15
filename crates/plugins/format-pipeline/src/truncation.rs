@@ -9,7 +9,8 @@
 /// The returned string will be at most max_chars characters long (including ellipsis).
 /// Safe for non-ASCII (UTF-8 multi-byte characters).
 pub fn truncate_string(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
+    // Bounded check: only walk up to max_chars+1 chars (not the whole string)
+    if s.chars().nth(max_chars).is_none() {
         return s.to_string();
     }
 
@@ -50,7 +51,8 @@ pub fn truncate_string(s: &str, max_chars: usize) -> String {
 /// Keeps the beginning and end of the diff to show what changed,
 /// hiding the middle if too long.
 pub fn truncate_diff(diff: &str, max_chars: usize) -> String {
-    if diff.chars().count() <= max_chars {
+    // Bounded check: only walk up to max_chars+1 chars
+    if diff.chars().nth(max_chars).is_none() {
         return diff.to_string();
     }
 
