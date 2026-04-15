@@ -11,6 +11,7 @@ use std::sync::{Arc, RwLock};
 use devboy_core::{BuiltinToolsConfig, Provider};
 use serde::Deserialize;
 use serde_json::Value;
+use tokio::sync::oneshot;
 
 use crate::protocol::{
     InitializeParams, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MCP_VERSION,
@@ -29,6 +30,8 @@ pub struct McpServer {
     proxy_manager: ProxyManager,
     builtin_tools_config: BuiltinToolsConfig,
     meeting_providers: Vec<Arc<dyn devboy_core::MeetingNotesProvider>>,
+    /// Deferred proxy initialization — resolved on first `tools/list` or `tools/call`.
+    deferred_proxy: Option<oneshot::Receiver<ProxyManager>>,
 }
 
 impl McpServer {
@@ -46,6 +49,7 @@ impl McpServer {
             proxy_manager: ProxyManager::new(),
             builtin_tools_config: BuiltinToolsConfig::default(),
             meeting_providers: Vec::new(),
+            deferred_proxy: None,
         }
     }
 
@@ -64,6 +68,31 @@ impl McpServer {
     /// Set the proxy manager for upstream MCP server connections.
     pub fn set_proxy_manager(&mut self, proxy_manager: ProxyManager) {
         self.proxy_manager = proxy_manager;
+    }
+
+    /// Set a deferred proxy manager that will be resolved on first `tools/list` or `tools/call`.
+    ///
+    /// This allows the MCP server to start reading stdin immediately while proxy
+    /// connections are established in the background. The proxy tools become
+    /// available once the background task completes.
+    pub fn set_deferred_proxy(&mut self, receiver: oneshot::Receiver<ProxyManager>) {
+        self.deferred_proxy = Some(receiver);
+    }
+
+    /// Resolve the deferred proxy if pending, merging its tools into the proxy manager.
+    async fn resolve_deferred_proxy(&mut self) {
+        if let Some(receiver) = self.deferred_proxy.take() {
+            match receiver.await {
+                Ok(proxy_manager) => {
+                    if !proxy_manager.is_empty() {
+                        self.proxy_manager = proxy_manager;
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!("Deferred proxy initialization was cancelled");
+                }
+            }
+        }
     }
 
     pub fn add_meeting_provider(&mut self, provider: Arc<dyn devboy_core::MeetingNotesProvider>) {
@@ -223,8 +252,14 @@ impl McpServer {
 
         match req.method.as_str() {
             "initialize" => self.handle_initialize(req.id, req.params),
-            "tools/list" => self.handle_tools_list(req.id),
-            "tools/call" => self.handle_tools_call(req.id, req.params).await,
+            "tools/list" => {
+                self.resolve_deferred_proxy().await;
+                self.handle_tools_list(req.id)
+            }
+            "tools/call" => {
+                self.resolve_deferred_proxy().await;
+                self.handle_tools_call(req.id, req.params).await
+            }
             "ping" => self.handle_ping(req.id),
             method => {
                 tracing::warn!("Unknown method: {}", method);
