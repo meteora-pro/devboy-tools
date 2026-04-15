@@ -796,7 +796,7 @@ fn test_init_claude_flag_help_shows_option() {
         "Help should mention --claude flag"
     );
     assert!(
-        stdout.contains("Register devboy as MCP server"),
+        stdout.contains("in Claude Code"),
         "Help should describe --claude flag"
     );
 }
@@ -1091,7 +1091,7 @@ fn test_init_kimi_flag_help_shows_option() {
     assert!(output.status.success());
     assert!(stdout.contains("--kimi"), "Help should mention --kimi flag");
     assert!(
-        stdout.contains("Register devboy as MCP server"),
+        stdout.contains("in Kimi CLI"),
         "Help should describe --kimi flag"
     );
 }
@@ -1293,6 +1293,10 @@ fn test_init_codex_cli_flag_help_shows_option() {
         stdout.contains("--codex-cli"),
         "Help should mention --codex-cli flag"
     );
+    assert!(
+        stdout.contains("in Codex CLI"),
+        "Help should describe --codex-cli flag"
+    );
 }
 
 #[test]
@@ -1350,6 +1354,10 @@ fn test_init_copilot_flag_help_shows_option() {
         stdout.contains("--copilot"),
         "Help should mention --copilot flag"
     );
+    assert!(
+        stdout.contains("in Copilot CLI"),
+        "Help should describe --copilot flag"
+    );
 }
 
 #[test]
@@ -1403,6 +1411,10 @@ fn test_init_gemini_flag_help_shows_option() {
         stdout.contains("--gemini"),
         "Help should mention --gemini flag"
     );
+    assert!(
+        stdout.contains("in Gemini CLI"),
+        "Help should describe --gemini flag"
+    );
 }
 
 #[test]
@@ -1452,6 +1464,10 @@ fn test_init_opencode_flag_help_shows_option() {
         stdout.contains("--opencode"),
         "Help should mention --opencode flag"
     );
+    assert!(
+        stdout.contains("in OpenCode"),
+        "Help should describe --opencode flag"
+    );
 }
 
 #[test]
@@ -1500,6 +1516,10 @@ fn test_init_forge_flag_help_shows_option() {
     assert!(
         stdout.contains("--forge"),
         "Help should mention --forge flag"
+    );
+    assert!(
+        stdout.contains("in ForgeCode"),
+        "Help should describe --forge flag"
     );
 }
 
