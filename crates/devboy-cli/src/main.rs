@@ -29,6 +29,8 @@ use devboy_storage::{ChainStore, CredentialStore};
 use dialoguer::{Confirm, Input, MultiSelect, Password};
 use doctor::{DoctorOptions, OutputFormat};
 use tracing_subscriber::EnvFilter;
+#[cfg(feature = "sentry")]
+use tracing_subscriber::prelude::*;
 
 /// Proxy transport type for MCP servers.
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -72,9 +74,31 @@ impl AuthType {
     }
 }
 
+/// Build version string with commit info for --version output.
+const BUILD_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (commit ",
+    env!("DEVBOY_BUILD_COMMIT"),
+    ", built ",
+    env!("DEVBOY_BUILD_TIMESTAMP"),
+    ")",
+);
+
+/// Full release string for Sentry (e.g., "devboy-tools@0.16.0+abc1234").
+#[cfg(feature = "sentry")]
+fn sentry_release() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let commit = env!("DEVBOY_BUILD_COMMIT");
+    if commit.is_empty() {
+        format!("devboy-tools@{version}")
+    } else {
+        format!("devboy-tools@{version}+{commit}")
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "devboy")]
-#[command(author, version, about = "DevBoy - AI-powered development tools", long_about = None)]
+#[command(author, version = BUILD_VERSION, about = "DevBoy - AI-powered development tools", long_about = None)]
 struct Cli {
     /// Enable verbose output
     #[arg(short, long, global = true)]
@@ -135,6 +159,14 @@ enum Commands {
         /// Proxy auth type (default: bearer if token provided, else none)
         #[arg(long, requires = "proxy", value_enum)]
         proxy_auth_type: Option<AuthType>,
+
+        /// Remote config URL (fetched on startup, TOML response merged with local config)
+        #[arg(long)]
+        remote_config_url: Option<String>,
+
+        /// Bearer token for remote config endpoint
+        #[arg(long, requires = "remote_config_url")]
+        remote_config_token: Option<String>,
     },
 
     /// Start the MCP server (stdio mode for AI assistants)
@@ -466,6 +498,21 @@ fn get_credential_store_for_init() -> Box<dyn CredentialStore> {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Initialize Sentry from local config / env vars.
+    // May return None if no DSN is configured yet — remote config can provide it later.
+    #[cfg(feature = "sentry")]
+    let mut _sentry_guard = {
+        let config = if is_no_config_enabled() {
+            None
+        } else {
+            load_runtime_config().ok().map(|(c, _)| c)
+        };
+        devboy_core::sentry_integration::init_sentry(
+            config.as_ref().and_then(|c| c.sentry.as_ref()),
+            &sentry_release(),
+        )
+    };
+
     // Initialize logging
     let filter = if cli.verbose {
         EnvFilter::new("debug")
@@ -475,11 +522,34 @@ async fn main() -> Result<()> {
 
     let is_mcp_command = matches!(cli.command, Some(Commands::Mcp { .. }));
 
-    let builder = tracing_subscriber::fmt().with_env_filter(filter);
-    if is_mcp_command {
-        builder.with_writer(std::io::stderr).init();
-    } else {
-        builder.init();
+    // Always install sentry-tracing layer when feature is enabled.
+    // If Sentry is not yet initialized (no DSN), the layer is a no-op.
+    // If remote config provides a DSN later, init_sentry() is called again
+    // and the layer automatically picks up the new client from Hub::current().
+    #[cfg(feature = "sentry")]
+    {
+        let fmt_layer = if is_mcp_command {
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .boxed()
+        } else {
+            tracing_subscriber::fmt::layer().boxed()
+        };
+        tracing_subscriber::registry()
+            .with(fmt_layer)
+            .with(sentry_tracing::layer())
+            .with(filter)
+            .init();
+    }
+
+    #[cfg(not(feature = "sentry"))]
+    {
+        let builder = tracing_subscriber::fmt().with_env_filter(filter);
+        if is_mcp_command {
+            builder.with_writer(std::io::stderr).init();
+        } else {
+            builder.init();
+        }
     }
 
     // Run update check in background for interactive commands (skip for mcp, upgrade, and no-command).
@@ -493,22 +563,9 @@ async fn main() -> Result<()> {
         _ => Some(tokio::spawn(update_check::check_and_notify())),
     };
 
-    match cli.command {
-        Some(Commands::Init {
-            yes,
-            dry_run,
-            force,
-            claude,
-            context,
-            proxy,
-            proxy_only,
-            proxy_name,
-            proxy_transport,
-            proxy_token_key,
-            proxy_token,
-            proxy_auth_type,
-        }) => {
-            handle_init_command(
+    let result: Result<()> = async {
+        match cli.command {
+            Some(Commands::Init {
                 yes,
                 dry_run,
                 force,
@@ -521,92 +578,126 @@ async fn main() -> Result<()> {
                 proxy_token_key,
                 proxy_token,
                 proxy_auth_type,
-            )
-            .await?;
-        }
+                remote_config_url,
+                remote_config_token,
+            }) => {
+                handle_init_command(
+                    yes,
+                    dry_run,
+                    force,
+                    claude,
+                    context,
+                    proxy,
+                    proxy_only,
+                    proxy_name,
+                    proxy_transport,
+                    proxy_token_key,
+                    proxy_token,
+                    proxy_auth_type,
+                    remote_config_url,
+                    remote_config_token,
+                )
+                .await?;
+            }
 
-        Some(Commands::Mcp { no_config }) => {
-            handle_mcp_command(no_config).await?;
-        }
+            Some(Commands::Mcp { no_config }) => {
+                handle_mcp_command(no_config).await?;
+            }
 
-        Some(Commands::Config { command }) => {
-            handle_config_command(command)?;
-        }
+            Some(Commands::Config { command }) => {
+                handle_config_command(command)?;
+            }
 
-        Some(Commands::Context { command }) => {
-            handle_context_command(command)?;
-        }
+            Some(Commands::Context { command }) => {
+                handle_context_command(command)?;
+            }
 
-        Some(Commands::Issues { state, limit }) => {
-            handle_issues_command(&state, limit).await?;
-        }
+            Some(Commands::Issues { state, limit }) => {
+                handle_issues_command(&state, limit).await?;
+            }
 
-        Some(Commands::Mrs { state, limit }) => {
-            handle_mrs_command(&state, limit).await?;
-        }
+            Some(Commands::Mrs { state, limit }) => {
+                handle_mrs_command(&state, limit).await?;
+            }
 
-        Some(Commands::Test { provider }) => {
-            handle_test_command(&provider).await?;
-        }
+            Some(Commands::Test { provider }) => {
+                handle_test_command(&provider).await?;
+            }
 
-        Some(Commands::Proxy { command }) => {
-            handle_proxy_command(command).await?;
-        }
+            Some(Commands::Proxy { command }) => {
+                handle_proxy_command(command).await?;
+            }
 
-        Some(Commands::Tools { command }) => {
-            handle_tools_command(command).await?;
-        }
+            Some(Commands::Tools { command }) => {
+                handle_tools_command(command).await?;
+            }
 
-        Some(Commands::Doctor {
-            format,
-            list_checks,
-            checks,
-        }) => {
-            let exit_code = doctor::handle_doctor_command(DoctorOptions {
-                verbose: cli.verbose,
-                output_format: format.map(Into::into),
+            Some(Commands::Doctor {
+                format,
                 list_checks,
                 checks,
-            })
-            .await?;
-            std::process::exit(exit_code);
-        }
+            }) => {
+                let exit_code = doctor::handle_doctor_command(DoctorOptions {
+                    verbose: cli.verbose,
+                    output_format: format.map(Into::into),
+                    list_checks,
+                    checks,
+                })
+                .await?;
+                std::process::exit(exit_code);
+            }
 
-        Some(Commands::Upgrade { check }) => {
-            upgrade::run_upgrade(check).await?;
-        }
+            Some(Commands::Upgrade { check }) => {
+                upgrade::run_upgrade(check).await?;
+            }
 
-        Some(Commands::Benchmark {
-            owner,
-            repo,
-            budget,
-            limit,
-            token,
-        }) => {
-            run_benchmark(&owner, &repo, budget, limit, token.as_deref()).await?;
-        }
-
-        Some(Commands::FormatPipeline {
-            data_type,
-            budget,
-            strategy,
-            level,
-            format,
-            stats,
-        }) => {
-            run_format_pipeline(
-                data_type.as_deref(),
+            Some(Commands::Benchmark {
+                owner,
+                repo,
                 budget,
-                strategy.as_deref(),
-                &level,
-                &format,
-                stats,
-            )?;
-        }
+                limit,
+                token,
+            }) => {
+                run_benchmark(&owner, &repo, budget, limit, token.as_deref()).await?;
+            }
 
-        None => {
-            println!("DevBoy - AI-powered development tools");
-            println!("Run with --help for usage information");
+            Some(Commands::FormatPipeline {
+                data_type,
+                budget,
+                strategy,
+                level,
+                format,
+                stats,
+            }) => {
+                run_format_pipeline(
+                    data_type.as_deref(),
+                    budget,
+                    strategy.as_deref(),
+                    &level,
+                    &format,
+                    stats,
+                )?;
+            }
+
+            None => {
+                println!("DevBoy - AI-powered development tools");
+                println!("Run with --help for usage information");
+            }
+        }
+        Ok(())
+    }
+    .await;
+
+    // Capture top-level errors to Sentry before returning.
+    // Most command handlers propagate errors via `?` without `tracing::error!`,
+    // so without this the common non-panicking error path would never reach Sentry.
+    #[cfg(feature = "sentry")]
+    if let Err(ref e) = result {
+        sentry::capture_message(&format!("{e:#}"), sentry::protocol::Level::Error);
+        // Flush pending events to ensure they are sent before process exits.
+        // The guard's Drop also flushes, but with a very short default timeout.
+        if let Some(client) = sentry::Hub::current().client() {
+            client.flush(Some(std::time::Duration::from_secs(5)));
         }
     }
 
@@ -615,7 +706,7 @@ async fn main() -> Result<()> {
         let _ = handle.await;
     }
 
-    Ok(())
+    result
 }
 
 // =============================================================================
@@ -636,6 +727,7 @@ struct InitOptions {
     slack: Option<SlackConfig>,
     tokens: Vec<(String, String)>, // (key, value) pairs for keychain
     proxy: Option<ProxyMcpServerConfig>,
+    remote_config: Option<devboy_core::RemoteConfigSettings>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -652,6 +744,8 @@ async fn handle_init_command(
     proxy_token_key: Option<String>,
     proxy_token: Option<String>,
     proxy_auth_type: Option<AuthType>,
+    remote_config_url: Option<String>,
+    remote_config_token: Option<String>,
 ) -> Result<()> {
     let config_path = PathBuf::from(INIT_CONFIG_FILE);
     let is_tty = io::stdin().is_terminal();
@@ -742,6 +836,21 @@ async fn handle_init_command(
             token_key,
             tool_prefix: None,
             transport,
+        });
+    }
+
+    // Add remote config settings if provided
+    if let Some(url) = remote_config_url {
+        let token_key = if let Some(token_value) = remote_config_token {
+            let key = "remote_config.token".to_string();
+            options.tokens.push((key.clone(), token_value));
+            Some(key)
+        } else {
+            None
+        };
+        options.remote_config = Some(devboy_core::RemoteConfigSettings {
+            url: Some(url),
+            token_key,
         });
     }
 
@@ -1223,6 +1332,11 @@ fn build_config(options: &InitOptions) -> Config {
         config.proxy_mcp_servers.push(proxy.clone());
     }
 
+    // Add remote config settings if provided
+    if let Some(remote_config) = &options.remote_config {
+        config.remote_config = Some(remote_config.clone());
+    }
+
     config
 }
 
@@ -1497,10 +1611,13 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
 }
 
 fn mask_secret(value: &str) -> String {
-    if value.len() <= 8 {
-        "*".repeat(value.len())
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= 8 {
+        "*".repeat(chars.len())
     } else {
-        format!("{}...{}", &value[..4], &value[value.len() - 4..])
+        let prefix: String = chars[..4].iter().collect();
+        let suffix: String = chars[chars.len() - 4..].iter().collect();
+        format!("{prefix}...{suffix}")
     }
 }
 
@@ -1919,17 +2036,56 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
     } else {
         let (cfg, config_path) = load_runtime_config()?;
         tracing::debug!("Config loaded from: {}", config_path.display());
-
-        // Apply built-in tools filtering config.
-        if !cfg.builtin_tools.is_empty() {
-            cfg.builtin_tools.warn_unknown_tools(KNOWN_BUILTIN_TOOLS);
-            server
-                .set_builtin_tools_config(cfg.builtin_tools.clone())
-                .context("Invalid builtin_tools configuration")?;
-        }
-
         cfg
     };
+
+    // Fetch and merge remote config (if configured via [remote_config] or env vars).
+    // This happens before provider setup so remote config can override builtin_tools etc.
+    let token_from_keychain = config
+        .remote_config
+        .as_ref()
+        .and_then(|rc| rc.token_key.as_ref())
+        .and_then(|key| store.get(key).ok())
+        .flatten();
+    let config =
+        devboy_core::remote_config::fetch_and_merge(config, token_from_keychain.as_deref()).await;
+
+    // Re-initialize Sentry if remote config provided a DSN that wasn't available earlier.
+    // The sentry-tracing layer (always installed) automatically picks up the new client.
+    #[cfg(feature = "sentry")]
+    {
+        let remote_dsn = config
+            .sentry
+            .as_ref()
+            .and_then(|s| s.dsn.as_ref())
+            .filter(|s| !s.is_empty());
+        let current_enabled = sentry::Hub::current()
+            .client()
+            .is_some_and(|c| c.is_enabled());
+
+        if remote_dsn.is_some() && !current_enabled {
+            let new_guard = devboy_core::sentry_integration::init_sentry(
+                config.sentry.as_ref(),
+                &sentry_release(),
+            );
+            if new_guard.as_ref().is_some_and(|g| g.is_enabled()) {
+                tracing::info!("Sentry re-initialized with DSN from remote config");
+                // Leak the guard to keep it alive for the process lifetime.
+                // The old guard (None) is already a no-op.
+                if let Some(guard) = new_guard {
+                    std::mem::forget(guard);
+                }
+            }
+        }
+    }
+
+    // Apply built-in tools filtering config.
+    if !config.builtin_tools.is_empty() {
+        config.builtin_tools.warn_unknown_tools(KNOWN_BUILTIN_TOOLS);
+        server
+            .set_builtin_tools_config(config.builtin_tools.clone())
+            .context("Invalid builtin_tools configuration")?;
+    }
 
     let mut any_provider_added = false;
 

@@ -399,7 +399,12 @@ impl McpProxyClient {
         tokio::time::timeout(Duration::from_secs(60), async {
             while let Ok(Some(line)) = lines.next_line().await {
                 let line = line.trim().to_string();
-                tracing::debug!("SSE line: {}", &line[..line.len().min(100)]);
+                let debug_len = line
+                    .char_indices()
+                    .nth(100)
+                    .map(|(i, _)| i)
+                    .unwrap_or(line.len());
+                tracing::debug!("SSE line: {}", &line[..debug_len]);
 
                 if line.is_empty() {
                     // End of SSE event — try to parse collected data

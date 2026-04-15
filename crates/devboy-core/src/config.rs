@@ -87,6 +87,15 @@ pub struct Config {
     /// Format pipeline configuration (TOON encoding, budget trimming, strategies).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format_pipeline: Option<FormatPipelineConfig>,
+
+    /// Sentry error reporting configuration (optional, disabled by default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sentry: Option<SentryConfig>,
+
+    /// Remote configuration endpoint (optional).
+    /// Fetches TOML config from a URL on startup and merges with local config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_config: Option<RemoteConfigSettings>,
 }
 
 /// Configuration for an upstream MCP server to proxy.
@@ -416,6 +425,66 @@ impl Default for ProxyMatchingConfig {
 
 fn default_true() -> bool {
     true
+}
+
+/// Sentry error reporting configuration.
+///
+/// By default Sentry is disabled. Setting `dsn` (or the `DEVBOY_SENTRY_DSN` env var)
+/// is sufficient to enable error reporting.
+///
+/// # Example
+///
+/// ```toml
+/// [sentry]
+/// dsn = "https://examplePublicKey@o0.ingest.sentry.io/0"
+/// environment = "production"
+/// sample_rate = 1.0
+/// traces_sample_rate = 0.0
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SentryConfig {
+    /// Sentry DSN endpoint. When empty, Sentry is disabled (no-op).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dsn: Option<String>,
+
+    /// Environment tag (e.g., "production", "staging", "development").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
+
+    /// Error sample rate (0.0 - 1.0). Default: 1.0 (send all errors).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_rate: Option<f32>,
+
+    /// Performance tracing sample rate (0.0 - 1.0). Default: 0.0 (disabled).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traces_sample_rate: Option<f32>,
+}
+
+/// Remote configuration endpoint settings.
+///
+/// Fetches TOML configuration from a remote URL on startup and merges it
+/// with the local config. Remote values override local values.
+///
+/// # Example
+///
+/// ```toml
+/// [remote_config]
+/// url = "https://example.com/api/devboy-config"
+/// token_key = "remote_config.token"
+/// ```
+///
+/// Or via environment variables:
+/// - `DEVBOY_REMOTE_CONFIG_URL` — Remote config URL
+/// - `DEVBOY_REMOTE_CONFIG_TOKEN` — Bearer token for authentication
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RemoteConfigSettings {
+    /// URL to fetch remote TOML config from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+
+    /// Keychain key for the Bearer token (e.g., "remote_config.token").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_key: Option<String>,
 }
 
 fn default_gitlab_url() -> String {
@@ -1179,6 +1248,8 @@ mod tests {
             proxy_mcp_servers: Vec::new(),
             builtin_tools: BuiltinToolsConfig::default(),
             format_pipeline: None,
+            sentry: None,
+            remote_config: None,
         };
 
         let providers = config.configured_providers();
@@ -1259,6 +1330,8 @@ mod tests {
             proxy_mcp_servers: Vec::new(),
             builtin_tools: BuiltinToolsConfig::default(),
             format_pipeline: None,
+            sentry: None,
+            remote_config: None,
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
