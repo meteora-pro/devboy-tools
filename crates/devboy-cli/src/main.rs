@@ -132,6 +132,26 @@ enum Commands {
         #[arg(long)]
         kimi: bool,
 
+        /// Register devboy as MCP server in Codex CLI
+        #[arg(long)]
+        codex_cli: bool,
+
+        /// Register devboy as MCP server in Copilot CLI
+        #[arg(long)]
+        copilot: bool,
+
+        /// Register devboy as MCP server in Gemini CLI
+        #[arg(long)]
+        gemini: bool,
+
+        /// Register devboy as MCP server in OpenCode
+        #[arg(long)]
+        opencode: bool,
+
+        /// Register devboy as MCP server in ForgeCode
+        #[arg(long)]
+        forge: bool,
+
         /// Context name for the configuration
         #[arg(short, long)]
         context: Option<String>,
@@ -575,6 +595,11 @@ async fn main() -> Result<()> {
                 force,
                 claude,
                 kimi,
+                codex_cli,
+                copilot,
+                gemini,
+                opencode,
+                forge,
                 context,
                 proxy,
                 proxy_only,
@@ -592,6 +617,11 @@ async fn main() -> Result<()> {
                     force,
                     claude,
                     kimi,
+                    codex_cli,
+                    copilot,
+                    gemini,
+                    opencode,
+                    forge,
                     context,
                     proxy,
                     proxy_only,
@@ -743,6 +773,11 @@ async fn handle_init_command(
     force: bool,
     claude: bool,
     kimi: bool,
+    codex_cli: bool,
+    copilot: bool,
+    gemini: bool,
+    opencode: bool,
+    forge: bool,
     context_name: Option<String>,
     proxy_url: Option<String>,
     proxy_only: bool,
@@ -799,10 +834,15 @@ async fn handle_init_command(
         collect_options_interactive(context_name)?
     };
 
-    // Save proxy_name for Claude/Kimi registration before it gets consumed
+    // Save proxy_name for agent registrations before it gets consumed
     // Only use custom name if user explicitly provided --proxy-name
     let claude_server_name = proxy_name.clone();
     let kimi_server_name = proxy_name.clone();
+    let codex_server_name = proxy_name.clone();
+    let copilot_server_name = proxy_name.clone();
+    let gemini_server_name = proxy_name.clone();
+    let opencode_server_name = proxy_name.clone();
+    let forge_server_name = proxy_name.clone();
 
     // Add proxy configuration if provided
     if let Some(url) = proxy_url {
@@ -894,6 +934,31 @@ async fn handle_init_command(
             println!("[dry-run] Would register devboy MCP server in Kimi CLI");
         }
 
+        if codex_cli {
+            println!();
+            println!("[dry-run] Would register devboy MCP server in Codex CLI");
+        }
+
+        if copilot {
+            println!();
+            println!("[dry-run] Would register devboy MCP server in Copilot CLI");
+        }
+
+        if gemini {
+            println!();
+            println!("[dry-run] Would register devboy MCP server in Gemini CLI");
+        }
+
+        if opencode {
+            println!();
+            println!("[dry-run] Would register devboy MCP server in OpenCode");
+        }
+
+        if forge {
+            println!();
+            println!("[dry-run] Would register devboy MCP server in ForgeCode");
+        }
+
         return Ok(());
     }
 
@@ -931,6 +996,36 @@ async fn handle_init_command(
     if kimi {
         let server_name = kimi_server_name.unwrap_or_else(|| "devboy".to_string());
         register_kimi_mcp(&server_name)?;
+    }
+
+    // Register with Codex CLI
+    if codex_cli {
+        let server_name = codex_server_name.unwrap_or_else(|| "devboy".to_string());
+        register_codex_mcp(&server_name)?;
+    }
+
+    // Register with Copilot CLI
+    if copilot {
+        let server_name = copilot_server_name.unwrap_or_else(|| "devboy".to_string());
+        register_copilot_mcp(&server_name)?;
+    }
+
+    // Register with Gemini CLI
+    if gemini {
+        let server_name = gemini_server_name.unwrap_or_else(|| "devboy".to_string());
+        register_gemini_mcp(&server_name)?;
+    }
+
+    // Register with OpenCode
+    if opencode {
+        let server_name = opencode_server_name.unwrap_or_else(|| "devboy".to_string());
+        register_opencode_mcp(&server_name)?;
+    }
+
+    // Register with ForgeCode
+    if forge {
+        let server_name = forge_server_name.unwrap_or_else(|| "devboy".to_string());
+        register_forge_mcp(&server_name)?;
     }
 
     println!();
@@ -1415,20 +1510,33 @@ fn register_claude_mcp_direct(server_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Internal helper to register MCP server to a specific config path.
-/// Used by both production code and tests.
-fn register_claude_mcp_to_path(server_name: &str, config_path: &std::path::Path) -> Result<()> {
-    let mut claude_config: serde_json::Value = if config_path.exists() {
-        let content =
-            std::fs::read_to_string(config_path).context("Failed to read claude config")?;
-        let parsed: serde_json::Value =
-            serde_json::from_str(&content).context("Failed to parse claude config")?;
+/// Internal helper to register MCP server to a JSON config file.
+/// Used by production code and tests for all JSON-based MCP configs.
+///
+/// # Arguments
+/// * `server_name` - Name to register the MCP server as
+/// * `config_path` - Path to the JSON config file
+/// * `container_key` - Top-level key that holds servers (e.g., "mcpServers")
+/// * `server_entry` - JSON value to insert for this server
+/// * `config_label` - Human-readable config name for error messages
+fn register_json_mcp_config(
+    server_name: &str,
+    config_path: &std::path::Path,
+    container_key: &str,
+    server_entry: serde_json::Value,
+    config_label: &str,
+) -> Result<()> {
+    let mut config: serde_json::Value = if config_path.exists() {
+        let content = std::fs::read_to_string(config_path)
+            .with_context(|| format!("Failed to read {} config", config_label))?;
+        let parsed: serde_json::Value = serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse {} config", config_label))?;
 
-        // Ensure root is an object
         if !parsed.is_object() {
             anyhow::bail!(
-                "Claude config exists but is not a JSON object. \
-                 Please fix it manually or delete it."
+                "{} config exists but is not a JSON object. \
+                 Please fix it manually or delete it.",
+                config_label
             );
         }
         parsed
@@ -1436,32 +1544,41 @@ fn register_claude_mcp_to_path(server_name: &str, config_path: &std::path::Path)
         serde_json::json!({})
     };
 
-    // Ensure mcpServers is an object (or create it)
-    match claude_config.get("mcpServers") {
+    match config.get(container_key) {
         Some(servers) if !servers.is_object() => {
             anyhow::bail!(
-                "Claude config has 'mcpServers' but it's not an object. \
-                 Please fix it manually."
+                "{} config has '{}' but it's not an object. \
+                 Please fix it manually.",
+                config_label,
+                container_key
             );
         }
         None => {
-            claude_config["mcpServers"] = serde_json::json!({});
+            config[container_key] = serde_json::json!({});
         }
         _ => {}
     }
 
-    // Add server with the specified name
-    claude_config["mcpServers"][server_name] = serde_json::json!({
-        "command": "devboy",
-        "args": ["mcp"]
-    });
+    config[container_key][server_name] = server_entry;
 
-    // Write back
-    let content = serde_json::to_string_pretty(&claude_config)
-        .context("Failed to serialize claude config")?;
-    std::fs::write(config_path, content).context("Failed to write claude config")?;
+    let content = serde_json::to_string_pretty(&config)
+        .with_context(|| format!("Failed to serialize {} config", config_label))?;
+    std::fs::write(config_path, content)
+        .with_context(|| format!("Failed to write {} config", config_label))?;
 
     Ok(())
+}
+
+/// Internal helper to register MCP server to a specific Claude config path.
+/// Used by both production code and tests.
+fn register_claude_mcp_to_path(server_name: &str, config_path: &std::path::Path) -> Result<()> {
+    register_json_mcp_config(
+        server_name,
+        config_path,
+        "mcpServers",
+        serde_json::json!({ "command": "devboy", "args": ["mcp"] }),
+        "claude",
+    )
 }
 
 /// Register MCP server in Kimi CLI by editing .kimi/mcp.json in the current directory.
@@ -1493,16 +1610,184 @@ fn register_kimi_mcp(server_name: &str) -> Result<()> {
 /// Internal helper to register MCP server to a specific Kimi config path.
 /// Used by both production code and tests.
 fn register_kimi_mcp_to_path(server_name: &str, config_path: &std::path::Path) -> Result<()> {
-    let mut kimi_config: serde_json::Value = if config_path.exists() {
-        let content =
-            std::fs::read_to_string(config_path).context("Failed to read kimi config")?;
-        let parsed: serde_json::Value =
-            serde_json::from_str(&content).context("Failed to parse kimi config")?;
+    register_json_mcp_config(
+        server_name,
+        config_path,
+        "mcpServers",
+        serde_json::json!({ "command": "devboy", "args": ["mcp"] }),
+        "kimi",
+    )
+}
 
-        // Ensure root is an object
+/// Register MCP server in Codex CLI.
+///
+/// Tries `codex mcp add` first, then falls back to editing `~/.codex/config.toml`.
+fn register_codex_mcp(server_name: &str) -> Result<()> {
+    println!("Registering '{}' MCP server in Codex CLI...", server_name);
+
+    let codex_result = Command::new("codex")
+        .args(["mcp", "add", server_name, "--", "devboy", "mcp"])
+        .status();
+
+    match codex_result {
+        Ok(status) if status.success() => {
+            println!("Successfully registered via Codex CLI");
+            return Ok(());
+        }
+        _ => {
+            register_codex_mcp_direct(server_name)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Fallback method: edit `~/.codex/config.toml` directly.
+fn register_codex_mcp_direct(server_name: &str) -> Result<()> {
+    let home = dirs::home_dir().context("Could not determine home directory")?;
+    let config_path = home.join(".codex").join("config.toml");
+    register_codex_mcp_to_path(server_name, &config_path)?;
+    println!("Successfully registered in ~/.codex/config.toml");
+    Ok(())
+}
+
+/// Internal helper to register Codex MCP to a specific config path.
+/// Used by both production code and tests.
+fn register_codex_mcp_to_path(server_name: &str, config_path: &std::path::Path) -> Result<()> {
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).context("Failed to create .codex directory")?;
+    }
+
+    let mut config: toml::Value = if config_path.exists() {
+        let content =
+            std::fs::read_to_string(config_path).context("Failed to read codex config")?;
+        content.parse().context("Failed to parse codex config")?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+
+    let table = config
+        .as_table_mut()
+        .context("Codex config is not a TOML table")?;
+
+    let mcp_servers = table
+        .entry("mcp_servers")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    let mcp_table = mcp_servers
+        .as_table_mut()
+        .context("Codex config 'mcp_servers' is not a table")?;
+
+    let mut server_table = toml::map::Map::new();
+    server_table.insert(
+        "command".to_string(),
+        toml::Value::String("devboy".to_string()),
+    );
+    let args = vec![toml::Value::String("mcp".to_string())];
+    server_table.insert("args".to_string(), toml::Value::Array(args));
+
+    mcp_table.insert(server_name.to_string(), toml::Value::Table(server_table));
+
+    let content =
+        toml::to_string_pretty(&config).context("Failed to serialize codex config")?;
+    std::fs::write(config_path, content).context("Failed to write codex config")?;
+
+    Ok(())
+}
+
+/// Register MCP server in Copilot CLI by editing `~/.copilot/mcp-config.json`.
+fn register_copilot_mcp(server_name: &str) -> Result<()> {
+    println!("Registering '{}' MCP server in Copilot CLI...", server_name);
+
+    let home = dirs::home_dir().context("Could not determine home directory")?;
+    let config_path = home.join(".copilot").join("mcp-config.json");
+    register_copilot_mcp_to_path(server_name, &config_path)?;
+
+    println!("Successfully registered in ~/.copilot/mcp-config.json");
+    Ok(())
+}
+
+/// Internal helper to register Copilot MCP to a specific config path.
+/// Used by both production code and tests.
+fn register_copilot_mcp_to_path(server_name: &str, config_path: &std::path::Path) -> Result<()> {
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).context("Failed to create .copilot directory")?;
+    }
+
+    register_json_mcp_config(
+        server_name,
+        config_path,
+        "mcpServers",
+        serde_json::json!({
+            "type": "local",
+            "command": "devboy",
+            "args": ["mcp"],
+            "tools": ["*"]
+        }),
+        "copilot",
+    )
+}
+
+/// Register MCP server in Gemini CLI.
+///
+/// Tries `gemini mcp add --trust` first, then falls back to `.gemini/settings.json`.
+fn register_gemini_mcp(server_name: &str) -> Result<()> {
+    println!("Registering '{}' MCP server in Gemini CLI...", server_name);
+
+    let gemini_result = Command::new("gemini")
+        .args(["mcp", "add", "--trust", server_name, "devboy", "mcp"])
+        .status();
+
+    match gemini_result {
+        Ok(status) if status.success() => {
+            println!("Successfully registered via Gemini CLI");
+            return Ok(());
+        }
+        _ => {
+            let config_path = std::env::current_dir()
+                .context("Could not determine current directory")?
+                .join(".gemini")
+                .join("settings.json");
+
+            if let Some(parent) = config_path.parent() {
+                std::fs::create_dir_all(parent).context("Failed to create .gemini directory")?;
+            }
+
+            register_json_mcp_config(
+                server_name,
+                &config_path,
+                "mcpServers",
+                serde_json::json!({
+                    "command": "devboy",
+                    "args": ["mcp"],
+                    "trust": true
+                }),
+                "gemini",
+            )?;
+
+            println!("Successfully registered in .gemini/settings.json");
+        }
+    }
+
+    Ok(())
+}
+
+/// Register MCP server in OpenCode by editing `opencode.json` in the current directory.
+fn register_opencode_mcp(server_name: &str) -> Result<()> {
+    println!("Registering '{}' MCP server in OpenCode...", server_name);
+
+    let config_path = std::env::current_dir()
+        .context("Could not determine current directory")?
+        .join("opencode.json");
+
+    let mut config: serde_json::Value = if config_path.exists() {
+        let content =
+            std::fs::read_to_string(&config_path).context("Failed to read opencode config")?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&content).context("Failed to parse opencode config")?;
+
         if !parsed.is_object() {
             anyhow::bail!(
-                "Kimi config exists but is not a JSON object. \
+                "OpenCode config exists but is not a JSON object. \
                  Please fix it manually or delete it."
             );
         }
@@ -1511,31 +1796,50 @@ fn register_kimi_mcp_to_path(server_name: &str, config_path: &std::path::Path) -
         serde_json::json!({})
     };
 
-    // Ensure mcpServers is an object (or create it)
-    match kimi_config.get("mcpServers") {
-        Some(servers) if !servers.is_object() => {
+    match config.get("mcp") {
+        Some(mcp) if !mcp.is_object() => {
             anyhow::bail!(
-                "Kimi config has 'mcpServers' but it's not an object. \
+                "OpenCode config has 'mcp' but it's not an object. \
                  Please fix it manually."
             );
         }
         None => {
-            kimi_config["mcpServers"] = serde_json::json!({});
+            config["mcp"] = serde_json::json!({});
         }
         _ => {}
     }
 
-    // Add server with the specified name
-    kimi_config["mcpServers"][server_name] = serde_json::json!({
+    config["mcp"][server_name] = serde_json::json!({
+        "type": "local",
         "command": "devboy",
         "args": ["mcp"]
     });
 
-    // Write back
-    let content = serde_json::to_string_pretty(&kimi_config)
-        .context("Failed to serialize kimi config")?;
-    std::fs::write(config_path, content).context("Failed to write kimi config")?;
+    let content = serde_json::to_string_pretty(&config)
+        .context("Failed to serialize opencode config")?;
+    std::fs::write(&config_path, content).context("Failed to write opencode config")?;
 
+    println!("Successfully registered in opencode.json");
+    Ok(())
+}
+
+/// Register MCP server in ForgeCode by editing `.mcp.json` in the current directory.
+fn register_forge_mcp(server_name: &str) -> Result<()> {
+    println!("Registering '{}' MCP server in ForgeCode...", server_name);
+
+    let config_path = std::env::current_dir()
+        .context("Could not determine current directory")?
+        .join(".mcp.json");
+
+    register_json_mcp_config(
+        server_name,
+        &config_path,
+        "mcpServers",
+        serde_json::json!({ "command": "devboy", "args": ["mcp"] }),
+        "forge",
+    )?;
+
+    println!("Successfully registered in .mcp.json");
     Ok(())
 }
 
@@ -4433,6 +4737,188 @@ mod tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not an object"));
+    }
+
+    // ==========================================================================
+    // Codex MCP registration tests (fallback TOML path)
+    // ==========================================================================
+
+    #[test]
+    fn test_register_codex_mcp_to_path_default_name() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let config_path = tmp_dir.path().join(".codex").join("config.toml");
+
+        register_codex_mcp_to_path("devboy", &config_path).unwrap();
+
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        let config: toml::Value = content.parse().unwrap();
+
+        assert!(config.get("mcp_servers").unwrap().get("devboy").is_some());
+        assert_eq!(
+            config["mcp_servers"]["devboy"]["command"].as_str().unwrap(),
+            "devboy"
+        );
+        let args = config["mcp_servers"]["devboy"]["args"].as_array().unwrap();
+        assert_eq!(args[0].as_str().unwrap(), "mcp");
+    }
+
+    #[test]
+    fn test_register_codex_mcp_to_path_preserves_existing() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let config_path = tmp_dir.path().join(".codex").join("config.toml");
+
+        let existing = r#"
+[model]
+provider = "openai"
+
+[mcp_servers.existing]
+command = "npx"
+args = ["old"]
+"#;
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        std::fs::write(&config_path, existing).unwrap();
+
+        register_codex_mcp_to_path("devboy", &config_path).unwrap();
+
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        let config: toml::Value = content.parse().unwrap();
+
+        assert!(config.get("mcp_servers").unwrap().get("existing").is_some());
+        assert!(config.get("mcp_servers").unwrap().get("devboy").is_some());
+        assert_eq!(config["model"]["provider"].as_str().unwrap(), "openai");
+    }
+
+    // ==========================================================================
+    // Copilot MCP registration tests
+    // ==========================================================================
+
+    #[test]
+    fn test_register_copilot_mcp_to_path_default_name() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let config_path = tmp_dir.path().join(".copilot").join("mcp-config.json");
+
+        register_copilot_mcp_to_path("devboy", &config_path).unwrap();
+
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert!(config["mcpServers"]["devboy"].is_object());
+        assert_eq!(config["mcpServers"]["devboy"]["type"], "local");
+        assert_eq!(config["mcpServers"]["devboy"]["command"], "devboy");
+        assert_eq!(config["mcpServers"]["devboy"]["args"][0], "mcp");
+        assert_eq!(config["mcpServers"]["devboy"]["tools"][0], "*");
+    }
+
+    // ==========================================================================
+    // Gemini MCP registration tests (fallback JSON path)
+    // ==========================================================================
+
+    fn register_gemini_mcp_to_test_path(server_name: &str, base: &std::path::Path) -> Result<()> {
+        let config_path = base.join(".gemini").join("settings.json");
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        register_json_mcp_config(
+            server_name,
+            &config_path,
+            "mcpServers",
+            serde_json::json!({ "command": "devboy", "args": ["mcp"], "trust": true }),
+            "gemini",
+        )
+    }
+
+    #[test]
+    fn test_register_gemini_mcp_default_name() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+
+        register_gemini_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
+
+        let content = std::fs::read_to_string(tmp_dir.path().join(".gemini").join("settings.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert!(config["mcpServers"]["devboy"].is_object());
+        assert_eq!(config["mcpServers"]["devboy"]["command"], "devboy");
+        assert_eq!(config["mcpServers"]["devboy"]["args"][0], "mcp");
+        assert_eq!(config["mcpServers"]["devboy"]["trust"], true);
+    }
+
+    // ==========================================================================
+    // OpenCode MCP registration tests
+    // ==========================================================================
+
+    fn register_opencode_mcp_to_test_path(server_name: &str, base: &std::path::Path) -> Result<()> {
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(base).unwrap();
+        let result = register_opencode_mcp(server_name);
+        std::env::set_current_dir(original_dir).unwrap();
+        result
+    }
+
+    #[test]
+    fn test_register_opencode_mcp_default_name() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+
+        register_opencode_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
+
+        let content = std::fs::read_to_string(tmp_dir.path().join("opencode.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert!(config["mcp"]["devboy"].is_object());
+        assert_eq!(config["mcp"]["devboy"]["type"], "local");
+        assert_eq!(config["mcp"]["devboy"]["command"], "devboy");
+        assert_eq!(config["mcp"]["devboy"]["args"][0], "mcp");
+    }
+
+    #[test]
+    fn test_register_opencode_mcp_preserves_existing() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        std::fs::write(tmp_dir.path().join("opencode.json"), r#"{"existingKey": "value"}"#).unwrap();
+
+        register_opencode_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
+
+        let content = std::fs::read_to_string(tmp_dir.path().join("opencode.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(config["existingKey"], "value");
+        assert!(config["mcp"]["devboy"].is_object());
+    }
+
+    // ==========================================================================
+    // ForgeCode MCP registration tests
+    // ==========================================================================
+
+    fn register_forge_mcp_to_test_path(server_name: &str, base: &std::path::Path) -> Result<()> {
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(base).unwrap();
+        let result = register_forge_mcp(server_name);
+        std::env::set_current_dir(original_dir).unwrap();
+        result
+    }
+
+    #[test]
+    fn test_register_forge_mcp_default_name() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+
+        register_forge_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
+
+        let content = std::fs::read_to_string(tmp_dir.path().join(".mcp.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert!(config["mcpServers"]["devboy"].is_object());
+        assert_eq!(config["mcpServers"]["devboy"]["command"], "devboy");
+        assert_eq!(config["mcpServers"]["devboy"]["args"][0], "mcp");
+    }
+
+    #[test]
+    fn test_register_forge_mcp_preserves_existing() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        std::fs::write(tmp_dir.path().join(".mcp.json"), r#"{"existingKey": "value"}"#).unwrap();
+
+        register_forge_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
+
+        let content = std::fs::read_to_string(tmp_dir.path().join(".mcp.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(config["existingKey"], "value");
+        assert!(config["mcpServers"]["devboy"].is_object());
     }
 
     // ==========================================================================

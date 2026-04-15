@@ -1280,3 +1280,271 @@ fn test_init_with_kimi_preserves_existing_mcp_servers() {
         kimi_content
     );
 }
+
+// ==========================================================================
+// Codex CLI registration tests
+// ==========================================================================
+
+#[test]
+fn test_init_codex_cli_flag_help_shows_option() {
+    let output = Command::new(devboy_bin())
+        .args(["init", "--help"])
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(
+        stdout.contains("--codex-cli"),
+        "Help should mention --codex-cli flag"
+    );
+}
+
+#[test]
+fn test_init_with_codex_cli_creates_config() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+    let fake_home = TempDir::new().unwrap();
+
+    let output = Command::new(devboy_bin())
+        .args(["init", "--yes", "--codex-cli"])
+        .env("HOME", fake_home.path())
+        .env("USERPROFILE", fake_home.path())
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        output.status.success(),
+        "Command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("'devboy'") || stdout.contains("\"devboy\""),
+        "Output should contain 'devboy' as the default server name: {}",
+        stdout
+    );
+
+    // Check fallback TOML config was created
+    let codex_toml = fake_home.path().join(".codex").join("config.toml");
+    if codex_toml.exists() {
+        let content = fs::read_to_string(&codex_toml).unwrap();
+        assert!(
+            content.contains("[mcp_servers.devboy]"),
+            "Codex config should contain devboy MCP server"
+        );
+    }
+}
+
+// ==========================================================================
+// Copilot CLI registration tests
+// ==========================================================================
+
+#[test]
+fn test_init_copilot_flag_help_shows_option() {
+    let output = Command::new(devboy_bin())
+        .args(["init", "--help"])
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(
+        stdout.contains("--copilot"),
+        "Help should mention --copilot flag"
+    );
+}
+
+#[test]
+fn test_init_with_copilot_creates_config() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+    let fake_home = TempDir::new().unwrap();
+
+    let output = Command::new(devboy_bin())
+        .args(["init", "--yes", "--copilot"])
+        .env("HOME", fake_home.path())
+        .env("USERPROFILE", fake_home.path())
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(
+        output.status.success(),
+        "Command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let copilot_json = fake_home.path().join(".copilot").join("mcp-config.json");
+    assert!(
+        copilot_json.exists(),
+        "Copilot config should be created"
+    );
+
+    let content = fs::read_to_string(&copilot_json).unwrap();
+    let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    assert!(
+        config["mcpServers"]["devboy"].is_object(),
+        "MCP server should be registered"
+    );
+    assert_eq!(config["mcpServers"]["devboy"]["type"], "local");
+    assert_eq!(config["mcpServers"]["devboy"]["tools"][0], "*");
+}
+
+// ==========================================================================
+// Gemini CLI registration tests
+// ==========================================================================
+
+#[test]
+fn test_init_gemini_flag_help_shows_option() {
+    let output = Command::new(devboy_bin())
+        .args(["init", "--help"])
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(
+        stdout.contains("--gemini"),
+        "Help should mention --gemini flag"
+    );
+}
+
+#[test]
+fn test_init_with_gemini_creates_config() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+
+    let output = Command::new(devboy_bin())
+        .args(["init", "--yes", "--gemini"])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(
+        output.status.success(),
+        "Command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let gemini_json = temp_dir.path().join(".gemini").join("settings.json");
+    assert!(
+        gemini_json.exists(),
+        "Gemini config should be created"
+    );
+
+    let content = fs::read_to_string(&gemini_json).unwrap();
+    let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    assert!(
+        config["mcpServers"]["devboy"].is_object(),
+        "MCP server should be registered"
+    );
+    assert_eq!(config["mcpServers"]["devboy"]["trust"], true);
+}
+
+// ==========================================================================
+// OpenCode registration tests
+// ==========================================================================
+
+#[test]
+fn test_init_opencode_flag_help_shows_option() {
+    let output = Command::new(devboy_bin())
+        .args(["init", "--help"])
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(
+        stdout.contains("--opencode"),
+        "Help should mention --opencode flag"
+    );
+}
+
+#[test]
+fn test_init_with_opencode_creates_config() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+
+    let output = Command::new(devboy_bin())
+        .args(["init", "--yes", "--opencode"])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(
+        output.status.success(),
+        "Command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let opencode_json = temp_dir.path().join("opencode.json");
+    assert!(
+        opencode_json.exists(),
+        "OpenCode config should be created"
+    );
+
+    let content = fs::read_to_string(&opencode_json).unwrap();
+    let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    assert!(
+        config["mcp"]["devboy"].is_object(),
+        "MCP server should be registered"
+    );
+    assert_eq!(config["mcp"]["devboy"]["type"], "local");
+}
+
+// ==========================================================================
+// ForgeCode registration tests
+// ==========================================================================
+
+#[test]
+fn test_init_forge_flag_help_shows_option() {
+    let output = Command::new(devboy_bin())
+        .args(["init", "--help"])
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(
+        stdout.contains("--forge"),
+        "Help should mention --forge flag"
+    );
+}
+
+#[test]
+fn test_init_with_forge_creates_config() {
+    let temp_dir = create_temp_git_repo("git@github.com:owner/repo.git");
+
+    let output = Command::new(devboy_bin())
+        .args(["init", "--yes", "--forge"])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(
+        output.status.success(),
+        "Command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let forge_json = temp_dir.path().join(".mcp.json");
+    assert!(
+        forge_json.exists(),
+        "ForgeCode config should be created"
+    );
+
+    let content = fs::read_to_string(&forge_json).unwrap();
+    let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    assert!(
+        config["mcpServers"]["devboy"].is_object(),
+        "MCP server should be registered"
+    );
+}
