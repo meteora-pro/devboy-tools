@@ -63,8 +63,8 @@ pub async fn fetch_and_merge(local_config: Config, token_from_keychain: Option<&
     match fetch_remote_toml(&url, token.as_deref()).await {
         Ok(remote_config) => merge_configs(local_config, remote_config),
         Err(e) => {
-            // Only show host/path to avoid leaking credentials from URL
-            let safe_url = url.split('?').next().unwrap_or(&url);
+            // Strip query params AND userinfo to avoid leaking credentials
+            let safe_url = redact_url(&url);
             eprintln!(
                 "[devboy] Failed to fetch remote config from {safe_url}: {e}. Using local config."
             );
@@ -75,6 +75,24 @@ pub async fn fetch_and_merge(local_config: Config, token_from_keychain: Option<&
 
 /// Maximum response size for remote config (1 MB). Prevents OOM from malicious endpoints.
 const MAX_REMOTE_CONFIG_SIZE: u64 = 1_024 * 1_024;
+
+/// Redact URL for safe logging: strip query params and userinfo.
+/// `https://user:pass@host.com/path?token=x` → `https://host.com/path`
+fn redact_url(url: &str) -> String {
+    let without_query = url.split('?').next().unwrap_or(url);
+    // Strip userinfo (user:pass@)
+    if let Some(scheme_end) = without_query.find("://") {
+        let after_scheme = &without_query[scheme_end + 3..];
+        if let Some(at_pos) = after_scheme.find('@') {
+            return format!(
+                "{}://{}",
+                &without_query[..scheme_end],
+                &after_scheme[at_pos + 1..]
+            );
+        }
+    }
+    without_query.to_string()
+}
 
 /// Fetch TOML config from a remote URL.
 async fn fetch_remote_toml(url: &str, token: Option<&str>) -> Result<Config, String> {
@@ -120,8 +138,11 @@ async fn fetch_remote_toml(url: &str, token: Option<&str>) -> Result<Config, Str
     toml::from_str::<Config>(&body).map_err(|e| format!("TOML parse error: {e}"))
 }
 
-/// Merge remote config into local config. Remote values override local values
-/// for fields that are `Some` / non-empty in the remote config.
+/// Merge remote config into local config.
+///
+/// Only fields that are present (Some/non-empty) in the remote config override
+/// local values. Remote config cannot clear/reset a local value — omitting a
+/// field in remote config preserves the local value.
 fn merge_configs(mut local: Config, remote: Config) -> Config {
     // Provider configs: remote overrides if present
     if remote.github.is_some() {

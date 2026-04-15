@@ -32,9 +32,11 @@ fn main() {
         .unwrap_or_default();
     println!("cargo:rustc-env=DEVBOY_BUILD_CI_RUN_ID={ci_run_id}");
 
-    // Rerun if git HEAD changes
+    // Rerun if git state changes
     println!("cargo:rerun-if-changed=../../.git/HEAD");
     println!("cargo:rerun-if-changed=../../.git/refs/");
+    println!("cargo:rerun-if-changed=../../.git/packed-refs");
+    println!("cargo:rerun-if-changed=../../.git/index");
 }
 
 fn git(args: &[&str]) -> String {
