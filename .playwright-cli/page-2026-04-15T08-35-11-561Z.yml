@@ -1,0 +1,42 @@
+- generic [ref=e2]:
+  - generic [ref=e6]:
+    - img "DevBoy" [ref=e11]
+    - generic [ref=e15]:
+      - heading "Sign in" [level=2] [ref=e16]
+      - generic [ref=e18]:
+        - button "Continue with Google" [ref=e19] [cursor=pointer]:
+          - img [ref=e20]
+          - generic [ref=e25]: Continue with Google
+        - button "Continue with GitHub" [ref=e26] [cursor=pointer]:
+          - img [ref=e27]
+          - generic [ref=e29]: Continue with GitHub
+      - generic [ref=e31]: OR
+      - generic [ref=e52]:
+        - generic [ref=e53]:
+          - generic [ref=e55]: Email address
+          - textbox "Email address" [ref=e59]:
+            - /placeholder: Enter your email
+            - text: e2e-tester@meteora.pro
+        - generic [ref=e60]:
+          - generic [ref=e62]: Password
+          - generic [ref=e66]:
+            - textbox "Password" [ref=e67]:
+              - /placeholder: Enter your password
+              - text: e2etester123123#
+            - img "eye-invisible" [ref=e69] [cursor=pointer]:
+              - img [ref=e70]
+        - generic [ref=e73]:
+          - button "Sign in" [active] [ref=e74] [cursor=pointer]:
+            - generic [ref=e79]: Sign in
+          - button "Cancel" [ref=e75] [cursor=pointer]:
+            - generic [ref=e76]: Cancel
+          - button "Sign in with link" [ref=e77] [cursor=pointer]:
+            - generic [ref=e78]: Sign in with link
+      - generic [ref=e35]:
+        - text: Don't have an account?
+        - link "Sign up" [ref=e36] [cursor=pointer]:
+          - /url: /sign-up
+  - generic [ref=e81]:
+    - img "close-circle" [ref=e82]:
+      - img [ref=e83]
+    - text: "Http failure response for http://localhost:4637/auth/login: 0 Unknown Error"

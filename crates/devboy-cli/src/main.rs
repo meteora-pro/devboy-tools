@@ -501,9 +501,9 @@ async fn main() -> Result<()> {
     // Initialize Sentry (must happen before tracing subscriber init).
     // Respects --no-config / DEVBOY_NO_CONFIG=1: in env-only mode, only env vars
     // are used for Sentry config (config file is not loaded).
-    // Note: remote config is NOT fetched here (requires async I/O before tracing
-    // init). If Sentry DSN comes from remote config, it will be applied when
-    // handle_mcp_command runs. For early Sentry init, use DEVBOY_SENTRY_DSN env var
+    // Note: remote config is NOT fetched here (it requires async I/O, but Sentry
+    // must be initialized before tracing subscriber). Sentry is initialized once
+    // and NOT re-initialized later. For Sentry DSN, use DEVBOY_SENTRY_DSN env var
     // or local [sentry] config section.
     #[cfg(feature = "sentry")]
     let _sentry_guard = {
@@ -2054,8 +2054,8 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
     };
 
     // Fetch and merge remote config (if configured via [remote_config] or env vars).
-    // This must happen before Sentry init and provider setup since remote config
-    // may provide sentry DSN, builtin_tools overrides, etc.
+    // This happens before provider setup so remote config can override builtin_tools etc.
+    // Note: Sentry is already initialized in main() — remote sentry DSN won't take effect.
     let token_from_keychain = config
         .remote_config
         .as_ref()

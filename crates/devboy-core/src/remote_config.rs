@@ -63,13 +63,18 @@ pub async fn fetch_and_merge(local_config: Config, token_from_keychain: Option<&
     match fetch_remote_toml(&url, token.as_deref()).await {
         Ok(remote_config) => merge_configs(local_config, remote_config),
         Err(e) => {
+            // Only show host/path to avoid leaking credentials from URL
+            let safe_url = url.split('?').next().unwrap_or(&url);
             eprintln!(
-                "[devboy] Failed to fetch remote config from {url}: {e}. Using local config."
+                "[devboy] Failed to fetch remote config from {safe_url}: {e}. Using local config."
             );
             local_config
         }
     }
 }
+
+/// Maximum response size for remote config (1 MB). Prevents OOM from malicious endpoints.
+const MAX_REMOTE_CONFIG_SIZE: u64 = 1_024 * 1_024;
 
 /// Fetch TOML config from a remote URL.
 async fn fetch_remote_toml(url: &str, token: Option<&str>) -> Result<Config, String> {
@@ -93,7 +98,24 @@ async fn fetch_remote_toml(url: &str, token: Option<&str>) -> Result<Config, Str
         return Err(format!("HTTP {status}"));
     }
 
+    // Check Content-Length if available
+    if let Some(len) = response.content_length()
+        && len > MAX_REMOTE_CONFIG_SIZE
+    {
+        return Err(format!(
+            "Response too large: {len} bytes (max {MAX_REMOTE_CONFIG_SIZE})"
+        ));
+    }
+
     let body = response.text().await.map_err(|e| format!("{e}"))?;
+
+    // Also check actual body size (Content-Length may be absent)
+    if body.len() as u64 > MAX_REMOTE_CONFIG_SIZE {
+        return Err(format!(
+            "Response too large: {} bytes (max {MAX_REMOTE_CONFIG_SIZE})",
+            body.len()
+        ));
+    }
 
     toml::from_str::<Config>(&body).map_err(|e| format!("TOML parse error: {e}"))
 }

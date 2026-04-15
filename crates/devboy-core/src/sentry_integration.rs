@@ -176,6 +176,9 @@ fn scrub_breadcrumb(
 ///
 /// Replaces `user:password@host` patterns and sensitive query parameters
 /// (token, key, secret, password) with `[Filtered]`.
+///
+/// Uses ASCII-only case-insensitive matching to avoid index misalignment
+/// issues with `to_lowercase()` on non-ASCII input.
 fn scrub_url_credentials(input: &str) -> String {
     let mut result = input.to_string();
     // Scrub userinfo in URLs: https://user:pass@host → https://[Filtered]@host
@@ -190,14 +193,17 @@ fn scrub_url_credentials(input: &str) -> String {
         }
     }
     // Scrub sensitive query params: ?token=xxx&key=yyy
-    // Single case-insensitive pass per param (no separate uppercase pattern needed).
+    // Uses ASCII-only case-insensitive byte search (safe for non-ASCII strings).
     for param in &["token", "key", "secret", "password", "api_key", "apikey"] {
         let pat = format!("{param}=");
-        let pat_lower = pat.to_lowercase();
+        let pat_bytes = pat.as_bytes();
         let mut search_from = 0;
-        // Precompute lowercase once, rebuild only when the string changes
-        let mut result_lower = result.to_lowercase();
-        while let Some(rel_pos) = result_lower[search_from..].find(&pat_lower) {
+        while search_from + pat_bytes.len() <= result.len() {
+            let haystack = &result.as_bytes()[search_from..];
+            let found = haystack
+                .windows(pat_bytes.len())
+                .position(|w| w.eq_ignore_ascii_case(pat_bytes));
+            let Some(rel_pos) = found else { break };
             let pos = search_from + rel_pos;
             let value_start = pos + pat.len();
             let value_end = result[value_start..]
@@ -205,16 +211,15 @@ fn scrub_url_credentials(input: &str) -> String {
                 .map(|i| value_start + i)
                 .unwrap_or(result.len());
             // Preserve original case of the param name from the input
-            let original_param = result[pos..value_start].to_string();
-            result = format!(
+            let original_param = &result[pos..value_start];
+            let replacement = format!(
                 "{}{}[Filtered]{}",
                 &result[..pos],
                 original_param,
                 &result[value_end..]
             );
-            // Advance past the replacement to avoid re-matching
             search_from = pos + original_param.len() + "[Filtered]".len();
-            result_lower = result.to_lowercase();
+            result = replacement;
         }
     }
     result
@@ -295,6 +300,54 @@ mod tests {
             scrub_url_credentials("https://host.com?api_key=xyz&page=1"),
             "https://host.com?api_key=[Filtered]&page=1"
         );
+    }
+
+    #[test]
+    fn test_scrub_url_credentials_non_ascii() {
+        // Non-ASCII in URL path — should not panic or corrupt
+        assert_eq!(
+            scrub_url_credentials("https://host.com/путь?token=secret"),
+            "https://host.com/путь?token=[Filtered]"
+        );
+        // Non-ASCII in value — scrubbed correctly
+        assert_eq!(
+            scrub_url_credentials("https://host.com?key=ключ&page=1"),
+            "https://host.com?key=[Filtered]&page=1"
+        );
+        // Pure non-ASCII string — unchanged
+        assert_eq!(scrub_url_credentials("Привет мир"), "Привет мир");
+    }
+
+    #[test]
+    fn test_scrub_url_credentials_multiple_same_param() {
+        // Multiple token params
+        assert_eq!(
+            scrub_url_credentials("https://h.com?token=a&other=b&token=c"),
+            "https://h.com?token=[Filtered]&other=b&token=[Filtered]"
+        );
+    }
+
+    #[test]
+    fn test_scrub_url_credentials_fragment() {
+        // Fragment delimiter stops value
+        assert_eq!(
+            scrub_url_credentials("https://host.com?token=secret#section"),
+            "https://host.com?token=[Filtered]#section"
+        );
+    }
+
+    #[test]
+    fn test_scrub_map() {
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("Authorization".to_string(), "Bearer xyz".to_string());
+        map.insert("Content-Type".to_string(), "application/json".to_string());
+        map.insert("x-api-key".to_string(), "secret123".to_string());
+
+        scrub_map(&mut map);
+
+        assert_eq!(map["Authorization"], "[Filtered]");
+        assert_eq!(map["Content-Type"], "application/json");
+        assert_eq!(map["x-api-key"], "[Filtered]");
     }
 
     #[test]
