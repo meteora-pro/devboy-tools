@@ -355,10 +355,12 @@ DevBoy can fetch TOML configuration from a remote URL on startup and merge it wi
 
 ### Configuration
 
-| Variable | Config Equivalent | Description |
-|----------|-------------------|-------------|
-| `DEVBOY_REMOTE_CONFIG_URL` | `remote_config.url` | URL to fetch TOML config from |
-| `DEVBOY_REMOTE_CONFIG_TOKEN` | `remote_config.token_key` (keychain) | Bearer token for authentication |
+| Variable | Description |
+|----------|-------------|
+| `DEVBOY_REMOTE_CONFIG_URL` | URL to fetch TOML config from (overrides `remote_config.url`) |
+| `DEVBOY_REMOTE_CONFIG_TOKEN` | Bearer token value for authentication (overrides keychain lookup via `remote_config.token_key`) |
+
+**Note:** In `config.toml`, `remote_config.token_key` is a keychain key name (e.g., `"remote_config.token"`), not the token itself. The env var `DEVBOY_REMOTE_CONFIG_TOKEN` provides the token value directly.
 
 ### Config file
 
