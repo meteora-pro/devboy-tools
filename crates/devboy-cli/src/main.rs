@@ -128,6 +128,10 @@ enum Commands {
         #[arg(long)]
         claude: bool,
 
+        /// Register devboy as MCP server in Kimi CLI
+        #[arg(long)]
+        kimi: bool,
+
         /// Context name for the configuration
         #[arg(short, long)]
         context: Option<String>,
@@ -570,6 +574,7 @@ async fn main() -> Result<()> {
                 dry_run,
                 force,
                 claude,
+                kimi,
                 context,
                 proxy,
                 proxy_only,
@@ -586,6 +591,7 @@ async fn main() -> Result<()> {
                     dry_run,
                     force,
                     claude,
+                    kimi,
                     context,
                     proxy,
                     proxy_only,
@@ -736,6 +742,7 @@ async fn handle_init_command(
     dry_run: bool,
     force: bool,
     claude: bool,
+    kimi: bool,
     context_name: Option<String>,
     proxy_url: Option<String>,
     proxy_only: bool,
@@ -792,9 +799,10 @@ async fn handle_init_command(
         collect_options_interactive(context_name)?
     };
 
-    // Save proxy_name for Claude registration before it gets consumed
-    // Only use custom name for Claude if user explicitly provided --proxy-name
+    // Save proxy_name for Claude/Kimi registration before it gets consumed
+    // Only use custom name if user explicitly provided --proxy-name
     let claude_server_name = proxy_name.clone();
+    let kimi_server_name = proxy_name.clone();
 
     // Add proxy configuration if provided
     if let Some(url) = proxy_url {
@@ -881,6 +889,11 @@ async fn handle_init_command(
             println!("[dry-run] Would register devboy MCP server in Claude Code");
         }
 
+        if kimi {
+            println!();
+            println!("[dry-run] Would register devboy MCP server in Kimi CLI");
+        }
+
         return Ok(());
     }
 
@@ -912,6 +925,12 @@ async fn handle_init_command(
         // options.proxy.name defaults to "proxy" when --proxy is used without --proxy-name
         let server_name = claude_server_name.unwrap_or_else(|| "devboy".to_string());
         register_claude_mcp(&server_name).await?;
+    }
+
+    // Register with Kimi CLI
+    if kimi {
+        let server_name = kimi_server_name.unwrap_or_else(|| "devboy".to_string());
+        register_kimi_mcp(&server_name)?;
     }
 
     println!();
@@ -1441,6 +1460,81 @@ fn register_claude_mcp_to_path(server_name: &str, config_path: &std::path::Path)
     let content = serde_json::to_string_pretty(&claude_config)
         .context("Failed to serialize claude config")?;
     std::fs::write(config_path, content).context("Failed to write claude config")?;
+
+    Ok(())
+}
+
+/// Register MCP server in Kimi CLI by editing .kimi/mcp.json in the current directory.
+///
+/// Kimi CLI supports project-level MCP configuration via `.kimi/mcp.json`.
+/// The server will run `devboy mcp` command but can be registered under any name.
+///
+/// # Arguments
+/// * `server_name` - Name to register the MCP server as (e.g., "devboy", "my-custom-server")
+fn register_kimi_mcp(server_name: &str) -> Result<()> {
+    println!("Registering '{}' MCP server in Kimi CLI...", server_name);
+
+    let kimi_config_path = std::env::current_dir()
+        .context("Could not determine current directory")?
+        .join(".kimi")
+        .join("mcp.json");
+
+    // Ensure .kimi directory exists
+    if let Some(parent) = kimi_config_path.parent() {
+        std::fs::create_dir_all(parent).context("Failed to create .kimi directory")?;
+    }
+
+    register_kimi_mcp_to_path(server_name, &kimi_config_path)?;
+
+    println!("Successfully registered in .kimi/mcp.json");
+    Ok(())
+}
+
+/// Internal helper to register MCP server to a specific Kimi config path.
+/// Used by both production code and tests.
+fn register_kimi_mcp_to_path(server_name: &str, config_path: &std::path::Path) -> Result<()> {
+    let mut kimi_config: serde_json::Value = if config_path.exists() {
+        let content =
+            std::fs::read_to_string(config_path).context("Failed to read kimi config")?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&content).context("Failed to parse kimi config")?;
+
+        // Ensure root is an object
+        if !parsed.is_object() {
+            anyhow::bail!(
+                "Kimi config exists but is not a JSON object. \
+                 Please fix it manually or delete it."
+            );
+        }
+        parsed
+    } else {
+        serde_json::json!({})
+    };
+
+    // Ensure mcpServers is an object (or create it)
+    match kimi_config.get("mcpServers") {
+        Some(servers) if !servers.is_object() => {
+            anyhow::bail!(
+                "Kimi config has 'mcpServers' but it's not an object. \
+                 Please fix it manually."
+            );
+        }
+        None => {
+            kimi_config["mcpServers"] = serde_json::json!({});
+        }
+        _ => {}
+    }
+
+    // Add server with the specified name
+    kimi_config["mcpServers"][server_name] = serde_json::json!({
+        "command": "devboy",
+        "args": ["mcp"]
+    });
+
+    // Write back
+    let content = serde_json::to_string_pretty(&kimi_config)
+        .context("Failed to serialize kimi config")?;
+    std::fs::write(config_path, content).context("Failed to write kimi config")?;
 
     Ok(())
 }
@@ -4174,6 +4268,168 @@ mod tests {
         let tmp_dir = create_test_claude_config(r#"{"mcpServers": "invalid"}"#);
 
         let result = register_claude_mcp_to_test_path("devboy", tmp_dir.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not an object"));
+    }
+
+    // ==========================================================================
+    // Kimi MCP registration tests
+    // ==========================================================================
+
+    /// Helper to create a test kimi mcp.json config in a temp directory
+    fn create_test_kimi_config(content: &str) -> tempfile::TempDir {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let kimi_dir = tmp_dir.path().join(".kimi");
+        std::fs::create_dir_all(&kimi_dir).unwrap();
+        let kimi_json = kimi_dir.join("mcp.json");
+        std::fs::write(&kimi_json, content).unwrap();
+        tmp_dir
+    }
+
+    /// Helper to call production code with a custom config path for testing
+    fn register_kimi_mcp_to_test_path(server_name: &str, base_path: &std::path::Path) -> Result<()> {
+        let config_path = base_path.join(".kimi").join("mcp.json");
+        // Ensure .kimi directory exists
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        register_kimi_mcp_to_path(server_name, &config_path)
+    }
+
+    #[test]
+    fn test_register_kimi_mcp_default_name() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+
+        register_kimi_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
+
+        let content = std::fs::read_to_string(tmp_dir.path().join(".kimi").join("mcp.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert!(config["mcpServers"]["devboy"].is_object());
+        assert_eq!(config["mcpServers"]["devboy"]["command"], "devboy");
+        assert_eq!(config["mcpServers"]["devboy"]["args"][0], "mcp");
+    }
+
+    #[test]
+    fn test_register_kimi_mcp_custom_name() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+
+        register_kimi_mcp_to_test_path("my-custom-server", tmp_dir.path()).unwrap();
+
+        let content = std::fs::read_to_string(tmp_dir.path().join(".kimi").join("mcp.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // Should be registered under custom name, not "devboy"
+        assert!(config["mcpServers"]["devboy"].is_null());
+        assert!(config["mcpServers"]["my-custom-server"].is_object());
+        assert_eq!(
+            config["mcpServers"]["my-custom-server"]["command"],
+            "devboy"
+        );
+        assert_eq!(config["mcpServers"]["my-custom-server"]["args"][0], "mcp");
+    }
+
+    #[test]
+    fn test_register_kimi_mcp_preserves_existing_servers() {
+        let tmp_dir = create_test_kimi_config(
+            r#"{
+            "mcpServers": {
+                "existing-server": {
+                    "command": "some-cmd",
+                    "args": ["arg1"]
+                }
+            }
+        }"#,
+        );
+
+        register_kimi_mcp_to_test_path("my-proxy", tmp_dir.path()).unwrap();
+
+        let content = std::fs::read_to_string(tmp_dir.path().join(".kimi").join("mcp.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // Existing server should be preserved
+        assert!(config["mcpServers"]["existing-server"].is_object());
+        assert_eq!(
+            config["mcpServers"]["existing-server"]["command"],
+            "some-cmd"
+        );
+
+        // New server should be added
+        assert!(config["mcpServers"]["my-proxy"].is_object());
+        assert_eq!(config["mcpServers"]["my-proxy"]["command"], "devboy");
+    }
+
+    #[test]
+    fn test_register_kimi_mcp_creates_mcp_servers_section() {
+        let tmp_dir = create_test_kimi_config(r#"{"someOtherKey": "value"}"#);
+
+        register_kimi_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
+
+        let content = std::fs::read_to_string(tmp_dir.path().join(".kimi").join("mcp.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // Original key should be preserved
+        assert_eq!(config["someOtherKey"], "value");
+
+        // mcpServers should be created
+        assert!(config["mcpServers"]["devboy"].is_object());
+    }
+
+    #[test]
+    fn test_register_kimi_mcp_creates_file_if_not_exists() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let kimi_json = tmp_dir.path().join(".kimi").join("mcp.json");
+
+        // File should not exist initially
+        assert!(!kimi_json.exists());
+
+        register_kimi_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
+
+        // File should now exist
+        assert!(kimi_json.exists());
+
+        let content = std::fs::read_to_string(&kimi_json).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(config["mcpServers"]["devboy"].is_object());
+    }
+
+    #[test]
+    fn test_register_kimi_mcp_creates_kimi_directory() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let kimi_dir = tmp_dir.path().join(".kimi");
+        let kimi_json = kimi_dir.join("mcp.json");
+
+        // .kimi directory should not exist initially
+        assert!(!kimi_dir.exists());
+
+        register_kimi_mcp_to_test_path("devboy", tmp_dir.path()).unwrap();
+
+        // .kimi directory and mcp.json should now exist
+        assert!(kimi_dir.exists());
+        assert!(kimi_json.exists());
+    }
+
+    #[test]
+    fn test_register_kimi_mcp_fails_on_non_object_root() {
+        let tmp_dir = create_test_kimi_config(r#"[]"#);
+
+        let result = register_kimi_mcp_to_test_path("devboy", tmp_dir.path());
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not a JSON object")
+        );
+    }
+
+    #[test]
+    fn test_register_kimi_mcp_fails_on_non_object_mcp_servers() {
+        let tmp_dir = create_test_kimi_config(r#"{"mcpServers": "invalid"}"#);
+
+        let result = register_kimi_mcp_to_test_path("devboy", tmp_dir.path());
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not an object"));
