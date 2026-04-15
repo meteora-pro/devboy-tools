@@ -1,5 +1,0 @@
-2026/04/15-12:16:57.786 99abae Reusing MANIFEST /Users/andreymaznyak/projects/meteora/DEV_ENV_4/devboy-env-4/external/devboy-tools/.playwright-cli/profile/Default/IndexedDB/http_localhost_4500.indexeddb.leveldb/MANIFEST-000001
-2026/04/15-12:16:57.786 99abae Recovering log #6
-2026/04/15-12:16:57.786 99abae Reusing old log /Users/andreymaznyak/projects/meteora/DEV_ENV_4/devboy-env-4/external/devboy-tools/.playwright-cli/profile/Default/IndexedDB/http_localhost_4500.indexeddb.leveldb/000006.log 
-2026/04/15-12:16:57.814 99abbe Manual compaction at level-0 from '\x00\x07\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x08\x00\x00\x00' @ 0 : 0; will stop at (end)
-2026/04/15-12:17:19.828 99abbe Manual compaction at level-0 from '\x00\x08\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x09\x00\x00\x00' @ 0 : 0; will stop at (end)
