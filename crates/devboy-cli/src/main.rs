@@ -2124,8 +2124,7 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
             }
 
             // 3. Build proxy manager and fetch tools
-            let mut proxy_manager =
-                build_proxy_manager(&merged_config, bg_store.as_ref()).await;
+            let mut proxy_manager = build_proxy_manager(&merged_config, bg_store.as_ref()).await;
             add_env_only_proxies_from_snapshot(
                 &mut proxy_manager,
                 &merged_config,
@@ -2134,10 +2133,10 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
             )
             .await;
 
-            if !proxy_manager.is_empty() {
-                if let Err(e) = proxy_manager.fetch_all_tools().await {
-                    tracing::warn!("Failed to fetch proxy tools: {}", e);
-                }
+            if !proxy_manager.is_empty()
+                && let Err(e) = proxy_manager.fetch_all_tools().await
+            {
+                tracing::warn!("Failed to fetch proxy tools: {}", e);
             }
 
             let _ = tx.send(proxy_manager);
@@ -2819,101 +2818,12 @@ fn add_context_providers_from_env(
 ///
 /// Looks for `DEVBOY_*_URL` variables and creates proxies for them
 /// if they don't already exist in the config.
+/// Uses a pre-collected env var snapshot so this function is Send-safe.
 ///
 /// Example:
+///
 /// - `DEVBOY_DEVBOY_CLOUD_URL=https://...` creates proxy named "devboy-cloud"
 /// - `DEVBOY_DEVBOY_CLOUD_TOKEN=xxx` provides the token
-/// Check if there are any env-only proxy servers (DEVBOY_*_URL) not already in config.
-fn has_env_only_proxies(config: &Config) -> bool {
-    let existing_names: std::collections::HashSet<_> = config
-        .proxy_mcp_servers
-        .iter()
-        .map(|p| p.name.to_lowercase().replace(['.', '/', '-'], "_"))
-        .collect();
-    std::env::vars().any(|( key, _)| {
-        key.strip_prefix("DEVBOY_")
-            .and_then(|s| s.strip_suffix("_URL"))
-            .is_some_and(|name| {
-                !name.starts_with("CONTEXTS_")
-                    && !existing_names.contains(&name.to_lowercase())
-            })
-    })
-}
-
-async fn add_env_only_proxies(
-    proxy_manager: &mut ProxyManager,
-    config: &Config,
-    store: &dyn CredentialStore,
-) {
-    // Collect existing proxy names from config
-    let existing_names: std::collections::HashSet<_> = config
-        .proxy_mcp_servers
-        .iter()
-        .map(|p| p.name.to_lowercase().replace(['.', '/', '-'], "_"))
-        .collect();
-
-    // Scan environment for DEVBOY_*_URL patterns
-    for (key, url) in std::env::vars() {
-        if let Some(name) = key
-            .strip_prefix("DEVBOY_")
-            .and_then(|s| s.strip_suffix("_URL"))
-        {
-            // Skip context/provider base URL variables like DEVBOY_CONTEXTS_<CTX>_GITHUB_URL
-            // These are for provider configuration, not proxy servers
-            if name.starts_with("CONTEXTS_") {
-                tracing::debug!("Ignoring context provider URL '{}' (not a proxy)", key);
-                continue;
-            }
-
-            // Convert env name back to proxy name (lowercase, underscores to dashes)
-            let proxy_name = name.to_lowercase().replace('_', "-");
-            let normalized = name.to_lowercase();
-
-            // Skip if already configured
-            if existing_names.contains(&normalized) {
-                tracing::debug!("Proxy '{}' already in config, env URL ignored", proxy_name);
-                continue;
-            }
-
-            // Get token from store (will check env vars via ChainStore)
-            let token_key = format!("{}.token", proxy_name);
-            let token = store.get(&token_key).ok().flatten();
-
-            tracing::info!(
-                "Found env-only proxy '{}' from {} (token: {})",
-                proxy_name,
-                key,
-                if token.is_some() { "found" } else { "none" }
-            );
-
-            // Connect to the proxy
-            match McpProxyClient::connect(
-                &proxy_name,
-                &url,
-                None, // no tool prefix override
-                token.as_deref(),
-                "bearer", // default auth type
-                ProxyTransport::StreamableHttp,
-            )
-            .await
-            {
-                Ok(client) => {
-                    tracing::info!("Connected to env-only proxy '{}' at {}", proxy_name, url);
-                    proxy_manager.add_client(client);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to connect to env-only proxy '{}': {}",
-                        proxy_name,
-                        e
-                    );
-                }
-            }
-        }
-    }
-}
-
-/// Like `add_env_only_proxies` but uses a pre-collected env var snapshot (Send-safe).
 async fn add_env_only_proxies_from_snapshot(
     proxy_manager: &mut ProxyManager,
     config: &Config,
