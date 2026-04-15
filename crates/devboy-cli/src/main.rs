@@ -498,15 +498,10 @@ fn get_credential_store_for_init() -> Box<dyn CredentialStore> {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize Sentry (must happen before tracing subscriber init).
-    // Respects --no-config / DEVBOY_NO_CONFIG=1: in env-only mode, only env vars
-    // are used for Sentry config (config file is not loaded).
-    // Note: remote config is NOT fetched here (it requires async I/O, but Sentry
-    // must be initialized before tracing subscriber). Sentry is initialized once
-    // and NOT re-initialized later. For Sentry DSN, use DEVBOY_SENTRY_DSN env var
-    // or local [sentry] config section.
+    // Initialize Sentry from local config / env vars.
+    // May return None if no DSN is configured yet — remote config can provide it later.
     #[cfg(feature = "sentry")]
-    let _sentry_guard = {
+    let mut _sentry_guard = {
         let config = if is_no_config_enabled() {
             None
         } else {
@@ -527,14 +522,12 @@ async fn main() -> Result<()> {
 
     let is_mcp_command = matches!(cli.command, Some(Commands::Mcp { .. }));
 
-    // When sentry feature is enabled AND Sentry is actually active, use layered
-    // subscriber with sentry-tracing. Otherwise fall back to plain fmt subscriber
-    // to avoid any per-event overhead from the sentry layer.
+    // Always install sentry-tracing layer when feature is enabled.
+    // If Sentry is not yet initialized (no DSN), the layer is a no-op.
+    // If remote config provides a DSN later, init_sentry() is called again
+    // and the layer automatically picks up the new client from Hub::current().
     #[cfg(feature = "sentry")]
-    let sentry_enabled = _sentry_guard.as_ref().is_some_and(|g| g.is_enabled());
-
-    #[cfg(feature = "sentry")]
-    if sentry_enabled {
+    {
         let fmt_layer = if is_mcp_command {
             tracing_subscriber::fmt::layer()
                 .with_writer(std::io::stderr)
@@ -547,16 +540,6 @@ async fn main() -> Result<()> {
             .with(sentry_tracing::layer())
             .with(filter)
             .init();
-    } else {
-        #[cfg(feature = "sentry")]
-        {
-            let builder = tracing_subscriber::fmt().with_env_filter(filter);
-            if is_mcp_command {
-                builder.with_writer(std::io::stderr).init();
-            } else {
-                builder.init();
-            }
-        }
     }
 
     #[cfg(not(feature = "sentry"))]
@@ -2058,7 +2041,6 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
 
     // Fetch and merge remote config (if configured via [remote_config] or env vars).
     // This happens before provider setup so remote config can override builtin_tools etc.
-    // Note: Sentry is already initialized in main() — remote sentry DSN won't take effect.
     let token_from_keychain = config
         .remote_config
         .as_ref()
@@ -2067,6 +2049,35 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
         .flatten();
     let config =
         devboy_core::remote_config::fetch_and_merge(config, token_from_keychain.as_deref()).await;
+
+    // Re-initialize Sentry if remote config provided a DSN that wasn't available earlier.
+    // The sentry-tracing layer (always installed) automatically picks up the new client.
+    #[cfg(feature = "sentry")]
+    {
+        let remote_dsn = config
+            .sentry
+            .as_ref()
+            .and_then(|s| s.dsn.as_ref())
+            .filter(|s| !s.is_empty());
+        let current_enabled = sentry::Hub::current()
+            .client()
+            .is_some_and(|c| c.is_enabled());
+
+        if remote_dsn.is_some() && !current_enabled {
+            let new_guard = devboy_core::sentry_integration::init_sentry(
+                config.sentry.as_ref(),
+                &sentry_release(),
+            );
+            if new_guard.as_ref().is_some_and(|g| g.is_enabled()) {
+                tracing::info!("Sentry re-initialized with DSN from remote config");
+                // Leak the guard to keep it alive for the process lifetime.
+                // The old guard (None) is already a no-op.
+                if let Some(guard) = new_guard {
+                    std::mem::forget(guard);
+                }
+            }
+        }
+    }
 
     // Apply built-in tools filtering config.
     if !config.builtin_tools.is_empty() {
