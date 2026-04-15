@@ -79,7 +79,7 @@ impl McpServer {
         self.deferred_proxy = Some(receiver);
     }
 
-    /// Resolve the deferred proxy if pending, merging its tools into the proxy manager.
+    /// Resolve the deferred proxy if pending, replacing the proxy manager with the background result.
     async fn resolve_deferred_proxy(&mut self) {
         if let Some(receiver) = self.deferred_proxy.take() {
             match receiver.await {
