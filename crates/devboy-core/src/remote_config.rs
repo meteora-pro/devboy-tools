@@ -45,7 +45,8 @@ pub async fn fetch_and_merge(local_config: Config, token_from_keychain: Option<&
             local_config
                 .remote_config
                 .as_ref()
-                .and_then(|rc| rc.url.clone())
+                .and_then(|rc| rc.url.as_ref().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
         });
 
     let url = match url {
