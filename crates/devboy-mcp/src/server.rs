@@ -11,6 +11,7 @@ use std::sync::{Arc, RwLock};
 use devboy_core::{BuiltinToolsConfig, Provider};
 use serde::Deserialize;
 use serde_json::Value;
+use tokio::sync::oneshot;
 
 use crate::protocol::{
     InitializeParams, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MCP_VERSION,
@@ -19,6 +20,14 @@ use crate::protocol::{
 };
 use crate::proxy::ProxyManager;
 use crate::transport::{IncomingMessage, StdioTransport};
+
+/// Result of deferred background initialization (remote config + proxy).
+pub struct DeferredInit {
+    /// Proxy manager with connected upstream servers and fetched tools.
+    pub proxy_manager: ProxyManager,
+    /// Builtin tools config from remote config (overrides local if non-empty).
+    pub builtin_tools_config: Option<BuiltinToolsConfig>,
+}
 
 /// MCP server for devboy-tools.
 pub struct McpServer {
@@ -29,6 +38,9 @@ pub struct McpServer {
     proxy_manager: ProxyManager,
     builtin_tools_config: BuiltinToolsConfig,
     meeting_providers: Vec<Arc<dyn devboy_core::MeetingNotesProvider>>,
+    /// Deferred background initialization — resolved on first `tools/list` or `tools/call`.
+    /// Returns proxy manager and optional builtin_tools override from remote config.
+    deferred_init: Option<oneshot::Receiver<DeferredInit>>,
 }
 
 impl McpServer {
@@ -46,6 +58,7 @@ impl McpServer {
             proxy_manager: ProxyManager::new(),
             builtin_tools_config: BuiltinToolsConfig::default(),
             meeting_providers: Vec::new(),
+            deferred_init: None,
         }
     }
 
@@ -64,6 +77,39 @@ impl McpServer {
     /// Set the proxy manager for upstream MCP server connections.
     pub fn set_proxy_manager(&mut self, proxy_manager: ProxyManager) {
         self.proxy_manager = proxy_manager;
+    }
+
+    /// Set deferred initialization that will be resolved on first `tools/list` or `tools/call`.
+    ///
+    /// This allows the MCP server to start reading stdin immediately while remote
+    /// config fetch, proxy connections, and tool loading run in the background.
+    pub fn set_deferred_init(&mut self, receiver: oneshot::Receiver<DeferredInit>) {
+        self.deferred_init = Some(receiver);
+    }
+
+    /// Resolve deferred init if pending — applies proxy manager and remote builtin_tools config.
+    async fn resolve_deferred_init(&mut self) {
+        if let Some(receiver) = self.deferred_init.take() {
+            match receiver.await {
+                Ok(init) => {
+                    if !init.proxy_manager.is_empty() {
+                        self.proxy_manager = init.proxy_manager;
+                    }
+                    if let Some(bt_config) = init.builtin_tools_config
+                        && !bt_config.is_empty()
+                    {
+                        if let Err(e) = bt_config.validate() {
+                            tracing::warn!("Remote builtin_tools config is invalid, ignoring: {e}");
+                        } else {
+                            self.builtin_tools_config = bt_config;
+                        }
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!("Deferred initialization was cancelled");
+                }
+            }
+        }
     }
 
     pub fn add_meeting_provider(&mut self, provider: Arc<dyn devboy_core::MeetingNotesProvider>) {
@@ -223,8 +269,14 @@ impl McpServer {
 
         match req.method.as_str() {
             "initialize" => self.handle_initialize(req.id, req.params),
-            "tools/list" => self.handle_tools_list(req.id),
-            "tools/call" => self.handle_tools_call(req.id, req.params).await,
+            "tools/list" => {
+                self.resolve_deferred_init().await;
+                self.handle_tools_list(req.id)
+            }
+            "tools/call" => {
+                self.resolve_deferred_init().await;
+                self.handle_tools_call(req.id, req.params).await
+            }
             "ping" => self.handle_ping(req.id),
             method => {
                 tracing::warn!("Unknown method: {}", method);
@@ -305,11 +357,18 @@ impl McpServer {
         let base_tools = devboy_executor::tools::base_tool_definitions();
         let mut tools: Vec<crate::protocol::ToolDefinition> = base_tools
             .into_iter()
-            .map(|t| crate::protocol::ToolDefinition {
-                name: t.name,
-                description: t.description,
-                input_schema: serde_json::to_value(&t.input_schema).unwrap_or_default(),
-                category: Some(t.category),
+            .map(|t| {
+                let mut schema = serde_json::to_value(&t.input_schema).unwrap_or_default();
+                // Ensure "type": "object" is present — required by MCP spec.
+                if let Some(obj) = schema.as_object_mut() {
+                    obj.entry("type").or_insert_with(|| "object".into());
+                }
+                crate::protocol::ToolDefinition {
+                    name: t.name,
+                    description: t.description,
+                    input_schema: schema,
+                    category: Some(t.category),
+                }
             })
             .collect();
 
@@ -789,7 +848,7 @@ mod tests {
             id: RequestId::Number(1),
             method: "initialize".to_string(),
             params: Some(serde_json::json!({
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": "2025-11-25",
                 "capabilities": {},
                 "clientInfo": {
                     "name": "test-client",
@@ -1449,5 +1508,74 @@ mod tests {
                 .contains(&"messenger-only".to_string())
         );
         assert!(server.set_active_context("messenger-only").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_deferred_init_resolves_proxy_on_tools_list() {
+        let mut server = McpServer::new();
+        server.initialized = true;
+
+        // Set up deferred init with a proxy that has mock tools
+        let (tx, rx) = oneshot::channel();
+        server.set_deferred_init(rx);
+
+        // Send the deferred init in background (simulates proxy loading)
+        tokio::spawn(async move {
+            // Small delay to simulate network
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let proxy_manager = ProxyManager::new();
+            let _ = tx.send(DeferredInit {
+                proxy_manager,
+                builtin_tools_config: None,
+            });
+        });
+
+        // tools/list should wait for deferred init to resolve
+        let resp = server
+            .handle_request(JsonRpcRequest {
+                jsonrpc: JSONRPC_VERSION.to_string(),
+                id: RequestId::Number(1),
+                method: "tools/list".to_string(),
+                params: None,
+            })
+            .await;
+
+        assert!(resp.result.is_some());
+        // Deferred init should be consumed (None after resolve)
+        assert!(server.deferred_init.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_deferred_init_applies_builtin_tools_config() {
+        let mut server = McpServer::new();
+        server.initialized = true;
+        server.add_provider(Arc::new(TestProvider));
+
+        let (tx, rx) = oneshot::channel();
+        server.set_deferred_init(rx);
+
+        // Send deferred init that disables get_issues
+        let _ = tx.send(DeferredInit {
+            proxy_manager: ProxyManager::new(),
+            builtin_tools_config: Some(BuiltinToolsConfig {
+                disabled: vec!["get_issues".to_string()],
+                enabled: vec![],
+            }),
+        });
+
+        let resp = server
+            .handle_request(JsonRpcRequest {
+                jsonrpc: JSONRPC_VERSION.to_string(),
+                id: RequestId::Number(1),
+                method: "tools/list".to_string(),
+                params: None,
+            })
+            .await;
+
+        let result: ToolsListResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+        // get_issues should be filtered out by remote builtin_tools config
+        assert!(!result.tools.iter().any(|t| t.name == "get_issues"));
+        // Other tools should still be present
+        assert!(result.tools.iter().any(|t| t.name == "get_issue"));
     }
 }
