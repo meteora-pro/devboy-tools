@@ -1,7 +1,7 @@
 {
   "name": "@devboy-tools/cli",
   "version": "0.0.0",
-  "description": "Fast and efficient MCP server for coding agents — npm wrapper for Rust binary",
+  "description": "Configurable tool bundle for AI coding agents — use via MCP server, CLI, or agent skills. npm wrapper for the Rust binary.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
