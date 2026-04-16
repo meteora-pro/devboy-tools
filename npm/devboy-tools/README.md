@@ -54,9 +54,19 @@ npx devboy mcp
 
 ### Agent skills (call a single tool from a skill script)
 
+The `tools call` subcommand takes a tool name and an optional positional JSON string (defaults to `{}`). Quoting rules differ between shells:
+
 ```bash
-# Invoke a specific tool without paying the MCP tool-list tax
+# POSIX shells (bash, zsh, sh) — no args
+npx devboy tools call get_issues
+
+# POSIX shells — with JSON args
 npx devboy tools call get_issues '{"limit": 20}'
+```
+
+```bat
+:: Windows cmd.exe / PowerShell — escape inner quotes
+npx devboy tools call get_issues "{\"limit\": 20}"
 ```
 
 ### Claude Code

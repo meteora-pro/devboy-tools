@@ -15,9 +15,11 @@ DevBoy is a tool bundle first — the transport is your choice:
 |------|-------------|---------|
 | **MCP server** | Claude Desktop, Claude Code, any MCP-compatible client | `devboy mcp` (stdio) |
 | **CLI** | Humans, CI jobs, shell scripts | `devboy issues`, `devboy mrs` |
-| **Agent skills** | Agents that don't want the full MCP tool-list tax — call just the tools a skill needs | `devboy tools call get_issues '{...}'` from a skill script |
+| **Agent skills** | Agents that don't want the full MCP tool-list tax — call just the tools a skill needs | `devboy tools call get_issues` from a skill script |
 
 The same tools, the same pipeline, three ways to reach them. Start with one mode and layer on the others as your workflow grows.
+
+> **Note on JSON arguments.** `devboy tools call <name>` takes an optional positional JSON string (defaults to `{}`). On POSIX shells wrap it in single quotes: `devboy tools call get_issues '{"limit": 20}'`. On Windows `cmd.exe` / PowerShell escape the inner quotes instead: `devboy tools call get_issues "{\"limit\": 20}"`.
 
 ## Why DevBoy?
 
