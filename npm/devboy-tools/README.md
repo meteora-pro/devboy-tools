@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@devboy-tools/cli)](https://www.npmjs.com/package/@devboy-tools/cli)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-npm distribution of [DevBoy tools](https://github.com/meteora-pro/devboy-tools) — a fast MCP server for coding agents, written in Rust.
+npm distribution of [DevBoy tools](https://github.com/meteora-pro/devboy-tools) — a fast, configurable **tool bundle** for AI coding agents, written in Rust. Use the same tools via an MCP server, via CLI commands, or directly from agent skills.
 
 The correct binary for your platform is installed automatically via platform-specific packages.
 
@@ -27,12 +27,11 @@ pnpm add @devboy-tools/cli
 
 ## Usage
 
-### CLI
+DevBoy is a tool bundle — pick the mode that fits your workflow:
+
+### CLI (humans, CI, shell scripts)
 
 ```bash
-# Start MCP server
-npx devboy mcp
-
 # Show help
 npx devboy --help
 
@@ -40,6 +39,34 @@ npx devboy --help
 npx devboy config set github.owner <owner>
 npx devboy config set github.repo <repo>
 npx devboy config set-secret github.token <token>
+
+# Use tools directly
+npx devboy issues
+npx devboy mrs
+```
+
+### MCP server (Claude Desktop, Claude Code, any MCP client)
+
+```bash
+# Start MCP server over stdio
+npx devboy mcp
+```
+
+### Agent skills (call a single tool from a skill script)
+
+The `tools call` subcommand takes a tool name and an optional positional JSON string (defaults to `{}`). Quoting rules differ between shells:
+
+```bash
+# POSIX shells (bash, zsh, sh) — no args
+npx devboy tools call get_issues
+
+# POSIX shells — with JSON args
+npx devboy tools call get_issues '{"limit": 20}'
+```
+
+```bat
+:: Windows cmd.exe / PowerShell — escape inner quotes
+npx devboy tools call get_issues "{\"limit\": 20}"
 ```
 
 ### Claude Code
