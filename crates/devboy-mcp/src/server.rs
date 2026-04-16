@@ -357,11 +357,18 @@ impl McpServer {
         let base_tools = devboy_executor::tools::base_tool_definitions();
         let mut tools: Vec<crate::protocol::ToolDefinition> = base_tools
             .into_iter()
-            .map(|t| crate::protocol::ToolDefinition {
-                name: t.name,
-                description: t.description,
-                input_schema: serde_json::to_value(&t.input_schema).unwrap_or_default(),
-                category: Some(t.category),
+            .map(|t| {
+                let mut schema = serde_json::to_value(&t.input_schema).unwrap_or_default();
+                // Ensure "type": "object" is present — required by MCP spec.
+                if let Some(obj) = schema.as_object_mut() {
+                    obj.entry("type").or_insert_with(|| "object".into());
+                }
+                crate::protocol::ToolDefinition {
+                    name: t.name,
+                    description: t.description,
+                    input_schema: schema,
+                    category: Some(t.category),
+                }
             })
             .collect();
 
