@@ -21,6 +21,28 @@ The same tools, the same pipeline, three ways to reach them. Start with one mode
 
 > **Note on JSON arguments.** `devboy tools call <name>` takes an optional positional JSON string (defaults to `{}`). On POSIX shells wrap it in single quotes: `devboy tools call get_issues '{"limit": 20}'`. On Windows `cmd.exe` / PowerShell escape the inner quotes instead: `devboy tools call get_issues "{\"limit\": 20}"`.
 
+## Skills — procedural recipes shipped with the tools
+
+`devboy-tools` ships a catalogue of **skills** — one-page Markdown recipes that tell an AI agent how to use the tool bundle to accomplish a common task. Every skill is CLI-first (it calls `devboy tools call <name>`), agent-agnostic (installable into Claude Code / Codex / Cursor / Kimi or a vendor-neutral path), and versioned with the binary.
+
+```bash
+devboy skills list                          # see the shipped catalogue
+devboy skills install --all --agent all     # install every skill into every detected agent
+devboy skills install devboy-review-mr      # repo-local by default
+devboy skills upgrade --all                 # refresh after `devboy upgrade`
+```
+
+| Category | Example skills |
+|----------|---------------|
+| `self-bootstrap` | `devboy-setup`, `devboy-repair`, `devboy-tools-catalog` |
+| `issue-tracking` | `devboy-get-issues`, `devboy-create-issue`, `devboy-update-issue`, `devboy-link-issues`, `devboy-solve-issue` |
+| `code-review` | `devboy-review-mr`, `devboy-fix-review-comments`, `devboy-self-review` |
+| `self-feedback` | `devboy-run-and-verify`, `devboy-daily-report`, `devboy-retro`, `devboy-knowledge-extract` |
+| `meeting-notes` | `devboy-meeting-search`, `devboy-meeting-transcript`, `devboy-meeting-to-tasks` |
+| `messenger` | `devboy-chat-search`, `devboy-chat-summary`, `devboy-notify` |
+
+The design lives in `docs/architecture/adr/ADR-012-skills-subsystem.md`; the user guide is at `docs/guide/skills/`. Skill installs keep a per-location manifest with SHA256s so upgrades leave user-modified files alone (ADR-014), and the self-feedback category reads session traces written to `.devboy/sessions/` in the format defined by ADR-015.
+
 ## Why DevBoy?
 
 | | Others | DevBoy |
