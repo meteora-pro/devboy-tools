@@ -1,7 +1,7 @@
 ---
 id: ADR-010
 title: Asset management — file attachments for AI agents
-status: proposed
+status: accepted
 date: 2026-04-10
 deciders: ["Andrei Mazniak"]
 tags: ["rust", "assets", "files", "mcp", "cache", "pipeline"]
@@ -19,14 +19,14 @@ superseded_by: null
 
 - `crates/devboy-assets/` exists with `cache`, `config`, `error`, `index`, `manager`, `rotation` modules. `AssetManager` is the public entry point, backed by `CacheManager` + `AssetIndex` with LRU rotation.
 - Shared types in `devboy-core::asset` — `AssetContext`, `AssetContextKind`, `AssetMeta`, `AssetInput`, `AssetAnalysis`, `AssetCapabilities`, `ContextCapabilities`, `ContentKind`, `SemanticAnalysis`, plus markdown-attachment helpers (`MarkdownAttachment`, `parse_markdown_attachments`, `filename_from_url`).
-- MCP tools `get_assets`, `upload_asset`, `download_asset` are wired in `devboy-executor`.
-- ClickUp provider implements attachment upload.
+- MCP tools `get_assets`, `upload_asset`, `download_asset`, `delete_asset` are wired in `devboy-executor`.
+- Attachment upload is implemented on the issue provider for ClickUp, GitLab, and Jira. GitHub still returns `ProviderUnsupported` because its public API does not expose a direct upload path for issues / PRs.
 
 **What's still proposed:**
 
-- `delete_asset` and `replace_asset` tools
+- `replace_asset` tool
 - `analyze_asset` tool and the Level-3 semantic pipeline (LLM provider abstraction, prompt templates, response cache)
-- Complete attachment coverage across all providers — several providers still return `ProviderUnsupported` for parts of the asset CRUD surface
+- Complete attachment coverage across all providers — `get_issue_attachments` / `download_attachment` / per-context deletes still rely on trait-level `ProviderUnsupported` defaults for several providers
 
 ## Context
 
@@ -140,7 +140,7 @@ The MCP server is a long-running process. Downloaded files are cached locally to
 
 ### 3. LRU eviction
 
-Configurable through `devboy.toml`:
+Configurable through the standard config entry points — `.devboy.toml` at the project root or `~/.devboy/config.toml` for the global default:
 
 ```toml
 [assets]
@@ -296,11 +296,11 @@ This turns `analyze_asset` into a generic **context-saving tool** — an agent c
 ### 5. Shared types
 
 ```rust
-// devboy-core/src/types.rs
+// crates/devboy-core/src/asset.rs
 pub enum AssetContext {
     Issue { key: String },
     IssueComment { key: String, comment_id: String },
-    MergeRequest { id: String },
+    MergeRequest { mr_id: String },
     MrComment { mr_id: String, note_id: String },
     Chat { chat_id: String, message_id: String },
     KbPage { page_id: String },
@@ -516,3 +516,4 @@ Issues to track work are on GitHub under `meteora-pro/devboy-tools`.
 | 2026-04-17 | Andrei Mazniak | Translated to English; removed cross-repo references; kept as `proposed` (partially implemented) |
 | 2026-04-17 | Andrei Mazniak | Promoted status to `accepted` for phases 1–3 (devboy-assets crate, core asset types, MCP tools `get_assets`/`upload_asset`/`download_asset`); phase 5 (semantic `analyze_asset`) remains proposed |
 | 2026-04-17 | Andrei Mazniak | Corrected provider status: `upload_attachment` is implemented for ClickUp, GitLab, and Jira (GitHub still unsupported). Jira supports REST v3 on Cloud and v2 on Self-Hosted |
+| 2026-04-17 | Andrei Mazniak | Flipped frontmatter `status: proposed` → `accepted` so it matches the body's `## Status` section and the index. Shared-types snippet now points at `crates/devboy-core/src/asset.rs` (not `types.rs`) and uses the real `MergeRequest { mr_id }` variant. "What's shipped" lists `delete_asset` as wired (it lives in `devboy-executor`) and credits ClickUp/GitLab/Jira uploads. Asset config section now names `.devboy.toml` / `~/.devboy/config.toml` instead of a fictional `devboy.toml` |
