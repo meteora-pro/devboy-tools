@@ -501,4 +501,4 @@ Issues to track work are on GitHub under `meteora-pro/devboy-tools`.
 | 2026-04-10 | Andrei Mazniak | Initial version |
 | 2026-04-11 | Andrei Mazniak | Three-level pipeline (metadata/heuristics/semantic), configurable LLM, batch analysis, passthrough mode, extension to URL/response inputs |
 | 2026-04-11 | Andrei Mazniak | CRUD operations: `delete_asset`/`replace_asset`, per-context capabilities, `AssetCapabilities` in provider traits, schema enrichment |
-| 2026-04-17 | Claude Code | Translated to English; removed cross-repo references; kept as `proposed` (partially implemented) |
+| 2026-04-17 | Andrei Mazniak | Translated to English; removed cross-repo references; kept as `proposed` (partially implemented) |

@@ -196,5 +196,5 @@ pub trait CredentialStore: Send + Sync {
 
 | Date | Author | Change |
 |------|--------|--------|
-| 2026-01-13 | Claude Code | Initial version |
-| 2026-04-17 | Claude Code | Translated to English; documented the env-var fallback chain; marked accepted |
+| 2026-01-13 | Andrei Mazniak | Initial version |
+| 2026-04-17 | Andrei Mazniak | Translated to English; documented the env-var fallback chain; marked accepted |

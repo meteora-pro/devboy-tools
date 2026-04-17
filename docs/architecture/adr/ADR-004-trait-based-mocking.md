@@ -216,5 +216,5 @@ struct Mcp<P: IssueProvider> { provider: P }
 
 | Date | Author | Change |
 |------|--------|--------|
-| 2026-01-13 | Claude Code | Initial version |
-| 2026-04-17 | Claude Code | Translated to English; marked accepted; trimmed code samples to the essentials |
+| 2026-01-13 | Andrei Mazniak | Initial version |
+| 2026-04-17 | Andrei Mazniak | Translated to English; marked accepted; trimmed code samples to the essentials |
