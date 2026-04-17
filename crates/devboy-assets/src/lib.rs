@@ -7,7 +7,7 @@
 //! The public surface is centered on [`AssetManager`], which wraps a
 //! [`CacheManager`] and an on-disk [`AssetIndex`].
 //!
-//! See ADR-010 in `devboy-cloud-monorepo` for the full design.
+//! See `docs/architecture/adr/ADR-010-asset-management.md` for the full design.
 
 #![deny(missing_docs)]
 
