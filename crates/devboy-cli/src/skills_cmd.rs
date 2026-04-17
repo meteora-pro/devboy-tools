@@ -199,10 +199,20 @@ async fn handle_upgrade(
         installed_from: Some(format!("devboy-tools {}", env!("CARGO_PKG_VERSION"))),
     };
 
+    let mut any_written = false;
+    let mut any_failed = false;
+
     for target in &targets {
         println!("-> {}", target.label);
         let manifest_path = target.skills_dir.join(devboy_skills::MANIFEST_FILE);
-        let manifest = Manifest::load(&manifest_path).unwrap_or_default();
+        let manifest = match Manifest::load(&manifest_path) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("   error: manifest load failed: {e}");
+                any_failed = true;
+                continue;
+            }
+        };
         let candidates: Vec<String> = if names.is_empty() {
             manifest.skills.keys().cloned().collect()
         } else {
@@ -220,9 +230,28 @@ async fn handle_upgrade(
             }
         }
         match install_skills_to_target(target, &skills, &history, &options) {
-            Ok(report) => print_report(&report),
-            Err(e) => eprintln!("   error: {e}"),
+            Ok(report) => {
+                print_report(&report);
+                if report.outcomes.values().any(|o| {
+                    matches!(
+                        o,
+                        InstallOutcome::Installed
+                            | InstallOutcome::Upgraded { .. }
+                            | InstallOutcome::OverwrittenWithForce
+                    )
+                }) {
+                    any_written = true;
+                }
+            }
+            Err(e) => {
+                eprintln!("   error: {e}");
+                any_failed = true;
+            }
         }
+    }
+
+    if any_failed && !any_written {
+        anyhow::bail!("every upgrade target failed; see errors above");
     }
     if dry_run {
         println!("\n(dry-run) no filesystem changes were made");
@@ -341,18 +370,24 @@ fn build_install_spec(
 }
 
 fn format_target_error(err: devboy_skills::SkillError) -> anyhow::Error {
-    if matches!(err, devboy_skills::SkillError::MissingRequiredField { .. }) {
-        anyhow::anyhow!(
+    // The install-target resolver reuses `MissingRequiredField` to signal
+    // "no repo + no flag" — it sets `skill` to the sentinel
+    // `<install-target>` so we can pattern-match on it specifically. Any
+    // other `MissingRequiredField` (e.g. frontmatter validation) must
+    // pass through unchanged so users see the real error.
+    if let devboy_skills::SkillError::MissingRequiredField { ref skill, .. } = err
+        && skill == "<install-target>"
+    {
+        return anyhow::anyhow!(
             "no git repository / .devboy.toml at the current path\n\n\
              skills are installed repo-locally by default. choose one:\n  \
              devboy skills install <name> --global           # install to ~/.agents/skills/\n  \
              devboy skills install <name> --agent claude     # install to ~/.claude/skills/\n  \
              devboy skills install <name> --agent all        # every detected agent\n  \
              cd <your-project> && devboy skills install <name>"
-        )
-    } else {
-        anyhow::Error::new(err)
+        );
     }
+    anyhow::Error::new(err)
 }
 
 fn print_report(report: &InstallReport) {

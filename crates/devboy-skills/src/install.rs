@@ -5,7 +5,8 @@
 //! should be written. The flow consumes that list together with the
 //! embedded [`HistoricalHashes`] registry to apply the three-state
 //! install logic from
-//! [ADR-014](../../../../docs/architecture/adr/ADR-014-skills-lifecycle.md).
+//! ADR-014 in `docs/architecture/adr/ADR-014-skills-lifecycle.md` at
+//! the repository root.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -341,7 +342,10 @@ pub fn install_skills_to_target(
     }
 
     let manifest_path = target.skills_dir.join(MANIFEST_FILE);
-    let mut manifest = Manifest::load(&manifest_path).unwrap_or_default();
+    // `Manifest::load` returns an empty manifest only when the file does
+    // not exist. A corrupt manifest is propagated so the caller sees the
+    // parse error rather than silently discarding every install record.
+    let mut manifest = Manifest::load(&manifest_path)?;
     manifest.installed_from = options.installed_from.clone().or(manifest.installed_from);
 
     let mut report = InstallReport::default();
@@ -444,12 +448,17 @@ pub fn remove_skills_from_target(
     dry_run: bool,
 ) -> Result<Vec<String>> {
     let manifest_path = target.skills_dir.join(MANIFEST_FILE);
-    let mut manifest = Manifest::load(&manifest_path).unwrap_or_default();
+    // Manifest parse errors propagate; a missing file produces an empty
+    // manifest as for `install`.
+    let mut manifest = Manifest::load(&manifest_path)?;
     let mut removed = Vec::new();
 
     for name in names {
         let skill_dir = target.skills_dir.join(name);
-        if !skill_dir.exists() {
+        let dir_present = skill_dir.exists();
+        let in_manifest = manifest.get(name).is_some();
+
+        if !dir_present && !in_manifest {
             if strict {
                 return Err(SkillError::NotFound {
                     name: name.clone(),
@@ -458,13 +467,20 @@ pub fn remove_skills_from_target(
             }
             continue;
         }
-        if !dry_run {
+
+        if dir_present && !dry_run {
             fs::remove_dir_all(&skill_dir).map_err(|source| SkillError::Io {
                 path: skill_dir.clone(),
                 source,
             })?;
         }
-        manifest.forget(name);
+        // Always clean the manifest entry — if the directory vanished
+        // out of band, the manifest row becomes stale and callers see
+        // the skill as installed forever. This brings the two sources
+        // of truth back in sync.
+        if !dry_run {
+            manifest.forget(name);
+        }
         removed.push(name.clone());
     }
 
@@ -523,7 +539,7 @@ fn write_skill(skill_dir: &Path, file_path: &Path, bytes: &[u8], dry_run: bool) 
 fn record_for(
     skill: &Skill,
     body: &[u8],
-    options: &InstallOptions,
+    _options: &InstallOptions,
     source: &str,
 ) -> InstalledSkill {
     let mut files = std::collections::BTreeMap::new();
@@ -534,13 +550,15 @@ fn record_for(
             size: body.len() as u64,
         },
     );
+    // `InstalledSkill.source` records which `SkillSource` produced the
+    // skill (`"embedded"`, a future `"marketplace"`, `"langfuse"` etc.).
+    // The devboy-tools version that did the install lives in the
+    // top-level `Manifest.installed_from` field — keeping the two
+    // distinct is deliberate.
     InstalledSkill {
         version: skill.frontmatter.version,
         installed_at: Utc::now(),
-        source: options
-            .installed_from
-            .clone()
-            .unwrap_or_else(|| source.to_string()),
+        source: source.to_string(),
         files,
     }
 }
