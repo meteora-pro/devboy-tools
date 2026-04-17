@@ -13,8 +13,13 @@ This directory holds Architecture Decision Records (ADRs) for `devboy-tools`. Ea
 | [005](./ADR-005-credential-storage.md) | Credential storage — OS keychain with environment-variable fallback | accepted | Storage, Security |
 | [007](./ADR-007-plugin-architecture.md) | Plugin architecture — API providers, format pipeline, and the enricher model | accepted | Plugins |
 | [010](./ADR-010-asset-management.md) | Asset management — file attachments for AI agents | accepted | Assets (phases 1–3 shipped; phase 5 pending) |
+| [012](./ADR-012-skills-subsystem.md) | Skills subsystem — procedural recipes on top of the tool bundle | proposed | Skills |
+| [013](./ADR-013-skills-install-targets.md) | Skill install targets — repo-local default, global and agent-specific overrides | proposed | Skills |
+| [014](./ADR-014-skills-lifecycle.md) | Skills lifecycle — manifest-based install, upgrade, and collision detection | proposed | Skills |
+| [015](./ADR-015-skills-session-traces.md) | Skills self-feedback loop — session trace format | proposed | Skills, Observability |
+| [016](./ADR-016-skills-language-adaptation.md) | Skills language adaptation | proposed | Skills (deferred) |
 
-**Number gaps** (006, 008, 009, 011, …) are intentional. Those numbers are reserved for decisions that are not in scope for this project.
+**Number gaps** (006, 008, 009, 011) are intentional. Those numbers are reserved for decisions that are not in scope for this project.
 
 ## Writing a new ADR
 
