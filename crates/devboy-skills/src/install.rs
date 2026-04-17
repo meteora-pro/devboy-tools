@@ -134,15 +134,25 @@ pub struct Environment {
 
 impl Environment {
     /// Build an [`Environment`] from the real operating system.
+    ///
+    /// The `DEVBOY_HOME_OVERRIDE` environment variable, when set,
+    /// replaces the detected home directory. This exists mostly for
+    /// integration tests that want to redirect installs into a
+    /// temporary directory on platforms (notably Windows) where
+    /// `dirs::home_dir()` resolves through the OS rather than through
+    /// `$HOME` / `$USERPROFILE`.
     pub fn detect() -> Result<Self> {
         let cwd = std::env::current_dir().map_err(|source| SkillError::Io {
             path: PathBuf::from("."),
             source,
         })?;
-        let home = dirs::home_dir().ok_or_else(|| SkillError::Io {
-            path: PathBuf::from("~"),
-            source: std::io::Error::other("home directory is not set"),
-        })?;
+        let home = match std::env::var_os("DEVBOY_HOME_OVERRIDE") {
+            Some(p) if !p.is_empty() => PathBuf::from(p),
+            _ => dirs::home_dir().ok_or_else(|| SkillError::Io {
+                path: PathBuf::from("~"),
+                source: std::io::Error::other("home directory is not set"),
+            })?,
+        };
         let repo_root = locate_repo_root(&cwd);
         Ok(Self {
             cwd,
