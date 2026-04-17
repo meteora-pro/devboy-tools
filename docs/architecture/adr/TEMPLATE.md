@@ -13,7 +13,7 @@ superseded_by: null       # ADR-XXX if this one is replaced by a newer decision
 
 ## Status
 
-**{proposed | accepted | deprecated | superseded by ADR-XXX}**
+**{proposed | accepted | deprecated | superseded}** (if `superseded`, follow with "by [ADR-XXX](./ADR-XXX-...md)"; keep frontmatter `status:` to one of the canonical values only)
 
 ## Context
 
