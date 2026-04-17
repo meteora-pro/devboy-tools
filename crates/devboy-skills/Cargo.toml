@@ -1,0 +1,44 @@
+[package]
+name = "devboy-skills"
+description = "Procedural skills on top of the devboy-tools bundle — install, upgrade, enumerate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+devboy-core = { path = "../devboy-core" }
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+dirs.workspace = true
+sha2.workspace = true
+
+# YAML frontmatter parsing
+serde_yaml = "0.9"
+
+# Embed baseline SKILL.md files into the binary
+rust-embed = { version = "8.5", features = ["debug-embed", "include-exclude"] }
+
+# Time stamps in the manifest
+chrono = { version = "0.4", features = ["serde"] }
+
+# ULID session ids (used by the future trace module; feature-gated so the
+# core install path stays small)
+ulid = { version = "1.1", features = ["serde"], optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[features]
+default = []
+# Enabled by the trace module (ADR-015); reserved so that the crate can
+# grow the session-trace API without pulling in ulid for the install path.
+trace = ["dep:ulid"]
+
+[lints]
+workspace = true
