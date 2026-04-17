@@ -53,8 +53,8 @@ PRs ─────┴─────────┴─────────�
 │    └─────────────────────────────────────────┘                  │
 │                        │                                         │
 │    ┌─────────────────────────────────────────┐                  │
-│    │  Integration tests (trait mocks)        │  no secrets      │
-│    │  MockIssueProvider, MockMrProvider, …   │                  │
+│    │  Integration tests (TestProvider +      │  no secrets      │
+│    │  FixtureProvider under crates/…/tests)  │                  │
 │    └─────────────────────────────────────────┘                  │
 │                        │                                         │
 │    ┌─────────────────────────────────────────┐                  │
@@ -77,7 +77,7 @@ These tests require no secrets and run in every CI job. They live in `crates/plu
 
 ### Layer 2: Trait-mocked integration tests
 
-`IssueProvider`/`MergeRequestProvider`/etc. are Rust traits (see ADR-004). Mock implementations (`MockIssueProvider`, etc.) sit in `tests/common/` and power integration tests that exercise the MCP tool layer and executor pipeline without touching any network.
+`IssueProvider`/`MergeRequestProvider`/etc. are Rust traits (see ADR-004). In practice, integration tests use the shared `TestProvider` + `FixtureProvider` harness under `crates/devboy-cli/tests/common/` (described below under Layer 3) to exercise the MCP tool layer and executor pipeline without touching any network — replaying fixture-backed responses when the relevant provider env vars are not set, and using the real client with fixture updates when they are.
 
 ### Layer 3: Record-and-Replay for real-API tests (opt-in)
 
@@ -216,3 +216,4 @@ The user guide is built with [Rspress](https://rspress.dev/) from `docs/` and de
 | 2026-01-13 | Andrei Mazniak | Initial version |
 | 2026-04-17 | Andrei Mazniak | Translated to English; trimmed inline code samples; marked accepted; clarified that Record-and-Replay is opt-in (not a blocker for contributors) |
 | 2026-04-17 | Andrei Mazniak | Synced with current CI: Rspress (not rustdoc+mdBook) for docs, separate `deploy-docs.yml`, coverage thresholds from `codecov.yml` (90% / 90% informational), actual CI secrets list |
+| 2026-04-17 | Andrei Mazniak | Removed leftover `MockIssueProvider`/`MockMrProvider` references from the pyramid diagram and the Layer 2 description — integration tests use `TestProvider` + `FixtureProvider` under `crates/devboy-cli/tests/common/` |

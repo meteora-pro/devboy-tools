@@ -115,7 +115,7 @@ Trait mocks are paired with HTTP-level mocks for a full picture:
 
 | Level | Tool | Tests | When to use |
 |-------|------|-------|-------------|
-| Trait mocks | `MockIssueProvider` | MCP tool layer, executor, business logic | Integration tests |
+| Trait mocks | `TestProvider` / `FixtureProvider` | MCP tool layer, executor, business logic | Integration tests |
 | HTTP mocks | `httpmock` | HTTP request shape, response parsing | Per-provider unit tests |
 
 HTTP-level mocks catch a different class of bug: wrong URLs, wrong query parameter names, missing headers, deserialization errors. Trait mocks can't catch those because they skip the HTTP layer entirely.
@@ -206,3 +206,4 @@ struct Mcp<P: IssueProvider> { provider: P }
 | 2026-04-17 | Andrei Mazniak | Translated to English; marked accepted; trimmed code samples to the essentials |
 | 2026-04-17 | Andrei Mazniak | Synced trait list with `devboy_core::provider` (added `Provider`, `PipelineProvider`, `MeetingNotesProvider`); replaced the fictional `MockIssueProvider` with the real test harness (`TestProvider`, `FixtureProvider`, `ApiResult` in `crates/devboy-cli/tests/common/`) |
 | 2026-04-17 | Andrei Mazniak | Fixed return types in code sketches: provider methods return `Result<ProviderResult<T>>`, not `Result<Vec<T>>` |
+| 2026-04-17 | Andrei Mazniak | Renamed the integration-test row in the "Two levels of mocking" table from `MockIssueProvider` to `TestProvider` / `FixtureProvider` — matches the real harness |
