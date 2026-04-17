@@ -30,6 +30,7 @@ pub mod install;
 pub mod manifest;
 pub mod skill;
 pub mod source;
+pub mod trace;
 
 pub use catalog::Catalog;
 pub use embedded::EmbeddedSkillSource;
@@ -44,3 +45,7 @@ pub use manifest::{
 };
 pub use skill::{Category, Frontmatter, Skill, SkillSummary};
 pub use source::SkillSource;
+pub use trace::{
+    Outcome as TraceOutcome, Phase as TracePhase, SessionMeta, SessionTracer, TraceRecord,
+    TraceTarget, append_event, create_session, finalise_session,
+};

@@ -10,7 +10,96 @@ use devboy_skills::{
     install_skills_to_target, remove_skills_from_target, resolve_targets,
 };
 
-use crate::SkillsCommands;
+use crate::{SkillsCommands, TraceCommands};
+
+/// Dispatch a `devboy trace` subcommand.
+pub async fn handle_trace(command: TraceCommands) -> Result<()> {
+    use devboy_skills::{TraceTarget, append_event, create_session, finalise_session};
+    match command {
+        TraceCommands::Begin { skill, global, dir } => {
+            let target = if let Some(p) = dir {
+                TraceTarget::Custom(std::path::PathBuf::from(p))
+            } else if global {
+                TraceTarget::Global
+            } else {
+                TraceTarget::RepoLocal
+            };
+            let (session_id, session_dir) =
+                create_session(&skill, &target).context("failed to begin session")?;
+            let trace_path = session_dir.join("trace.jsonl");
+            let out = serde_json::json!({
+                "session_id": session_id,
+                "session_dir": session_dir.display().to_string(),
+                "trace_path": trace_path.display().to_string(),
+            });
+            println!("{out}");
+            Ok(())
+        }
+        TraceCommands::Event {
+            session_dir,
+            session_id,
+            skill,
+            phase,
+            payload,
+        } => {
+            let phase = parse_phase(&phase)?;
+            let payload: serde_json::Value =
+                serde_json::from_str(&payload).context("invalid JSON payload")?;
+            append_event(
+                std::path::Path::new(&session_dir),
+                &session_id,
+                &skill,
+                phase,
+                payload,
+            )
+            .context("failed to append event")
+        }
+        TraceCommands::End {
+            session_dir,
+            session_id,
+            skill,
+            outcome,
+            summary,
+        } => {
+            let outcome = parse_outcome(&outcome)?;
+            finalise_session(
+                std::path::Path::new(&session_dir),
+                &session_id,
+                &skill,
+                outcome,
+                &summary,
+            )
+            .context("failed to finalise session")
+        }
+    }
+}
+
+fn parse_phase(raw: &str) -> Result<devboy_skills::TracePhase> {
+    use devboy_skills::TracePhase as P;
+    Ok(match raw {
+        "start" => P::Start,
+        "decision" => P::Decision,
+        "tool_call" => P::ToolCall,
+        "tool_result" => P::ToolResult,
+        "verify" => P::Verify,
+        "artifact" => P::Artifact,
+        "note" => P::Note,
+        "end" => P::End,
+        other => anyhow::bail!(
+            "unknown trace phase `{other}` (expected start | decision | tool_call | tool_result | verify | artifact | note | end)"
+        ),
+    })
+}
+
+fn parse_outcome(raw: &str) -> Result<devboy_skills::TraceOutcome> {
+    use devboy_skills::TraceOutcome as O;
+    Ok(match raw {
+        "success" => O::Success,
+        "failure" => O::Failure,
+        "aborted" => O::Aborted,
+        other => anyhow::bail!("unknown outcome `{other}` (expected success | failure | aborted)"),
+    })
+}
 
 /// Dispatch a `devboy skills` subcommand.
 pub async fn handle(command: SkillsCommands) -> Result<()> {
