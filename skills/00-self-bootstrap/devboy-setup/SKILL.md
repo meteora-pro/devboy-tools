@@ -31,7 +31,7 @@ Configure `devboy-tools` end-to-end for the current project or the current user.
 1. `devboy` is on `PATH`. If it is not:
 
    ```bash
-   devboy tools call doctor '{}' >/dev/null 2>&1 || \
+   command -v devboy >/dev/null 2>&1 || \
      echo "devboy is not on PATH — install it via 'npm install -g @devboy-tools/cli' first"
    ```
 
