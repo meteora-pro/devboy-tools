@@ -89,7 +89,7 @@ DEVBOY_{PROVIDER}_TOKEN          # preferred prefixed form
   └── fallback to
 {PROVIDER}_TOKEN                 # unprefixed, for compatibility with other tools
   └── fallback to
-OS keychain (devboy/<provider>/token)
+OS keychain (service: devboy-tools, key: <provider>.token)
 ```
 
 Example for GitHub:
@@ -113,7 +113,7 @@ This order lets CI jobs configure tokens the same way they do for other tools wh
 [contexts.my-project.github]
 owner = "meteora-pro"
 repo = "devboy-tools"
-# token: read from keychain key `devboy/github/token`
+# token: read from keychain service `devboy-tools`, key `github.token`
 # or from env var DEVBOY_GITHUB_TOKEN / GITHUB_TOKEN
 
 [contexts.my-project.gitlab]
@@ -219,3 +219,4 @@ Concrete implementations:
 | 2026-04-17 | Andrei Mazniak | Translated to English; documented the env-var fallback chain; marked accepted |
 | 2026-04-17 | Andrei Mazniak | Synced with shipped `devboy-storage`: sync (not async) trait with single-key `store`/`get`/`delete`/`exists`/`is_available`/`is_writable`; service name `devboy-tools`; dot-separated keys (`github.token`, `proxy.<name>.token`, `remote_config.token`) |
 | 2026-04-17 | Andrei Mazniak | Fixed stale `CredentialStore::set` → `::store` in the setup wizard section; updated the Implementation section to match the actual single-file `crates/devboy-storage/src/lib.rs` and `crates/devboy-cli/src/main.rs` layout |
+| 2026-04-17 | Andrei Mazniak | Final sweep of keychain key formatting: env-var fallback chain now shows `OS keychain (service: devboy-tools, key: <provider>.token)`; the local-config TOML example refers to `keychain service devboy-tools, key github.token` instead of the old slash-separated form |
