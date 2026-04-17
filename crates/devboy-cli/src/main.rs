@@ -1625,8 +1625,15 @@ fn register_kimi_mcp_to_path(server_name: &str, config_path: &std::path::Path) -
 fn register_codex_mcp(server_name: &str) -> Result<()> {
     println!("Registering '{}' MCP server in Codex CLI...", server_name);
 
+    // Allow tests to force the fallback path for determinism
+    if std::env::var("DEVBOY_NO_NATIVE_MCP").is_ok() {
+        register_codex_mcp_direct(server_name)?;
+        return Ok(());
+    }
+
     let codex_result = Command::new("codex")
         .args(["mcp", "add", server_name, "--", "devboy", "mcp"])
+        .stdin(std::process::Stdio::null())
         .status();
 
     match codex_result {
@@ -1647,7 +1654,7 @@ fn register_codex_mcp_direct(server_name: &str) -> Result<()> {
     let home = dirs::home_dir().context("Could not determine home directory")?;
     let config_path = home.join(".codex").join("config.toml");
     register_codex_mcp_to_path(server_name, &config_path)?;
-    println!("Successfully registered in ~/.codex/config.toml");
+    println!("Successfully registered in {}", config_path.display());
     Ok(())
 }
 
@@ -1701,7 +1708,7 @@ fn register_copilot_mcp(server_name: &str) -> Result<()> {
     let config_path = home.join(".copilot").join("mcp-config.json");
     register_copilot_mcp_to_path(server_name, &config_path)?;
 
-    println!("Successfully registered in ~/.copilot/mcp-config.json");
+    println!("Successfully registered in {}", config_path.display());
     Ok(())
 }
 
@@ -1732,8 +1739,15 @@ fn register_copilot_mcp_to_path(server_name: &str, config_path: &std::path::Path
 fn register_gemini_mcp(server_name: &str) -> Result<()> {
     println!("Registering '{}' MCP server in Gemini CLI...", server_name);
 
+    // Allow tests to force the fallback path for determinism
+    if std::env::var("DEVBOY_NO_NATIVE_MCP").is_ok() {
+        register_gemini_mcp_fallback(server_name)?;
+        return Ok(());
+    }
+
     let gemini_result = Command::new("gemini")
         .args(["mcp", "add", "--trust", server_name, "devboy", "mcp"])
+        .stdin(std::process::Stdio::null())
         .status();
 
     match gemini_result {
@@ -1742,30 +1756,36 @@ fn register_gemini_mcp(server_name: &str) -> Result<()> {
             return Ok(());
         }
         _ => {
-            let config_path = std::env::current_dir()
-                .context("Could not determine current directory")?
-                .join(".gemini")
-                .join("settings.json");
-
-            if let Some(parent) = config_path.parent() {
-                std::fs::create_dir_all(parent).context("Failed to create .gemini directory")?;
-            }
-
-            register_json_mcp_config(
-                server_name,
-                &config_path,
-                "mcpServers",
-                serde_json::json!({
-                    "command": "devboy",
-                    "args": ["mcp"],
-                    "trust": true
-                }),
-                "gemini",
-            )?;
-
-            println!("Successfully registered in .gemini/settings.json");
+            register_gemini_mcp_fallback(server_name)?;
         }
     }
+
+    Ok(())
+}
+
+fn register_gemini_mcp_fallback(server_name: &str) -> Result<()> {
+    let config_path = std::env::current_dir()
+        .context("Could not determine current directory")?
+        .join(".gemini")
+        .join("settings.json");
+
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).context("Failed to create .gemini directory")?;
+    }
+
+    register_json_mcp_config(
+        server_name,
+        &config_path,
+        "mcpServers",
+        serde_json::json!({
+            "command": "devboy",
+            "args": ["mcp"],
+            "trust": true
+        }),
+        "gemini",
+    )?;
+
+    println!("Successfully registered in .gemini/settings.json");
 
     Ok(())
 }

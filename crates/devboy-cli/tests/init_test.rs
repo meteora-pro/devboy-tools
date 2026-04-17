@@ -1308,6 +1308,7 @@ fn test_init_with_codex_cli_creates_config() {
         .args(["init", "--yes", "--codex-cli"])
         .env("HOME", fake_home.path())
         .env("USERPROFILE", fake_home.path())
+        .env("DEVBOY_NO_NATIVE_MCP", "1")
         .current_dir(temp_dir.path())
         .output()
         .expect("Failed to execute command");
@@ -1427,6 +1428,7 @@ fn test_init_with_gemini_creates_config() {
 
     let output = Command::new(devboy_bin())
         .args(["init", "--yes", "--gemini"])
+        .env("DEVBOY_NO_NATIVE_MCP", "1")
         .current_dir(temp_dir.path())
         .output()
         .expect("Failed to execute command");
