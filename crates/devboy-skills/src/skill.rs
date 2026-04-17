@@ -176,6 +176,20 @@ impl Skill {
                 source,
             })?;
 
+        // The frontmatter `name` field is documented as "must match the
+        // containing directory". Enforce that here so the expectation is
+        // actually checked rather than being a suggestion.
+        if frontmatter.name != skill_id {
+            return Err(SkillError::InvalidFieldType {
+                skill: skill_id.to_string(),
+                field: "name",
+                reason: format!(
+                    "must match the containing directory `{skill_id}`, got `{}`",
+                    frontmatter.name
+                ),
+            });
+        }
+
         Ok(Self {
             frontmatter,
             body: body.to_string(),

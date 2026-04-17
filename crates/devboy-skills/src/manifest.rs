@@ -1,8 +1,9 @@
 //! Per-location manifest (`.manifest.json`) describing installed skills
 //! plus the embedded history of every previously-shipped SHA256.
 //!
-//! See [ADR-014](../../../../docs/architecture/adr/ADR-014-skills-lifecycle.md)
-//! for the three-state install / upgrade logic that these types drive.
+//! See ADR-014 in `docs/architecture/adr/ADR-014-skills-lifecycle.md`
+//! at the repository root for the three-state install / upgrade logic
+//! that these types drive.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -38,7 +39,9 @@ struct HistoryAsset;
 pub struct HistoricalVersion {
     /// Integer version the skill had at this point.
     pub version: u32,
-    /// SHA256 of the SKILL.md body at this version.
+    /// SHA256 of the full `SKILL.md` file contents (frontmatter + body)
+    /// at this version. Matches how [`classify`] and [`classify_path`]
+    /// compute their hashes.
     pub sha256: String,
 }
 
@@ -198,6 +201,16 @@ impl Manifest {
             path: tmp_path.clone(),
             source,
         })?;
+        // `std::fs::rename` does not overwrite an existing destination
+        // on Windows (it does on POSIX). Remove the destination first so
+        // the behaviour is consistent across platforms. A missing
+        // destination is fine — the rename creates it.
+        if path.exists() {
+            std::fs::remove_file(path).map_err(|source| SkillError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        }
         std::fs::rename(&tmp_path, path).map_err(|source| SkillError::Io {
             path: path.to_path_buf(),
             source,
