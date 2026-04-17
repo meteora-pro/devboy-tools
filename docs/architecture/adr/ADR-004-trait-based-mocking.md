@@ -50,7 +50,7 @@ pub trait IssueProvider: Provider {
     async fn get_issue(&self, key: &str) -> Result<Issue>;
     async fn create_issue(&self, input: CreateIssueInput) -> Result<Issue>;
     async fn update_issue(&self, key: &str, input: UpdateIssueInput) -> Result<Issue>;
-    async fn get_comments(&self, issue_key: &str) -> Result<Vec<Comment>>;
+    async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>>;
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment>;
     // ... asset methods (see ADR-010), plus optional link/relation methods
 }
@@ -71,7 +71,7 @@ pub struct GitLabProvider {
 
 #[async_trait]
 impl IssueProvider for GitLabProvider {
-    async fn get_issues(&self, filter: IssueFilter) -> Result<Vec<Issue>> {
+    async fn get_issues(&self, filter: IssueFilter) -> Result<ProviderResult<Issue>> {
         let url = format!("{}/api/v4/projects/{}/issues", self.base_url, self.project_id);
         let response = self.client
             .get(&url)
@@ -205,3 +205,4 @@ struct Mcp<P: IssueProvider> { provider: P }
 | 2026-01-13 | Andrei Mazniak | Initial version |
 | 2026-04-17 | Andrei Mazniak | Translated to English; marked accepted; trimmed code samples to the essentials |
 | 2026-04-17 | Andrei Mazniak | Synced trait list with `devboy_core::provider` (added `Provider`, `PipelineProvider`, `MeetingNotesProvider`); replaced the fictional `MockIssueProvider` with the real test harness (`TestProvider`, `FixtureProvider`, `ApiResult` in `crates/devboy-cli/tests/common/`) |
+| 2026-04-17 | Andrei Mazniak | Fixed return types in code sketches: provider methods return `Result<ProviderResult<T>>`, not `Result<Vec<T>>` |

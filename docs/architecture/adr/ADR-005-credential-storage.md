@@ -152,7 +152,7 @@ Concrete implementations:
 
 ### Interactive setup (`devboy init`)
 
-`devboy init` collects tokens through a wizard (or via CLI flags like `--remote-config-token` for non-interactive use) and stores them via `CredentialStore::set`, which picks the right backend — keychain if available, else a clear error with instructions to use env vars instead.
+`devboy init` collects tokens through a wizard (or via CLI flags like `--remote-config-token` for non-interactive use) and persists them via `CredentialStore::store`, which picks the right backend — keychain if available, else a clear error with instructions to use env vars instead.
 
 ## Consequences
 
@@ -195,10 +195,10 @@ Concrete implementations:
 
 ## Implementation
 
-- **Crate:** `crates/devboy-storage/`
-- **Backends:** `keychain.rs`, `env_var.rs`, `chain.rs`
-- **Key naming:** `devboy/<provider>/<key>`
-- **CLI integration:** `crates/devboy-cli/src/init.rs` and `src/config.rs`
+- **Crate:** `crates/devboy-storage/` — single-file today (`src/lib.rs`) housing the `CredentialStore` trait and the `KeychainStore` / `EnvVarStore` / `ChainStore` backends
+- **Service name:** `devboy-tools` (constant in `src/lib.rs`)
+- **Key naming:** `<provider>.<credential_name>` (e.g. `github.token`, `proxy.<name>.token`, `remote_config.token`)
+- **CLI integration:** `crates/devboy-cli/src/main.rs` (the `Init` / `Config` subcommands drive token collection and storage)
 - **Docs:** `README.md` → "Alternative: Environment Variables (CI/CD)" section
 
 ## References
@@ -218,3 +218,4 @@ Concrete implementations:
 | 2026-01-13 | Andrei Mazniak | Initial version |
 | 2026-04-17 | Andrei Mazniak | Translated to English; documented the env-var fallback chain; marked accepted |
 | 2026-04-17 | Andrei Mazniak | Synced with shipped `devboy-storage`: sync (not async) trait with single-key `store`/`get`/`delete`/`exists`/`is_available`/`is_writable`; service name `devboy-tools`; dot-separated keys (`github.token`, `proxy.<name>.token`, `remote_config.token`) |
+| 2026-04-17 | Andrei Mazniak | Fixed stale `CredentialStore::set` → `::store` in the setup wizard section; updated the Implementation section to match the actual single-file `crates/devboy-storage/src/lib.rs` and `crates/devboy-cli/src/main.rs` layout |
