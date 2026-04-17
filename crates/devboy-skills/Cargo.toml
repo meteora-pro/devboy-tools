@@ -33,11 +33,12 @@ ulid = { version = "1.1", features = ["serde"], optional = true }
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+temp-env = "0.3"
 
 [features]
-default = []
-# Enabled by the trace module (ADR-015); reserved so that the crate can
-# grow the session-trace API without pulling in ulid for the install path.
+default = ["trace"]
+# Session-trace module (ADR-015). Pulls in `ulid` for session ids.
+# On by default — disabling it is mostly a CI knob.
 trace = ["dep:ulid"]
 
 [lints]
