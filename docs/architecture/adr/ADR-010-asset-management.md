@@ -38,11 +38,10 @@ AI agents working with issue trackers and merge/pull requests need to:
 
 ### Current state
 
-- `upload_attachment()` exists on `IssueProvider`, implemented only for ClickUp
-- `add_issue_comment` supports attachments via base64 → multipart upload → markdown URL
-- GitLab, GitHub, Jira return `ProviderUnsupported`
-- There is no download / read support at all — only upload
-- There is no unified `Asset` abstraction — everything is bolted to a single provider
+- `upload_attachment()` on `IssueProvider` is implemented for **ClickUp, GitLab, and Jira**. GitHub still returns `ProviderUnsupported` because the public API does not expose a direct upload surface for issues / PRs.
+- `add_issue_comment` supports attachments via base64 → multipart upload → markdown URL.
+- `get_issue_attachments` / `download_attachment` have trait-level defaults returning `ProviderUnsupported`; per-provider implementations are being rolled out.
+- There is still no unified `Asset` abstraction exposed to agents — each provider has its own shape, and there is no local cache layer stitching them together.
 
 ### Where assets appear
 
@@ -59,7 +58,7 @@ AI agents working with issue trackers and merge/pull requests need to:
 
 - **GitLab** — no direct attachment API for comments. Workaround: `POST /projects/:id/uploads` uploads to the project and returns a markdown link `![image](/uploads/hash/file.png)` that is then embedded in issue/MR body or notes.
 - **GitHub** — no public API for attachments in comments. Releases assets and Gists are possible workarounds.
-- **Jira** — full support via `POST /rest/api/2/issue/{id}/attachments`.
+- **Jira** — full support via `POST /rest/api/3/issue/{id}/attachments` on Jira Cloud, and `POST /rest/api/2/issue/{id}/attachments` on Self-Hosted / Data Center.
 - **ClickUp** — full support via task attachments API (already implemented for upload).
 
 ## Decision
@@ -418,9 +417,9 @@ Each provider implements `asset_capabilities()` with its actual support. The enr
 
 | Provider | Upload | Download | List | Delete | Notes |
 |----------|--------|----------|------|--------|-------|
-| **ClickUp** | ✅ (`POST /task/{id}/attachment`) | to add | to add | ❌ (no public API) | Upload implemented |
-| **Jira** | to add (`POST /rest/api/2/issue/{id}/attachments`) | to add | to add | to add | Full API available |
-| **GitLab** | to add (project uploads, markdown link) | to add (via URL) | to add (parse markdown) | partial (edit out of body/comment) | No physical-delete API; "delete" means "remove the markdown link" |
+| **ClickUp** | ✅ (`POST /task/{id}/attachment`) | to add | to add | ❌ (no public API) | Upload shipped |
+| **Jira** | ✅ (v3 on Cloud, v2 on Self-Hosted / Data Center) | to add | to add | to add | Full API available; delete is implementable |
+| **GitLab** | ✅ (project uploads + markdown link) | to add (via URL) | to add (parse markdown) | partial (edit out of body/comment) | No physical-delete API; "delete" means "remove the markdown link" |
 | **GitHub** | ❌ (no public API for issues/PRs) | to add (via URL) | to add (parse markdown) | partial | Release assets are a separate path if we need upload |
 
 ## Consequences
@@ -516,3 +515,4 @@ Issues to track work are on GitHub under `meteora-pro/devboy-tools`.
 | 2026-04-11 | Andrei Mazniak | CRUD operations: `delete_asset`/`replace_asset`, per-context capabilities, `AssetCapabilities` in provider traits, schema enrichment |
 | 2026-04-17 | Andrei Mazniak | Translated to English; removed cross-repo references; kept as `proposed` (partially implemented) |
 | 2026-04-17 | Andrei Mazniak | Promoted status to `accepted` for phases 1–3 (devboy-assets crate, core asset types, MCP tools `get_assets`/`upload_asset`/`download_asset`); phase 5 (semantic `analyze_asset`) remains proposed |
+| 2026-04-17 | Andrei Mazniak | Corrected provider status: `upload_attachment` is implemented for ClickUp, GitLab, and Jira (GitHub still unsupported). Jira supports REST v3 on Cloud and v2 on Self-Hosted |
