@@ -1318,8 +1318,9 @@ fn detect_provider_defaults() -> Vec<bool> {
     vec![is_github, is_gitlab, false, false]
 }
 
-/// Build Config from collected options.
-/// Decide whether `devboy init --yes` should skip local git remote auto-detection.
+/// Decide whether `devboy init` should skip local git remote auto-detection and
+/// fall through to a minimal-config branch instead of calling `collect_options_auto`
+/// (for `--yes`) or `collect_options_interactive` (for the interactive path).
 ///
 /// Git detection is skipped when any of the following holds:
 /// - `--proxy-only` was passed (explicit opt-out, pre-existing behaviour);
@@ -1337,6 +1338,7 @@ fn should_skip_git_detect(
     remote_config_url.is_some() && !detect_git
 }
 
+/// Build Config from collected options.
 fn build_config(options: &InitOptions) -> Config {
     let mut config = Config::default();
 
