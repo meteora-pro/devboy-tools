@@ -590,8 +590,8 @@ fn test_init_remote_config_url_skips_git_detection_by_default() {
         "Should contain remote config URL"
     );
     assert!(
-        !content.contains("[contexts.") || !content.contains(".gitlab]"),
-        "Should NOT contain gitlab config section when remote config is the source of truth"
+        !content.contains(".gitlab]"),
+        "Should NOT contain a [contexts.*.gitlab] section when remote config is the source of truth"
     );
     assert!(
         !content.contains("company/project"),
