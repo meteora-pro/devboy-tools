@@ -670,6 +670,7 @@ struct CreateIssueParams {
     assignees: Vec<String>,
     #[serde(default, deserialize_with = "deserialize_string_or_number")]
     priority: Option<String>,
+    #[serde(alias = "parentId")]
     parent: Option<String>,
     markdown: Option<bool>,
     #[serde(rename = "projectId")]
@@ -2022,6 +2023,20 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::SingleIssue(_)));
+    }
+
+    #[test]
+    fn create_issue_params_accepts_parent_id_alias() {
+        let args = serde_json::json!({ "title": "t", "parentId": "DEV-799" });
+        let params: CreateIssueParams = serde_json::from_value(args).unwrap();
+        assert_eq!(params.parent.as_deref(), Some("DEV-799"));
+    }
+
+    #[test]
+    fn create_issue_params_still_accepts_parent() {
+        let args = serde_json::json!({ "title": "t", "parent": "DEV-799" });
+        let params: CreateIssueParams = serde_json::from_value(args).unwrap();
+        assert_eq!(params.parent.as_deref(), Some("DEV-799"));
     }
 
     #[tokio::test]
