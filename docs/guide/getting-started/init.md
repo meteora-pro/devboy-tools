@@ -44,6 +44,9 @@ This automatically detects your Git provider from the `origin` remote and create
 | `--proxy-token` | | Proxy token value (stored in keychain automatically, requires `--proxy`) |
 | `--proxy-token-key` | | Custom keychain key for token (default: "proxy.{name}.token", requires `--proxy`) |
 | `--proxy-auth-type` | | Auth type: "bearer", "api_key", or "none" (default: "bearer" if token, else "none") |
+| `--remote-config-url` | | Remote config endpoint; sets `[remote_config]` and, by default, **suppresses git auto-detection** (remote config is treated as the source of truth for integrations) |
+| `--remote-config-token` | | Bearer token for the remote config endpoint (stored in keychain as `remote_config.token`, requires `--remote-config-url`) |
+| `--detect-git` | | Force git remote auto-detection even when `--remote-config-url` is set (restores the pre-#151 behaviour for users who want both a remote config and an auto-detected local provider) |
 
 ## Examples
 
@@ -125,6 +128,34 @@ This skips Git remote detection and creates a minimal config with only the proxy
 
 See [MCP proxy](../configuration/proxy) for more details on proxy configuration.
 
+### Initialize with a remote config endpoint
+
+```bash
+devboy init --yes \
+  --remote-config-url "https://app.devboy.pro/api/config/mcp" \
+  --remote-config-token "your-token-here" \
+  --claude
+```
+
+Generates a minimal `.devboy.toml` that points at the remote config endpoint:
+
+```toml
+[remote_config]
+url = "https://app.devboy.pro/api/config/mcp"
+token_key = "remote_config.token"
+```
+
+**By default, `--remote-config-url` suppresses git remote auto-detection.** The remote config endpoint is treated as the source of truth for integrations, so devboy does not add a local `[contexts.*.github]` / `[contexts.*.gitlab]` section from the current `origin` — a local section would almost always be stale and drift from whatever the remote is actually serving.
+
+If you genuinely want both — a remote config *and* an auto-detected local provider pinned at bootstrap time — add `--detect-git`:
+
+```bash
+devboy init --yes \
+  --remote-config-url "https://app.devboy.pro/api/config/mcp" \
+  --remote-config-token "your-token-here" \
+  --detect-git
+```
+
 ## Auto-detection
 
 When using `--yes` or in interactive mode, devboy automatically detects:
@@ -133,6 +164,13 @@ When using `--yes` or in interactive mode, devboy automatically detects:
 - **GitLab** repositories from SSH (`git@gitlab.com:owner/repo.git`) or HTTPS (`https://gitlab.com/owner/repo`) remotes
 
 The detected provider is pre-selected in interactive mode or automatically configured in `--yes` mode.
+
+**Auto-detection is suppressed when:**
+
+- `--proxy-only` is passed (requires `--proxy`)
+- `--remote-config-url` is passed without `--detect-git`
+
+In both cases the rationale is the same — an external source (a proxy server or a remote config endpoint) is expected to supply the integration settings, so a locally auto-detected provider would just create drift.
 
 ## Token storage
 

@@ -376,6 +376,8 @@ token_key = "remote_config.token"
 devboy init --yes --remote-config-url "https://example.com/config" --remote-config-token "token" --claude
 ```
 
+This generates a minimal `.devboy.toml` with only the `[remote_config]` section — git remote auto-detection is suppressed when `--remote-config-url` is set, since the remote endpoint is expected to supply integration settings. Pass `--detect-git` to override that and also pin a locally auto-detected GitHub/GitLab provider. See [Project initialization](../getting-started/init) for details.
+
 ### Behavior
 
 - Remote config is fetched on each `devboy mcp` startup

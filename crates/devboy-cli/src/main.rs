@@ -167,6 +167,15 @@ enum Commands {
         /// Bearer token for remote config endpoint
         #[arg(long, requires = "remote_config_url")]
         remote_config_token: Option<String>,
+
+        /// Force git remote auto-detection even when `--remote-config-url` is set.
+        ///
+        /// By default, passing `--remote-config-url` suppresses local git auto-detection
+        /// (remote config is treated as the source of truth for integrations). Use
+        /// `--detect-git` to restore the pre-existing behaviour and auto-add a local
+        /// GitHub/GitLab context alongside the remote config.
+        #[arg(long)]
+        detect_git: bool,
     },
 
     /// Start the MCP server (stdio mode for AI assistants)
@@ -580,6 +589,7 @@ async fn main() -> Result<()> {
                 proxy_auth_type,
                 remote_config_url,
                 remote_config_token,
+                detect_git,
             }) => {
                 handle_init_command(
                     yes,
@@ -596,6 +606,7 @@ async fn main() -> Result<()> {
                     proxy_auth_type,
                     remote_config_url,
                     remote_config_token,
+                    detect_git,
                 )
                 .await?;
             }
@@ -746,6 +757,7 @@ async fn handle_init_command(
     proxy_auth_type: Option<AuthType>,
     remote_config_url: Option<String>,
     remote_config_token: Option<String>,
+    detect_git: bool,
 ) -> Result<()> {
     let config_path = PathBuf::from(INIT_CONFIG_FILE);
     let is_tty = io::stdin().is_terminal();
@@ -773,9 +785,15 @@ async fn handle_init_command(
         );
     }
 
+    let skip_git_detect =
+        should_skip_git_detect(proxy_only, remote_config_url.as_deref(), detect_git);
+
     // Collect options
-    let mut options = if proxy_only {
-        // Skip git remote detection, create minimal config with just proxy
+    let mut options = if skip_git_detect {
+        // Skip git remote detection, create minimal config.
+        // Reason: either --proxy-only was passed, or --remote-config-url was provided
+        // without --detect-git (remote config is the source of truth for integrations,
+        // so an auto-detected local provider would almost always be stale/wrong).
         let ctx_name = context_name.unwrap_or_else(|| {
             std::env::current_dir()
                 .ok()
@@ -1298,6 +1316,26 @@ fn detect_provider_defaults() -> Vec<bool> {
 
     // [GitHub, GitLab, ClickUp, Jira]
     vec![is_github, is_gitlab, false, false]
+}
+
+/// Decide whether `devboy init` should skip local git remote auto-detection and
+/// fall through to a minimal-config branch instead of calling `collect_options_auto`
+/// (for `--yes`) or `collect_options_interactive` (for the interactive path).
+///
+/// Git detection is skipped when any of the following holds:
+/// - `--proxy-only` was passed (explicit opt-out, pre-existing behaviour);
+/// - `--remote-config-url` is present and `--detect-git` is not (remote config is
+///   the source of truth for integrations, so a local auto-detected provider would
+///   almost always be stale or conflict).
+fn should_skip_git_detect(
+    proxy_only: bool,
+    remote_config_url: Option<&str>,
+    detect_git: bool,
+) -> bool {
+    if proxy_only {
+        return true;
+    }
+    remote_config_url.is_some() && !detect_git
 }
 
 /// Build Config from collected options.
@@ -3936,6 +3974,60 @@ mod tests {
         let options = InitOptions::default();
         let config = build_config(&options);
         assert!(config.contexts.is_empty());
+    }
+
+    // ==========================================================================
+    // should_skip_git_detect tests
+    // ==========================================================================
+
+    #[test]
+    fn test_skip_git_detect_default_behaviour() {
+        // Plain `devboy init --yes` — no proxy, no remote config, no override.
+        // Must preserve pre-existing auto-detect behaviour.
+        assert!(!should_skip_git_detect(false, None, false));
+    }
+
+    #[test]
+    fn test_skip_git_detect_proxy_only() {
+        // --proxy --proxy-only keeps its original skip behaviour.
+        assert!(should_skip_git_detect(true, None, false));
+    }
+
+    #[test]
+    fn test_skip_git_detect_remote_config_implies_skip() {
+        // --remote-config-url alone now suppresses git auto-detection.
+        assert!(should_skip_git_detect(
+            false,
+            Some("https://example.com/config"),
+            false
+        ));
+    }
+
+    #[test]
+    fn test_skip_git_detect_remote_config_with_detect_git_override() {
+        // Users who want both (remote config + local git-detected provider) opt in
+        // explicitly via --detect-git.
+        assert!(!should_skip_git_detect(
+            false,
+            Some("https://example.com/config"),
+            true
+        ));
+    }
+
+    #[test]
+    fn test_skip_git_detect_proxy_only_beats_detect_git() {
+        // --proxy-only is an explicit skip and wins even if --detect-git is also set.
+        assert!(should_skip_git_detect(
+            true,
+            Some("https://example.com/config"),
+            true
+        ));
+    }
+
+    #[test]
+    fn test_skip_git_detect_detect_git_without_remote_config_is_noop() {
+        // --detect-git with no remote config URL doesn't spuriously flip behaviour.
+        assert!(!should_skip_git_detect(false, None, true));
     }
 
     #[test]
