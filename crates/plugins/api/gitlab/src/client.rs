@@ -2357,6 +2357,43 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn test_add_mr_comment_discussion_reply() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/api/v4/projects/123/merge_requests/50/discussions/disc-1/notes")
+                    .header("PRIVATE-TOKEN", "test-token")
+                    .body_includes("\"body\":\"Thread reply\"");
+                then.status(201).json_body(serde_json::json!({
+                    "id": 401,
+                    "body": "Thread reply",
+                    "author": {"id": 1, "username": "reviewer"},
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "system": false,
+                    "resolvable": true,
+                    "resolved": false
+                }));
+            });
+
+            let client = create_test_client(&server);
+            let comment = MergeRequestProvider::add_comment(
+                &client,
+                "mr#50",
+                CreateCommentInput {
+                    body: "Thread reply".to_string(),
+                    position: None,
+                    discussion_id: Some("disc-1".to_string()),
+                },
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(comment.id, "401");
+            assert_eq!(comment.body, "Thread reply");
+        }
+
+        #[tokio::test]
         async fn test_get_current_user() {
             let server = MockServer::start();
 

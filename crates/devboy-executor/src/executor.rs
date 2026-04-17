@@ -964,12 +964,17 @@ async fn execute_create_merge_request(
 
 #[derive(Deserialize)]
 struct CreateMrCommentParams {
+    #[serde(alias = "mrKey")]
     key: String,
     body: String,
+    #[serde(alias = "filePath")]
     file_path: Option<String>,
     line: Option<u32>,
+    #[serde(alias = "lineType")]
     line_type: Option<String>,
+    #[serde(alias = "commitSha")]
     commit_sha: Option<String>,
+    #[serde(alias = "discussionId")]
     discussion_id: Option<String>,
 }
 
@@ -2180,6 +2185,29 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::Text(ref t) if t.contains("Comment added")));
+    }
+
+    #[test]
+    fn test_create_merge_request_comment_params_accept_camel_case() {
+        let args = serde_json::json!({
+            "mrKey": "mr#566",
+            "body": "reply",
+            "filePath": "src/main.rs",
+            "line": 12,
+            "lineType": "new",
+            "commitSha": "abc123",
+            "discussionId": "788adb16c57805c9a5d59272c944cddea381a605"
+        });
+
+        let params: CreateMrCommentParams = serde_json::from_value(args).unwrap();
+        assert_eq!(params.key, "mr#566");
+        assert_eq!(params.file_path.as_deref(), Some("src/main.rs"));
+        assert_eq!(params.line_type.as_deref(), Some("new"));
+        assert_eq!(params.commit_sha.as_deref(), Some("abc123"));
+        assert_eq!(
+            params.discussion_id.as_deref(),
+            Some("788adb16c57805c9a5d59272c944cddea381a605")
+        );
     }
 
     #[tokio::test]
