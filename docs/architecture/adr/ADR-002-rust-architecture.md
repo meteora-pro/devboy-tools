@@ -138,5 +138,5 @@ The same tool set is exposed through multiple transports (see the README's "Inte
 
 | Date | Author | Change |
 |------|--------|--------|
-| 2026-01-12 | Claude Code | Initial version |
-| 2026-04-17 | Claude Code | Translated to English; trimmed to the scope of this project; marked as accepted (implementation shipped) |
+| 2026-01-12 | Andrei Mazniak | Initial version |
+| 2026-04-17 | Andrei Mazniak | Translated to English; trimmed to the scope of this project; marked as accepted (implementation shipped) |

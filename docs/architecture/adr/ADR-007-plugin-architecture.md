@@ -310,5 +310,5 @@ pub enum Extension {
 
 | Date | Author | Change |
 |------|--------|--------|
-| 2026-01-13 | Claude Code | Initial version |
-| 2026-04-17 | Claude Code | Translated to English; split into shipped (Parts 1–2) and deferred (Parts 3–4) sections; trimmed in-doc code; marked accepted for the shipped subset |
+| 2026-01-13 | Andrei Mazniak | Initial version |
+| 2026-04-17 | Andrei Mazniak | Translated to English; split into shipped (Parts 1–2) and deferred (Parts 3–4) sections; trimmed in-doc code; marked accepted for the shipped subset |

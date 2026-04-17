@@ -198,5 +198,5 @@ Authentication failures are never silently masked — they indicate a misconfigu
 
 | Date | Author | Change |
 |------|--------|--------|
-| 2026-01-13 | Claude Code | Initial version |
-| 2026-04-17 | Claude Code | Translated to English; trimmed inline code samples; marked accepted; clarified that Record-and-Replay is opt-in (not a blocker for contributors) |
+| 2026-01-13 | Andrei Mazniak | Initial version |
+| 2026-04-17 | Andrei Mazniak | Translated to English; trimmed inline code samples; marked accepted; clarified that Record-and-Replay is opt-in (not a blocker for contributors) |

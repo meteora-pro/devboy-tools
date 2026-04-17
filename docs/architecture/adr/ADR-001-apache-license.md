@@ -130,5 +130,5 @@ limitations under the License.
 
 | Date | Author | Change |
 |------|--------|--------|
-| 2026-01-12 | Claude Code | Initial version |
-| 2026-04-17 | Claude Code | Translated to English and brought into this repository |
+| 2026-01-12 | Andrei Mazniak | Initial version |
+| 2026-04-17 | Andrei Mazniak | Translated to English and brought into this repository |
