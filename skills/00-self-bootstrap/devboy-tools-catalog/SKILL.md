@@ -32,17 +32,18 @@ Answer the question "what tools does the current `devboy-tools` installation exp
 devboy tools list
 ```
 
-Output includes each tool's name, enabled/disabled status, and the category it belongs to (`git_repository`, `issue_tracker`, `epics`, `releases`, `meeting_notes`, `messenger`, plus pipeline helpers). Tools from a provider that is not configured are hidden — if you expected a tool and do not see it, that provider is not active in this setup.
+Output is a flat list of tool names with enabled/disabled status — `devboy tools list` does not print descriptions or categories itself. Tools from providers that are not configured for the active context are filtered out, so an empty or short list almost always means "no provider is wired up yet" rather than "devboy is broken".
 
 ### 2. Inspect one tool's schema
 
+`devboy tools call` does not take `--help`; the schema is not served as a flag. The only way to see a tool's full JSON Schema (required fields, enums, provider-specific `cf_*` custom-field extensions) is to ask the MCP server directly:
+
 ```bash
-devboy tools call get_issues --help 2>/dev/null || \
-  devboy mcp <<< '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | \
-    jq '.result.tools[] | select(.name=="get_issues")'
+devboy mcp <<< '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | \
+  jq '.result.tools[] | select(.name=="get_issues")'
 ```
 
-The second form prints the full JSON Schema (required fields, enums, provider-specific `cf_*` custom-field extensions, etc.). Use it when you need to know exactly what an argument accepts.
+The MCP server exits after serving one request on stdin, so no background process remains.
 
 ### 3. Invoke a tool
 

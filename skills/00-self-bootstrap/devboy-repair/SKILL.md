@@ -37,51 +37,41 @@ devboy doctor --format json > /tmp/devboy-doctor.json
 jq '.' /tmp/devboy-doctor.json
 ```
 
-Read the JSON: every check has `{ id, status, message, remediation }`. `status = "fail"` entries are the ones to fix.
+The JSON shape is:
+
+```json
+{
+  "version": { "current_version": "...", "latest_version": "...", "update_available": false, "install_method": "...", "update_command": "devboy upgrade" },
+  "results": [
+    { "id": "environment.os_support", "category": "Environment", "name": "...", "status": "pass|warning|error", "message": "...", "details": null, "fix_command": "devboy init", "fix_url": null }
+  ]
+}
+```
+
+Every result has `{ id, category, name, status, message, details, fix_command, fix_url }`. Status values are `pass` (good), `warning` (recoverable but worth attention), and `error` (must be fixed). Any non-null `fix_command` is a suggested starting point.
 
 If the command itself fails to run, `devboy` is not on `PATH` — install or re-link the binary before continuing.
 
 ### 2. Classify by check id
 
-Work through the failing checks in order. Common buckets:
+The real check id taxonomy (from `devboy doctor --list-checks`):
 
-**`config.*`** — the `.devboy.toml` is missing, malformed, or points at something that no longer exists.
-
-- `config.exists` fails → run `devboy init` (see `devboy-setup`).
-- `config.valid_toml` fails → `jq .` or `cat .devboy.toml` to find the syntax error; back up and re-run `devboy init --force` if unsalvageable.
-- `config.contexts.<name>.missing` → edit `.devboy.toml` to either remove the stale context reference or re-run `devboy init` to regenerate.
-
-**`providers.*`** — credentials are missing or invalid.
-
-- `providers.<name>.no_token` → `devboy config set-secret <name>.token` (or set the env var on CI).
-- `providers.<name>.unauthorised` (401) → the token is wrong or expired. Rotate and re-store.
-- `providers.<name>.forbidden` (403) → the token lacks the required scopes. Re-issue the token with the scopes listed in the remediation hint.
-- `providers.<name>.unreachable` → network or DNS issue. Verify with `curl -v <base-url>`.
-
-**`keychain.*`** — the OS keychain is not reachable.
-
-- macOS / Windows keychain locked → unlock the user session; re-run.
-- Linux headless (no D-Bus) → move to env vars: `export DEVBOY_<PROVIDER>_TOKEN=...` and re-run `devboy doctor`.
-
-**`proxy.servers.*`** — an upstream MCP proxy is not responding.
-
-- Network failure → verify with `curl -v <proxy URL>`.
-- Bad token → re-issue via `devboy proxy add <name> --url <url> --force` with a new `--token`.
-
-**`remote_config.*`** — the remote config endpoint is down or the token is wrong.
-
-- 401 / 403 → re-issue the `--remote-config-token`.
-- 5xx / timeout → retry; if persistent, the remote endpoint is the problem and local config takes over (remote config is best-effort).
+- **Environment** — `environment.os_support`, `environment.config_dir`, `environment.credential_store`. The first two warn when the config directory is missing (run `devboy init`); the third warns when the OS keychain daemon isn't reachable (move tokens to env vars — see step 3).
+- **Configuration** — `config.exists`, `config.valid_toml`, `config.active_context`. Missing file → `devboy init`; invalid TOML → open `.devboy.toml` in an editor or run `devboy init --force`; stale active context → edit the `active_context` field or re-run `devboy init`.
+- **Credentials** — `credentials.github`, `credentials.gitlab`, `credentials.clickup`, `credentials.jira`, `credentials.slack`. A `warning`/`error` means the token is missing. Store it with `devboy config set-secret <provider>.token` or set the matching `DEVBOY_<PROVIDER>_TOKEN` / `<PROVIDER>_TOKEN` env var.
+- **Provider Connectivity** — `providers.github`, `providers.gitlab`, `providers.clickup`, `providers.jira`, `providers.slack`. `error` means the token is rejected (401/403) or the endpoint is unreachable. 401/403 → rotate the token. Unreachable → check network / base URL.
+- **MCP Server** — `mcp.tools` reports on the built-in tool filter; only warns if the config disables every tool.
+- **Proxy** — `proxy.servers` checks upstream MCP proxy connectivity. Failure usually means a bad `--proxy-token` or a dead URL; re-issue with `devboy proxy add <name> --url <url> --force --token <new>`.
 
 ### 3. Re-verify
 
 After each fix:
 
 ```bash
-devboy doctor --format json | jq '[.checks[] | select(.status=="fail")] | length'
+devboy doctor --format json | jq '[.results[] | select(.status=="error")] | length'
 ```
 
-Zero failing checks is the target. Repeat step 2 until the number reaches zero.
+Zero `error` results is the target (some `warning`s are expected — e.g. "no config file" until `devboy init` runs). Repeat step 2 until every `error` is resolved.
 
 ### 4. Smoke-test the tool bundle
 
