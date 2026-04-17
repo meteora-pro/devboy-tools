@@ -42,6 +42,7 @@ devboy-tools/
 │   ├── devboy-mcp/                # MCP server (JSON-RPC over stdio)
 │   ├── devboy-cli/                # CLI binary (entry point)
 │   ├── devboy-storage/            # Credential storage (keychain, env vars)
+│   ├── devboy-assets/             # On-disk asset cache, index, LRU rotation (see ADR-010)
 │   └── plugins/
 │       ├── api/                   # Provider integrations
 │       │   ├── gitlab/
@@ -50,7 +51,7 @@ devboy-tools/
 │       │   ├── jira/
 │       │   ├── slack/
 │       │   └── fireflies/
-│       └── format-pipeline/       # Output formatting (TOON, markdown, budget trimming)
+│       └── format-pipeline/       # Output formatting (TOON, budget trimming, pagination)
 ├── npm/                           # npm distribution wrappers
 │   ├── devboy-tools/              # Main `@devboy-tools/cli` package
 │   └── devboy-tools-{platform}/   # Per-platform binaries
@@ -140,3 +141,4 @@ The same tool set is exposed through multiple transports (see the README's "Inte
 |------|--------|--------|
 | 2026-01-12 | Andrei Mazniak | Initial version |
 | 2026-04-17 | Andrei Mazniak | Translated to English; trimmed to the scope of this project; marked as accepted (implementation shipped) |
+| 2026-04-17 | Andrei Mazniak | Added `devboy-assets` to the workspace tree (was missing) |

@@ -120,25 +120,40 @@ Authentication failures are never silently masked — they indicate a misconfigu
 
 ### CI workflows
 
-- `.github/workflows/ci.yml` — unit + integration tests on every PR, plus `cargo fmt --check` and `cargo clippy -- -D warnings`
-- Coverage via `cargo-llvm-cov` uploaded to [Codecov](https://about.codecov.io/)
-- Docs build: rustdoc + user guide, published to GitHub Pages from `main`
-- Record-and-Replay real-API runs are gated on secrets being present; forks skip them
+- `.github/workflows/ci.yml` — jobs: `fmt`, `docs` (build), `clippy`, `test` (matrix over 5 platforms), `build` (matrix over 5 platforms), `coverage`
+  - `cargo fmt --all -- --check`
+  - `cargo clippy --all-targets --all-features` (with `RUSTFLAGS: -Dwarnings`)
+  - `cargo test --all-features` per target
+- `.github/workflows/deploy-docs.yml` — on `push` to `main` with changes under `docs/**`, deploys the Rspress site to GitHub Pages
+- `.github/workflows/fixtures-update.yml` — refreshes fixtures against the real APIs on a schedule
+- `.github/workflows/release.yml` — builds release artefacts on git tag
+- Coverage via `cargo-llvm-cov` → Codecov (uses `codecov-action@v5`)
+- Record-and-Replay real-API runs are gated on secrets being present; forks skip them and fall back to fixtures
+
+### CI secrets
+
+Only a minimal set of credentials is configured in the main repository; other providers run purely against fixtures:
+
+| Secret | Used for |
+|--------|----------|
+| `GITLAB_URL`, `GITLAB_TOKEN`, `GITLAB_PROJECT_ID` | GitLab provider tests in Record mode |
+| `GH_TEST_TOKEN` | GitHub provider tests in Record mode |
+| `CODECOV_TOKEN` | Uploading coverage reports |
 
 ### Coverage thresholds
 
-| Metric | Threshold | Enforcement |
-|--------|-----------|-------------|
-| Overall coverage | 70% | warning on PR |
-| Patch coverage | 80% | block merge |
-| Critical paths | 90% | block merge |
+Enforced through `codecov.yml` at the repository root:
+
+| Metric | Target | Threshold | Enforcement |
+|--------|--------|-----------|-------------|
+| Project coverage | 90% | 1% | status check on PR |
+| Patch coverage | 90% | — | informational (reported but does not block merge — test code in `crates/*/tests/` is not instrumented and can unfairly lower patch coverage) |
+
+The `crates/devboy-cli/src/main.rs` binary entry point is excluded from coverage (orchestrates subcommands, does little worth measuring).
 
 ### Documentation
 
-| Kind | Tool | Path | Purpose |
-|------|------|------|---------|
-| API reference | rustdoc | `/api/` | Auto-generated from doc comments |
-| User guide | Rspress | `/` | Hand-written guide, published to GitHub Pages |
+The user guide is built with [Rspress](https://rspress.dev/) from `docs/` and deployed to GitHub Pages by `deploy-docs.yml`. Inline API documentation lives in Rust doc comments and is surfaced through `cargo doc`; we do not currently publish a separate auto-generated rustdoc site.
 
 ## Consequences
 
@@ -200,3 +215,4 @@ Authentication failures are never silently masked — they indicate a misconfigu
 |------|--------|--------|
 | 2026-01-13 | Andrei Mazniak | Initial version |
 | 2026-04-17 | Andrei Mazniak | Translated to English; trimmed inline code samples; marked accepted; clarified that Record-and-Replay is opt-in (not a blocker for contributors) |
+| 2026-04-17 | Andrei Mazniak | Synced with current CI: Rspress (not rustdoc+mdBook) for docs, separate `deploy-docs.yml`, coverage thresholds from `codecov.yml` (90% / 90% informational), actual CI secrets list |
