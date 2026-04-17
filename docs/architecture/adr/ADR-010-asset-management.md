@@ -13,7 +13,20 @@ superseded_by: null
 
 ## Status
 
-**proposed** — partially implemented. ClickUp attachment upload exists in the issue provider; a unified asset abstraction, local cache, download support across all providers, and the semantic-analysis pipeline are still to be built.
+**accepted** — Phases 1–3 shipped. Phase 5 (semantic `analyze_asset` via a configurable LLM) is still proposed and not implemented. Per-provider coverage of attachment download/delete is partial (see the Provider-specific support table below).
+
+**What's shipped today:**
+
+- `crates/devboy-assets/` exists with `cache`, `config`, `error`, `index`, `manager`, `rotation` modules. `AssetManager` is the public entry point, backed by `CacheManager` + `AssetIndex` with LRU rotation.
+- Shared types in `devboy-core::asset` — `AssetContext`, `AssetContextKind`, `AssetMeta`, `AssetInput`, `AssetAnalysis`, `AssetCapabilities`, `ContextCapabilities`, `ContentKind`, `SemanticAnalysis`, plus markdown-attachment helpers (`MarkdownAttachment`, `parse_markdown_attachments`, `filename_from_url`).
+- MCP tools `get_assets`, `upload_asset`, `download_asset` are wired in `devboy-executor`.
+- ClickUp provider implements attachment upload.
+
+**What's still proposed:**
+
+- `delete_asset` and `replace_asset` tools
+- `analyze_asset` tool and the Level-3 semantic pipeline (LLM provider abstraction, prompt templates, response cache)
+- Complete attachment coverage across all providers — several providers still return `ProviderUnsupported` for parts of the asset CRUD surface
 
 ## Context
 
@@ -502,3 +515,4 @@ Issues to track work are on GitHub under `meteora-pro/devboy-tools`.
 | 2026-04-11 | Andrei Mazniak | Three-level pipeline (metadata/heuristics/semantic), configurable LLM, batch analysis, passthrough mode, extension to URL/response inputs |
 | 2026-04-11 | Andrei Mazniak | CRUD operations: `delete_asset`/`replace_asset`, per-context capabilities, `AssetCapabilities` in provider traits, schema enrichment |
 | 2026-04-17 | Andrei Mazniak | Translated to English; removed cross-repo references; kept as `proposed` (partially implemented) |
+| 2026-04-17 | Andrei Mazniak | Promoted status to `accepted` for phases 1–3 (devboy-assets crate, core asset types, MCP tools `get_assets`/`upload_asset`/`download_asset`); phase 5 (semantic `analyze_asset`) remains proposed |

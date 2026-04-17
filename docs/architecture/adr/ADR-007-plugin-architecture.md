@@ -1,6 +1,6 @@
 ---
 id: ADR-007
-title: Plugin architecture — API plugins, pipeline plugins, and capability model
+title: Plugin architecture — API providers, format pipeline, and the enricher model
 status: accepted
 date: 2026-01-13
 deciders: ["Andrei Mazniak"]
@@ -13,296 +13,154 @@ superseded_by: null
 
 ## Status
 
-**accepted** (Parts 1–2). Parts 3–4 (WASM Component Model, TypeScript plugin SDK) are kept as future work but not implemented.
-
-- Part 1 — API and Pipeline plugin split via Cargo workspace: **shipped**
-- Part 2 — `ExtensionSlots` with `TypeId`-based type-safe access, feature flags, per-plugin Cargo dependencies: **shipped**
-- Part 3 — WASM Component Model for community plugins: **future work, deferred**
-- Part 4 — TypeScript plugin SDK via child-process JSON-RPC: **future work, deferred**
+**accepted** — the shipped design is described below. Two earlier variants considered during the original discussion (typed `ExtensionSlots` with a `Capability` enum, and community plugins via WASM / TypeScript) are kept as **alternatives considered** and **deferred future work** respectively — neither is implemented today.
 
 ## Context
 
 `devboy-tools` needs an extensible architecture for three groups of add-ons:
 
-1. **API plugins** — provider integrations (GitLab, GitHub, ClickUp, Jira, Slack, Fireflies, future: Linear, Sentry, …)
-2. **Pipeline plugins** — output processing (pagination, truncation, summary, enrichment)
-3. **Community plugins** — third-party extensions distributed outside the main repository
+1. **API plugins** — provider integrations (GitLab, GitHub, ClickUp, Jira, Slack, Fireflies, …)
+2. **Pipeline plugins** — output processing (TOON encoding, budget trimming, pagination, truncation, …)
+3. **Community plugins** — third-party extensions distributed outside the main repository *(deferred — no shipped mechanism yet)*
 
 Key requirements:
 
-- Typed data flow between plugins (a downstream plugin can use a typed value produced by an upstream plugin)
-- Feature flags for optional plugins so lean builds are possible
-- Compile-time verification for plugins shipped inside the binary, runtime verification for community plugins
+- A provider crate must be addable without touching core
+- Tools surfaced to the agent should adapt to what the active providers actually support (no empty shells of tools that always return "not supported")
+- Core crates stay free of any provider-specific code
 
 ## Decision
 
-### Part 1: Two plugin types
+### Part 1 — Two plugin types, two shapes
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                        Plugin Types                         │
-├────────────────────────────────────────────────────────────┤
-│                                                             │
-│  API PLUGINS                      PIPELINE PLUGINS          │
-│  ───────────                      ────────────────          │
-│                                                             │
-│  + Credentials config             + Input schema extension  │
-│  + API client                     + Output transformation   │
-│  + Provider trait impl            + Guidance generation     │
-│  + Entity mapping                 + Context enrichment      │
-│                                                             │
-│  crates/plugins/api/gitlab        crates/plugins/pipeline/ │
-│  crates/plugins/api/github          paginate                │
-│  crates/plugins/api/clickup         truncate                │
-│  crates/plugins/api/jira            summary                 │
-│  crates/plugins/api/slack           enrich                  │
-│  crates/plugins/api/fireflies                               │
-│                                                             │
-└────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                          Plugin types                               │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  API PLUGINS (one crate per provider)    FORMAT PIPELINE (one crate)│
+│  ───────────────────────────────────     ───────────────────────────│
+│                                                                     │
+│  + Provider trait impl (ADR-004)          + TOON encoding           │
+│  + API client                             + Budget trimming         │
+│  + Entity mapping → core types            + Pagination              │
+│  + ToolEnricher impl                      + Per-strategy trim logic │
+│  + Category declarations                  + Output formatting       │
+│                                                                     │
+│  crates/plugins/api/gitlab                crates/plugins/           │
+│  crates/plugins/api/github                      format-pipeline/    │
+│  crates/plugins/api/clickup                     ├── budget/        │
+│  crates/plugins/api/jira                        ├── pagination/    │
+│  crates/plugins/api/slack                       ├── trim/          │
+│  crates/plugins/api/fireflies                   ├── truncation/    │
+│                                                 ├── toon/          │
+│                                                 └── strategy/      │
+│                                                                     │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-API plugins implement the provider traits from ADR-004. Pipeline plugins implement `PipelinePlugin` and operate on the `PipelineContext` that carries a tool call's input, output, and cross-plugin extensions.
+**API plugins are one crate per provider.** Each one implements the relevant provider traits from ADR-004 (`IssueProvider`, `MergeRequestProvider`, etc.), plus the `ToolEnricher` trait described below.
 
-### Part 2: `ExtensionSlots` with `TypeId`-based access
+**The format pipeline is one crate (`devboy-format-pipeline`) with modules.** The original discussion considered splitting each pipeline stage (pagination, truncation, summarisation, enrichment) into its own crate; in practice the stages are tightly coupled through shared types (`TransformOutput`, `BudgetConfig`, `StrategyResolver`) and splitting them added Cargo surface without removing any real coupling. One crate, several modules turned out to be the right trade-off.
 
-Rust's `TypeId` gives us a type-safe but extensible slot map: each plugin can publish a typed extension and downstream plugins can pull it out by type.
+### Part 2 — Tool enrichment via `ToolEnricher` + `ToolCategory`
+
+The capability model is expressed through two cooperating constructs, both in `devboy-core`:
 
 ```rust
-// crates/devboy-core/src/pipeline/context.rs
-pub struct ExtensionSlots {
-    slots: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+// crates/devboy-core/src/tool_category.rs
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ToolCategory {
+    GitRepository,   // MR/PR, pipelines, diffs, discussions
+    IssueTracker,    // issues CRUD, comments, statuses
+    Epics,           // high-level tasks with goals and progress
+    Releases,        // tags, releases, release assets
+    MeetingNotes,    // transcripts, summaries, search
+    Messenger,       // chats, messages, search, sending
 }
 
-impl ExtensionSlots {
-    pub fn get<T: 'static + Send + Sync>(&self) -> Option<&T> {
-        self.slots.get(&TypeId::of::<T>())
-            .and_then(|b| b.downcast_ref::<T>())
-    }
-    pub fn set<T: 'static + Send + Sync>(&mut self, ext: T) {
-        self.slots.insert(TypeId::of::<T>(), Box::new(ext));
-    }
-}
+// crates/devboy-core/src/enricher.rs
+pub trait ToolEnricher: Send + Sync {
+    /// Which categories this provider serves. Tools from categories
+    /// not covered by any registered enricher are hidden in `tools/list`.
+    fn supported_categories(&self) -> &[ToolCategory];
 
-pub struct PipelineContext {
-    pub input: Value,
-    pub output: Value,
-    pub extensions: ExtensionSlots,
-    pub guidance: LlmGuidance,
-    pub metadata: ContextMetadata,
-}
-```
+    /// Adapt the JSON Schema of a tool at `tools/list` time (add provider-
+    /// specific parameters, set enum values from real project metadata,
+    /// strip unsupported fields).
+    fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema);
 
-#### Typed cross-plugin dependencies via Cargo
-
-A pipeline plugin that needs the pagination extension declares a regular Cargo dependency:
-
-```toml
-# crates/plugins/pipeline/summary/Cargo.toml
-[dependencies]
-devboy-core           = { workspace = true }
-devboy-pipeline-paginate = { workspace = true }
-```
-
-And imports the extension type directly:
-
-```rust
-// crates/plugins/pipeline/summary/src/lib.rs
-use devboy_pipeline_paginate::PaginateExtension;
-
-impl PipelinePlugin for SummaryPlugin {
-    fn process(&self, ctx: &mut PipelineContext) -> Result<()> {
-        if let Some(pag) = ctx.extensions.get::<PaginateExtension>() {
-            ctx.guidance.add_hint(format!(
-                "Showing page {} of {}",
-                pag.current_page,
-                pag.total_pages.unwrap_or(1),
-            ));
-        }
-        Ok(())
-    }
+    /// Transform arguments before execution (e.g. `cf_story_points`
+    /// → `customFields.storyPoints` for ClickUp).
+    fn transform_args(&self, tool_name: &str, args: &mut Value);
 }
 ```
 
-This gives us IDE autocomplete, go-to-definition, compile-time type checking, and explicit semver-versioned dependencies — all for free, just by using Cargo.
+The model is deliberately **provider-scoped**, not fine-grained capability-scoped:
 
-#### Feature flags
+- A provider declares a handful of **categories** it serves. The executor filters the advertised tools accordingly, so an agent talking to an MCP server configured with only Slack + Fireflies does not see `create_issue` or `get_merge_requests` in its tool list.
+- Inside a category, the provider **enriches** the tool schema to match what it can really do — injecting custom-field enums, removing params it cannot honour, adding free-form provider-specific parameters.
 
-```toml
-# crates/devboy-core/Cargo.toml
-[features]
-default = ["all-pipeline"]
+This gives us most of what a richer capability system would give us (tools that don't fit are hidden; those that do fit get schemas that match reality), without the cost of maintaining a large `Capability` enum or a runtime verification layer.
 
-all-pipeline = [
-    "pipeline-paginate", "pipeline-truncate",
-    "pipeline-summary",  "pipeline-enrich",
-]
+### Part 3 — Community plugins *(deferred)*
 
-pipeline-paginate = ["devboy-pipeline-paginate"]
-pipeline-truncate = ["devboy-pipeline-truncate"]
-pipeline-summary  = ["devboy-pipeline-summary", "pipeline-paginate", "pipeline-truncate"]
-pipeline-enrich   = ["devboy-pipeline-enrich"]
+The original discussion also sketched two mechanisms for third-party plugins:
 
-all-providers = [
-    "gitlab", "github", "clickup", "jira", "slack", "fireflies",
-]
-```
+- **WASM Component Model** with WIT interfaces, `wasmtime` host, and sandboxed HTTP / credentials / logging imports
+- **TypeScript plugin SDK** via a child Node.js process speaking JSON-RPC over stdio, published as `@devboy-tools/plugin-sdk`
 
-A CI job builds a feature matrix to confirm every combination compiles and passes its tests.
-
-### Part 2b: Capability system
-
-Each plugin declares what it **provides** and what it **requires** via a `Capability` value. Core capabilities are a Rust enum (compile-time typed); custom capabilities are strings with a `namespace:action` shape, so community plugins can add their own without core changes.
-
-```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CoreCapability {
-    IssueRead, IssueWrite, IssueDelete, IssueComment, IssueRelations, IssueAttachment,
-    MergeRequestRead, MergeRequestWrite, MergeRequestDiscussion, MergeRequestPipeline,
-    ChatRead, ChatWrite, ChatSearch,
-    MeetingRead, MeetingTranscript,
-    Pagination, Truncation, Summarization, Enrichment, GuidanceGeneration,
-}
-
-pub enum Capability {
-    Core(CoreCapability),
-    Custom(String),   // "linear:team:read", "jira:agile:*"
-}
-```
-
-A `CapabilitySet` with wildcard matching (`issue:*`, `linear:**`) allows both strict and permissive requirements.
-
-### Part 3 (future work, deferred): WASM Component Model for community plugins
-
-When community plugins become a priority, we intend to use the W3C WASM Component Model:
-
-- WIT interface definitions for plugin/host contracts
-- `wasmtime` Component Model for the host runtime
-- Host-supplied imports: HTTP, logging, credential lookup
-- Sandboxed execution — community plugins never touch the host filesystem or network except through host functions
-
-A sketch of the WIT surface and the `wasmtime` host integration exists in design notes but has not been implemented. Until we have a concrete community-plugin use case, this stays deferred.
-
-### Part 4 (future work, deferred): TypeScript plugin SDK
-
-Another deferred path is a child-process TypeScript SDK:
-
-- Plugins run as a Node.js process
-- Communicate with the host over JSON-RPC on stdio
-- `@devboy-tools/plugin-sdk` npm package provides the SDK and plugin lifecycle helpers
-- Full access to the NPM ecosystem (e.g. `@linear/sdk` for a Linear plugin)
-
-Rationale for deferring: we currently have no confirmed use case that requires running user-authored TypeScript inside the binary. The Rust-crate path covers every provider we've built so far.
-
-### Verification
-
-#### Compile-time (core plugins)
-
-Core plugins are verified at compile time: they use trait bounds and macros to assert API version compatibility and capability consistency.
-
-```rust
-pub trait VerifiedPlugin: PipelinePlugin {
-    const API_VERSION: ApiVersion;
-    const PROVIDES: &'static [Capability];
-    const REQUIRES: &'static [Capability];
-}
-
-#[macro_export]
-macro_rules! verify_plugin_deps {
-    ($plugin:ty) => {
-        const _: () = {
-            let api = <$plugin as VerifiedPlugin>::API_VERSION;
-            assert!(api.major == $crate::CORE_API_VERSION.major);
-        };
-    };
-}
-```
-
-#### Runtime (community plugins, when they land)
-
-For community plugins we intend to ship a `PluginVerifier` that checks a `PluginManifest` at load time — version compatibility, dependency resolution, schema validity, capability consistency, and a conformance test suite run against the loaded plugin in a sandbox. This is all in the "future work" bucket alongside Parts 3–4.
-
-### CI
-
-```yaml
-# .github/workflows/plugin-verification.yml
-jobs:
-  feature-matrix:
-    strategy:
-      matrix:
-        features:
-          - default
-          - pipeline-paginate
-          - pipeline-paginate,pipeline-truncate
-          - pipeline-paginate,pipeline-truncate,pipeline-summary
-          - all-pipeline
-          - all-pipeline,all-providers
-    steps:
-      - run: cargo test --no-default-features --features "${{ matrix.features }}"
-```
+Neither is implemented and neither is in the current scope. They are kept here as a reminder that the core design doesn't preclude them — the `Provider` + `ToolEnricher` split is the natural seam to plug a WASM or child-process runtime into when the need becomes concrete.
 
 ## Consequences
 
 ### Positive
 
-- ✅ **Type safety** — `ctx.extensions.get::<PaginateExtension>()` is compile-time checked
-- ✅ **IDE support** — autocomplete and go-to-definition across plugin boundaries
-- ✅ **Explicit dependencies** — each plugin's `Cargo.toml` lists exactly what it depends on
-- ✅ **Semver** — plugins version with the rest of the workspace
-- ✅ **Zero cost when unused** — `Option<&T>` is as cheap as a pointer check
-- ✅ **Feature-matrix CI** — prevents accidentally coupling plugins that shouldn't be coupled
+- ✅ **New provider = new crate.** No core changes are required to add a provider; Cargo workspace members + `devboy_core` trait impls cover it.
+- ✅ **Tool list matches provider set.** Agents only see tools that can actually run against the active configuration.
+- ✅ **Schemas reflect reality.** Provider-specific parameters and enums come from the enricher, not from static MCP declarations.
+- ✅ **Simple to reason about.** Six categories, one trait — no type-map of extension slots, no runtime capability resolver.
+- ✅ **Format pipeline is one place.** Truncation, TOON encoding, budget trimming, and pagination share types and code without the friction of several crates.
 
 ### Negative
 
-- ❌ **Complexity** — two verification strategies (compile-time for core, runtime for community once shipped)
-- ❌ **Boilerplate** — each plugin needs a `VerifiedPlugin` impl with its capabilities
-- ❌ **CI build time** — the feature matrix multiplies the number of `cargo test` invocations
-
-### Trade-offs
-
-| Aspect | Core plugins | Community plugins (future) |
-|--------|--------------|-----------------------------|
-| Verification | Compile-time | Runtime |
-| Trust model | Trusted — shipped inside the binary | Sandboxed via WASM |
-| Update path | Recompile the binary | Hot reload at runtime |
-| Dependency declaration | `Cargo.toml` | `manifest.json` |
+- ❌ Category granularity is coarser than per-capability gating. If two providers belong to the same category but support different subsets of its tools, we can't currently hide individual tools for one of them — we rely on the enricher to communicate that through the schema (e.g. restricted enum values).
+- ❌ The format pipeline being one crate means a consumer can't trivially pull in just `truncation` without the rest. No feature flags for per-module selection today. Not currently a pain point, but it is a trade-off.
 
 ## Alternatives Considered
 
-### Alternative 1: `HashMap<String, Value>` for extensions
+### Alternative 1: Type-safe `ExtensionSlots` + `Capability` enum
 
-**Why rejected:** No type safety, no IDE help, every downstream read becomes a string key plus a `serde_json::from_value` call that can fail at runtime.
+**Sketch (from the original discussion):**
 
-### Alternative 2: Enum for known extensions
+- `ExtensionSlots` backed by `HashMap<TypeId, Box<dyn Any + Send + Sync>>`, giving downstream plugins typed access (`ctx.extensions.get::<PaginateExtension>()`) to upstream plugin state.
+- A `CoreCapability` enum enumerating every operation (`IssueRead`, `IssueWrite`, `MergeRequestDiscussion`, `Pagination`, …) with a `Custom(String)` escape hatch, plus a `CapabilitySet` with wildcard matching (`issue:*`, `linear:**`).
+- A `VerifiedPlugin` trait with `PROVIDES` / `REQUIRES` constants, plus a compile-time macro asserting API-version compatibility.
 
-```rust
-pub enum Extension {
-    Pagination(PaginateExtension),
-    Truncation(TruncateExtension),
-    // ...
-}
-```
+**Why not adopted:** in practice, the cross-plugin dependencies we actually need are already typed — a pipeline stage that depends on another's output shares a module in the same crate and uses its types directly, no `TypeId` lookup required. The fine-grained capability enum would have needed constant maintenance as the tool surface evolved, and the wildcard resolver introduced a runtime layer for problems that were better solved at the category level. `ToolEnricher` + `ToolCategory` delivers the same "advertise what you can really do" property for less ongoing cost.
 
-**Why rejected:** Adding a new extension means changing the core enum — defeats the plugin split.
+### Alternative 2: Per-pipeline-stage Cargo crates with feature flags
 
-### Alternative 3: Only runtime verification (no compile-time for core)
+**Sketch:** `devboy-pipeline-paginate`, `devboy-pipeline-truncate`, `devboy-pipeline-summary`, `devboy-pipeline-enrich`, each its own crate; `devboy-core` pulls them in via `optional = true` dependencies gated by `pipeline-paginate` / `pipeline-truncate` / … features; a feature matrix in CI verifies every combination.
 
-**Why rejected:** Core plugins ship inside the binary. It would be silly to defer their validation to startup when Rust can prove it at build time.
+**Why not adopted:** the stages share substantial data and control flow (`TransformOutput`, `StrategyResolver`, budget bookkeeping). Splitting them into separate crates would have duplicated types or forced a shared "-types" crate that defeats the purpose of the split. One crate with well-factored modules is cleaner and we can revisit if a real need emerges to drop individual stages from a lean build.
+
+### Alternative 3: Runtime plugin registry with dynamic loading
+
+**Why not adopted:** static Cargo membership keeps the build reproducible, gets us type safety across plugin boundaries for free, and avoids the operational complexity of discovering and verifying shared libraries at startup. Dynamic loading can be added through the deferred community-plugin track (WASM / child-process) without changing the core design.
 
 ## Implementation
 
-- **Shared types:** `crates/devboy-core/src/pipeline/` (context, extensions, capabilities)
-- **API plugins:** `crates/plugins/api/<provider>/`
-- **Pipeline plugins:** `crates/plugins/format-pipeline/`
-- **Feature flags:** `crates/devboy-core/Cargo.toml`
-- **Feature-matrix CI:** `.github/workflows/` (feature permutations per job)
+- **Traits:** `crates/devboy-core/src/provider.rs`, `crates/devboy-core/src/enricher.rs`, `crates/devboy-core/src/tool_category.rs`
+- **API plugins:** `crates/plugins/api/{gitlab,github,clickup,jira,slack,fireflies}/`
+- **Format pipeline:** `crates/plugins/format-pipeline/` with modules `budget`, `pagination`, `strategy`, `token_counter`, `toon`, `tree`, `trim`, `truncation`
+- **Executor wiring:** `crates/devboy-executor/src/` registers enrichers per provider and filters tools by category
 
 ## References
 
-- [`std::any::TypeId`](https://doc.rust-lang.org/std/any/struct.TypeId.html)
-- [Cargo features](https://doc.rust-lang.org/cargo/reference/features.html)
-- [WASM Component Model](https://component-model.bytecodealliance.org/) — deferred (Part 3)
-- [WIT specification](https://github.com/WebAssembly/component-model/blob/main/design/mvp/WIT.md) — deferred (Part 3)
+- [ADR-002: Rust-based architecture](./ADR-002-rust-architecture.md)
 - [ADR-004: Trait-based provider abstraction](./ADR-004-trait-based-mocking.md)
+- [MCP `tools/list` specification](https://spec.modelcontextprotocol.io/)
 
 ---
 
@@ -310,5 +168,5 @@ pub enum Extension {
 
 | Date | Author | Change |
 |------|--------|--------|
-| 2026-01-13 | Andrei Mazniak | Initial version |
-| 2026-04-17 | Andrei Mazniak | Translated to English; split into shipped (Parts 1–2) and deferred (Parts 3–4) sections; trimmed in-doc code; marked accepted for the shipped subset |
+| 2026-01-13 | Andrei Mazniak | Initial version — proposed `ExtensionSlots` + `Capability` enum + WASM/TS community plugins |
+| 2026-04-17 | Andrei Mazniak | Rewritten to match the shipped design: `ToolEnricher` + `ToolCategory` (six categories) for provider-scoped enrichment; format pipeline kept as a single crate with modules; original typed-capability and community-plugin sketches moved into Alternatives and Deferred sections |

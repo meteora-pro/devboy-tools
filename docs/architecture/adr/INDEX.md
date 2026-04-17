@@ -11,8 +11,8 @@ This directory holds Architecture Decision Records (ADRs) for `devboy-tools`. Ea
 | [003](./ADR-003-testing-strategy.md) | Testing strategy — layered mocking with optional record-and-replay for real APIs | accepted | Testing, CI |
 | [004](./ADR-004-trait-based-mocking.md) | Trait-based provider abstraction for testability and extensibility | accepted | Core |
 | [005](./ADR-005-credential-storage.md) | Credential storage — OS keychain with environment-variable fallback | accepted | Storage, Security |
-| [007](./ADR-007-plugin-architecture.md) | Plugin architecture — API plugins, pipeline plugins, and capability model | accepted (partial) | Plugins |
-| [010](./ADR-010-asset-management.md) | Asset management — file attachments for AI agents | proposed | Assets |
+| [007](./ADR-007-plugin-architecture.md) | Plugin architecture — API providers, format pipeline, and the enricher model | accepted | Plugins |
+| [010](./ADR-010-asset-management.md) | Asset management — file attachments for AI agents | accepted (phase 5 pending) | Assets |
 
 **Number gaps** (006, 008, 009, 011, …) are intentional. Those numbers are reserved for decisions that are not in scope for this project.
 

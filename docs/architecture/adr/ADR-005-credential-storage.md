@@ -64,20 +64,21 @@ Use the platform-native **OS keychain** as the primary secret store, and expose 
 
 ### Key naming convention
 
-```
-devboy / <provider> / <key>
+The keychain **service name** is a fixed constant: `devboy-tools`.
 
-examples:
-  devboy / gitlab / token
-  devboy / github / token
-  devboy / clickup / token
-  devboy / jira / token
-  devboy / jira / email                 # for Basic Auth providers
-  devboy / proxy.<name> / token         # from `devboy init --proxy`
-  devboy / remote_config / token        # from `devboy init --remote-config-url`
+The keychain **account/key** follows a dot-separated `<namespace>.<credential_name>` convention:
+
+```
+gitlab.token
+github.token
+clickup.token
+jira.token
+jira.email                    # for Basic Auth providers
+proxy.<name>.token            # from `devboy init --proxy`
+remote_config.token           # from `devboy init --remote-config-url`
 ```
 
-Service name is always `devboy`. The account name is a slash-joined path so that the keychain GUI groups them logically.
+The dot separator matches the TOML config style (`[gitlab] token = "..."`), making the mapping between config references and stored secrets obvious.
 
 ### Environment-variable fallback
 
@@ -122,14 +123,32 @@ project_id = "meteora-pro/devboy-tools"
 
 ### `CredentialStore` trait
 
+The trait is intentionally synchronous and single-keyed — credential access is not in the hot path of any async workload, and keying by a single string matches the TOML convention.
+
 ```rust
-#[async_trait]
+// crates/devboy-storage/src/lib.rs
 pub trait CredentialStore: Send + Sync {
-    async fn get(&self, provider: &str, key: &str) -> Result<String>;
-    async fn set(&self, provider: &str, key: &str, value: &str) -> Result<()>;
-    async fn delete(&self, provider: &str, key: &str) -> Result<()>;
+    fn store(&self, key: &str, value: &str) -> Result<()>;
+    fn get(&self, key: &str) -> Result<Option<String>>;
+    fn delete(&self, key: &str) -> Result<()>;
+
+    fn exists(&self, key: &str) -> bool { matches!(self.get(key), Ok(Some(_))) }
+
+    /// Reports whether the backend is reachable (e.g. keychain can be opened
+    /// in a CI / headless container).
+    fn is_available(&self) -> bool { true }
+
+    /// Reports whether the backend accepts writes (e.g. env-var stores are
+    /// read-only).
+    fn is_writable(&self) -> bool { true }
 }
 ```
+
+Concrete implementations:
+
+- **`KeychainStore`** — backed by [`keyring`](https://docs.rs/keyring/)
+- **`EnvVarStore`** — read-only; resolves keys through the env-var fallback chain described above
+- **`ChainStore`** — composes multiple backends in priority order. `ChainStore::default_chain()` gives you "env vars → keychain".
 
 ### Interactive setup (`devboy init`)
 
@@ -198,3 +217,4 @@ pub trait CredentialStore: Send + Sync {
 |------|--------|--------|
 | 2026-01-13 | Andrei Mazniak | Initial version |
 | 2026-04-17 | Andrei Mazniak | Translated to English; documented the env-var fallback chain; marked accepted |
+| 2026-04-17 | Andrei Mazniak | Synced with shipped `devboy-storage`: sync (not async) trait with single-key `store`/`get`/`delete`/`exists`/`is_available`/`is_writable`; service name `devboy-tools`; dot-separated keys (`github.token`, `proxy.<name>.token`, `remote_config.token`) |

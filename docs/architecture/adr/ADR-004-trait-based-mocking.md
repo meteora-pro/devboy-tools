@@ -17,7 +17,7 @@ superseded_by: null
 
 ## Context
 
-`devboy-tools` integrates with many external services: issue trackers (GitLab, GitHub, ClickUp, Jira), messengers (Slack, Telegram), CI systems (GitLab Pipelines, GitHub Actions), meeting sources (Fireflies). We need an abstraction that:
+`devboy-tools` integrates with many external services — issue trackers (GitLab, GitHub, ClickUp, Jira), a messenger (Slack), a meeting-notes source (Fireflies), and CI pipelines on top of GitLab/GitHub. We need an abstraction that:
 
 1. Lets us mock providers cleanly in tests
 2. Lets contributors add a new provider by writing a single crate without touching the core executor
@@ -26,47 +26,33 @@ superseded_by: null
 
 ## Decision
 
-Use **Rust traits** (with `async_trait`) for provider abstractions. Each provider crate implements the trait for its concrete client.
+Use **Rust traits** (with `async_trait`) for provider abstractions. Each provider crate implements one or more of these traits for its concrete client.
 
 ### Core traits
 
-```rust
-// crates/devboy-core/src/traits.rs
-use async_trait::async_trait;
+All traits live in `crates/devboy-core/src/provider.rs` and are re-exported from `devboy_core`:
 
+- **`Provider`** — base trait every provider implements. Carries identity and capability declarations (see ADR-007 for the `ToolEnricher` / `ToolCategory` surface).
+- **`IssueProvider`** — issues, comments, statuses, links. Implemented by GitLab, GitHub, ClickUp, Jira.
+- **`MergeRequestProvider`** — merge/pull requests, discussions, diffs, pipelines. Implemented by GitLab, GitHub.
+- **`PipelineProvider`** — CI pipelines, jobs, job logs. Implemented by GitLab, GitHub.
+- **`MessengerProvider`** — chats, messages, search, sending. Implemented by Slack.
+- **`MeetingNotesProvider`** — meeting notes, transcripts, search. Implemented by Fireflies.
+
+A provider crate can implement any subset of these traits. For example, `devboy-slack` implements `Provider` + `MessengerProvider` only; `devboy-gitlab` implements `Provider` + `IssueProvider` + `MergeRequestProvider` + `PipelineProvider`.
+
+Shape of a typical trait (simplified):
+
+```rust
 #[async_trait]
-pub trait IssueProvider: Send + Sync {
-    async fn get_issues(&self, filter: IssueFilter) -> Result<Vec<Issue>>;
+pub trait IssueProvider: Provider {
+    async fn get_issues(&self, filter: IssueFilter) -> Result<ProviderResult<Issue>>;
     async fn get_issue(&self, key: &str) -> Result<Issue>;
     async fn create_issue(&self, input: CreateIssueInput) -> Result<Issue>;
     async fn update_issue(&self, key: &str, input: UpdateIssueInput) -> Result<Issue>;
     async fn get_comments(&self, issue_key: &str) -> Result<Vec<Comment>>;
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment>;
-    fn provider_name(&self) -> &'static str;
-}
-
-#[async_trait]
-pub trait MergeRequestProvider: Send + Sync {
-    async fn get_merge_requests(&self, filter: MrFilter) -> Result<Vec<MergeRequest>>;
-    async fn get_merge_request(&self, key: &str) -> Result<MergeRequest>;
-    async fn get_discussions(&self, mr_key: &str) -> Result<Vec<Discussion>>;
-    async fn get_diffs(&self, mr_key: &str) -> Result<Vec<FileDiff>>;
-    async fn add_comment(
-        &self,
-        mr_key: &str,
-        body: &str,
-        position: Option<CodePosition>,
-    ) -> Result<Comment>;
-    async fn get_pipeline(&self, mr_key: &str) -> Result<Pipeline>;
-    fn provider_name(&self) -> &'static str;
-}
-
-#[async_trait]
-pub trait MessengerProvider: Send + Sync {
-    async fn get_messages(&self, chat_id: &str, filter: MessageFilter) -> Result<Vec<Message>>;
-    async fn send_message(&self, chat_id: &str, text: &str) -> Result<Message>;
-    async fn search_messages(&self, query: &str) -> Result<Vec<Message>>;
-    fn provider_name(&self) -> &'static str;
+    // ... asset methods (see ADR-010), plus optional link/relation methods
 }
 ```
 
@@ -101,28 +87,27 @@ impl IssueProvider for GitLabProvider {
 }
 ```
 
-### Mock implementations for tests
+### Test harness for Record-and-Replay
+
+Integration tests use the Record-and-Replay pattern from ADR-003 through a small harness under `crates/devboy-cli/tests/common/`:
+
+- **`TestProvider`** (`test_provider.rs`) — wraps a concrete real client and a `FixtureProvider`. Selects Record mode when the relevant provider env vars are set; otherwise selects Replay mode.
+- **`FixtureProvider`** — implements the provider traits by loading committed fixture files under `crates/devboy-cli/tests/fixtures/<provider>/`.
+- **`ApiResult<T>`** (`api_result.rs`) — the `Ok` / `Fallback` / `ConfigError` variant from ADR-003 that threads through live-call outcomes.
 
 ```rust
-// tests/common/mock_provider.rs
-pub struct MockIssueProvider { issues: Vec<Issue>, /* ... */ }
-
-impl MockIssueProvider {
-    pub fn from_fixtures(path: &str) -> Result<Self> { /* load JSON */ }
-    pub fn with_issue(mut self, issue: Issue) -> Self { /* builder */ }
-}
-
-#[async_trait]
-impl IssueProvider for MockIssueProvider {
-    async fn get_issues(&self, filter: IssueFilter) -> Result<Vec<Issue>> {
-        // In-memory filter + limit
-    }
-    // ...
-    fn provider_name(&self) -> &'static str { "mock" }
+// Sketch — see crates/devboy-cli/tests/common/test_provider.rs for the real thing
+pub struct TestProvider { /* mode + real client + fixture fallback */ }
+impl TestProvider {
+    pub fn github() -> Self { /* detects GITHUB_TEST_TOKEN */ }
 }
 ```
 
-The mock can be hydrated from fixture files (for Record-and-Replay tests per ADR-003) or built inline per test with `.with_issue(...)`.
+Unit tests in provider crates use `httpmock` instead (see the next section) and don't need this harness.
+
+### Unit-test mocks in provider crates
+
+Every provider crate (e.g. `crates/plugins/api/github/`) has its own unit tests that spin up an `httpmock` server, configure expected requests and responses, and run the real client against the mock. These tests need no Record-and-Replay machinery because they exercise the HTTP shape, not the provider semantics.
 
 ### Two levels of mocking
 
@@ -197,10 +182,11 @@ struct Mcp<P: IssueProvider> { provider: P }
 
 ## Implementation
 
-- **Traits:** `crates/devboy-core/src/traits.rs` (and neighbouring modules for specific domains)
+- **Traits:** `crates/devboy-core/src/provider.rs` (re-exported from the `devboy_core` crate root)
 - **Real providers:** `crates/plugins/api/<provider>/`
-- **HTTP-level mocks:** `crates/plugins/api/<provider>/tests/` using `httpmock`
-- **Trait mocks:** `crates/devboy-core/src/mock.rs` or per-crate `tests/common/`
+- **HTTP-level mocks:** per-provider tests using [`httpmock`](https://docs.rs/httpmock/) and per-provider `MockServer` setup
+- **Test harness for Record-and-Replay:** `crates/devboy-cli/tests/common/` (`test_provider.rs`, `fixture_provider.rs`, `api_result.rs`, `mod.rs`)
+- **Committed fixtures:** `crates/devboy-cli/tests/fixtures/<provider>/`
 
 ## References
 
@@ -218,3 +204,4 @@ struct Mcp<P: IssueProvider> { provider: P }
 |------|--------|--------|
 | 2026-01-13 | Andrei Mazniak | Initial version |
 | 2026-04-17 | Andrei Mazniak | Translated to English; marked accepted; trimmed code samples to the essentials |
+| 2026-04-17 | Andrei Mazniak | Synced trait list with `devboy_core::provider` (added `Provider`, `PipelineProvider`, `MeetingNotesProvider`); replaced the fictional `MockIssueProvider` with the real test harness (`TestProvider`, `FixtureProvider`, `ApiResult` in `crates/devboy-cli/tests/common/`) |
