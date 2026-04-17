@@ -24,8 +24,13 @@ where
     S: AsRef<std::ffi::OsStr>,
 {
     Command::new(devboy_bin())
+        // The resolver honours DEVBOY_HOME_OVERRIDE on every platform;
+        // HOME / USERPROFILE are kept for test cleanliness but cannot
+        // redirect `dirs::home_dir()` on Windows, which is why the
+        // override env var exists.
+        .env("DEVBOY_HOME_OVERRIDE", home.path())
         .env("HOME", home.path())
-        .env("USERPROFILE", home.path()) // Windows
+        .env("USERPROFILE", home.path())
         .current_dir(cwd)
         .args(args)
         .output()
