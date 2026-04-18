@@ -158,13 +158,17 @@ pub struct SessionTracer {
 }
 
 impl SessionTracer {
-    /// Start a new session. Creates the dated directory + a per-skill
-    /// subdirectory and opens `trace.jsonl` for append.
+    /// Start a new session. Creates a unique directory
+    /// `<root>/<date>/<skill>/<session_id>/` and opens `trace.jsonl`
+    /// for append. The per-session directory ensures that concurrent
+    /// or repeated invocations of the same skill on the same day do
+    /// not share any files (ADR-015 requires self-contained sessions).
     pub fn begin(skill: &str, target: &TraceTarget) -> Result<Self> {
         let root = target.sessions_root()?;
         let started_at = Utc::now();
         let date = started_at.format("%Y-%m-%d").to_string();
-        let session_dir = root.join(&date).join(skill);
+        let session_id = new_session_id();
+        let session_dir = root.join(&date).join(skill).join(&session_id);
         create_dir_all(&session_dir).map_err(|source| SkillError::Io {
             path: session_dir.clone(),
             source,
@@ -180,8 +184,6 @@ impl SessionTracer {
                 path: trace_path.clone(),
                 source,
             })?;
-
-        let session_id = new_session_id();
 
         let tracer = Self {
             session_id,
@@ -357,19 +359,27 @@ pub struct SessionMeta {
 // ---------------------------------------------------------------------------
 
 /// Create the session directory, write the opening `start` event, and
-/// return the session id + absolute session directory. Callers then
-/// pass those back into [`append_event`] and [`finalise_session`] on
+/// return the session id + session directory. The returned path is the
+/// value the user passed through `TraceTarget` with the `<date>/<skill>
+/// /<session_id>` suffix appended — it is not canonicalised, so a
+/// relative `TraceTarget::Custom(".traces")` produces a relative path
+/// and an absolute target produces an absolute path. Callers pass both
+/// values back into [`append_event`] and [`finalise_session`] on
 /// subsequent CLI invocations.
+///
+/// The per-session directory level is required so that concurrent or
+/// repeated invocations of the same skill on the same day never share
+/// `trace.jsonl` or `meta.json` (ADR-015).
 pub fn create_session(skill: &str, target: &TraceTarget) -> Result<(String, PathBuf)> {
     let root = target.sessions_root()?;
     let started_at = Utc::now();
     let date = started_at.format("%Y-%m-%d").to_string();
-    let session_dir = root.join(&date).join(skill);
+    let session_id = new_session_id();
+    let session_dir = root.join(&date).join(skill).join(&session_id);
     create_dir_all(&session_dir).map_err(|source| SkillError::Io {
         path: session_dir.clone(),
         source,
     })?;
-    let session_id = new_session_id();
     append_event_inner(
         &session_dir,
         &session_id,
@@ -492,18 +502,35 @@ fn write_meta_file(path: &Path, meta: &SessionMeta) -> Result<()> {
 }
 
 fn scan_counts(trace_path: &Path) -> Result<(u64, u64, DateTime<Utc>)> {
-    let text = std::fs::read_to_string(trace_path).map_err(|source| SkillError::Io {
+    use std::io::{BufRead, BufReader};
+
+    // Stream the file line-by-line rather than reading the whole
+    // `trace.jsonl` into memory. ADR-015 explicitly flags that long
+    // sessions can produce very large traces; keeping the memory
+    // footprint bounded matters.
+    let file = std::fs::File::open(trace_path).map_err(|source| SkillError::Io {
         path: trace_path.to_path_buf(),
         source,
     })?;
+    let reader = BufReader::new(file);
+
     let mut tool_calls = 0u64;
     let mut errors = 0u64;
     let mut started_at: Option<DateTime<Utc>> = None;
-    for line in text.lines() {
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(source) => {
+                return Err(SkillError::Io {
+                    path: trace_path.to_path_buf(),
+                    source,
+                });
+            }
+        };
         if line.trim().is_empty() {
             continue;
         }
-        let record: TraceRecord = match serde_json::from_str(line) {
+        let record: TraceRecord = match serde_json::from_str(&line) {
             Ok(r) => r,
             Err(_) => continue,
         };
