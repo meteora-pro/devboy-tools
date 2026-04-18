@@ -64,8 +64,8 @@ devboy tools call update_issue '{"key": "DEV-123", "assignees": ["bob"]}'
 # Swap the label set (replaces — not additive)
 devboy tools call update_issue '{"key": "DEV-123", "labels": ["bug", "regression"]}'
 
-# Transition a ClickUp / Jira status by string — pass the literal status name
-devboy tools call update_issue '{"key": "CU-abc123", "status": "In Review"}'
+# Transition a ClickUp / Jira workflow status by string — pass the literal status name via `state`
+devboy tools call update_issue '{"key": "CU-abc123", "state": "In Review"}'
 ```
 
 Tool fields you can pass: `title`, `description`, `state`, `labels`, `assignees`, `parentId` (ClickUp subtasks), `markdown`. `labels` and `assignees` are replacements, not merges — re-send the full desired list.
