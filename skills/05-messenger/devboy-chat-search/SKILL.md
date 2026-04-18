@@ -36,7 +36,7 @@ If the user said something like "in #eng" or "in the deploys channel", resolve t
 devboy tools call get_messenger_chats '{"search": "eng", "limit": 10}'
 ```
 
-Useful filters: `chat_type` (`direct` / `group` / `channel`), `include_inactive` (archived chats are hidden by default), `cursor` for pagination.
+Useful filters: `chat_type` (`direct` / `group` / `channel`), `include_inactive` (archived chats are hidden by default). Note: `cursor`-based pagination is accepted by the tool's argument schema today but the response is formatted as text and does not surface a `next_cursor` back to the caller — narrow the hit list with `search` / `limit` instead, or refine the query.
 
 ### 2. Run the search
 
@@ -63,15 +63,16 @@ devboy tools call search_chat_messages '{
 
 `since` / `until` are provider-native timestamps (Slack passes them straight through — floating-point epoch seconds, as strings). If the user phrases a window in natural language ("yesterday", "last week"), convert to epoch seconds before calling.
 
-### 3. Page through large result sets
+### 3. Narrow a too-large result set
 
-`search_chat_messages` returns at most `limit` hits per call (capped at 1000). If the response carries a `cursor`, walk the pages:
+`search_chat_messages` returns at most `limit` hits per call (capped at 1000). The response is rendered as formatted text and **does not surface a `next_cursor` back to the caller** today, so cursor-based pagination is not actionable from the tool output. Instead of trying to page, narrow the query:
 
-```bash
-devboy tools call search_chat_messages '{"query": "rollback", "limit": 100, "cursor": "<cursor-from-previous-call>"}'
-```
+- Tighten `since` / `until` to a smaller window.
+- Add distinguishing words to `query`.
+- Scope with `chat_id` to the channel the user actually meant.
+- Raise `limit` as a last resort, but the hit list gets harder to skim fast.
 
-Stop when a page returns no cursor, or when you have enough recent material to answer.
+If cursor pagination becomes genuinely necessary for a user's workflow, that requires a tool-side change to expose the pagination metadata, not a skill-side workaround.
 
 ### 4. Rank and present
 
@@ -80,12 +81,12 @@ Before handing the hits back to the user:
 - **Sort by recency.** Messengers default to relevance; users almost always want "the most recent mention" first. Override the order client-side.
 - **One line per hit.** Channel (or DM partner) + author + date + a one-line excerpt (≤ 120 chars, collapse newlines).
 - **Deduplicate threads.** If multiple hits belong to the same thread, show the root hit once with a count of matching replies.
-- **Link when the provider supports it.** Slack responses include permalinks — surface them so the user can jump straight to the message.
+- **Cite coordinates, not permalinks.** The unified `MessengerMessage` type does not include a `permalink` field, so do not promise jump-to-message URLs. Surface the `chat_id` + message `id` / `timestamp` instead — that's enough for the user to open the message directly in Slack (`slack://channel?team=…&id=<chat_id>&message=<ts>`) or paste into a helper script.
 
 Example render:
 
 ```
-#eng        alice   2026-04-15 14:02   "…rolling back v2.4.1, see incident-204…"  (permalink)
+#eng        alice   2026-04-15 14:02   "…rolling back v2.4.1, see incident-204…"  (C0123/ts=1712584920.010)
 DM bob      bob     2026-04-14 09:31   "feature flag cutover is done on staging"
 ```
 

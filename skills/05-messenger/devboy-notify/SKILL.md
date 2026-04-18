@@ -27,7 +27,7 @@ Send a one-shot, structured notification — a short subject line, 2–3 body bu
 ## Preconditions
 
 1. **The user must have asked.** If the user said something like "maybe we should tell #eng" or "should we notify?", treat that as a **draft** — confirm the target and the text with the user before calling `send_message`. Never post on an ambiguous signal.
-2. **Slack write scope present.** `send_message` on Slack requires the `chat:write` scope. The full list of scopes the devboy Slack integration expects is defined by `default_slack_required_scopes` in `crates/devboy-core/src/config.rs` (`channels:read`, `channels:history`, `groups:read`, `groups:history`, `im:read`, `im:history`, `mpim:read`, `mpim:history`, `chat:write`, `users:read`). Verify the token has them before posting — see step 2 below.
+2. **Slack write scope present.** `send_message` on Slack requires the `chat:write` scope. The full list of scopes the devboy Slack integration expects is defined by the `default_slack_required_scopes()` function in `crates/devboy-core/src/config.rs` (`channels:read`, `channels:history`, `groups:read`, `groups:history`, `im:read`, `im:history`, `mpim:read`, `mpim:history`, `chat:write`, `users:read`). Verify the token has them before posting — see step 2 below.
 
 ## Procedure
 
@@ -104,7 +104,7 @@ devboy tools call send_message '{
 
 ### 6. Report back
 
-After `send_message` returns, tell the user where you posted (chat name + permalink if the response supplies one) and echo the final text. If the call failed, surface the provider error verbatim — don't swallow it.
+After `send_message` returns, tell the user where you posted (chat name + the returned message `chat_id` / `id` / `timestamp` — the unified `MessengerMessage` does not include a `permalink` field, so don't promise a jump-to link) and echo the final text. If the call failed, surface the provider error verbatim — don't swallow it.
 
 ## Success criteria
 
