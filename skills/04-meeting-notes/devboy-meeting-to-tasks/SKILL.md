@@ -13,6 +13,7 @@ activation:
 tools:
   - get_meeting_notes
   - get_meeting_transcript
+  - get_issues
   - create_issue
   - link_issues
 ---
@@ -141,7 +142,7 @@ Reply with:
 ## Guardrails
 
 - **Never auto-create.** Even when the user says "just do it", show the list once and wait for one-key confirmation. One extra round-trip beats filing 20 bad tickets.
-- **Do not re-create on re-run.** If the user re-runs the skill on the same meeting, check for existing tickets with the `from-meeting` label plus the source-meeting citation before creating duplicates.
+- **Do not re-create on re-run.** If the user re-runs the skill on the same meeting, use `get_issues` with the `from-meeting` label (plus the source-meeting citation in the body) to find already-created tickets before creating duplicates.
 - **Respect privacy.** Do not paste full transcript quotes into ticket descriptions — 2–4 lines of context is enough, more is a PII leak in a system that is often more widely shared than the meeting itself.
 
 ## Non-goals

@@ -43,37 +43,34 @@ devboy tools call get_meeting_notes '{
 
 Confirm the title and date with the user before proceeding — pulling the wrong transcript is an irreversible PII leak into the chat.
 
-### 2. Fetch the transcript with a budget
+### 2. Fetch the transcript
 
 ```bash
-devboy tools call get_meeting_transcript '{"meeting_id": "<id>"}' --budget 4000
+devboy tools call get_meeting_transcript '{"meeting_id": "<id>"}'
 ```
 
-`--budget` is the format pipeline's token cap. A full-length call does not fit in a single chunk — the response comes back with:
+`devboy tools call` takes a tool name + a JSON argument object — it does not accept `--budget` (or any other CLI flag) for the tool itself. The format-pipeline budget is applied inside the tool runtime. The transcript output is rendered as plain text, not JSON; a long transcript may be shortened by the pipeline and picked up again via a subsequent call.
 
-- `truncated: true` and a pagination hint when there is more to fetch.
-- `chunked: true` + `total_chunks` + `chunk_number` when the output was split.
+### 3. If the rendered transcript is incomplete, fetch the next chunk
 
-### 3. Navigate chunks, do not re-fetch the whole thing
-
-If chunk 1 is not the interesting bit, ask for the next chunk rather than re-running the call with a higher budget:
+If the response ends mid-thought, pull the next segment:
 
 ```bash
-devboy tools call get_meeting_transcript '{"meeting_id": "<id>", "chunk": 2}' --budget 4000
+devboy tools call get_meeting_transcript '{"meeting_id": "<id>", "chunk": 2}'
 ```
 
-`chunk` is the enricher's universal navigation parameter — it is added to every tool, not specific to transcripts. Chunk 1 is the default.
+`chunk` is a per-call argument understood by the transcript tool (the default is 1). The response is still text — do not expect a JSON body with fields like `total_chunks` or `chunk_number`. The tell for "more to fetch" is that the text ends mid-sentence, not a structured field.
 
 ### 4. Prefer a targeted fetch over a full dump
 
 When the question is specific ("what did Alice say about X?"), do not scroll the whole transcript in the chat. Two patterns:
 
 1. **Search first, transcript second.** Run `devboy-meeting-search` with the topic word, confirm this is the right meeting, then open the relevant chunk.
-2. **Grep the chunk.** Once you have the transcript text, filter locally to sentences from the speaker of interest. The transcript output is speaker-attributed (`speaker_name`, `speaker_id`, `text`, `start_time`), so a simple line filter works:
+2. **Grep the chunk.** The transcript is rendered as text lines shaped like `[mm:ss] <speaker>: <sentence>`, so filter with `grep` / `ripgrep`:
 
    ```bash
-   devboy tools call get_meeting_transcript '{"meeting_id": "<id>"}' --budget 6000 \
-     | jq '.[] | select(.speaker_name == "Alice")'
+   devboy tools call get_meeting_transcript '{"meeting_id": "<id>"}' \
+     | grep -F '] Alice: '
    ```
 
 ### 5. Quote, do not paste
