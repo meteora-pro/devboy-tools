@@ -37,11 +37,14 @@ to act on it.
 Accept one of:
 
 - `--session-dir <path>` — absolute or relative path to a
-  `.devboy/sessions/<YYYY-MM-DD>/<skill>/` directory. If the directory
-  contains `meta.json` and `trace.jsonl`, use it directly.
-- `--pick` — interactive mode: list today's sessions where `outcome
-  = success` but `errors > 0` and let the user pick one. This is the
-  common follow-up after `devboy-daily-report`.
+  `.devboy/sessions/<YYYY-MM-DD>/<skill>/<session_id>/` directory. If
+  the directory contains `meta.json` and `trace.jsonl`, use it
+  directly.
+- `--pick` — interactive mode: enumerate today's per-session
+  directories (`.devboy/sessions/<YYYY-MM-DD>/<skill>/<session_id>/`)
+  whose `meta.json` reports `outcome = success` and `errors > 0`,
+  and let the user pick one. This is the common follow-up after
+  `devboy-daily-report`.
 
 Exit with a clear error if neither flag is set or the directory is
 not a well-formed session.
@@ -107,8 +110,8 @@ Classify the fix and propose exactly one home:
   the project's own guide, quoting the sentence.
 - **Systemic infra bug** (e.g. "CI cache corrupts itself on
   concurrent merges") — propose a ticket via
-  `devboy-create-issue`, including a draft title and two-sentence
-  reproduction, but do not create it.
+  `devboy tools call create_issue` (draft only), including a draft
+  title and two-sentence reproduction, but do not create it.
 
 Only one home per lesson. If the fix really belongs in two places,
 split the extraction into two successive invocations.

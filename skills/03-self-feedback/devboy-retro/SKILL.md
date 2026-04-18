@@ -14,6 +14,7 @@ tools:
   - get_merge_request_discussions
   - get_pipeline
   - get_job_logs
+  - get_issues
 ---
 
 # devboy-retro
@@ -56,10 +57,16 @@ Emit a `decision` event recording the window and the scope.
 
 ### 3. Aggregate per-skill session stats
 
-Walk every `<date>/<skill>/meta.json` in the window. Per skill,
-collect: total runs, success / failure / aborted counts, total
-`tool_calls`, total `errors`, total duration, average duration, and
-the most common `summary` strings for failing runs.
+Walk every `<date>/<skill>/<session_id>/meta.json` in the window —
+each session lives in its own subdirectory, so a skill that ran four
+times on one day produces four `meta.json` files under that day's
+`<skill>/` folder. Per skill, aggregate across every completed
+session in the window: total runs, success / failure / aborted
+counts, total `tool_calls`, total `errors`, total duration, average
+duration per run, and the most common `summary` strings for failing
+runs. Skip any session whose `meta.json` has not yet recorded
+`ended_at` / `outcome` — that run is still in flight and should not
+skew the numbers.
 
 Additionally, read each failing session's `trace.jsonl` to find
 retry loops — sequences of `verify` events with `ok: false` followed
@@ -72,14 +79,16 @@ future retros have a stable trail.
 
 ### 4. Cross-reference CI history
 
-For every merged MR in the window:
+Pull the recent merged MRs with a single list call, then iterate the
+filtered result client-side — `get_merge_requests` returns a list, not
+one MR at a time:
 
 ```bash
 devboy tools call get_merge_requests '{"state":"merged","limit":100}'
 ```
 
-Filter the result to merge timestamps inside the window, then for the
-first ~20 call:
+Filter the returned list to merge timestamps inside the window, then
+for the first ~20 entries call `get_pipeline` per MR:
 
 ```bash
 devboy tools call get_pipeline \

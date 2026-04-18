@@ -53,25 +53,35 @@ SESSION_ID=$(echo "$result" | jq -r .session_id)
 This skill is itself traceable — retro runs will see that a daily
 report ran, how long it took, and whether it succeeded.
 
-### 3. Walk the per-skill subdirectories
+### 3. Walk the per-session subdirectories
 
-For each `<skill>/` directory under the day:
+Each session lives under `<YYYY-MM-DD>/<skill>/<session_id>/`, so a
+skill that ran four times today produces four `session_id/` folders
+under that day's `<skill>/` directory. For every
+`<skill>/<session_id>/` directory under the day:
 
-1. If `meta.json` is missing, skip the directory — the session is
-   still in flight. Record a single `note` event listing the skipped
+1. Inspect session completion state instead of using the presence of
+   `meta.json` as the signal. `devboy trace begin` writes a skeletal
+   `meta.json` up front, so an in-flight session still has the file.
+   Read `meta.json` if it exists; if `ended_at` and `outcome` are not
+   yet set, treat the session as still in flight. If `meta.json` is
+   missing or does not parse, fall back to `trace.jsonl` and treat
+   the session as still in flight when no terminal `end` event is
+   present. Record a single `note` event listing the skipped
    sessions so they show up in the report as "in progress".
-2. Otherwise, read `meta.json` and pull:
+2. For completed sessions, read `meta.json` and pull:
    - `skill`, `outcome`, `tool_calls`, `errors`,
    - `summary`, `started_at`, `ended_at`.
-3. Aggregate per-skill counts: total runs, success / failure /
-   aborted, total tool-calls, total errors, average duration.
+3. Aggregate per-skill counts only from completed sessions: total
+   runs, success / failure / aborted, total tool-calls, total
+   errors, average duration.
 
-Emit an `artifact` event per skill directory so the retro skill can
-later find the raw data:
+Emit an `artifact` event per session directory so the retro skill
+can later find the raw data:
 
 ```bash
 devboy trace event ... --phase artifact \
-  --payload "$(jq -nc --arg path "$SKILL_DIR" '{path:$path,kind:"session-dir"}')"
+  --payload "$(jq -nc --arg path "$SESSION_PATH" '{path:$path,kind:"session-dir"}')"
 ```
 
 ### 4. Cross-reference with the provider
@@ -135,8 +145,9 @@ Print the assembled Markdown to stdout and exit.
 
 - The report lists one line per skill that ran today, with accurate
   counts drawn from `meta.json`.
-- In-flight sessions (no `meta.json`) are listed under "in progress"
-  rather than silently dropped.
+- In-flight sessions (those with `ended_at` / `outcome` unset in
+  `meta.json`, or without a terminal `end` event in `trace.jsonl`)
+  are listed under "in progress" rather than silently dropped.
 - MRs and issues with a date-stamp outside the target day are not
   shown.
 - The skill never mutates anything — no comments posted, no issues
