@@ -48,10 +48,11 @@ fn sanitize_with(secrets: &HashSet<String>, value: Value) -> Value {
             let mut out = serde_json::Map::with_capacity(map.len());
             for (k, v) in map {
                 // If the key itself hints at a secret, redact the whole
-                // value to prevent `{"auth": "Bearer abc"}` style leaks
-                // when the string does not match a known prefix.
-                let key_is_secret_name = key_looks_secret(&k);
-                let new_val = if key_is_secret_name && v.is_string() {
+                // value regardless of its type. This prevents structured
+                // leaks like `{"authorization": {"scheme": "Bearer",
+                // "value": "…"}}` where nested field names may not
+                // themselves trip the secret-key heuristic.
+                let new_val = if key_looks_secret(&k) {
                     Value::String("<redacted:secret-field>".to_string())
                 } else {
                     sanitize_with(secrets, v)
@@ -154,7 +155,10 @@ fn key_looks_secret(key: &str) -> bool {
         return true;
     }
     // Common devboy conventions.
-    if key.contains("password") || key.contains("secret") || key.contains("token") {
+    // Use the upper-cased copy for the substring heuristic too, so
+    // mixed-case keys like `Password` / `Token` / `Secret` are caught
+    // consistently with the EXACT / SUFFIX branches above.
+    if upper.contains("PASSWORD") || upper.contains("SECRET") || upper.contains("TOKEN") {
         return true;
     }
     false
