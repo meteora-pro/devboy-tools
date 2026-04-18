@@ -93,7 +93,9 @@ devboy tools call create_merge_request_comment '{
 }'
 ```
 
-For a comment on an unchanged (context) line, use `"line_type": "old"`. If the provider requires a `commit_sha`, pick the head SHA from `get_merge_request_diffs` output.
+`line_type` is an `old` / `new` selector for which side of the diff the `line` number refers to: `"new"` for added or unchanged (context) lines, `"old"` only for deleted lines. Using `"old"` on a context line can place the comment on the wrong side or fail outright. Default to `"new"`.
+
+Do not pass `commit_sha` unless you already have a concrete SHA from outside this skill's tool set. `get_merge_request_diffs` returns `FileDiff` without a head SHA, so there is no head commit to lift from the tool output. On GitHub the provider fills in the PR head SHA automatically when `commit_sha` is omitted; on GitLab it is not required for line-scoped comments.
 
 ### 8. Post the summary comment
 
