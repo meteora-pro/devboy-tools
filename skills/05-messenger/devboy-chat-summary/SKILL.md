@@ -42,30 +42,29 @@ If the user already handed over a `chat_id`, skip this step.
 
 `get_chat_messages` takes `since` / `until` as provider-native timestamps (for Slack: floating-point epoch seconds, as strings — e.g. `"1712448000.000000"`). Convert the user's natural-language window ("today", "this week", "since Monday") into those before calling. Default to **the last 24 hours** when the user does not name a window.
 
-### 3. Pull messages in pages — do not load the whole history
+### 3. Pull messages in narrow slices — do not load the whole history
 
-Paginate via the response `cursor`. Cap each page at 200 messages to keep chunks small enough to summarise cleanly:
+The tool returns formatted text and **does not surface a `next_cursor`** in the output today, so you cannot page by cursor from the tool result. Instead, split a large window into several narrow `since` / `until` calls and summarise each slice independently:
 
 ```bash
-# First page
+# Morning slice
 devboy tools call get_chat_messages '{
   "chat_id": "C0123456789",
   "since": "1713052800.000000",
-  "until": "1713139200.000000",
+  "until": "1713091200.000000",
   "limit": 200
 }'
 
-# Follow-up pages: pass the cursor from the previous response
+# Afternoon slice
 devboy tools call get_chat_messages '{
   "chat_id": "C0123456789",
-  "since": "1713052800.000000",
+  "since": "1713091200.000000",
   "until": "1713139200.000000",
-  "limit": 200,
-  "cursor": "<cursor-from-previous-call>"
+  "limit": 200
 }'
 ```
 
-If a response carries no cursor, you have the full window. If a thread is referenced by `thread_id` and the user asked about a specific thread, pull its replies separately:
+Cap `limit` at 200 per call to keep each response small enough to summarise cleanly. If a slice comes back close to the cap, halve the window and re-run. If a thread is referenced by `thread_id` and the user asked about a specific thread, pull its replies separately:
 
 ```bash
 devboy tools call get_chat_messages '{"chat_id": "C0123456789", "thread_id": "1712450000.001500", "limit": 200}'
@@ -78,7 +77,7 @@ Rather than feeding the entire history into one summary prompt:
 1. **Per page**, draft 3–6 bullet points: decisions, open questions, action items, notable quotes (with author handle).
 2. **Merge** the page-level bullets into a single list, collapsing duplicates and merging threads that span pages.
 3. **Group the final list by topic**, not by time. Suggested top-level groups: `Decisions`, `Action items`, `Open questions`, `Context / FYI`. Omit groups that have no bullets.
-4. Keep each bullet to **one line**, prefixed with the author when it matters (`alice: shipped v2.4.2`). Link threads by their `thread_id` permalink where the provider supplies one.
+4. Keep each bullet to **one line**, prefixed with the author when it matters (`alice: shipped v2.4.2`). Cite threads by their `chat_id` + `thread_id` pair — the unified messenger output does not supply a permalink field.
 
 ### 5. Render the summary
 
