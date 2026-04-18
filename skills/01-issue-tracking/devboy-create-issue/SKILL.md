@@ -15,6 +15,7 @@ tools:
   - add_issue_comment
   - get_available_statuses
   - get_users
+  - get_issue
 ---
 
 # devboy-create-issue

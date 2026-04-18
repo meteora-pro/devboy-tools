@@ -12,8 +12,6 @@ activation:
   - "ship this issue"
 tools:
   - get_issue
-  - get_issue_comments
-  - get_issue_relations
   - create_merge_request
   - add_issue_comment
 ---
@@ -64,11 +62,12 @@ Rules:
 
 ### 3. Cut the branch and implement
 
-Standard local Git flow — the skill does not wrap these in `devboy` tools:
+Standard local Git flow — the skill does not wrap these in `devboy` tools. Base the branch off the remote's default head rather than hardcoding `main`, so the flow keeps working on repos whose default is `master` or something else:
 
 ```bash
 git fetch origin
-git switch -c feat/DEV-123-add-bulk-archive origin/main
+DEFAULT_BRANCH_REF="$(git symbolic-ref refs/remotes/origin/HEAD)"   # e.g. refs/remotes/origin/main
+git switch -c feat/DEV-123-add-bulk-archive "$DEFAULT_BRANCH_REF"
 # ... write the code, run tests, verify locally ...
 git add -p
 git commit -m "feat(issues): add bulk archive (DEV-123)"
@@ -79,14 +78,14 @@ Commit messages should follow the repo's convention and end with the issue key i
 
 ### 4. Open the merge request
 
-`create_merge_request` is the unified tool — it opens a GitLab MR or a GitHub PR depending on the configured provider. Title and `source_branch` / `target_branch` are required:
+`create_merge_request` is the unified tool — it opens a GitLab MR or a GitHub PR depending on the configured provider. Title and `source_branch` / `target_branch` are required. Set `target_branch` to the repo's actual default branch — do not hardcode `main`; derive it from `git symbolic-ref refs/remotes/origin/HEAD` (strip the `refs/remotes/origin/` prefix) so the call works on repos defaulted to `master` or a custom branch:
 
 ```bash
 devboy tools call create_merge_request '{
   "title": "feat(issues): add bulk archive (DEV-123)",
   "description": "Implements DEV-123.\n\n## What changed\n- Added `bulkArchive` action to the issue list\n- New keyboard shortcut `shift+a`\n\n## How to test\n1. Select multiple issues\n2. Press `shift+a`\n3. Confirm they move to the archived state\n\nRelates to DEV-123.",
   "source_branch": "feat/DEV-123-add-bulk-archive",
-  "target_branch": "main",
+  "target_branch": "<repo-default-branch>",
   "draft": false,
   "labels": ["feature"],
   "reviewers": ["alice"]
