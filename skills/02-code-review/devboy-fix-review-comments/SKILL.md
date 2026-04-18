@@ -33,7 +33,14 @@ Address a reviewer's feedback on one MR / PR. For every unresolved discussion: d
 devboy tools call get_merge_request_discussions '{"key": "mr#374", "limit": 100}'
 ```
 
-Filter to unresolved threads. Each discussion returns a list of notes and — for inline discussions — a file path, line number, and `discussion_id`. The `discussion_id` is what you reply to later.
+The tool returns `Discussion { id, resolved, comments, position }`. `comments` is the thread's list of messages; `position` carries the file path + line number for inline discussions. Reply later using the discussion's `id` (for GitLab) or the numeric id of one of `comments[*]` (for GitHub — see the reply section below).
+
+**Do not rely on `resolved` alone to pick threads that need a reply.** On GitHub the provider has no reliable resolved-state signal in the REST data it reads, so `resolved` is always `false` — treating "unresolved" as "needs reply" will pick every thread and produce infinite reply loops on re-runs. Use a deterministic filter instead:
+
+- threads where the latest comment is not authored by the MR author, **or**
+- threads where the MR author has not replied since the reviewer's last comment.
+
+On GitLab the `resolved` field is populated correctly and you may lean on it as a hint, but keep the author-based check as a fallback — it works across providers.
 
 ### 2. Pull the current diff for context
 
@@ -79,13 +86,21 @@ Note the commit SHA of each fix — you will reference it in the reply. For fixe
 
 ### 6. Reply to each discussion
 
-Use `create_merge_request_comment` in **reply mode** by passing the `discussion_id`. Keep the reply one or two sentences.
+Use `create_merge_request_comment` in **reply mode**. The right reply id depends on the provider:
+
+- **GitLab** — reply with the discussion's `id` as `discussion_id`. GitLab threads are first-class objects and the `Discussion.id` is what you pass back.
+- **GitHub** — GitHub's REST reply goes through `in_reply_to` on a **review comment id**, which is numeric. The provider packs that into a `Discussion.comments[*].id`; pass the id of the comment you are replying to (typically the last one in the thread) as `discussion_id`.
+
+If you get a 404 on reply, the value was the wrong one for the provider — fall back to a top-level comment rather than looping.
+
+Keep the reply one or two sentences:
 
 - **Accepted**: `fixed in <sha>` or `fixed in <sha> — <one-line what changed>`.
 - **Pushed back**: `keeping as-is because <specific technical reason>`.
 - **Clarified**: `could you clarify <specific point>? <short reason you're asking>`.
 
 ```bash
+# GitLab example
 devboy tools call create_merge_request_comment '{
   "key": "mr#374",
   "discussion_id": "abc123",
@@ -93,7 +108,7 @@ devboy tools call create_merge_request_comment '{
 }'
 ```
 
-Do not pass `file_path` / `line` when replying — the discussion already owns a position.
+Do not pass `file_path` / `line` when replying — the thread already owns a position.
 
 ### 7. Verify
 

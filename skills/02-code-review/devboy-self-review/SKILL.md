@@ -46,7 +46,11 @@ Read every changed file end-to-end. This is the only piece of ground truth you n
 devboy tools call get_merge_request_discussions '{"key": "mr#374", "limit": 100}'
 ```
 
-Flag any thread that is still unresolved. Self-review is incomplete as long as an open discussion exists — either reply to it (see `devboy-fix-review-comments`) or, if you are pushing back, at least have the reasoning ready so the reviewer is not left waiting.
+Flag any thread that is clearly awaiting your response — for example, the latest comment was not authored by you, or it contains an explicit request for changes / clarification / follow-up.
+
+If the provider exposes a reliable `resolved` field you may use it as a hint (GitLab does), but do not treat `unresolved` on its own as a universal blocking signal: on GitHub the provider has no reliable resolved-state signal in the REST data and `resolved` is always `false`, so a naive check would tag every thread and make self-review impossible on GitHub-hosted PRs.
+
+Self-review is incomplete while a reviewer is still waiting on you — either reply to the thread (see `devboy-fix-review-comments`) or, if you are pushing back, have the reasoning ready so the reviewer is not left waiting.
 
 ### 4. Walk the checklist
 
