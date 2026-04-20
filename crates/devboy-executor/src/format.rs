@@ -322,6 +322,27 @@ pub fn format_output(
                 None,
             ))
         }
+        // Jira Structure outputs — serialize as JSON
+        ToolOutput::Structures(items, _meta) => {
+            let json = serde_json::to_string_pretty(&items).unwrap_or_default();
+            Ok(text_result(json, None, None))
+        }
+        ToolOutput::StructureForest(forest) => {
+            let json = serde_json::to_string_pretty(&*forest).unwrap_or_default();
+            Ok(text_result(json, None, None))
+        }
+        ToolOutput::StructureValues(values) => {
+            let json = serde_json::to_string_pretty(&*values).unwrap_or_default();
+            Ok(text_result(json, None, None))
+        }
+        ToolOutput::StructureViews(views, _meta) => {
+            let json = serde_json::to_string_pretty(&views).unwrap_or_default();
+            Ok(text_result(json, None, None))
+        }
+        ToolOutput::ForestModified(result) => {
+            let json = serde_json::to_string_pretty(&result).unwrap_or_default();
+            Ok(text_result(json, None, None))
+        }
         ToolOutput::Text(text) => Ok(text_result(text, None, None)),
     }
 }

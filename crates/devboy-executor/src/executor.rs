@@ -1,10 +1,12 @@
 use devboy_core::types::ChatType;
 use devboy_core::{
-    CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Error, GetChatsParams,
-    GetMessagesParams, GetPipelineInput, GetUsersOptions, IssueFilter, IssueProvider, JobLogMode,
-    JobLogOptions, MeetingFilter, MeetingNotesProvider, MergeRequestProvider, MessengerProvider,
-    MrFilter, PipelineProvider, Result, SearchMessagesParams, SendMessageParams, ToolCategory,
-    UpdateIssueInput,
+    AddStructureRowsInput, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
+    CreateStructureInput, Error, GetChatsParams, GetForestOptions, GetMessagesParams,
+    GetPipelineInput, GetStructureValuesInput, GetUsersOptions, IssueFilter, IssueProvider,
+    JobLogMode, JobLogOptions, MeetingFilter, MeetingNotesProvider, MergeRequestProvider,
+    MessengerProvider, MoveStructureRowsInput, MrFilter, PipelineProvider, Result,
+    SaveStructureViewInput, SearchMessagesParams, SendMessageParams, StructureRowItem,
+    StructureViewColumn, ToolCategory, UpdateIssueInput,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -410,6 +412,17 @@ async fn dispatch_tool(
         "upload_asset" => execute_upload_asset(provider, args).await,
         "download_asset" => execute_download_asset(provider, args, asset_manager).await,
         "delete_asset" => execute_delete_asset(provider, args, asset_manager).await,
+
+        // Jira Structure tools
+        "get_structures" => execute_get_structures(provider).await,
+        "get_structure_forest" => execute_get_structure_forest(provider, args).await,
+        "add_structure_rows" => execute_add_structure_rows(provider, args).await,
+        "move_structure_rows" => execute_move_structure_rows(provider, args).await,
+        "remove_structure_row" => execute_remove_structure_row(provider, args).await,
+        "get_structure_values" => execute_get_structure_values(provider, args).await,
+        "get_structure_views" => execute_get_structure_views(provider, args).await,
+        "save_structure_view" => execute_save_structure_view(provider, args).await,
+        "create_structure" => execute_create_structure(provider, args).await,
 
         _ => Err(Error::NotFound(format!("unknown tool: {tool}"))),
     }
@@ -1735,6 +1748,262 @@ fn base64_decode(input: &str) -> Result<Vec<u8>> {
 fn base64_encode(data: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(data)
+}
+
+// =============================================================================
+// Jira Structure tool handlers
+// =============================================================================
+
+async fn execute_get_structures(provider: &dyn devboy_core::Provider) -> Result<ToolOutput> {
+    let result = provider.get_structures().await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::Structures(result.items, Some(meta)))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetStructureForestParams {
+    structure_id: u64,
+    offset: Option<u64>,
+    limit: Option<u64>,
+}
+
+async fn execute_get_structure_forest(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetStructureForestParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("missing 'structureId': {e}")))?;
+    let forest = provider
+        .get_structure_forest(
+            params.structure_id,
+            GetForestOptions {
+                offset: params.offset,
+                limit: Some(params.limit.unwrap_or(200)),
+            },
+        )
+        .await?;
+    Ok(ToolOutput::StructureForest(Box::new(forest)))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AddStructureRowsParams {
+    structure_id: u64,
+    items: Vec<Value>,
+    under: Option<u64>,
+    after: Option<u64>,
+    forest_version: Option<u64>,
+}
+
+async fn execute_add_structure_rows(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: AddStructureRowsParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid add_structure_rows params: {e}")))?;
+
+    let items: Vec<StructureRowItem> = params
+        .items
+        .into_iter()
+        .map(|v| {
+            if let Some(s) = v.as_str() {
+                StructureRowItem {
+                    item_id: s.to_string(),
+                    item_type: None,
+                }
+            } else {
+                serde_json::from_value(v).unwrap_or_default()
+            }
+        })
+        .collect();
+
+    let result = provider
+        .add_structure_rows(
+            params.structure_id,
+            AddStructureRowsInput {
+                items,
+                under: params.under,
+                after: params.after,
+                forest_version: params.forest_version,
+            },
+        )
+        .await?;
+    Ok(ToolOutput::ForestModified(result))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MoveStructureRowsParams {
+    structure_id: u64,
+    row_ids: Vec<u64>,
+    under: Option<u64>,
+    after: Option<u64>,
+    forest_version: Option<u64>,
+}
+
+async fn execute_move_structure_rows(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: MoveStructureRowsParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid move_structure_rows params: {e}")))?;
+    let result = provider
+        .move_structure_rows(
+            params.structure_id,
+            MoveStructureRowsInput {
+                row_ids: params.row_ids,
+                under: params.under,
+                after: params.after,
+                forest_version: params.forest_version,
+            },
+        )
+        .await?;
+    Ok(ToolOutput::ForestModified(result))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoveStructureRowParams {
+    structure_id: u64,
+    row_id: u64,
+}
+
+async fn execute_remove_structure_row(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: RemoveStructureRowParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid remove_structure_row params: {e}")))?;
+    provider
+        .remove_structure_row(params.structure_id, params.row_id)
+        .await?;
+    Ok(ToolOutput::Text(format!(
+        "Row {} removed from structure {}",
+        params.row_id, params.structure_id
+    )))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetStructureValuesParams {
+    structure_id: u64,
+    rows: Vec<u64>,
+    columns: Vec<Value>,
+}
+
+async fn execute_get_structure_values(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetStructureValuesParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid get_structure_values params: {e}")))?;
+
+    let columns: Vec<StructureViewColumn> = params
+        .columns
+        .into_iter()
+        .map(|v| {
+            if let Some(s) = v.as_str() {
+                StructureViewColumn {
+                    field: Some(s.to_string()),
+                    ..Default::default()
+                }
+            } else {
+                serde_json::from_value(v).unwrap_or_default()
+            }
+        })
+        .collect();
+
+    let result = provider
+        .get_structure_values(GetStructureValuesInput {
+            structure_id: params.structure_id,
+            rows: params.rows,
+            columns,
+        })
+        .await?;
+    Ok(ToolOutput::StructureValues(Box::new(result)))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetStructureViewsParams {
+    structure_id: u64,
+    view_id: Option<u64>,
+}
+
+async fn execute_get_structure_views(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetStructureViewsParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid get_structure_views params: {e}")))?;
+    let views = provider
+        .get_structure_views(params.structure_id, params.view_id)
+        .await?;
+    Ok(ToolOutput::StructureViews(views, None))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveStructureViewParams {
+    id: Option<u64>,
+    structure_id: u64,
+    name: String,
+    columns: Option<Vec<Value>>,
+    group_by: Option<String>,
+    sort_by: Option<String>,
+    filter: Option<String>,
+}
+
+async fn execute_save_structure_view(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: SaveStructureViewParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid save_structure_view params: {e}")))?;
+
+    let columns: Option<Vec<StructureViewColumn>> = params.columns.map(|cols| {
+        cols.into_iter()
+            .map(|v| serde_json::from_value(v).unwrap_or_default())
+            .collect()
+    });
+
+    let view = provider
+        .save_structure_view(SaveStructureViewInput {
+            id: params.id,
+            structure_id: params.structure_id,
+            name: params.name,
+            columns,
+            group_by: params.group_by,
+            sort_by: params.sort_by,
+            filter: params.filter,
+        })
+        .await?;
+    Ok(ToolOutput::StructureViews(vec![view], None))
+}
+
+#[derive(Deserialize)]
+struct CreateStructureParams {
+    name: String,
+    description: Option<String>,
+}
+
+async fn execute_create_structure(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: CreateStructureParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("missing 'name': {e}")))?;
+    let structure = provider
+        .create_structure(CreateStructureInput {
+            name: params.name,
+            description: params.description,
+        })
+        .await?;
+    Ok(ToolOutput::Structures(vec![structure], None))
 }
 
 #[cfg(test)]

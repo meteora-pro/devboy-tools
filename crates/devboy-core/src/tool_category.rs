@@ -34,4 +34,8 @@ pub enum ToolCategory {
     /// Messenger tools: chats, messages, search, sending.
     /// Providers: Slack
     Messenger,
+
+    /// Jira Structure plugin tools: hierarchies, views, formulas.
+    /// Providers: Jira (requires Structure plugin)
+    JiraStructure,
 }
