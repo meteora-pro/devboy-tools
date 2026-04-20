@@ -324,12 +324,12 @@ mod tests {
             1
         );
         assert_eq!(
-            ToolOutput::StructureForest(Box::new(devboy_core::StructureForest::default()))
+            ToolOutput::StructureForest(Box::<devboy_core::StructureForest>::default())
                 .item_count(),
             1
         );
         assert_eq!(
-            ToolOutput::StructureValues(Box::new(devboy_core::StructureValues::default()))
+            ToolOutput::StructureValues(Box::<devboy_core::StructureValues>::default())
                 .item_count(),
             1
         );
@@ -401,13 +401,11 @@ mod tests {
             "structures"
         );
         assert_eq!(
-            ToolOutput::StructureForest(Box::new(devboy_core::StructureForest::default()))
-                .type_name(),
+            ToolOutput::StructureForest(Box::<devboy_core::StructureForest>::default()).type_name(),
             "structure_forest"
         );
         assert_eq!(
-            ToolOutput::StructureValues(Box::new(devboy_core::StructureValues::default()))
-                .type_name(),
+            ToolOutput::StructureValues(Box::<devboy_core::StructureValues>::default()).type_name(),
             "structure_values"
         );
         assert_eq!(
@@ -493,7 +491,7 @@ mod tests {
                 .is_none()
         );
         assert!(
-            ToolOutput::StructureForest(Box::new(devboy_core::StructureForest::default()))
+            ToolOutput::StructureForest(Box::<devboy_core::StructureForest>::default())
                 .result_meta()
                 .is_none()
         );
