@@ -2137,6 +2137,82 @@ mod tests {
                 ..Default::default()
             })
         }
+        async fn get_structures(
+            &self,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<devboy_core::Structure>> {
+            Ok(vec![sample_structure()].into())
+        }
+        async fn get_structure_forest(
+            &self,
+            structure_id: u64,
+            _options: devboy_core::GetForestOptions,
+        ) -> devboy_core::Result<devboy_core::StructureForest> {
+            Ok(sample_forest(structure_id))
+        }
+        async fn add_structure_rows(
+            &self,
+            _structure_id: u64,
+            input: devboy_core::AddStructureRowsInput,
+        ) -> devboy_core::Result<devboy_core::ForestModifyResult> {
+            Ok(devboy_core::ForestModifyResult {
+                version: 2,
+                affected_count: input.items.len(),
+            })
+        }
+        async fn move_structure_rows(
+            &self,
+            _structure_id: u64,
+            input: devboy_core::MoveStructureRowsInput,
+        ) -> devboy_core::Result<devboy_core::ForestModifyResult> {
+            Ok(devboy_core::ForestModifyResult {
+                version: 3,
+                affected_count: input.row_ids.len(),
+            })
+        }
+        async fn remove_structure_row(
+            &self,
+            _structure_id: u64,
+            _row_id: u64,
+        ) -> devboy_core::Result<()> {
+            Ok(())
+        }
+        async fn get_structure_values(
+            &self,
+            input: devboy_core::GetStructureValuesInput,
+        ) -> devboy_core::Result<devboy_core::StructureValues> {
+            Ok(devboy_core::StructureValues {
+                structure_id: input.structure_id,
+                values: vec![],
+            })
+        }
+        async fn get_structure_views(
+            &self,
+            structure_id: u64,
+            _view_id: Option<u64>,
+        ) -> devboy_core::Result<Vec<devboy_core::StructureView>> {
+            Ok(vec![sample_view(structure_id)])
+        }
+        async fn save_structure_view(
+            &self,
+            input: devboy_core::SaveStructureViewInput,
+        ) -> devboy_core::Result<devboy_core::StructureView> {
+            Ok(devboy_core::StructureView {
+                id: input.id.unwrap_or(99),
+                name: input.name,
+                structure_id: input.structure_id,
+                ..Default::default()
+            })
+        }
+        async fn create_structure(
+            &self,
+            input: devboy_core::CreateStructureInput,
+        ) -> devboy_core::Result<devboy_core::Structure> {
+            Ok(devboy_core::Structure {
+                id: 42,
+                name: input.name,
+                description: input.description,
+            })
+        }
         fn provider_name(&self) -> &'static str {
             "mock"
         }
@@ -2725,5 +2801,167 @@ mod tests {
         let provider = MockMeetingProvider;
         let result = dispatch_meeting_tool("nonexistent_tool", &Value::Null, &provider).await;
         assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // Structure tool dispatch tests
+    // =========================================================================
+
+    fn sample_structure() -> devboy_core::Structure {
+        devboy_core::Structure {
+            id: 1,
+            name: "Q1 Plan".into(),
+            description: Some("Quarter 1 planning".into()),
+        }
+    }
+
+    fn sample_forest(structure_id: u64) -> devboy_core::StructureForest {
+        devboy_core::StructureForest {
+            version: 1,
+            structure_id,
+            tree: vec![devboy_core::StructureNode {
+                row_id: 100,
+                item_id: Some("PROJ-1".into()),
+                item_type: Some("issue".into()),
+                children: vec![],
+            }],
+            total_count: Some(1),
+        }
+    }
+
+    fn sample_view(structure_id: u64) -> devboy_core::StructureView {
+        devboy_core::StructureView {
+            id: 10,
+            name: "Default".into(),
+            structure_id,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_structures() {
+        let provider = MockProvider;
+        let result = dispatch_tool("get_structures", &Value::Null, &provider, None)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Structures(ref items, _) if items.len() == 1));
+        assert_eq!(result.type_name(), "structures");
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_structure_forest() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"structureId": 1});
+        let result = dispatch_tool("get_structure_forest", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::StructureForest(_)));
+        assert_eq!(result.type_name(), "structure_forest");
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_structure_forest_missing_id() {
+        let provider = MockProvider;
+        let result = dispatch_tool("get_structure_forest", &Value::Null, &provider, None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_add_structure_rows() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "structureId": 1,
+            "items": ["PROJ-1", "PROJ-2"],
+            "under": 100
+        });
+        let result = dispatch_tool("add_structure_rows", &args, &provider, None)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::ForestModified(r) => {
+                assert_eq!(r.version, 2);
+                assert_eq!(r.affected_count, 2);
+            }
+            _ => panic!("expected ForestModified"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_move_structure_rows() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "structureId": 1,
+            "rowIds": [100, 101],
+            "under": 200
+        });
+        let result = dispatch_tool("move_structure_rows", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::ForestModified(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_remove_structure_row() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"structureId": 1, "rowId": 100});
+        let result = dispatch_tool("remove_structure_row", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Text(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_structure_values() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "structureId": 1,
+            "rows": [100],
+            "columns": ["summary", {"field": "status"}]
+        });
+        let result = dispatch_tool("get_structure_values", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::StructureValues(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_structure_views() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"structureId": 1});
+        let result = dispatch_tool("get_structure_views", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::StructureViews(views, _) if views.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_save_structure_view() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "structureId": 1,
+            "name": "Sprint View"
+        });
+        let result = dispatch_tool("save_structure_view", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(
+            matches!(result, ToolOutput::StructureViews(views, _) if views[0].name == "Sprint View")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_create_structure() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"name": "New Structure", "description": "Test"});
+        let result = dispatch_tool("create_structure", &args, &provider, None)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::Structures(items, _) => {
+                assert_eq!(items[0].name, "New Structure");
+                assert_eq!(items[0].id, 42);
+            }
+            _ => panic!("expected Structures"),
+        }
     }
 }

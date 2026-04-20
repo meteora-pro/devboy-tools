@@ -5197,7 +5197,7 @@ mod tests {
         fn create_client(server: &MockServer) -> JiraClient {
             // with_base_url sets base_url WITHOUT /rest/api/N,
             // but Structure uses instance_url. Adjust:
-            
+
             // instance_url is set to base_url by with_base_url
             JiraClient::with_base_url(
                 server.base_url(),

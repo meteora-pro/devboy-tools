@@ -310,6 +310,34 @@ mod tests {
         );
         assert_eq!(ToolOutput::Users(vec![], None).item_count(), 0);
         assert_eq!(ToolOutput::Relations(Box::default()).item_count(), 1);
+        assert_eq!(ToolOutput::Structures(vec![], None).item_count(), 0);
+        assert_eq!(
+            ToolOutput::Structures(
+                vec![devboy_core::Structure {
+                    id: 1,
+                    name: "S".into(),
+                    description: None
+                }],
+                None
+            )
+            .item_count(),
+            1
+        );
+        assert_eq!(
+            ToolOutput::StructureForest(Box::new(devboy_core::StructureForest::default()))
+                .item_count(),
+            1
+        );
+        assert_eq!(
+            ToolOutput::StructureValues(Box::new(devboy_core::StructureValues::default()))
+                .item_count(),
+            1
+        );
+        assert_eq!(ToolOutput::StructureViews(vec![], None).item_count(), 0);
+        assert_eq!(
+            ToolOutput::ForestModified(devboy_core::ForestModifyResult::default()).item_count(),
+            1
+        );
         assert_eq!(ToolOutput::Text("x".into()).item_count(), 1);
     }
 
@@ -368,6 +396,28 @@ mod tests {
             "issue_relations"
         );
         assert_eq!(ToolOutput::Text("x".into()).type_name(), "text");
+        assert_eq!(
+            ToolOutput::Structures(vec![], None).type_name(),
+            "structures"
+        );
+        assert_eq!(
+            ToolOutput::StructureForest(Box::new(devboy_core::StructureForest::default()))
+                .type_name(),
+            "structure_forest"
+        );
+        assert_eq!(
+            ToolOutput::StructureValues(Box::new(devboy_core::StructureValues::default()))
+                .type_name(),
+            "structure_values"
+        );
+        assert_eq!(
+            ToolOutput::StructureViews(vec![], None).type_name(),
+            "structure_views"
+        );
+        assert_eq!(
+            ToolOutput::ForestModified(devboy_core::ForestModifyResult::default()).type_name(),
+            "forest_modified"
+        );
     }
 
     #[test]
@@ -433,6 +483,17 @@ mod tests {
         assert!(ToolOutput::Users(vec![], None).result_meta().is_none());
         assert!(
             ToolOutput::MeetingNotes(vec![], None)
+                .result_meta()
+                .is_none()
+        );
+        assert!(ToolOutput::Structures(vec![], None).result_meta().is_none());
+        assert!(
+            ToolOutput::StructureViews(vec![], None)
+                .result_meta()
+                .is_none()
+        );
+        assert!(
+            ToolOutput::StructureForest(Box::new(devboy_core::StructureForest::default()))
                 .result_meta()
                 .is_none()
         );
