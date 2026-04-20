@@ -5079,4 +5079,258 @@ mod tests {
         assert!(relations.related_to.is_empty());
         assert!(relations.duplicates.is_empty());
     }
+
+    // =========================================================================
+    // Structure: build_forest_tree tests
+    // =========================================================================
+
+    #[test]
+    fn test_build_forest_tree_empty() {
+        let tree = build_forest_tree(&[], &[]);
+        assert!(tree.is_empty());
+    }
+
+    #[test]
+    fn test_build_forest_tree_flat() {
+        let rows = vec![
+            JiraForestRow {
+                id: 1,
+                item_id: Some("PROJ-1".into()),
+                item_type: Some("issue".into()),
+            },
+            JiraForestRow {
+                id: 2,
+                item_id: Some("PROJ-2".into()),
+                item_type: Some("issue".into()),
+            },
+        ];
+        let depths = vec![0, 0];
+        let tree = build_forest_tree(&rows, &depths);
+        assert_eq!(tree.len(), 2);
+        assert_eq!(tree[0].row_id, 1);
+        assert_eq!(tree[1].row_id, 2);
+        assert!(tree[0].children.is_empty());
+        assert!(tree[1].children.is_empty());
+    }
+
+    #[test]
+    fn test_build_forest_tree_nested() {
+        // PROJ-1
+        //   PROJ-2
+        //     PROJ-3
+        //   PROJ-4
+        let rows = vec![
+            JiraForestRow {
+                id: 1,
+                item_id: Some("PROJ-1".into()),
+                item_type: None,
+            },
+            JiraForestRow {
+                id: 2,
+                item_id: Some("PROJ-2".into()),
+                item_type: None,
+            },
+            JiraForestRow {
+                id: 3,
+                item_id: Some("PROJ-3".into()),
+                item_type: None,
+            },
+            JiraForestRow {
+                id: 4,
+                item_id: Some("PROJ-4".into()),
+                item_type: None,
+            },
+        ];
+        let depths = vec![0, 1, 2, 1];
+        let tree = build_forest_tree(&rows, &depths);
+
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].row_id, 1);
+        assert_eq!(tree[0].children.len(), 2);
+        assert_eq!(tree[0].children[0].row_id, 2);
+        assert_eq!(tree[0].children[0].children.len(), 1);
+        assert_eq!(tree[0].children[0].children[0].row_id, 3);
+        assert_eq!(tree[0].children[1].row_id, 4);
+        assert!(tree[0].children[1].children.is_empty());
+    }
+
+    #[test]
+    fn test_build_forest_tree_multiple_roots() {
+        let rows = vec![
+            JiraForestRow {
+                id: 1,
+                item_id: Some("PROJ-1".into()),
+                item_type: None,
+            },
+            JiraForestRow {
+                id: 2,
+                item_id: Some("PROJ-2".into()),
+                item_type: None,
+            },
+            JiraForestRow {
+                id: 3,
+                item_id: Some("PROJ-3".into()),
+                item_type: None,
+            },
+            JiraForestRow {
+                id: 4,
+                item_id: Some("PROJ-4".into()),
+                item_type: None,
+            },
+        ];
+        let depths = vec![0, 1, 0, 1];
+        let tree = build_forest_tree(&rows, &depths);
+
+        assert_eq!(tree.len(), 2);
+        assert_eq!(tree[0].children.len(), 1);
+        assert_eq!(tree[1].children.len(), 1);
+    }
+
+    // =========================================================================
+    // Structure: httpmock integration tests
+    // =========================================================================
+
+    mod structure_integration {
+        use super::*;
+        use httpmock::prelude::*;
+
+        fn create_client(server: &MockServer) -> JiraClient {
+            // with_base_url sets base_url WITHOUT /rest/api/N,
+            // but Structure uses instance_url. Adjust:
+            
+            // instance_url is set to base_url by with_base_url
+            JiraClient::with_base_url(
+                server.base_url(),
+                "PROJ",
+                "user@example.com",
+                "token",
+                false,
+            )
+        }
+
+        #[tokio::test]
+        async fn test_get_structures() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/rest/structure/2.0/structure");
+                then.status(200).json_body(serde_json::json!({
+                    "structures": [
+                        {"id": 1, "name": "Q1 Planning", "description": "Quarter 1"},
+                        {"id": 2, "name": "Sprint Board"}
+                    ]
+                }));
+            });
+
+            let client = create_client(&server);
+            let result = client.get_structures().await.unwrap();
+            assert_eq!(result.items.len(), 2);
+            assert_eq!(result.items[0].name, "Q1 Planning");
+            assert_eq!(result.items[1].id, 2);
+        }
+
+        #[tokio::test]
+        async fn test_get_structure_forest() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST).path("/rest/structure/2.0/forest/1/spec");
+                then.status(200).json_body(serde_json::json!({
+                    "version": 42,
+                    "rows": [
+                        {"id": 100, "itemId": "PROJ-1", "itemType": "issue"},
+                        {"id": 101, "itemId": "PROJ-2", "itemType": "issue"},
+                        {"id": 102, "itemId": "PROJ-3", "itemType": "issue"}
+                    ],
+                    "depths": [0, 1, 1],
+                    "totalCount": 3
+                }));
+            });
+
+            let client = create_client(&server);
+            let forest = client
+                .get_structure_forest(
+                    1,
+                    GetForestOptions {
+                        offset: None,
+                        limit: Some(200),
+                    },
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(forest.version, 42);
+            assert_eq!(forest.structure_id, 1);
+            assert_eq!(forest.total_count, Some(3));
+            assert_eq!(forest.tree.len(), 1); // one root
+            assert_eq!(forest.tree[0].item_id, Some("PROJ-1".into()));
+            assert_eq!(forest.tree[0].children.len(), 2);
+        }
+
+        #[tokio::test]
+        async fn test_create_structure() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST).path("/rest/structure/2.0/structure");
+                then.status(200).json_body(serde_json::json!({
+                    "id": 99,
+                    "name": "New Structure",
+                    "description": "Test"
+                }));
+            });
+
+            let client = create_client(&server);
+            let result = client
+                .create_structure(CreateStructureInput {
+                    name: "New Structure".into(),
+                    description: Some("Test".into()),
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(result.id, 99);
+            assert_eq!(result.name, "New Structure");
+        }
+
+        #[tokio::test]
+        async fn test_remove_structure_row() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(DELETE)
+                    .path("/rest/structure/2.0/forest/1/item/100");
+                then.status(204);
+            });
+
+            let client = create_client(&server);
+            client.remove_structure_row(1, 100).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_get_structure_views() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/rest/structure/2.0/view")
+                    .query_param("structureId", "1");
+                then.status(200).json_body(serde_json::json!({
+                    "views": [
+                        {"id": 10, "name": "Default View", "structureId": 1, "columns": []},
+                        {"id": 11, "name": "Sprint View", "structureId": 1, "columns": [
+                            {"field": "summary"},
+                            {"field": "status"},
+                            {"formula": "SUM(\"Story Points\")"}
+                        ]}
+                    ]
+                }));
+            });
+
+            let client = create_client(&server);
+            let views = client.get_structure_views(1, None).await.unwrap();
+            assert_eq!(views.len(), 2);
+            assert_eq!(views[1].columns.len(), 3);
+        }
+    }
 }
