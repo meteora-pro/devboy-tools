@@ -1,7 +1,8 @@
 use devboy_core::{
-    Comment, Discussion, FileDiff, Issue, IssueRelations, IssueStatus, JobLogOutput, MeetingNote,
-    MeetingTranscript, MergeRequest, MessengerChat, MessengerMessage, Pagination, PipelineInfo,
-    SortInfo, User,
+    Comment, Discussion, FileDiff, ForestModifyResult, Issue, IssueRelations, IssueStatus,
+    JobLogOutput, MeetingNote, MeetingTranscript, MergeRequest, MessengerChat, MessengerMessage,
+    Pagination, PipelineInfo, SortInfo, Structure, StructureForest, StructureValues, StructureView,
+    User,
 };
 
 /// Metadata from provider result (pagination + sort info).
@@ -90,6 +91,16 @@ pub enum ToolOutput {
         /// Human-readable confirmation message.
         message: String,
     },
+    /// List of Jira Structures
+    Structures(Vec<Structure>, Option<ResultMeta>),
+    /// Structure forest (hierarchy tree)
+    StructureForest(Box<StructureForest>),
+    /// Structure column values
+    StructureValues(Box<StructureValues>),
+    /// Structure views
+    StructureViews(Vec<StructureView>, Option<ResultMeta>),
+    /// Forest modification result (add/move rows)
+    ForestModified(ForestModifyResult),
     /// Plain text result (e.g., "Comment created successfully")
     Text(String),
 }
@@ -108,6 +119,8 @@ impl ToolOutput {
             Self::MeetingNotes(v, _) => v.len(),
             Self::MessengerChats(v, _) => v.len(),
             Self::MessengerMessages(v, _) => v.len(),
+            Self::Structures(v, _) => v.len(),
+            Self::StructureViews(v, _) => v.len(),
             Self::AssetList { count, .. } => *count,
             Self::SingleMergeRequest(_)
             | Self::SingleIssue(_)
@@ -116,6 +129,9 @@ impl ToolOutput {
             | Self::MeetingTranscript(_)
             | Self::Relations(_)
             | Self::SingleMessage(_)
+            | Self::StructureForest(_)
+            | Self::StructureValues(_)
+            | Self::ForestModified(_)
             | Self::AssetDownloaded { .. }
             | Self::AssetUploaded { .. }
             | Self::AssetDeleted { .. }
@@ -143,6 +159,11 @@ impl ToolOutput {
             Self::MessengerChats(..) => "messenger_chats",
             Self::MessengerMessages(..) => "messenger_messages",
             Self::SingleMessage(_) => "messenger_message",
+            Self::Structures(..) => "structures",
+            Self::StructureForest(_) => "structure_forest",
+            Self::StructureValues(_) => "structure_values",
+            Self::StructureViews(..) => "structure_views",
+            Self::ForestModified(_) => "forest_modified",
             Self::AssetList { .. } => "asset_list",
             Self::AssetDownloaded { .. } => "asset_downloaded",
             Self::AssetUploaded { .. } => "asset_uploaded",
@@ -163,7 +184,9 @@ impl ToolOutput {
             | Self::Users(_, meta)
             | Self::MeetingNotes(_, meta)
             | Self::MessengerChats(_, meta)
-            | Self::MessengerMessages(_, meta) => meta.as_ref(),
+            | Self::MessengerMessages(_, meta)
+            | Self::Structures(_, meta)
+            | Self::StructureViews(_, meta) => meta.as_ref(),
             _ => None,
         }
     }

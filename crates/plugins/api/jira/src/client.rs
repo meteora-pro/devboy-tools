@@ -17,18 +17,23 @@ fn safe_char_boundary(s: &str, max_bytes: usize) -> usize {
 
 use async_trait::async_trait;
 use devboy_core::{
-    AssetCapabilities, AssetMeta, Comment, ContextCapabilities, CreateIssueInput, Error,
-    GetUsersOptions, Issue, IssueFilter, IssueLink, IssueProvider, IssueRelations, IssueStatus,
-    MergeRequestProvider, PipelineProvider, Provider, ProviderResult, Result, UpdateIssueInput,
-    User,
+    AddStructureRowsInput, AssetCapabilities, AssetMeta, Comment, ContextCapabilities,
+    CreateIssueInput, CreateStructureInput, Error, ForestModifyResult, GetForestOptions,
+    GetStructureValuesInput, GetUsersOptions, Issue, IssueFilter, IssueLink, IssueProvider,
+    IssueRelations, IssueStatus, MergeRequestProvider, MoveStructureRowsInput, PipelineProvider,
+    Provider, ProviderResult, Result, SaveStructureViewInput, Structure, StructureColumnValue,
+    StructureForest, StructureNode, StructureRowValues, StructureValues, StructureView,
+    StructureViewColumn, UpdateIssueInput, User,
 };
 use tracing::{debug, warn};
 
 use crate::types::{
     AddCommentPayload, CreateIssueFields, CreateIssueLinkPayload, CreateIssuePayload,
     CreateIssueResponse, IssueKeyRef, IssueLinkTypeName, IssueType, JiraAttachment,
-    JiraCloudSearchResponse, JiraComment, JiraCommentsResponse, JiraIssue, JiraIssueTypeStatuses,
-    JiraPriority, JiraProjectStatus, JiraSearchResponse, JiraStatus, JiraTransition,
+    JiraCloudSearchResponse, JiraComment, JiraCommentsResponse, JiraForestModifyResponse,
+    JiraForestResponse, JiraIssue, JiraIssueTypeStatuses, JiraPriority, JiraProjectStatus,
+    JiraSearchResponse, JiraStatus, JiraStructure, JiraStructureListResponse,
+    JiraStructureValuesResponse, JiraStructureView, JiraStructureViewListResponse, JiraTransition,
     JiraTransitionsResponse, JiraUser, PriorityName, ProjectKey, TransitionId, TransitionPayload,
     UpdateIssueFields, UpdateIssuePayload,
 };
@@ -507,6 +512,78 @@ impl JiraClient {
         );
 
         Ok(statuses)
+    }
+
+    // =========================================================================
+    // Jira Structure Plugin API (/rest/structure/2.0/)
+    // =========================================================================
+
+    /// Build a URL for the Structure REST API.
+    fn structure_url(&self, endpoint: &str) -> String {
+        format!("{}/rest/structure/2.0{}", self.instance_url, endpoint)
+    }
+
+    /// Make an authenticated GET request to the Structure API.
+    async fn structure_get<T: serde::de::DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
+        let url = self.structure_url(endpoint);
+        debug!(url = %url, "Jira Structure GET");
+        let response = self
+            .request(reqwest::Method::GET, &url)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        self.handle_response(response).await
+    }
+
+    /// Make an authenticated POST request to the Structure API.
+    async fn structure_post<T: serde::de::DeserializeOwned, B: serde::Serialize>(
+        &self,
+        endpoint: &str,
+        body: &B,
+    ) -> Result<T> {
+        let url = self.structure_url(endpoint);
+        debug!(url = %url, "Jira Structure POST");
+        let response = self
+            .request(reqwest::Method::POST, &url)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        self.handle_response(response).await
+    }
+
+    /// Make an authenticated PUT request to the Structure API (returns body).
+    async fn structure_put<T: serde::de::DeserializeOwned, B: serde::Serialize>(
+        &self,
+        endpoint: &str,
+        body: &B,
+    ) -> Result<T> {
+        let url = self.structure_url(endpoint);
+        debug!(url = %url, "Jira Structure PUT");
+        let response = self
+            .request(reqwest::Method::PUT, &url)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        self.handle_response(response).await
+    }
+
+    /// Make an authenticated DELETE request to the Structure API.
+    async fn structure_delete_request(&self, endpoint: &str) -> Result<()> {
+        let url = self.structure_url(endpoint);
+        debug!(url = %url, "Jira Structure DELETE");
+        let response = self
+            .request(reqwest::Method::DELETE, &url)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_default();
+            return Err(Error::from_status(status.as_u16(), message));
+        }
+        Ok(())
     }
 }
 
@@ -1030,6 +1107,71 @@ fn instance_url_from_base(base_url: &str) -> String {
         .trim_end_matches("/rest/api/3")
         .trim_end_matches("/rest/api/2")
         .to_string()
+}
+
+// =============================================================================
+// Structure helpers
+// =============================================================================
+
+/// Transform compact `rows[] + depths[]` from Structure API into a nested tree.
+fn build_forest_tree(rows: &[crate::types::JiraForestRow], depths: &[u32]) -> Vec<StructureNode> {
+    let mut roots: Vec<StructureNode> = Vec::new();
+    let mut stack: Vec<StructureNode> = Vec::new();
+
+    for (i, row) in rows.iter().enumerate() {
+        let depth = depths.get(i).copied().unwrap_or(0) as usize;
+        let node = StructureNode {
+            row_id: row.id,
+            item_id: row.item_id.clone(),
+            item_type: row.item_type.clone(),
+            children: Vec::new(),
+        };
+
+        // Pop stack to find parent at depth - 1
+        while stack.len() > depth {
+            let child = stack.pop().unwrap();
+            if let Some(parent) = stack.last_mut() {
+                parent.children.push(child);
+            } else {
+                roots.push(child);
+            }
+        }
+
+        stack.push(node);
+    }
+
+    // Flush remaining stack
+    while let Some(child) = stack.pop() {
+        if let Some(parent) = stack.last_mut() {
+            parent.children.push(child);
+        } else {
+            roots.push(child);
+        }
+    }
+
+    roots
+}
+
+/// Map Jira Structure view to unified type.
+fn map_structure_view(view: crate::types::JiraStructureView) -> StructureView {
+    StructureView {
+        id: view.id,
+        name: view.name,
+        structure_id: view.structure_id,
+        columns: view
+            .columns
+            .into_iter()
+            .map(|c| StructureViewColumn {
+                id: c.id,
+                field: c.field,
+                formula: c.formula,
+                width: c.width,
+            })
+            .collect(),
+        group_by: view.group_by,
+        sort_by: view.sort_by,
+        filter: view.filter,
+    }
 }
 
 // =============================================================================
@@ -1695,6 +1837,269 @@ impl IssueProvider for JiraClient {
             },
             ..Default::default()
         }
+    }
+
+    // --- Jira Structure plugin ---
+
+    async fn get_structures(&self) -> Result<ProviderResult<Structure>> {
+        let resp: JiraStructureListResponse = self.structure_get("/structure").await?;
+        let items: Vec<Structure> = resp
+            .structures
+            .into_iter()
+            .map(|s| Structure {
+                id: s.id,
+                name: s.name,
+                description: s.description,
+            })
+            .collect();
+        Ok(items.into())
+    }
+
+    async fn get_structure_forest(
+        &self,
+        structure_id: u64,
+        options: GetForestOptions,
+    ) -> Result<StructureForest> {
+        let mut spec = serde_json::Map::new();
+        if let Some(offset) = options.offset {
+            spec.insert("offset".into(), serde_json::json!(offset));
+        }
+        if let Some(limit) = options.limit {
+            spec.insert("limit".into(), serde_json::json!(limit));
+        }
+
+        let resp: JiraForestResponse = self
+            .structure_post(
+                &format!("/forest/{}/spec", structure_id),
+                &serde_json::Value::Object(spec),
+            )
+            .await?;
+
+        let tree = build_forest_tree(&resp.rows, &resp.depths);
+
+        Ok(StructureForest {
+            version: resp.version,
+            structure_id,
+            tree,
+            total_count: resp.total_count,
+        })
+    }
+
+    async fn add_structure_rows(
+        &self,
+        structure_id: u64,
+        input: AddStructureRowsInput,
+    ) -> Result<ForestModifyResult> {
+        let mut payload = serde_json::json!({
+            "rows": input.items.iter().map(|i| {
+                let mut row = serde_json::json!({"itemId": i.item_id});
+                if let Some(ref t) = i.item_type {
+                    row["itemType"] = serde_json::json!(t);
+                }
+                row
+            }).collect::<Vec<_>>()
+        });
+        if let Some(under) = input.under {
+            payload["under"] = serde_json::json!(under);
+        }
+        if let Some(after) = input.after {
+            payload["after"] = serde_json::json!(after);
+        }
+        if let Some(version) = input.forest_version {
+            payload["forestVersion"] = serde_json::json!(version);
+        }
+
+        let resp: JiraForestModifyResponse = self
+            .structure_put(&format!("/forest/{}/item", structure_id), &payload)
+            .await
+            .map_err(|e| {
+                if matches!(&e, Error::Api { status, .. } if *status == 409) {
+                    Error::Api {
+                        status: 409,
+                        message: "Forest version conflict. The structure was modified concurrently. Retry with the latest version.".to_string(),
+                    }
+                } else {
+                    e
+                }
+            })?;
+
+        Ok(ForestModifyResult {
+            version: resp.version,
+            affected_count: input.items.len(),
+        })
+    }
+
+    async fn move_structure_rows(
+        &self,
+        structure_id: u64,
+        input: MoveStructureRowsInput,
+    ) -> Result<ForestModifyResult> {
+        let mut payload = serde_json::json!({
+            "rowIds": input.row_ids
+        });
+        if let Some(under) = input.under {
+            payload["under"] = serde_json::json!(under);
+        }
+        if let Some(after) = input.after {
+            payload["after"] = serde_json::json!(after);
+        }
+        if let Some(version) = input.forest_version {
+            payload["forestVersion"] = serde_json::json!(version);
+        }
+
+        let resp: JiraForestModifyResponse = self
+            .structure_post(&format!("/forest/{}/move", structure_id), &payload)
+            .await
+            .map_err(|e| {
+                if matches!(&e, Error::Api { status, .. } if *status == 409) {
+                    Error::Api {
+                        status: 409,
+                        message: "Forest version conflict. Retry with the latest version."
+                            .to_string(),
+                    }
+                } else {
+                    e
+                }
+            })?;
+
+        Ok(ForestModifyResult {
+            version: resp.version,
+            affected_count: input.row_ids.len(),
+        })
+    }
+
+    async fn remove_structure_row(&self, structure_id: u64, row_id: u64) -> Result<()> {
+        self.structure_delete_request(&format!("/forest/{}/item/{}", structure_id, row_id))
+            .await
+    }
+
+    async fn get_structure_values(
+        &self,
+        input: GetStructureValuesInput,
+    ) -> Result<StructureValues> {
+        let columns: Vec<serde_json::Value> = input
+            .columns
+            .iter()
+            .map(|c| {
+                let mut col = serde_json::Map::new();
+                if let Some(ref id) = c.id {
+                    col.insert("id".into(), serde_json::json!(id));
+                }
+                if let Some(ref field) = c.field {
+                    col.insert("field".into(), serde_json::json!(field));
+                }
+                if let Some(ref formula) = c.formula {
+                    col.insert("formula".into(), serde_json::json!(formula));
+                }
+                serde_json::Value::Object(col)
+            })
+            .collect();
+
+        let payload = serde_json::json!({
+            "structureId": input.structure_id,
+            "rows": input.rows,
+            "columns": columns,
+        });
+
+        let resp: JiraStructureValuesResponse = self.structure_post("/value", &payload).await?;
+
+        // Group values by row_id
+        let mut row_map: std::collections::BTreeMap<u64, Vec<StructureColumnValue>> =
+            std::collections::BTreeMap::new();
+        for entry in resp.values {
+            row_map
+                .entry(entry.row_id)
+                .or_default()
+                .push(StructureColumnValue {
+                    column: entry.column_id.unwrap_or_default(),
+                    value: entry.value,
+                });
+        }
+
+        let values = row_map
+            .into_iter()
+            .map(|(row_id, columns)| StructureRowValues { row_id, columns })
+            .collect();
+
+        Ok(StructureValues {
+            structure_id: input.structure_id,
+            values,
+        })
+    }
+
+    async fn get_structure_views(
+        &self,
+        structure_id: u64,
+        view_id: Option<u64>,
+    ) -> Result<Vec<StructureView>> {
+        if let Some(id) = view_id {
+            let view: JiraStructureView = self.structure_get(&format!("/view/{}", id)).await?;
+            Ok(vec![map_structure_view(view)])
+        } else {
+            let resp: JiraStructureViewListResponse = self
+                .structure_get(&format!("/view?structureId={}", structure_id))
+                .await?;
+            Ok(resp.views.into_iter().map(map_structure_view).collect())
+        }
+    }
+
+    async fn save_structure_view(&self, input: SaveStructureViewInput) -> Result<StructureView> {
+        let columns: Option<Vec<serde_json::Value>> = input.columns.as_ref().map(|cols| {
+            cols.iter()
+                .map(|c| {
+                    let mut col = serde_json::Map::new();
+                    if let Some(ref field) = c.field {
+                        col.insert("field".into(), serde_json::json!(field));
+                    }
+                    if let Some(ref formula) = c.formula {
+                        col.insert("formula".into(), serde_json::json!(formula));
+                    }
+                    if let Some(width) = c.width {
+                        col.insert("width".into(), serde_json::json!(width));
+                    }
+                    serde_json::Value::Object(col)
+                })
+                .collect()
+        });
+
+        let mut payload = serde_json::json!({
+            "structureId": input.structure_id,
+            "name": input.name,
+        });
+        if let Some(cols) = columns {
+            payload["columns"] = serde_json::json!(cols);
+        }
+        if let Some(ref g) = input.group_by {
+            payload["groupBy"] = serde_json::json!(g);
+        }
+        if let Some(ref s) = input.sort_by {
+            payload["sortBy"] = serde_json::json!(s);
+        }
+        if let Some(ref f) = input.filter {
+            payload["filter"] = serde_json::json!(f);
+        }
+
+        let view: JiraStructureView = if let Some(id) = input.id {
+            self.structure_put(&format!("/view/{}", id), &payload)
+                .await?
+        } else {
+            self.structure_post("/view", &payload).await?
+        };
+
+        Ok(map_structure_view(view))
+    }
+
+    async fn create_structure(&self, input: CreateStructureInput) -> Result<Structure> {
+        let mut payload = serde_json::json!({"name": input.name});
+        if let Some(ref desc) = input.description {
+            payload["description"] = serde_json::json!(desc);
+        }
+        let s: JiraStructure = self.structure_post("/structure", &payload).await?;
+        Ok(Structure {
+            id: s.id,
+            name: s.name,
+            description: s.description,
+        })
     }
 
     fn provider_name(&self) -> &'static str {

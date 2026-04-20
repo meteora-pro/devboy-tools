@@ -410,6 +410,7 @@ impl McpServer {
                     devboy_core::ToolCategory::MeetingNotes => has_meeting_providers,
                     devboy_core::ToolCategory::Messenger => has_messenger_providers,
                     devboy_core::ToolCategory::Releases => has_mr_providers,
+                    devboy_core::ToolCategory::JiraStructure => has_issue_providers,
                 })
                 .unwrap_or(true) // Tools without category are always available
         });
