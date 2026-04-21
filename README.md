@@ -29,7 +29,7 @@ The same tools, the same pipeline, three ways to reach them. Start with one mode
 devboy skills list                          # see the shipped catalogue
 devboy skills install --all --agent all     # install every skill into every detected agent
 devboy skills install devboy-review-mr      # repo-local by default
-devboy skills upgrade --all                 # refresh after `devboy upgrade`
+devboy skills upgrade                       # refresh every installed skill after `devboy upgrade`
 ```
 
 | Category | Example skills |
