@@ -49,10 +49,11 @@ Preview a change without touching disk:
 devboy skills install devboy-review-mr --agent claude --dry-run
 ```
 
-Upgrade previously-installed skills after a `devboy upgrade`:
+Upgrade previously-installed skills after a `devboy upgrade` — with no arguments the subcommand upgrades every skill recorded in the local manifest; pass explicit names to scope it to a subset:
 
 ```bash
-devboy skills upgrade --all
+devboy skills upgrade                       # every installed skill
+devboy skills upgrade devboy-review-mr      # just one
 ```
 
 ## Where skills go
