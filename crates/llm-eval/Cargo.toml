@@ -1,0 +1,17 @@
+[package]
+name = "llm-eval"
+description = "LLM comprehension eval for TrimTree strategy ablation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+devboy-format-pipeline = { path = "../plugins/format-pipeline" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
+
+[lints]
+workspace = true

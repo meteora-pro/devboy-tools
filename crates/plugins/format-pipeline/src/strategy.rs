@@ -11,6 +11,18 @@ use std::collections::HashMap;
 
 use crate::tree::{NodeKind, TrimNode};
 
+/// Metadata for priority-aware value scoring.
+///
+/// Passed to `assign_priority_values` alongside the tree.
+/// All fields are optional — missing fields fall back to position-based scoring.
+#[derive(Debug, Clone, Default)]
+pub struct ItemMetadata {
+    /// Number of comments/reactions (activity signal).
+    pub activity: Option<f64>,
+    /// Days since last update (recency signal — lower = more recent = higher value).
+    pub days_since_update: Option<f64>,
+}
+
 /// Strategy type identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TrimStrategyKind {
@@ -31,6 +43,14 @@ pub enum TrimStrategyKind {
     HeadTail,
     /// Default uniform strategy — equal value for all nodes.
     Default,
+    /// Random strategy — shuffle order by seeded RNG (baseline lower bound).
+    Random,
+    /// Reversed strategy — mirror of ElementCount: last item = 1.0, first = 0.3.
+    /// Represents adversarial case where agent needs the last item.
+    Reversed,
+    /// Priority strategy — composite scorer: position⁻¹ × activity × recency.
+    /// Best for get_issues/get_merge_requests when metadata is available.
+    Priority,
 }
 
 impl TrimStrategyKind {
@@ -43,6 +63,9 @@ impl TrimStrategyKind {
             "thread_level" => Some(Self::ThreadLevel),
             "head_tail" => Some(Self::HeadTail),
             "default" => Some(Self::Default),
+            "random" => Some(Self::Random),
+            "reversed" => Some(Self::Reversed),
+            "priority" => Some(Self::Priority),
             _ => None,
         }
     }
@@ -56,6 +79,9 @@ impl TrimStrategyKind {
             Self::ThreadLevel => "thread_level",
             Self::HeadTail => "head_tail",
             Self::Default => "default",
+            Self::Random => "random",
+            Self::Reversed => "reversed",
+            Self::Priority => "priority",
         }
     }
 }
@@ -256,6 +282,132 @@ fn set_uniform_value(node: &mut TrimNode, value: f64) {
     }
 }
 
+/// Random strategy — assigns deterministic pseudo-random values via LCG.
+///
+/// Uses a fixed-seed LCG so results are reproducible across runs.
+/// Serves as the lower-bound baseline in ablation experiments.
+pub struct RandomStrategy {
+    /// Seed for the LCG. Default: 42.
+    pub seed: u64,
+}
+
+impl Default for RandomStrategy {
+    fn default() -> Self {
+        Self { seed: 42 }
+    }
+}
+
+impl TrimStrategy for RandomStrategy {
+    fn assign_values(&self, tree: &mut TrimNode) {
+        let n = tree.children.len();
+        if n == 0 {
+            return;
+        }
+        // LCG: xₙ₊₁ = (a·xₙ + c) mod m  (Knuth parameters)
+        let mut state = self.seed;
+        for child in tree.children.iter_mut() {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            // Map to (0.0, 1.0]
+            child.value = (state >> 33) as f64 / (u32::MAX as f64);
+            for grandchild in &mut child.children {
+                grandchild.value = child.value;
+            }
+        }
+    }
+}
+
+/// Reversed strategy — mirror of ElementCount: last item = 1.0, first = 0.3.
+///
+/// Represents the adversarial case where the agent needs the last item in the list.
+/// Useful for measuring worst-case p₁ of position-biased strategies.
+pub struct ReversedStrategy;
+
+impl TrimStrategy for ReversedStrategy {
+    fn assign_values(&self, tree: &mut TrimNode) {
+        let n = tree.children.len();
+        if n == 0 {
+            return;
+        }
+        let denom = (n - 1).max(1) as f64;
+        for (i, child) in tree.children.iter_mut().enumerate() {
+            // Linear increase: first item = 0.3, last = 1.0
+            child.value = 0.3 + (i as f64 / denom) * 0.7;
+            for grandchild in &mut child.children {
+                grandchild.value = child.value;
+            }
+        }
+    }
+}
+
+/// Priority strategy — composite scorer for issues and MRs.
+///
+/// `v(i) = w_pos·rank⁻¹ + w_act·activity_norm + w_rec·recency_norm`
+///
+/// When per-item metadata is unavailable, falls back to ElementCount.
+/// Use `assign_priority_values` to supply metadata explicitly.
+pub struct PriorityStrategy;
+
+impl TrimStrategy for PriorityStrategy {
+    fn assign_values(&self, tree: &mut TrimNode) {
+        // Without metadata, fall back to ElementCount scoring
+        ElementCountStrategy.assign_values(tree);
+    }
+}
+
+/// Assign priority values with explicit per-item metadata.
+///
+/// Weights: position_rank=0.4, activity=0.35, recency=0.25.
+/// All signals are normalized to [0, 1] within the item set before combining.
+pub fn assign_priority_values(tree: &mut TrimNode, metadata: &[ItemMetadata]) {
+    let n = tree.children.len();
+    if n == 0 {
+        return;
+    }
+
+    // Collect raw signals, filling missing with positional defaults
+    let activities: Vec<f64> = metadata
+        .iter()
+        .enumerate()
+        .map(|(i, m)| m.activity.unwrap_or(1.0 - i as f64 / n as f64))
+        .collect();
+
+    let recencies: Vec<f64> = metadata
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            // Lower days_since_update → higher recency value
+            m.days_since_update
+                .map(|d| 1.0 / (1.0 + d / 30.0)) // half-life 30 days
+                .unwrap_or(1.0 - i as f64 / n as f64)
+        })
+        .collect();
+
+    // Normalize each signal to [0, 1]
+    let norm = |vals: &[f64]| -> Vec<f64> {
+        let max = vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let min = vals.iter().cloned().fold(f64::INFINITY, f64::min);
+        let range = (max - min).max(1e-9);
+        vals.iter().map(|v| (v - min) / range).collect()
+    };
+
+    let act_norm = norm(&activities);
+    let rec_norm = norm(&recencies);
+
+    const W_POS: f64 = 0.40;
+    const W_ACT: f64 = 0.35;
+    const W_REC: f64 = 0.25;
+
+    for (i, child) in tree.children.iter_mut().enumerate() {
+        let pos_score = 1.0 - (i as f64 / n as f64); // higher rank = lower index
+        let act_score = act_norm.get(i).copied().unwrap_or(0.5);
+        let rec_score = rec_norm.get(i).copied().unwrap_or(0.5);
+        child.value = W_POS * pos_score + W_ACT * act_score + W_REC * rec_score;
+        for grandchild in &mut child.children {
+            grandchild.value = child.value;
+        }
+    }
+}
+
 // ============================================================================
 // Strategy creation
 // ============================================================================
@@ -269,6 +421,9 @@ pub fn create_strategy(kind: TrimStrategyKind) -> Box<dyn TrimStrategy> {
         TrimStrategyKind::ThreadLevel => Box::new(ThreadLevelStrategy),
         TrimStrategyKind::HeadTail => Box::new(HeadTailStrategy),
         TrimStrategyKind::Default => Box::new(DefaultStrategy),
+        TrimStrategyKind::Random => Box::new(RandomStrategy::default()),
+        TrimStrategyKind::Reversed => Box::new(ReversedStrategy),
+        TrimStrategyKind::Priority => Box::new(PriorityStrategy),
     }
 }
 
@@ -279,9 +434,9 @@ pub fn create_strategy(kind: TrimStrategyKind) -> Box<dyn TrimStrategy> {
 /// Hardcoded default strategies for known tool names.
 fn hardcoded_defaults() -> HashMap<&'static str, TrimStrategyKind> {
     let mut m = HashMap::new();
-    m.insert("get_issues", TrimStrategyKind::ElementCount);
+    m.insert("get_issues", TrimStrategyKind::Priority);
     m.insert("get_issue_comments", TrimStrategyKind::Cascading);
-    m.insert("get_merge_requests", TrimStrategyKind::ElementCount);
+    m.insert("get_merge_requests", TrimStrategyKind::Priority);
     m.insert(
         "get_merge_request_diffs",
         TrimStrategyKind::SizeProportional,
@@ -384,9 +539,14 @@ mod tests {
     #[test]
     fn test_resolver_hardcoded_defaults() {
         let resolver = StrategyResolver::new();
+        // get_issues and get_merge_requests now use Priority (composite scorer)
         assert_eq!(
             resolver.resolve("get_issues"),
-            TrimStrategyKind::ElementCount
+            TrimStrategyKind::Priority
+        );
+        assert_eq!(
+            resolver.resolve("get_merge_requests"),
+            TrimStrategyKind::Priority
         );
         assert_eq!(
             resolver.resolve("get_issue_comments"),
@@ -423,7 +583,7 @@ mod tests {
         let resolver = StrategyResolver::new();
         assert_eq!(
             resolver.resolve("cloud__get_issues"),
-            TrimStrategyKind::ElementCount
+            TrimStrategyKind::Priority
         );
         assert_eq!(
             resolver.resolve("jira_proxy__get_issue_comments"),
@@ -645,6 +805,9 @@ mod tests {
             TrimStrategyKind::ThreadLevel,
             TrimStrategyKind::HeadTail,
             TrimStrategyKind::Default,
+            TrimStrategyKind::Random,
+            TrimStrategyKind::Reversed,
+            TrimStrategyKind::Priority,
         ];
         for kind in &kinds {
             let strategy = create_strategy(*kind);
@@ -665,6 +828,9 @@ mod tests {
             Box::new(ThreadLevelStrategy),
             Box::new(HeadTailStrategy),
             Box::new(DefaultStrategy),
+            Box::new(RandomStrategy::default()),
+            Box::new(ReversedStrategy),
+            Box::new(PriorityStrategy),
         ];
         for strategy in &strategies {
             let mut tree = TrimNode::new(0, NodeKind::Root, 0);
@@ -699,5 +865,128 @@ mod tests {
             root.children.push(node);
         }
         root
+    }
+
+    // --- New strategies ---
+
+    #[test]
+    fn test_random_strategy_reproducible() {
+        let mut tree1 = make_test_tree(5);
+        let mut tree2 = make_test_tree(5);
+        RandomStrategy { seed: 42 }.assign_values(&mut tree1);
+        RandomStrategy { seed: 42 }.assign_values(&mut tree2);
+        // Same seed → same values
+        for (a, b) in tree1.children.iter().zip(tree2.children.iter()) {
+            assert!((a.value - b.value).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn test_random_strategy_different_seeds() {
+        let mut tree1 = make_test_tree(5);
+        let mut tree2 = make_test_tree(5);
+        RandomStrategy { seed: 42 }.assign_values(&mut tree1);
+        RandomStrategy { seed: 99 }.assign_values(&mut tree2);
+        // Different seeds → different values (probabilistically)
+        let same = tree1
+            .children
+            .iter()
+            .zip(tree2.children.iter())
+            .all(|(a, b)| (a.value - b.value).abs() < 1e-9);
+        assert!(!same, "Different seeds should produce different orderings");
+    }
+
+    #[test]
+    fn test_random_strategy_values_in_range() {
+        let mut tree = make_test_tree(20);
+        RandomStrategy::default().assign_values(&mut tree);
+        for child in &tree.children {
+            assert!(child.value >= 0.0 && child.value <= 1.0);
+        }
+    }
+
+    #[test]
+    fn test_reversed_strategy() {
+        let mut tree = make_test_tree(5);
+        ReversedStrategy.assign_values(&mut tree);
+        // Last item should have highest value
+        let last = tree.children.last().unwrap().value;
+        let first = tree.children.first().unwrap().value;
+        assert!(last > first, "Reversed: last item should have highest value");
+        assert!((last - 1.0).abs() < 0.01, "Last item should be ≈ 1.0");
+        assert!((first - 0.3).abs() < 0.1, "First item should be ≈ 0.3");
+    }
+
+    #[test]
+    fn test_reversed_is_mirror_of_element_count() {
+        let n = 10;
+        let mut tree_ec = make_test_tree(n);
+        let mut tree_rev = make_test_tree(n);
+        ElementCountStrategy.assign_values(&mut tree_ec);
+        ReversedStrategy.assign_values(&mut tree_rev);
+        // Both span [0.3, 1.0]; ElementCount decreases, Reversed increases.
+        // Verify ordering is exactly opposite.
+        for i in 0..n - 1 {
+            assert!(
+                tree_ec.children[i].value >= tree_ec.children[i + 1].value,
+                "ElementCount should be non-increasing"
+            );
+            assert!(
+                tree_rev.children[i].value <= tree_rev.children[i + 1].value,
+                "Reversed should be non-decreasing"
+            );
+        }
+        // Endpoints
+        assert!((tree_ec.children[0].value - 1.0).abs() < 0.01);
+        assert!((tree_rev.children[n - 1].value - 1.0).abs() < 0.01);
+        assert!((tree_ec.children[n - 1].value - 0.3).abs() < 0.1);
+        assert!((tree_rev.children[0].value - 0.3).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_priority_strategy_fallback_to_element_count() {
+        let mut tree_ec = make_test_tree(5);
+        let mut tree_pr = make_test_tree(5);
+        ElementCountStrategy.assign_values(&mut tree_ec);
+        PriorityStrategy.assign_values(&mut tree_pr);
+        // Without metadata, Priority falls back to ElementCount
+        for (ec, pr) in tree_ec.children.iter().zip(tree_pr.children.iter()) {
+            assert!((ec.value - pr.value).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_assign_priority_values_with_metadata() {
+        let mut tree = make_test_tree(3);
+        // Item 2 has highest activity and most recent — should get highest value
+        let metadata = vec![
+            ItemMetadata { activity: Some(1.0), days_since_update: Some(90.0) },
+            ItemMetadata { activity: Some(2.0), days_since_update: Some(30.0) },
+            ItemMetadata { activity: Some(10.0), days_since_update: Some(1.0) },
+        ];
+        assign_priority_values(&mut tree, &metadata);
+        assert!(
+            tree.children[2].value > tree.children[0].value,
+            "Highly active recent item should score higher"
+        );
+    }
+
+    #[test]
+    fn test_priority_strategy_round_trip() {
+        assert_eq!(TrimStrategyKind::parse("random"), Some(TrimStrategyKind::Random));
+        assert_eq!(TrimStrategyKind::parse("reversed"), Some(TrimStrategyKind::Reversed));
+        assert_eq!(TrimStrategyKind::parse("priority"), Some(TrimStrategyKind::Priority));
+        assert_eq!(TrimStrategyKind::Random.as_str(), "random");
+        assert_eq!(TrimStrategyKind::Reversed.as_str(), "reversed");
+        assert_eq!(TrimStrategyKind::Priority.as_str(), "priority");
+    }
+
+    #[test]
+    fn test_hardcoded_defaults_use_priority_for_issues() {
+        let resolver = StrategyResolver::new();
+        assert_eq!(resolver.resolve("get_issues"), TrimStrategyKind::Priority);
+        assert_eq!(resolver.resolve("get_merge_requests"), TrimStrategyKind::Priority);
+        // Other tools unchanged
+        assert_eq!(resolver.resolve("get_issue_comments"), TrimStrategyKind::Cascading);
     }
 }
