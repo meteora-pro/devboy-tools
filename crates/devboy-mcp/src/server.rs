@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 use devboy_core::{BuiltinToolsConfig, Provider};
 use serde::Deserialize;
@@ -19,6 +20,8 @@ use crate::protocol::{
     ToolsListResult,
 };
 use crate::proxy::ProxyManager;
+use crate::routing::{RoutingEngine, RoutingTarget};
+use crate::telemetry::{TelemetryBuffer, TelemetryEvent, TelemetryStatus};
 use crate::transport::{IncomingMessage, StdioTransport};
 
 /// Result of deferred background initialization (remote config + proxy).
@@ -27,6 +30,9 @@ pub struct DeferredInit {
     pub proxy_manager: ProxyManager,
     /// Builtin tools config from remote config (overrides local if non-empty).
     pub builtin_tools_config: Option<BuiltinToolsConfig>,
+    /// Transparent-routing engine built from the merged config + proxy catalogue.
+    /// When `None`, the server keeps its pre-feature dispatch behaviour.
+    pub routing_engine: Option<Arc<RoutingEngine>>,
 }
 
 /// MCP server for devboy-tools.
@@ -38,6 +44,11 @@ pub struct McpServer {
     proxy_manager: ProxyManager,
     builtin_tools_config: BuiltinToolsConfig,
     meeting_providers: Vec<Arc<dyn devboy_core::MeetingNotesProvider>>,
+    /// Transparent-routing decision engine. When `None`, calls route the legacy way
+    /// (explicit proxy prefix → remote, otherwise local).
+    routing_engine: Option<Arc<RoutingEngine>>,
+    /// Telemetry buffer — every invocation records one event here (best-effort).
+    telemetry: Option<TelemetryBuffer>,
     /// Deferred background initialization — resolved on first `tools/list` or `tools/call`.
     /// Returns proxy manager and optional builtin_tools override from remote config.
     deferred_init: Option<oneshot::Receiver<DeferredInit>>,
@@ -58,8 +69,21 @@ impl McpServer {
             proxy_manager: ProxyManager::new(),
             builtin_tools_config: BuiltinToolsConfig::default(),
             meeting_providers: Vec::new(),
+            routing_engine: None,
+            telemetry: None,
             deferred_init: None,
         }
+    }
+
+    /// Install a transparent-routing engine. Must be built by the caller after upstream
+    /// tools have been fetched and the local tool catalogue has been enumerated.
+    pub fn set_routing_engine(&mut self, engine: Arc<RoutingEngine>) {
+        self.routing_engine = Some(engine);
+    }
+
+    /// Install a telemetry buffer. Every tool invocation emits one event into it.
+    pub fn set_telemetry(&mut self, buffer: TelemetryBuffer) {
+        self.telemetry = Some(buffer);
     }
 
     /// Set the built-in tools filtering configuration.
@@ -87,7 +111,9 @@ impl McpServer {
         self.deferred_init = Some(receiver);
     }
 
-    /// Resolve deferred init if pending — applies proxy manager and remote builtin_tools config.
+    /// Resolve deferred init if pending — applies proxy manager, remote builtin_tools
+    /// config, and the transparent-routing engine (built off the finalised upstream
+    /// catalogue).
     async fn resolve_deferred_init(&mut self) {
         if let Some(receiver) = self.deferred_init.take() {
             match receiver.await {
@@ -103,6 +129,9 @@ impl McpServer {
                         } else {
                             self.builtin_tools_config = bt_config;
                         }
+                    }
+                    if let Some(engine) = init.routing_engine {
+                        self.routing_engine = Some(engine);
                     }
                 }
                 Err(_) => {
@@ -498,7 +527,41 @@ impl McpServer {
             );
         }
 
-        let result = match params.name.as_str() {
+        // Internal context-management tools short-circuit routing entirely.
+        if let Some(result) = self.handle_internal_tool(&params).await {
+            return JsonRpcResponse::success(id, serde_json::to_value(result).unwrap());
+        }
+
+        let started = Instant::now();
+        let (result, was_fallback, emitted_reason, emitted_detail, upstream_label, resolved_name) =
+            self.dispatch_with_routing(&params).await;
+
+        // Best-effort telemetry — never block response path on this.
+        if let Some(buffer) = &self.telemetry {
+            let latency_ms = started.elapsed().as_millis() as u64;
+            let status = if result.is_error == Some(true) {
+                TelemetryStatus::Error
+            } else {
+                TelemetryStatus::Success
+            };
+            // Always use the *resolved* (unprefixed) name — upstream-prefixed variants
+            // like `cloud__get_issues` would break backend tool-name validation and
+            // inflate per-tool dashboards with duplicate labels.
+            let mut event = TelemetryEvent::now(&resolved_name, emitted_reason);
+            event.routing_detail = emitted_detail;
+            event.upstream = upstream_label;
+            event.status = status;
+            event.latency_ms = latency_ms;
+            event.was_fallback = was_fallback;
+            buffer.record(event).await;
+        }
+
+        JsonRpcResponse::success(id, serde_json::to_value(result).unwrap())
+    }
+
+    /// Dispatch context-management tools. Returns `Some` when handled.
+    async fn handle_internal_tool(&self, params: &ToolCallParams) -> Option<ToolCallResult> {
+        match params.name.as_str() {
             "list_contexts" => {
                 let active = self.active_context_name();
                 let names = self.context_names();
@@ -513,51 +576,161 @@ impl McpServer {
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
-                crate::protocol::ToolCallResult::text(content)
+                Some(ToolCallResult::text(content))
             }
-            "get_current_context" => {
-                crate::protocol::ToolCallResult::text(self.active_context_name())
-            }
+            "get_current_context" => Some(ToolCallResult::text(self.active_context_name())),
             "use_context" => {
                 #[derive(Deserialize)]
                 struct UseContextParams {
                     name: String,
                 }
-
-                match params.arguments {
-                    Some(args) => match serde_json::from_value::<UseContextParams>(args) {
+                Some(match &params.arguments {
+                    Some(args) => match serde_json::from_value::<UseContextParams>(args.clone()) {
                         Ok(args) => match self.set_active_context(&args.name) {
-                            Ok(()) => crate::protocol::ToolCallResult::text(format!(
+                            Ok(()) => ToolCallResult::text(format!(
                                 "Active context set to '{}'",
                                 args.name
                             )),
-                            Err(e) => crate::protocol::ToolCallResult::error(e.to_string()),
+                            Err(e) => ToolCallResult::error(e.to_string()),
                         },
-                        Err(e) => crate::protocol::ToolCallResult::error(format!(
-                            "Invalid parameters: {}",
-                            e
-                        )),
+                        Err(e) => ToolCallResult::error(format!("Invalid parameters: {}", e)),
                     },
-                    None => crate::protocol::ToolCallResult::error(
-                        "Missing required parameter: name".to_string(),
-                    ),
-                }
+                    None => ToolCallResult::error("Missing required parameter: name".to_string()),
+                })
             }
-            _ => {
-                // Try proxied upstream tools first
-                if let Some(proxy_result) = self
-                    .proxy_manager
-                    .try_call(&params.name, params.arguments.clone())
-                    .await
-                {
-                    proxy_result
-                } else {
-                    self.dispatch_builtin_tool(&params.name, params.arguments)
-                        .await
-                }
-            }
+            _ => None,
+        }
+    }
+
+    /// Resolve executor for `params.name` using the routing engine (when present) and
+    /// dispatch. Falls back to the secondary executor on error when the decision allows.
+    ///
+    /// Returns the final `ToolCallResult` plus telemetry metadata:
+    /// `(result, was_fallback, reason_label, reason_detail, upstream_label)`.
+    async fn dispatch_with_routing(
+        &self,
+        params: &ToolCallParams,
+    ) -> (
+        ToolCallResult,
+        bool,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    ) {
+        // When no engine is wired, keep legacy behaviour: explicit prefix → remote,
+        // otherwise local. For telemetry we still want an unprefixed name, so strip the
+        // upstream prefix ourselves.
+        let Some(engine) = self.routing_engine.clone() else {
+            let result = self.legacy_dispatch(params).await;
+            let (reason, resolved) = if self.proxy_manager.has_tool(&params.name) {
+                // `foo__bar` → `bar`; falls back to the full name if there is no prefix.
+                let stripped = params
+                    .name
+                    .split_once("__")
+                    .map(|(_, rest)| rest.to_string())
+                    .unwrap_or_else(|| params.name.clone());
+                ("legacy_remote", stripped)
+            } else {
+                ("legacy_local", params.name.clone())
+            };
+            return (result, false, reason.to_string(), None, None, resolved);
         };
-        JsonRpcResponse::success(id, serde_json::to_value(result).unwrap())
+
+        let decision = engine.decide(&params.name);
+        let reason_label = decision.reason.as_label().to_string();
+        let reason_detail = decision.reason.detail().map(String::from);
+        let resolved_name = decision.resolved_name.clone();
+
+        let primary = decision.primary.clone();
+        let result = self
+            .execute_target(&primary, &decision.resolved_name, params.arguments.clone())
+            .await;
+
+        let upstream_label = match &primary {
+            RoutingTarget::Remote { prefix, .. } => Some(prefix.clone()),
+            _ => None,
+        };
+
+        if result.is_error == Some(true)
+            && let Some(fallback) = &decision.fallback
+        {
+            tracing::warn!(
+                tool = params.name.as_str(),
+                primary_target = ?primary,
+                "primary executor errored; retrying via fallback"
+            );
+            let fb_result = self
+                .execute_target(fallback, &decision.resolved_name, params.arguments.clone())
+                .await;
+            let fb_upstream = match fallback {
+                RoutingTarget::Remote { prefix, .. } => Some(prefix.clone()),
+                _ => None,
+            };
+            return (
+                fb_result,
+                true,
+                reason_label,
+                reason_detail,
+                fb_upstream,
+                resolved_name,
+            );
+        }
+
+        (
+            result,
+            false,
+            reason_label,
+            reason_detail,
+            upstream_label,
+            resolved_name,
+        )
+    }
+
+    /// Run a specific [`RoutingTarget`]. Local execution goes through
+    /// [`Self::dispatch_builtin_tool`] (full built-in tool set including meeting /
+    /// messenger providers and the `Executor`); remote execution forwards to the
+    /// matching upstream via [`ProxyManager`].
+    async fn execute_target(
+        &self,
+        target: &RoutingTarget,
+        unprefixed_name: &str,
+        arguments: Option<Value>,
+    ) -> ToolCallResult {
+        match target {
+            RoutingTarget::Local => self.dispatch_builtin_tool(unprefixed_name, arguments).await,
+            RoutingTarget::Remote {
+                prefix,
+                original_name,
+            } => self
+                .proxy_manager
+                .call_by_prefix(prefix, original_name, arguments)
+                .await
+                .unwrap_or_else(|| {
+                    ToolCallResult::error(format!(
+                        "No upstream MCP server connected with prefix '{}'",
+                        prefix
+                    ))
+                }),
+            RoutingTarget::Reject => ToolCallResult::error(format!(
+                "Tool '{}' is not available (unknown to both local and remote catalogues)",
+                unprefixed_name
+            )),
+        }
+    }
+
+    /// Legacy dispatch — used only when no routing engine is installed. Preserves the
+    /// pre-transparent-proxy behaviour for integrators that haven't opted in.
+    async fn legacy_dispatch(&self, params: &ToolCallParams) -> ToolCallResult {
+        if let Some(result) = self
+            .proxy_manager
+            .try_call(&params.name, params.arguments.clone())
+            .await
+        {
+            return result;
+        }
+        self.dispatch_builtin_tool(&params.name, params.arguments.clone())
+            .await
     }
 
     /// Dispatch a built-in tool call through the Executor.
@@ -1466,6 +1639,200 @@ mod tests {
         assert_eq!(server.active_providers().len(), 1);
     }
 
+    // =========================================================================
+    // Routing engine integration (Wire-up #1)
+    // =========================================================================
+
+    use crate::protocol::ToolDefinition;
+    use crate::routing::RoutingEngine;
+    use crate::signature_match::{MatchReport, ToolMatch};
+    use devboy_core::config::{ProxyRoutingConfig, RoutingStrategy};
+
+    fn match_report_with(items: Vec<ToolMatch>) -> MatchReport {
+        let mut r = MatchReport::default();
+        for m in items {
+            r.matches.insert(m.tool_name.clone(), m);
+        }
+        r
+    }
+
+    #[tokio::test]
+    async fn test_routing_engine_reject_decision_surfaces_as_error_result() {
+        let mut server = McpServer::new();
+        // Empty match report → every unknown tool is rejected.
+        let engine = RoutingEngine::new(ProxyRoutingConfig::default(), MatchReport::default());
+        server.set_routing_engine(Arc::new(engine));
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "mystery_tool",
+                "arguments": {}
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        let result: ToolCallResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+        assert_eq!(result.is_error, Some(true));
+        match &result.content[0] {
+            ToolResultContent::Text { text } => {
+                assert!(text.contains("unknown to both local and remote"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_routing_engine_local_dispatch_uses_toolhandler() {
+        let mut server = McpServer::new();
+        server.add_provider(Arc::new(TestProvider));
+
+        let report = match_report_with(vec![ToolMatch {
+            tool_name: "get_issues".to_string(),
+            local_present: true,
+            remote_present: false,
+            schema_compatible: None,
+            upstream_prefix: None,
+            schema_mismatch: None,
+        }]);
+        let engine = RoutingEngine::new(ProxyRoutingConfig::default(), report);
+        server.set_routing_engine(Arc::new(engine));
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "get_issues",
+                "arguments": {}
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        // TestProvider returns empty list — success path.
+        assert!(resp.error.is_none());
+        let result: ToolCallResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+        assert!(result.is_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_telemetry_buffer_receives_event_per_call() {
+        let mut server = McpServer::new();
+        server.add_provider(Arc::new(TestProvider));
+
+        let report = match_report_with(vec![ToolMatch {
+            tool_name: "get_issues".to_string(),
+            local_present: true,
+            remote_present: false,
+            schema_compatible: None,
+            upstream_prefix: None,
+            schema_mismatch: None,
+        }]);
+        let engine = RoutingEngine::new(ProxyRoutingConfig::default(), report);
+        server.set_routing_engine(Arc::new(engine));
+
+        let buffer = TelemetryBuffer::new(16);
+        server.set_telemetry(buffer.clone());
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "get_issues",
+                "arguments": {}
+            })),
+        };
+        let _resp = server.handle_request(req).await;
+
+        let events = buffer.drain(100).await;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].tool, "get_issues");
+        assert_eq!(events[0].routing_decision, "local_only");
+        assert_eq!(events[0].status, TelemetryStatus::Success);
+    }
+
+    #[tokio::test]
+    async fn test_telemetry_event_captures_reason_detail_for_override_rule() {
+        let mut server = McpServer::new();
+        server.add_provider(Arc::new(TestProvider));
+
+        let report = match_report_with(vec![ToolMatch {
+            tool_name: "get_issues".to_string(),
+            local_present: true,
+            remote_present: true,
+            schema_compatible: Some(true),
+            upstream_prefix: Some("cloud".to_string()),
+            schema_mismatch: None,
+        }]);
+        // Override all get_* to local so we don't hit the unconnected proxy.
+        let config = ProxyRoutingConfig {
+            strategy: RoutingStrategy::Remote,
+            fallback_on_error: true,
+            tool_overrides: vec![devboy_core::config::ProxyToolRule {
+                pattern: "get_*".to_string(),
+                strategy: RoutingStrategy::Local,
+            }],
+        };
+        let engine = RoutingEngine::new(config, report);
+        server.set_routing_engine(Arc::new(engine));
+
+        let buffer = TelemetryBuffer::new(16);
+        server.set_telemetry(buffer.clone());
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "get_issues",
+                "arguments": {}
+            })),
+        };
+        let _resp = server.handle_request(req).await;
+
+        let events = buffer.drain(100).await;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].routing_decision, "override_rule");
+        assert_eq!(events[0].routing_detail.as_deref(), Some("get_*"));
+        assert!(events[0].upstream.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_no_routing_engine_keeps_legacy_behaviour() {
+        // When set_routing_engine has not been called, server must keep the pre-feature
+        // dispatch semantics intact so existing deployments see zero behaviour change.
+        let mut server = McpServer::new();
+        server.add_provider(Arc::new(TestProvider));
+        let buffer = TelemetryBuffer::new(16);
+        server.set_telemetry(buffer.clone());
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "get_issues",
+                "arguments": {}
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none());
+        let events = buffer.drain(100).await;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].routing_decision, "legacy_local");
+    }
+
+    // Keep rustc from flagging the imports as unused if any cfg path changes.
+    #[allow(dead_code)]
+    fn _unused_cfg_helper_tooldef() -> ToolDefinition {
+        ToolDefinition {
+            name: "x".into(),
+            description: "x".into(),
+            input_schema: serde_json::json!({}),
+            category: None,
+        }
+    }
+
     #[test]
     fn test_messenger_providers_are_scoped_to_active_context() {
         let mut server = McpServer::new();
@@ -1534,6 +1901,7 @@ mod tests {
             let _ = tx.send(DeferredInit {
                 proxy_manager,
                 builtin_tools_config: None,
+                routing_engine: None,
             });
         });
 
@@ -1568,6 +1936,7 @@ mod tests {
                 disabled: vec!["get_issues".to_string()],
                 enabled: vec![],
             }),
+            routing_engine: None,
         });
 
         let resp = server

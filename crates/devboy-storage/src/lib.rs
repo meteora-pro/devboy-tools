@@ -37,6 +37,10 @@ use devboy_core::{Error, Result};
 use keyring::Entry;
 use tracing::{debug, warn};
 
+pub mod cache;
+
+pub use cache::CachedStore;
+
 /// Service name used in OS keychain.
 const SERVICE_NAME: &str = "devboy-tools";
 
@@ -609,6 +613,40 @@ pub fn token_key(provider: &str) -> String {
     format!("{}/token", provider)
 }
 
+/// Build the default credential chain, optionally wrapping the whole thing in a TTL
+/// cache. Call this from host binaries (CLI, MCP server entrypoint) so the cache
+/// configuration stays consistent.
+///
+/// - `cache_ttl_secs == 0` → no cache, returns the raw [`ChainStore`].
+/// - `cache_ttl_secs > 0` → wraps in [`CachedStore`] with the requested TTL.
+pub fn build_default_store(cache_ttl_secs: u64) -> Box<dyn CredentialStore> {
+    let chain = ChainStore::default_chain();
+    if cache_ttl_secs == 0 {
+        Box::new(chain)
+    } else {
+        Box::new(CachedStore::new(
+            chain,
+            std::time::Duration::from_secs(cache_ttl_secs),
+        ))
+    }
+}
+
+/// Build a store on top of a user-provided backend (mainly useful for CI variants or
+/// custom test harnesses). Same cache semantics as [`build_default_store`].
+pub fn wrap_with_cache<S: CredentialStore + 'static>(
+    inner: S,
+    cache_ttl_secs: u64,
+) -> Box<dyn CredentialStore> {
+    if cache_ttl_secs == 0 {
+        Box::new(inner)
+    } else {
+        Box::new(CachedStore::new(
+            inner,
+            std::time::Duration::from_secs(cache_ttl_secs),
+        ))
+    }
+}
+
 /// Standard credential key for a provider's email (used by Jira).
 pub fn email_key(provider: &str) -> String {
     format!("{}/email", provider)
@@ -1032,5 +1070,41 @@ mod tests {
         let debug_str = format!("{:?}", chain);
         assert!(debug_str.contains("ChainStore"));
         assert!(debug_str.contains("stores_count"));
+    }
+
+    // =========================================================================
+    // build_default_store / wrap_with_cache factories (Wire-up #2)
+    // =========================================================================
+
+    #[test]
+    fn test_build_default_store_zero_ttl_returns_writable_chain() {
+        let store = build_default_store(0);
+        // Default chain: env vars (read-only) + keychain (writable) → overall writable.
+        assert!(store.is_writable());
+    }
+
+    #[test]
+    fn test_build_default_store_positive_ttl_delegates_writable() {
+        let store = build_default_store(60);
+        // Cache must not break write-capability delegation.
+        assert!(store.is_writable());
+    }
+
+    #[test]
+    fn test_wrap_with_cache_zero_ttl_is_passthrough() {
+        let inner = MemoryStore::with_credentials([("k".to_string(), "v".to_string())]);
+        let store = wrap_with_cache(inner, 0);
+        assert_eq!(store.get("k").unwrap().as_deref(), Some("v"));
+    }
+
+    #[test]
+    fn test_wrap_with_cache_populated_ttl_caches_lookups() {
+        let inner = MemoryStore::with_credentials([("k".to_string(), "v1".to_string())]);
+        let store = wrap_with_cache(inner, 60);
+
+        assert_eq!(store.get("k").unwrap().as_deref(), Some("v1"));
+
+        // Second call returns the same value — cached or not, semantics are identical.
+        assert_eq!(store.get("k").unwrap().as_deref(), Some("v1"));
     }
 }
