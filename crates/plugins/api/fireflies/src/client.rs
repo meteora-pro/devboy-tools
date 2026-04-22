@@ -78,6 +78,7 @@ query GetTranscript($transcriptId: String!) {
 /// Fireflies.ai API client.
 pub struct FirefliesClient {
     api_key: String,
+    api_url: String,
     http: reqwest::Client,
 }
 
@@ -85,8 +86,16 @@ impl FirefliesClient {
     pub fn new(api_key: &str) -> Self {
         Self {
             api_key: api_key.to_string(),
+            api_url: FIREFLIES_API_URL.to_string(),
             http: reqwest::Client::new(),
         }
+    }
+
+    /// Override the GraphQL endpoint. Only meaningful in tests — the
+    /// default points at the hosted Fireflies API.
+    pub fn with_api_url(mut self, url: impl Into<String>) -> Self {
+        self.api_url = url.into();
+        self
     }
 
     /// Execute a GraphQL query against the Fireflies API.
@@ -100,11 +109,11 @@ impl FirefliesClient {
             "variables": variables,
         });
 
-        debug!(url = FIREFLIES_API_URL, "fireflies graphql request");
+        debug!(url = %self.api_url, "fireflies graphql request");
 
         let response = self
             .http
-            .post(FIREFLIES_API_URL)
+            .post(&self.api_url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&body)
@@ -569,5 +578,216 @@ mod tests {
     fn test_fireflies_client_new() {
         let client = FirefliesClient::new("test-key");
         assert_eq!(client.provider_name(), "fireflies");
+    }
+
+    #[test]
+    fn test_with_api_url_overrides_endpoint() {
+        let client = FirefliesClient::new("k").with_api_url("http://localhost:1234/gql");
+        assert_eq!(client.api_url, "http://localhost:1234/gql");
+    }
+
+    // ===========================================================================
+    // httpmock integration tests — exercise the GraphQL request path end-to-end.
+    // ===========================================================================
+
+    mod integration {
+        use super::*;
+        use httpmock::prelude::*;
+
+        fn mock_client(server: &MockServer) -> FirefliesClient {
+            FirefliesClient::new("test-token").with_api_url(server.url("/gql"))
+        }
+
+        #[tokio::test]
+        async fn get_meetings_returns_parsed_transcripts() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/gql")
+                    .header("authorization", "Bearer test-token");
+                then.status(200).json_body(json!({
+                    "data": {
+                        "transcripts": [
+                            {
+                                "id": "t1",
+                                "title": "Sprint planning",
+                                "date": "2025-04-15T10:00:00Z",
+                                "duration": 45,
+                                "host_email": "host@ex.com",
+                                "organizer_email": null,
+                                "meeting_attendees": [
+                                    { "displayName": "Alice", "email": "alice@ex.com", "name": "Alice" }
+                                ],
+                                "speakers": [{ "id": "1", "name": "Alice" }],
+                                "transcript_url": null,
+                                "audio_url": null,
+                                "video_url": null,
+                                "meeting_link": null,
+                                "summary": {
+                                    "keywords": [],
+                                    "action_items": null,
+                                    "topics_discussed": [],
+                                    "meeting_type": null,
+                                    "overview": null,
+                                    "short_summary": null
+                                }
+                            }
+                        ]
+                    }
+                }));
+            });
+
+            let client = mock_client(&server);
+            let result = client.get_meetings(MeetingFilter::default()).await.unwrap();
+            assert_eq!(result.items.len(), 1);
+            assert_eq!(result.items[0].title, "Sprint planning");
+        }
+
+        #[tokio::test]
+        async fn get_transcript_maps_sentences_to_speaker_names() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(POST).path("/gql");
+                then.status(200).json_body(json!({
+                    "data": {
+                        "transcript": {
+                            "id": "t1",
+                            "title": "Sprint",
+                            "date": "2025-04-15T10:00:00Z",
+                            "duration": 45,
+                            "speakers": [
+                                { "id": "1", "name": "Alice" },
+                                { "id": 2, "name": "Bob" }
+                            ],
+                            "sentences": [
+                                { "speaker_id": "1", "text": "Hi", "start_time": 0.0, "end_time": 1.0 },
+                                { "speaker_id": 2, "text": "Hey", "start_time": 1.5, "end_time": 2.5 },
+                                { "speaker_id": null, "text": "—", "start_time": 3.0, "end_time": 3.2 }
+                            ]
+                        }
+                    }
+                }));
+            });
+
+            let client = mock_client(&server);
+            let t = client.get_transcript("t1").await.unwrap();
+            assert_eq!(t.meeting_id, "t1");
+            assert_eq!(t.sentences.len(), 3);
+            // Both string-id and number-id speakers resolved.
+            assert_eq!(t.sentences[0].speaker_name.as_deref(), Some("Alice"));
+            assert_eq!(t.sentences[1].speaker_name.as_deref(), Some("Bob"));
+            // Unknown (null) speaker_id -> no name attached, empty id string.
+            assert!(t.sentences[2].speaker_name.is_none());
+            assert_eq!(t.sentences[2].speaker_id, "");
+        }
+
+        #[tokio::test]
+        async fn get_transcript_missing_returns_not_found() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(POST).path("/gql");
+                then.status(200)
+                    .json_body(json!({ "data": { "transcript": null } }));
+            });
+            let client = mock_client(&server);
+            let err = client.get_transcript("missing").await.unwrap_err();
+            assert!(matches!(err, Error::NotFound(_)), "got {err:?}");
+        }
+
+        #[tokio::test]
+        async fn graphql_401_becomes_unauthorized_error() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(POST).path("/gql");
+                then.status(401).body("nope");
+            });
+            let client = mock_client(&server);
+            let err = client
+                .get_meetings(MeetingFilter::default())
+                .await
+                .unwrap_err();
+            assert!(matches!(err, Error::Unauthorized(_)), "got {err:?}");
+        }
+
+        #[tokio::test]
+        async fn graphql_500_becomes_api_error_with_status() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(POST).path("/gql");
+                then.status(500).body("boom");
+            });
+            let client = mock_client(&server);
+            let err = client.get_transcript("anything").await.unwrap_err();
+            match err {
+                Error::Api { status, message } => {
+                    assert_eq!(status, 500);
+                    assert!(message.contains("boom"));
+                }
+                other => panic!("expected Api, got {other:?}"),
+            }
+        }
+
+        #[tokio::test]
+        async fn graphql_errors_field_surfaces_as_api_error() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(POST).path("/gql");
+                then.status(200).json_body(json!({
+                    "errors": [
+                        {"message": "rate limited"},
+                        {"message": "again"}
+                    ]
+                }));
+            });
+            let client = mock_client(&server);
+            let err = client
+                .get_meetings(MeetingFilter::default())
+                .await
+                .unwrap_err();
+            match err {
+                Error::Api { status, message } => {
+                    assert_eq!(status, 200);
+                    assert!(message.contains("rate limited"));
+                    assert!(message.contains("again"));
+                }
+                other => panic!("expected Api, got {other:?}"),
+            }
+        }
+
+        #[tokio::test]
+        async fn graphql_missing_data_is_invalid_data_error() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(POST).path("/gql");
+                // 200 OK but no `data` and no `errors` — malformed
+                // server response. Client must not panic.
+                then.status(200).json_body(json!({}));
+            });
+            let client = mock_client(&server);
+            let err = client
+                .get_meetings(MeetingFilter::default())
+                .await
+                .unwrap_err();
+            assert!(matches!(err, Error::InvalidData(_)), "got {err:?}");
+        }
+
+        #[tokio::test]
+        async fn search_meetings_adds_keyword_and_hits_endpoint() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/gql")
+                    .body_includes("\"keyword\":\"rollback\"");
+                then.status(200).json_body(json!({
+                    "data": { "transcripts": [] }
+                }));
+            });
+            let client = mock_client(&server);
+            let result = client
+                .search_meetings("rollback", MeetingFilter::default())
+                .await
+                .unwrap();
+            assert_eq!(result.items.len(), 0);
+        }
     }
 }
