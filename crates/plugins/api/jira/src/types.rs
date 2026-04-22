@@ -424,3 +424,111 @@ pub struct IssueKeyRef {
     /// Issue key (e.g., "PROJ-123")
     pub key: String,
 }
+
+// =============================================================================
+// Jira Structure Plugin API types (/rest/structure/2.0/)
+// =============================================================================
+
+/// Structure info from GET /rest/structure/2.0/structure
+#[derive(Debug, Clone, Deserialize)]
+pub struct JiraStructure {
+    pub id: u64,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// Response from GET /rest/structure/2.0/structure
+#[derive(Debug, Clone, Deserialize)]
+pub struct JiraStructureListResponse {
+    pub structures: Vec<JiraStructure>,
+}
+
+/// A single row in the forest (compact format from API)
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraForestRow {
+    pub id: u64,
+    #[serde(default)]
+    pub item_id: Option<String>,
+    #[serde(default)]
+    pub item_type: Option<String>,
+}
+
+/// Forest response from POST /rest/structure/2.0/forest/{id}/spec
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraForestResponse {
+    pub version: u64,
+    #[serde(default)]
+    pub rows: Vec<JiraForestRow>,
+    #[serde(default)]
+    pub depths: Vec<u32>,
+    #[serde(default)]
+    pub total_count: Option<u64>,
+}
+
+/// Response from forest modification operations (add/move)
+#[derive(Debug, Clone, Deserialize)]
+pub struct JiraForestModifyResponse {
+    pub version: u64,
+    #[serde(default)]
+    pub rows: Vec<JiraForestRow>,
+}
+
+/// Structure view from /rest/structure/2.0/view
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraStructureView {
+    pub id: u64,
+    pub name: String,
+    /// Owning structure id. Left non-optional and **without**
+    /// `#[serde(default)]` so a missing / renamed field from the API
+    /// fails loudly rather than silently deserialising to `0` — the
+    /// caller uses this id for cross-structure scope checks.
+    pub structure_id: u64,
+    #[serde(default)]
+    pub columns: Vec<JiraStructureViewColumn>,
+    #[serde(default)]
+    pub group_by: Option<String>,
+    #[serde(default)]
+    pub sort_by: Option<String>,
+    #[serde(default)]
+    pub filter: Option<String>,
+}
+
+/// Column definition in a structure view
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct JiraStructureViewColumn {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub field: Option<String>,
+    #[serde(default)]
+    pub formula: Option<String>,
+    #[serde(default)]
+    pub width: Option<u32>,
+}
+
+/// Response from GET /rest/structure/2.0/view?structureId={id}
+#[derive(Debug, Clone, Deserialize)]
+pub struct JiraStructureViewListResponse {
+    pub views: Vec<JiraStructureView>,
+}
+
+/// Batch value response from POST /rest/structure/2.0/value
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraStructureValueEntry {
+    pub row_id: u64,
+    #[serde(default)]
+    pub column_id: Option<String>,
+    #[serde(default)]
+    pub value: serde_json::Value,
+}
+
+/// Response from POST /rest/structure/2.0/value
+#[derive(Debug, Clone, Deserialize)]
+pub struct JiraStructureValuesResponse {
+    pub values: Vec<JiraStructureValueEntry>,
+}

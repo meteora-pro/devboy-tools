@@ -48,6 +48,16 @@ pub const KNOWN_BUILTIN_TOOLS: &[&str] = &[
     "get_chat_messages",
     "search_chat_messages",
     "send_message",
+    // Jira Structure plugin tools
+    "get_structures",
+    "get_structure_forest",
+    "add_structure_rows",
+    "move_structure_rows",
+    "remove_structure_row",
+    "get_structure_values",
+    "get_structure_views",
+    "save_structure_view",
+    "create_structure",
     // Context management (handled by McpServer directly)
     "list_contexts",
     "use_context",

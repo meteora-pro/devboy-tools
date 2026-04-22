@@ -522,6 +522,143 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s
             },
         },
+        // Jira Structure plugin tools
+        ToolDefinition {
+            name: "get_structures".into(),
+            description: "List all available Jira Structures. Returns structure ID, name, and description. Requires Jira with Structure plugin.".into(),
+            category: ToolCategory::JiraStructure,
+            input_schema: ToolSchema::new(),
+        },
+        ToolDefinition {
+            name: "get_structure_forest".into(),
+            description: "Get the hierarchy tree of a Jira Structure. Returns nested tree with rowId, itemId (Jira issue key), itemType, and children. Supports pagination for large structures.".into(),
+            category: ToolCategory::JiraStructure,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("structureId", PropertySchema::integer("Structure ID. Use get_structures to find it.", None, None));
+                s.add_property("offset", PropertySchema::integer("Offset for pagination (default: 0)", Some(0.0), None));
+                s.add_property("limit", PropertySchema::integer("Max rows to return (default: 200)", Some(1.0), Some(10000.0)));
+                s.set_required("structureId", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "add_structure_rows".into(),
+            description: "Add items (Jira issues or folders) to a Structure. Specify position with under (parent row) and/or after (sibling row). Use forestVersion for optimistic concurrency.".into(),
+            category: ToolCategory::JiraStructure,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("structureId", PropertySchema::integer("Structure ID", None, None));
+                s.add_property("items", PropertySchema::array(
+                    PropertySchema::string("Item: Jira issue key (e.g. 'PROJ-123') or JSON {\"itemId\":\"PROJ-123\",\"itemType\":\"issue\"}"),
+                    "Items to add",
+                ));
+                s.add_property("under", PropertySchema::integer("Parent row ID — items become children of this row", None, None));
+                s.add_property("after", PropertySchema::integer("Sibling row ID — items placed after this row", None, None));
+                s.add_property("forestVersion", PropertySchema::integer("Forest version for optimistic locking (from get_structure_forest)", None, None));
+                s.set_required("structureId", true);
+                s.set_required("items", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "move_structure_rows".into(),
+            description: "Move rows within a Jira Structure hierarchy. Specify new position with under (new parent) and/or after (sibling).".into(),
+            category: ToolCategory::JiraStructure,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("structureId", PropertySchema::integer("Structure ID", None, None));
+                s.add_property("rowIds", PropertySchema::array(
+                    PropertySchema::integer("Row ID", None, None),
+                    "Row IDs to move (from get_structure_forest)",
+                ));
+                s.add_property("under", PropertySchema::integer("New parent row ID", None, None));
+                s.add_property("after", PropertySchema::integer("Sibling row ID to place after", None, None));
+                s.add_property("forestVersion", PropertySchema::integer("Forest version for optimistic locking", None, None));
+                s.set_required("structureId", true);
+                s.set_required("rowIds", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "remove_structure_row".into(),
+            description: "Remove a row from a Jira Structure. Only removes from the structure hierarchy — the underlying Jira issue is NOT deleted.".into(),
+            category: ToolCategory::JiraStructure,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("structureId", PropertySchema::integer("Structure ID", None, None));
+                s.add_property("rowId", PropertySchema::integer("Row ID to remove (from get_structure_forest)", None, None));
+                s.set_required("structureId", true);
+                s.set_required("rowId", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "get_structure_values".into(),
+            description: "Read column values (including Expr formulas like SUM, PROGRESS, COUNT) for specific rows in a Jira Structure. Values are computed server-side.".into(),
+            category: ToolCategory::JiraStructure,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("structureId", PropertySchema::integer("Structure ID", None, None));
+                s.add_property("rows", PropertySchema::array(
+                    PropertySchema::integer("Row ID", None, None),
+                    "Row IDs to read values for",
+                ));
+                s.add_property("columns", PropertySchema::array(
+                    PropertySchema::string("Column spec: field name (e.g. 'summary'), or JSON {\"field\":\"status\"} or {\"formula\":\"SUM(\\\"Story Points\\\")\"}"),
+                    "Columns to read",
+                ));
+                s.set_required("structureId", true);
+                s.set_required("rows", true);
+                s.set_required("columns", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "get_structure_views".into(),
+            description: "Get views for a Jira Structure. Without viewId: lists all views. With viewId: returns full view configuration (columns, grouping, sorting, filter).".into(),
+            category: ToolCategory::JiraStructure,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("structureId", PropertySchema::integer("Structure ID", None, None));
+                s.add_property("viewId", PropertySchema::integer("View ID for full config (optional — omit to list all views)", None, None));
+                s.set_required("structureId", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "save_structure_view".into(),
+            description: "Create or update a Jira Structure view. Views define column layout (fields and formulas), grouping, sorting, and filters. Omit id to create new.".into(),
+            category: ToolCategory::JiraStructure,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("id", PropertySchema::integer("View ID to update (omit to create new)", None, None));
+                s.add_property("structureId", PropertySchema::integer("Structure ID this view belongs to", None, None));
+                s.add_property("name", PropertySchema::string("View name"));
+                s.add_property("columns", PropertySchema::array(
+                    PropertySchema::string("Column spec: JSON {\"field\":\"summary\"} or {\"formula\":\"SUM(\\\"Story Points\\\")\",\"width\":100}"),
+                    "Column definitions",
+                ));
+                s.add_property("groupBy", PropertySchema::string("Field name to group by"));
+                s.add_property("sortBy", PropertySchema::string("Field name to sort by"));
+                s.add_property("filter", PropertySchema::string("JQL filter expression"));
+                s.set_required("structureId", true);
+                s.set_required("name", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "create_structure".into(),
+            description: "Create a new Jira Structure. After creation, use add_structure_rows to populate and save_structure_view to configure columns.".into(),
+            category: ToolCategory::JiraStructure,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("name", PropertySchema::string("Structure name"));
+                s.add_property("description", PropertySchema::string("Structure description"));
+                s.set_required("name", true);
+                s
+            },
+        },
     ]
 }
 
@@ -532,7 +669,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 34);
+        assert_eq!(tools.len(), 43);
     }
 
     #[test]
@@ -587,6 +724,17 @@ mod tests {
             "search_chat_messages",
             "send_message",
         ];
+        let jira_structure_tools = [
+            "get_structures",
+            "get_structure_forest",
+            "add_structure_rows",
+            "move_structure_rows",
+            "remove_structure_row",
+            "get_structure_values",
+            "get_structure_views",
+            "save_structure_view",
+            "create_structure",
+        ];
 
         for tool in &tools {
             if issue_tracker_tools.contains(&tool.name.as_str()) {
@@ -622,6 +770,13 @@ mod tests {
                     tool.category,
                     ToolCategory::Messenger,
                     "tool {} should be Messenger",
+                    tool.name
+                );
+            } else if jira_structure_tools.contains(&tool.name.as_str()) {
+                assert_eq!(
+                    tool.category,
+                    ToolCategory::JiraStructure,
+                    "tool {} should be JiraStructure",
                     tool.name
                 );
             } else {

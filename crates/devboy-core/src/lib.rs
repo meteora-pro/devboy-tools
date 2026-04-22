@@ -44,14 +44,18 @@ pub use provider::{
 
 // Re-export all types
 pub use types::{
-    CodePosition, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
-    Discussion, FailedJob, FileDiff, GetChatsParams, GetMessagesParams, GetPipelineInput,
-    GetUsersOptions, Issue, IssueFilter, IssueLink, IssueRelations, IssueStatus, JobLogMode,
-    JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote, MeetingSpeaker, MeetingTranscript,
-    MergeRequest, MessageAttachment, MessageAuthor, MessengerChat, MessengerMessage, MrFilter,
-    Pagination, PipelineInfo, PipelineJob, PipelineStage, PipelineStatus, PipelineSummary,
-    ProviderResult, Release, ReleaseAsset, SearchMessagesParams, SendMessageParams, SortInfo,
-    SortOrder, TranscriptSentence, UpdateIssueInput, UpdateMergeRequestInput, User,
+    AddStructureRowsInput, CodePosition, Comment, CreateCommentInput, CreateIssueInput,
+    CreateMergeRequestInput, CreateStructureInput, Discussion, FailedJob, FileDiff,
+    ForestModifyResult, GetChatsParams, GetForestOptions, GetMessagesParams, GetPipelineInput,
+    GetStructureValuesInput, GetUsersOptions, Issue, IssueFilter, IssueLink, IssueRelations,
+    IssueStatus, JobLogMode, JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote,
+    MeetingSpeaker, MeetingTranscript, MergeRequest, MessageAttachment, MessageAuthor,
+    MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, Pagination, PipelineInfo,
+    PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, ProviderResult, Release,
+    ReleaseAsset, SaveStructureViewInput, SearchMessagesParams, SendMessageParams, SortInfo,
+    SortOrder, Structure, StructureColumnValue, StructureForest, StructureNode, StructureRowItem,
+    StructureRowValues, StructureValues, StructureView, StructureViewColumn, TranscriptSentence,
+    UpdateIssueInput, UpdateMergeRequestInput, User,
 };
 
 // Re-export enricher traits and utilities
