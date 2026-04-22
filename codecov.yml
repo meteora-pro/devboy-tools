@@ -17,4 +17,13 @@ comment:
   require_changes: true
 
 ignore:
+  # CLI main entrypoint is a thin wrapper over the library layer; the
+  # real logic it calls is already exercised through the library tests
+  # plus `crates/devboy-cli/tests/*`.
   - "crates/devboy-cli/src/main.rs"
+  # Research harnesses — TrimTree Paper 1 experiment runners. These
+  # talk to real LLM endpoints and have no practical way to be unit
+  # tested. They exist to reproduce paper results, not to ship as
+  # library code.
+  - "crates/llm-eval/**"
+  - "crates/plugins/format-pipeline/src/bin/eval.rs"

@@ -403,4 +403,139 @@ mod tests {
             InstallState::Unknown
         );
     }
+
+    #[test]
+    fn skill_history_is_current_and_is_historical_are_case_insensitive() {
+        let hist = SkillHistory {
+            current: HistoricalVersion {
+                version: 2,
+                sha256: "AbCdEf1234567890".repeat(4),
+            },
+            history: vec![HistoricalVersion {
+                version: 1,
+                sha256: "11223344".repeat(8),
+            }],
+        };
+        // eq_ignore_ascii_case on both branches.
+        assert!(hist.is_current(&"abcdef1234567890".repeat(4)));
+        assert!(hist.is_historical(&"11223344".repeat(8).to_uppercase()));
+        assert!(!hist.is_current("00".repeat(32).as_str()));
+        assert!(!hist.is_historical("00".repeat(32).as_str()));
+    }
+
+    #[test]
+    fn historical_hashes_load_embedded_returns_parsed_or_empty() {
+        // The test must not crash regardless of whether `history.json`
+        // has been embedded yet — early in development it's empty, once
+        // releases land it fills up. Both shapes are valid.
+        let hashes = HistoricalHashes::load_embedded().expect("parses or empty");
+        for (name, entry) in &hashes.by_skill {
+            assert!(!name.is_empty(), "history keys must be non-empty");
+            assert!(!entry.current.sha256.is_empty());
+        }
+    }
+
+    #[test]
+    fn manifest_forget_and_get_round_trip() {
+        let mut m = Manifest::default();
+        assert!(m.get("ghost").is_none());
+
+        let entry = InstalledSkill {
+            version: 3,
+            installed_at: Utc::now(),
+            source: "embedded".into(),
+            files: BTreeMap::new(),
+        };
+        m.record("devboy-setup", entry.clone());
+        assert_eq!(m.get("devboy-setup").unwrap().version, 3);
+
+        let removed = m.forget("devboy-setup").expect("entry removed");
+        assert_eq!(removed.version, entry.version);
+        assert!(m.forget("devboy-setup").is_none());
+        assert!(m.get("devboy-setup").is_none());
+    }
+
+    #[test]
+    fn manifest_save_overwrites_existing_destination() {
+        // Regression: on Windows `fs::rename` does not overwrite. The
+        // manifest's atomic-save path removes the destination first;
+        // exercise the overwrite branch so that code path stays covered.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(MANIFEST_FILE);
+
+        // First write.
+        let m1 = Manifest {
+            installed_from: Some("v1".into()),
+            ..Default::default()
+        };
+        m1.save(&path).unwrap();
+
+        // Second write must overwrite, not error.
+        let mut m2 = Manifest {
+            installed_from: Some("v2".into()),
+            ..Default::default()
+        };
+        m2.record(
+            "devboy-setup",
+            InstalledSkill {
+                version: 7,
+                installed_at: Utc::now(),
+                source: "embedded".into(),
+                files: BTreeMap::new(),
+            },
+        );
+        m2.save(&path).unwrap();
+
+        let loaded = Manifest::load(&path).unwrap();
+        assert_eq!(loaded.installed_from.as_deref(), Some("v2"));
+        assert_eq!(loaded.skills["devboy-setup"].version, 7);
+    }
+
+    #[test]
+    fn manifest_load_rejects_corrupt_json() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(MANIFEST_FILE);
+        std::fs::write(&path, "{ not json").unwrap();
+        let err = Manifest::load(&path).unwrap_err();
+        assert!(
+            matches!(err, SkillError::InvalidManifest { .. }),
+            "expected InvalidManifest, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn classify_path_handles_missing_and_present_files() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("SKILL.md");
+
+        let mut history = HistoricalHashes::default();
+        let body = b"ship";
+        history.by_skill.insert(
+            "s".into(),
+            SkillHistory {
+                current: HistoricalVersion {
+                    version: 1,
+                    sha256: sha256_hex(body),
+                },
+                history: vec![],
+            },
+        );
+
+        // Missing file → None.
+        assert!(classify_path(&history, "s", &path).unwrap().is_none());
+
+        // Present file with matching body → Unchanged.
+        std::fs::write(&path, body).unwrap();
+        assert_eq!(
+            classify_path(&history, "s", &path).unwrap(),
+            Some(InstallState::Unchanged)
+        );
+
+        // Present file with unknown body → UserModified.
+        std::fs::write(&path, b"drifted").unwrap();
+        assert_eq!(
+            classify_path(&history, "s", &path).unwrap(),
+            Some(InstallState::UserModified)
+        );
+    }
 }
