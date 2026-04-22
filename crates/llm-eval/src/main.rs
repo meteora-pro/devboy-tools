@@ -96,10 +96,16 @@ fn load_model_configs(dotenv: &std::collections::HashMap<String, String>) -> Vec
     let mut configs = Vec::new();
 
     macro_rules! getv {
-        ($key:literal) => { getenv($key, dotenv) };
+        ($key:literal) => {
+            getenv($key, dotenv)
+        };
         ($key:literal, $default:literal) => {{
             let v = getenv($key, dotenv);
-            if v.is_empty() { $default.to_string() } else { v }
+            if v.is_empty() {
+                $default.to_string()
+            } else {
+                v
+            }
         }};
     }
 
@@ -133,7 +139,11 @@ fn load_model_configs(dotenv: &std::collections::HashMap<String, String>) -> Vec
     // OLLAMA_MODELS takes precedence if set: "gemma4:26b,gpt-oss:20b,deepseek-r1:14b"
     let ollama_models_list = getv!("OLLAMA_MODELS");
     if !ollama_models_list.is_empty() {
-        for model_id in ollama_models_list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        for model_id in ollama_models_list
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             configs.push(ModelConfig {
                 name: ollama_short_name(model_id),
                 base_url: ollama_url.clone(),
@@ -257,7 +267,11 @@ fn compress_issues(
     for (i, issue) in issues.iter().enumerate() {
         let row = format!(
             "| {} | {} | {} | {} | {} | {}d ago |",
-            issue.id, issue.title, issue.status, issue.priority, issue.comments,
+            issue.id,
+            issue.title,
+            issue.status,
+            issue.priority,
+            issue.comments,
             issue.days_since_update as u64,
         );
         let weight = estimate_tokens(&row);
@@ -289,7 +303,11 @@ fn compress_issues(
         if tree.children[i].included {
             lines.push(format!(
                 "| {} | {} | {} | {} | {} | {}d ago |",
-                issue.id, issue.title, issue.status, issue.priority, issue.comments,
+                issue.id,
+                issue.title,
+                issue.status,
+                issue.priority,
+                issue.comments,
                 issue.days_since_update as u64,
             ));
         }
@@ -298,7 +316,10 @@ fn compress_issues(
     let content = lines.join("\n");
     let gold_included = tree.children[gold_index].included;
 
-    CompressionResult { content, gold_included }
+    CompressionResult {
+        content,
+        gold_included,
+    }
 }
 
 // ============================================================================
@@ -366,7 +387,9 @@ fn call_llm(
 /// Check if LLM response correctly names the gold issue.
 fn judge(response: &str, gold_id: &str) -> bool {
     // Normalize: "gitlab#524" or "#524" or "524" should all match
-    let gold_num = gold_id.trim_start_matches("gitlab#").trim_start_matches('#');
+    let gold_num = gold_id
+        .trim_start_matches("gitlab#")
+        .trim_start_matches('#');
     response.contains(gold_id)
         || response.contains(&format!("#{}", gold_num))
         || response.contains(gold_num)
@@ -379,13 +402,22 @@ fn judge(response: &str, gold_id: &str) -> bool {
 struct Lcg(u64);
 
 impl Lcg {
-    fn new(seed: u64) -> Self { Self(seed) }
+    fn new(seed: u64) -> Self {
+        Self(seed)
+    }
     fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0
     }
-    fn next_f64(&mut self) -> f64 { (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64 }
-    fn next_usize(&mut self, n: usize) -> usize { (self.next_f64() * n as f64) as usize }
+    fn next_f64(&mut self) -> f64 {
+        (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+    }
+    fn next_usize(&mut self, n: usize) -> usize {
+        (self.next_f64() * n as f64) as usize
+    }
 }
 
 // ============================================================================
@@ -405,6 +437,7 @@ struct LlmResult {
     mean_latency_ms: u64,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_llm_experiment(
     client: &reqwest::blocking::Client,
     config: &ModelConfig,
@@ -438,9 +471,12 @@ fn run_llm_experiment(
 
         let correct = judge(&response, &gold_id);
         if verbose {
-            eprintln!("  [t={t}] gold={gold_id} included={} → response: {:?} → {}",
-                result.gold_included, &response[..response.len().min(120)],
-                if correct { "✓" } else { "✗" });
+            eprintln!(
+                "  [t={t}] gold={gold_id} included={} → response: {:?} → {}",
+                result.gold_included,
+                &response[..response.len().min(120)],
+                if correct { "✓" } else { "✗" }
+            );
         }
         if correct {
             llm_correct += 1;
@@ -469,7 +505,11 @@ fn run_llm_experiment(
             0.0
         },
         trials,
-        mean_latency_ms: if trials > 0 { total_latency / trials as u64 } else { 0 },
+        mean_latency_ms: if trials > 0 {
+            total_latency / trials as u64
+        } else {
+            0
+        },
     })
 }
 
@@ -479,13 +519,28 @@ fn run_llm_experiment(
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    let model_filter = args.windows(2).find(|w| w[0] == "--model").map(|w| w[1].as_str());
-    let trials: usize = args.windows(2).find(|w| w[0] == "--trials")
-        .and_then(|w| w[1].parse().ok()).unwrap_or(10);
-    let output_file = args.windows(2).find(|w| w[0] == "--output").map(|w| w[1].as_str());
-    let seed: u64 = args.windows(2).find(|w| w[0] == "--seed")
-        .and_then(|w| w[1].parse().ok()).unwrap_or(0xC0FFEE);
-    let env_file = args.windows(2).find(|w| w[0] == "--env-file").map(|w| w[1].clone());
+    let model_filter = args
+        .windows(2)
+        .find(|w| w[0] == "--model")
+        .map(|w| w[1].as_str());
+    let trials: usize = args
+        .windows(2)
+        .find(|w| w[0] == "--trials")
+        .and_then(|w| w[1].parse().ok())
+        .unwrap_or(10);
+    let output_file = args
+        .windows(2)
+        .find(|w| w[0] == "--output")
+        .map(|w| w[1].as_str());
+    let seed: u64 = args
+        .windows(2)
+        .find(|w| w[0] == "--seed")
+        .and_then(|w| w[1].parse().ok())
+        .unwrap_or(0xC0FFEE);
+    let env_file = args
+        .windows(2)
+        .find(|w| w[0] == "--env-file")
+        .map(|w| w[1].clone());
     let verbose = args.contains(&"--verbose".to_string());
 
     // Load .env — check explicit arg first, then common locations
@@ -504,7 +559,7 @@ fn main() -> Result<()> {
 
     let configs: Vec<&ModelConfig> = all_configs
         .iter()
-        .filter(|c| model_filter.map_or(true, |f| c.name == f || c.model_id == f))
+        .filter(|c| model_filter.is_none_or(|f| c.name == f || c.model_id == f))
         .collect();
 
     if configs.is_empty() {
@@ -512,7 +567,14 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    eprintln!("Models: {}", configs.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", "));
+    eprintln!(
+        "Models: {}",
+        configs
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     // Experiment dimensions (smaller than algorithmic eval — LLM calls are slow).
     //
@@ -522,10 +584,7 @@ fn main() -> Result<()> {
     //   n=50 total ≈ 1340 tok → budgets 250/600/1100
     // This ensures algo_p1 is meaningfully below 1.0 and strategies differ.
     let n_items_range = [20usize, 50];
-    let budgets_map: &[(usize, &[usize])] = &[
-        (20, &[150, 300, 500]),
-        (50, &[250, 600, 1100]),
-    ];
+    let budgets_map: &[(usize, &[usize])] = &[(20, &[150, 300, 500]), (50, &[250, 600, 1100])];
     let strategies = [
         TrimStrategyKind::ElementCount, // FIFO baseline
         TrimStrategyKind::Priority,     // our strategy
@@ -538,19 +597,34 @@ fn main() -> Result<()> {
     let total_configs: usize = configs.len()
         * budgets_map.iter().map(|(_, bs)| bs.len()).sum::<usize>()
         * strategies.len();
-    eprintln!("Running {} experiment configs × {} trials = {} LLM calls",
-        total_configs, trials, total_configs * trials);
+    eprintln!(
+        "Running {} experiment configs × {} trials = {} LLM calls",
+        total_configs,
+        trials,
+        total_configs * trials
+    );
 
     let mut results: Vec<LlmResult> = Vec::new();
 
     for config in &configs {
         for &n in &n_items_range {
-            let budgets = budgets_map.iter().find(|(k, _)| *k == n).map(|(_, v)| *v).unwrap_or(&[]);
+            let budgets = budgets_map
+                .iter()
+                .find(|(k, _)| *k == n)
+                .map(|(_, v)| *v)
+                .unwrap_or(&[]);
             for &budget in budgets {
                 for &strategy in &strategies {
-                    eprint!("[{} n={} budget={} strategy={}] ",
-                        config.name, n, budget, strategy.as_str());
-                    match run_llm_experiment(&client, config, n, budget, strategy, trials, seed, verbose) {
+                    eprint!(
+                        "[{} n={} budget={} strategy={}] ",
+                        config.name,
+                        n,
+                        budget,
+                        strategy.as_str()
+                    );
+                    match run_llm_experiment(
+                        &client, config, n, budget, strategy, trials, seed, verbose,
+                    ) {
                         Ok(result) => results.push(result),
                         Err(e) => eprintln!("\nERROR: {}", e),
                     }
@@ -562,12 +636,20 @@ fn main() -> Result<()> {
     let header = "model,n_items,budget_tokens,strategy,algo_p1,llm_accuracy,hallucination_rate,trials,mean_latency_ms\n";
     let csv: String = results
         .iter()
-        .map(|r| format!(
-            "{},{},{},{},{:.4},{:.4},{:.4},{},{}\n",
-            r.model, r.n_items, r.budget_tokens, r.strategy,
-            r.algo_p1, r.llm_accuracy, r.hallucination_rate,
-            r.trials, r.mean_latency_ms,
-        ))
+        .map(|r| {
+            format!(
+                "{},{},{},{},{:.4},{:.4},{:.4},{},{}\n",
+                r.model,
+                r.n_items,
+                r.budget_tokens,
+                r.strategy,
+                r.algo_p1,
+                r.llm_accuracy,
+                r.hallucination_rate,
+                r.trials,
+                r.mean_latency_ms,
+            )
+        })
         .collect();
 
     match output_file {
@@ -583,10 +665,18 @@ fn main() -> Result<()> {
 
     // Print summary (middle budget tier for n=50 → 600 tokens)
     eprintln!("\n=== Summary: n=50, budget=600 ===");
-    eprintln!("{:<14} {:<14} {:<10} {:<10} {:<10}", "model", "strategy", "algo_p1", "llm_acc", "latency_ms");
-    for r in results.iter().filter(|r| r.n_items == 50 && r.budget_tokens == 600) {
-        eprintln!("{:<14} {:<14} {:<10.3} {:<10.3} {:<10}",
-            r.model, r.strategy, r.algo_p1, r.llm_accuracy, r.mean_latency_ms);
+    eprintln!(
+        "{:<14} {:<14} {:<10} {:<10} {:<10}",
+        "model", "strategy", "algo_p1", "llm_acc", "latency_ms"
+    );
+    for r in results
+        .iter()
+        .filter(|r| r.n_items == 50 && r.budget_tokens == 600)
+    {
+        eprintln!(
+            "{:<14} {:<14} {:<10.3} {:<10.3} {:<10}",
+            r.model, r.strategy, r.algo_p1, r.llm_accuracy, r.mean_latency_ms
+        );
     }
 
     Ok(())
