@@ -462,4 +462,114 @@ body
         assert_eq!(sum.name, "devboy-setup");
         assert_eq!(sum.category, Category::SelfBootstrap);
     }
+
+    #[test]
+    fn category_as_str_matches_parse() {
+        for cat in Category::all() {
+            // Display == as_str and both round-trip through parse.
+            assert_eq!(cat.as_str(), format!("{}", cat));
+            assert_eq!(Category::parse(cat.as_str()), Some(*cat));
+        }
+    }
+
+    #[test]
+    fn parse_accepts_numeric_prefix_directory_form() {
+        // The filesystem layout uses `<NN>-<category>/` directory
+        // names (`01-issue-tracking`, `05-messenger`, …). The parser
+        // has to accept those too.
+        assert_eq!(
+            Category::parse("01-issue-tracking"),
+            Some(Category::IssueTracking)
+        );
+        assert_eq!(Category::parse("05-messenger"), Some(Category::Messenger));
+        // Double-digit-only prefix is also accepted (harmless).
+        assert_eq!(
+            Category::parse("42-self-bootstrap"),
+            Some(Category::SelfBootstrap)
+        );
+    }
+
+    #[test]
+    fn parse_rejects_frontmatter_without_closing_fence() {
+        // Missing closing `---` must yield MissingFrontmatter, not
+        // a YAML error on the half-parsed body.
+        let input = "---\nname: devboy-setup\ndescription: incomplete\ncategory: self-bootstrap\nversion: 1\nbody starts here\n";
+        let err = Skill::parse("devboy-setup", input).unwrap_err();
+        assert!(
+            matches!(err, SkillError::MissingFrontmatter { .. }),
+            "expected MissingFrontmatter, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_strips_bom_if_present() {
+        // UTF-8 BOM at the very start must not confuse the fence
+        // detector.
+        let bom_input = format!("\u{FEFF}{VALID}");
+        let skill = Skill::parse("devboy-setup", &bom_input).expect("BOM-prefixed file parses");
+        assert_eq!(skill.name(), "devboy-setup");
+    }
+
+    #[test]
+    fn parse_rejects_non_mapping_frontmatter() {
+        // Frontmatter that is valid YAML but not a mapping (list,
+        // scalar, etc.) must error out.
+        let input = "---\n- list-not-mapping\n- another\n---\nbody\n";
+        let err = Skill::parse("whatever", input).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                SkillError::InvalidFieldType {
+                    field: "<root>",
+                    ..
+                }
+            ),
+            "expected InvalidFieldType(<root>), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_rejects_mismatched_name_and_skill_id() {
+        // `frontmatter.name` is contractually "must match the
+        // containing directory"; enforce by constructing a payload
+        // where the two disagree.
+        let input = r#"---
+name: wrong-name
+description: test
+category: self-bootstrap
+version: 1
+---
+body
+"#;
+        let err = Skill::parse("devboy-setup", input).unwrap_err();
+        assert!(
+            matches!(err, SkillError::InvalidFieldType { field: "name", .. }),
+            "expected InvalidFieldType(name), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_rejects_negative_version() {
+        let input = r#"---
+name: devboy-setup
+description: test
+category: self-bootstrap
+version: -1
+---
+body
+"#;
+        let err = Skill::parse("devboy-setup", input).unwrap_err();
+        // Negative values serialise as i64 in serde_yaml, so they
+        // fail the `as_u64()` guard in `require_u32`.
+        assert!(
+            matches!(
+                err,
+                SkillError::InvalidFieldType {
+                    field: "version",
+                    ..
+                }
+            ),
+            "expected InvalidFieldType(version), got {err:?}"
+        );
+    }
 }

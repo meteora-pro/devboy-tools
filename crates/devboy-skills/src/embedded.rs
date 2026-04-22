@@ -148,4 +148,61 @@ mod tests {
             "expected NotFound(embedded), got {err:?}"
         );
     }
+
+    #[test]
+    fn source_name_is_embedded() {
+        let source = EmbeddedSkillSource::new();
+        assert_eq!(source.name(), "embedded");
+    }
+
+    #[test]
+    fn all_returns_every_embedded_skill() {
+        // `all()` should match `iter()` in shape: every entry parses as
+        // a Skill with a non-empty name and a category consistent with
+        // the on-disk folder tree (`skills/<NN-category>/<skill>/SKILL.md`).
+        let all = EmbeddedSkillSource::all().expect("embedded skills parse");
+        for (name, skill) in &all {
+            assert_eq!(name, skill.name(), "map key matches skill name");
+            assert!(!skill.frontmatter.description.is_empty());
+            assert!(skill.version() > 0);
+        }
+        // `list()` covers every skill `all()` does, just as summaries.
+        let summaries = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(EmbeddedSkillSource::new().list())
+            .unwrap();
+        assert_eq!(summaries.len(), all.len());
+    }
+
+    #[tokio::test]
+    async fn load_returns_parsed_skill_for_known_name() {
+        // Pick whichever skill `all()` produces first — avoids tying the
+        // test to a specific skill that may be renamed later.
+        let all = EmbeddedSkillSource::all().unwrap();
+        let Some((name, _)) = all.iter().next() else {
+            // If the catalogue is empty for some build, the earlier
+            // `list_returns_empty_or_valid_before_any_skills_ship`
+            // test already covers that case.
+            return;
+        };
+        let source = EmbeddedSkillSource::new();
+        let skill = source.load(name).await.expect("known skill loads");
+        assert_eq!(skill.name(), name);
+    }
+
+    #[tokio::test]
+    async fn list_is_sorted_by_category_then_name() {
+        let source = EmbeddedSkillSource::new();
+        let summaries = source.list().await.unwrap();
+        for pair in summaries.windows(2) {
+            let (a, b) = (&pair[0], &pair[1]);
+            let ord = (a.category, a.name.as_str()).cmp(&(b.category, b.name.as_str()));
+            assert!(
+                ord == std::cmp::Ordering::Less || ord == std::cmp::Ordering::Equal,
+                "summaries not sorted: {} then {}",
+                a.name,
+                b.name
+            );
+        }
+    }
 }
