@@ -13,6 +13,7 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+zeroize = { version = "1.8", features = ["derive"] }
 
 # Keychain access (platform-specific features)
 [target.'cfg(target_os = "macos")'.dependencies]
