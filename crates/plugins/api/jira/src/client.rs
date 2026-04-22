@@ -519,8 +519,15 @@ impl JiraClient {
     // =========================================================================
 
     /// Build a URL for the Structure REST API.
+    ///
+    /// Uses the same root as the regular REST API (`base_url` with the
+    /// `/rest/api/{2,3}` suffix stripped) so that Structure calls go
+    /// through the configured proxy — `instance_url` is intentionally
+    /// reserved for browse links and bypasses any proxy headers/auth
+    /// installed via [`JiraClient::with_proxy`].
     fn structure_url(&self, endpoint: &str) -> String {
-        format!("{}/rest/structure/2.0{}", self.instance_url, endpoint)
+        let root = instance_url_from_base(&self.base_url);
+        format!("{}/rest/structure/2.0{}", root, endpoint)
     }
 
     /// Make an authenticated GET request to the Structure API.
@@ -1113,13 +1120,27 @@ fn instance_url_from_base(base_url: &str) -> String {
 // Structure helpers
 // =============================================================================
 
-/// Transform compact `rows[] + depths[]` from Structure API into a nested tree.
-fn build_forest_tree(rows: &[crate::types::JiraForestRow], depths: &[u32]) -> Vec<StructureNode> {
+/// Transform compact `rows[] + depths[]` from Structure API into a
+/// nested tree. Returns `InvalidData` if the two vectors are not the
+/// same length — the Structure API contract guarantees alignment, and
+/// a mismatch here would otherwise silently nest rows at depth 0 and
+/// produce a subtly wrong tree.
+fn build_forest_tree(
+    rows: &[crate::types::JiraForestRow],
+    depths: &[u32],
+) -> Result<Vec<StructureNode>> {
+    if rows.len() != depths.len() {
+        return Err(Error::InvalidData(format!(
+            "Structure forest response has {} rows but {} depths",
+            rows.len(),
+            depths.len()
+        )));
+    }
     let mut roots: Vec<StructureNode> = Vec::new();
     let mut stack: Vec<StructureNode> = Vec::new();
 
-    for (i, row) in rows.iter().enumerate() {
-        let depth = depths.get(i).copied().unwrap_or(0) as usize;
+    for (row, depth) in rows.iter().zip(depths.iter()) {
+        let depth = *depth as usize;
         let node = StructureNode {
             row_id: row.id,
             item_id: row.item_id.clone(),
@@ -1129,7 +1150,7 @@ fn build_forest_tree(rows: &[crate::types::JiraForestRow], depths: &[u32]) -> Ve
 
         // Pop stack to find parent at depth - 1
         while stack.len() > depth {
-            let child = stack.pop().unwrap();
+            let child = stack.pop().expect("stack.len() > depth > 0");
             if let Some(parent) = stack.last_mut() {
                 parent.children.push(child);
             } else {
@@ -1149,7 +1170,7 @@ fn build_forest_tree(rows: &[crate::types::JiraForestRow], depths: &[u32]) -> Ve
         }
     }
 
-    roots
+    Ok(roots)
 }
 
 /// Map Jira Structure view to unified type.
@@ -1875,7 +1896,7 @@ impl IssueProvider for JiraClient {
             )
             .await?;
 
-        let tree = build_forest_tree(&resp.rows, &resp.depths);
+        let tree = build_forest_tree(&resp.rows, &resp.depths)?;
 
         Ok(StructureForest {
             version: resp.version,
@@ -2003,15 +2024,24 @@ impl IssueProvider for JiraClient {
 
         let resp: JiraStructureValuesResponse = self.structure_post("/value", &payload).await?;
 
-        // Group values by row_id
+        // Group values by row_id. A missing `columnId` is treated as
+        // an error rather than defaulted to `""` — silently bucketing
+        // unknown columns under the empty-string key would merge
+        // values from different columns and destroy user data.
         let mut row_map: std::collections::BTreeMap<u64, Vec<StructureColumnValue>> =
             std::collections::BTreeMap::new();
         for entry in resp.values {
+            let column = entry.column_id.ok_or_else(|| {
+                Error::InvalidData(format!(
+                    "Structure value for row {} is missing `columnId`",
+                    entry.row_id
+                ))
+            })?;
             row_map
                 .entry(entry.row_id)
                 .or_default()
                 .push(StructureColumnValue {
-                    column: entry.column_id.unwrap_or_default(),
+                    column,
                     value: entry.value,
                 });
         }
@@ -2034,6 +2064,17 @@ impl IssueProvider for JiraClient {
     ) -> Result<Vec<StructureView>> {
         if let Some(id) = view_id {
             let view: JiraStructureView = self.structure_get(&format!("/view/{}", id)).await?;
+            // Validate that the returned view actually belongs to the
+            // requested structure — the Structure API's `/view/{id}`
+            // endpoint ignores the structure id in the request, so a
+            // caller who mixes up ids would otherwise silently see a
+            // view from a different structure.
+            if view.structure_id != structure_id {
+                return Err(Error::InvalidData(format!(
+                    "view {id} belongs to structure {} but {structure_id} was requested",
+                    view.structure_id
+                )));
+            }
             Ok(vec![map_structure_view(view)])
         } else {
             let resp: JiraStructureViewListResponse = self
@@ -5086,7 +5127,7 @@ mod tests {
 
     #[test]
     fn test_build_forest_tree_empty() {
-        let tree = build_forest_tree(&[], &[]);
+        let tree = build_forest_tree(&[], &[]).unwrap();
         assert!(tree.is_empty());
     }
 
@@ -5105,12 +5146,27 @@ mod tests {
             },
         ];
         let depths = vec![0, 0];
-        let tree = build_forest_tree(&rows, &depths);
+        let tree = build_forest_tree(&rows, &depths).unwrap();
         assert_eq!(tree.len(), 2);
         assert_eq!(tree[0].row_id, 1);
         assert_eq!(tree[1].row_id, 2);
         assert!(tree[0].children.is_empty());
         assert!(tree[1].children.is_empty());
+    }
+
+    #[test]
+    fn test_build_forest_tree_rejects_mismatched_lengths() {
+        let rows = vec![JiraForestRow {
+            id: 1,
+            item_id: Some("PROJ-1".into()),
+            item_type: None,
+        }];
+        let depths = vec![0, 1];
+        let err = build_forest_tree(&rows, &depths).expect_err("mismatch must be rejected");
+        assert!(
+            matches!(err, Error::InvalidData(ref msg) if msg.contains("1 rows but 2 depths")),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
@@ -5142,7 +5198,7 @@ mod tests {
             },
         ];
         let depths = vec![0, 1, 2, 1];
-        let tree = build_forest_tree(&rows, &depths);
+        let tree = build_forest_tree(&rows, &depths).unwrap();
 
         assert_eq!(tree.len(), 1);
         assert_eq!(tree[0].row_id, 1);
@@ -5179,7 +5235,7 @@ mod tests {
             },
         ];
         let depths = vec![0, 1, 0, 1];
-        let tree = build_forest_tree(&rows, &depths);
+        let tree = build_forest_tree(&rows, &depths).unwrap();
 
         assert_eq!(tree.len(), 2);
         assert_eq!(tree[0].children.len(), 1);
@@ -5331,6 +5387,55 @@ mod tests {
             let views = client.get_structure_views(1, None).await.unwrap();
             assert_eq!(views.len(), 2);
             assert_eq!(views[1].columns.len(), 3);
+        }
+
+        #[tokio::test]
+        async fn test_get_structure_views_by_id_accepts_matching_structure() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/rest/structure/2.0/view/10");
+                then.status(200).json_body(serde_json::json!({
+                    "id": 10,
+                    "name": "Default View",
+                    "structureId": 1,
+                    "columns": []
+                }));
+            });
+
+            let client = create_client(&server);
+            let views = client.get_structure_views(1, Some(10)).await.unwrap();
+            assert_eq!(views.len(), 1);
+            assert_eq!(views[0].id, 10);
+        }
+
+        #[tokio::test]
+        async fn test_get_structure_views_by_id_rejects_cross_structure_view() {
+            // View 99 actually lives in structure 7 — a caller who asked
+            // for `structureId=1` must see InvalidData, not a surprise
+            // view from a different structure.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/rest/structure/2.0/view/99");
+                then.status(200).json_body(serde_json::json!({
+                    "id": 99,
+                    "name": "Sibling view",
+                    "structureId": 7,
+                    "columns": []
+                }));
+            });
+
+            let client = create_client(&server);
+            let err = client
+                .get_structure_views(1, Some(99))
+                .await
+                .expect_err("mismatched structure must error");
+            match err {
+                Error::InvalidData(msg) => {
+                    assert!(msg.contains("belongs to structure 7"), "got: {msg}");
+                    assert!(msg.contains("but 1 was requested"), "got: {msg}");
+                }
+                other => panic!("expected InvalidData, got {other:?}"),
+            }
         }
     }
 }

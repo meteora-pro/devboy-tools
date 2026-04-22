@@ -482,7 +482,10 @@ pub struct JiraForestModifyResponse {
 pub struct JiraStructureView {
     pub id: u64,
     pub name: String,
-    #[serde(default)]
+    /// Owning structure id. Left non-optional and **without**
+    /// `#[serde(default)]` so a missing / renamed field from the API
+    /// fails loudly rather than silently deserialising to `0` — the
+    /// caller uses this id for cross-structure scope checks.
     pub structure_id: u64,
     #[serde(default)]
     pub columns: Vec<JiraStructureViewColumn>,
