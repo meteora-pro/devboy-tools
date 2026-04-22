@@ -2,8 +2,11 @@
 //!
 //! A session is the execution of one skill (or any caller that opts in
 //! through the `devboy trace` CLI). Events land as JSON Lines at
-//! `<target>/.devboy/sessions/<YYYY-MM-DD>/<skill>/trace.jsonl`, and
-//! a sibling `meta.json` carries session-level metadata.
+//! `<target>/.devboy/sessions/<YYYY-MM-DD>/<skill>/<session_id>/trace.jsonl`,
+//! and a sibling `meta.json` in the same per-session directory carries
+//! session-level metadata. The `<session_id>` segment keeps concurrent
+//! or repeated invocations of the same skill on the same day isolated
+//! from each other (ADR-015 requires self-contained sessions).
 //!
 //! The [`SessionTracer`] writer is intentionally small — it serialises
 //! one event per line with no framing, no network I/O, and no reliance
@@ -37,7 +40,11 @@ pub mod redact;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
-    /// First event of the session — captures input, cwd, devboy version.
+    /// First event of the session, marking the start of execution.
+    /// The tracer synthesises a `start` record with an empty payload;
+    /// any input / cwd / version metadata is caller-defined — pass it
+    /// via a regular `event` call after `begin` if you want it in the
+    /// stream, or record it in `meta.json` via a later `end` call.
     Start,
     /// Skill-level reasoning outcome.
     Decision,
@@ -155,6 +162,11 @@ pub struct SessionTracer {
     started_at: DateTime<Utc>,
     tool_calls: std::sync::atomic::AtomicU64,
     errors: std::sync::atomic::AtomicU64,
+    /// Env-var snapshot captured at `begin`, reused for every
+    /// `write_event` so the redactor does not rescan `std::env::vars()`
+    /// on each record (can be tens of thousands of events in a long
+    /// session).
+    redactor: redact::Redactor,
 }
 
 impl SessionTracer {
@@ -195,6 +207,7 @@ impl SessionTracer {
             started_at,
             tool_calls: std::sync::atomic::AtomicU64::new(0),
             errors: std::sync::atomic::AtomicU64::new(0),
+            redactor: redact::Redactor::snapshot(),
         };
 
         // Emit the `start` event synthesised from the call arguments;
@@ -272,7 +285,7 @@ impl SessionTracer {
     }
 
     fn write_event(&self, phase: Phase, payload: Value) -> Result<()> {
-        let redacted = redact::sanitize(payload);
+        let redacted = self.redactor.sanitize(payload);
         let record = TraceRecord {
             ts: Utc::now(),
             skill: self.skill.clone(),

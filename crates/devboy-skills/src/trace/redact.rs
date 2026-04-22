@@ -3,11 +3,12 @@
 //! Two mechanisms are layered:
 //!
 //! 1. Known credential shapes are masked regardless of where they
-//!    appear in the tree. Currently: `ghp_`, `glpat-`, `pk_live_`,
-//!    `pk_test_`, `sk-`, `xoxb-`/`xoxa-`/`xapp-`, `Bearer `, plus a
-//!    few other common prefixes. These all survive without knowing
-//!    the configured credential set — useful when a token leaks into
-//!    an error message, a git URL, or a user-supplied prompt.
+//!    appear in the tree. Currently: `ghp_`, `glpat-`, `pk_`, `sk-`,
+//!    `xoxb-` / `xoxa-` / `xapp-`, `Bearer ` / `Basic ` (case-
+//!    insensitive), plus a few other common prefixes. These all
+//!    survive without knowing the configured credential set — useful
+//!    when a token leaks into an error message, a git URL, or a
+//!    user-supplied prompt.
 //! 2. Values of any string-valued environment variable whose name
 //!    matches a sensitive suffix (`*_TOKEN` / `*_SECRET` / `*_KEY` /
 //!    `*_PASSWORD` / `*_PASSPHRASE` / `AUTHORIZATION` / `COOKIE`) are
@@ -15,6 +16,15 @@
 //!
 //! Setting the `DEVBOY_TRACE_REDACTION=off` environment variable
 //! disables both passes for local debugging. Never default to off.
+//!
+//! ## Amortizing the env snapshot
+//!
+//! The top-level [`sanitize`] helper walks `std::env::vars()` on every
+//! call — fine for one-shot CLI invocations but wasteful inside a
+//! long-running producer like [`super::SessionTracer`] that writes
+//! many events. Build a [`Redactor`] once with
+//! [`Redactor::snapshot`] and reuse it for every event in the same
+//! session to pay the env scan just once.
 
 use std::collections::HashSet;
 
@@ -23,12 +33,49 @@ use serde_json::Value;
 /// Redact sensitive data in `value`. Recursively walks maps and
 /// arrays. Strings are rewritten; numbers / bools / null pass through
 /// unchanged.
+///
+/// Each call snapshots `*_TOKEN` / `*_SECRET` / … env vars afresh so
+/// that tests using `temp_env::with_var` (and production callers that
+/// legitimately mutate the environment) see up-to-date state. Inside
+/// a long session, prefer [`Redactor::snapshot`] + [`Redactor::sanitize`].
 pub fn sanitize(value: Value) -> Value {
-    if redaction_disabled() {
-        return value;
+    Redactor::snapshot().sanitize(value)
+}
+
+/// A reusable redactor that holds one env-var snapshot. Created via
+/// [`Redactor::snapshot`]; use once per long-running producer (e.g.
+/// one per `SessionTracer`) to avoid rescanning the environment on
+/// every event.
+#[derive(Debug, Clone)]
+pub struct Redactor {
+    enabled: bool,
+    secrets: HashSet<String>,
+}
+
+impl Redactor {
+    /// Capture the current set of sensitive env-var values and the
+    /// `DEVBOY_TRACE_REDACTION=off` opt-out state. Cheap to clone.
+    pub fn snapshot() -> Self {
+        if redaction_disabled() {
+            Self {
+                enabled: false,
+                secrets: HashSet::new(),
+            }
+        } else {
+            Self {
+                enabled: true,
+                secrets: known_env_secrets(),
+            }
+        }
     }
-    let secrets = known_env_secrets();
-    sanitize_with(&secrets, value)
+
+    /// Sanitize a single value using the captured env-var snapshot.
+    pub fn sanitize(&self, value: Value) -> Value {
+        if !self.enabled {
+            return value;
+        }
+        sanitize_with(&self.secrets, value)
+    }
 }
 
 fn redaction_disabled() -> bool {
@@ -84,7 +131,11 @@ fn redact_string(secrets: &HashSet<String>, s: &str) -> String {
 }
 
 fn has_known_prefix(s: &str) -> bool {
-    const PREFIXES: &[&str] = &[
+    // Case-sensitive prefixes. The publisher-defined provider tokens
+    // are all case-sensitive in the wild, so matching them strictly
+    // avoids redacting words that merely share the letters (e.g. an
+    // English sentence starting with "Ghp").
+    const CASE_SENSITIVE: &[&str] = &[
         // GitHub PATs
         "ghp_",
         "github_pat_",
@@ -94,35 +145,46 @@ fn has_known_prefix(s: &str) -> bool {
         "ghr_",
         // GitLab PATs
         "glpat-",
-        // Stripe-ish shapes, also matches ClickUp `pk_`
-        "pk_live_",
-        "pk_test_",
-        "sk_live_",
-        "sk_test_",
-        // OpenAI-ish
+        // Publishable / secret key families shared across a few
+        // providers (Stripe, ClickUp, etc.). ADR-015 spec calls these
+        // out as a single `pk_` / `sk_` group — keep them generic.
+        "pk_",
+        "sk_",
+        // OpenAI-ish (also covers sk-ant-… via the `sk-` prefix).
         "sk-",
         // Slack
         "xoxb-",
         "xoxa-",
         "xoxp-",
         "xapp-",
-        // Anthropic
-        "sk-ant-",
-        // Generic bearer markers users sometimes paste as a raw value.
-        "Bearer ",
-        "Basic ",
     ];
-    PREFIXES
+    if CASE_SENSITIVE
         .iter()
         .any(|p| s.starts_with(p) && s.len() > p.len() + 8)
+    {
+        return true;
+    }
+    // Case-insensitive auth-scheme prefixes: HTTP scheme tokens are
+    // case-insensitive per RFC 7235, so `Bearer <tok>`, `bearer <tok>`
+    // and `BEARER <tok>` should all redact.
+    const SCHEME_CI: &[&str] = &["bearer ", "basic "];
+    let lower = s.to_ascii_lowercase();
+    SCHEME_CI
+        .iter()
+        .any(|p| lower.starts_with(p) && s.len() > p.len() + 8)
 }
 
 fn mask_auth_header_segment(s: &str) -> Option<String> {
     // e.g. "Authorization: Bearer ghp_…" embedded inside a log line.
-    let needles = ["Bearer ", "Basic "];
+    // HTTP auth schemes are case-insensitive (RFC 7235), so locate the
+    // needle in the lowercased copy but preserve the original casing
+    // of the scheme token in the rewritten output.
+    let lower = s.to_ascii_lowercase();
+    let needles = ["bearer ", "basic "];
     for needle in needles {
-        if let Some(idx) = s.find(needle) {
+        if let Some(idx) = lower.find(needle) {
             let head = &s[..idx];
+            let scheme = &s[idx..idx + needle.len()]; // original case preserved
             // Credential runs until whitespace, comma, or semicolon.
             let rest = &s[idx + needle.len()..];
             let end = rest
@@ -130,7 +192,7 @@ fn mask_auth_header_segment(s: &str) -> Option<String> {
                 .unwrap_or(rest.len());
             if end >= 8 {
                 let tail = &rest[end..];
-                return Some(format!("{head}{needle}<redacted:auth>{tail}"));
+                return Some(format!("{head}{scheme}<redacted:auth>{tail}"));
             }
         }
     }
@@ -253,6 +315,92 @@ mod tests {
             let v = json!({ "token": "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
             let out = sanitize(v.clone());
             assert_eq!(out, v);
+        });
+    }
+
+    #[test]
+    fn masks_bearer_scheme_case_insensitive() {
+        // HTTP schemes are case-insensitive per RFC 7235, so all of
+        // these variants must redact.
+        for header in [
+            "Authorization: Bearer xxxxxxxxxxxxyyyyyyyyyyyy",
+            "authorization: bearer xxxxxxxxxxxxyyyyyyyyyyyy",
+            "AUTHORIZATION: BEARER xxxxxxxxxxxxyyyyyyyyyyyy",
+            "authorization: BeArEr xxxxxxxxxxxxyyyyyyyyyyyy",
+        ] {
+            let out = sanitize(json!(header));
+            let s = out.as_str().unwrap();
+            assert!(
+                !s.contains("xxxxxxxxxxxxyyyyyyyyyyyy"),
+                "token leaked for header `{header}` → `{s}`"
+            );
+            assert!(
+                s.contains("<redacted"),
+                "no redaction marker for header `{header}` → `{s}`"
+            );
+        }
+    }
+
+    #[test]
+    fn masks_bare_bearer_value_case_insensitive() {
+        // When the caller pasted just the `Bearer <token>` segment as
+        // a standalone value, the prefix check (not the header scanner)
+        // fires — must also be case-insensitive.
+        for raw in [
+            "Bearer abcdefghijklmnopqrstuvwx",
+            "bearer abcdefghijklmnopqrstuvwx",
+            "BEARER abcdefghijklmnopqrstuvwx",
+            "Basic YWxpY2U6aHVudGVyMjpkcmFnb24=",
+        ] {
+            let out = sanitize(json!(raw));
+            let s = out.as_str().unwrap();
+            assert!(s.contains("<redacted"), "not redacted: `{raw}` → `{s}`");
+        }
+    }
+
+    #[test]
+    fn masks_generic_pk_prefix() {
+        // ADR-015 calls out a generic `pk_` prefix (not just
+        // `pk_live_` / `pk_test_`). Enough bytes after the prefix to
+        // clear the length guard so a bare `pk_` literal is left alone.
+        let v = json!({ "clickup_pk": "pk_abcdefghijklmnop" });
+        let out = sanitize(v);
+        assert_eq!(
+            out.get("clickup_pk").and_then(|v| v.as_str()),
+            Some("<redacted:token-pattern>"),
+            "generic pk_ prefix should redact"
+        );
+
+        // Short `pk_` literal stays untouched (e.g. in docs).
+        let doc = json!("pk_");
+        assert_eq!(sanitize(doc).as_str(), Some("pk_"));
+    }
+
+    #[test]
+    fn redactor_snapshot_amortizes_env_scan() {
+        // The Redactor captures the env-var set at snapshot time and
+        // keeps redacting the snapshotted value even after the source
+        // env var has been unset — this is what makes reuse inside a
+        // long session cheap and consistent.
+        let redactor = temp_env::with_var(
+            "DEVBOY_REDACTOR_CACHE_TOKEN",
+            Some("cached-token-zzzzzzzz"),
+            Redactor::snapshot,
+        );
+        // The env var is gone at this point, but the snapshot remembers.
+        let out = redactor.sanitize(json!({ "raw": "cached-token-zzzzzzzz" }));
+        assert_eq!(
+            out.get("raw").and_then(|v| v.as_str()),
+            Some("<redacted:credential>")
+        );
+    }
+
+    #[test]
+    fn redactor_snapshot_respects_disable_env() {
+        temp_env::with_var("DEVBOY_TRACE_REDACTION", Some("off"), || {
+            let redactor = Redactor::snapshot();
+            let v = json!({ "token": "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
+            assert_eq!(redactor.sanitize(v.clone()), v);
         });
     }
 }
