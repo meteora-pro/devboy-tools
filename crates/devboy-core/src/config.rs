@@ -122,10 +122,12 @@ pub struct ProxyMcpServerConfig {
     /// Transport type: "sse" (default) or "streamable-http"
     #[serde(default = "default_transport_sse")]
     pub transport: String,
-    /// Per-server routing override. If set, merges on top of global `[proxy.routing]`
-    /// and takes priority when both define the same field.
+    /// Per-server routing override. Only the fields explicitly set here win over the
+    /// global `[proxy.routing]`; omitted fields inherit from the global config (so a
+    /// per-server block that just sets `strategy` does **not** silently reset
+    /// `fallback_on_error` to its default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub routing: Option<ProxyRoutingConfig>,
+    pub routing: Option<ProxyRoutingOverride>,
 }
 
 fn default_transport_sse() -> String {
@@ -594,17 +596,25 @@ impl ProxyRoutingConfig {
     }
 
     /// Merge a per-server override on top of this global config.
-    /// The override wins for every field it defines; `tool_overrides` from the override
-    /// are prepended so they match before global rules.
-    pub fn merged_with(&self, override_cfg: Option<&ProxyRoutingConfig>) -> ProxyRoutingConfig {
+    ///
+    /// Only `Some` fields of the override win over the global config — omitted fields
+    /// are inherited. `tool_overrides` from the override are prepended so they match
+    /// before global rules; `None` there means "use the global list as-is".
+    pub fn merged_with(&self, override_cfg: Option<&ProxyRoutingOverride>) -> ProxyRoutingConfig {
         let Some(o) = override_cfg else {
             return self.clone();
         };
         let mut merged = self.clone();
-        merged.strategy = o.strategy;
-        merged.fallback_on_error = o.fallback_on_error;
-        if !o.tool_overrides.is_empty() {
-            let mut combined = o.tool_overrides.clone();
+        if let Some(strategy) = o.strategy {
+            merged.strategy = strategy;
+        }
+        if let Some(fallback_on_error) = o.fallback_on_error {
+            merged.fallback_on_error = fallback_on_error;
+        }
+        if let Some(extra) = &o.tool_overrides
+            && !extra.is_empty()
+        {
+            let mut combined = extra.clone();
             combined.extend(self.tool_overrides.iter().cloned());
             merged.tool_overrides = combined;
         }
@@ -617,6 +627,23 @@ impl ProxyRoutingConfig {
             && self.fallback_on_error
             && self.tool_overrides.is_empty()
     }
+}
+
+/// Per-server partial override for [`ProxyRoutingConfig`].
+///
+/// Every field is `Option` so that an override block touches only what it explicitly
+/// sets — omitted fields inherit from the global `[proxy.routing]`. This matches the
+/// "override what you want, keep what you don't" intuition a reviewer would expect
+/// from the merge semantics described in the docs.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProxyRoutingOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<RoutingStrategy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_on_error: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_overrides: Option<Vec<ProxyToolRule>>,
 }
 
 /// Secure-store configuration for proxy authentication tokens.
@@ -825,26 +852,43 @@ impl Config {
         let contents = std::fs::read_to_string(path)
             .map_err(|e| Error::Config(format!("Failed to read config file: {}", e)))?;
 
-        let config: Config = toml::from_str(&contents)
+        let mut config: Config = toml::from_str(&contents)
             .map_err(|e| Error::Config(format!("Failed to parse config file: {}", e)))?;
 
-        // Validate semantics that serde cannot enforce on its own (URL shape, etc.).
-        // `Config::set` already applies the same checks at write time, but a user editing
-        // the TOML file directly bypasses those — so we re-run validation on load.
+        // First collapse cosmetic empties (e.g. `endpoint = ""`) so they behave like the
+        // CLI's "empty value clears the field" semantics, then validate semantics that
+        // serde cannot enforce on its own (URL shape, etc.). `Config::set` already
+        // applies these at write time — we re-run them on load so hand-edited TOML
+        // cannot sneak invalid values past the API surface.
+        config.sanitize();
         config.validate()?;
 
         info!(path = ?path, "Config loaded successfully");
         Ok(config)
     }
 
+    /// Normalize cosmetic "null-equivalents" that TOML/serde can't express on their
+    /// own — currently just: `proxy.telemetry.endpoint = ""` collapses to `None`, so
+    /// hand-edited TOML matches the CLI semantics (where an empty value clears the
+    /// field rather than leaving an invalid URL in place). Called by [`Self::load_from`]
+    /// immediately before [`Self::validate`].
+    pub fn sanitize(&mut self) {
+        if let Some(endpoint) = self.proxy.telemetry.endpoint.as_deref()
+            && endpoint.is_empty()
+        {
+            self.proxy.telemetry.endpoint = None;
+        }
+    }
+
     /// Run post-deserialization validation on the config.
     ///
     /// Covers invariants that TOML/serde deserializers can't express by themselves:
     /// URL shape for telemetry endpoint, bool coercions, etc. Safe to call at any time.
+    /// Note: an empty-string endpoint is rejected here — callers that want "empty
+    /// means clear" semantics should run [`Self::sanitize`] first (which `load_from`
+    /// does automatically).
     pub fn validate(&self) -> Result<()> {
-        if let Some(endpoint) = self.proxy.telemetry.endpoint.as_deref()
-            && !endpoint.is_empty()
-        {
+        if let Some(endpoint) = self.proxy.telemetry.endpoint.as_deref() {
             validate_http_url(endpoint, "proxy.telemetry.endpoint")?;
         }
         Ok(())
@@ -2265,13 +2309,13 @@ mod tests {
                 strategy: RoutingStrategy::LocalFirst,
             }],
         };
-        let override_cfg = ProxyRoutingConfig {
-            strategy: RoutingStrategy::Local,
-            fallback_on_error: false,
-            tool_overrides: vec![ProxyToolRule {
+        let override_cfg = ProxyRoutingOverride {
+            strategy: Some(RoutingStrategy::Local),
+            fallback_on_error: Some(false),
+            tool_overrides: Some(vec![ProxyToolRule {
                 pattern: "create_*".to_string(),
                 strategy: RoutingStrategy::Remote,
-            }],
+            }]),
         };
 
         let merged = global.merged_with(Some(&override_cfg));
@@ -2281,6 +2325,39 @@ mod tests {
         assert_eq!(merged.tool_overrides.len(), 2);
         assert_eq!(merged.tool_overrides[0].pattern, "create_*");
         assert_eq!(merged.tool_overrides[1].pattern, "get_*");
+    }
+
+    #[test]
+    fn test_proxy_routing_merged_with_partial_override_preserves_unset_fields() {
+        // Reviewer concern: "a per-server block that only sets strategy must not reset
+        // fallback_on_error / tool_overrides to defaults."
+        let global = ProxyRoutingConfig {
+            strategy: RoutingStrategy::Remote,
+            fallback_on_error: false, // deliberately non-default
+            tool_overrides: vec![ProxyToolRule {
+                pattern: "get_*".to_string(),
+                strategy: RoutingStrategy::LocalFirst,
+            }],
+        };
+        // Override only tweaks `strategy`; everything else must inherit from global.
+        let override_cfg = ProxyRoutingOverride {
+            strategy: Some(RoutingStrategy::Local),
+            fallback_on_error: None,
+            tool_overrides: None,
+        };
+
+        let merged = global.merged_with(Some(&override_cfg));
+        assert_eq!(merged.strategy, RoutingStrategy::Local);
+        assert!(
+            !merged.fallback_on_error,
+            "fallback_on_error must inherit from global, not snap to default"
+        );
+        assert_eq!(
+            merged.tool_overrides.len(),
+            1,
+            "tool_overrides must inherit from global when override omits them"
+        );
+        assert_eq!(merged.tool_overrides[0].pattern, "get_*");
     }
 
     #[test]
@@ -2356,11 +2433,11 @@ mod tests {
 
         let config: Config = toml::from_str(toml_str).unwrap();
         let server = &config.proxy_mcp_servers[0];
-        assert!(server.routing.is_some());
-        assert_eq!(
-            server.routing.as_ref().unwrap().strategy,
-            RoutingStrategy::LocalFirst
-        );
+        let override_cfg = server.routing.as_ref().expect("override present");
+        // Only `strategy` was set — other fields must stay `None` so they inherit.
+        assert_eq!(override_cfg.strategy, Some(RoutingStrategy::LocalFirst));
+        assert!(override_cfg.fallback_on_error.is_none());
+        assert!(override_cfg.tool_overrides.is_none());
     }
 
     // =========================================================================
@@ -2505,6 +2582,61 @@ mod tests {
         // Validation must not fail in this common case.
         let config = Config::default();
         config.validate().expect("default config validates");
+    }
+
+    #[test]
+    fn test_sanitize_normalizes_empty_endpoint_to_none() {
+        // Hand-edited TOML may set `endpoint = ""`; serde keeps it as Some("").
+        // `sanitize` must collapse it to None so it stops short-circuiting validation
+        // and later tricking the telemetry pipeline into using an invalid URL.
+        let mut config: Config = toml::from_str(
+            r#"
+[proxy.telemetry]
+endpoint = ""
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.proxy.telemetry.endpoint.as_deref(), Some(""));
+        config.sanitize();
+        assert!(config.proxy.telemetry.endpoint.is_none());
+        config.validate().expect("sanitized config must validate");
+    }
+
+    #[test]
+    fn test_load_from_sanitizes_empty_endpoint() {
+        use std::fs::write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        write(
+            &path,
+            r#"
+[proxy.telemetry]
+endpoint = ""
+"#,
+        )
+        .unwrap();
+
+        let cfg = Config::load_from(&path).expect("empty endpoint must be normalised on load");
+        assert!(
+            cfg.proxy.telemetry.endpoint.is_none(),
+            "empty string must load as None, not Some(\"\")"
+        );
+    }
+
+    #[test]
+    fn test_validate_rejects_naked_empty_string_endpoint() {
+        // Skip sanitize: a caller that set the value manually must see the bad-URL
+        // error rather than silent acceptance.
+        let mut config = Config::default();
+        config.proxy.telemetry.endpoint = Some(String::new());
+        let err = config
+            .validate()
+            .expect_err("empty string must be rejected if caller skipped sanitize");
+        assert!(
+            err.to_string().contains("Invalid URL"),
+            "unexpected error: {}",
+            err
+        );
     }
 
     #[test]

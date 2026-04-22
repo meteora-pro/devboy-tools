@@ -198,7 +198,7 @@ If the upstream schema requires arguments the local schema does not declare, Dev
 
 ### Per-server override
 
-A `routing` block under `[[proxy_mcp_servers]]` overrides the global policy for that upstream only:
+A `routing` block under `[[proxy_mcp_servers]]` overrides the global policy for that upstream only. **Only the fields you set win over the global config** — omitted fields keep their global values (a per-server block that just sets `strategy` does not silently reset `fallback_on_error` to its default):
 
 ```toml
 [[proxy_mcp_servers]]
@@ -209,8 +209,11 @@ token_key = "devboy-cloud.token"
 transport = "streamable-http"
 
 [proxy_mcp_servers.routing]
+# Inherits global `fallback_on_error` and `tool_overrides`; only strategy changes.
 strategy = "local-first"
 ```
+
+Supported override fields: `strategy`, `fallback_on_error`, `tool_overrides`. When `tool_overrides` is set it is **prepended** to the global list so per-server rules match first.
 
 ## Secrets cache
 
