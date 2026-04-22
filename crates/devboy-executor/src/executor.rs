@@ -1,10 +1,12 @@
 use devboy_core::types::ChatType;
 use devboy_core::{
-    CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Error, GetChatsParams,
-    GetMessagesParams, GetPipelineInput, GetUsersOptions, IssueFilter, IssueProvider, JobLogMode,
-    JobLogOptions, MeetingFilter, MeetingNotesProvider, MergeRequestProvider, MessengerProvider,
-    MrFilter, PipelineProvider, Result, SearchMessagesParams, SendMessageParams, ToolCategory,
-    UpdateIssueInput,
+    AddStructureRowsInput, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
+    CreateStructureInput, Error, GetChatsParams, GetForestOptions, GetMessagesParams,
+    GetPipelineInput, GetStructureValuesInput, GetUsersOptions, IssueFilter, IssueProvider,
+    JobLogMode, JobLogOptions, MeetingFilter, MeetingNotesProvider, MergeRequestProvider,
+    MessengerProvider, MoveStructureRowsInput, MrFilter, PipelineProvider, Result,
+    SaveStructureViewInput, SearchMessagesParams, SendMessageParams, StructureRowItem,
+    StructureViewColumn, ToolCategory, UpdateIssueInput,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -410,6 +412,17 @@ async fn dispatch_tool(
         "upload_asset" => execute_upload_asset(provider, args).await,
         "download_asset" => execute_download_asset(provider, args, asset_manager).await,
         "delete_asset" => execute_delete_asset(provider, args, asset_manager).await,
+
+        // Jira Structure tools
+        "get_structures" => execute_get_structures(provider).await,
+        "get_structure_forest" => execute_get_structure_forest(provider, args).await,
+        "add_structure_rows" => execute_add_structure_rows(provider, args).await,
+        "move_structure_rows" => execute_move_structure_rows(provider, args).await,
+        "remove_structure_row" => execute_remove_structure_row(provider, args).await,
+        "get_structure_values" => execute_get_structure_values(provider, args).await,
+        "get_structure_views" => execute_get_structure_views(provider, args).await,
+        "save_structure_view" => execute_save_structure_view(provider, args).await,
+        "create_structure" => execute_create_structure(provider, args).await,
 
         _ => Err(Error::NotFound(format!("unknown tool: {tool}"))),
     }
@@ -1737,6 +1750,298 @@ fn base64_encode(data: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(data)
 }
 
+// =============================================================================
+// Jira Structure tool handlers
+// =============================================================================
+
+async fn execute_get_structures(provider: &dyn devboy_core::Provider) -> Result<ToolOutput> {
+    let result = provider.get_structures().await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::Structures(result.items, Some(meta)))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetStructureForestParams {
+    structure_id: u64,
+    offset: Option<u64>,
+    limit: Option<u64>,
+}
+
+async fn execute_get_structure_forest(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetStructureForestParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("missing 'structureId': {e}")))?;
+    let forest = provider
+        .get_structure_forest(
+            params.structure_id,
+            GetForestOptions {
+                offset: params.offset,
+                limit: Some(params.limit.unwrap_or(200)),
+            },
+        )
+        .await?;
+    Ok(ToolOutput::StructureForest(Box::new(forest)))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AddStructureRowsParams {
+    structure_id: u64,
+    items: Vec<Value>,
+    under: Option<u64>,
+    after: Option<u64>,
+    forest_version: Option<u64>,
+}
+
+/// Turn a single `items[]` entry from `add_structure_rows` into a
+/// `StructureRowItem`. The tool schema can only express a list of
+/// strings, so callers wanting to set `item_type` or nested fields
+/// are forced to pass JSON inside a string. Accept both:
+///
+/// - bare string → `{ item_id: s, item_type: None }`
+/// - JSON object (either as a real object or a string that parses as
+///   one) → `serde_json::from_value`
+///
+/// Malformed input surfaces as `InvalidData` rather than silently
+/// dropping values through `unwrap_or_default()`.
+fn parse_structure_row_item(v: Value) -> Result<StructureRowItem> {
+    if let Some(s) = v.as_str() {
+        if let Ok(parsed) = serde_json::from_str::<Value>(s)
+            && parsed.is_object()
+        {
+            return serde_json::from_value(parsed)
+                .map_err(|e| Error::InvalidData(format!("invalid structure row item JSON: {e}")));
+        }
+        return Ok(StructureRowItem {
+            item_id: s.to_string(),
+            item_type: None,
+        });
+    }
+    serde_json::from_value(v)
+        .map_err(|e| Error::InvalidData(format!("invalid structure row item: {e}")))
+}
+
+/// Turn a `columns[]` entry from `get_structure_values` /
+/// `save_structure_view` into a `StructureViewColumn`. Same dual
+/// shape as `parse_structure_row_item`: bare string means
+/// `{ field: Some(s) }`, anything else (or a JSON-object string) is
+/// deserialised as a full spec. Errors propagate.
+fn parse_structure_column_spec(v: Value) -> Result<StructureViewColumn> {
+    if let Some(s) = v.as_str() {
+        if let Ok(parsed) = serde_json::from_str::<Value>(s)
+            && parsed.is_object()
+        {
+            return serde_json::from_value(parsed).map_err(|e| {
+                Error::InvalidData(format!("invalid structure column spec JSON: {e}"))
+            });
+        }
+        return Ok(StructureViewColumn {
+            field: Some(s.to_string()),
+            ..Default::default()
+        });
+    }
+    serde_json::from_value(v)
+        .map_err(|e| Error::InvalidData(format!("invalid structure column spec: {e}")))
+}
+
+async fn execute_add_structure_rows(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: AddStructureRowsParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid add_structure_rows params: {e}")))?;
+
+    let items: Vec<StructureRowItem> = params
+        .items
+        .into_iter()
+        .map(parse_structure_row_item)
+        .collect::<Result<Vec<_>>>()?;
+
+    let result = provider
+        .add_structure_rows(
+            params.structure_id,
+            AddStructureRowsInput {
+                items,
+                under: params.under,
+                after: params.after,
+                forest_version: params.forest_version,
+            },
+        )
+        .await?;
+    Ok(ToolOutput::ForestModified(result))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MoveStructureRowsParams {
+    structure_id: u64,
+    row_ids: Vec<u64>,
+    under: Option<u64>,
+    after: Option<u64>,
+    forest_version: Option<u64>,
+}
+
+async fn execute_move_structure_rows(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: MoveStructureRowsParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid move_structure_rows params: {e}")))?;
+    let result = provider
+        .move_structure_rows(
+            params.structure_id,
+            MoveStructureRowsInput {
+                row_ids: params.row_ids,
+                under: params.under,
+                after: params.after,
+                forest_version: params.forest_version,
+            },
+        )
+        .await?;
+    Ok(ToolOutput::ForestModified(result))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoveStructureRowParams {
+    structure_id: u64,
+    row_id: u64,
+}
+
+async fn execute_remove_structure_row(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: RemoveStructureRowParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid remove_structure_row params: {e}")))?;
+    provider
+        .remove_structure_row(params.structure_id, params.row_id)
+        .await?;
+    Ok(ToolOutput::Text(format!(
+        "Row {} removed from structure {}",
+        params.row_id, params.structure_id
+    )))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetStructureValuesParams {
+    structure_id: u64,
+    rows: Vec<u64>,
+    columns: Vec<Value>,
+}
+
+async fn execute_get_structure_values(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetStructureValuesParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid get_structure_values params: {e}")))?;
+
+    let columns: Vec<StructureViewColumn> = params
+        .columns
+        .into_iter()
+        .map(parse_structure_column_spec)
+        .collect::<Result<Vec<_>>>()?;
+
+    let result = provider
+        .get_structure_values(GetStructureValuesInput {
+            structure_id: params.structure_id,
+            rows: params.rows,
+            columns,
+        })
+        .await?;
+    Ok(ToolOutput::StructureValues(Box::new(result)))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetStructureViewsParams {
+    structure_id: u64,
+    view_id: Option<u64>,
+}
+
+async fn execute_get_structure_views(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetStructureViewsParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid get_structure_views params: {e}")))?;
+    let views = provider
+        .get_structure_views(params.structure_id, params.view_id)
+        .await?;
+    Ok(ToolOutput::StructureViews(views, None))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveStructureViewParams {
+    id: Option<u64>,
+    structure_id: u64,
+    name: String,
+    columns: Option<Vec<Value>>,
+    group_by: Option<String>,
+    sort_by: Option<String>,
+    filter: Option<String>,
+}
+
+async fn execute_save_structure_view(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: SaveStructureViewParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid save_structure_view params: {e}")))?;
+
+    let columns: Option<Vec<StructureViewColumn>> = params
+        .columns
+        .map(|cols| {
+            cols.into_iter()
+                .map(parse_structure_column_spec)
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?;
+
+    let view = provider
+        .save_structure_view(SaveStructureViewInput {
+            id: params.id,
+            structure_id: params.structure_id,
+            name: params.name,
+            columns,
+            group_by: params.group_by,
+            sort_by: params.sort_by,
+            filter: params.filter,
+        })
+        .await?;
+    Ok(ToolOutput::StructureViews(vec![view], None))
+}
+
+#[derive(Deserialize)]
+struct CreateStructureParams {
+    name: String,
+    description: Option<String>,
+}
+
+async fn execute_create_structure(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: CreateStructureParams = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("missing 'name': {e}")))?;
+    let structure = provider
+        .create_structure(CreateStructureInput {
+            name: params.name,
+            description: params.description,
+        })
+        .await?;
+    Ok(ToolOutput::Structures(vec![structure], None))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1866,6 +2171,82 @@ mod tests {
                     link_type: "Blocks".into(),
                 }],
                 ..Default::default()
+            })
+        }
+        async fn get_structures(
+            &self,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<devboy_core::Structure>> {
+            Ok(vec![sample_structure()].into())
+        }
+        async fn get_structure_forest(
+            &self,
+            structure_id: u64,
+            _options: devboy_core::GetForestOptions,
+        ) -> devboy_core::Result<devboy_core::StructureForest> {
+            Ok(sample_forest(structure_id))
+        }
+        async fn add_structure_rows(
+            &self,
+            _structure_id: u64,
+            input: devboy_core::AddStructureRowsInput,
+        ) -> devboy_core::Result<devboy_core::ForestModifyResult> {
+            Ok(devboy_core::ForestModifyResult {
+                version: 2,
+                affected_count: input.items.len(),
+            })
+        }
+        async fn move_structure_rows(
+            &self,
+            _structure_id: u64,
+            input: devboy_core::MoveStructureRowsInput,
+        ) -> devboy_core::Result<devboy_core::ForestModifyResult> {
+            Ok(devboy_core::ForestModifyResult {
+                version: 3,
+                affected_count: input.row_ids.len(),
+            })
+        }
+        async fn remove_structure_row(
+            &self,
+            _structure_id: u64,
+            _row_id: u64,
+        ) -> devboy_core::Result<()> {
+            Ok(())
+        }
+        async fn get_structure_values(
+            &self,
+            input: devboy_core::GetStructureValuesInput,
+        ) -> devboy_core::Result<devboy_core::StructureValues> {
+            Ok(devboy_core::StructureValues {
+                structure_id: input.structure_id,
+                values: vec![],
+            })
+        }
+        async fn get_structure_views(
+            &self,
+            structure_id: u64,
+            _view_id: Option<u64>,
+        ) -> devboy_core::Result<Vec<devboy_core::StructureView>> {
+            Ok(vec![sample_view(structure_id)])
+        }
+        async fn save_structure_view(
+            &self,
+            input: devboy_core::SaveStructureViewInput,
+        ) -> devboy_core::Result<devboy_core::StructureView> {
+            Ok(devboy_core::StructureView {
+                id: input.id.unwrap_or(99),
+                name: input.name,
+                structure_id: input.structure_id,
+                ..Default::default()
+            })
+        }
+        async fn create_structure(
+            &self,
+            input: devboy_core::CreateStructureInput,
+        ) -> devboy_core::Result<devboy_core::Structure> {
+            Ok(devboy_core::Structure {
+                id: 42,
+                name: input.name,
+                description: input.description,
             })
         }
         fn provider_name(&self) -> &'static str {
@@ -2456,5 +2837,221 @@ mod tests {
         let provider = MockMeetingProvider;
         let result = dispatch_meeting_tool("nonexistent_tool", &Value::Null, &provider).await;
         assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // Structure tool dispatch tests
+    // =========================================================================
+
+    fn sample_structure() -> devboy_core::Structure {
+        devboy_core::Structure {
+            id: 1,
+            name: "Q1 Plan".into(),
+            description: Some("Quarter 1 planning".into()),
+        }
+    }
+
+    fn sample_forest(structure_id: u64) -> devboy_core::StructureForest {
+        devboy_core::StructureForest {
+            version: 1,
+            structure_id,
+            tree: vec![devboy_core::StructureNode {
+                row_id: 100,
+                item_id: Some("PROJ-1".into()),
+                item_type: Some("issue".into()),
+                children: vec![],
+            }],
+            total_count: Some(1),
+        }
+    }
+
+    fn sample_view(structure_id: u64) -> devboy_core::StructureView {
+        devboy_core::StructureView {
+            id: 10,
+            name: "Default".into(),
+            structure_id,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_structures() {
+        let provider = MockProvider;
+        let result = dispatch_tool("get_structures", &Value::Null, &provider, None)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Structures(ref items, _) if items.len() == 1));
+        assert_eq!(result.type_name(), "structures");
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_structure_forest() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"structureId": 1});
+        let result = dispatch_tool("get_structure_forest", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::StructureForest(_)));
+        assert_eq!(result.type_name(), "structure_forest");
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_structure_forest_missing_id() {
+        let provider = MockProvider;
+        let result = dispatch_tool("get_structure_forest", &Value::Null, &provider, None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_add_structure_rows() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "structureId": 1,
+            "items": ["PROJ-1", "PROJ-2"],
+            "under": 100
+        });
+        let result = dispatch_tool("add_structure_rows", &args, &provider, None)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::ForestModified(r) => {
+                assert_eq!(r.version, 2);
+                assert_eq!(r.affected_count, 2);
+            }
+            _ => panic!("expected ForestModified"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_move_structure_rows() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "structureId": 1,
+            "rowIds": [100, 101],
+            "under": 200
+        });
+        let result = dispatch_tool("move_structure_rows", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::ForestModified(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_remove_structure_row() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"structureId": 1, "rowId": 100});
+        let result = dispatch_tool("remove_structure_row", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Text(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_structure_values() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "structureId": 1,
+            "rows": [100],
+            "columns": ["summary", {"field": "status"}]
+        });
+        let result = dispatch_tool("get_structure_values", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::StructureValues(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_structure_views() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"structureId": 1});
+        let result = dispatch_tool("get_structure_views", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::StructureViews(views, _) if views.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_save_structure_view() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "structureId": 1,
+            "name": "Sprint View"
+        });
+        let result = dispatch_tool("save_structure_view", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(
+            matches!(result, ToolOutput::StructureViews(views, _) if views[0].name == "Sprint View")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_create_structure() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"name": "New Structure", "description": "Test"});
+        let result = dispatch_tool("create_structure", &args, &provider, None)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::Structures(items, _) => {
+                assert_eq!(items[0].name, "New Structure");
+                assert_eq!(items[0].id, 42);
+            }
+            _ => panic!("expected Structures"),
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Regression: structure-specific arg parsing
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn parse_row_item_bare_string_becomes_item_id() {
+        let item = parse_structure_row_item(serde_json::json!("PROJ-1")).unwrap();
+        assert_eq!(item.item_id, "PROJ-1");
+        assert!(item.item_type.is_none());
+    }
+
+    #[test]
+    fn parse_row_item_json_object_string_parses_fields() {
+        let item = parse_structure_row_item(serde_json::json!(
+            "{\"item_id\":\"PROJ-2\",\"item_type\":\"issue\"}"
+        ))
+        .unwrap();
+        assert_eq!(item.item_id, "PROJ-2");
+        assert_eq!(item.item_type.as_deref(), Some("issue"));
+    }
+
+    #[test]
+    fn parse_row_item_malformed_json_object_is_error() {
+        // Valid JSON object but fields do not match StructureRowItem.
+        let err = parse_structure_row_item(serde_json::json!("{\"wrong\":true}")).unwrap_err();
+        assert!(matches!(err, Error::InvalidData(_)));
+    }
+
+    #[test]
+    fn parse_column_spec_bare_string_sets_field() {
+        let col = parse_structure_column_spec(serde_json::json!("summary")).unwrap();
+        assert_eq!(col.field.as_deref(), Some("summary"));
+        assert!(col.formula.is_none());
+    }
+
+    #[test]
+    fn parse_column_spec_formula_json_string_parses() {
+        let col = parse_structure_column_spec(serde_json::json!(
+            "{\"formula\":\"SUM(\\\"Story Points\\\")\"}"
+        ))
+        .unwrap();
+        assert!(col.field.is_none());
+        assert_eq!(col.formula.as_deref(), Some("SUM(\"Story Points\")"));
+    }
+
+    #[test]
+    fn parse_column_spec_object_value_is_deserialised() {
+        // A real JSON object (not a stringified one) should also work.
+        let col = parse_structure_column_spec(serde_json::json!({"field": "status", "width": 120}))
+            .unwrap();
+        assert_eq!(col.field.as_deref(), Some("status"));
+        assert_eq!(col.width, Some(120));
     }
 }

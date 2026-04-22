@@ -1136,3 +1136,213 @@ pub struct SendMessageParams {
     /// Optional attachments to include or reference.
     pub attachments: Vec<MessageAttachment>,
 }
+
+// =============================================================================
+// Jira Structure (plugin)
+// =============================================================================
+
+/// A Jira Structure container.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Structure {
+    /// Structure ID
+    pub id: u64,
+    /// Structure name
+    pub name: String,
+    /// Structure description
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// A node in a Structure forest tree.
+///
+/// Transformed from the compact `rows[] + depths[]` API format
+/// into a nested tree with `children` for LLM readability.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct StructureNode {
+    /// Row ID within the structure
+    pub row_id: u64,
+    /// Item identifier (e.g., Jira issue key "PROJ-123")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_id: Option<String>,
+    /// Item type (e.g., "issue", "folder")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_type: Option<String>,
+    /// Child nodes
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<StructureNode>,
+}
+
+/// A Structure forest — the hierarchy tree for a Structure.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct StructureForest {
+    /// Forest version (for optimistic concurrency)
+    pub version: u64,
+    /// Structure ID
+    pub structure_id: u64,
+    /// Root nodes of the tree
+    pub tree: Vec<StructureNode>,
+    /// Total number of rows in the structure
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_count: Option<u64>,
+}
+
+/// Result of a forest modification (add/move rows).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ForestModifyResult {
+    /// New forest version after modification
+    pub version: u64,
+    /// Number of rows affected
+    pub affected_count: usize,
+}
+
+/// A saved view for a Structure.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct StructureView {
+    /// View ID
+    pub id: u64,
+    /// View name
+    pub name: String,
+    /// Structure ID this view belongs to
+    pub structure_id: u64,
+    /// Column definitions
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<StructureViewColumn>,
+    /// Group by field
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_by: Option<String>,
+    /// Sort by field
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort_by: Option<String>,
+    /// JQL filter
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
+}
+
+/// A column in a Structure view.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct StructureViewColumn {
+    /// Column ID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Jira field name (e.g., "summary", "status")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    /// Structure Expr formula (e.g., "SUM(\"Story Points\")")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
+    /// Column width in pixels
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+}
+
+/// Batch values for Structure rows × columns.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct StructureValues {
+    /// Structure ID
+    pub structure_id: u64,
+    /// Values matrix: row_id → column values
+    pub values: Vec<StructureRowValues>,
+}
+
+/// Values for a single row.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct StructureRowValues {
+    /// Row ID
+    pub row_id: u64,
+    /// Column values (column_id/field → value)
+    pub columns: Vec<StructureColumnValue>,
+}
+
+/// A single column value.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct StructureColumnValue {
+    /// Column identifier (field name or formula)
+    pub column: String,
+    /// The value (can be string, number, null, etc.)
+    pub value: Value,
+}
+
+// --- Structure input types ---
+
+/// Options for getting a structure forest.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GetForestOptions {
+    /// Offset for pagination
+    pub offset: Option<u64>,
+    /// Max rows to return (default: 200)
+    pub limit: Option<u64>,
+}
+
+/// Input for adding rows to a structure.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AddStructureRowsInput {
+    /// Items to add
+    pub items: Vec<StructureRowItem>,
+    /// Parent row ID (items become children)
+    pub under: Option<u64>,
+    /// Sibling row ID (items placed after)
+    pub after: Option<u64>,
+    /// Forest version for optimistic locking
+    pub forest_version: Option<u64>,
+}
+
+/// A single item to add to a structure.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StructureRowItem {
+    /// Jira issue key or folder name
+    pub item_id: String,
+    /// Item type: "issue" (default) or "folder"
+    pub item_type: Option<String>,
+}
+
+/// Input for moving rows within a structure.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MoveStructureRowsInput {
+    /// Row IDs to move
+    pub row_ids: Vec<u64>,
+    /// New parent row ID
+    pub under: Option<u64>,
+    /// Sibling row ID (placed after)
+    pub after: Option<u64>,
+    /// Forest version for optimistic locking
+    pub forest_version: Option<u64>,
+}
+
+/// Input for reading structure values.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GetStructureValuesInput {
+    /// Structure ID
+    pub structure_id: u64,
+    /// Row IDs to read
+    pub rows: Vec<u64>,
+    /// Columns to read
+    pub columns: Vec<StructureViewColumn>,
+}
+
+/// Input for saving a structure view.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SaveStructureViewInput {
+    /// View ID (omit to create new)
+    pub id: Option<u64>,
+    /// Structure ID
+    pub structure_id: u64,
+    /// View name
+    pub name: String,
+    /// Column definitions
+    pub columns: Option<Vec<StructureViewColumn>>,
+    /// Group by field
+    pub group_by: Option<String>,
+    /// Sort by field
+    pub sort_by: Option<String>,
+    /// JQL filter
+    pub filter: Option<String>,
+}
+
+/// Input for creating a new structure.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CreateStructureInput {
+    /// Structure name
+    pub name: String,
+    /// Structure description
+    pub description: Option<String>,
+}

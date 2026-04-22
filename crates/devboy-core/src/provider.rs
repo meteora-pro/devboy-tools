@@ -10,12 +10,14 @@ use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::types::JobLogMode;
 use crate::types::{
-    Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Discussion, FileDiff,
-    GetChatsParams, GetMessagesParams, GetPipelineInput, GetUsersOptions, Issue, IssueFilter,
-    IssueRelations, IssueStatus, JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote,
-    MeetingTranscript, MergeRequest, MessengerChat, MessengerMessage, MrFilter, PipelineInfo,
-    ProviderResult, Release, SearchMessagesParams, SendMessageParams, UpdateIssueInput,
-    UpdateMergeRequestInput, User,
+    AddStructureRowsInput, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
+    CreateStructureInput, Discussion, FileDiff, ForestModifyResult, GetChatsParams,
+    GetForestOptions, GetMessagesParams, GetPipelineInput, GetStructureValuesInput,
+    GetUsersOptions, Issue, IssueFilter, IssueRelations, IssueStatus, JobLogOptions, JobLogOutput,
+    MeetingFilter, MeetingNote, MeetingTranscript, MergeRequest, MessengerChat, MessengerMessage,
+    MoveStructureRowsInput, MrFilter, PipelineInfo, ProviderResult, Release,
+    SaveStructureViewInput, SearchMessagesParams, SendMessageParams, Structure, StructureForest,
+    StructureValues, StructureView, UpdateIssueInput, UpdateMergeRequestInput, User,
 };
 
 /// Provider for working with issues.
@@ -158,6 +160,100 @@ pub trait IssueProvider: Send + Sync {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "get_issue_relations".to_string(),
+        })
+    }
+
+    // --- Jira Structure plugin methods ---
+    // Default: ProviderUnsupported. Only JiraClient overrides these.
+
+    /// List all available structures.
+    async fn get_structures(&self) -> Result<ProviderResult<Structure>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_structures".to_string(),
+        })
+    }
+
+    /// Get a structure's forest (hierarchy tree).
+    async fn get_structure_forest(
+        &self,
+        _structure_id: u64,
+        _options: GetForestOptions,
+    ) -> Result<StructureForest> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_structure_forest".to_string(),
+        })
+    }
+
+    /// Add rows to a structure's forest.
+    async fn add_structure_rows(
+        &self,
+        _structure_id: u64,
+        _input: AddStructureRowsInput,
+    ) -> Result<ForestModifyResult> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "add_structure_rows".to_string(),
+        })
+    }
+
+    /// Move rows within a structure's forest.
+    async fn move_structure_rows(
+        &self,
+        _structure_id: u64,
+        _input: MoveStructureRowsInput,
+    ) -> Result<ForestModifyResult> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "move_structure_rows".to_string(),
+        })
+    }
+
+    /// Remove a row from a structure's forest.
+    async fn remove_structure_row(&self, _structure_id: u64, _row_id: u64) -> Result<()> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "remove_structure_row".to_string(),
+        })
+    }
+
+    /// Batch-read column values (including formulas) for structure rows.
+    async fn get_structure_values(
+        &self,
+        _input: GetStructureValuesInput,
+    ) -> Result<StructureValues> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_structure_values".to_string(),
+        })
+    }
+
+    /// Get views for a structure, optionally a specific view by ID.
+    async fn get_structure_views(
+        &self,
+        _structure_id: u64,
+        _view_id: Option<u64>,
+    ) -> Result<Vec<StructureView>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_structure_views".to_string(),
+        })
+    }
+
+    /// Create or update a structure view.
+    async fn save_structure_view(&self, _input: SaveStructureViewInput) -> Result<StructureView> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "save_structure_view".to_string(),
+        })
+    }
+
+    /// Create a new structure.
+    async fn create_structure(&self, _input: CreateStructureInput) -> Result<Structure> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "create_structure".to_string(),
         })
     }
 

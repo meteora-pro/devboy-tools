@@ -381,6 +381,12 @@ impl McpServer {
                 "github" | "gitlab"
             )
         });
+        // Jira Structure is a Jira-only add-on; don't expose the
+        // category under GitHub/GitLab/ClickUp — every call would
+        // return ProviderUnsupported and pollute the tool list.
+        let has_jira_provider = providers
+            .iter()
+            .any(|p| IssueProvider::provider_name(p.as_ref()) == "jira");
         let has_meeting_providers = !self.meeting_providers.is_empty();
         let has_messenger_providers = !self.active_messenger_providers().is_empty();
 
@@ -410,6 +416,7 @@ impl McpServer {
                     devboy_core::ToolCategory::MeetingNotes => has_meeting_providers,
                     devboy_core::ToolCategory::Messenger => has_messenger_providers,
                     devboy_core::ToolCategory::Releases => has_mr_providers,
+                    devboy_core::ToolCategory::JiraStructure => has_jira_provider,
                 })
                 .unwrap_or(true) // Tools without category are always available
         });
