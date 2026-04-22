@@ -11,7 +11,8 @@
 use std::time::Duration;
 
 use devboy_core::config::{
-    ProxyConfig, ProxyRoutingConfig, ProxyTelemetryConfig, ProxyToolRule, RoutingStrategy,
+    ProxyConfig, ProxyRoutingConfig, ProxyRoutingOverride, ProxyTelemetryConfig, ProxyToolRule,
+    RoutingStrategy,
 };
 use devboy_mcp::protocol::ToolDefinition;
 use devboy_mcp::proxy::{McpProxyClient, ProxyManager, ProxyTransport};
@@ -281,10 +282,10 @@ async fn end_to_end_routing_over_matched_catalogues() {
 
     // 10. Quick sanity check on merged_with for per-server overrides.
     let global = ProxyRoutingConfig::default();
-    let override_cfg = ProxyRoutingConfig {
-        strategy: RoutingStrategy::RemoteFirst,
-        fallback_on_error: false,
-        tool_overrides: vec![],
+    let override_cfg = ProxyRoutingOverride {
+        strategy: Some(RoutingStrategy::RemoteFirst),
+        fallback_on_error: Some(false),
+        tool_overrides: None,
     };
     let merged = global.merged_with(Some(&override_cfg));
     assert_eq!(merged.strategy, RoutingStrategy::RemoteFirst);
