@@ -17,9 +17,7 @@ use devboy_mcp::protocol::ToolDefinition;
 use devboy_mcp::proxy::{McpProxyClient, ProxyManager, ProxyTransport};
 use devboy_mcp::routing::{ProxyStatus, RoutingEngine, RoutingTarget};
 use devboy_mcp::signature_match::{ToolCatalogue, build_report};
-use devboy_mcp::telemetry::{
-    TelemetryAuth, TelemetryEvent, TelemetryPipeline, TelemetryStatus,
-};
+use devboy_mcp::telemetry::{TelemetryAuth, TelemetryEvent, TelemetryPipeline, TelemetryStatus};
 use httpmock::prelude::*;
 use serde_json::json;
 
@@ -138,14 +136,14 @@ async fn end_to_end_routing_over_matched_catalogues() {
     // 5. Build match report and spot-check classification.
     let report = build_report(ToolCatalogue {
         local: &local,
-        upstream: catalogue
-            .iter()
-            .map(|(p, t)| (p.clone(), &t[..]))
-            .collect(),
+        upstream: catalogue.iter().map(|(p, t)| (p.clone(), &t[..])).collect(),
     });
 
     let m_get_issues = report.get("get_issues").unwrap();
-    assert!(m_get_issues.is_routable_local(), "get_issues should be routable locally");
+    assert!(
+        m_get_issues.is_routable_local(),
+        "get_issues should be routable locally"
+    );
     let m_get_issue = report.get("get_issue").unwrap();
     assert_eq!(m_get_issue.schema_compatible, Some(false));
     assert!(report.get("list_contexts").unwrap().local_present);
@@ -180,7 +178,10 @@ async fn end_to_end_routing_over_matched_catalogues() {
     // Remote-only → Remote:cloud.
     let d = engine.decide_quiet("cloud_render_report");
     match d.primary {
-        RoutingTarget::Remote { prefix, original_name } => {
+        RoutingTarget::Remote {
+            prefix,
+            original_name,
+        } => {
             assert_eq!(prefix, "cloud");
             assert_eq!(original_name, "cloud_render_report");
         }
@@ -194,7 +195,10 @@ async fn end_to_end_routing_over_matched_catalogues() {
     // Explicit prefix → Remote regardless of report.
     let d = engine.decide_quiet("cloud__list_contexts");
     match d.primary {
-        RoutingTarget::Remote { prefix, original_name } => {
+        RoutingTarget::Remote {
+            prefix,
+            original_name,
+        } => {
             assert_eq!(prefix, "cloud");
             assert_eq!(original_name, "list_contexts");
         }
@@ -205,7 +209,11 @@ async fn end_to_end_routing_over_matched_catalogues() {
     let status = ProxyStatus::from_engine(&engine);
     assert!(status.routable_locally.contains(&"get_issues".to_string()));
     assert!(status.local_only.contains(&"list_contexts".to_string()));
-    assert!(status.remote_only.contains(&"cloud_render_report".to_string()));
+    assert!(
+        status
+            .remote_only
+            .contains(&"cloud_render_report".to_string())
+    );
     assert_eq!(status.incompatible.len(), 1);
     assert_eq!(status.incompatible[0].tool, "get_issue");
 
@@ -244,7 +252,12 @@ async fn end_to_end_routing_over_matched_catalogues() {
         .unwrap();
 
     let buf = pipeline.buffer();
-    for name in ["get_issues", "get_issue", "list_contexts", "cloud_render_report"] {
+    for name in [
+        "get_issues",
+        "get_issue",
+        "list_contexts",
+        "cloud_render_report",
+    ] {
         let decision = engine.decide_quiet(name);
         let mut ev = TelemetryEvent::now(&decision.resolved_name, decision.reason.as_label());
         ev.routing_detail = decision.reason.detail().map(String::from);

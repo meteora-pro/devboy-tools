@@ -259,8 +259,7 @@ impl RoutingEngine {
             );
         }
 
-        let (strategy, override_pattern) =
-            self.resolved_strategy_with_override(requested_name);
+        let (strategy, override_pattern) = self.resolved_strategy_with_override(requested_name);
 
         let base_reason = match override_pattern {
             Some(pat) => RoutingReason::OverrideRule(pat),
