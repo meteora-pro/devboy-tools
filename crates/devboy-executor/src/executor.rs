@@ -2210,6 +2210,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_create_merge_request_comment_params_still_accept_snake_case() {
+        // Belt-and-suspenders: the camelCase aliases must not break the
+        // original snake_case payload shape, which the MCP schema
+        // declares and which some callers (our own skills included)
+        // send today.
+        let args = serde_json::json!({
+            "key": "mr#566",
+            "body": "reply",
+            "file_path": "src/main.rs",
+            "line": 12,
+            "line_type": "new",
+            "commit_sha": "abc123",
+            "discussion_id": "788adb16c57805c9a5d59272c944cddea381a605"
+        });
+
+        let params: CreateMrCommentParams = serde_json::from_value(args).unwrap();
+        assert_eq!(params.key, "mr#566");
+        assert_eq!(params.file_path.as_deref(), Some("src/main.rs"));
+        assert_eq!(params.line_type.as_deref(), Some("new"));
+        assert_eq!(params.commit_sha.as_deref(), Some("abc123"));
+        assert_eq!(
+            params.discussion_id.as_deref(),
+            Some("788adb16c57805c9a5d59272c944cddea381a605")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_create_merge_request_comment_accepts_camel_case_args() {
+        // End-to-end: the executor's `dispatch_tool` path must accept
+        // the same camelCase payload that real MCP clients (and our
+        // skills) send, otherwise the alias would only help direct
+        // `from_value` callers.
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "mrKey": "mr#1",
+            "body": "threaded reply",
+            "discussionId": "abc123"
+        });
+        let result = dispatch_tool("create_merge_request_comment", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Text(ref t) if t.contains("Comment added")));
+    }
+
     #[tokio::test]
     async fn test_dispatch_unknown_tool() {
         let provider = MockProvider;
