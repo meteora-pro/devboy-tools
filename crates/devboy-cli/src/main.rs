@@ -657,16 +657,24 @@ async fn main() -> Result<()> {
         EnvFilter::new("info")
     };
 
-    // stdout is a transport-layer channel for `devboy mcp` (JSON-RPC messages) and a
-    // pipe-friendly surface for `devboy proxy status --json` / any `devboy … | jq`
-    // pipeline. Route tracing to stderr for all such cases; for plain interactive
-    // commands we keep logs on stdout so users can read them without redirection.
+    // stdout is a transport-layer channel for `devboy mcp` (JSON-RPC messages) and
+    // any subcommand a script is expected to parse (`tools call` → MCP tool-result
+    // JSON, `tools list` → table-like output users pipe to grep/jq, `format-pipeline`
+    // → whatever the pipeline emits to stdout, `proxy status --json`). Route tracing
+    // to stderr in all those cases so `devboy tools call get_issues ... | jq` and
+    // `devboy mcp` do not get their stdout clobbered with log lines. For plain
+    // interactive commands (`init`, `config set`, `doctor`, `issues`) we keep logs
+    // on stdout so users see them without having to redirect.
     let needs_stderr_logs = matches!(
         &cli.command,
         Some(Commands::Mcp { .. })
             | Some(Commands::Proxy {
                 command: ProxyCommands::Status { json: true, .. },
             })
+            | Some(Commands::Tools {
+                command: Some(ToolsCommands::Call { .. } | ToolsCommands::List),
+            })
+            | Some(Commands::FormatPipeline { .. })
     );
 
     // Always install sentry-tracing layer when feature is enabled.

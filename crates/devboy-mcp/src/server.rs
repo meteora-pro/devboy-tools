@@ -826,13 +826,18 @@ fn output_to_result(output: devboy_executor::ToolOutput) -> ToolCallResult {
 /// try the next. In multi-provider setups, a key like `gitlab#1` is
 /// invalid for GitHub but valid for GitLab.
 fn should_try_next_provider(e: &devboy_core::Error) -> bool {
+    // Only `ProviderUnsupported` / `ProviderNotFound` mean "this provider can't
+    // handle the tool at all" and justify trying the next provider in the chain.
+    //
+    // `NotFound` / `InvalidData` / `Http` used to short-circuit here too, but
+    // that turned real upstream errors (missing issue, 5xx from GitLab, reqwest
+    // DNS failure, etc.) into a misleading "No provider supports '<tool>'"
+    // response — hiding the actual cause from the caller. Those error variants
+    // now bubble up as the proper `tools/call` error so the caller sees what
+    // actually went wrong.
     matches!(
         e,
-        devboy_core::Error::ProviderUnsupported { .. }
-            | devboy_core::Error::ProviderNotFound(_)
-            | devboy_core::Error::NotFound(_)
-            | devboy_core::Error::InvalidData(_)
-            | devboy_core::Error::Http(_)
+        devboy_core::Error::ProviderUnsupported { .. } | devboy_core::Error::ProviderNotFound(_)
     )
 }
 
