@@ -605,7 +605,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                     "Row IDs to read values for",
                 ));
                 s.add_property("columns", PropertySchema::array(
-                    PropertySchema::string("Column spec: field name (e.g. 'summary'), or JSON {\"field\":\"status\"} or {\"formula\":\"SUM(\\\"Story Points\\\")\"})"),
+                    PropertySchema::string("Column spec: field name (e.g. 'summary'), or JSON {\"field\":\"status\"} or {\"formula\":\"SUM(\\\"Story Points\\\")\"}"),
                     "Columns to read",
                 ));
                 s.set_required("structureId", true);

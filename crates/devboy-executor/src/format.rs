@@ -322,25 +322,43 @@ pub fn format_output(
                 None,
             ))
         }
-        // Jira Structure outputs — serialize as JSON
+        // Jira Structure outputs — serialize as JSON. Match the
+        // `Relations` branch above: surface serialisation errors as
+        // `InvalidData` rather than silently emitting an empty body.
         ToolOutput::Structures(items, _meta) => {
-            let json = serde_json::to_string_pretty(&items).unwrap_or_default();
+            let json = serde_json::to_string_pretty(&items).map_err(|e| {
+                devboy_core::Error::InvalidData(format!("failed to serialize structures: {e}"))
+            })?;
             Ok(text_result(json, None, None))
         }
         ToolOutput::StructureForest(forest) => {
-            let json = serde_json::to_string_pretty(&*forest).unwrap_or_default();
+            let json = serde_json::to_string_pretty(&*forest).map_err(|e| {
+                devboy_core::Error::InvalidData(format!(
+                    "failed to serialize structure forest: {e}"
+                ))
+            })?;
             Ok(text_result(json, None, None))
         }
         ToolOutput::StructureValues(values) => {
-            let json = serde_json::to_string_pretty(&*values).unwrap_or_default();
+            let json = serde_json::to_string_pretty(&*values).map_err(|e| {
+                devboy_core::Error::InvalidData(format!(
+                    "failed to serialize structure values: {e}"
+                ))
+            })?;
             Ok(text_result(json, None, None))
         }
         ToolOutput::StructureViews(views, _meta) => {
-            let json = serde_json::to_string_pretty(&views).unwrap_or_default();
+            let json = serde_json::to_string_pretty(&views).map_err(|e| {
+                devboy_core::Error::InvalidData(format!("failed to serialize structure views: {e}"))
+            })?;
             Ok(text_result(json, None, None))
         }
         ToolOutput::ForestModified(result) => {
-            let json = serde_json::to_string_pretty(&result).unwrap_or_default();
+            let json = serde_json::to_string_pretty(&result).map_err(|e| {
+                devboy_core::Error::InvalidData(format!(
+                    "failed to serialize forest modification result: {e}"
+                ))
+            })?;
             Ok(text_result(json, None, None))
         }
         ToolOutput::Text(text) => Ok(text_result(text, None, None)),

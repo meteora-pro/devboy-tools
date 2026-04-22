@@ -1799,6 +1799,57 @@ struct AddStructureRowsParams {
     forest_version: Option<u64>,
 }
 
+/// Turn a single `items[]` entry from `add_structure_rows` into a
+/// `StructureRowItem`. The tool schema can only express a list of
+/// strings, so callers wanting to set `item_type` or nested fields
+/// are forced to pass JSON inside a string. Accept both:
+///
+/// - bare string → `{ item_id: s, item_type: None }`
+/// - JSON object (either as a real object or a string that parses as
+///   one) → `serde_json::from_value`
+///
+/// Malformed input surfaces as `InvalidData` rather than silently
+/// dropping values through `unwrap_or_default()`.
+fn parse_structure_row_item(v: Value) -> Result<StructureRowItem> {
+    if let Some(s) = v.as_str() {
+        if let Ok(parsed) = serde_json::from_str::<Value>(s)
+            && parsed.is_object()
+        {
+            return serde_json::from_value(parsed)
+                .map_err(|e| Error::InvalidData(format!("invalid structure row item JSON: {e}")));
+        }
+        return Ok(StructureRowItem {
+            item_id: s.to_string(),
+            item_type: None,
+        });
+    }
+    serde_json::from_value(v)
+        .map_err(|e| Error::InvalidData(format!("invalid structure row item: {e}")))
+}
+
+/// Turn a `columns[]` entry from `get_structure_values` /
+/// `save_structure_view` into a `StructureViewColumn`. Same dual
+/// shape as `parse_structure_row_item`: bare string means
+/// `{ field: Some(s) }`, anything else (or a JSON-object string) is
+/// deserialised as a full spec. Errors propagate.
+fn parse_structure_column_spec(v: Value) -> Result<StructureViewColumn> {
+    if let Some(s) = v.as_str() {
+        if let Ok(parsed) = serde_json::from_str::<Value>(s)
+            && parsed.is_object()
+        {
+            return serde_json::from_value(parsed).map_err(|e| {
+                Error::InvalidData(format!("invalid structure column spec JSON: {e}"))
+            });
+        }
+        return Ok(StructureViewColumn {
+            field: Some(s.to_string()),
+            ..Default::default()
+        });
+    }
+    serde_json::from_value(v)
+        .map_err(|e| Error::InvalidData(format!("invalid structure column spec: {e}")))
+}
+
 async fn execute_add_structure_rows(
     provider: &dyn devboy_core::Provider,
     args: &Value,
@@ -1809,17 +1860,8 @@ async fn execute_add_structure_rows(
     let items: Vec<StructureRowItem> = params
         .items
         .into_iter()
-        .map(|v| {
-            if let Some(s) = v.as_str() {
-                StructureRowItem {
-                    item_id: s.to_string(),
-                    item_type: None,
-                }
-            } else {
-                serde_json::from_value(v).unwrap_or_default()
-            }
-        })
-        .collect();
+        .map(parse_structure_row_item)
+        .collect::<Result<Vec<_>>>()?;
 
     let result = provider
         .add_structure_rows(
@@ -1905,17 +1947,8 @@ async fn execute_get_structure_values(
     let columns: Vec<StructureViewColumn> = params
         .columns
         .into_iter()
-        .map(|v| {
-            if let Some(s) = v.as_str() {
-                StructureViewColumn {
-                    field: Some(s.to_string()),
-                    ..Default::default()
-                }
-            } else {
-                serde_json::from_value(v).unwrap_or_default()
-            }
-        })
-        .collect();
+        .map(parse_structure_column_spec)
+        .collect::<Result<Vec<_>>>()?;
 
     let result = provider
         .get_structure_values(GetStructureValuesInput {
@@ -1965,11 +1998,14 @@ async fn execute_save_structure_view(
     let params: SaveStructureViewParams = serde_json::from_value(args.clone())
         .map_err(|e| Error::InvalidData(format!("invalid save_structure_view params: {e}")))?;
 
-    let columns: Option<Vec<StructureViewColumn>> = params.columns.map(|cols| {
-        cols.into_iter()
-            .map(|v| serde_json::from_value(v).unwrap_or_default())
-            .collect()
-    });
+    let columns: Option<Vec<StructureViewColumn>> = params
+        .columns
+        .map(|cols| {
+            cols.into_iter()
+                .map(parse_structure_column_spec)
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?;
 
     let view = provider
         .save_structure_view(SaveStructureViewInput {
@@ -2963,5 +2999,59 @@ mod tests {
             }
             _ => panic!("expected Structures"),
         }
+    }
+
+    // -------------------------------------------------------------------
+    // Regression: structure-specific arg parsing
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn parse_row_item_bare_string_becomes_item_id() {
+        let item = parse_structure_row_item(serde_json::json!("PROJ-1")).unwrap();
+        assert_eq!(item.item_id, "PROJ-1");
+        assert!(item.item_type.is_none());
+    }
+
+    #[test]
+    fn parse_row_item_json_object_string_parses_fields() {
+        let item = parse_structure_row_item(serde_json::json!(
+            "{\"item_id\":\"PROJ-2\",\"item_type\":\"issue\"}"
+        ))
+        .unwrap();
+        assert_eq!(item.item_id, "PROJ-2");
+        assert_eq!(item.item_type.as_deref(), Some("issue"));
+    }
+
+    #[test]
+    fn parse_row_item_malformed_json_object_is_error() {
+        // Valid JSON object but fields do not match StructureRowItem.
+        let err = parse_structure_row_item(serde_json::json!("{\"wrong\":true}")).unwrap_err();
+        assert!(matches!(err, Error::InvalidData(_)));
+    }
+
+    #[test]
+    fn parse_column_spec_bare_string_sets_field() {
+        let col = parse_structure_column_spec(serde_json::json!("summary")).unwrap();
+        assert_eq!(col.field.as_deref(), Some("summary"));
+        assert!(col.formula.is_none());
+    }
+
+    #[test]
+    fn parse_column_spec_formula_json_string_parses() {
+        let col = parse_structure_column_spec(serde_json::json!(
+            "{\"formula\":\"SUM(\\\"Story Points\\\")\"}"
+        ))
+        .unwrap();
+        assert!(col.field.is_none());
+        assert_eq!(col.formula.as_deref(), Some("SUM(\"Story Points\")"));
+    }
+
+    #[test]
+    fn parse_column_spec_object_value_is_deserialised() {
+        // A real JSON object (not a stringified one) should also work.
+        let col = parse_structure_column_spec(serde_json::json!({"field": "status", "width": 120}))
+            .unwrap();
+        assert_eq!(col.field.as_deref(), Some("status"));
+        assert_eq!(col.width, Some(120));
     }
 }
