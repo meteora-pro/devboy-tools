@@ -169,7 +169,12 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate coverage
-        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+        # `--ignore-filename-regex` mirrors the paths listed in
+        # codecov.yml `ignore:` so local `cargo llvm-cov` runs match
+        # what Codecov reports after its own filter pass.
+        run: |
+          cargo llvm-cov --all-features --lcov --output-path lcov.info \
+            --ignore-filename-regex '(crates/devboy-cli/src/main\.rs|crates/llm-eval/|crates/plugins/format-pipeline/src/bin/eval\.rs)'
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5

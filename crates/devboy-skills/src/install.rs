@@ -820,4 +820,75 @@ body
         assert_eq!(removed, vec!["devboy-setup".to_string()]);
         assert!(!skill_dir.exists());
     }
+
+    // -------------------------------------------------------------------
+    // Agent parsing / detection
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn agent_parse_and_as_str_round_trip() {
+        for agent in Agent::all() {
+            let parsed = Agent::parse(agent.as_str()).unwrap();
+            assert_eq!(parsed, *agent);
+            assert!(!agent.dir_name().is_empty());
+            assert!(agent.dir_name().starts_with('.'));
+        }
+        assert!(Agent::parse("not-an-agent").is_none());
+        // `all` advertises exactly the four agents enumerated today —
+        // bumping this count is intentional and should be done
+        // alongside a matching `parse` arm.
+        assert_eq!(Agent::all().len(), 4);
+    }
+
+    #[test]
+    fn detect_installed_agents_filters_on_disk() {
+        let home = tempdir().unwrap();
+        // No agent dirs created → nothing detected.
+        assert!(detect_installed_agents(home.path()).is_empty());
+
+        // Drop two agent directories; expect exactly those back.
+        fs::create_dir_all(home.path().join(".claude")).unwrap();
+        fs::create_dir_all(home.path().join(".kimi")).unwrap();
+        let detected = detect_installed_agents(home.path());
+        assert!(detected.contains(&Agent::Claude));
+        assert!(detected.contains(&Agent::Kimi));
+        assert!(!detected.contains(&Agent::Codex));
+    }
+
+    // -------------------------------------------------------------------
+    // render_skill_file
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn render_skill_file_produces_round_trippable_markdown() {
+        let original = r#"---
+name: devboy-setup
+description: Walk the user through initial devboy configuration.
+category: self-bootstrap
+version: 3
+compatibility: devboy-tools >= 0.18
+activation:
+  - "setup devboy"
+tools:
+  - doctor
+---
+
+# devboy-setup
+
+Body stays intact across a render round-trip.
+"#;
+        let skill = Skill::parse("devboy-setup", original).unwrap();
+        let rendered = render_skill_file(&skill);
+        assert!(rendered.starts_with("---\n"));
+        assert!(rendered.contains("\n---\n"));
+        assert!(rendered.contains("Body stays intact"));
+
+        // Re-parse: the rendered file must round-trip back to the same
+        // frontmatter + body pair.
+        let reparsed = Skill::parse("devboy-setup", &rendered).unwrap();
+        assert_eq!(reparsed.name(), skill.name());
+        assert_eq!(reparsed.version(), skill.version());
+        assert_eq!(reparsed.category(), skill.category());
+        assert_eq!(reparsed.body.trim_end(), skill.body.trim_end());
+    }
 }
