@@ -9,12 +9,8 @@ authors.workspace = true
 
 [dependencies]
 devboy-core = { path = "../devboy-core" }
+devboy-assets = { path = "../devboy-assets" }
 devboy-executor = { path = "../devboy-executor" }
-devboy-gitlab = { path = "../plugins/api/gitlab" }
-devboy-github = { path = "../plugins/api/github" }
-devboy-clickup = { path = "../plugins/api/clickup" }
-devboy-storage = { path = "../devboy-storage" }
-devboy-format-pipeline = { path = "../plugins/format-pipeline" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

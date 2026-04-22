@@ -10,6 +10,7 @@ pub struct GitHubTokenCheck;
 pub struct GitLabTokenCheck;
 pub struct ClickUpTokenCheck;
 pub struct JiraTokenCheck;
+pub struct SlackTokenCheck;
 
 struct CredentialSpec {
     provider: &'static str,
@@ -159,6 +160,10 @@ fn jira_configured(context: &ContextConfig) -> bool {
     context.jira.is_some()
 }
 
+fn slack_configured(context: &ContextConfig) -> bool {
+    context.slack.is_some()
+}
+
 fn validate_github_token(token: &str) -> TokenFormat {
     let token = token.trim();
     if token.starts_with("ghp_")
@@ -202,6 +207,19 @@ fn validate_jira_token(token: &str) -> TokenFormat {
         TokenFormat::Recognized
     } else {
         TokenFormat::Suspicious("token is shorter than a typical Jira API token or credential pair")
+    }
+}
+
+fn validate_slack_token(token: &str) -> TokenFormat {
+    let token = token.trim();
+    if token.starts_with("xoxb-") {
+        TokenFormat::Recognized
+    } else if token.starts_with("xox") {
+        TokenFormat::Suspicious("expected a Slack bot token prefix like xoxb-")
+    } else if token.len() >= 20 {
+        TokenFormat::Suspicious("token does not look like a Slack OAuth token")
+    } else {
+        TokenFormat::Suspicious("token is shorter than a typical Slack bot token")
     }
 }
 
@@ -332,6 +350,39 @@ impl DiagnosticCheck for JiraTokenCheck {
             .as_ref()
             .and_then(resolve_active_provider_context)
             .is_some_and(|active| jira_configured(&active.config));
+
+        spec.build_result(self, ctx, configured)
+    }
+}
+
+#[async_trait]
+impl DiagnosticCheck for SlackTokenCheck {
+    fn id(&self) -> &'static str {
+        "credentials.slack"
+    }
+
+    fn name(&self) -> &'static str {
+        "Slack bot token available"
+    }
+
+    fn category(&self) -> &'static str {
+        "Credentials"
+    }
+
+    async fn run(&self, ctx: &DiagnosticContext) -> CheckResult {
+        let spec = CredentialSpec {
+            provider: "slack",
+            label: "Slack",
+            help_key: "slack.token",
+            format_hint: "Slack bot token (xoxb-...)",
+            validator: validate_slack_token,
+        };
+
+        let configured = ctx
+            .config
+            .as_ref()
+            .and_then(resolve_active_provider_context)
+            .is_some_and(|active| slack_configured(&active.config));
 
         spec.build_result(self, ctx, configured)
     }

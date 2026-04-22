@@ -2,17 +2,18 @@
 
 use async_trait::async_trait;
 use devboy_core::{
-    Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueLink, IssueProvider, IssueRelations,
-    IssueStatus, MergeRequestProvider, PipelineProvider, Provider, ProviderResult, Result,
-    SortInfo, SortOrder, UpdateIssueInput, User,
+    AssetCapabilities, AssetMeta, Comment, ContextCapabilities, CreateIssueInput, Error, Issue,
+    IssueFilter, IssueLink, IssueProvider, IssueRelations, IssueStatus, MergeRequestProvider,
+    PipelineProvider, Provider, ProviderResult, Result, SortInfo, SortOrder, UpdateIssueInput,
+    User,
 };
 use tracing::{debug, warn};
 
 use crate::DEFAULT_CLICKUP_URL;
 use crate::types::{
-    ClickUpComment, ClickUpCommentList, ClickUpLinkedTask, ClickUpListInfo, ClickUpPriority,
-    ClickUpTask, ClickUpTaskList, ClickUpUser, CreateCommentRequest, CreateCommentResponse,
-    CreateTaskRequest, UpdateTaskRequest,
+    ClickUpAttachment, ClickUpComment, ClickUpCommentList, ClickUpLinkedTask, ClickUpListInfo,
+    ClickUpPriority, ClickUpTask, ClickUpTaskList, ClickUpUser, CreateCommentRequest,
+    CreateCommentResponse, CreateTaskRequest, UpdateTaskRequest,
 };
 
 /// Maximum number of tasks per page in ClickUp API.
@@ -462,6 +463,11 @@ fn map_task(task: &ClickUpTask) -> Issue {
         url: Some(task.url.clone()),
         created_at: map_timestamp(&task.date_created),
         updated_at: map_timestamp(&task.date_updated),
+        attachments_count: if task.attachments.is_empty() {
+            None
+        } else {
+            Some(task.attachments.len() as u32)
+        },
         parent: task.parent.as_ref().map(|id| format!("CU-{id}")),
         subtasks: task
             .subtasks
@@ -481,6 +487,43 @@ fn map_comment(cu_comment: &ClickUpComment) -> Comment {
         created_at: map_timestamp(&cu_comment.date),
         updated_at: None,
         position: None,
+    }
+}
+
+/// Map a ClickUp attachment payload to the provider-agnostic [`AssetMeta`].
+fn map_clickup_attachment(raw: &ClickUpAttachment) -> AssetMeta {
+    let filename = raw
+        .title
+        .clone()
+        .or_else(|| {
+            raw.url
+                .as_deref()
+                .map(devboy_core::asset::filename_from_url)
+        })
+        .unwrap_or_else(|| format!("attachment-{}", raw.id));
+
+    let size = match raw.size.as_ref() {
+        Some(serde_json::Value::Number(n)) => n.as_u64(),
+        Some(serde_json::Value::String(s)) => s.parse::<u64>().ok(),
+        _ => None,
+    };
+
+    let created_at = raw.date.as_deref().and_then(epoch_ms_to_iso8601);
+
+    let author = raw.user.as_ref().map(|u| u.username.clone());
+
+    AssetMeta {
+        id: raw.id.clone(),
+        filename,
+        mime_type: raw.mimetype.clone(),
+        size,
+        url: raw.url.clone(),
+        created_at,
+        author,
+        cached: false,
+        local_path: None,
+        checksum_sha256: None,
+        analysis: None,
     }
 }
 
@@ -1126,6 +1169,76 @@ impl IssueProvider for ClickUpClient {
         Ok(download_url)
     }
 
+    async fn get_issue_attachments(&self, issue_key: &str) -> Result<Vec<AssetMeta>> {
+        let url = self.task_url(issue_key)?;
+        let task: ClickUpTask = self.get(&url).await?;
+        Ok(task
+            .attachments
+            .iter()
+            .map(map_clickup_attachment)
+            .collect())
+    }
+
+    async fn download_attachment(&self, issue_key: &str, asset_id: &str) -> Result<Vec<u8>> {
+        // ClickUp does not expose an "attachment by id" endpoint: the
+        // download URL lives on the task payload. Fetch the task, look up
+        // the attachment, and download from its URL using our authenticated
+        // client.
+        let url = self.task_url(issue_key)?;
+        let task: ClickUpTask = self.get(&url).await?;
+        let attachment = task
+            .attachments
+            .iter()
+            .find(|a| a.id == asset_id)
+            .ok_or_else(|| {
+                Error::NotFound(format!(
+                    "attachment '{asset_id}' not found on task {issue_key}",
+                ))
+            })?;
+        let download_url = attachment.url.as_deref().ok_or_else(|| {
+            Error::InvalidData(format!(
+                "attachment '{asset_id}' on task {issue_key} has no URL",
+            ))
+        })?;
+
+        let response = self
+            .client
+            .get(download_url)
+            .header("Authorization", &self.token)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_default();
+            return Err(Error::from_status(status.as_u16(), message));
+        }
+
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| Error::Http(format!("failed to read attachment bytes: {e}")))?;
+        Ok(bytes.to_vec())
+    }
+
+    fn asset_capabilities(&self) -> AssetCapabilities {
+        // ClickUp supports upload / download / list on issue (task) bodies.
+        // There is no public delete attachment endpoint, so `delete` stays
+        // false for every context.
+        AssetCapabilities {
+            issue: ContextCapabilities {
+                upload: true,
+                download: true,
+                delete: false,
+                list: true,
+                max_file_size: None,
+                allowed_types: Vec::new(),
+            },
+            ..Default::default()
+        }
+    }
+
     async fn get_statuses(&self) -> Result<ProviderResult<IssueStatus>> {
         let url = format!("{}/list/{}", self.base_url, self.list_id);
         let list_info: ClickUpListInfo = self.get(&url).await?;
@@ -1421,6 +1534,7 @@ mod tests {
             subtasks: None,
             dependencies: None,
             linked_tasks: None,
+            attachments: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1467,6 +1581,7 @@ mod tests {
             subtasks: None,
             dependencies: None,
             linked_tasks: None,
+            attachments: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1496,6 +1611,7 @@ mod tests {
             subtasks: None,
             dependencies: None,
             linked_tasks: None,
+            attachments: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1571,6 +1687,91 @@ mod tests {
         let user = map_user_required(None);
         assert_eq!(user.id, "unknown");
         assert_eq!(user.username, "unknown");
+    }
+
+    #[test]
+    fn test_map_clickup_attachment_all_fields() {
+        let raw = ClickUpAttachment {
+            id: "att-1".into(),
+            title: Some("report.log".into()),
+            url: Some("https://attachments.clickup.com/abc/report.log".into()),
+            size: Some(serde_json::json!("2048")),
+            extension: Some("log".into()),
+            mimetype: Some("text/plain".into()),
+            date: Some("1704067200000".into()),
+            user: Some(ClickUpUser {
+                id: 7,
+                username: "uploader".into(),
+                email: None,
+                profile_picture: None,
+            }),
+        };
+        let meta = map_clickup_attachment(&raw);
+        assert_eq!(meta.id, "att-1");
+        assert_eq!(meta.filename, "report.log");
+        assert_eq!(meta.mime_type.as_deref(), Some("text/plain"));
+        assert_eq!(meta.size, Some(2048));
+        assert_eq!(
+            meta.url.as_deref(),
+            Some("https://attachments.clickup.com/abc/report.log")
+        );
+        assert_eq!(meta.author.as_deref(), Some("uploader"));
+        assert_eq!(meta.created_at, Some("2024-01-01T00:00:00Z".to_string()));
+        assert!(!meta.cached);
+    }
+
+    #[test]
+    fn test_map_clickup_attachment_minimal_falls_back_to_url() {
+        let raw = ClickUpAttachment {
+            id: "att-2".into(),
+            title: None,
+            url: Some("https://cdn/a/b/screen.png?token=x".into()),
+            size: Some(serde_json::json!(4096)),
+            extension: None,
+            mimetype: None,
+            date: None,
+            user: None,
+        };
+        let meta = map_clickup_attachment(&raw);
+        // Filename falls back to the last path segment, query stripped.
+        assert_eq!(meta.filename, "screen.png");
+        assert_eq!(meta.size, Some(4096));
+        assert!(meta.created_at.is_none());
+        assert!(meta.author.is_none());
+    }
+
+    #[test]
+    fn test_map_clickup_attachment_missing_everything() {
+        let raw = ClickUpAttachment {
+            id: "att-3".into(),
+            title: None,
+            url: None,
+            size: None,
+            extension: None,
+            mimetype: None,
+            date: None,
+            user: None,
+        };
+        let meta = map_clickup_attachment(&raw);
+        // When title and URL are missing the fallback uses the attachment id.
+        assert_eq!(meta.filename, "attachment-att-3");
+        assert!(meta.url.is_none());
+        assert!(meta.size.is_none());
+    }
+
+    #[test]
+    fn test_clickup_asset_capabilities() {
+        let client =
+            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", "token");
+        let caps = client.asset_capabilities();
+        assert!(caps.issue.upload);
+        assert!(caps.issue.download);
+        assert!(caps.issue.list);
+        assert!(!caps.issue.delete, "ClickUp has no delete attachment API");
+        assert!(
+            !caps.merge_request.upload,
+            "ClickUp does not track merge requests",
+        );
     }
 
     #[test]
@@ -1677,6 +1878,7 @@ mod tests {
             subtasks: None,
             dependencies: None,
             linked_tasks: None,
+            attachments: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1706,6 +1908,7 @@ mod tests {
             subtasks: None,
             dependencies: None,
             linked_tasks: None,
+            attachments: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1735,6 +1938,7 @@ mod tests {
             subtasks: None,
             dependencies: None,
             linked_tasks: None,
+            attachments: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1765,6 +1969,7 @@ mod tests {
             subtasks: None,
             dependencies: None,
             linked_tasks: None,
+            attachments: Vec::new(),
         };
 
         let task = ClickUpTask {
@@ -1790,6 +1995,7 @@ mod tests {
             subtasks: Some(vec![subtask]),
             dependencies: None,
             linked_tasks: None,
+            attachments: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1824,6 +2030,7 @@ mod tests {
             subtasks: None,
             dependencies: None,
             linked_tasks: None,
+            attachments: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -3365,6 +3572,135 @@ mod tests {
                 .items;
             assert_eq!(issues.len(), 1);
             assert_eq!(issues[0].title, "Backlog task");
+        }
+
+        #[tokio::test]
+        async fn test_get_issue_attachments_maps_all_fields() {
+            let server = MockServer::start();
+
+            let task_json = serde_json::json!({
+                "id": "abc123",
+                "name": "Test",
+                "status": {"status": "open", "type": "open"},
+                "tags": [], "assignees": [],
+                "url": "https://app.clickup.com/t/abc123",
+                "date_created": "1704067200000",
+                "date_updated": "1704067200000",
+                "attachments": [
+                    {
+                        "id": "att-1",
+                        "title": "screen.png",
+                        "url": "https://attachments.clickup.com/abc/screen.png",
+                        "size": "12345",
+                        "extension": "png",
+                        "mimetype": "image/png",
+                        "date": "1704067200000",
+                        "user": {"id": 7, "username": "uploader"}
+                    }
+                ]
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(task_json);
+            });
+
+            let client = create_test_client(&server);
+            let assets = client.get_issue_attachments("CU-abc123").await.unwrap();
+            assert_eq!(assets.len(), 1);
+            let a = &assets[0];
+            assert_eq!(a.id, "att-1");
+            assert_eq!(a.filename, "screen.png");
+            assert_eq!(a.mime_type.as_deref(), Some("image/png"));
+            assert_eq!(a.size, Some(12345));
+            assert_eq!(a.author.as_deref(), Some("uploader"));
+        }
+
+        #[tokio::test]
+        async fn test_get_issue_attachments_empty_when_none() {
+            let server = MockServer::start();
+
+            let task_json = serde_json::json!({
+                "id": "abc123",
+                "name": "Test",
+                "status": {"status": "open", "type": "open"},
+                "tags": [], "assignees": [],
+                "url": "https://app.clickup.com/t/abc123",
+                "date_created": "1704067200000",
+                "date_updated": "1704067200000"
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(task_json);
+            });
+
+            let client = create_test_client(&server);
+            let assets = client.get_issue_attachments("CU-abc123").await.unwrap();
+            assert!(assets.is_empty());
+        }
+
+        #[tokio::test]
+        async fn test_download_attachment_fetches_bytes() {
+            let server = MockServer::start();
+
+            let task_json = serde_json::json!({
+                "id": "abc123",
+                "name": "Test",
+                "status": {"status": "open", "type": "open"},
+                "tags": [], "assignees": [],
+                "url": "https://app.clickup.com/t/abc123",
+                "date_created": "1704067200000",
+                "date_updated": "1704067200000",
+                "attachments": [
+                    {
+                        "id": "att-1",
+                        "title": "log.txt",
+                        "url": format!("{}/download/att-1", server.base_url()),
+                    }
+                ]
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(task_json);
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/download/att-1");
+                then.status(200).body("hello world");
+            });
+
+            let client = create_test_client(&server);
+            let bytes = client
+                .download_attachment("CU-abc123", "att-1")
+                .await
+                .unwrap();
+            assert_eq!(bytes, b"hello world");
+        }
+
+        #[tokio::test]
+        async fn test_download_attachment_not_found() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "abc123", "name": "Test",
+                    "status": {"status": "open", "type": "open"},
+                    "tags": [], "assignees": [],
+                    "url": "https://app.clickup.com/t/abc123",
+                    "date_created": "1704067200000",
+                    "date_updated": "1704067200000",
+                    "attachments": []
+                }));
+            });
+
+            let client = create_test_client(&server);
+            let err = client
+                .download_attachment("CU-abc123", "missing")
+                .await
+                .unwrap_err();
+            assert!(matches!(err, Error::NotFound(_)));
         }
     }
 }

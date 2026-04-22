@@ -1,6 +1,7 @@
 use devboy_core::{
     Comment, Discussion, FileDiff, Issue, IssueRelations, IssueStatus, JobLogOutput, MeetingNote,
-    MeetingTranscript, MergeRequest, Pagination, PipelineInfo, SortInfo, User,
+    MeetingTranscript, MergeRequest, MessengerChat, MessengerMessage, Pagination, PipelineInfo,
+    SortInfo, User,
 };
 
 /// Metadata from provider result (pagination + sort info).
@@ -45,6 +46,50 @@ pub enum ToolOutput {
     MeetingTranscript(Box<MeetingTranscript>),
     /// Issue relations (parent, subtasks, linked issues)
     Relations(Box<IssueRelations>),
+    /// List of messenger chats
+    MessengerChats(Vec<MessengerChat>, Option<ResultMeta>),
+    /// List of messenger messages
+    MessengerMessages(Vec<MessengerMessage>, Option<ResultMeta>),
+    /// Single sent message
+    SingleMessage(Box<MessengerMessage>),
+    /// Asset listing result
+    AssetList {
+        /// Serialized attachment objects from the provider.
+        attachments: Vec<serde_json::Value>,
+        /// Number of attachments.
+        count: usize,
+        /// Provider-reported asset capabilities.
+        capabilities: serde_json::Value,
+    },
+    /// Asset downloaded (cached locally or base64)
+    AssetDownloaded {
+        /// Provider-specific asset identifier.
+        asset_id: String,
+        /// Size in bytes.
+        size: usize,
+        /// Absolute path when cached locally.
+        local_path: Option<String>,
+        /// Base64-encoded content when no cache is available.
+        data: Option<String>,
+        /// Whether the result came from local cache.
+        cached: bool,
+    },
+    /// Asset uploaded
+    AssetUploaded {
+        /// Provider-returned URL for the uploaded file.
+        url: String,
+        /// Original filename.
+        filename: String,
+        /// Size in bytes.
+        size: usize,
+    },
+    /// Asset deleted
+    AssetDeleted {
+        /// Deleted asset identifier.
+        asset_id: String,
+        /// Human-readable confirmation message.
+        message: String,
+    },
     /// Plain text result (e.g., "Comment created successfully")
     Text(String),
 }
@@ -61,12 +106,19 @@ impl ToolOutput {
             Self::Statuses(v, _) => v.len(),
             Self::Users(v, _) => v.len(),
             Self::MeetingNotes(v, _) => v.len(),
+            Self::MessengerChats(v, _) => v.len(),
+            Self::MessengerMessages(v, _) => v.len(),
+            Self::AssetList { count, .. } => *count,
             Self::SingleMergeRequest(_)
             | Self::SingleIssue(_)
             | Self::Pipeline(_)
             | Self::JobLog(_)
             | Self::MeetingTranscript(_)
             | Self::Relations(_)
+            | Self::SingleMessage(_)
+            | Self::AssetDownloaded { .. }
+            | Self::AssetUploaded { .. }
+            | Self::AssetDeleted { .. }
             | Self::Text(_) => 1,
         }
     }
@@ -88,6 +140,13 @@ impl ToolOutput {
             Self::MeetingNotes(..) => "meeting_notes",
             Self::MeetingTranscript(_) => "meeting_transcript",
             Self::Relations(_) => "issue_relations",
+            Self::MessengerChats(..) => "messenger_chats",
+            Self::MessengerMessages(..) => "messenger_messages",
+            Self::SingleMessage(_) => "messenger_message",
+            Self::AssetList { .. } => "asset_list",
+            Self::AssetDownloaded { .. } => "asset_downloaded",
+            Self::AssetUploaded { .. } => "asset_uploaded",
+            Self::AssetDeleted { .. } => "asset_deleted",
             Self::Text(_) => "text",
         }
     }
@@ -102,7 +161,9 @@ impl ToolOutput {
             | Self::Comments(_, meta)
             | Self::Statuses(_, meta)
             | Self::Users(_, meta)
-            | Self::MeetingNotes(_, meta) => meta.as_ref(),
+            | Self::MeetingNotes(_, meta)
+            | Self::MessengerChats(_, meta)
+            | Self::MessengerMessages(_, meta) => meta.as_ref(),
             _ => None,
         }
     }
@@ -127,6 +188,7 @@ mod tests {
             url: None,
             created_at: None,
             updated_at: None,
+            attachments_count: None,
             parent: None,
             subtasks: vec![],
         }
@@ -293,6 +355,7 @@ mod tests {
                 limit: 10,
                 total: Some(50),
                 has_more: true,
+                next_cursor: None,
             }),
             sort_info: Some(devboy_core::SortInfo {
                 sort_by: Some("created_at".into()),

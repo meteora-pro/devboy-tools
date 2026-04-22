@@ -8,8 +8,14 @@
     "url": "https://github.com/meteora-pro/devboy-tools.git",
     "directory": "npm/devboy-tools-linux-arm64"
   },
-  "os": ["linux"],
-  "cpu": ["arm64"],
-  "files": ["bin/devboy"],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/devboy"
+  ],
   "preferUnplugged": true
 }

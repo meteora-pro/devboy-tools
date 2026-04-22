@@ -552,6 +552,96 @@ fn test_init_with_proxy_only_skips_git_detection() {
 }
 
 #[test]
+fn test_init_remote_config_url_skips_git_detection_by_default() {
+    // Running `devboy init --yes --remote-config-url ...` inside a git repo used to
+    // auto-add a [contexts.*.github]/[contexts.*.gitlab] section from the origin
+    // remote alongside [remote_config]. Remote config is meant to be the source of
+    // truth for integrations, so the local auto-detected provider is almost always
+    // stale/wrong. Issue #151 changed the default to skip git detection in this case.
+    let temp_dir = create_temp_git_repo("git@gitlab.com:company/project.git");
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "init",
+            "--yes",
+            "--remote-config-url",
+            "https://example.com/config",
+        ])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        !stdout.contains("Detected GitLab"),
+        "Should NOT auto-detect GitLab when --remote-config-url is set"
+    );
+
+    let content = fs::read_to_string(&config_path).unwrap();
+    assert!(
+        content.contains("[remote_config]"),
+        "Should contain [remote_config] section"
+    );
+    assert!(
+        content.contains("https://example.com/config"),
+        "Should contain remote config URL"
+    );
+    assert!(
+        !content.contains(".gitlab]"),
+        "Should NOT contain a [contexts.*.gitlab] section when remote config is the source of truth"
+    );
+    assert!(
+        !content.contains("company/project"),
+        "Should NOT contain git-detected project path"
+    );
+}
+
+#[test]
+fn test_init_remote_config_url_with_detect_git_keeps_auto_detection() {
+    // Escape hatch: `--detect-git` restores pre-#151 behaviour for users who
+    // genuinely want both a remote config and an auto-detected local provider.
+    let temp_dir = create_temp_git_repo("git@github.com:test-owner/test-repo.git");
+    let config_path = temp_dir.path().join(".devboy.toml");
+
+    let output = Command::new(devboy_bin())
+        .args([
+            "init",
+            "--yes",
+            "--remote-config-url",
+            "https://example.com/config",
+            "--detect-git",
+        ])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        stdout.contains("Detected GitHub repository"),
+        "Should auto-detect GitHub when --detect-git override is passed"
+    );
+
+    let content = fs::read_to_string(&config_path).unwrap();
+    assert!(
+        content.contains("[remote_config]"),
+        "Should still contain [remote_config] section"
+    );
+    assert!(
+        content.contains("test-owner"),
+        "Should contain auto-detected owner"
+    );
+    assert!(
+        content.contains("test-repo"),
+        "Should contain auto-detected repo"
+    );
+}
+
+#[test]
 fn test_proxy_add_creates_config() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join(".devboy.toml");

@@ -17,6 +17,12 @@ Thumbs.db
 .env
 .env.local
 
+# Research benchmark workbenches (never committed — contain host IPs / API keys / raw data)
+/docs/research/benchmarks/paper1/
+/docs/research/benchmarks/paper2/
+/docs/research/benchmarks/paper3/
+/docs/research/benchmarks/paper4/
+
 # Local project config
 .devboy.toml
 
@@ -27,3 +33,4 @@ dist/
 
 # npm platform packages (binaries added by CI)
 npm/devboy-tools-*/bin/
+.playwright-cli/

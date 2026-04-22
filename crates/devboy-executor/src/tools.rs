@@ -32,6 +32,8 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("offset", PropertySchema::integer("Number of results to skip (default: 0)", Some(0.0), None));
                 s.add_property("sort_by", PropertySchema::string_enum(&["created_at", "updated_at"], "Sort by field (default: updated_at)"));
                 s.add_property("sort_order", PropertySchema::string_enum(&["asc", "desc"], "Sort order (default: desc)"));
+                s.add_property("projectKey", PropertySchema::string("Project key to filter issues (e.g., \"PROJ\"). Overrides default project. Removed by providers that don't support it."));
+                s.add_property("nativeQuery", PropertySchema::string("Native query passed directly to provider (e.g., Jira JQL). Replaces auto-generated filters. If the query omits a project clause, the default project is auto-injected."));
                 s
             },
         },
@@ -80,8 +82,10 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("description", PropertySchema::string("Issue description/body"));
                 s.add_property("labels", PropertySchema::array(PropertySchema::string("label"), "Labels to add"));
                 s.add_property("assignees", PropertySchema::array(PropertySchema::string("assignee"), "Assignee usernames"));
-                s.add_property("parent", PropertySchema::string("Parent issue key to create a subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp."));
+                s.add_property("parentId", PropertySchema::string("Parent issue key to create a subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp."));
                 s.add_property("markdown", PropertySchema::boolean("Whether the description is markdown (default: true). When true, ClickUp renders formatted text."));
+                s.add_property("projectId", PropertySchema::string("Jira project key (not numeric ID) for issue creation (e.g., \"PROJ\"). Optional — overrides the default project."));
+                s.add_property("issueType", PropertySchema::string("Issue type (e.g., \"Task\", \"Bug\", \"Story\"). Default: \"Task\". Removed by providers that don't support it."));
                 s.set_required("title", true);
                 s
             },
@@ -278,6 +282,21 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
             },
         },
         ToolDefinition {
+            name: "unlink_issues".into(),
+            description: "Remove a link between two issues.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("sourceIssueKey", PropertySchema::string("Source issue key"));
+                s.add_property("targetIssueKey", PropertySchema::string("Target issue key"));
+                s.add_property("linkType", PropertySchema::string("Link type to remove (e.g., blocks, relates_to, subtask)"));
+                s.set_required("sourceIssueKey", true);
+                s.set_required("targetIssueKey", true);
+                s.set_required("linkType", true);
+                s
+            },
+        },
+        ToolDefinition {
             name: "get_epics".into(),
             description: "Get epics (high-level tasks) from the issue tracker.".into(),
             category: ToolCategory::Epics,
@@ -363,6 +382,146 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s
             },
         },
+        ToolDefinition {
+            name: "update_merge_request".into(),
+            description: "Update a merge request / pull request (title, description, state, labels, draft).".into(),
+            category: ToolCategory::GitRepository,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("key", PropertySchema::string("MR key (e.g. 'mr#1', 'pr#42')"));
+                s.add_property("title", PropertySchema::string("New title"));
+                s.add_property("description", PropertySchema::string("New description / body (supports markdown)"));
+                s.add_property("state", PropertySchema::string_enum(&["close", "reopen"], "Change MR state"));
+                s.add_property("labels", PropertySchema::array(PropertySchema::string("label"), "New labels (replaces existing)"));
+                s.set_required("key", true);
+                s
+            },
+        },
+        // =====================================================================
+        // Asset tools
+        // =====================================================================
+        ToolDefinition {
+            name: "get_assets".into(),
+            description: "List file attachments for an issue or merge request.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("context_type", PropertySchema::string_enum(&["issue", "mr"], "Context type: 'issue' or 'mr' (merge request / pull request)"));
+                s.add_property("key", PropertySchema::string("Issue key (e.g. 'DEV-123', 'gitlab#42') or MR key (e.g. 'mr#42', 'pr#42')"));
+                s.set_required("context_type", true);
+                s.set_required("key", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "upload_asset".into(),
+            description: "Upload a file attachment to an issue. Returns the download URL.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("context_type", PropertySchema::string_enum(&["issue"], "Context type (currently only 'issue' is supported for uploads)"));
+                s.add_property("key", PropertySchema::string("Issue key (e.g. 'DEV-123')"));
+                s.add_property("filename", PropertySchema::string("Original filename (e.g. 'screenshot.png')"));
+                s.add_property("fileData", PropertySchema::string("Base64-encoded file content"));
+                s.set_required("context_type", true);
+                s.set_required("key", true);
+                s.set_required("filename", true);
+                s.set_required("fileData", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "download_asset".into(),
+            description: "Download a file attachment to local cache. Returns local file path when cache is available, base64-encoded content as fallback.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("context_type", PropertySchema::string_enum(&["issue", "mr"], "Context type: 'issue' or 'mr'"));
+                s.add_property("key", PropertySchema::string("Issue key or MR key"));
+                s.add_property("asset_id", PropertySchema::string("Asset identifier from get_assets response"));
+                s.set_required("context_type", true);
+                s.set_required("key", true);
+                s.set_required("asset_id", true);
+                s
+            },
+        },
+        // =====================================================================
+        // Messenger tools
+        // =====================================================================
+        ToolDefinition {
+            name: "get_messenger_chats".into(),
+            description: "List available messenger chats, channels, groups, or direct messages.".into(),
+            category: ToolCategory::Messenger,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("search", PropertySchema::string("Optional chat name search"));
+                s.add_property("chat_type", PropertySchema::string_enum(&["direct", "group", "channel"], "Optional chat type filter"));
+                s.add_property("limit", PropertySchema::integer("Maximum number of chats to return", Some(1.0), Some(1000.0)));
+                s.add_property("cursor", PropertySchema::string("Provider pagination cursor"));
+                s.add_property("include_inactive", PropertySchema::boolean("Include archived or inactive chats"));
+                s
+            },
+        },
+        ToolDefinition {
+            name: "get_chat_messages".into(),
+            description: "Get message history for a chat or fetch replies for a specific thread.".into(),
+            category: ToolCategory::Messenger,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("chat_id", PropertySchema::string("Messenger chat ID"));
+                s.add_property("limit", PropertySchema::integer("Maximum number of messages to return", Some(1.0), Some(1000.0)));
+                s.add_property("cursor", PropertySchema::string("Provider pagination cursor"));
+                s.add_property("thread_id", PropertySchema::string("Thread identifier to fetch replies for"));
+                s.add_property("since", PropertySchema::string("Only include messages after this provider timestamp"));
+                s.add_property("until", PropertySchema::string("Only include messages before this provider timestamp"));
+                s.set_required("chat_id", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "search_chat_messages".into(),
+            description: "Search messages across accessible chats or within a specific chat.".into(),
+            category: ToolCategory::Messenger,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("query", PropertySchema::string("Message search query"));
+                s.add_property("chat_id", PropertySchema::string("Optional chat ID to scope the search"));
+                s.add_property("limit", PropertySchema::integer("Maximum number of matches to return", Some(1.0), Some(1000.0)));
+                s.add_property("cursor", PropertySchema::string("Provider pagination cursor"));
+                s.add_property("since", PropertySchema::string("Only include messages after this provider timestamp"));
+                s.add_property("until", PropertySchema::string("Only include messages before this provider timestamp"));
+                s.set_required("query", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "send_message".into(),
+            description: "Send a message to a chat or as a threaded reply.".into(),
+            category: ToolCategory::Messenger,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("chat_id", PropertySchema::string("Messenger chat ID"));
+                s.add_property("text", PropertySchema::string("Message body"));
+                s.add_property("thread_id", PropertySchema::string("Thread identifier to post as a threaded reply"));
+                s.add_property("reply_to_id", PropertySchema::string("Direct parent message ID when supported"));
+                s.set_required("chat_id", true);
+                s.set_required("text", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "delete_asset".into(),
+            description: "Delete a file attachment from an issue. Not all providers support this — check asset_capabilities first.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("key", PropertySchema::string("Issue key (e.g. 'PROJ-123')"));
+                s.add_property("asset_id", PropertySchema::string("Asset identifier to delete"));
+                s.set_required("key", true);
+                s.set_required("asset_id", true);
+                s
+            },
+        },
     ]
 }
 
@@ -373,7 +532,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 24);
+        assert_eq!(tools.len(), 34);
     }
 
     #[test]
@@ -399,6 +558,11 @@ mod tests {
             "get_available_statuses",
             "get_users",
             "link_issues",
+            "unlink_issues",
+            "get_assets",
+            "upload_asset",
+            "download_asset",
+            "delete_asset",
         ];
         let git_repository_tools = [
             "get_merge_requests",
@@ -407,6 +571,7 @@ mod tests {
             "get_merge_request_diffs",
             "create_merge_request",
             "create_merge_request_comment",
+            "update_merge_request",
             "get_pipeline",
             "get_job_logs",
         ];
@@ -415,6 +580,12 @@ mod tests {
             "get_meeting_notes",
             "get_meeting_transcript",
             "search_meeting_notes",
+        ];
+        let messenger_tools = [
+            "get_messenger_chats",
+            "get_chat_messages",
+            "search_chat_messages",
+            "send_message",
         ];
 
         for tool in &tools {
@@ -444,6 +615,13 @@ mod tests {
                     tool.category,
                     ToolCategory::MeetingNotes,
                     "tool {} should be MeetingNotes",
+                    tool.name
+                );
+            } else if messenger_tools.contains(&tool.name.as_str()) {
+                assert_eq!(
+                    tool.category,
+                    ToolCategory::Messenger,
+                    "tool {} should be Messenger",
                     tool.name
                 );
             } else {
@@ -514,12 +692,14 @@ mod tests {
         let get_issues = tools.iter().find(|t| t.name == "get_issues").unwrap();
         let json = serde_json::to_string_pretty(get_issues).unwrap();
 
-        // get_issues should have state, search, labels, assignee, limit, offset, sort_by, sort_order
+        // get_issues should have state, search, labels, assignee, limit, offset, sort_by, sort_order, projectKey, nativeQuery
         assert!(json.contains("state"));
         assert!(json.contains("search"));
         assert!(json.contains("labels"));
         assert!(json.contains("assignee"));
         assert!(json.contains("limit"));
+        assert!(json.contains("projectKey"));
+        assert!(json.contains("nativeQuery"));
     }
 
     #[test]

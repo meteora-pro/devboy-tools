@@ -4,21 +4,26 @@ resolver = "2"
 members = [
     "crates/devboy-core",
     "crates/devboy-storage",
+    "crates/devboy-assets",
     "crates/devboy-executor",
     "crates/devboy-mcp",
     "crates/devboy-cli",
+    "crates/devboy-skills",
     # API plugins
     "crates/plugins/api/gitlab",
     "crates/plugins/api/github",
     "crates/plugins/api/clickup",
     "crates/plugins/api/jira",
     "crates/plugins/api/fireflies",
+    "crates/plugins/api/slack",
     # Pipeline plugins
     "crates/plugins/format-pipeline",
+    # Research eval tools
+    "crates/llm-eval",
 ]
 
 [workspace.package]
-version = "0.15.1"
+version = "0.17.1"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/meteora-pro/devboy-tools"
@@ -65,6 +70,13 @@ mockall = "0.13"
 insta = { version = "1.41", features = ["json", "yaml"] }
 httpmock = "0.8"
 tempfile = "3.15"
+
+# Asset management
+sha2 = "0.10"
+
+# Observability (optional)
+sentry = { version = "0.35", default-features = false, features = ["rustls", "reqwest", "tracing", "panic", "backtrace", "contexts"] }
+sentry-tracing = "0.35"
 
 [profile.release]
 lto = true

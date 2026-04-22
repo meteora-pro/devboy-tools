@@ -31,13 +31,13 @@ pub mod telemetry;
 pub mod tools;
 pub mod transport;
 
-pub use handlers::{KNOWN_BUILTIN_TOOLS, ToolHandler};
+pub use handlers::KNOWN_BUILTIN_TOOLS;
 pub use protocol::{JSONRPC_VERSION, JsonRpcRequest, RequestId};
 pub use proxy::{McpProxyClient, ProxyManager, ProxyTransport};
 pub use routing::{
     IncompatibleTool, ProxyStatus, RoutingDecision, RoutingEngine, RoutingReason, RoutingTarget,
 };
-pub use server::McpServer;
+pub use server::{DeferredInit, McpServer};
 pub use signature_match::{MatchReport, ToolCatalogue, ToolMatch, build_report};
 pub use telemetry::{
     TelemetryAuth, TelemetryBatch, TelemetryBuffer, TelemetryEvent, TelemetryPipeline,

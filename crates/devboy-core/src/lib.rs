@@ -2,8 +2,8 @@
 //!
 //! This crate provides the foundational abstractions used across all devboy components:
 //!
-//! - **Provider traits**: [`IssueProvider`], [`MergeRequestProvider`], [`Provider`]
-//! - **Unified types**: [`Issue`], [`MergeRequest`], [`Discussion`], [`Comment`], [`FileDiff`]
+//! - **Provider traits**: [`IssueProvider`], [`MergeRequestProvider`], [`MessengerProvider`], [`Provider`]
+//! - **Unified types**: [`Issue`], [`MergeRequest`], [`MessengerChat`], [`MessengerMessage`], [`Discussion`], [`Comment`], [`FileDiff`]
 //! - **Configuration**: [`Config`], [`GitHubConfig`], [`GitLabConfig`]
 //! - **Error handling**: [`Error`], [`Result`]
 //!
@@ -22,10 +22,14 @@
 //! }
 //! ```
 
+pub mod asset;
 pub mod config;
 pub mod enricher;
 pub mod error;
 pub mod provider;
+pub mod remote_config;
+#[cfg(feature = "sentry")]
+pub mod sentry_integration;
 pub mod tool_category;
 pub mod types;
 
@@ -34,28 +38,39 @@ pub use error::{Error, Result};
 
 // Re-export provider traits
 pub use provider::{
-    IssueProvider, MeetingNotesProvider, MergeRequestProvider, PipelineProvider, Provider,
+    IssueProvider, MeetingNotesProvider, MergeRequestProvider, MessengerProvider, PipelineProvider,
+    Provider,
 };
 
 // Re-export all types
 pub use types::{
     CodePosition, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
-    Discussion, FailedJob, FileDiff, GetPipelineInput, GetUsersOptions, Issue, IssueFilter,
-    IssueLink, IssueRelations, IssueStatus, JobLogMode, JobLogOptions, JobLogOutput, MeetingFilter,
-    MeetingNote, MeetingSpeaker, MeetingTranscript, MergeRequest, MrFilter, Pagination,
-    PipelineInfo, PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, ProviderResult,
-    Release, ReleaseAsset, SortInfo, SortOrder, TranscriptSentence, UpdateIssueInput, User,
+    Discussion, FailedJob, FileDiff, GetChatsParams, GetMessagesParams, GetPipelineInput,
+    GetUsersOptions, Issue, IssueFilter, IssueLink, IssueRelations, IssueStatus, JobLogMode,
+    JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote, MeetingSpeaker, MeetingTranscript,
+    MergeRequest, MessageAttachment, MessageAuthor, MessengerChat, MessengerMessage, MrFilter,
+    Pagination, PipelineInfo, PipelineJob, PipelineStage, PipelineStatus, PipelineSummary,
+    ProviderResult, Release, ReleaseAsset, SearchMessagesParams, SendMessageParams, SortInfo,
+    SortOrder, TranscriptSentence, UpdateIssueInput, UpdateMergeRequestInput, User,
 };
 
 // Re-export enricher traits and utilities
 pub use enricher::{PropertySchema, ToolEnricher, ToolSchema, sanitize_field_name};
 pub use tool_category::ToolCategory;
 
+// Re-export asset management types
+pub use asset::{
+    AssetAnalysis, AssetCapabilities, AssetContext, AssetContextKind, AssetInput, AssetMeta,
+    ContentKind, ContextCapabilities, MarkdownAttachment, SemanticAnalysis, filename_from_url,
+    parse_markdown_attachments,
+};
+
 // Re-export config types
 pub use config::{
     BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, FirefliesConfig,
     FormatPipelineConfig, GitHubConfig, GitLabConfig, JiraConfig, ProxyConfig,
     ProxyMatchingConfig, ProxyMcpServerConfig, ProxyRoutingConfig, ProxySecretsConfig,
-    ProxyTelemetryConfig, ProxyToolRule, RoutingStrategy, matches_glob,
+    ProxyTelemetryConfig, ProxyToolRule, RemoteConfigSettings, RoutingStrategy,
+    SentryConfig, SlackConfig, default_slack_required_scopes, matches_glob,
     routing_strategy_slug,
 };

@@ -6,9 +6,11 @@
 //! - Creates agent hints about hidden content
 
 /// Truncate a string to max_chars, preserving word boundaries.
-/// The returned string will be at most max_chars long (including ellipsis).
+/// The returned string will be at most max_chars characters long (including ellipsis).
+/// Safe for non-ASCII (UTF-8 multi-byte characters).
 pub fn truncate_string(s: &str, max_chars: usize) -> String {
-    if s.len() <= max_chars {
+    // Bounded check: only walk up to max_chars+1 chars (not the whole string)
+    if s.chars().nth(max_chars).is_none() {
         return s.to_string();
     }
 
@@ -18,24 +20,30 @@ pub fn truncate_string(s: &str, max_chars: usize) -> String {
         return "...".to_string();
     }
 
-    let truncated = &s[..content_limit.min(s.len())];
+    // Find byte offset for content_limit characters (safe char boundary)
+    let byte_limit = s
+        .char_indices()
+        .nth(content_limit)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len());
+    let truncated = &s[..byte_limit];
 
     // Try to break at newline first
     if let Some(pos) = truncated.rfind('\n')
-        && pos > content_limit / 2
+        && pos > byte_limit / 2
     {
         return format!("{}...", &s[..pos]);
     }
 
     // Fall back to word boundary
     if let Some(pos) = truncated.rfind(' ')
-        && pos > content_limit / 2
+        && pos > byte_limit / 2
     {
         return format!("{}...", &s[..pos]);
     }
 
     // Hard truncate if no good boundary found
-    format!("{}...", truncated)
+    format!("{truncated}...")
 }
 
 /// Truncate diff content with context preservation.
@@ -43,7 +51,8 @@ pub fn truncate_string(s: &str, max_chars: usize) -> String {
 /// Keeps the beginning and end of the diff to show what changed,
 /// hiding the middle if too long.
 pub fn truncate_diff(diff: &str, max_chars: usize) -> String {
-    if diff.len() <= max_chars {
+    // Bounded check: only walk up to max_chars+1 chars
+    if diff.chars().nth(max_chars).is_none() {
         return diff.to_string();
     }
 

@@ -10,7 +10,10 @@ use serde_json::Value;
 pub const JSONRPC_VERSION: &str = "2.0";
 
 /// MCP protocol version.
-pub const MCP_VERSION: &str = "2024-11-05";
+///
+/// Server echoes back the version it supports. Clients that send a newer version
+/// (e.g., "2025-11-25") should still be compatible with this version.
+pub const MCP_VERSION: &str = "2025-11-25";
 
 /// JSON-RPC request message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -225,7 +228,7 @@ pub struct ToolDefinition {
     pub input_schema: Value,
     /// Tool category for filtering (not serialized to JSON).
     #[serde(skip)]
-    pub category: Option<crate::handlers::ToolCategory>,
+    pub category: Option<devboy_core::ToolCategory>,
 }
 
 /// Tools list response.
