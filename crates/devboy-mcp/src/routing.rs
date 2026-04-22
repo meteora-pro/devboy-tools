@@ -25,7 +25,7 @@
 
 use std::time::Instant;
 
-use devboy_core::config::{ProxyRoutingConfig, RoutingStrategy};
+use devboy_core::config::{ProxyRoutingConfig, RoutingStrategy, routing_strategy_slug};
 use serde_json::{Value, json};
 use tracing::info;
 
@@ -431,15 +431,19 @@ impl ProxyStatus {
 
     /// Render a plain-text report suitable for CLI output.
     ///
-    /// Strategy форматируется через [`strategy_slug`] (kebab-case), симметрично с
-    /// `to_json()` и TOML-сериализацией. Так пользователь видит одно и то же
-    /// написание во всех формах вывода.
+    /// The strategy is formatted via [`routing_strategy_slug`] (kebab-case),
+    /// consistently with `to_json()` and TOML serialization — the user sees the same
+    /// spelling in every output format.
     pub fn to_text_report(&self) -> String {
         use std::fmt::Write;
         let mut out = String::new();
         let _ = writeln!(out, "Proxy routing status");
         let _ = writeln!(out, "====================");
-        let _ = writeln!(out, "strategy           : {}", strategy_slug(self.strategy));
+        let _ = writeln!(
+            out,
+            "strategy           : {}",
+            routing_strategy_slug(self.strategy)
+        );
         let _ = writeln!(out, "fallback_on_error  : {}", self.fallback_on_error);
         let _ = writeln!(out, "total_tools        : {}", self.total_tools);
 
@@ -469,7 +473,7 @@ impl ProxyStatus {
             let _ = writeln!(out);
             let _ = writeln!(out, "Override rules:");
             for (pat, strat) in &self.override_rules {
-                let _ = writeln!(out, "  • {:<24} → {}", pat, strategy_slug(*strat));
+                let _ = writeln!(out, "  • {:<24} → {}", pat, routing_strategy_slug(*strat));
             }
         }
         out
@@ -477,12 +481,12 @@ impl ProxyStatus {
 
     /// JSON form — convenient for machine-readable CLI output (`--json` flag).
     ///
-    /// Strategy values сериализуются в том же kebab-case виде что и в TOML конфиге
-    /// (`local-first`, не `LocalFirst`), иначе клиентам `proxy status --json | jq`
-    /// пришлось бы поддерживать два написания для одного и того же значения.
+    /// Strategy values are serialized in the same kebab-case form as in the TOML
+    /// config (`local-first`, not `LocalFirst`); otherwise `proxy status --json | jq`
+    /// clients would have to deal with two spellings of the same value.
     pub fn to_json(&self) -> Value {
         json!({
-            "strategy": strategy_slug(self.strategy),
+            "strategy": routing_strategy_slug(self.strategy),
             "fallback_on_error": self.fallback_on_error,
             "total_tools": self.total_tools,
             "routable_locally": self.routable_locally,
@@ -495,22 +499,9 @@ impl ProxyStatus {
             })).collect::<Vec<_>>(),
             "override_rules": self.override_rules.iter().map(|(p, s)| json!({
                 "pattern": p,
-                "strategy": strategy_slug(*s),
+                "strategy": routing_strategy_slug(*s),
             })).collect::<Vec<_>>(),
         })
-    }
-}
-
-/// Стабильный kebab-case slug для [`RoutingStrategy`], симметричный serde-сериализации.
-///
-/// Продублировано здесь, а не импортировано из `devboy-core`, чтобы не тянуть в API
-/// `devboy-mcp` приватные helper'ы core-пакета.
-fn strategy_slug(s: RoutingStrategy) -> &'static str {
-    match s {
-        RoutingStrategy::Remote => "remote",
-        RoutingStrategy::Local => "local",
-        RoutingStrategy::LocalFirst => "local-first",
-        RoutingStrategy::RemoteFirst => "remote-first",
     }
 }
 

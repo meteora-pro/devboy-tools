@@ -345,9 +345,9 @@ enum ConfigCommands {
     Set {
         /// Config key (e.g., github.owner, gitlab.url)
         key: String,
-        /// Config value. `allow_hyphen_values` лечит частый случай ввода отрицательных
-        /// чисел вроде `-1` — clap больше не интерпретирует их как флаги, а передаёт
-        /// доменному парсеру, который вернёт понятную ошибку валидации.
+        /// Config value. `allow_hyphen_values` handles the common case of negative
+        /// numbers like `-1` — clap no longer treats them as flags but passes them to
+        /// the domain validator which returns a clear validation error.
         #[arg(allow_hyphen_values = true)]
         value: String,
     },
@@ -1626,15 +1626,15 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
         }
 
         ConfigCommands::Get { key } => {
-            // `config get` поддерживает два формата ключа:
-            //   1. Структурированные пути конфига — `github.owner`, `proxy.routing.strategy`, …
-            //      Для них `Config::get` знает схему: известное поле даёт `Ok(Some|None)`,
-            //      опечатка в имени поля — `Err("Unknown …")`. Пользователю важно знать
-            //      что он опечатался, поэтому такой `Err` превращаем в явную ошибку, а
-            //      не в silent fallback.
-            //   2. Произвольные keychain-ключи (`proxy.cloud.token`, `github.token`, …).
-            //      Для них `Config::get` возвращает `Err` ("Invalid config key …"),
-            //      после чего мы честно ходим в keychain — там и лежат секреты.
+            // `config get` supports two key shapes:
+            //   1. Structured config paths — `github.owner`, `proxy.routing.strategy`, …
+            //      For these `Config::get` knows the schema: a known field returns
+            //      `Ok(Some|None)`, a typo returns `Err("Unknown …")`. We want the user
+            //      to notice the typo, so we surface that `Err` instead of a silent
+            //      keychain fallback.
+            //   2. Arbitrary keychain keys (`proxy.cloud.token`, `github.token`, …).
+            //      For these `Config::get` returns `Err("Invalid config key …")` and we
+            //      honestly fall through to the keychain — that's where secrets live.
             let config = Config::load().context("Failed to load config")?;
             let is_structured_path = is_structured_config_path(&key);
             match config.get(&key) {
@@ -1827,14 +1827,15 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
     Ok(())
 }
 
-/// Проверка что key — это **структурированный путь конфига** (известная схема), а не
-/// произвольный keychain-ключ. Для структурированных путей ошибка от `Config::get` —
-/// это опечатка пользователя; для произвольных — валидная причина пойти в keychain.
+/// Check whether `key` is a **structured config path** (known schema) rather than an
+/// arbitrary keychain key. For structured paths, a `Config::get` error means a user
+/// typo and we want it surfaced; for arbitrary keys, the same error is a valid signal
+/// to fall back to the keychain.
 ///
-/// Сейчас покрывает только `proxy.{routing|secrets|telemetry}.*` — эту схему мы
-/// добавили вместе с transparent proxy и вольны устанавливать строгие правила.
-/// Provider-пути (`github.*`, `gitlab.*`, …) сохраняют историческое поведение (silent
-/// fallback на keychain), чтобы не ломать существующих пользователей.
+/// Currently covers only `proxy.{routing|secrets|telemetry}.*` — this schema was
+/// introduced together with the transparent proxy, so we can apply strict rules to it.
+/// Provider paths (`github.*`, `gitlab.*`, …) keep the historical silent-keychain
+/// fallback to avoid breaking existing users.
 fn is_structured_config_path(key: &str) -> bool {
     let parts: Vec<&str> = key.split('.').collect();
     matches!(

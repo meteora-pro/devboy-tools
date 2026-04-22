@@ -277,9 +277,9 @@ has_fallback=true
 
 Filter with `RUST_LOG=devboy_mcp::routing=info` to see only routing events.
 
-### Response `_meta.routing`
+### Response metadata
 
-For the MCP transport, each `tools/call` response carries an optional `_meta.routing` object describing the executor picked. Client tooling can surface this for debug UI.
+Routing details are currently exposed through tracing logs (`tracing::info` on every decision) rather than as a `_meta.routing` object on `tools/call` responses. Clients should not rely on response-level metadata for routing diagnostics unless and until that behavior is explicitly documented in a future release. For now, capture stderr (`2> routing.log`) and grep for `routing decision` records.
 
 ## Cloud priority — summary of invariants
 
@@ -341,10 +341,11 @@ On any validation failure the whole batch is rejected (`400 Bad Request`) — no
 
 ### MCP protocol and stdout hygiene
 
-All commands send logs to **stderr**, not stdout. stdout stays clean for:
+Not every `devboy` command keeps stdout log-free. The commands whose stdout is reserved for machine-readable output route tracing to **stderr**:
 
 - JSON-RPC messages when running `devboy mcp`
-- Machine-readable output (`devboy proxy status --json`, `devboy config get …`)
-- Any output you pipe into `jq`, `python`, or another MCP client
+- Machine-readable status from `devboy proxy status --json`
+
+For other commands (`devboy config get`, `devboy init`, regular interactive subcommands) human-oriented INFO logs stay on stdout by design — do not assume stdout is free of logs when piping into `jq`, `python`, or another client. Use `2> /dev/null` (or a log file) to suppress/capture the log stream in those cases.
 
 Use `RUST_LOG=devboy_mcp::routing=info devboy mcp 2> routing.log` to capture routing decisions without polluting the JSON-RPC channel.

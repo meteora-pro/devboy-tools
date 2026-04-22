@@ -526,7 +526,7 @@ impl McpServer {
         }
 
         let started = Instant::now();
-        let (result, was_fallback, emitted_reason, emitted_detail, upstream_label) =
+        let (result, was_fallback, emitted_reason, emitted_detail, upstream_label, resolved_name) =
             self.dispatch_with_routing(&params).await;
 
         // Best-effort telemetry — never block response path on this.
@@ -537,7 +537,10 @@ impl McpServer {
             } else {
                 TelemetryStatus::Success
             };
-            let mut event = TelemetryEvent::now(&params.name, emitted_reason);
+            // Always use the *resolved* (unprefixed) name — upstream-prefixed variants
+            // like `cloud__get_issues` would break backend tool-name validation and
+            // inflate per-tool dashboards with duplicate labels.
+            let mut event = TelemetryEvent::now(&resolved_name, emitted_reason);
             event.routing_detail = emitted_detail;
             event.upstream = upstream_label;
             event.status = status;
@@ -600,22 +603,37 @@ impl McpServer {
     async fn dispatch_with_routing(
         &self,
         params: &ToolCallParams,
-    ) -> (ToolCallResult, bool, String, Option<String>, Option<String>) {
+    ) -> (
+        ToolCallResult,
+        bool,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    ) {
         // When no engine is wired, keep legacy behaviour: explicit prefix → remote,
-        // otherwise local.
+        // otherwise local. For telemetry we still want an unprefixed name, so strip the
+        // upstream prefix ourselves.
         let Some(engine) = self.routing_engine.clone() else {
             let result = self.legacy_dispatch(params).await;
-            let reason = if self.proxy_manager.has_tool(&params.name) {
-                "legacy_remote"
+            let (reason, resolved) = if self.proxy_manager.has_tool(&params.name) {
+                // `foo__bar` → `bar`; falls back to the full name if there is no prefix.
+                let stripped = params
+                    .name
+                    .split_once("__")
+                    .map(|(_, rest)| rest.to_string())
+                    .unwrap_or_else(|| params.name.clone());
+                ("legacy_remote", stripped)
             } else {
-                "legacy_local"
+                ("legacy_local", params.name.clone())
             };
-            return (result, false, reason.to_string(), None, None);
+            return (result, false, reason.to_string(), None, None, resolved);
         };
 
         let decision = engine.decide(&params.name);
         let reason_label = decision.reason.as_label().to_string();
         let reason_detail = decision.reason.detail().map(String::from);
+        let resolved_name = decision.resolved_name.clone();
 
         let primary = decision.primary.clone();
         let result = self
@@ -642,10 +660,24 @@ impl McpServer {
                 RoutingTarget::Remote { prefix, .. } => Some(prefix.clone()),
                 _ => None,
             };
-            return (fb_result, true, reason_label, reason_detail, fb_upstream);
+            return (
+                fb_result,
+                true,
+                reason_label,
+                reason_detail,
+                fb_upstream,
+                resolved_name,
+            );
         }
 
-        (result, false, reason_label, reason_detail, upstream_label)
+        (
+            result,
+            false,
+            reason_label,
+            reason_detail,
+            upstream_label,
+            resolved_name,
+        )
     }
 
     /// Run a specific [`RoutingTarget`]. Local execution goes through
