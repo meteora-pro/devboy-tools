@@ -306,7 +306,9 @@ impl TrimStrategy for RandomStrategy {
         // LCG: xₙ₊₁ = (a·xₙ + c) mod m  (Knuth parameters)
         let mut state = self.seed;
         for child in tree.children.iter_mut() {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             // Map to (0.0, 1.0]
             child.value = (state >> 33) as f64 / (u32::MAX as f64);
             for grandchild in &mut child.children {
@@ -540,10 +542,7 @@ mod tests {
     fn test_resolver_hardcoded_defaults() {
         let resolver = StrategyResolver::new();
         // get_issues and get_merge_requests now use Priority (composite scorer)
-        assert_eq!(
-            resolver.resolve("get_issues"),
-            TrimStrategyKind::Priority
-        );
+        assert_eq!(resolver.resolve("get_issues"), TrimStrategyKind::Priority);
         assert_eq!(
             resolver.resolve("get_merge_requests"),
             TrimStrategyKind::Priority
@@ -912,7 +911,10 @@ mod tests {
         // Last item should have highest value
         let last = tree.children.last().unwrap().value;
         let first = tree.children.first().unwrap().value;
-        assert!(last > first, "Reversed: last item should have highest value");
+        assert!(
+            last > first,
+            "Reversed: last item should have highest value"
+        );
         assert!((last - 1.0).abs() < 0.01, "Last item should be ≈ 1.0");
         assert!((first - 0.3).abs() < 0.1, "First item should be ≈ 0.3");
     }
@@ -960,9 +962,18 @@ mod tests {
         let mut tree = make_test_tree(3);
         // Item 2 has highest activity and most recent — should get highest value
         let metadata = vec![
-            ItemMetadata { activity: Some(1.0), days_since_update: Some(90.0) },
-            ItemMetadata { activity: Some(2.0), days_since_update: Some(30.0) },
-            ItemMetadata { activity: Some(10.0), days_since_update: Some(1.0) },
+            ItemMetadata {
+                activity: Some(1.0),
+                days_since_update: Some(90.0),
+            },
+            ItemMetadata {
+                activity: Some(2.0),
+                days_since_update: Some(30.0),
+            },
+            ItemMetadata {
+                activity: Some(10.0),
+                days_since_update: Some(1.0),
+            },
         ];
         assign_priority_values(&mut tree, &metadata);
         assert!(
@@ -973,9 +984,18 @@ mod tests {
 
     #[test]
     fn test_priority_strategy_round_trip() {
-        assert_eq!(TrimStrategyKind::parse("random"), Some(TrimStrategyKind::Random));
-        assert_eq!(TrimStrategyKind::parse("reversed"), Some(TrimStrategyKind::Reversed));
-        assert_eq!(TrimStrategyKind::parse("priority"), Some(TrimStrategyKind::Priority));
+        assert_eq!(
+            TrimStrategyKind::parse("random"),
+            Some(TrimStrategyKind::Random)
+        );
+        assert_eq!(
+            TrimStrategyKind::parse("reversed"),
+            Some(TrimStrategyKind::Reversed)
+        );
+        assert_eq!(
+            TrimStrategyKind::parse("priority"),
+            Some(TrimStrategyKind::Priority)
+        );
         assert_eq!(TrimStrategyKind::Random.as_str(), "random");
         assert_eq!(TrimStrategyKind::Reversed.as_str(), "reversed");
         assert_eq!(TrimStrategyKind::Priority.as_str(), "priority");
@@ -985,8 +1005,14 @@ mod tests {
     fn test_hardcoded_defaults_use_priority_for_issues() {
         let resolver = StrategyResolver::new();
         assert_eq!(resolver.resolve("get_issues"), TrimStrategyKind::Priority);
-        assert_eq!(resolver.resolve("get_merge_requests"), TrimStrategyKind::Priority);
+        assert_eq!(
+            resolver.resolve("get_merge_requests"),
+            TrimStrategyKind::Priority
+        );
         // Other tools unchanged
-        assert_eq!(resolver.resolve("get_issue_comments"), TrimStrategyKind::Cascading);
+        assert_eq!(
+            resolver.resolve("get_issue_comments"),
+            TrimStrategyKind::Cascading
+        );
     }
 }
