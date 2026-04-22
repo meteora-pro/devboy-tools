@@ -1,12 +1,14 @@
-//! Telemetry pipeline — records every tool invocation and ships batches to the cloud
-//! backend, even when the call was executed locally.
+//! Telemetry pipeline — records every tool invocation and ships batches to a
+//! configurable HTTP endpoint, even when the call was executed locally.
 //!
-//! # Why on the OSS side?
+//! # Why on the proxy side?
 //!
-//! With transparent routing, some tool calls never reach the cloud MCP server. We still
-//! want those invocations to show up in billing / usage dashboards, so the OSS proxy
-//! forwards a minimal event payload (no tool arguments, no responses) to a dedicated
-//! telemetry endpoint on the cloud.
+//! With transparent routing, some tool calls never reach an upstream MCP server.
+//! Operators who aggregate usage elsewhere (usage dashboards, billing, audit) still
+//! want those invocations to show up somewhere, so the proxy forwards a minimal event
+//! payload (no tool arguments, no responses) to the endpoint configured under
+//! `[proxy.telemetry].endpoint`. When no endpoint is configured, the pipeline still
+//! buffers events locally but never attempts an upload.
 //!
 //! # Back pressure
 //!
@@ -31,7 +33,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use devboy_core::config::ProxyTelemetryConfig;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
@@ -101,10 +103,20 @@ pub struct TelemetryBatch {
 }
 
 /// Shared event buffer. `record()` is cheap and lock-bound; clones are light (Arc).
+///
+/// Internally carries a `Notify` that the buffer signals when the queue length crosses
+/// the `flush_threshold` — the uploader waits on this alongside its periodic ticker so
+/// that "batch_size reached" triggers an immediate flush without waiting for the next
+/// interval tick.
 #[derive(Clone)]
 pub struct TelemetryBuffer {
     inner: Arc<Mutex<VecDeque<TelemetryEvent>>>,
     capacity: usize,
+    /// Threshold at which `record()` wakes the flusher. Set by the pipeline owner; a
+    /// freshly constructed buffer uses `capacity` (effectively "never size-triggered").
+    flush_threshold: Arc<std::sync::atomic::AtomicUsize>,
+    /// Signal for the background flush task to wake immediately.
+    size_trigger: Arc<Notify>,
 }
 
 impl TelemetryBuffer {
@@ -112,20 +124,46 @@ impl TelemetryBuffer {
         Self {
             inner: Arc::new(Mutex::new(VecDeque::with_capacity(capacity.min(1024)))),
             capacity,
+            flush_threshold: Arc::new(std::sync::atomic::AtomicUsize::new(capacity)),
+            size_trigger: Arc::new(Notify::new()),
         }
     }
 
+    /// Set the queue length at which `record()` wakes the flusher. Called by the
+    /// pipeline once `batch_size` is known.
+    pub fn set_flush_threshold(&self, threshold: usize) {
+        self.flush_threshold
+            .store(threshold.max(1), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Notifier the background flusher waits on for size-triggered flushes.
+    pub fn size_trigger(&self) -> Arc<Notify> {
+        self.size_trigger.clone()
+    }
+
     /// Push an event. When the queue is full, drops the oldest event to make room.
+    /// Wakes the background flusher as soon as the queue length crosses
+    /// [`Self::set_flush_threshold`].
     pub async fn record(&self, event: TelemetryEvent) {
-        let mut guard = self.inner.lock().await;
-        while guard.len() >= self.capacity {
-            let dropped = guard.pop_front();
-            debug!(
-                dropped = ?dropped.as_ref().map(|e| e.tool.as_str()),
-                "telemetry buffer full, dropping oldest event"
-            );
+        let (len_after, threshold) = {
+            let mut guard = self.inner.lock().await;
+            while guard.len() >= self.capacity {
+                let dropped = guard.pop_front();
+                debug!(
+                    dropped = ?dropped.as_ref().map(|e| e.tool.as_str()),
+                    "telemetry buffer full, dropping oldest event"
+                );
+            }
+            guard.push_back(event);
+            (
+                guard.len(),
+                self.flush_threshold
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            )
+        };
+        if len_after >= threshold {
+            self.size_trigger.notify_one();
         }
-        guard.push_back(event);
     }
 
     /// Drain up to `max` events without releasing the lock between pops.
@@ -252,6 +290,11 @@ impl TelemetryPipeline {
         let buffer = self.buffer.clone();
         let batch_size = self.config.batch_size.max(1);
         let interval = Duration::from_secs(self.config.batch_interval_secs.max(1));
+        // Arm the buffer so `record()` pokes the flusher the moment the queue reaches
+        // `batch_size` — satisfies the "batch_size reached OR interval elapsed"
+        // contract without waiting up to `batch_interval_secs` every time.
+        buffer.set_flush_threshold(batch_size);
+        let size_trigger = buffer.size_trigger();
         let (tx, mut rx) = tokio::sync::oneshot::channel();
         self.shutdown_tx = Some(tx);
 
@@ -269,6 +312,9 @@ impl TelemetryPipeline {
                         break;
                     }
                     _ = ticker.tick() => {
+                        flush_once(&buffer, &uploader, batch_size).await;
+                    }
+                    _ = size_trigger.notified() => {
                         flush_once(&buffer, &uploader, batch_size).await;
                     }
                 }
@@ -373,6 +419,30 @@ mod tests {
         assert_eq!(drained.len(), 2);
         assert_eq!(drained[0].tool, "b");
         assert_eq!(drained[1].tool, "c");
+    }
+
+    #[tokio::test]
+    async fn test_size_trigger_fires_when_threshold_reached() {
+        let buf = TelemetryBuffer::new(10);
+        buf.set_flush_threshold(3);
+        let notify = buf.size_trigger();
+
+        // Two events stay below the threshold — notify must not fire yet.
+        buf.record(sample_event("a")).await;
+        buf.record(sample_event("b")).await;
+        let early = tokio::time::timeout(Duration::from_millis(50), notify.notified()).await;
+        assert!(
+            early.is_err(),
+            "size_trigger should not fire below threshold"
+        );
+
+        // Third event lands on the threshold — notify must fire.
+        buf.record(sample_event("c")).await;
+        let fired = tokio::time::timeout(Duration::from_millis(100), notify.notified()).await;
+        assert!(
+            fired.is_ok(),
+            "size_trigger must fire when queue reaches threshold"
+        );
     }
 
     #[tokio::test]

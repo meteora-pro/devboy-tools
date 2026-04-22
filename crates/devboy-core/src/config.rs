@@ -1336,17 +1336,28 @@ fn parse_usize(value: &str, field: &str) -> Result<usize> {
     })
 }
 
-/// Быстрая проверка что значение выглядит как корректный HTTP(S) URL.
+/// Lightweight sanity check that the value looks like a valid HTTP(S) URL.
 ///
-/// Полный RFC 3986 parser добавил бы зависимость `url`, которая не используется
-/// другими частями `devboy-core`. Для защиты от очевидно мусорных значений (вроде
-/// `not-a-url`, `ftp://…`, одних только слэшей) достаточно проверить что строка:
-/// - начинается с `http://` или `https://`
-/// - после схемы идёт как минимум один непустой символ хоста
+/// A full RFC 3986 parser would pull in the `url` crate for a single field, which no
+/// other part of `devboy-core` needs. To reject the obvious garbage (`not-a-url`,
+/// `ftp://…`, lone slashes) it is enough to verify that the string:
+/// - starts with `http://` or `https://`
+/// - has at least one non-empty character after the scheme, before any `/`, `?`, `#`
+/// - contains no whitespace anywhere (host, path, query)
 ///
-/// Более строгая валидация (DNS label, порт, escaping) делается на стороне
-/// самого `reqwest` во время upload'а.
+/// Stricter validation (DNS labels, port, escaping) is left to `reqwest` at upload
+/// time; this helper exists purely to catch user typos at configuration time.
 fn validate_http_url(value: &str, field: &str) -> Result<()> {
+    // A correct URL has no whitespace anywhere (host, path, or query). Reject the
+    // whole string up-front instead of letting e.g. `https://example.com/a b` slip
+    // through just because the host part was clean.
+    if value.contains(|c: char| c.is_whitespace()) {
+        return Err(Error::Config(format!(
+            "Invalid URL for {}: '{}'. Must not contain whitespace",
+            field, value
+        )));
+    }
+
     let rest = if let Some(r) = value.strip_prefix("https://") {
         r
     } else if let Some(r) = value.strip_prefix("http://") {
@@ -1358,20 +1369,12 @@ fn validate_http_url(value: &str, field: &str) -> Result<()> {
         )));
     };
 
-    // Минимальный хост — до первого `/`, `?`, `#` или конца строки.
+    // Minimal host extraction — everything up to the first `/`, `?` or `#`.
     let host_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let host = &rest[..host_end];
     if host.is_empty() {
         return Err(Error::Config(format!(
             "Invalid URL for {}: '{}'. Missing host",
-            field, value
-        )));
-    }
-
-    // Минимальная sanity-check — хост не должен содержать пробелов, табов и т.п.
-    if host.contains(|c: char| c.is_whitespace()) {
-        return Err(Error::Config(format!(
-            "Invalid URL for {}: '{}'. Host must not contain whitespace",
             field, value
         )));
     }
@@ -2441,6 +2444,11 @@ mod tests {
             "//example.com",
             "https://",
             "http:// space.example.com",
+            // whitespace anywhere — path, query, trailing — must be rejected too
+            "https://example.com/a b",
+            "https://example.com/path?key=a b",
+            "https://example.com/\tpath",
+            "https://example.com/ ",
         ] {
             match cfg.set("proxy.telemetry.endpoint", bad) {
                 Ok(()) => panic!("expected reject for {}", bad),
