@@ -508,6 +508,13 @@ impl McpProxyClient {
             .collect()
     }
 
+    /// Return the raw upstream tool catalogue (without prefixing).
+    /// Used by the signature matcher to compare upstream definitions against the local
+    /// tool registry. Empty until `fetch_tools()` has been called.
+    pub fn raw_upstream_tools(&self) -> &[ToolDefinition] {
+        &self.upstream_tools
+    }
+
     /// Execute a tool call, stripping the prefix before forwarding.
     pub async fn call_tool(
         &self,
@@ -608,6 +615,37 @@ impl ProxyManager {
             }
         }
         None
+    }
+
+    /// Call a specific upstream by prefix using the unprefixed tool name.
+    /// Used by the routing engine when it has already decided the remote executor is the
+    /// right target for a matched tool (and therefore doesn't need to rely on the
+    /// prefixed alias).
+    pub async fn call_by_prefix(
+        &self,
+        prefix: &str,
+        unprefixed_tool_name: &str,
+        arguments: Option<Value>,
+    ) -> Option<ToolCallResult> {
+        for client in &self.clients {
+            if client.prefix() == prefix {
+                let result = client.call_tool(unprefixed_tool_name, arguments).await;
+                return Some(match result {
+                    Ok(r) => r,
+                    Err(e) => ToolCallResult::error(format!("Proxy error: {}", e)),
+                });
+            }
+        }
+        None
+    }
+
+    /// Return every upstream's raw (unprefixed) tool catalogue tagged by prefix.
+    /// Consumers use this to feed the signature matcher.
+    pub fn raw_upstream_catalogue(&self) -> Vec<(String, &[ToolDefinition])> {
+        self.clients
+            .iter()
+            .map(|c| (c.prefix().to_string(), c.raw_upstream_tools()))
+            .collect()
     }
 }
 

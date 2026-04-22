@@ -17,6 +17,7 @@ sentry = ["devboy-core/sentry", "dep:sentry-tracing", "dep:sentry"]
 
 [dependencies]
 devboy-core = { path = "../devboy-core" }
+devboy-executor = { path = "../devboy-executor" }
 devboy-mcp = { path = "../devboy-mcp" }
 devboy-storage = { path = "../devboy-storage" }
 devboy-github = { path = "../plugins/api/github" }

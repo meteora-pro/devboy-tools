@@ -443,6 +443,7 @@ mod tests {
                     token_key: None,
                     tool_prefix: Some("cloud".to_string()),
                     transport: "streamable-http".to_string(),
+                    routing: None,
                 }],
                 ..Default::default()
             },
@@ -490,6 +491,7 @@ mod tests {
                     token_key: Some("proxy.cloud.token".to_string()),
                     tool_prefix: None,
                     transport: "streamable-http".to_string(),
+                    routing: None,
                 }],
                 ..Default::default()
             },
@@ -516,6 +518,7 @@ mod tests {
                     token_key: None,
                     tool_prefix: None,
                     transport: "grpc".to_string(),
+                    routing: None,
                 }],
                 ..Default::default()
             },
@@ -543,6 +546,7 @@ mod tests {
                     token_key: None,
                     tool_prefix: None,
                     transport: "streamable-http".to_string(),
+                    routing: None,
                 }],
                 ..Default::default()
             },
@@ -577,6 +581,7 @@ mod tests {
                 token_key: None,
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
+                routing: None,
             },
         )
         .await;
@@ -592,6 +597,7 @@ mod tests {
                 token_key: None,
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
+                routing: None,
             },
         )
         .await;
@@ -610,6 +616,7 @@ mod tests {
                 token_key: Some("proxy.cloud.token".to_string()),
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
+                routing: None,
             },
         )
         .await;
@@ -645,6 +652,7 @@ mod tests {
                 token_key: Some("proxy.cloud.token".to_string()),
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
+                routing: None,
             },
         )
         .await;
