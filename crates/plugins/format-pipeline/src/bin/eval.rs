@@ -63,7 +63,12 @@ impl DatasetType {
     }
 
     fn all() -> &'static [Self] {
-        &[Self::Uniform, Self::PowerLaw, Self::Adversarial, Self::Realistic]
+        &[
+            Self::Uniform,
+            Self::PowerLaw,
+            Self::Adversarial,
+            Self::Realistic,
+        ]
     }
 }
 
@@ -79,7 +84,8 @@ impl Lcg {
     }
 
     fn next_u64(&mut self) -> u64 {
-        self.0 = self.0
+        self.0 = self
+            .0
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         self.0
@@ -150,9 +156,7 @@ impl Dataset {
 
             DatasetType::Adversarial => {
                 // Gold is the LAST item — worst case for position-biased strategies
-                let values: Vec<f64> = (0..n)
-                    .map(|i| 0.3 + (i as f64 / n as f64) * 0.7)
-                    .collect();
+                let values: Vec<f64> = (0..n).map(|i| 0.3 + (i as f64 / n as f64) * 0.7).collect();
                 let meta = metadata_from_values(&values, rng);
                 (n - 1, meta)
             }
@@ -173,7 +177,11 @@ impl Dataset {
             }
         };
 
-        Dataset { item_weights, gold_index, metadata }
+        Dataset {
+            item_weights,
+            gold_index,
+            metadata,
+        }
     }
 }
 
@@ -312,14 +320,19 @@ fn main() {
     let budgets = [1000usize, 2000, 4000, 8000];
     let strategies = [
         TrimStrategyKind::Random,
-        TrimStrategyKind::Default,      // FIFO-equivalent (uniform values, order preserved)
+        TrimStrategyKind::Default, // FIFO-equivalent (uniform values, order preserved)
         TrimStrategyKind::Reversed,
         TrimStrategyKind::ElementCount, // FIFO with position decay
         TrimStrategyKind::Priority,
     ];
 
     let total = dataset_types.len() * n_items_range.len() * budgets.len() * strategies.len();
-    eprintln!("Running {} experiments × {} trials = {} trials total", total, trials, total * trials);
+    eprintln!(
+        "Running {} experiments × {} trials = {} trials total",
+        total,
+        trials,
+        total * trials
+    );
 
     let mut results: Vec<ExperimentResult> = Vec::with_capacity(total);
 
@@ -367,8 +380,14 @@ fn main() {
 
     // Print summary table for key scenario: n=50, budget=4k
     eprintln!("\n=== Summary: n=50 items, budget=4000 tokens ===");
-    eprintln!("{:<14} {:<14} {:<14} {:<14} {:<14}", "dataset", "strategy", "p1", "items_incl", "tokens");
-    for r in results.iter().filter(|r| r.n_items == 50 && r.budget_tokens == 4000) {
+    eprintln!(
+        "{:<14} {:<14} {:<14} {:<14} {:<14}",
+        "dataset", "strategy", "p1", "items_incl", "tokens"
+    );
+    for r in results
+        .iter()
+        .filter(|r| r.n_items == 50 && r.budget_tokens == 4000)
+    {
         eprintln!(
             "{:<14} {:<14} {:<14.3} {:<14.1} {:<14.0}",
             r.dataset_type, r.strategy, r.p1, r.mean_items_included, r.mean_tokens_used,
