@@ -26,6 +26,8 @@ devboy-jira = { path = "../plugins/api/jira" }
 devboy-fireflies = { path = "../plugins/api/fireflies" }
 devboy-slack = { path = "../plugins/api/slack" }
 devboy-format-pipeline = { path = "../plugins/format-pipeline" }
+devboy-skills = { path = "../devboy-skills" }
+serde_yaml = "0.9"
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

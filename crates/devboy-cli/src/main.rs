@@ -1,6 +1,7 @@
 //! DevBoy CLI - Command-line interface for devboy-tools.
 
 mod doctor;
+mod skills_cmd;
 mod update_check;
 mod upgrade;
 
@@ -237,6 +238,12 @@ enum Commands {
         command: Option<ToolsCommands>,
     },
 
+    /// Manage skills — procedural recipes installed alongside the tool bundle
+    Skills {
+        #[command(subcommand)]
+        command: SkillsCommands,
+    },
+
     /// Run diagnostic checks for the local DevBoy setup
     Doctor {
         /// Output machine-readable JSON
@@ -450,6 +457,89 @@ enum ToolsCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum SkillsCommands {
+    /// List every skill the embedded source knows about
+    List {
+        /// Filter by category id (e.g. `self-bootstrap`, `issue-tracking`)
+        #[arg(long)]
+        category: Option<String>,
+    },
+    /// Print a skill's full `SKILL.md` contents
+    Show {
+        /// Skill name
+        name: String,
+    },
+    /// Install one or more skills to the resolved target(s)
+    Install {
+        /// Skill names. Ignored when `--all` or `--category` is used.
+        names: Vec<String>,
+        /// Install every skill the embedded source knows about.
+        #[arg(long, conflicts_with = "category")]
+        all: bool,
+        /// Install every skill in the given category.
+        #[arg(long)]
+        category: Option<String>,
+        /// Install globally at `~/.agents/skills/` instead of repo-local.
+        #[arg(long, conflicts_with = "local")]
+        global: bool,
+        /// When combined with `--agent`, install under the repo instead of the user home.
+        #[arg(long)]
+        local: bool,
+        /// Install for one or more agents (claude, codex, cursor, kimi, all).
+        /// Accepts the value repeatedly or comma-delimited.
+        #[arg(long = "agent", value_delimiter = ',')]
+        agents: Vec<String>,
+        /// Overwrite user-modified files.
+        #[arg(long)]
+        force: bool,
+        /// Show what would happen without touching the filesystem.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Upgrade previously installed skills (shortcut for `install` on what the manifest already knows).
+    Upgrade {
+        /// Upgrade only these skills (default: every skill in the manifest).
+        names: Vec<String>,
+        /// Upgrade across every recorded target (`--global`, `--agent`).
+        #[arg(long, conflicts_with = "local")]
+        global: bool,
+        /// Counterpart to `--agent` (see `install`).
+        #[arg(long)]
+        local: bool,
+        /// Apply to these agents' install paths.
+        #[arg(long = "agent", value_delimiter = ',')]
+        agents: Vec<String>,
+        /// Overwrite user-modified files.
+        #[arg(long)]
+        force: bool,
+        /// Show what would happen without touching the filesystem.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Remove installed skills from the resolved target(s).
+    Remove {
+        /// Skill names to remove.
+        #[arg(required = true, num_args = 1..)]
+        names: Vec<String>,
+        /// Counterpart to `--agent` (see `install`).
+        #[arg(long, conflicts_with = "local")]
+        global: bool,
+        /// Counterpart to `--agent` (see `install`).
+        #[arg(long)]
+        local: bool,
+        /// Apply to these agents' install paths.
+        #[arg(long = "agent", value_delimiter = ',')]
+        agents: Vec<String>,
+        /// Fail if a requested skill is not present at the target.
+        #[arg(long)]
+        strict: bool,
+        /// Show what would happen without touching the filesystem.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
 /// Environment variable to skip keychain operations (for CI testing).
 /// When set to "1" or "true", uses in-memory store instead of OS keychain.
 const SKIP_KEYCHAIN_ENV: &str = "DEVBOY_SKIP_KEYCHAIN";
@@ -641,6 +731,10 @@ async fn main() -> Result<()> {
 
             Some(Commands::Tools { command }) => {
                 handle_tools_command(command).await?;
+            }
+
+            Some(Commands::Skills { command }) => {
+                skills_cmd::handle(command).await?;
             }
 
             Some(Commands::Doctor {
