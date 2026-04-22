@@ -170,7 +170,11 @@ impl TelemetryUploader {
             .timeout(Duration::from_secs(15))
             .build()
             .map_err(|e| devboy_core::Error::Http(format!("telemetry client build: {}", e)))?;
-        Ok(Self { endpoint, auth, http })
+        Ok(Self {
+            endpoint,
+            auth,
+            http,
+        })
     }
 
     /// POST a batch; returns Ok when the server accepted it (2xx).
@@ -307,17 +311,18 @@ impl TelemetryPipeline {
     }
 }
 
-async fn flush_once(
-    buffer: &TelemetryBuffer,
-    uploader: &TelemetryUploader,
-    batch_size: usize,
-) {
+async fn flush_once(buffer: &TelemetryBuffer, uploader: &TelemetryUploader, batch_size: usize) {
     loop {
         let events = buffer.drain(batch_size).await;
         if events.is_empty() {
             return;
         }
-        match uploader.upload(&TelemetryBatch { events: events.clone() }).await {
+        match uploader
+            .upload(&TelemetryBatch {
+                events: events.clone(),
+            })
+            .await
+        {
             Ok(_) => {
                 debug!(count = events.len(), "telemetry batch uploaded");
                 if events.len() < batch_size {
@@ -386,13 +391,15 @@ mod tests {
     #[tokio::test]
     async fn test_uploader_sends_bearer_header_and_payload() {
         let server = MockServer::start_async().await;
-        let mock = server.mock_async(|when, then| {
-            when.method(POST)
-                .path("/api/telemetry/tool-invocations")
-                .header("authorization", "Bearer my-token")
-                .body_includes(r#""tool":"get_issues""#);
-            then.status(202).body("");
-        }).await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/api/telemetry/tool-invocations")
+                    .header("authorization", "Bearer my-token")
+                    .body_includes(r#""tool":"get_issues""#);
+                then.status(202).body("");
+            })
+            .await;
 
         let uploader = TelemetryUploader::new(
             format!("{}/api/telemetry/tool-invocations", server.base_url()),
@@ -412,10 +419,12 @@ mod tests {
     #[tokio::test]
     async fn test_uploader_reports_error_on_5xx() {
         let server = MockServer::start_async().await;
-        server.mock_async(|when, then| {
-            when.method(POST);
-            then.status(500).body("boom");
-        }).await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST);
+                then.status(500).body("boom");
+            })
+            .await;
 
         let uploader = TelemetryUploader::new(
             format!("{}/tele", server.base_url()),
@@ -424,7 +433,9 @@ mod tests {
         .unwrap();
 
         let err = uploader
-            .upload(&TelemetryBatch { events: vec![sample_event("x")] })
+            .upload(&TelemetryBatch {
+                events: vec![sample_event("x")],
+            })
             .await
             .unwrap_err();
         let msg = err.to_string();
@@ -435,10 +446,12 @@ mod tests {
     #[tokio::test]
     async fn test_pipeline_flush_uploads_all_and_returns_count() {
         let server = MockServer::start_async().await;
-        server.mock_async(|when, then| {
-            when.method(POST);
-            then.status(200).body("");
-        }).await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST);
+                then.status(200).body("");
+            })
+            .await;
 
         let cfg = ProxyTelemetryConfig {
             endpoint: Some(format!("{}/t", server.base_url())),
@@ -488,10 +501,12 @@ mod tests {
     #[tokio::test]
     async fn test_flush_requeues_on_failure() {
         let server = MockServer::start_async().await;
-        server.mock_async(|when, then| {
-            when.method(POST);
-            then.status(500).body("");
-        }).await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST);
+                then.status(500).body("");
+            })
+            .await;
 
         let cfg = ProxyTelemetryConfig {
             endpoint: Some(format!("{}/t", server.base_url())),

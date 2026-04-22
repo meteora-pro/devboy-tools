@@ -1293,9 +1293,7 @@ impl Config {
                 "batch_interval_secs" => {
                     Ok(Some(self.proxy.telemetry.batch_interval_secs.to_string()))
                 }
-                "offline_queue_max" => {
-                    Ok(Some(self.proxy.telemetry.offline_queue_max.to_string()))
-                }
+                "offline_queue_max" => Ok(Some(self.proxy.telemetry.offline_queue_max.to_string())),
                 _ => Err(Error::Config(format!(
                     "Unknown proxy.telemetry field: {}",
                     field
@@ -1361,9 +1359,7 @@ fn validate_http_url(value: &str, field: &str) -> Result<()> {
     };
 
     // Минимальный хост — до первого `/`, `?`, `#` или конца строки.
-    let host_end = rest
-        .find(['/', '?', '#'])
-        .unwrap_or(rest.len());
+    let host_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let host = &rest[..host_end];
     if host.is_empty() {
         return Err(Error::Config(format!(
@@ -2163,9 +2159,18 @@ mod tests {
 
     #[test]
     fn test_routing_strategy_parse_tolerates_formats() {
-        assert_eq!(RoutingStrategy::parse("remote"), Some(RoutingStrategy::Remote));
-        assert_eq!(RoutingStrategy::parse(" REMOTE "), Some(RoutingStrategy::Remote));
-        assert_eq!(RoutingStrategy::parse("local"), Some(RoutingStrategy::Local));
+        assert_eq!(
+            RoutingStrategy::parse("remote"),
+            Some(RoutingStrategy::Remote)
+        );
+        assert_eq!(
+            RoutingStrategy::parse(" REMOTE "),
+            Some(RoutingStrategy::Remote)
+        );
+        assert_eq!(
+            RoutingStrategy::parse("local"),
+            Some(RoutingStrategy::Local)
+        );
         assert_eq!(
             RoutingStrategy::parse("local-first"),
             Some(RoutingStrategy::LocalFirst)
@@ -2216,9 +2221,18 @@ mod tests {
             ],
         };
 
-        assert_eq!(routing.strategy_for("create_issue"), RoutingStrategy::Remote);
-        assert_eq!(routing.strategy_for("get_issues"), RoutingStrategy::LocalFirst);
-        assert_eq!(routing.strategy_for("anything_else"), RoutingStrategy::Local);
+        assert_eq!(
+            routing.strategy_for("create_issue"),
+            RoutingStrategy::Remote
+        );
+        assert_eq!(
+            routing.strategy_for("get_issues"),
+            RoutingStrategy::LocalFirst
+        );
+        assert_eq!(
+            routing.strategy_for("anything_else"),
+            RoutingStrategy::Local
+        );
     }
 
     #[test]
@@ -2521,8 +2535,11 @@ endpoint = "ftp://wrong-scheme.example.com"
         let err = toml::from_str::<Config>(toml_str)
             .expect_err("expected parse error for typo 'startegy'");
         let msg = err.to_string();
-        assert!(msg.contains("startegy") || msg.contains("unknown field"),
-                "unexpected error: {}", msg);
+        assert!(
+            msg.contains("startegy") || msg.contains("unknown field"),
+            "unexpected error: {}",
+            msg
+        );
     }
 
     #[test]
@@ -2533,7 +2550,10 @@ endpoint = "ftp://wrong-scheme.example.com"
             chache_ttl_secs = 120
         "#;
         let err = toml::from_str::<Config>(toml_str).expect_err("typo must fail");
-        assert!(err.to_string().contains("chache_ttl_secs") || err.to_string().contains("unknown field"));
+        assert!(
+            err.to_string().contains("chache_ttl_secs")
+                || err.to_string().contains("unknown field")
+        );
     }
 
     #[test]
@@ -2600,8 +2620,10 @@ endpoint = "https://app.example.com/api/telemetry/tool-invocations"
     fn test_set_proxy_telemetry_batch_fields() {
         let mut cfg = Config::default();
         cfg.set("proxy.telemetry.batch_size", "50").unwrap();
-        cfg.set("proxy.telemetry.batch_interval_secs", "15").unwrap();
-        cfg.set("proxy.telemetry.offline_queue_max", "2000").unwrap();
+        cfg.set("proxy.telemetry.batch_interval_secs", "15")
+            .unwrap();
+        cfg.set("proxy.telemetry.offline_queue_max", "2000")
+            .unwrap();
 
         assert_eq!(cfg.proxy.telemetry.batch_size, 50);
         assert_eq!(cfg.proxy.telemetry.batch_interval_secs, 15);

@@ -21,14 +21,14 @@ use devboy_core::{
 use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
 use devboy_jira::JiraClient;
+use devboy_mcp::protocol::ToolDefinition;
+use devboy_mcp::routing::{ProxyStatus, RoutingEngine};
+use devboy_mcp::signature_match::{ToolCatalogue, build_report};
+use devboy_mcp::telemetry::{TelemetryAuth, TelemetryPipeline};
 use devboy_mcp::{
     JSONRPC_VERSION, JsonRpcRequest, KNOWN_BUILTIN_TOOLS, McpProxyClient, McpServer, ProxyManager,
     ProxyTransport, RequestId,
 };
-use devboy_mcp::routing::{ProxyStatus, RoutingEngine};
-use devboy_mcp::signature_match::{ToolCatalogue, build_report};
-use devboy_mcp::telemetry::{TelemetryAuth, TelemetryPipeline};
-use devboy_mcp::protocol::ToolDefinition;
 use devboy_slack::SlackClient;
 use devboy_storage::{ChainStore, CredentialStore, wrap_with_cache};
 use dialoguer::{Confirm, Input, MultiSelect, Password};
@@ -637,13 +637,13 @@ async fn main() -> Result<()> {
     // pipe-friendly surface for `devboy proxy status --json` / any `devboy … | jq`
     // pipeline. Route tracing to stderr for all such cases; for plain interactive
     // commands we keep logs on stdout so users can read them without redirection.
-    let needs_stderr_logs = match &cli.command {
-        Some(Commands::Mcp { .. }) => true,
-        Some(Commands::Proxy {
-            command: ProxyCommands::Status { json: true, .. },
-        }) => true,
-        _ => false,
-    };
+    let needs_stderr_logs = matches!(
+        &cli.command,
+        Some(Commands::Mcp { .. })
+            | Some(Commands::Proxy {
+                command: ProxyCommands::Status { json: true, .. },
+            })
+    );
 
     // Always install sentry-tracing layer when feature is enabled.
     // If Sentry is not yet initialized (no DSN), the layer is a no-op.
@@ -2472,17 +2472,12 @@ fn start_telemetry_pipeline(
     // Resolve auth token: prefer explicit telemetry.token_key, otherwise fall back to
     // the first upstream server's token. Missing token is fine for unauthenticated
     // endpoints — the uploader will just omit the header.
-    let token_key = config
-        .proxy
-        .telemetry
-        .token_key
-        .clone()
-        .or_else(|| {
-            config
-                .proxy_mcp_servers
-                .first()
-                .and_then(|s| s.token_key.clone())
-        });
+    let token_key = config.proxy.telemetry.token_key.clone().or_else(|| {
+        config
+            .proxy_mcp_servers
+            .first()
+            .and_then(|s| s.token_key.clone())
+    });
     let bearer_token = token_key
         .as_deref()
         .and_then(|k| store.get(k).ok().flatten());
@@ -2632,18 +2627,12 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
 /// Build a [`ProxyStatus`] snapshot from the current config and a connected proxy
 /// manager. Combines the local tool catalogue with upstream catalogues into a
 /// [`RoutingEngine`] purely for reporting (nothing is dispatched).
-fn build_proxy_status(
-    config: &Config,
-    proxy_manager: &ProxyManager,
-) -> Result<ProxyStatus> {
+fn build_proxy_status(config: &Config, proxy_manager: &ProxyManager) -> Result<ProxyStatus> {
     let local_tools = local_tool_catalogue();
     let upstream = proxy_manager.raw_upstream_catalogue();
     let catalogue = ToolCatalogue {
         local: &local_tools,
-        upstream: upstream
-            .iter()
-            .map(|(p, t)| (p.clone(), &t[..]))
-            .collect(),
+        upstream: upstream.iter().map(|(p, t)| (p.clone(), &t[..])).collect(),
     };
     let report = build_report(catalogue);
     let engine = RoutingEngine::new(config.proxy.routing.clone(), report);
@@ -4464,7 +4453,7 @@ mod tests {
                 token_key: Some("proxy.token".to_string()),
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
-            routing: None,
+                routing: None,
             }),
             ..Default::default()
         };
@@ -4490,7 +4479,7 @@ mod tests {
                 token_key: None,
                 tool_prefix: None,
                 transport: "sse".to_string(),
-            routing: None,
+                routing: None,
             }),
             ..Default::default()
         };
@@ -4520,7 +4509,7 @@ mod tests {
                 token_key: Some("devboy.token".to_string()),
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
-            routing: None,
+                routing: None,
             }),
             ..Default::default()
         };

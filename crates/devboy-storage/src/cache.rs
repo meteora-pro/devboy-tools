@@ -104,7 +104,10 @@ impl<S: CredentialStore> CachedStore<S> {
         let Ok(mut entries) = self.entries.write() else {
             return;
         };
-        entries.insert(key.to_string(), CachedEntry::new(value.to_string(), self.ttl));
+        entries.insert(
+            key.to_string(),
+            CachedEntry::new(value.to_string(), self.ttl),
+        );
     }
 
     fn purge_expired_locked(&self) {

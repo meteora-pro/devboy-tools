@@ -74,7 +74,10 @@ pub struct MatchReport {
 impl MatchReport {
     /// Tools that have a viable local counterpart (matched + compatible schema).
     pub fn routable_locally(&self) -> Vec<&ToolMatch> {
-        self.matches.values().filter(|m| m.is_routable_local()).collect()
+        self.matches
+            .values()
+            .filter(|m| m.is_routable_local())
+            .collect()
     }
 
     /// Tools that exist only remotely.
@@ -160,11 +163,9 @@ pub fn build_report(catalogue: ToolCatalogue<'_>) -> MatchReport {
             }
 
             if entry.local_present
-                && let Some(local_tool) =
-                    catalogue.local.iter().find(|t| t.name == up_tool.name)
+                && let Some(local_tool) = catalogue.local.iter().find(|t| t.name == up_tool.name)
             {
-                let check =
-                    check_schema_compat(&local_tool.input_schema, &up_tool.input_schema);
+                let check = check_schema_compat(&local_tool.input_schema, &up_tool.input_schema);
                 entry.schema_compatible = Some(check.is_compatible);
                 entry.schema_mismatch = check.reason;
             }
@@ -290,7 +291,10 @@ mod tests {
         assert!(m.is_matched());
         assert_eq!(m.schema_compatible, Some(true));
         assert_eq!(m.upstream_prefix.as_deref(), Some("cloud"));
-        assert_eq!(m.prefixed_remote_name().as_deref(), Some("cloud__get_issues"));
+        assert_eq!(
+            m.prefixed_remote_name().as_deref(),
+            Some("cloud__get_issues")
+        );
     }
 
     #[test]
