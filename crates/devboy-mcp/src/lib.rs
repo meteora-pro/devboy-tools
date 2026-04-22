@@ -24,14 +24,25 @@
 pub mod handlers;
 pub mod protocol;
 pub mod proxy;
+pub mod routing;
 pub mod server;
+pub mod signature_match;
+pub mod telemetry;
 pub mod tools;
 pub mod transport;
 
 pub use handlers::{KNOWN_BUILTIN_TOOLS, ToolHandler};
 pub use protocol::{JSONRPC_VERSION, JsonRpcRequest, RequestId};
 pub use proxy::{McpProxyClient, ProxyManager, ProxyTransport};
+pub use routing::{
+    IncompatibleTool, ProxyStatus, RoutingDecision, RoutingEngine, RoutingReason, RoutingTarget,
+};
 pub use server::McpServer;
+pub use signature_match::{MatchReport, ToolCatalogue, ToolMatch, build_report};
+pub use telemetry::{
+    TelemetryAuth, TelemetryBatch, TelemetryBuffer, TelemetryEvent, TelemetryPipeline,
+    TelemetryStatus, TelemetryUploader,
+};
 
 // Re-export executor types for consumers that use devboy-mcp as entry point
 pub use devboy_executor::{

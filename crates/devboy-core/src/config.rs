@@ -83,6 +83,11 @@ pub struct Config {
     /// Format pipeline configuration (TOON encoding, budget trimming, strategies).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format_pipeline: Option<FormatPipelineConfig>,
+
+    /// Transparent proxy configuration: routing strategy, secrets cache, telemetry.
+    /// Applies across all upstream MCP servers unless overridden per-server.
+    #[serde(default, skip_serializing_if = "ProxyConfig::is_default")]
+    pub proxy: ProxyConfig,
 }
 
 /// Configuration for an upstream MCP server to proxy.
@@ -104,6 +109,10 @@ pub struct ProxyMcpServerConfig {
     /// Transport type: "sse" (default) or "streamable-http"
     #[serde(default = "default_transport_sse")]
     pub transport: String,
+    /// Per-server routing override. If set, merges on top of global `[proxy.routing]`
+    /// and takes priority when both define the same field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<ProxyRoutingConfig>,
 }
 
 fn default_transport_sse() -> String {
@@ -357,6 +366,289 @@ fn default_gitlab_url() -> String {
 }
 
 // =============================================================================
+// Transparent Proxy Config (routing, secrets, telemetry)
+// =============================================================================
+
+/// Routing strategy — how a tool invocation is dispatched when both the local executor
+/// and a connected upstream MCP server can handle the same tool.
+///
+/// Cloud has priority by design: the default strategy is `Remote`, so behavior is unchanged
+/// for existing deployments unless the user explicitly opts in to local routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RoutingStrategy {
+    /// Route every matched call to the upstream server. Local executor stays idle for
+    /// matched tools (still used for local-only tools that have no upstream counterpart).
+    #[default]
+    Remote,
+    /// Route matched calls to the local executor. If a tool has no local implementation,
+    /// fall through to upstream.
+    Local,
+    /// Try the local executor first; on error, fall back to upstream (requires
+    /// `fallback_on_error`).
+    #[serde(rename = "local-first")]
+    LocalFirst,
+    /// Try upstream first; on error, fall back to the local executor (requires
+    /// `fallback_on_error`).
+    #[serde(rename = "remote-first")]
+    RemoteFirst,
+}
+
+impl RoutingStrategy {
+    /// Parse a string token, tolerating both kebab-case and snake_case.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "remote" => Some(Self::Remote),
+            "local" => Some(Self::Local),
+            "local-first" | "local_first" | "localfirst" => Some(Self::LocalFirst),
+            "remote-first" | "remote_first" | "remotefirst" => Some(Self::RemoteFirst),
+            _ => None,
+        }
+    }
+}
+
+/// Per-tool override: maps a tool-name glob pattern to a specific routing strategy.
+/// Patterns are matched against the tool name *without* the upstream prefix
+/// (e.g., `get_issues`, not `cloud__get_issues`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProxyToolRule {
+    /// Glob-like pattern: `*` matches any sequence (including empty).
+    /// Examples: `get_*`, `*_issue`, `gitlab.*`, `create_*`.
+    pub pattern: String,
+    /// Strategy to apply for tools whose name matches this pattern.
+    pub strategy: RoutingStrategy,
+}
+
+/// Routing policy: global default strategy plus per-tool overrides.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProxyRoutingConfig {
+    /// Default strategy applied to tools without a matching override.
+    #[serde(default)]
+    pub strategy: RoutingStrategy,
+    /// For `LocalFirst` / `RemoteFirst`: when the primary executor errors, retry with
+    /// the other executor. No-op for `Remote` / `Local` strategies.
+    #[serde(default = "default_true")]
+    pub fallback_on_error: bool,
+    /// First-match-wins list of per-tool overrides.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_overrides: Vec<ProxyToolRule>,
+}
+
+impl Default for ProxyRoutingConfig {
+    fn default() -> Self {
+        Self {
+            strategy: RoutingStrategy::default(),
+            fallback_on_error: true,
+            tool_overrides: Vec::new(),
+        }
+    }
+}
+
+impl ProxyRoutingConfig {
+    /// Resolve the effective strategy for a tool name (without upstream prefix).
+    /// First-match wins across `tool_overrides`; falls back to the global `strategy`.
+    pub fn strategy_for(&self, tool_name: &str) -> RoutingStrategy {
+        for rule in &self.tool_overrides {
+            if matches_glob(&rule.pattern, tool_name) {
+                return rule.strategy;
+            }
+        }
+        self.strategy
+    }
+
+    /// Merge a per-server override on top of this global config.
+    /// The override wins for every field it defines; `tool_overrides` from the override
+    /// are prepended so they match before global rules.
+    pub fn merged_with(&self, override_cfg: Option<&ProxyRoutingConfig>) -> ProxyRoutingConfig {
+        let Some(o) = override_cfg else {
+            return self.clone();
+        };
+        let mut merged = self.clone();
+        merged.strategy = o.strategy;
+        merged.fallback_on_error = o.fallback_on_error;
+        if !o.tool_overrides.is_empty() {
+            let mut combined = o.tool_overrides.clone();
+            combined.extend(self.tool_overrides.iter().cloned());
+            merged.tool_overrides = combined;
+        }
+        merged
+    }
+
+    /// True iff this config equals the default — used for `skip_serializing_if`.
+    pub fn is_default(&self) -> bool {
+        self.strategy == RoutingStrategy::default()
+            && self.fallback_on_error
+            && self.tool_overrides.is_empty()
+    }
+}
+
+/// Secure-store configuration for proxy authentication tokens.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProxySecretsConfig {
+    /// TTL (seconds) for the in-memory cache on top of the OS keychain.
+    /// `0` disables caching and forces a keychain lookup on every call
+    /// (safer, but slower and may trigger repeated UI prompts on macOS).
+    /// Default: 300 (5 minutes).
+    #[serde(default = "default_secrets_cache_ttl")]
+    pub cache_ttl_secs: u64,
+}
+
+impl Default for ProxySecretsConfig {
+    fn default() -> Self {
+        Self {
+            cache_ttl_secs: default_secrets_cache_ttl(),
+        }
+    }
+}
+
+impl ProxySecretsConfig {
+    pub fn is_default(&self) -> bool {
+        self.cache_ttl_secs == default_secrets_cache_ttl()
+    }
+}
+
+fn default_secrets_cache_ttl() -> u64 {
+    300
+}
+
+/// Telemetry pipeline configuration — reports routing decisions to a configurable
+/// HTTP endpoint even when the call is executed locally.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProxyTelemetryConfig {
+    /// When false, no telemetry events are collected or uploaded.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Flush when this many events accumulate in the buffer.
+    #[serde(default = "default_batch_size")]
+    pub batch_size: usize,
+    /// Flush at least once per interval even if the buffer is smaller than `batch_size`.
+    #[serde(default = "default_batch_interval_secs")]
+    pub batch_interval_secs: u64,
+    /// Upload endpoint URL. If unset, events are collected but never uploaded (dry-run).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    /// Keychain key for the telemetry auth token. Falls back to the first upstream
+    /// server's `token_key` when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_key: Option<String>,
+    /// Maximum events held in the offline queue (when upload is unavailable). Oldest
+    /// events are dropped when the queue is full.
+    #[serde(default = "default_offline_queue_max")]
+    pub offline_queue_max: usize,
+}
+
+impl Default for ProxyTelemetryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            batch_size: default_batch_size(),
+            batch_interval_secs: default_batch_interval_secs(),
+            endpoint: None,
+            token_key: None,
+            offline_queue_max: default_offline_queue_max(),
+        }
+    }
+}
+
+impl ProxyTelemetryConfig {
+    pub fn is_default(&self) -> bool {
+        self.enabled
+            && self.batch_size == default_batch_size()
+            && self.batch_interval_secs == default_batch_interval_secs()
+            && self.endpoint.is_none()
+            && self.token_key.is_none()
+            && self.offline_queue_max == default_offline_queue_max()
+    }
+}
+
+fn default_batch_size() -> usize {
+    100
+}
+
+fn default_batch_interval_secs() -> u64 {
+    30
+}
+
+fn default_offline_queue_max() -> usize {
+    10_000
+}
+
+/// Container for global proxy configuration — wired under `[proxy]` in TOML.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProxyConfig {
+    #[serde(default, skip_serializing_if = "ProxyRoutingConfig::is_default")]
+    pub routing: ProxyRoutingConfig,
+
+    #[serde(default, skip_serializing_if = "ProxySecretsConfig::is_default")]
+    pub secrets: ProxySecretsConfig,
+
+    #[serde(default, skip_serializing_if = "ProxyTelemetryConfig::is_default")]
+    pub telemetry: ProxyTelemetryConfig,
+}
+
+impl ProxyConfig {
+    pub fn is_default(&self) -> bool {
+        self.routing.is_default() && self.secrets.is_default() && self.telemetry.is_default()
+    }
+}
+
+/// Match `name` against a glob-like `pattern` where `*` is a wildcard matching any
+/// run of characters (including empty). No character classes, escapes, or `?`.
+///
+/// Examples:
+/// - `get_*` matches `get_issues`, `get_merge_requests`
+/// - `*_issue` matches `create_issue`, `update_issue`
+/// - `*` matches everything
+/// - `exact` matches only `exact`
+pub fn matches_glob(pattern: &str, name: &str) -> bool {
+    // Trivial cases
+    if pattern == "*" {
+        return true;
+    }
+    if !pattern.contains('*') {
+        return pattern == name;
+    }
+
+    let segments: Vec<&str> = pattern.split('*').collect();
+    let mut cursor = 0usize;
+    let last_idx = segments.len() - 1;
+
+    // First segment must be a prefix unless empty (leading *).
+    if !segments[0].is_empty() {
+        if !name.starts_with(segments[0]) {
+            return false;
+        }
+        cursor = segments[0].len();
+    }
+
+    // Middle segments must appear in order, each consuming a position in `name`.
+    for seg in &segments[1..last_idx] {
+        if seg.is_empty() {
+            continue; // "**" collapses
+        }
+        match name[cursor..].find(seg) {
+            Some(pos) => cursor += pos + seg.len(),
+            None => return false,
+        }
+    }
+
+    // Last segment must be a suffix unless empty (trailing *).
+    let last = segments[last_idx];
+    if last.is_empty() {
+        return true;
+    }
+    if cursor > name.len() {
+        return false;
+    }
+    name[cursor..].ends_with(last)
+}
+
+// =============================================================================
 // Config implementation
 // =============================================================================
 
@@ -401,8 +693,26 @@ impl Config {
         let config: Config = toml::from_str(&contents)
             .map_err(|e| Error::Config(format!("Failed to parse config file: {}", e)))?;
 
+        // Validate semantics that serde cannot enforce on its own (URL shape, etc.).
+        // `Config::set` already applies the same checks at write time, but a user editing
+        // the TOML file directly bypasses those — so we re-run validation on load.
+        config.validate()?;
+
         info!(path = ?path, "Config loaded successfully");
         Ok(config)
+    }
+
+    /// Run post-deserialization validation on the config.
+    ///
+    /// Covers invariants that TOML/serde deserializers can't express by themselves:
+    /// URL shape for telemetry endpoint, bool coercions, etc. Safe to call at any time.
+    pub fn validate(&self) -> Result<()> {
+        if let Some(endpoint) = self.proxy.telemetry.endpoint.as_deref()
+            && !endpoint.is_empty()
+        {
+            validate_http_url(endpoint, "proxy.telemetry.endpoint")?;
+        }
+        Ok(())
     }
 
     /// Save configuration to the default location.
@@ -527,12 +837,20 @@ impl Config {
 
     /// Set a configuration value by key path.
     ///
-    /// Key format: `provider.field` (e.g., `github.owner`, `gitlab.url`)
+    /// Supported key formats:
+    /// - `provider.field` — e.g., `github.owner`, `gitlab.url`
+    /// - `proxy.{routing|secrets|telemetry}.{field}` — e.g., `proxy.routing.strategy`
     pub fn set(&mut self, key: &str, value: &str) -> Result<()> {
         let parts: Vec<&str> = key.split('.').collect();
+
+        // Three-part paths are reserved for `proxy.*` sections.
+        if parts.len() == 3 && parts[0] == "proxy" {
+            return self.set_proxy_field(parts[1], parts[2], value);
+        }
+
         if parts.len() != 2 {
             return Err(Error::Config(format!(
-                "Invalid config key '{}'. Expected format: provider.field",
+                "Invalid config key '{}'. Expected formats: provider.field or proxy.section.field",
                 key
             )));
         }
@@ -618,12 +936,19 @@ impl Config {
 
     /// Get a configuration value by key path.
     ///
-    /// Key format: `provider.field` (e.g., `github.owner`, `gitlab.url`)
+    /// Supported key formats:
+    /// - `provider.field` — e.g., `github.owner`, `gitlab.url`
+    /// - `proxy.{routing|secrets|telemetry}.{field}` — e.g., `proxy.routing.strategy`
     pub fn get(&self, key: &str) -> Result<Option<String>> {
         let parts: Vec<&str> = key.split('.').collect();
+
+        if parts.len() == 3 && parts[0] == "proxy" {
+            return self.get_proxy_field(parts[1], parts[2]);
+        }
+
         if parts.len() != 2 {
             return Err(Error::Config(format!(
-                "Invalid config key '{}'. Expected format: provider.field",
+                "Invalid config key '{}'. Expected formats: provider.field or proxy.section.field",
                 key
             )));
         }
@@ -688,6 +1013,215 @@ impl Config {
             _ => Err(Error::Config(format!("Unknown provider: {}", provider))),
         }
     }
+
+    /// Set a `proxy.{section}.{field}` value. Extracted so [`Self::set`] stays small.
+    fn set_proxy_field(&mut self, section: &str, field: &str, value: &str) -> Result<()> {
+        match section {
+            "routing" => match field {
+                "strategy" => {
+                    let strat = RoutingStrategy::parse(value).ok_or_else(|| {
+                        Error::Config(format!(
+                            "Invalid routing strategy '{}'. Allowed (case-insensitive): \
+                             remote, local, local-first, remote-first",
+                            value
+                        ))
+                    })?;
+                    self.proxy.routing.strategy = strat;
+                    Ok(())
+                }
+                "fallback_on_error" => {
+                    self.proxy.routing.fallback_on_error = parse_bool(value)?;
+                    Ok(())
+                }
+                _ => Err(Error::Config(format!(
+                    "Unknown proxy.routing field: {}",
+                    field
+                ))),
+            },
+            "secrets" => match field {
+                "cache_ttl_secs" => {
+                    self.proxy.secrets.cache_ttl_secs = parse_u64(value, field)?;
+                    Ok(())
+                }
+                _ => Err(Error::Config(format!(
+                    "Unknown proxy.secrets field: {}",
+                    field
+                ))),
+            },
+            "telemetry" => match field {
+                "enabled" => {
+                    self.proxy.telemetry.enabled = parse_bool(value)?;
+                    Ok(())
+                }
+                "endpoint" => {
+                    self.proxy.telemetry.endpoint = if value.is_empty() {
+                        None
+                    } else {
+                        validate_http_url(value, "proxy.telemetry.endpoint")?;
+                        Some(value.to_string())
+                    };
+                    Ok(())
+                }
+                "token_key" => {
+                    self.proxy.telemetry.token_key = if value.is_empty() {
+                        None
+                    } else {
+                        Some(value.to_string())
+                    };
+                    Ok(())
+                }
+                "batch_size" => {
+                    self.proxy.telemetry.batch_size = parse_usize(value, field)?;
+                    Ok(())
+                }
+                "batch_interval_secs" => {
+                    self.proxy.telemetry.batch_interval_secs = parse_u64(value, field)?;
+                    Ok(())
+                }
+                "offline_queue_max" => {
+                    self.proxy.telemetry.offline_queue_max = parse_usize(value, field)?;
+                    Ok(())
+                }
+                _ => Err(Error::Config(format!(
+                    "Unknown proxy.telemetry field: {}",
+                    field
+                ))),
+            },
+            _ => Err(Error::Config(format!(
+                "Unknown proxy section: {}. Allowed: routing, secrets, telemetry",
+                section
+            ))),
+        }
+    }
+
+    /// Read a `proxy.{section}.{field}` value. Returns `Ok(None)` for fields that are
+    /// unset (e.g., optional `telemetry.endpoint`).
+    fn get_proxy_field(&self, section: &str, field: &str) -> Result<Option<String>> {
+        match section {
+            "routing" => match field {
+                "strategy" => Ok(Some(routing_strategy_slug(self.proxy.routing.strategy))),
+                "fallback_on_error" => Ok(Some(self.proxy.routing.fallback_on_error.to_string())),
+                _ => Err(Error::Config(format!(
+                    "Unknown proxy.routing field: {}",
+                    field
+                ))),
+            },
+            "secrets" => match field {
+                "cache_ttl_secs" => Ok(Some(self.proxy.secrets.cache_ttl_secs.to_string())),
+                _ => Err(Error::Config(format!(
+                    "Unknown proxy.secrets field: {}",
+                    field
+                ))),
+            },
+            "telemetry" => match field {
+                "enabled" => Ok(Some(self.proxy.telemetry.enabled.to_string())),
+                "endpoint" => Ok(self.proxy.telemetry.endpoint.clone()),
+                "token_key" => Ok(self.proxy.telemetry.token_key.clone()),
+                "batch_size" => Ok(Some(self.proxy.telemetry.batch_size.to_string())),
+                "batch_interval_secs" => {
+                    Ok(Some(self.proxy.telemetry.batch_interval_secs.to_string()))
+                }
+                "offline_queue_max" => {
+                    Ok(Some(self.proxy.telemetry.offline_queue_max.to_string()))
+                }
+                _ => Err(Error::Config(format!(
+                    "Unknown proxy.telemetry field: {}",
+                    field
+                ))),
+            },
+            _ => Err(Error::Config(format!(
+                "Unknown proxy section: {}. Allowed: routing, secrets, telemetry",
+                section
+            ))),
+        }
+    }
+}
+
+fn parse_bool(value: &str) -> Result<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        _ => Err(Error::Config(format!(
+            "Invalid boolean '{}'. Allowed: true/false, 1/0, yes/no, on/off",
+            value
+        ))),
+    }
+}
+
+fn parse_u64(value: &str, field: &str) -> Result<u64> {
+    value.trim().parse::<u64>().map_err(|_| {
+        Error::Config(format!(
+            "Invalid value for {}: '{}'. Expected non-negative integer",
+            field, value
+        ))
+    })
+}
+
+fn parse_usize(value: &str, field: &str) -> Result<usize> {
+    value.trim().parse::<usize>().map_err(|_| {
+        Error::Config(format!(
+            "Invalid value for {}: '{}'. Expected non-negative integer",
+            field, value
+        ))
+    })
+}
+
+/// Быстрая проверка что значение выглядит как корректный HTTP(S) URL.
+///
+/// Полный RFC 3986 parser добавил бы зависимость `url`, которая не используется
+/// другими частями `devboy-core`. Для защиты от очевидно мусорных значений (вроде
+/// `not-a-url`, `ftp://…`, одних только слэшей) достаточно проверить что строка:
+/// - начинается с `http://` или `https://`
+/// - после схемы идёт как минимум один непустой символ хоста
+///
+/// Более строгая валидация (DNS label, порт, escaping) делается на стороне
+/// самого `reqwest` во время upload'а.
+fn validate_http_url(value: &str, field: &str) -> Result<()> {
+    let rest = if let Some(r) = value.strip_prefix("https://") {
+        r
+    } else if let Some(r) = value.strip_prefix("http://") {
+        r
+    } else {
+        return Err(Error::Config(format!(
+            "Invalid URL for {}: '{}'. Must start with http:// or https://",
+            field, value
+        )));
+    };
+
+    // Минимальный хост — до первого `/`, `?`, `#` или конца строки.
+    let host_end = rest
+        .find(['/', '?', '#'])
+        .unwrap_or(rest.len());
+    let host = &rest[..host_end];
+    if host.is_empty() {
+        return Err(Error::Config(format!(
+            "Invalid URL for {}: '{}'. Missing host",
+            field, value
+        )));
+    }
+
+    // Минимальная sanity-check — хост не должен содержать пробелов, табов и т.п.
+    if host.contains(|c: char| c.is_whitespace()) {
+        return Err(Error::Config(format!(
+            "Invalid URL for {}: '{}'. Host must not contain whitespace",
+            field, value
+        )));
+    }
+
+    Ok(())
+}
+
+/// Stable kebab-case slug for a [`RoutingStrategy`]. Symmetric with serde and TOML
+/// serialisation. Exported so CLI / observability code renders strategy values the
+/// same way in every surface (JSON, plain text, `config list`).
+pub fn routing_strategy_slug(s: RoutingStrategy) -> String {
+    match s {
+        RoutingStrategy::Remote => "remote",
+        RoutingStrategy::Local => "local",
+        RoutingStrategy::LocalFirst => "local-first",
+        RoutingStrategy::RemoteFirst => "remote-first",
+    }
+    .to_string()
 }
 
 impl ContextConfig {
@@ -1057,6 +1591,7 @@ mod tests {
             proxy_mcp_servers: Vec::new(),
             builtin_tools: BuiltinToolsConfig::default(),
             format_pipeline: None,
+            proxy: ProxyConfig::default(),
         };
 
         let providers = config.configured_providers();
@@ -1136,6 +1671,7 @@ mod tests {
             proxy_mcp_servers: Vec::new(),
             builtin_tools: BuiltinToolsConfig::default(),
             format_pipeline: None,
+            proxy: ProxyConfig::default(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -1363,6 +1899,7 @@ mod tests {
                 token_key: Some("test.token".to_string()),
                 tool_prefix: Some("tst".to_string()),
                 transport: "streamable-http".to_string(),
+                routing: None,
             }],
             ..Default::default()
         };
@@ -1387,6 +1924,7 @@ mod tests {
                 token_key: None,
                 tool_prefix: None,
                 transport: "sse".to_string(),
+                routing: None,
             }],
             ..Default::default()
         };
@@ -1401,6 +1939,566 @@ mod tests {
         let config = Config::default();
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(!toml_str.contains("proxy_mcp_servers"));
+    }
+
+    // =========================================================================
+    // ProxyConfig (routing, secrets, telemetry) tests
+    // =========================================================================
+
+    #[test]
+    fn test_proxy_config_default_is_default() {
+        let cfg = ProxyConfig::default();
+        assert!(cfg.is_default());
+    }
+
+    #[test]
+    fn test_default_proxy_section_not_serialized() {
+        let config = Config::default();
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        assert!(!toml_str.contains("[proxy]"));
+        assert!(!toml_str.contains("[proxy.routing]"));
+    }
+
+    #[test]
+    fn test_routing_strategy_default_is_remote() {
+        let strategy = RoutingStrategy::default();
+        assert_eq!(strategy, RoutingStrategy::Remote);
+    }
+
+    #[test]
+    fn test_routing_strategy_parse_tolerates_formats() {
+        assert_eq!(RoutingStrategy::parse("remote"), Some(RoutingStrategy::Remote));
+        assert_eq!(RoutingStrategy::parse(" REMOTE "), Some(RoutingStrategy::Remote));
+        assert_eq!(RoutingStrategy::parse("local"), Some(RoutingStrategy::Local));
+        assert_eq!(
+            RoutingStrategy::parse("local-first"),
+            Some(RoutingStrategy::LocalFirst)
+        );
+        assert_eq!(
+            RoutingStrategy::parse("local_first"),
+            Some(RoutingStrategy::LocalFirst)
+        );
+        assert_eq!(
+            RoutingStrategy::parse("remote-first"),
+            Some(RoutingStrategy::RemoteFirst)
+        );
+        assert_eq!(RoutingStrategy::parse("unknown"), None);
+    }
+
+    #[test]
+    fn test_routing_strategy_serde_kebab_case() {
+        let toml_str = r#"
+            [proxy.routing]
+            strategy = "local-first"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.proxy.routing.strategy, RoutingStrategy::LocalFirst);
+
+        // Round-trip
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        assert!(serialized.contains("strategy = \"local-first\""));
+    }
+
+    #[test]
+    fn test_proxy_routing_strategy_for_picks_first_matching_override() {
+        let routing = ProxyRoutingConfig {
+            strategy: RoutingStrategy::Remote,
+            fallback_on_error: true,
+            tool_overrides: vec![
+                ProxyToolRule {
+                    pattern: "create_*".to_string(),
+                    strategy: RoutingStrategy::Remote,
+                },
+                ProxyToolRule {
+                    pattern: "get_*".to_string(),
+                    strategy: RoutingStrategy::LocalFirst,
+                },
+                ProxyToolRule {
+                    pattern: "*".to_string(),
+                    strategy: RoutingStrategy::Local,
+                },
+            ],
+        };
+
+        assert_eq!(routing.strategy_for("create_issue"), RoutingStrategy::Remote);
+        assert_eq!(routing.strategy_for("get_issues"), RoutingStrategy::LocalFirst);
+        assert_eq!(routing.strategy_for("anything_else"), RoutingStrategy::Local);
+    }
+
+    #[test]
+    fn test_proxy_routing_strategy_for_falls_back_to_global() {
+        let routing = ProxyRoutingConfig {
+            strategy: RoutingStrategy::Remote,
+            fallback_on_error: true,
+            tool_overrides: vec![ProxyToolRule {
+                pattern: "get_*".to_string(),
+                strategy: RoutingStrategy::LocalFirst,
+            }],
+        };
+
+        assert_eq!(
+            routing.strategy_for("unrelated_tool"),
+            RoutingStrategy::Remote
+        );
+    }
+
+    #[test]
+    fn test_proxy_routing_merged_with_override_wins() {
+        let global = ProxyRoutingConfig {
+            strategy: RoutingStrategy::Remote,
+            fallback_on_error: true,
+            tool_overrides: vec![ProxyToolRule {
+                pattern: "get_*".to_string(),
+                strategy: RoutingStrategy::LocalFirst,
+            }],
+        };
+        let override_cfg = ProxyRoutingConfig {
+            strategy: RoutingStrategy::Local,
+            fallback_on_error: false,
+            tool_overrides: vec![ProxyToolRule {
+                pattern: "create_*".to_string(),
+                strategy: RoutingStrategy::Remote,
+            }],
+        };
+
+        let merged = global.merged_with(Some(&override_cfg));
+        assert_eq!(merged.strategy, RoutingStrategy::Local);
+        assert!(!merged.fallback_on_error);
+        // override tool_overrides come first, global rules append
+        assert_eq!(merged.tool_overrides.len(), 2);
+        assert_eq!(merged.tool_overrides[0].pattern, "create_*");
+        assert_eq!(merged.tool_overrides[1].pattern, "get_*");
+    }
+
+    #[test]
+    fn test_proxy_routing_merged_with_none_returns_clone() {
+        let global = ProxyRoutingConfig {
+            strategy: RoutingStrategy::LocalFirst,
+            ..Default::default()
+        };
+        let merged = global.merged_with(None);
+        assert_eq!(merged.strategy, RoutingStrategy::LocalFirst);
+    }
+
+    #[test]
+    fn test_proxy_secrets_default_cache_ttl() {
+        let s = ProxySecretsConfig::default();
+        assert_eq!(s.cache_ttl_secs, 300);
+        assert!(s.is_default());
+    }
+
+    #[test]
+    fn test_proxy_telemetry_defaults() {
+        let t = ProxyTelemetryConfig::default();
+        assert!(t.enabled);
+        assert_eq!(t.batch_size, 100);
+        assert_eq!(t.batch_interval_secs, 30);
+        assert!(t.endpoint.is_none());
+        assert!(t.is_default());
+    }
+
+    #[test]
+    fn test_proxy_toml_parse_full() {
+        let toml_str = r#"
+            [proxy.routing]
+            strategy = "local-first"
+            fallback_on_error = false
+
+            [[proxy.routing.tool_overrides]]
+            pattern = "create_*"
+            strategy = "remote"
+
+            [proxy.secrets]
+            cache_ttl_secs = 120
+
+            [proxy.telemetry]
+            enabled = true
+            batch_size = 50
+            batch_interval_secs = 10
+            endpoint = "https://telemetry.example.com/api/events"
+        "#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.proxy.routing.strategy, RoutingStrategy::LocalFirst);
+        assert!(!config.proxy.routing.fallback_on_error);
+        assert_eq!(config.proxy.routing.tool_overrides.len(), 1);
+        assert_eq!(config.proxy.secrets.cache_ttl_secs, 120);
+        assert_eq!(config.proxy.telemetry.batch_size, 50);
+        assert_eq!(
+            config.proxy.telemetry.endpoint.as_deref(),
+            Some("https://telemetry.example.com/api/events")
+        );
+    }
+
+    #[test]
+    fn test_proxy_mcp_server_per_server_routing_override() {
+        let toml_str = r#"
+            [[proxy_mcp_servers]]
+            name = "cloud"
+            url = "https://api.example.com/mcp"
+
+            [proxy_mcp_servers.routing]
+            strategy = "local-first"
+        "#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let server = &config.proxy_mcp_servers[0];
+        assert!(server.routing.is_some());
+        assert_eq!(
+            server.routing.as_ref().unwrap().strategy,
+            RoutingStrategy::LocalFirst
+        );
+    }
+
+    // =========================================================================
+    // Config::set / Config::get for `proxy.*` paths
+    // =========================================================================
+
+    #[test]
+    fn test_set_get_proxy_routing_strategy_roundtrip() {
+        let mut cfg = Config::default();
+        cfg.set("proxy.routing.strategy", "local-first").unwrap();
+        assert_eq!(cfg.proxy.routing.strategy, RoutingStrategy::LocalFirst);
+        assert_eq!(
+            cfg.get("proxy.routing.strategy").unwrap().as_deref(),
+            Some("local-first")
+        );
+
+        cfg.set("proxy.routing.strategy", "remote").unwrap();
+        assert_eq!(
+            cfg.get("proxy.routing.strategy").unwrap().as_deref(),
+            Some("remote")
+        );
+    }
+
+    #[test]
+    fn test_set_proxy_routing_strategy_rejects_garbage() {
+        let mut cfg = Config::default();
+        let err = cfg
+            .set("proxy.routing.strategy", "teleport")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Invalid routing strategy"));
+    }
+
+    #[test]
+    fn test_set_proxy_routing_booleans_accept_many_forms() {
+        let mut cfg = Config::default();
+        for truthy in ["true", "TRUE", "1", "yes", "on"] {
+            cfg.set("proxy.routing.fallback_on_error", truthy).unwrap();
+            assert!(cfg.proxy.routing.fallback_on_error);
+        }
+        for falsy in ["false", "0", "no", "off"] {
+            cfg.set("proxy.routing.fallback_on_error", falsy).unwrap();
+            assert!(!cfg.proxy.routing.fallback_on_error);
+        }
+    }
+
+    #[test]
+    fn test_set_proxy_secrets_cache_ttl() {
+        let mut cfg = Config::default();
+        cfg.set("proxy.secrets.cache_ttl_secs", "120").unwrap();
+        assert_eq!(cfg.proxy.secrets.cache_ttl_secs, 120);
+        assert_eq!(
+            cfg.get("proxy.secrets.cache_ttl_secs").unwrap().as_deref(),
+            Some("120")
+        );
+
+        assert!(cfg.set("proxy.secrets.cache_ttl_secs", "-5").is_err());
+    }
+
+    #[test]
+    fn test_set_proxy_telemetry_endpoint_and_clear() {
+        let mut cfg = Config::default();
+        cfg.set("proxy.telemetry.endpoint", "https://example.com/t")
+            .unwrap();
+        assert_eq!(
+            cfg.proxy.telemetry.endpoint.as_deref(),
+            Some("https://example.com/t")
+        );
+
+        // Empty string clears the field — symmetric with how serde skips it.
+        cfg.set("proxy.telemetry.endpoint", "").unwrap();
+        assert!(cfg.proxy.telemetry.endpoint.is_none());
+    }
+
+    #[test]
+    fn test_set_proxy_telemetry_endpoint_rejects_garbage() {
+        let mut cfg = Config::default();
+        for bad in [
+            "not-a-url",
+            "ftp://host.example.com",
+            "//example.com",
+            "https://",
+            "http:// space.example.com",
+        ] {
+            match cfg.set("proxy.telemetry.endpoint", bad) {
+                Ok(()) => panic!("expected reject for {}", bad),
+                Err(e) => assert!(
+                    e.to_string().contains("Invalid URL"),
+                    "bad={}, err={}",
+                    bad,
+                    e
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn test_set_proxy_telemetry_endpoint_accepts_common_forms() {
+        let mut cfg = Config::default();
+        for good in [
+            "https://app.example.com/api/telemetry/tool-invocations",
+            "http://localhost:4335/api/telemetry/tool-invocations",
+            "https://example.com",
+            "http://10.0.0.1:8080/",
+        ] {
+            cfg.set("proxy.telemetry.endpoint", good)
+                .unwrap_or_else(|e| panic!("expected accept for {}: {}", good, e));
+        }
+    }
+
+    // =========================================================================
+    // Config::validate() — run-time checks applied on load_from() too
+    // =========================================================================
+
+    #[test]
+    fn test_validate_rejects_bad_endpoint_from_toml() {
+        // A user hand-editing TOML can sneak invalid endpoints past `set()`; ensure
+        // `Config::load_from` (via `validate()`) still catches them.
+        let toml_str = r#"
+            [proxy.telemetry]
+            endpoint = "not-a-url"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let err = config
+            .validate()
+            .expect_err("expected validation to fail for 'not-a-url'");
+        assert!(
+            err.to_string().contains("Invalid URL"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_validate_accepts_empty_endpoint_as_absent() {
+        // Current TOML serde path keeps `endpoint = None` when the field is skipped.
+        // Validation must not fail in this common case.
+        let config = Config::default();
+        config.validate().expect("default config validates");
+    }
+
+    #[test]
+    fn test_load_from_runs_validation() {
+        use std::fs::write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        write(
+            &path,
+            r#"
+[proxy.telemetry]
+endpoint = "ftp://wrong-scheme.example.com"
+"#,
+        )
+        .unwrap();
+
+        let err = Config::load_from(&path).expect_err("must reject bad URL from file");
+        assert!(
+            err.to_string().contains("Invalid URL"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    // =========================================================================
+    // deny_unknown_fields — typos surface on load, not silently default away
+    // =========================================================================
+
+    #[test]
+    fn test_unknown_field_in_proxy_routing_rejected() {
+        let toml_str = r#"
+            [proxy.routing]
+            strategy = "local-first"
+            startegy = "typo"
+        "#;
+        let err = toml::from_str::<Config>(toml_str)
+            .expect_err("expected parse error for typo 'startegy'");
+        let msg = err.to_string();
+        assert!(msg.contains("startegy") || msg.contains("unknown field"),
+                "unexpected error: {}", msg);
+    }
+
+    #[test]
+    fn test_unknown_field_in_proxy_secrets_rejected() {
+        let toml_str = r#"
+            [proxy.secrets]
+            cache_ttl_secs = 60
+            chache_ttl_secs = 120
+        "#;
+        let err = toml::from_str::<Config>(toml_str).expect_err("typo must fail");
+        assert!(err.to_string().contains("chache_ttl_secs") || err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn test_unknown_field_in_proxy_telemetry_rejected() {
+        let toml_str = r#"
+            [proxy.telemetry]
+            enabled = true
+            endpooint = "https://example.com"
+        "#;
+        let err = toml::from_str::<Config>(toml_str).expect_err("typo must fail");
+        assert!(err.to_string().contains("endpooint") || err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn test_unknown_field_in_tool_override_rejected() {
+        let toml_str = r#"
+            [[proxy.routing.tool_overrides]]
+            pattern = "get_*"
+            strategy = "local"
+            unknown = 1
+        "#;
+        let err = toml::from_str::<Config>(toml_str).expect_err("typo in rule must fail");
+        assert!(err.to_string().contains("unknown"));
+    }
+
+    #[test]
+    fn test_unknown_top_level_proxy_section_rejected() {
+        // E.g. user writes [proxy.typo] — we want this to fail, not silently ignore.
+        let toml_str = r#"
+            [proxy.typo]
+            foo = 1
+        "#;
+        let err = toml::from_str::<Config>(toml_str).expect_err("unknown section must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("typo") || msg.contains("unknown field"));
+    }
+
+    #[test]
+    fn test_load_from_accepts_valid_proxy_config() {
+        use std::fs::write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        write(
+            &path,
+            r#"
+[proxy.routing]
+strategy = "local-first"
+
+[proxy.telemetry]
+endpoint = "https://app.example.com/api/telemetry/tool-invocations"
+"#,
+        )
+        .unwrap();
+
+        let cfg = Config::load_from(&path).expect("valid config must load");
+        assert_eq!(cfg.proxy.routing.strategy, RoutingStrategy::LocalFirst);
+        assert_eq!(
+            cfg.proxy.telemetry.endpoint.as_deref(),
+            Some("https://app.example.com/api/telemetry/tool-invocations")
+        );
+    }
+
+    #[test]
+    fn test_set_proxy_telemetry_batch_fields() {
+        let mut cfg = Config::default();
+        cfg.set("proxy.telemetry.batch_size", "50").unwrap();
+        cfg.set("proxy.telemetry.batch_interval_secs", "15").unwrap();
+        cfg.set("proxy.telemetry.offline_queue_max", "2000").unwrap();
+
+        assert_eq!(cfg.proxy.telemetry.batch_size, 50);
+        assert_eq!(cfg.proxy.telemetry.batch_interval_secs, 15);
+        assert_eq!(cfg.proxy.telemetry.offline_queue_max, 2000);
+    }
+
+    #[test]
+    fn test_unknown_proxy_section_or_field_errors() {
+        let mut cfg = Config::default();
+        assert!(cfg.set("proxy.unknown.foo", "1").is_err());
+        assert!(cfg.set("proxy.routing.unknown", "1").is_err());
+        assert!(cfg.get("proxy.unknown.foo").is_err());
+        assert!(cfg.get("proxy.routing.unknown").is_err());
+    }
+
+    #[test]
+    fn test_four_part_key_rejected() {
+        let mut cfg = Config::default();
+        assert!(cfg.set("proxy.routing.strategy.extra", "local").is_err());
+    }
+
+    // =========================================================================
+    // Config: backward compat
+    // =========================================================================
+
+    #[test]
+    fn test_legacy_config_without_proxy_section_still_parses() {
+        // A config written before this feature must keep deserializing cleanly.
+        let toml_str = r#"
+            [github]
+            owner = "me"
+            repo = "repo"
+
+            [[proxy_mcp_servers]]
+            name = "cloud"
+            url = "https://api.example.com/mcp"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.github.unwrap().owner, "me");
+        assert_eq!(config.proxy_mcp_servers.len(), 1);
+        assert!(config.proxy.is_default());
+    }
+
+    // =========================================================================
+    // glob matcher tests
+    // =========================================================================
+
+    #[test]
+    fn test_matches_glob_exact() {
+        assert!(matches_glob("get_issues", "get_issues"));
+        assert!(!matches_glob("get_issues", "get_issue"));
+        assert!(!matches_glob("get_issues", "gets_issues"));
+    }
+
+    #[test]
+    fn test_matches_glob_star_alone() {
+        assert!(matches_glob("*", ""));
+        assert!(matches_glob("*", "anything"));
+        assert!(matches_glob("*", "create_merge_request"));
+    }
+
+    #[test]
+    fn test_matches_glob_prefix() {
+        assert!(matches_glob("get_*", "get_issues"));
+        assert!(matches_glob("get_*", "get_"));
+        assert!(!matches_glob("get_*", "create_issues"));
+    }
+
+    #[test]
+    fn test_matches_glob_suffix() {
+        assert!(matches_glob("*_issue", "create_issue"));
+        assert!(matches_glob("*_issue", "_issue"));
+        assert!(!matches_glob("*_issue", "create_issues"));
+    }
+
+    #[test]
+    fn test_matches_glob_contains() {
+        assert!(matches_glob("*issue*", "get_issues"));
+        assert!(matches_glob("*issue*", "issue"));
+        assert!(!matches_glob("*issue*", "merge_request"));
+    }
+
+    #[test]
+    fn test_matches_glob_multiple_wildcards() {
+        assert!(matches_glob("get_*_by_*", "get_issue_by_id"));
+        assert!(matches_glob("get_*_by_*", "get_user_by_email"));
+        assert!(!matches_glob("get_*_by_*", "get_issue"));
+        assert!(!matches_glob("get_*_by_*", "create_issue_by_id"));
+    }
+
+    #[test]
+    fn test_matches_glob_collapses_double_star() {
+        assert!(matches_glob("get_**_issue", "get_new_issue"));
     }
 
     // =========================================================================

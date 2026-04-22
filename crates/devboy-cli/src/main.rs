@@ -15,7 +15,7 @@ use devboy_clickup::ClickUpClient;
 use devboy_core::{
     BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, GitHubConfig, GitLabConfig,
     IssueFilter, IssueProvider, JiraConfig, MergeRequestProvider, MrFilter, Provider,
-    ProxyMcpServerConfig,
+    ProxyMcpServerConfig, routing_strategy_slug,
 };
 use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
@@ -24,7 +24,11 @@ use devboy_mcp::{
     JSONRPC_VERSION, JsonRpcRequest, KNOWN_BUILTIN_TOOLS, McpProxyClient, McpServer, ProxyManager,
     ProxyTransport, RequestId,
 };
-use devboy_storage::{ChainStore, CredentialStore};
+use devboy_mcp::routing::{ProxyStatus, RoutingEngine};
+use devboy_mcp::signature_match::{ToolCatalogue, build_report};
+use devboy_mcp::telemetry::{TelemetryAuth, TelemetryPipeline};
+use devboy_mcp::{ToolHandler, protocol::ToolDefinition};
+use devboy_storage::{ChainStore, CredentialStore, wrap_with_cache};
 use dialoguer::{Confirm, Input, MultiSelect, Password};
 use doctor::{DoctorOptions, OutputFormat};
 use tracing_subscriber::EnvFilter;
@@ -292,7 +296,10 @@ enum ConfigCommands {
     Set {
         /// Config key (e.g., github.owner, gitlab.url)
         key: String,
-        /// Config value
+        /// Config value. `allow_hyphen_values` лечит частый случай ввода отрицательных
+        /// чисел вроде `-1` — clap больше не интерпретирует их как флаги, а передаёт
+        /// доменному парсеру, который вернёт понятную ошибку валидации.
+        #[arg(allow_hyphen_values = true)]
         value: String,
     },
 
@@ -369,6 +376,13 @@ enum ProxyCommands {
         /// JSON arguments (optional)
         #[arg(default_value = "{}")]
         args: String,
+    },
+
+    /// Inspect transparent-routing status: matched tools, overrides, schema issues
+    Status {
+        /// Output as JSON instead of a human-readable report
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -472,7 +486,14 @@ async fn main() -> Result<()> {
         EnvFilter::new("info")
     };
 
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    // stdout is a transport-layer channel for `devboy mcp` (JSON-RPC messages) and a
+    // pipe-friendly surface for `devboy proxy status --json`. All logs therefore must
+    // go to stderr; otherwise any MCP client or `jq` pipeline chokes on the first log
+    // line. Applies to every command since the writer is a process-wide subscriber.
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .init();
 
     // Run update check in background for interactive commands (skip for mcp, upgrade, and no-command).
     // Spawned as a background task to avoid blocking CLI startup on network calls.
@@ -733,6 +754,7 @@ async fn handle_init_command(
             token_key,
             tool_prefix: None,
             transport,
+            routing: None,
         });
     }
 
@@ -1344,19 +1366,35 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
         }
 
         ConfigCommands::Get { key } => {
-            // First try config file for standard "provider.field" keys (e.g., "github.owner").
-            // Falls back to keychain for any other key format (e.g., "proxy.server_name.token").
+            // `config get` поддерживает два формата ключа:
+            //   1. Структурированные пути конфига — `github.owner`, `proxy.routing.strategy`, …
+            //      Для них `Config::get` знает схему: известное поле даёт `Ok(Some|None)`,
+            //      опечатка в имени поля — `Err("Unknown …")`. Пользователю важно знать
+            //      что он опечатался, поэтому такой `Err` превращаем в явную ошибку, а
+            //      не в silent fallback.
+            //   2. Произвольные keychain-ключи (`proxy.cloud.token`, `github.token`, …).
+            //      Для них `Config::get` возвращает `Err` ("Invalid config key …"),
+            //      после чего мы честно ходим в keychain — там и лежат секреты.
             let config = Config::load().context("Failed to load config")?;
+            let is_structured_path = is_structured_config_path(&key);
             match config.get(&key) {
                 Ok(Some(value)) => {
                     println!("{}", value);
                     return Ok(());
                 }
                 Ok(None) => {
-                    // Key format is valid but value not found, continue to keychain
+                    // Known field, just not populated — fall through to keychain lookup
+                    // for backward compat with secret keys that share the `provider.field`
+                    // shape (e.g., `github.token` is stored in keychain, not config).
+                }
+                Err(e) if is_structured_path => {
+                    // Typo in a known structured path (e.g., `proxy.routing.nonexistent`) —
+                    // keychain fallback would silently mask the mistake. Surface it.
+                    return Err(anyhow::Error::msg(e.to_string()));
                 }
                 Err(_) => {
-                    // Key format doesn't match "provider.field", fall back to keychain
+                    // Unknown key shape — legitimate keychain lookup (arbitrary 3-part
+                    // token paths that aren't part of any config schema).
                 }
             }
 
@@ -1437,7 +1475,51 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
                 println!();
             }
 
-            if !config.has_any_provider() {
+            // Transparent proxy configuration. Shown whenever any proxy-related value
+            // deviates from defaults so users can audit their setup with a single
+            // command. Identical ordering with the TOML file for quick cross-reference.
+            if !config.proxy.is_default() {
+                let routing = &config.proxy.routing;
+                let secrets = &config.proxy.secrets;
+                let telemetry = &config.proxy.telemetry;
+
+                if !routing.is_default() {
+                    println!("[proxy.routing]");
+                    println!("  strategy = {}", routing_strategy_slug(routing.strategy));
+                    println!("  fallback_on_error = {}", routing.fallback_on_error);
+                    for rule in &routing.tool_overrides {
+                        println!(
+                            "  override: {} → {}",
+                            rule.pattern,
+                            routing_strategy_slug(rule.strategy)
+                        );
+                    }
+                    println!();
+                }
+
+                if !secrets.is_default() {
+                    println!("[proxy.secrets]");
+                    println!("  cache_ttl_secs = {}", secrets.cache_ttl_secs);
+                    println!();
+                }
+
+                if !telemetry.is_default() {
+                    println!("[proxy.telemetry]");
+                    println!("  enabled = {}", telemetry.enabled);
+                    if let Some(ep) = &telemetry.endpoint {
+                        println!("  endpoint = {}", ep);
+                    }
+                    if let Some(tk) = &telemetry.token_key {
+                        println!("  token_key = {}", tk);
+                    }
+                    println!("  batch_size = {}", telemetry.batch_size);
+                    println!("  batch_interval_secs = {}", telemetry.batch_interval_secs);
+                    println!("  offline_queue_max = {}", telemetry.offline_queue_max);
+                    println!();
+                }
+            }
+
+            if !config.has_any_provider() && config.proxy.is_default() {
                 println!("No providers configured.");
                 println!();
                 println!("To configure GitHub:");
@@ -1454,6 +1536,22 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Проверка что key — это **структурированный путь конфига** (известная схема), а не
+/// произвольный keychain-ключ. Для структурированных путей ошибка от `Config::get` —
+/// это опечатка пользователя; для произвольных — валидная причина пойти в keychain.
+///
+/// Сейчас покрывает только `proxy.{routing|secrets|telemetry}.*` — эту схему мы
+/// добавили вместе с transparent proxy и вольны устанавливать строгие правила.
+/// Provider-пути (`github.*`, `gitlab.*`, …) сохраняют историческое поведение (silent
+/// fallback на keychain), чтобы не ломать существующих пользователей.
+fn is_structured_config_path(key: &str) -> bool {
+    let parts: Vec<&str> = key.split('.').collect();
+    matches!(
+        parts.as_slice(),
+        ["proxy", "routing" | "secrets" | "telemetry", _]
+    )
 }
 
 fn mask_secret(value: &str) -> String {
@@ -1806,7 +1904,6 @@ async fn handle_test_command(provider: &str) -> Result<()> {
 // =============================================================================
 
 async fn handle_mcp_command(no_config: bool) -> Result<()> {
-    let store = get_credential_store();
     let mut server = McpServer::new();
 
     // Load config unless --no-config flag or DEVBOY_NO_CONFIG=1 is set
@@ -1828,6 +1925,11 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
 
         cfg
     };
+
+    // Build the credential store. When `[proxy.secrets].cache_ttl_secs > 0`, wrap the
+    // default chain in a TTL cache so keychain hits (and UI prompts on macOS) are
+    // amortized across routing decisions and telemetry flushes.
+    let store = build_mcp_store(config.proxy.secrets.cache_ttl_secs);
 
     let mut any_provider_added = false;
 
@@ -1870,10 +1972,44 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
     // Also check for env-only proxies (DEVBOY_*_URL without config entry)
     add_env_only_proxies(&mut proxy_manager, &config, store.as_ref()).await;
 
+    if !proxy_manager.is_empty()
+        && let Err(e) = proxy_manager.fetch_all_tools().await
+    {
+        tracing::warn!("Failed to fetch proxy tools: {}", e);
+    }
+
+    // Build the transparent-routing engine from the (possibly empty) upstream catalogue
+    // and the local tool registry. Always installed: even without upstreams the engine
+    // handles local-only dispatch and consistently emits telemetry.
+    let local_catalogue = local_tool_catalogue();
+    let upstream_catalogue = proxy_manager.raw_upstream_catalogue();
+    let match_report = build_report(ToolCatalogue {
+        local: &local_catalogue,
+        upstream: upstream_catalogue
+            .iter()
+            .map(|(p, t)| (p.clone(), &t[..]))
+            .collect(),
+    });
+    let routing_engine = Arc::new(RoutingEngine::new(
+        config.proxy.routing.clone(),
+        match_report,
+    ));
+    tracing::info!(
+        strategy = ?routing_engine.config().strategy,
+        total_tools = routing_engine.report().len(),
+        "routing engine initialised"
+    );
+    server.set_routing_engine(routing_engine);
+
+    // Start the telemetry pipeline. We keep the pipeline owned here so its background
+    // task stays alive for the lifetime of the MCP server.
+    let mut telemetry_pipeline = start_telemetry_pipeline(&config, store.as_ref());
+    if let Some(pipeline) = &telemetry_pipeline {
+        server.set_telemetry(pipeline.buffer());
+    }
+
+    // Attach the proxy manager last — must happen after we've consumed its catalogue.
     if !proxy_manager.is_empty() {
-        if let Err(e) = proxy_manager.fetch_all_tools().await {
-            tracing::warn!("Failed to fetch proxy tools: {}", e);
-        }
         server.set_proxy_manager(proxy_manager);
     }
 
@@ -1883,9 +2019,70 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
     }
 
     // Run the MCP server (reads from stdin, writes to stdout)
-    server.run().await.context("MCP server error")?;
+    let run_result = server.run().await.context("MCP server error");
+
+    // Best-effort telemetry flush on shutdown.
+    if let Some(mut pipeline) = telemetry_pipeline.take() {
+        pipeline.shutdown().await;
+    }
+
+    run_result?;
 
     Ok(())
+}
+
+/// Credential store factory for the MCP command — wraps the default chain in a TTL
+/// cache when the user enabled it.
+fn build_mcp_store(cache_ttl_secs: u64) -> Box<dyn CredentialStore> {
+    if is_skip_keychain_enabled() {
+        tracing::info!("Using CI credential chain (env vars only, keychain disabled)");
+        return wrap_with_cache(ChainStore::ci_chain(), cache_ttl_secs);
+    }
+    tracing::debug!(
+        cache_ttl_secs,
+        "Using default credential chain (env vars -> keychain) with TTL cache"
+    );
+    wrap_with_cache(ChainStore::default_chain(), cache_ttl_secs)
+}
+
+/// Configure and launch the telemetry pipeline. Returns `None` when telemetry is
+/// disabled or when the auth token cannot be resolved.
+fn start_telemetry_pipeline(
+    config: &Config,
+    store: &dyn CredentialStore,
+) -> Option<TelemetryPipeline> {
+    if !config.proxy.telemetry.enabled {
+        tracing::debug!("proxy.telemetry.enabled=false; skipping pipeline");
+        return None;
+    }
+    if config.proxy.telemetry.endpoint.is_none() {
+        tracing::debug!("proxy.telemetry.endpoint unset; pipeline buffers locally only");
+    }
+
+    // Resolve auth token: prefer explicit telemetry.token_key, otherwise fall back to
+    // the first upstream server's token. Missing token is fine for unauthenticated
+    // endpoints — the uploader will just omit the header.
+    let token_key = config
+        .proxy
+        .telemetry
+        .token_key
+        .clone()
+        .or_else(|| {
+            config
+                .proxy_mcp_servers
+                .first()
+                .and_then(|s| s.token_key.clone())
+        });
+    let bearer_token = token_key
+        .as_deref()
+        .and_then(|k| store.get(k).ok().flatten());
+
+    let mut pipeline = TelemetryPipeline::new(config.proxy.telemetry.clone());
+    if let Err(e) = pipeline.start(TelemetryAuth { bearer_token }) {
+        tracing::warn!(error = %e, "telemetry pipeline failed to start; continuing without it");
+        return None;
+    }
+    Some(pipeline)
 }
 
 // =============================================================================
@@ -1923,7 +2120,12 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
     let (config, _) = load_runtime_config()?;
     let store = get_credential_store();
 
-    if config.proxy_mcp_servers.is_empty() {
+    // `Status` is the only read-only command that is still useful without upstream:
+    // it reports the local tool catalogue plus the active routing policy, which lets
+    // users validate their config before wiring a cloud server.
+    let is_status_cmd = matches!(command, ProxyCommands::Status { .. });
+
+    if config.proxy_mcp_servers.is_empty() && !is_status_cmd {
         println!("No proxy MCP servers configured.");
         println!("Add using: devboy proxy add <name> --url <url>");
         println!();
@@ -1938,7 +2140,7 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
 
     let mut proxy_manager = build_proxy_manager(&config, store.as_ref()).await;
 
-    if proxy_manager.is_empty() {
+    if proxy_manager.is_empty() && !is_status_cmd {
         eprintln!("Could not connect to any upstream MCP server.");
         return Ok(());
     }
@@ -1987,9 +2189,92 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
                 }
             }
         }
+        ProxyCommands::Status { json } => {
+            // Fetch upstream tool catalogues only when there are connected clients.
+            // Local-only mode (no upstream) still produces a useful status snapshot:
+            // every tool is classified as `local_only`, matching runtime behaviour.
+            if !proxy_manager.is_empty() {
+                proxy_manager
+                    .fetch_all_tools()
+                    .await
+                    .context("Failed to fetch tools from upstream servers")?;
+            }
+            let status =
+                build_proxy_status(&config, &proxy_manager).context("failed to build status")?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&status.to_json()).unwrap_or_default()
+                );
+            } else {
+                if proxy_manager.is_empty() {
+                    println!("(No upstream MCP servers connected — showing local-only status)");
+                    println!();
+                }
+                print!("{}", status.to_text_report());
+            }
+        }
     }
 
     Ok(())
+}
+
+/// Build a [`ProxyStatus`] snapshot from the current config and a connected proxy
+/// manager. Combines the local tool catalogue with upstream catalogues into a
+/// [`RoutingEngine`] purely for reporting (nothing is dispatched).
+fn build_proxy_status(
+    config: &Config,
+    proxy_manager: &ProxyManager,
+) -> Result<ProxyStatus> {
+    let local_tools = local_tool_catalogue();
+    let upstream = proxy_manager.raw_upstream_catalogue();
+    let catalogue = ToolCatalogue {
+        local: &local_tools,
+        upstream: upstream
+            .iter()
+            .map(|(p, t)| (p.clone(), &t[..]))
+            .collect(),
+    };
+    let report = build_report(catalogue);
+    let engine = RoutingEngine::new(config.proxy.routing.clone(), report);
+    Ok(ProxyStatus::from_engine(&engine))
+}
+
+/// Enumerate every built-in tool available on this process. The list is used both for
+/// signature matching and for the `proxy status` command.
+fn local_tool_catalogue() -> Vec<ToolDefinition> {
+    // Reuse the ToolHandler's advertised list. No providers attached — we only need the
+    // definitions (name + schema), not any runtime behaviour.
+    let handler = ToolHandler::new(Vec::new());
+    let mut tools = handler.available_tools();
+
+    // Context-management tools that the server injects unconditionally.
+    tools.push(ToolDefinition {
+        name: "list_contexts".to_string(),
+        description: "List configured contexts and indicate the active context.".to_string(),
+        input_schema: serde_json::json!({ "type": "object", "properties": {} }),
+        category: None,
+    });
+    tools.push(ToolDefinition {
+        name: "use_context".to_string(),
+        description: "Switch active context at runtime.".to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": { "type": "string" }
+            }
+        }),
+        category: None,
+    });
+    tools.push(ToolDefinition {
+        name: "get_current_context".to_string(),
+        description: "Get current active context name.".to_string(),
+        input_schema: serde_json::json!({ "type": "object", "properties": {} }),
+        category: None,
+    });
+
+    tools
 }
 
 /// Add a new proxy server configuration.
@@ -2044,6 +2329,7 @@ fn handle_proxy_add(
         token_key: final_token_key.clone(),
         tool_prefix: None,
         transport: transport_str.to_string(),
+        routing: None,
     };
 
     config.proxy_mcp_servers.push(proxy);
@@ -3644,6 +3930,7 @@ mod tests {
                 token_key: Some("proxy.token".to_string()),
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
+            routing: None,
             }),
             ..Default::default()
         };
@@ -3669,6 +3956,7 @@ mod tests {
                 token_key: None,
                 tool_prefix: None,
                 transport: "sse".to_string(),
+            routing: None,
             }),
             ..Default::default()
         };
@@ -3698,6 +3986,7 @@ mod tests {
                 token_key: Some("devboy.token".to_string()),
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
+            routing: None,
             }),
             ..Default::default()
         };
