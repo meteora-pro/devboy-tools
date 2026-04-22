@@ -7,6 +7,8 @@ use async_trait::async_trait;
 
 use crate::asset::{AssetCapabilities, AssetMeta};
 use crate::error::{Error, Result};
+#[cfg(test)]
+use crate::types::JobLogMode;
 use crate::types::{
     Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, Discussion, FileDiff,
     GetChatsParams, GetMessagesParams, GetPipelineInput, GetUsersOptions, Issue, IssueFilter,
@@ -348,4 +350,186 @@ pub trait MessengerProvider: Send + Sync {
 
     /// Send a message to a chat or thread.
     async fn send_message(&self, params: SendMessageParams) -> Result<MessengerMessage>;
+}
+
+// ============================================================================
+// Default-method coverage
+// ============================================================================
+//
+// The traits above expose a lot of default methods that return
+// `ProviderUnsupported` so that concrete providers only have to
+// override what they actually implement. The unit tests below pin the
+// contract of that default set so a future refactor cannot silently
+// turn an unsupported operation into a panic, a silent success, or a
+// wrong error variant.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `Provider` that only overrides `provider_name()` and nothing
+    /// else — every other method should fall through to the default
+    /// `ProviderUnsupported` return.
+    struct DummyProvider;
+
+    #[async_trait]
+    impl IssueProvider for DummyProvider {
+        async fn get_issues(&self, _: IssueFilter) -> Result<ProviderResult<Issue>> {
+            unreachable!("the dispatcher should never call this in these tests")
+        }
+        async fn get_issue(&self, _: &str) -> Result<Issue> {
+            unreachable!()
+        }
+        async fn create_issue(&self, _: CreateIssueInput) -> Result<Issue> {
+            unreachable!()
+        }
+        async fn update_issue(&self, _: &str, _: UpdateIssueInput) -> Result<Issue> {
+            unreachable!()
+        }
+        async fn get_comments(&self, _: &str) -> Result<ProviderResult<Comment>> {
+            unreachable!()
+        }
+        async fn add_comment(&self, _: &str, _: &str) -> Result<Comment> {
+            unreachable!()
+        }
+        fn provider_name(&self) -> &'static str {
+            "dummy"
+        }
+    }
+
+    #[async_trait]
+    impl MergeRequestProvider for DummyProvider {
+        fn provider_name(&self) -> &'static str {
+            "dummy"
+        }
+    }
+
+    #[async_trait]
+    impl PipelineProvider for DummyProvider {
+        fn provider_name(&self) -> &'static str {
+            "dummy"
+        }
+    }
+
+    /// Assert that a result is `ProviderUnsupported { provider, operation }`
+    /// and that both fields carry the expected values.
+    fn assert_unsupported<T: std::fmt::Debug>(result: Result<T>, expected_op: &str) {
+        match result {
+            Err(Error::ProviderUnsupported {
+                provider,
+                operation,
+            }) => {
+                assert_eq!(provider, "dummy");
+                assert_eq!(operation, expected_op);
+            }
+            other => panic!("expected ProviderUnsupported({expected_op}), got {other:?}"),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // IssueProvider defaults
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn issue_provider_defaults_return_unsupported() {
+        let p = DummyProvider;
+
+        assert_unsupported(p.get_statuses().await, "get_statuses");
+        assert_unsupported(p.link_issues("a", "b", "blocks").await, "link_issues");
+        assert_unsupported(p.unlink_issues("a", "b", "blocks").await, "unlink_issues");
+        assert_unsupported(p.get_users(GetUsersOptions::default()).await, "get_users");
+        assert_unsupported(
+            p.upload_attachment("k", "f.png", b"x").await,
+            "upload_attachment",
+        );
+        assert_unsupported(p.get_issue_attachments("k").await, "get_issue_attachments");
+        assert_unsupported(p.download_attachment("k", "1").await, "download_attachment");
+        assert_unsupported(p.delete_attachment("k", "1").await, "delete_attachment");
+        assert_unsupported(p.get_issue_relations("k").await, "get_issue_relations");
+    }
+
+    #[tokio::test]
+    async fn issue_provider_set_custom_fields_is_no_op_by_default() {
+        // Distinct from every other default: this one returns Ok(()).
+        let p = DummyProvider;
+        p.set_custom_fields("k", &[]).await.unwrap();
+    }
+
+    #[test]
+    fn issue_provider_default_asset_capabilities_is_empty() {
+        let caps = IssueProvider::asset_capabilities(&DummyProvider);
+        assert_eq!(caps, AssetCapabilities::default());
+    }
+
+    // ------------------------------------------------------------------
+    // MergeRequestProvider defaults
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn merge_request_provider_defaults_return_unsupported() {
+        let p = DummyProvider;
+        assert_unsupported(
+            p.get_merge_requests(MrFilter::default()).await,
+            "get_merge_requests",
+        );
+        assert_unsupported(p.get_merge_request("mr#1").await, "get_merge_request");
+        assert_unsupported(p.get_discussions("mr#1").await, "get_discussions");
+        assert_unsupported(p.get_diffs("mr#1").await, "get_diffs");
+        assert_unsupported(
+            MergeRequestProvider::add_comment(
+                &p,
+                "mr#1",
+                CreateCommentInput {
+                    body: "".into(),
+                    position: None,
+                    discussion_id: None,
+                },
+            )
+            .await,
+            "add_merge_request_comment",
+        );
+        assert_unsupported(
+            p.create_merge_request(CreateMergeRequestInput::default())
+                .await,
+            "create_merge_request",
+        );
+        assert_unsupported(
+            p.update_merge_request("mr#1", UpdateMergeRequestInput::default())
+                .await,
+            "update_merge_request",
+        );
+        assert_unsupported(p.get_releases().await, "get_releases");
+        assert_unsupported(p.get_mr_attachments("mr#1").await, "get_mr_attachments");
+        assert_unsupported(
+            p.download_mr_attachment("mr#1", "1").await,
+            "download_mr_attachment",
+        );
+        assert_unsupported(
+            p.delete_mr_attachment("mr#1", "1").await,
+            "delete_mr_attachment",
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // PipelineProvider defaults
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn pipeline_provider_defaults_return_unsupported() {
+        let p = DummyProvider;
+        assert_unsupported(
+            p.get_pipeline(GetPipelineInput::default()).await,
+            "get_pipeline",
+        );
+        assert_unsupported(
+            p.get_job_logs(
+                "1",
+                JobLogOptions {
+                    mode: JobLogMode::Smart,
+                },
+            )
+            .await,
+            "get_job_logs",
+        );
+    }
 }
