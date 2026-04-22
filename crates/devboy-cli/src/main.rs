@@ -244,6 +244,12 @@ enum Commands {
         command: SkillsCommands,
     },
 
+    /// Write to a skill's self-feedback session trace (ADR-015)
+    Trace {
+        #[command(subcommand)]
+        command: TraceCommands,
+    },
+
     /// Run diagnostic checks for the local DevBoy setup
     Doctor {
         /// Output machine-readable JSON
@@ -540,6 +546,64 @@ enum SkillsCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum TraceCommands {
+    /// Start a new session trace. Prints a single JSON line with
+    /// `session_id`, `session_dir`, `trace_path` — skills capture that
+    /// and pass the values to subsequent `event` / `end` invocations.
+    Begin {
+        /// Skill name. Shown as the directory under the date, also
+        /// recorded in every event.
+        #[arg(long)]
+        skill: String,
+        /// Write under `~/.devboy/sessions/` instead of the repo-local
+        /// `<repo>/.devboy/sessions/`.
+        #[arg(long, conflicts_with = "dir")]
+        global: bool,
+        /// Write under an explicit directory (mostly for testing).
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Append one event to an existing session.
+    Event {
+        /// Session directory printed by `trace begin`.
+        #[arg(long)]
+        session_dir: String,
+        /// Session id printed by `trace begin`.
+        #[arg(long)]
+        session_id: String,
+        /// Skill name.
+        #[arg(long)]
+        skill: String,
+        /// Event phase. Supported values: `start`, `decision`, `tool_call`,
+        /// `tool_result`, `verify`, `artifact`, `note`, `end`.
+        #[arg(long)]
+        phase: String,
+        /// JSON payload. Defaults to `{}` if omitted.
+        #[arg(long, default_value = "{}")]
+        payload: String,
+    },
+    /// Finalise a session — writes the closing event and updates
+    /// `meta.json` with the outcome + aggregated counts.
+    End {
+        /// Session directory printed by `trace begin`.
+        #[arg(long)]
+        session_dir: String,
+        /// Session id printed by `trace begin`.
+        #[arg(long)]
+        session_id: String,
+        /// Skill name.
+        #[arg(long)]
+        skill: String,
+        /// Session outcome: `success`, `failure`, `aborted`.
+        #[arg(long)]
+        outcome: String,
+        /// Human-readable summary.
+        #[arg(long, default_value = "")]
+        summary: String,
+    },
+}
+
 /// Environment variable to skip keychain operations (for CI testing).
 /// When set to "1" or "true", uses in-memory store instead of OS keychain.
 const SKIP_KEYCHAIN_ENV: &str = "DEVBOY_SKIP_KEYCHAIN";
@@ -735,6 +799,10 @@ async fn main() -> Result<()> {
 
             Some(Commands::Skills { command }) => {
                 skills_cmd::handle(command).await?;
+            }
+
+            Some(Commands::Trace { command }) => {
+                skills_cmd::handle_trace(command).await?;
             }
 
             Some(Commands::Doctor {
