@@ -1,6 +1,1 @@
-[
-  "index",
-  "executor",
-  "enrichers",
-  "format-pipeline"
-]
+["index", "executor", "enrichers", "format-pipeline"]

@@ -11,8 +11,13 @@ authors.workspace = true
 name = "devboy"
 path = "src/main.rs"
 
+[features]
+default = []
+sentry = ["devboy-core/sentry", "dep:sentry-tracing", "dep:sentry"]
+
 [dependencies]
 devboy-core = { path = "../devboy-core" }
+devboy-executor = { path = "../devboy-executor" }
 devboy-mcp = { path = "../devboy-mcp" }
 devboy-storage = { path = "../devboy-storage" }
 devboy-github = { path = "../plugins/api/github" }
@@ -20,7 +25,10 @@ devboy-gitlab = { path = "../plugins/api/gitlab" }
 devboy-clickup = { path = "../plugins/api/clickup" }
 devboy-jira = { path = "../plugins/api/jira" }
 devboy-fireflies = { path = "../plugins/api/fireflies" }
+devboy-slack = { path = "../plugins/api/slack" }
 devboy-format-pipeline = { path = "../plugins/format-pipeline" }
+devboy-skills = { path = "../devboy-skills" }
+serde_yaml = "0.9"
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -37,12 +45,17 @@ dirs.workspace = true
 flate2 = "1.1"
 tar = "0.4"
 zip = "8.4"
+sentry = { workspace = true, optional = true }
+sentry-tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tempfile.workspace = true
 httpmock.workspace = true
 temp-env = { version = "0.3", features = ["async_closure"] }
+
+[build-dependencies]
+chrono = "0.4"
 
 [lints]
 workspace = true

@@ -1,7 +1,9 @@
 use crate::doctor::checks::{resolve_active_provider_context, resolve_secret};
 use crate::doctor::{CheckResult, CheckStatus, DiagnosticCheck, DiagnosticContext};
 use async_trait::async_trait;
-use devboy_core::{ClickUpConfig, ContextConfig, GitHubConfig, GitLabConfig, JiraConfig};
+use devboy_core::{
+    ClickUpConfig, ContextConfig, GitHubConfig, GitLabConfig, JiraConfig, SlackConfig,
+};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, USER_AGENT};
 use reqwest::{Client, Method};
 use serde::Deserialize;
@@ -12,6 +14,7 @@ pub struct GitHubApiCheck;
 pub struct GitLabApiCheck;
 pub struct ClickUpApiCheck;
 pub struct JiraApiCheck;
+pub struct SlackApiCheck;
 
 #[derive(Debug, Clone)]
 struct RateLimitInfo {
@@ -411,6 +414,39 @@ async fn jira_connectivity(
     })
 }
 
+async fn slack_connectivity(
+    config: &SlackConfig,
+    token: &str,
+) -> Result<ConnectivityOutcome, String> {
+    let mut client =
+        devboy_slack::SlackClient::new(token).with_required_scopes(config.required_scopes.clone());
+    if let Some(base_url) = &config.base_url {
+        client = client.with_base_url(base_url);
+    }
+
+    let info = client
+        .auth_info()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    if !info.missing_scopes.is_empty() {
+        return Err(format!(
+            "missing required scopes: {}",
+            info.missing_scopes.join(", ")
+        ));
+    }
+
+    Ok(ConnectivityOutcome {
+        message: format!("Slack API authenticated for workspace {}", info.team_name),
+        user: Some(ProviderIdentity {
+            username: info.user_id,
+            name: info.user_name,
+            email: None,
+        }),
+        rate_limit: None,
+    })
+}
+
 use std::pin::Pin;
 
 type ConnectFuture<'a> =
@@ -608,6 +644,32 @@ impl DiagnosticCheck for JiraApiCheck {
             "jira",
             |c| c.jira.clone(),
             |cfg, token| Box::pin(jira_connectivity(cfg, token)),
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl DiagnosticCheck for SlackApiCheck {
+    fn id(&self) -> &'static str {
+        "providers.slack"
+    }
+
+    fn name(&self) -> &'static str {
+        "Slack API connectivity"
+    }
+
+    fn category(&self) -> &'static str {
+        "Provider Connectivity"
+    }
+
+    async fn run(&self, ctx: &DiagnosticContext) -> CheckResult {
+        run_provider_check(
+            self,
+            ctx,
+            "slack",
+            |c| c.slack.clone(),
+            |cfg, token| Box::pin(slack_connectivity(cfg, token)),
         )
         .await
     }

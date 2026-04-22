@@ -1,0 +1,25 @@
+[package]
+name = "devboy-assets"
+description = "Asset management (cache, rotation, index) for devboy-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+devboy-core = { path = "../devboy-core" }
+
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+toml.workspace = true
+dirs.workspace = true
+
+sha2.workspace = true
+# Atomic file writes for the index
+tempfile.workspace = true
+
+[lints]
+workspace = true

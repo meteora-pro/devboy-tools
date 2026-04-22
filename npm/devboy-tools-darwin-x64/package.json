@@ -8,8 +8,14 @@
     "url": "https://github.com/meteora-pro/devboy-tools.git",
     "directory": "npm/devboy-tools-darwin-x64"
   },
-  "os": ["darwin"],
-  "cpu": ["x64"],
-  "files": ["bin/devboy"],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/devboy"
+  ],
   "preferUnplugged": true
 }

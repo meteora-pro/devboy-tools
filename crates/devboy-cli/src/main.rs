@@ -1,6 +1,7 @@
 //! DevBoy CLI - Command-line interface for devboy-tools.
 
 mod doctor;
+mod skills_cmd;
 mod update_check;
 mod upgrade;
 
@@ -15,7 +16,7 @@ use devboy_clickup::ClickUpClient;
 use devboy_core::{
     BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, GitHubConfig, GitLabConfig,
     IssueFilter, IssueProvider, JiraConfig, MergeRequestProvider, MrFilter, Provider,
-    ProxyMcpServerConfig, routing_strategy_slug,
+    ProxyMcpServerConfig, SlackConfig, routing_strategy_slug,
 };
 use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
@@ -27,11 +28,14 @@ use devboy_mcp::{
 use devboy_mcp::routing::{ProxyStatus, RoutingEngine};
 use devboy_mcp::signature_match::{ToolCatalogue, build_report};
 use devboy_mcp::telemetry::{TelemetryAuth, TelemetryPipeline};
-use devboy_mcp::{ToolHandler, protocol::ToolDefinition};
+use devboy_mcp::protocol::ToolDefinition;
+use devboy_slack::SlackClient;
 use devboy_storage::{ChainStore, CredentialStore, wrap_with_cache};
 use dialoguer::{Confirm, Input, MultiSelect, Password};
 use doctor::{DoctorOptions, OutputFormat};
 use tracing_subscriber::EnvFilter;
+#[cfg(feature = "sentry")]
+use tracing_subscriber::prelude::*;
 
 /// Proxy transport type for MCP servers.
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -75,9 +79,31 @@ impl AuthType {
     }
 }
 
+/// Build version string with commit info for --version output.
+const BUILD_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (commit ",
+    env!("DEVBOY_BUILD_COMMIT"),
+    ", built ",
+    env!("DEVBOY_BUILD_TIMESTAMP"),
+    ")",
+);
+
+/// Full release string for Sentry (e.g., "devboy-tools@0.16.0+abc1234").
+#[cfg(feature = "sentry")]
+fn sentry_release() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let commit = env!("DEVBOY_BUILD_COMMIT");
+    if commit.is_empty() {
+        format!("devboy-tools@{version}")
+    } else {
+        format!("devboy-tools@{version}+{commit}")
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "devboy")]
-#[command(author, version, about = "DevBoy - AI-powered development tools", long_about = None)]
+#[command(author, version = BUILD_VERSION, about = "DevBoy - AI-powered development tools", long_about = None)]
 struct Cli {
     /// Enable verbose output
     #[arg(short, long, global = true)]
@@ -138,6 +164,23 @@ enum Commands {
         /// Proxy auth type (default: bearer if token provided, else none)
         #[arg(long, requires = "proxy", value_enum)]
         proxy_auth_type: Option<AuthType>,
+
+        /// Remote config URL (fetched on startup, TOML response merged with local config)
+        #[arg(long)]
+        remote_config_url: Option<String>,
+
+        /// Bearer token for remote config endpoint
+        #[arg(long, requires = "remote_config_url")]
+        remote_config_token: Option<String>,
+
+        /// Force git remote auto-detection even when `--remote-config-url` is set.
+        ///
+        /// By default, passing `--remote-config-url` suppresses local git auto-detection
+        /// (remote config is treated as the source of truth for integrations). Use
+        /// `--detect-git` to restore the pre-existing behaviour and auto-add a local
+        /// GitHub/GitLab context alongside the remote config.
+        #[arg(long)]
+        detect_git: bool,
     },
 
     /// Start the MCP server (stdio mode for AI assistants)
@@ -183,7 +226,7 @@ enum Commands {
 
     /// Test provider connection
     Test {
-        /// Provider to test (github, gitlab, clickup, jira)
+        /// Provider to test (github, gitlab, clickup, jira, slack)
         provider: String,
     },
 
@@ -197,6 +240,12 @@ enum Commands {
     Tools {
         #[command(subcommand)]
         command: Option<ToolsCommands>,
+    },
+
+    /// Manage skills — procedural recipes installed alongside the tool bundle
+    Skills {
+        #[command(subcommand)]
+        command: SkillsCommands,
     },
 
     /// Run diagnostic checks for the local DevBoy setup
@@ -422,6 +471,89 @@ enum ToolsCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum SkillsCommands {
+    /// List every skill the embedded source knows about
+    List {
+        /// Filter by category id (e.g. `self-bootstrap`, `issue-tracking`)
+        #[arg(long)]
+        category: Option<String>,
+    },
+    /// Print a skill's full `SKILL.md` contents
+    Show {
+        /// Skill name
+        name: String,
+    },
+    /// Install one or more skills to the resolved target(s)
+    Install {
+        /// Skill names. Ignored when `--all` or `--category` is used.
+        names: Vec<String>,
+        /// Install every skill the embedded source knows about.
+        #[arg(long, conflicts_with = "category")]
+        all: bool,
+        /// Install every skill in the given category.
+        #[arg(long)]
+        category: Option<String>,
+        /// Install globally at `~/.agents/skills/` instead of repo-local.
+        #[arg(long, conflicts_with = "local")]
+        global: bool,
+        /// When combined with `--agent`, install under the repo instead of the user home.
+        #[arg(long)]
+        local: bool,
+        /// Install for one or more agents (claude, codex, cursor, kimi, all).
+        /// Accepts the value repeatedly or comma-delimited.
+        #[arg(long = "agent", value_delimiter = ',')]
+        agents: Vec<String>,
+        /// Overwrite user-modified files.
+        #[arg(long)]
+        force: bool,
+        /// Show what would happen without touching the filesystem.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Upgrade previously installed skills (shortcut for `install` on what the manifest already knows).
+    Upgrade {
+        /// Upgrade only these skills (default: every skill in the manifest).
+        names: Vec<String>,
+        /// Upgrade across every recorded target (`--global`, `--agent`).
+        #[arg(long, conflicts_with = "local")]
+        global: bool,
+        /// Counterpart to `--agent` (see `install`).
+        #[arg(long)]
+        local: bool,
+        /// Apply to these agents' install paths.
+        #[arg(long = "agent", value_delimiter = ',')]
+        agents: Vec<String>,
+        /// Overwrite user-modified files.
+        #[arg(long)]
+        force: bool,
+        /// Show what would happen without touching the filesystem.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Remove installed skills from the resolved target(s).
+    Remove {
+        /// Skill names to remove.
+        #[arg(required = true, num_args = 1..)]
+        names: Vec<String>,
+        /// Counterpart to `--agent` (see `install`).
+        #[arg(long, conflicts_with = "local")]
+        global: bool,
+        /// Counterpart to `--agent` (see `install`).
+        #[arg(long)]
+        local: bool,
+        /// Apply to these agents' install paths.
+        #[arg(long = "agent", value_delimiter = ',')]
+        agents: Vec<String>,
+        /// Fail if a requested skill is not present at the target.
+        #[arg(long)]
+        strict: bool,
+        /// Show what would happen without touching the filesystem.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
 /// Environment variable to skip keychain operations (for CI testing).
 /// When set to "1" or "true", uses in-memory store instead of OS keychain.
 const SKIP_KEYCHAIN_ENV: &str = "DEVBOY_SKIP_KEYCHAIN";
@@ -479,6 +611,21 @@ fn get_credential_store_for_init() -> Box<dyn CredentialStore> {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Initialize Sentry from local config / env vars.
+    // May return None if no DSN is configured yet — remote config can provide it later.
+    #[cfg(feature = "sentry")]
+    let mut _sentry_guard = {
+        let config = if is_no_config_enabled() {
+            None
+        } else {
+            load_runtime_config().ok().map(|(c, _)| c)
+        };
+        devboy_core::sentry_integration::init_sentry(
+            config.as_ref().and_then(|c| c.sentry.as_ref()),
+            &sentry_release(),
+        )
+    };
+
     // Initialize logging
     let filter = if cli.verbose {
         EnvFilter::new("debug")
@@ -487,13 +634,46 @@ async fn main() -> Result<()> {
     };
 
     // stdout is a transport-layer channel for `devboy mcp` (JSON-RPC messages) and a
-    // pipe-friendly surface for `devboy proxy status --json`. All logs therefore must
-    // go to stderr; otherwise any MCP client or `jq` pipeline chokes on the first log
-    // line. Applies to every command since the writer is a process-wide subscriber.
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .init();
+    // pipe-friendly surface for `devboy proxy status --json` / any `devboy … | jq`
+    // pipeline. Route tracing to stderr for all such cases; for plain interactive
+    // commands we keep logs on stdout so users can read them without redirection.
+    let needs_stderr_logs = match &cli.command {
+        Some(Commands::Mcp { .. }) => true,
+        Some(Commands::Proxy {
+            command: ProxyCommands::Status { json: true, .. },
+        }) => true,
+        _ => false,
+    };
+
+    // Always install sentry-tracing layer when feature is enabled.
+    // If Sentry is not yet initialized (no DSN), the layer is a no-op.
+    // If remote config provides a DSN later, init_sentry() is called again
+    // and the layer automatically picks up the new client from Hub::current().
+    #[cfg(feature = "sentry")]
+    {
+        let fmt_layer = if needs_stderr_logs {
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .boxed()
+        } else {
+            tracing_subscriber::fmt::layer().boxed()
+        };
+        tracing_subscriber::registry()
+            .with(fmt_layer)
+            .with(sentry_tracing::layer())
+            .with(filter)
+            .init();
+    }
+
+    #[cfg(not(feature = "sentry"))]
+    {
+        let builder = tracing_subscriber::fmt().with_env_filter(filter);
+        if needs_stderr_logs {
+            builder.with_writer(std::io::stderr).init();
+        } else {
+            builder.init();
+        }
+    }
 
     // Run update check in background for interactive commands (skip for mcp, upgrade, and no-command).
     // Spawned as a background task to avoid blocking CLI startup on network calls.
@@ -506,22 +686,9 @@ async fn main() -> Result<()> {
         _ => Some(tokio::spawn(update_check::check_and_notify())),
     };
 
-    match cli.command {
-        Some(Commands::Init {
-            yes,
-            dry_run,
-            force,
-            claude,
-            context,
-            proxy,
-            proxy_only,
-            proxy_name,
-            proxy_transport,
-            proxy_token_key,
-            proxy_token,
-            proxy_auth_type,
-        }) => {
-            handle_init_command(
+    let result: Result<()> = async {
+        match cli.command {
+            Some(Commands::Init {
                 yes,
                 dry_run,
                 force,
@@ -534,92 +701,132 @@ async fn main() -> Result<()> {
                 proxy_token_key,
                 proxy_token,
                 proxy_auth_type,
-            )
-            .await?;
-        }
+                remote_config_url,
+                remote_config_token,
+                detect_git,
+            }) => {
+                handle_init_command(
+                    yes,
+                    dry_run,
+                    force,
+                    claude,
+                    context,
+                    proxy,
+                    proxy_only,
+                    proxy_name,
+                    proxy_transport,
+                    proxy_token_key,
+                    proxy_token,
+                    proxy_auth_type,
+                    remote_config_url,
+                    remote_config_token,
+                    detect_git,
+                )
+                .await?;
+            }
 
-        Some(Commands::Mcp { no_config }) => {
-            handle_mcp_command(no_config).await?;
-        }
+            Some(Commands::Mcp { no_config }) => {
+                handle_mcp_command(no_config).await?;
+            }
 
-        Some(Commands::Config { command }) => {
-            handle_config_command(command)?;
-        }
+            Some(Commands::Config { command }) => {
+                handle_config_command(command)?;
+            }
 
-        Some(Commands::Context { command }) => {
-            handle_context_command(command)?;
-        }
+            Some(Commands::Context { command }) => {
+                handle_context_command(command)?;
+            }
 
-        Some(Commands::Issues { state, limit }) => {
-            handle_issues_command(&state, limit).await?;
-        }
+            Some(Commands::Issues { state, limit }) => {
+                handle_issues_command(&state, limit).await?;
+            }
 
-        Some(Commands::Mrs { state, limit }) => {
-            handle_mrs_command(&state, limit).await?;
-        }
+            Some(Commands::Mrs { state, limit }) => {
+                handle_mrs_command(&state, limit).await?;
+            }
 
-        Some(Commands::Test { provider }) => {
-            handle_test_command(&provider).await?;
-        }
+            Some(Commands::Test { provider }) => {
+                handle_test_command(&provider).await?;
+            }
 
-        Some(Commands::Proxy { command }) => {
-            handle_proxy_command(command).await?;
-        }
+            Some(Commands::Proxy { command }) => {
+                handle_proxy_command(command).await?;
+            }
 
-        Some(Commands::Tools { command }) => {
-            handle_tools_command(command).await?;
-        }
+            Some(Commands::Tools { command }) => {
+                handle_tools_command(command).await?;
+            }
 
-        Some(Commands::Doctor {
-            format,
-            list_checks,
-            checks,
-        }) => {
-            let exit_code = doctor::handle_doctor_command(DoctorOptions {
-                verbose: cli.verbose,
-                output_format: format.map(Into::into),
+            Some(Commands::Skills { command }) => {
+                skills_cmd::handle(command).await?;
+            }
+
+            Some(Commands::Doctor {
+                format,
                 list_checks,
                 checks,
-            })
-            .await?;
-            std::process::exit(exit_code);
-        }
+            }) => {
+                let exit_code = doctor::handle_doctor_command(DoctorOptions {
+                    verbose: cli.verbose,
+                    output_format: format.map(Into::into),
+                    list_checks,
+                    checks,
+                })
+                .await?;
+                std::process::exit(exit_code);
+            }
 
-        Some(Commands::Upgrade { check }) => {
-            upgrade::run_upgrade(check).await?;
-        }
+            Some(Commands::Upgrade { check }) => {
+                upgrade::run_upgrade(check).await?;
+            }
 
-        Some(Commands::Benchmark {
-            owner,
-            repo,
-            budget,
-            limit,
-            token,
-        }) => {
-            run_benchmark(&owner, &repo, budget, limit, token.as_deref()).await?;
-        }
-
-        Some(Commands::FormatPipeline {
-            data_type,
-            budget,
-            strategy,
-            level,
-            format,
-            stats,
-        }) => {
-            run_format_pipeline(
-                data_type.as_deref(),
+            Some(Commands::Benchmark {
+                owner,
+                repo,
                 budget,
-                strategy.as_deref(),
-                &level,
-                &format,
-                stats,
-            )?;
-        }
+                limit,
+                token,
+            }) => {
+                run_benchmark(&owner, &repo, budget, limit, token.as_deref()).await?;
+            }
 
-        None => {
-            println!("DevBoy - AI-powered development tools");
-            println!("Run with --help for usage information");
+            Some(Commands::FormatPipeline {
+                data_type,
+                budget,
+                strategy,
+                level,
+                format,
+                stats,
+            }) => {
+                run_format_pipeline(
+                    data_type.as_deref(),
+                    budget,
+                    strategy.as_deref(),
+                    &level,
+                    &format,
+                    stats,
+                )?;
+            }
+
+            None => {
+                println!("DevBoy - AI-powered development tools");
+                println!("Run with --help for usage information");
+            }
+        }
+        Ok(())
+    }
+    .await;
+
+    // Capture top-level errors to Sentry before returning.
+    // Most command handlers propagate errors via `?` without `tracing::error!`,
+    // so without this the common non-panicking error path would never reach Sentry.
+    #[cfg(feature = "sentry")]
+    if let Err(ref e) = result {
+        sentry::capture_message(&format!("{e:#}"), sentry::protocol::Level::Error);
+        // Flush pending events to ensure they are sent before process exits.
+        // The guard's Drop also flushes, but with a very short default timeout.
+        if let Some(client) = sentry::Hub::current().client() {
+            client.flush(Some(std::time::Duration::from_secs(5)));
         }
     }
 
@@ -628,7 +835,7 @@ async fn main() -> Result<()> {
         let _ = handle.await;
     }
 
-    Ok(())
+    result
 }
 
 // =============================================================================
@@ -646,8 +853,10 @@ struct InitOptions {
     gitlab: Option<GitLabConfig>,
     clickup: Option<ClickUpConfig>,
     jira: Option<JiraConfig>,
+    slack: Option<SlackConfig>,
     tokens: Vec<(String, String)>, // (key, value) pairs for keychain
     proxy: Option<ProxyMcpServerConfig>,
+    remote_config: Option<devboy_core::RemoteConfigSettings>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -664,6 +873,9 @@ async fn handle_init_command(
     proxy_token_key: Option<String>,
     proxy_token: Option<String>,
     proxy_auth_type: Option<AuthType>,
+    remote_config_url: Option<String>,
+    remote_config_token: Option<String>,
+    detect_git: bool,
 ) -> Result<()> {
     let config_path = PathBuf::from(INIT_CONFIG_FILE);
     let is_tty = io::stdin().is_terminal();
@@ -691,9 +903,15 @@ async fn handle_init_command(
         );
     }
 
+    let skip_git_detect =
+        should_skip_git_detect(proxy_only, remote_config_url.as_deref(), detect_git);
+
     // Collect options
-    let mut options = if proxy_only {
-        // Skip git remote detection, create minimal config with just proxy
+    let mut options = if skip_git_detect {
+        // Skip git remote detection, create minimal config.
+        // Reason: either --proxy-only was passed, or --remote-config-url was provided
+        // without --detect-git (remote config is the source of truth for integrations,
+        // so an auto-detected local provider would almost always be stale/wrong).
         let ctx_name = context_name.unwrap_or_else(|| {
             std::env::current_dir()
                 .ok()
@@ -755,6 +973,21 @@ async fn handle_init_command(
             tool_prefix: None,
             transport,
             routing: None,
+        });
+    }
+
+    // Add remote config settings if provided
+    if let Some(url) = remote_config_url {
+        let token_key = if let Some(token_value) = remote_config_token {
+            let key = "remote_config.token".to_string();
+            options.tokens.push((key.clone(), token_value));
+            Some(key)
+        } else {
+            None
+        };
+        options.remote_config = Some(devboy_core::RemoteConfigSettings {
+            url: Some(url),
+            token_key,
         });
     }
 
@@ -1204,6 +1437,26 @@ fn detect_provider_defaults() -> Vec<bool> {
     vec![is_github, is_gitlab, false, false]
 }
 
+/// Decide whether `devboy init` should skip local git remote auto-detection and
+/// fall through to a minimal-config branch instead of calling `collect_options_auto`
+/// (for `--yes`) or `collect_options_interactive` (for the interactive path).
+///
+/// Git detection is skipped when any of the following holds:
+/// - `--proxy-only` was passed (explicit opt-out, pre-existing behaviour);
+/// - `--remote-config-url` is present and `--detect-git` is not (remote config is
+///   the source of truth for integrations, so a local auto-detected provider would
+///   almost always be stale or conflict).
+fn should_skip_git_detect(
+    proxy_only: bool,
+    remote_config_url: Option<&str>,
+    detect_git: bool,
+) -> bool {
+    if proxy_only {
+        return true;
+    }
+    remote_config_url.is_some() && !detect_git
+}
+
 /// Build Config from collected options.
 fn build_config(options: &InitOptions) -> Config {
     let mut config = Config::default();
@@ -1218,6 +1471,7 @@ fn build_config(options: &InitOptions) -> Config {
         || options.gitlab.is_some()
         || options.clickup.is_some()
         || options.jira.is_some()
+        || options.slack.is_some()
     {
         let context = ContextConfig {
             github: options.github.clone(),
@@ -1225,6 +1479,7 @@ fn build_config(options: &InitOptions) -> Config {
             clickup: options.clickup.clone(),
             jira: options.jira.clone(),
             fireflies: None,
+            slack: options.slack.clone(),
         };
         config.contexts.insert(context_name, context);
     }
@@ -1232,6 +1487,11 @@ fn build_config(options: &InitOptions) -> Config {
     // Add proxy configuration if provided
     if let Some(proxy) = &options.proxy {
         config.proxy_mcp_servers.push(proxy.clone());
+    }
+
+    // Add remote config settings if provided
+    if let Some(remote_config) = &options.remote_config {
+        config.remote_config = Some(remote_config.clone());
     }
 
     config
@@ -1475,6 +1735,32 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
                 println!();
             }
 
+            if let Some(slack) = &config.slack {
+                println!("[slack]");
+                if let Some(team_id) = &slack.team_id {
+                    println!("  team_id = {}", team_id);
+                }
+                if let Some(workspace) = &slack.workspace {
+                    println!("  workspace = {}", workspace);
+                }
+                if let Some(base_url) = &slack.base_url {
+                    println!("  base_url = {}", base_url);
+                }
+                if let Some(client_id) = &slack.client_id {
+                    println!("  client_id = {}", client_id);
+                }
+                if let Some(redirect_uri) = &slack.redirect_uri {
+                    println!("  redirect_uri = {}", redirect_uri);
+                }
+                println!("  required_scopes = {}", slack.required_scopes.join(", "));
+                if store.exists("slack.token") {
+                    println!("  token = ******* (in keychain)");
+                } else {
+                    println!("  token = (not set)");
+                }
+                println!();
+            }
+
             // Transparent proxy configuration. Shown whenever any proxy-related value
             // deviates from defaults so users can audit their setup with a single
             // command. Identical ordering with the TOML file for quick cross-reference.
@@ -1526,6 +1812,9 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
                 println!("  devboy config set github.owner <owner>");
                 println!("  devboy config set github.repo <repo>");
                 println!("  devboy config set-secret github.token <token>");
+                println!("To configure Slack:");
+                println!("  devboy config set slack.workspace <workspace>");
+                println!("  devboy config set-secret slack.token <xoxb-token>");
             }
         }
 
@@ -1555,10 +1844,13 @@ fn is_structured_config_path(key: &str) -> bool {
 }
 
 fn mask_secret(value: &str) -> String {
-    if value.len() <= 8 {
-        "*".repeat(value.len())
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= 8 {
+        "*".repeat(chars.len())
     } else {
-        format!("{}...{}", &value[..4], &value[value.len() - 4..])
+        let prefix: String = chars[..4].iter().collect();
+        let suffix: String = chars[chars.len() - 4..].iter().collect();
+        format!("{prefix}...{suffix}")
     }
 }
 
@@ -1890,9 +2182,71 @@ async fn handle_test_command(provider: &str) -> Result<()> {
             }
         }
 
+        "slack" => {
+            let slack = config
+                .slack
+                .as_ref()
+                .context(
+                    "Slack not configured. Run: devboy config set slack.team_id <team-id> or devboy config set slack.workspace <name>",
+                )?;
+
+            let token = store
+                .get("slack.token")
+                .context("Failed to get token")?
+                .context(
+                    "Slack bot token not set. Run: devboy config set-secret slack.token <xoxb-token>",
+                )?;
+
+            println!("Testing Slack connection...");
+            if let Some(workspace) = &slack.workspace {
+                println!("  Workspace: {}", workspace);
+            }
+            if let Some(team_id) = &slack.team_id {
+                println!("  Team ID: {}", team_id);
+            }
+
+            let mut client =
+                SlackClient::new(token).with_required_scopes(slack.required_scopes.clone());
+            if let Some(base_url) = &slack.base_url {
+                client = client.with_base_url(base_url);
+            }
+
+            match client.auth_info().await {
+                Ok(info) => {
+                    println!("  Team: {} ({})", info.team_name, info.team_id);
+                    if let Some(user_name) = info.user_name.as_deref() {
+                        println!("  Authenticated as: {} ({})", info.user_id, user_name);
+                    } else {
+                        println!("  Authenticated as: {}", info.user_id);
+                    }
+                    if let Some(bot_id) = info.bot_id.as_deref() {
+                        println!("  Bot ID: {}", bot_id);
+                    }
+                    println!("  Scopes: {}", info.scopes.join(", "));
+                    if !info.missing_scopes.is_empty() {
+                        println!("  Missing scopes: {}", info.missing_scopes.join(", "));
+                        println!();
+                        println!("Slack connection failed health check!");
+                        anyhow::bail!(
+                            "Slack token is missing required scopes: {}",
+                            info.missing_scopes.join(", ")
+                        );
+                    }
+                    println!();
+                    println!("Slack connection successful!");
+                }
+                Err(e) => {
+                    println!("  Error: {}", e);
+                    println!();
+                    println!("Slack connection failed!");
+                    return Err(e.into());
+                }
+            }
+        }
+
         _ => {
             println!("Unknown provider: {}", provider);
-            println!("Supported providers: github, gitlab, clickup, jira");
+            println!("Supported providers: github, gitlab, clickup, jira, slack");
         }
     }
 
@@ -1914,15 +2268,6 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
     } else {
         let (cfg, config_path) = load_runtime_config()?;
         tracing::debug!("Config loaded from: {}", config_path.display());
-
-        // Apply built-in tools filtering config.
-        if !cfg.builtin_tools.is_empty() {
-            cfg.builtin_tools.warn_unknown_tools(KNOWN_BUILTIN_TOOLS);
-            server
-                .set_builtin_tools_config(cfg.builtin_tools.clone())
-                .context("Invalid builtin_tools configuration")?;
-        }
-
         cfg
     };
 
@@ -1931,9 +2276,8 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
     // amortized across routing decisions and telemetry flushes.
     let store = build_mcp_store(config.proxy.secrets.cache_ttl_secs);
 
+    // Set up local providers from config (no network calls — only credential lookups).
     let mut any_provider_added = false;
-
-    // Add configured named contexts (skip if no_config).
     if !skip_config {
         for (context_name, context) in &config.contexts {
             server.ensure_context(context_name);
@@ -1941,7 +2285,6 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
                 add_context_providers(&mut server, store.as_ref(), context_name, context);
         }
 
-        // Backward-compatible implicit default context from top-level provider fields.
         if !config.contexts.contains_key(Config::DEFAULT_CONTEXT_NAME)
             && let Some(default_context) = config.legacy_default_context()
         {
@@ -1953,7 +2296,6 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
             );
         }
 
-        // Set active context (if configured and valid).
         if let Some(active) = config.resolve_active_context_name() {
             if let Err(e) = server.set_active_context(&active) {
                 tracing::warn!("Could not set active context '{}': {}", active, e);
@@ -1962,55 +2304,121 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
             }
         }
     }
-
-    // Also check for env-only contexts (DEVBOY_CONTEXTS_*_* without config entry)
     any_provider_added |= add_env_only_contexts(&mut server, &config, store.as_ref());
 
-    // Connect to upstream MCP proxy servers (from config and/or env vars).
-    let mut proxy_manager = build_proxy_manager(&config, store.as_ref()).await;
-
-    // Also check for env-only proxies (DEVBOY_*_URL without config entry)
-    add_env_only_proxies(&mut proxy_manager, &config, store.as_ref()).await;
-
-    if !proxy_manager.is_empty()
-        && let Err(e) = proxy_manager.fetch_all_tools().await
-    {
-        tracing::warn!("Failed to fetch proxy tools: {}", e);
+    // Apply built-in tools filtering from local config (remote config may override later).
+    if !config.builtin_tools.is_empty() {
+        config.builtin_tools.warn_unknown_tools(KNOWN_BUILTIN_TOOLS);
+        server
+            .set_builtin_tools_config(config.builtin_tools.clone())
+            .context("Invalid builtin_tools configuration")?;
     }
 
-    // Build the transparent-routing engine from the (possibly empty) upstream catalogue
-    // and the local tool registry. Always installed: even without upstreams the engine
-    // handles local-only dispatch and consistently emits telemetry.
-    let local_catalogue = local_tool_catalogue();
-    let upstream_catalogue = proxy_manager.raw_upstream_catalogue();
-    let match_report = build_report(ToolCatalogue {
-        local: &local_catalogue,
-        upstream: upstream_catalogue
-            .iter()
-            .map(|(p, t)| (p.clone(), &t[..]))
-            .collect(),
-    });
-    let routing_engine = Arc::new(RoutingEngine::new(
-        config.proxy.routing.clone(),
-        match_report,
-    ));
-    tracing::info!(
-        strategy = ?routing_engine.config().strategy,
-        total_tools = routing_engine.report().len(),
-        "routing engine initialised"
-    );
-    server.set_routing_engine(routing_engine);
+    // Spawn background task for remote config fetch + proxy connection.
+    // This is the slow path (~1-2s of HTTP calls) that we don't want to block stdin.
+    // Proxy tools become available on first tools/list or tools/call.
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let env_snapshot: Vec<(String, String)> = std::env::vars().collect();
+        let bg_config = config.clone();
+        let bg_store = get_credential_store();
+        let bg_token = config
+            .remote_config
+            .as_ref()
+            .and_then(|rc| rc.token_key.as_ref())
+            .and_then(|key| store.get(key).ok())
+            .flatten();
 
-    // Start the telemetry pipeline. We keep the pipeline owned here so its background
-    // task stays alive for the lifetime of the MCP server.
+        tokio::spawn(async move {
+            // 1. Fetch and merge remote config
+            let merged_config =
+                devboy_core::remote_config::fetch_and_merge(bg_config, bg_token.as_deref()).await;
+
+            // 2. Re-initialize Sentry if remote config provided a DSN
+            #[cfg(feature = "sentry")]
+            {
+                let remote_dsn = merged_config
+                    .sentry
+                    .as_ref()
+                    .and_then(|s| s.dsn.as_ref())
+                    .filter(|s| !s.is_empty());
+                let current_enabled = sentry::Hub::current()
+                    .client()
+                    .is_some_and(|c| c.is_enabled());
+
+                if remote_dsn.is_some() && !current_enabled {
+                    let new_guard = devboy_core::sentry_integration::init_sentry(
+                        merged_config.sentry.as_ref(),
+                        &sentry_release(),
+                    );
+                    if new_guard.as_ref().is_some_and(|g| g.is_enabled()) {
+                        tracing::info!("Sentry re-initialized with DSN from remote config");
+                        if let Some(guard) = new_guard {
+                            std::mem::forget(guard);
+                        }
+                    }
+                }
+            }
+
+            // 3. Build proxy manager and fetch tools
+            let mut proxy_manager = build_proxy_manager(&merged_config, bg_store.as_ref()).await;
+            add_env_only_proxies_from_snapshot(
+                &mut proxy_manager,
+                &merged_config,
+                bg_store.as_ref(),
+                &env_snapshot,
+            )
+            .await;
+
+            if !proxy_manager.is_empty()
+                && let Err(e) = proxy_manager.fetch_all_tools().await
+            {
+                tracing::warn!("Failed to fetch proxy tools: {}", e);
+            }
+
+            // 4. Send back remote builtin_tools override (if any)
+            let builtin_tools_config = if !merged_config.builtin_tools.is_empty() {
+                Some(merged_config.builtin_tools)
+            } else {
+                None
+            };
+
+            // 5. Build the transparent-routing engine off the finalised upstream
+            //    catalogue + local tool registry. Always installed: the engine handles
+            //    local-only dispatch and telemetry emission even without upstreams.
+            let local_catalogue = local_tool_catalogue();
+            let upstream_catalogue = proxy_manager.raw_upstream_catalogue();
+            let match_report = build_report(ToolCatalogue {
+                local: &local_catalogue,
+                upstream: upstream_catalogue
+                    .iter()
+                    .map(|(p, t)| (p.clone(), &t[..]))
+                    .collect(),
+            });
+            let routing_engine = Arc::new(RoutingEngine::new(
+                merged_config.proxy.routing.clone(),
+                match_report,
+            ));
+            tracing::info!(
+                strategy = ?routing_engine.config().strategy,
+                total_tools = routing_engine.report().len(),
+                "routing engine initialised"
+            );
+
+            let _ = tx.send(devboy_mcp::DeferredInit {
+                proxy_manager,
+                builtin_tools_config,
+                routing_engine: Some(routing_engine),
+            });
+        });
+        server.set_deferred_init(rx);
+    }
+
+    // Start the telemetry pipeline synchronously so its background flush task stays
+    // alive for the process lifetime; buffer is a cheap clone attached to the server.
     let mut telemetry_pipeline = start_telemetry_pipeline(&config, store.as_ref());
     if let Some(pipeline) = &telemetry_pipeline {
         server.set_telemetry(pipeline.buffer());
-    }
-
-    // Attach the proxy manager last — must happen after we've consumed its catalogue.
-    if !proxy_manager.is_empty() {
-        server.set_proxy_manager(proxy_manager);
     }
 
     if !any_provider_added && !skip_config {
@@ -2018,7 +2426,9 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
         tracing::info!("Configure GitHub: devboy config set github.owner <owner>");
     }
 
-    // Run the MCP server (reads from stdin, writes to stdout)
+    // Run the MCP server (reads from stdin, writes to stdout).
+    // initialize is handled immediately; proxy tools + routing engine are resolved
+    // lazily on first tools/list or tools/call via the DeferredInit receiver.
     let run_result = server.run().await.context("MCP server error");
 
     // Best-effort telemetry flush on shutdown.
@@ -2243,10 +2653,25 @@ fn build_proxy_status(
 /// Enumerate every built-in tool available on this process. The list is used both for
 /// signature matching and for the `proxy status` command.
 fn local_tool_catalogue() -> Vec<ToolDefinition> {
-    // Reuse the ToolHandler's advertised list. No providers attached — we only need the
-    // definitions (name + schema), not any runtime behaviour.
-    let handler = ToolHandler::new(Vec::new());
-    let mut tools = handler.available_tools();
+    // Source of truth lives in the executor crate — reuse the same definitions the
+    // MCP server advertises via `tools/list`. No providers attached: we only need the
+    // names and schemas for matching, not runtime dispatch.
+    let base = devboy_executor::tools::base_tool_definitions();
+    let mut tools: Vec<ToolDefinition> = base
+        .into_iter()
+        .map(|t| {
+            let mut schema = serde_json::to_value(&t.input_schema).unwrap_or_default();
+            if let Some(obj) = schema.as_object_mut() {
+                obj.entry("type").or_insert_with(|| "object".into());
+            }
+            ToolDefinition {
+                name: t.name,
+                description: t.description,
+                input_schema: schema,
+                category: Some(t.category),
+            }
+        })
+        .collect();
 
     // Context-management tools that the server injects unconditionally.
     tools.push(ToolDefinition {
@@ -2448,6 +2873,7 @@ fn get_proxy_url_from_env(name: &str) -> Option<String> {
 /// - `DEVBOY_CONTEXTS_{NAME}_GITLAB_URL` + `_PROJECT_ID` -> GitLab provider
 /// - `DEVBOY_CONTEXTS_{NAME}_CLICKUP_LIST_ID` -> ClickUp provider
 /// - `DEVBOY_CONTEXTS_{NAME}_JIRA_URL` + `_PROJECT_KEY` + `_EMAIL` -> Jira provider
+/// - `DEVBOY_CONTEXTS_{NAME}_SLACK_WORKSPACE` or `_TEAM_ID` -> Slack provider
 ///
 /// Tokens are resolved via the credential store (which checks env vars first).
 ///
@@ -2536,7 +2962,7 @@ fn add_env_only_contexts(
 /// - "MY_PROJECT_GITLAB_URL" -> ("MY_PROJECT", "GITLAB", "URL")
 fn parse_context_env_key(key: &str) -> Option<(String, String, String)> {
     // Known provider prefixes (in order of specificity)
-    let providers = ["GITHUB", "GITLAB", "CLICKUP", "JIRA"];
+    let providers = ["GITHUB", "GITLAB", "CLICKUP", "JIRA", "SLACK"];
 
     for provider in providers {
         // Look for _PROVIDER_ in the key
@@ -2574,6 +3000,12 @@ struct EnvContextBuilder {
     jira_url: Option<String>,
     jira_project_key: Option<String>,
     jira_email: Option<String>,
+    // Slack
+    slack_team_id: Option<String>,
+    slack_workspace: Option<String>,
+    slack_base_url: Option<String>,
+    slack_client_id: Option<String>,
+    slack_redirect_uri: Option<String>,
 }
 
 impl EnvContextBuilder {
@@ -2602,6 +3034,12 @@ impl EnvContextBuilder {
             ("JIRA", "URL") => self.jira_url = Some(value),
             ("JIRA", "PROJECT_KEY") | ("JIRA", "PROJECT") => self.jira_project_key = Some(value),
             ("JIRA", "EMAIL") => self.jira_email = Some(value),
+            // Slack
+            ("SLACK", "TEAM_ID") | ("SLACK", "TEAM") => self.slack_team_id = Some(value),
+            ("SLACK", "WORKSPACE") => self.slack_workspace = Some(value),
+            ("SLACK", "BASE_URL") | ("SLACK", "URL") => self.slack_base_url = Some(value),
+            ("SLACK", "CLIENT_ID") => self.slack_client_id = Some(value),
+            ("SLACK", "REDIRECT_URI") => self.slack_redirect_uri = Some(value),
             // Unknown fields are silently ignored
             _ => {
                 tracing::debug!(
@@ -2666,6 +3104,23 @@ impl EnvContextBuilder {
             clickup,
             jira,
             fireflies: None,
+            slack: if self.slack_team_id.is_some()
+                || self.slack_workspace.is_some()
+                || self.slack_base_url.is_some()
+                || self.slack_client_id.is_some()
+                || self.slack_redirect_uri.is_some()
+            {
+                Some(SlackConfig {
+                    team_id: self.slack_team_id.clone(),
+                    workspace: self.slack_workspace.clone(),
+                    base_url: self.slack_base_url.clone(),
+                    client_id: self.slack_client_id.clone(),
+                    redirect_uri: self.slack_redirect_uri.clone(),
+                    required_scopes: devboy_core::default_slack_required_scopes(),
+                })
+            } else {
+                None
+            },
         };
 
         if context.has_any_provider() {
@@ -2780,6 +3235,24 @@ fn add_context_providers_from_env(
         }
     }
 
+    if let Some(slack) = &context.slack {
+        if let Some(token) = get_token_for_context(store, context_name, "slack") {
+            let mut client =
+                SlackClient::new(token).with_required_scopes(slack.required_scopes.clone());
+            if let Some(base_url) = &slack.base_url {
+                client = client.with_base_url(base_url);
+            }
+            server.add_messenger_provider_to_context(context_name, Arc::new(client));
+            tracing::info!("Added Slack provider to context '{}'", context_name);
+            added = true;
+        } else {
+            tracing::warn!(
+                "Slack configured for context '{}' but no bot token found",
+                context_name
+            );
+        }
+    }
+
     added
 }
 
@@ -2787,63 +3260,51 @@ fn add_context_providers_from_env(
 ///
 /// Looks for `DEVBOY_*_URL` variables and creates proxies for them
 /// if they don't already exist in the config.
+/// Uses a pre-collected env var snapshot so this function is Send-safe.
 ///
 /// Example:
+///
 /// - `DEVBOY_DEVBOY_CLOUD_URL=https://...` creates proxy named "devboy-cloud"
 /// - `DEVBOY_DEVBOY_CLOUD_TOKEN=xxx` provides the token
-async fn add_env_only_proxies(
+async fn add_env_only_proxies_from_snapshot(
     proxy_manager: &mut ProxyManager,
     config: &Config,
     store: &dyn CredentialStore,
+    env_vars: &[(String, String)],
 ) {
-    // Collect existing proxy names from config
     let existing_names: std::collections::HashSet<_> = config
         .proxy_mcp_servers
         .iter()
         .map(|p| p.name.to_lowercase().replace(['.', '/', '-'], "_"))
         .collect();
 
-    // Scan environment for DEVBOY_*_URL patterns
-    for (key, url) in std::env::vars() {
+    for (key, url) in env_vars {
         if let Some(name) = key
             .strip_prefix("DEVBOY_")
             .and_then(|s| s.strip_suffix("_URL"))
         {
-            // Skip context/provider base URL variables like DEVBOY_CONTEXTS_<CTX>_GITHUB_URL
-            // These are for provider configuration, not proxy servers
             if name.starts_with("CONTEXTS_") {
-                tracing::debug!("Ignoring context provider URL '{}' (not a proxy)", key);
                 continue;
             }
-
-            // Convert env name back to proxy name (lowercase, underscores to dashes)
             let proxy_name = name.to_lowercase().replace('_', "-");
             let normalized = name.to_lowercase();
-
-            // Skip if already configured
             if existing_names.contains(&normalized) {
-                tracing::debug!("Proxy '{}' already in config, env URL ignored", proxy_name);
                 continue;
             }
-
-            // Get token from store (will check env vars via ChainStore)
             let token_key = format!("{}.token", proxy_name);
             let token = store.get(&token_key).ok().flatten();
-
             tracing::info!(
                 "Found env-only proxy '{}' from {} (token: {})",
                 proxy_name,
                 key,
                 if token.is_some() { "found" } else { "none" }
             );
-
-            // Connect to the proxy
             match McpProxyClient::connect(
                 &proxy_name,
-                &url,
-                None, // no tool prefix override
+                url,
+                None,
                 token.as_deref(),
-                "bearer", // default auth type
+                "bearer",
                 ProxyTransport::StreamableHttp,
             )
             .await
@@ -2976,6 +3437,25 @@ fn add_context_providers(
         } else {
             tracing::warn!(
                 "Fireflies configured for context '{}' but no API key found",
+                context_name
+            );
+        }
+    }
+
+    if let Some(slack) = &context.slack {
+        if let Some(token) = get_token_for_context(store, context_name, "slack") {
+            let mut client =
+                SlackClient::new(token).with_required_scopes(slack.required_scopes.clone());
+            if let Some(base_url) = &slack.base_url {
+                client = client.with_base_url(base_url);
+            }
+            server.add_messenger_provider_to_context(context_name, Arc::new(client));
+            tracing::info!("Added Slack provider to context '{}'", context_name);
+            added = true;
+        } else {
+            tracing::warn!(
+                "Slack configured in context '{}' but no token found (tried contexts.{}.slack.token then slack.token)",
+                context_name,
                 context_name
             );
         }
@@ -3888,6 +4368,60 @@ mod tests {
         let options = InitOptions::default();
         let config = build_config(&options);
         assert!(config.contexts.is_empty());
+    }
+
+    // ==========================================================================
+    // should_skip_git_detect tests
+    // ==========================================================================
+
+    #[test]
+    fn test_skip_git_detect_default_behaviour() {
+        // Plain `devboy init --yes` — no proxy, no remote config, no override.
+        // Must preserve pre-existing auto-detect behaviour.
+        assert!(!should_skip_git_detect(false, None, false));
+    }
+
+    #[test]
+    fn test_skip_git_detect_proxy_only() {
+        // --proxy --proxy-only keeps its original skip behaviour.
+        assert!(should_skip_git_detect(true, None, false));
+    }
+
+    #[test]
+    fn test_skip_git_detect_remote_config_implies_skip() {
+        // --remote-config-url alone now suppresses git auto-detection.
+        assert!(should_skip_git_detect(
+            false,
+            Some("https://example.com/config"),
+            false
+        ));
+    }
+
+    #[test]
+    fn test_skip_git_detect_remote_config_with_detect_git_override() {
+        // Users who want both (remote config + local git-detected provider) opt in
+        // explicitly via --detect-git.
+        assert!(!should_skip_git_detect(
+            false,
+            Some("https://example.com/config"),
+            true
+        ));
+    }
+
+    #[test]
+    fn test_skip_git_detect_proxy_only_beats_detect_git() {
+        // --proxy-only is an explicit skip and wins even if --detect-git is also set.
+        assert!(should_skip_git_detect(
+            true,
+            Some("https://example.com/config"),
+            true
+        ));
+    }
+
+    #[test]
+    fn test_skip_git_detect_detect_git_without_remote_config_is_noop() {
+        // --detect-git with no remote config URL doesn't spuriously flip behaviour.
+        assert!(!should_skip_git_detect(false, None, true));
     }
 
     #[test]

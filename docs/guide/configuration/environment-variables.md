@@ -308,6 +308,84 @@ Resolution for `staging` context (no context-specific var):
 2. `DEVBOY_GITHUB_TOKEN` (found, used)
 3. ~~Keychain~~ (skipped)
 
+## Sentry error reporting
+
+DevBoy supports optional [Sentry](https://sentry.io/) integration for error reporting. This requires the `sentry` feature flag at compile time (`cargo build -p devboy-cli --features sentry`).
+
+### Configuration
+
+| Variable | Config Equivalent | Description |
+|----------|-------------------|-------------|
+| `DEVBOY_SENTRY_DSN` | `sentry.dsn` | Sentry DSN endpoint. Setting this enables error reporting |
+| `DEVBOY_SENTRY_ENVIRONMENT` | `sentry.environment` | Environment tag (e.g., "production") |
+| `DEVBOY_SENTRY_SAMPLE_RATE` | `sentry.sample_rate` | Error sample rate, 0.0–1.0 (default: 1.0) |
+| `DEVBOY_SENTRY_TRACES_SAMPLE_RATE` | `sentry.traces_sample_rate` | Performance tracing rate, 0.0–1.0 (default: 0.0) |
+
+### Config file
+
+```toml
+[sentry]
+dsn = "https://examplePublicKey@o0.ingest.sentry.io/0"
+environment = "production"
+sample_rate = 1.0
+traces_sample_rate = 0.0
+```
+
+Environment variables take priority over config file values.
+
+### Usage
+
+```bash
+# Enable Sentry via environment variable
+DEVBOY_SENTRY_DSN="https://key@sentry.io/123" devboy mcp
+
+# Or in Docker/Kubernetes
+docker run -e DEVBOY_SENTRY_DSN="$SENTRY_DSN" devboy-tools mcp
+```
+
+### Privacy
+
+- Sentry is **disabled by default** — no data is sent unless a DSN is configured
+- Sensitive data (tokens, API keys, credentials) is automatically scrubbed from error reports
+- Zero overhead when the `sentry` feature is not compiled in; minimal overhead when compiled but no DSN is configured (Sentry tracing layer is not installed without a valid DSN)
+
+## Remote configuration
+
+DevBoy can fetch TOML configuration from a remote URL on startup and merge it with the local config. Remote values override local values.
+
+### Configuration
+
+| Variable | Description |
+|----------|-------------|
+| `DEVBOY_REMOTE_CONFIG_URL` | URL to fetch TOML config from (overrides `remote_config.url`) |
+| `DEVBOY_REMOTE_CONFIG_TOKEN` | Bearer token value for authentication (overrides keychain lookup via `remote_config.token_key`) |
+
+**Note:** In `config.toml`, `remote_config.token_key` is a keychain key name (e.g., `"remote_config.token"`), not the token itself. The env var `DEVBOY_REMOTE_CONFIG_TOKEN` provides the token value directly.
+
+### Config file
+
+```toml
+[remote_config]
+url = "https://example.com/api/devboy-config"
+token_key = "remote_config.token"
+```
+
+### CLI setup
+
+```bash
+devboy init --yes --remote-config-url "https://example.com/config" --remote-config-token "token" --claude
+```
+
+This generates a minimal `.devboy.toml` with only the `[remote_config]` section — git remote auto-detection is suppressed when `--remote-config-url` is set, since the remote endpoint is expected to supply integration settings. Pass `--detect-git` to override that and also pin a locally auto-detected GitHub/GitLab provider. See [Project initialization](../getting-started/init) for details.
+
+### Behavior
+
+- Remote config is fetched on each `devboy mcp` startup
+- TOML response is merged with local config (remote wins)
+- If fetch fails — warning printed, local config used unchanged
+- Timeout: 10 seconds, max response size: 1 MB
+- Environment variables take priority over config file values
+
 ## Special environment variables
 
 ### DEVBOY_SKIP_KEYCHAIN

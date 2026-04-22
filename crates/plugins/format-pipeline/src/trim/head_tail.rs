@@ -27,11 +27,7 @@ pub fn solve(tree: &mut TrimNode, budget: usize) {
     }
 
     let avg_weight = total_weight / n;
-    let max_items = if avg_weight > 0 {
-        budget / avg_weight
-    } else {
-        n
-    };
+    let max_items = budget.checked_div(avg_weight).unwrap_or(n);
 
     if max_items >= n {
         // Everything fits

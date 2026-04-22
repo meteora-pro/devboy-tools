@@ -254,7 +254,7 @@ fn run_managed_upgrade(install_method: &crate::update_check::InstallMethod) -> R
             .context("Failed to spawn helper process for upgrade")?;
 
         println!("\x1b[33mThe upgrade will run in the background after this process exits.\x1b[0m");
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(windows))]

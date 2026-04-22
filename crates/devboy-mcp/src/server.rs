@@ -12,8 +12,8 @@ use std::time::Instant;
 use devboy_core::{BuiltinToolsConfig, Provider};
 use serde::Deserialize;
 use serde_json::Value;
+use tokio::sync::oneshot;
 
-use crate::handlers::{ToolCategory, ToolHandler};
 use crate::protocol::{
     InitializeParams, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MCP_VERSION,
     RequestId, ServerCapabilities, ServerInfo, ToolCallParams, ToolCallResult, ToolsCapability,
@@ -24,9 +24,21 @@ use crate::routing::{RoutingEngine, RoutingTarget};
 use crate::telemetry::{TelemetryBuffer, TelemetryEvent, TelemetryStatus};
 use crate::transport::{IncomingMessage, StdioTransport};
 
+/// Result of deferred background initialization (remote config + proxy).
+pub struct DeferredInit {
+    /// Proxy manager with connected upstream servers and fetched tools.
+    pub proxy_manager: ProxyManager,
+    /// Builtin tools config from remote config (overrides local if non-empty).
+    pub builtin_tools_config: Option<BuiltinToolsConfig>,
+    /// Transparent-routing engine built from the merged config + proxy catalogue.
+    /// When `None`, the server keeps its pre-feature dispatch behaviour.
+    pub routing_engine: Option<Arc<RoutingEngine>>,
+}
+
 /// MCP server for devboy-tools.
 pub struct McpServer {
     contexts: HashMap<String, Vec<Arc<dyn Provider>>>,
+    messenger_contexts: HashMap<String, Vec<Arc<dyn devboy_core::MessengerProvider>>>,
     active_context: RwLock<String>,
     initialized: bool,
     proxy_manager: ProxyManager,
@@ -37,6 +49,9 @@ pub struct McpServer {
     routing_engine: Option<Arc<RoutingEngine>>,
     /// Telemetry buffer — every invocation records one event here (best-effort).
     telemetry: Option<TelemetryBuffer>,
+    /// Deferred background initialization — resolved on first `tools/list` or `tools/call`.
+    /// Returns proxy manager and optional builtin_tools override from remote config.
+    deferred_init: Option<oneshot::Receiver<DeferredInit>>,
 }
 
 impl McpServer {
@@ -44,8 +59,11 @@ impl McpServer {
     pub fn new() -> Self {
         let mut contexts = HashMap::new();
         contexts.insert("default".to_string(), Vec::new());
+        let mut messenger_contexts = HashMap::new();
+        messenger_contexts.insert("default".to_string(), Vec::new());
         Self {
             contexts,
+            messenger_contexts,
             active_context: RwLock::new("default".to_string()),
             initialized: false,
             proxy_manager: ProxyManager::new(),
@@ -53,6 +71,7 @@ impl McpServer {
             meeting_providers: Vec::new(),
             routing_engine: None,
             telemetry: None,
+            deferred_init: None,
         }
     }
 
@@ -84,8 +103,62 @@ impl McpServer {
         self.proxy_manager = proxy_manager;
     }
 
+    /// Set deferred initialization that will be resolved on first `tools/list` or `tools/call`.
+    ///
+    /// This allows the MCP server to start reading stdin immediately while remote
+    /// config fetch, proxy connections, and tool loading run in the background.
+    pub fn set_deferred_init(&mut self, receiver: oneshot::Receiver<DeferredInit>) {
+        self.deferred_init = Some(receiver);
+    }
+
+    /// Resolve deferred init if pending — applies proxy manager, remote builtin_tools
+    /// config, and the transparent-routing engine (built off the finalised upstream
+    /// catalogue).
+    async fn resolve_deferred_init(&mut self) {
+        if let Some(receiver) = self.deferred_init.take() {
+            match receiver.await {
+                Ok(init) => {
+                    if !init.proxy_manager.is_empty() {
+                        self.proxy_manager = init.proxy_manager;
+                    }
+                    if let Some(bt_config) = init.builtin_tools_config
+                        && !bt_config.is_empty()
+                    {
+                        if let Err(e) = bt_config.validate() {
+                            tracing::warn!("Remote builtin_tools config is invalid, ignoring: {e}");
+                        } else {
+                            self.builtin_tools_config = bt_config;
+                        }
+                    }
+                    if let Some(engine) = init.routing_engine {
+                        self.routing_engine = Some(engine);
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!("Deferred initialization was cancelled");
+                }
+            }
+        }
+    }
+
     pub fn add_meeting_provider(&mut self, provider: Arc<dyn devboy_core::MeetingNotesProvider>) {
         self.meeting_providers.push(provider);
+    }
+
+    pub fn add_messenger_provider(&mut self, provider: Arc<dyn devboy_core::MessengerProvider>) {
+        self.add_messenger_provider_to_context("default", provider);
+    }
+
+    pub fn add_messenger_provider_to_context(
+        &mut self,
+        context: &str,
+        provider: Arc<dyn devboy_core::MessengerProvider>,
+    ) {
+        self.contexts.entry(context.to_string()).or_default();
+        self.messenger_contexts
+            .entry(context.to_string())
+            .or_default()
+            .push(provider);
     }
 
     /// Add a provider to the server.
@@ -107,6 +180,9 @@ impl McpServer {
     /// Ensure a named context exists, even if it has no providers.
     pub fn ensure_context(&mut self, context: &str) {
         self.contexts.entry(context.to_string()).or_default();
+        self.messenger_contexts
+            .entry(context.to_string())
+            .or_default();
     }
 
     /// Set active context.
@@ -145,6 +221,15 @@ impl McpServer {
     pub fn active_providers(&self) -> Vec<Arc<dyn Provider>> {
         let active = self.active_context_name();
         self.contexts.get(&active).cloned().unwrap_or_default()
+    }
+
+    /// Get messenger providers in active context.
+    pub fn active_messenger_providers(&self) -> Vec<Arc<dyn devboy_core::MessengerProvider>> {
+        let active = self.active_context_name();
+        self.messenger_contexts
+            .get(&active)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Get providers in the default context.
@@ -213,8 +298,14 @@ impl McpServer {
 
         match req.method.as_str() {
             "initialize" => self.handle_initialize(req.id, req.params),
-            "tools/list" => self.handle_tools_list(req.id),
-            "tools/call" => self.handle_tools_call(req.id, req.params).await,
+            "tools/list" => {
+                self.resolve_deferred_init().await;
+                self.handle_tools_list(req.id)
+            }
+            "tools/call" => {
+                self.resolve_deferred_init().await;
+                self.handle_tools_call(req.id, req.params).await
+            }
             "ping" => self.handle_ping(req.id),
             method => {
                 tracing::warn!("Unknown method: {}", method);
@@ -290,9 +381,25 @@ impl McpServer {
     /// This method is public to allow integration testing.
     pub fn handle_tools_list(&self, id: RequestId) -> JsonRpcResponse {
         let providers = self.active_providers();
-        let handler = ToolHandler::new(providers.clone())
-            .with_meeting_providers(self.meeting_providers.clone());
-        let mut tools = handler.available_tools();
+
+        // Build tool list from executor's base definitions (source of truth)
+        let base_tools = devboy_executor::tools::base_tool_definitions();
+        let mut tools: Vec<crate::protocol::ToolDefinition> = base_tools
+            .into_iter()
+            .map(|t| {
+                let mut schema = serde_json::to_value(&t.input_schema).unwrap_or_default();
+                // Ensure "type": "object" is present — required by MCP spec.
+                if let Some(obj) = schema.as_object_mut() {
+                    obj.entry("type").or_insert_with(|| "object".into());
+                }
+                crate::protocol::ToolDefinition {
+                    name: t.name,
+                    description: t.description,
+                    input_schema: schema,
+                    category: Some(t.category),
+                }
+            })
+            .collect();
 
         // Pre-compute category availability to avoid repeated provider lookups.
         use devboy_core::IssueProvider;
@@ -303,16 +410,35 @@ impl McpServer {
                 "github" | "gitlab"
             )
         });
-        let has_meeting_providers = handler.has_meeting_providers();
+        let has_meeting_providers = !self.meeting_providers.is_empty();
+        let has_messenger_providers = !self.active_messenger_providers().is_empty();
+
+        // Pre-compute per-tool asset capability flags.
+        // If no provider supports upload/delete, hide those tools entirely.
+        let any_upload = providers
+            .iter()
+            .any(|p| p.asset_capabilities().issue.upload);
+        let any_delete = providers
+            .iter()
+            .any(|p| p.asset_capabilities().issue.delete);
 
         // Filter tools based on available providers (dynamic filtering).
         // This prevents exposing tools that would always fail due to missing providers.
         tools.retain(|t| {
+            // Per-tool capability checks (asset tools).
+            match t.name.as_str() {
+                "upload_asset" => return any_upload,
+                "delete_asset" => return any_delete,
+                _ => {}
+            }
             t.category
                 .map(|cat| match cat {
-                    ToolCategory::Issues => has_issue_providers,
-                    ToolCategory::MergeRequests => has_mr_providers,
-                    ToolCategory::MeetingNotes => has_meeting_providers,
+                    devboy_core::ToolCategory::IssueTracker => has_issue_providers,
+                    devboy_core::ToolCategory::Epics => has_issue_providers,
+                    devboy_core::ToolCategory::GitRepository => has_mr_providers,
+                    devboy_core::ToolCategory::MeetingNotes => has_meeting_providers,
+                    devboy_core::ToolCategory::Messenger => has_messenger_providers,
+                    devboy_core::ToolCategory::Releases => has_mr_providers,
                 })
                 .unwrap_or(true) // Tools without category are always available
         });
@@ -522,8 +648,10 @@ impl McpServer {
         (result, false, reason_label, reason_detail, upstream_label)
     }
 
-    /// Run a specific [`RoutingTarget`]. Local execution uses [`ToolHandler`]; remote
-    /// execution forwards to the matching upstream via [`ProxyManager`].
+    /// Run a specific [`RoutingTarget`]. Local execution goes through
+    /// [`Self::dispatch_builtin_tool`] (full built-in tool set including meeting /
+    /// messenger providers and the `Executor`); remote execution forwards to the
+    /// matching upstream via [`ProxyManager`].
     async fn execute_target(
         &self,
         target: &RoutingTarget,
@@ -531,11 +659,7 @@ impl McpServer {
         arguments: Option<Value>,
     ) -> ToolCallResult {
         match target {
-            RoutingTarget::Local => {
-                let handler = ToolHandler::new(self.active_providers())
-                    .with_meeting_providers(self.meeting_providers.clone());
-                handler.execute(unprefixed_name, arguments).await
-            }
+            RoutingTarget::Local => self.dispatch_builtin_tool(unprefixed_name, arguments).await,
             RoutingTarget::Remote {
                 prefix,
                 original_name,
@@ -566,15 +690,111 @@ impl McpServer {
         {
             return result;
         }
-        let handler = ToolHandler::new(self.active_providers())
-            .with_meeting_providers(self.meeting_providers.clone());
-        handler.execute(&params.name, params.arguments.clone()).await
+        self.dispatch_builtin_tool(&params.name, params.arguments.clone())
+            .await
+    }
+
+    /// Dispatch a built-in tool call through the Executor.
+    ///
+    /// Routes tool calls to the appropriate provider type based on tool category:
+    /// - MeetingNotes -> meeting providers
+    /// - Messenger -> messenger providers
+    /// - Everything else -> standard providers (issues, MRs, pipelines, assets, epics)
+    async fn dispatch_builtin_tool(&self, name: &str, arguments: Option<Value>) -> ToolCallResult {
+        let executor = self.create_executor();
+        let args = arguments.unwrap_or(Value::Null);
+        let category = devboy_executor::Executor::tool_category(name);
+
+        match category {
+            Some(devboy_core::ToolCategory::MeetingNotes) => {
+                for provider in &self.meeting_providers {
+                    match executor
+                        .execute_direct_meeting(name, args.clone(), provider.as_ref())
+                        .await
+                    {
+                        Ok(output) => return output_to_result(output),
+                        Err(e) => {
+                            tracing::debug!("Meeting provider failed: {}", e);
+                            continue;
+                        }
+                    }
+                }
+                ToolCallResult::error(format!("No meeting provider supports '{}'", name))
+            }
+            Some(devboy_core::ToolCategory::Messenger) => {
+                for provider in &self.active_messenger_providers() {
+                    match executor
+                        .execute_direct_messenger(name, args.clone(), provider.as_ref())
+                        .await
+                    {
+                        Ok(output) => return output_to_result(output),
+                        Err(e) => {
+                            tracing::debug!("Messenger provider failed: {}", e);
+                            continue;
+                        }
+                    }
+                }
+                ToolCallResult::error(format!("No messenger provider supports '{}'", name))
+            }
+            _ => {
+                // Issues, MRs, Pipelines, Assets, Epics, etc.
+                let providers = self.active_providers();
+                if providers.is_empty() {
+                    return ToolCallResult::error("No providers configured".to_string());
+                }
+                for provider in &providers {
+                    match executor
+                        .execute_direct(name, args.clone(), provider.as_ref())
+                        .await
+                    {
+                        Ok(output) => return output_to_result(output),
+                        Err(e) if should_try_next_provider(&e) => continue,
+                        Err(e) => return ToolCallResult::error(format!("{e}")),
+                    }
+                }
+                ToolCallResult::error(format!("No provider supports '{}'", name))
+            }
+        }
+    }
+
+    /// Create an Executor instance with best-effort asset cache.
+    fn create_executor(&self) -> devboy_executor::Executor {
+        let mut executor = devboy_executor::Executor::new();
+        // Best-effort asset cache
+        if let Ok(mgr) =
+            devboy_assets::AssetManager::from_config(devboy_assets::AssetConfig::default())
+        {
+            executor = executor.with_asset_manager(mgr);
+        }
+        executor
     }
 
     /// Handle ping request.
     fn handle_ping(&self, id: RequestId) -> JsonRpcResponse {
         JsonRpcResponse::success(id, serde_json::json!({}))
     }
+}
+
+/// Convert an executor ToolOutput to an MCP ToolCallResult.
+fn output_to_result(output: devboy_executor::ToolOutput) -> ToolCallResult {
+    match devboy_executor::format_output(output, None, None, None) {
+        Ok(formatted) => ToolCallResult::text(formatted.content),
+        Err(e) => ToolCallResult::error(format!("Format error: {e}")),
+    }
+}
+
+/// Check whether an error from one provider should cause the handler to
+/// try the next. In multi-provider setups, a key like `gitlab#1` is
+/// invalid for GitHub but valid for GitLab.
+fn should_try_next_provider(e: &devboy_core::Error) -> bool {
+    matches!(
+        e,
+        devboy_core::Error::ProviderUnsupported { .. }
+            | devboy_core::Error::ProviderNotFound(_)
+            | devboy_core::Error::NotFound(_)
+            | devboy_core::Error::InvalidData(_)
+            | devboy_core::Error::Http(_)
+    )
 }
 
 impl Default for McpServer {
@@ -589,9 +809,12 @@ mod tests {
     use crate::protocol::{JSONRPC_VERSION, RequestId, ToolCallResult, ToolResultContent};
 
     use async_trait::async_trait;
+    use devboy_core::types::ChatType;
     use devboy_core::{
-        Comment, CreateCommentInput, CreateIssueInput, Discussion, FileDiff, Issue, IssueFilter,
-        IssueProvider, MergeRequest, MergeRequestProvider, MrFilter, UpdateIssueInput, User,
+        Comment, CreateCommentInput, CreateIssueInput, Discussion, FileDiff, GetChatsParams,
+        GetMessagesParams, Issue, IssueFilter, IssueProvider, MergeRequest, MergeRequestProvider,
+        MessageAuthor, MessengerChat, MessengerMessage, MessengerProvider, MrFilter,
+        SearchMessagesParams, SendMessageParams, UpdateIssueInput, User,
     };
 
     /// Test provider that simulates a GitHub-like provider (supports both issues and MRs).
@@ -687,6 +910,69 @@ mod tests {
         }
     }
 
+    struct TestMessengerProvider;
+
+    #[async_trait]
+    impl MessengerProvider for TestMessengerProvider {
+        fn provider_name(&self) -> &'static str {
+            "slack"
+        }
+
+        async fn get_chats(
+            &self,
+            _params: GetChatsParams,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<MessengerChat>> {
+            Ok(vec![MessengerChat {
+                id: "C123".to_string(),
+                key: "slack:C123".to_string(),
+                name: "general".to_string(),
+                chat_type: ChatType::Channel,
+                source: "slack".to_string(),
+                member_count: Some(3),
+                description: None,
+                is_active: true,
+            }]
+            .into())
+        }
+
+        async fn get_messages(
+            &self,
+            _params: GetMessagesParams,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<MessengerMessage>> {
+            Ok(vec![].into())
+        }
+
+        async fn search_messages(
+            &self,
+            _params: SearchMessagesParams,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<MessengerMessage>> {
+            Ok(vec![].into())
+        }
+
+        async fn send_message(
+            &self,
+            _params: SendMessageParams,
+        ) -> devboy_core::Result<MessengerMessage> {
+            Ok(MessengerMessage {
+                id: "1710000000.000100".to_string(),
+                chat_id: "C123".to_string(),
+                text: "test".to_string(),
+                author: MessageAuthor {
+                    id: "U123".to_string(),
+                    name: "DevBoy".to_string(),
+                    username: Some("devboy".to_string()),
+                    avatar_url: None,
+                },
+                source: "slack".to_string(),
+                timestamp: "1710000000.000100".to_string(),
+                thread_id: None,
+                reply_to_id: None,
+                attachments: vec![],
+                is_edited: false,
+            })
+        }
+    }
+
     #[test]
     fn test_server_creation() {
         let server = McpServer::new();
@@ -703,7 +989,7 @@ mod tests {
             id: RequestId::Number(1),
             method: "initialize".to_string(),
             params: Some(serde_json::json!({
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": "2025-11-25",
                 "capabilities": {},
                 "clientInfo": {
                     "name": "test-client",
@@ -1506,5 +1792,127 @@ mod tests {
             input_schema: serde_json::json!({}),
             category: None,
         }
+    }
+
+    #[test]
+    fn test_messenger_providers_are_scoped_to_active_context() {
+        let mut server = McpServer::new();
+        server.ensure_context("slack-context");
+        server.ensure_context("plain-context");
+        server.add_messenger_provider_to_context("slack-context", Arc::new(TestMessengerProvider));
+
+        server.set_active_context("plain-context").unwrap();
+        let plain_result: ToolsListResult = serde_json::from_value(
+            server
+                .handle_tools_list(RequestId::Number(1))
+                .result
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            !plain_result
+                .tools
+                .iter()
+                .any(|tool| tool.name == "get_messenger_chats")
+        );
+
+        server.set_active_context("slack-context").unwrap();
+        let slack_result: ToolsListResult = serde_json::from_value(
+            server
+                .handle_tools_list(RequestId::Number(2))
+                .result
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            slack_result
+                .tools
+                .iter()
+                .any(|tool| tool.name == "get_messenger_chats")
+        );
+    }
+
+    #[test]
+    fn test_add_messenger_provider_creates_context_for_activation() {
+        let mut server = McpServer::new();
+        server.add_messenger_provider_to_context("messenger-only", Arc::new(TestMessengerProvider));
+
+        assert!(
+            server
+                .context_names()
+                .contains(&"messenger-only".to_string())
+        );
+        assert!(server.set_active_context("messenger-only").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_deferred_init_resolves_proxy_on_tools_list() {
+        let mut server = McpServer::new();
+        server.initialized = true;
+
+        // Set up deferred init with a proxy that has mock tools
+        let (tx, rx) = oneshot::channel();
+        server.set_deferred_init(rx);
+
+        // Send the deferred init in background (simulates proxy loading)
+        tokio::spawn(async move {
+            // Small delay to simulate network
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let proxy_manager = ProxyManager::new();
+            let _ = tx.send(DeferredInit {
+                proxy_manager,
+                builtin_tools_config: None,
+                routing_engine: None,
+            });
+        });
+
+        // tools/list should wait for deferred init to resolve
+        let resp = server
+            .handle_request(JsonRpcRequest {
+                jsonrpc: JSONRPC_VERSION.to_string(),
+                id: RequestId::Number(1),
+                method: "tools/list".to_string(),
+                params: None,
+            })
+            .await;
+
+        assert!(resp.result.is_some());
+        // Deferred init should be consumed (None after resolve)
+        assert!(server.deferred_init.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_deferred_init_applies_builtin_tools_config() {
+        let mut server = McpServer::new();
+        server.initialized = true;
+        server.add_provider(Arc::new(TestProvider));
+
+        let (tx, rx) = oneshot::channel();
+        server.set_deferred_init(rx);
+
+        // Send deferred init that disables get_issues
+        let _ = tx.send(DeferredInit {
+            proxy_manager: ProxyManager::new(),
+            builtin_tools_config: Some(BuiltinToolsConfig {
+                disabled: vec!["get_issues".to_string()],
+                enabled: vec![],
+            }),
+            routing_engine: None,
+        });
+
+        let resp = server
+            .handle_request(JsonRpcRequest {
+                jsonrpc: JSONRPC_VERSION.to_string(),
+                id: RequestId::Number(1),
+                method: "tools/list".to_string(),
+                params: None,
+            })
+            .await;
+
+        let result: ToolsListResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+        // get_issues should be filtered out by remote builtin_tools config
+        assert!(!result.tools.iter().any(|t| t.name == "get_issues"));
+        // Other tools should still be present
+        assert!(result.tools.iter().any(|t| t.name == "get_issue"));
     }
 }

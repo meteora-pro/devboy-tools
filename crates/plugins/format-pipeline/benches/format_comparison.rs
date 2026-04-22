@@ -53,6 +53,7 @@ fn generate_issues(n: usize) -> Vec<Issue> {
             url: Some(format!("https://github.com/org/repo/issues/{}", i + 1)),
             created_at: Some("2024-01-01T00:00:00Z".into()),
             updated_at: Some("2024-06-15T12:00:00Z".into()),
+            attachments_count: None,
             parent: None,
             subtasks: vec![],
         })

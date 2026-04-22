@@ -3,8 +3,8 @@ pageType: home
 
 hero:
   name: DevBoy tools
-  text: MCP Server for AI Coding Agents
-  tagline: Open Source. Written in Rust. Designed for privacy-first dev workflows with multi-project context switching.
+  text: Configurable Tool Bundle for AI Coding Agents
+  tagline: Open Source. Written in Rust. Use the same tools via MCP, CLI, or agent skills. Privacy-first, with multi-project context switching.
   actions:
     - theme: brand
       text: Quick start
@@ -26,8 +26,8 @@ features:
   - title: Multi-project contexts
     details: Switch between projects on the fly. Each context has its own providers, tokens, and settings.
     icon: 🔄
-  - title: MCP protocol
-    details: Native Model Context Protocol support. Proxy upstream MCP servers to combine tools into a single endpoint. Works with Claude Code, Claude Desktop, and any MCP-compatible client.
+  - title: Multiple integration modes
+    details: Same tool bundle, three ways to call it — as an MCP server (Claude Code, Claude Desktop, any MCP client), as a CLI for humans and CI, or directly from agent skills via `devboy tools call`. Proxy upstream MCP servers to combine tools into a single endpoint.
     icon: 🤖
   - title: Built with Rust
     details: Fast, reliable, and cross-platform. Single binary, no runtime dependencies.
