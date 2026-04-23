@@ -2456,8 +2456,7 @@ mod tests {
             #[allow(dead_code)]
             n: u32,
         }
-        let err =
-            parse_tool_params::<P>(&serde_json::json!({"n": "nope"}), "tool-x").unwrap_err();
+        let err = parse_tool_params::<P>(&serde_json::json!({"n": "nope"}), "tool-x").unwrap_err();
         assert!(
             matches!(err, devboy_core::Error::InvalidData(ref msg) if msg.contains("tool-x")),
             "expected InvalidData(tool-x), got {err:?}"

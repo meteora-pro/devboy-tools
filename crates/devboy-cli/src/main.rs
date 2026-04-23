@@ -2135,8 +2135,7 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
             // repo-local `.devboy.toml` over the global config so
             // `config list` reports the config that will actually be
             // used by the rest of the CLI in this cwd.
-            let (config, source_path) = load_runtime_config()
-                .context("Failed to load config")?;
+            let (config, source_path) = load_runtime_config().context("Failed to load config")?;
             println!("Configuration (source: {}):", source_path.display());
             println!();
             let store = get_credential_store();
