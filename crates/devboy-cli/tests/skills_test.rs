@@ -243,3 +243,148 @@ fn skills_remove_deletes_files_and_manifest_entry() {
     );
     assert!(!installed.exists(), "file should be deleted");
 }
+
+#[test]
+fn trace_begin_event_end_round_trip() {
+    let home = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let dir_override = TempDir::new().unwrap();
+
+    let begin = spawn(
+        &home,
+        cwd.path(),
+        [
+            "trace",
+            "begin",
+            "--skill",
+            "devboy-setup",
+            "--dir",
+            dir_override.path().to_str().unwrap(),
+        ],
+    );
+    assert!(begin.status.success(), "trace begin should succeed");
+    let begin_stdout = String::from_utf8_lossy(&begin.stdout);
+    let meta: serde_json::Value = serde_json::from_str(begin_stdout.trim())
+        .expect("trace begin should print a single JSON line");
+    let session_id = meta["session_id"].as_str().unwrap().to_string();
+    let session_dir = meta["session_dir"].as_str().unwrap().to_string();
+    assert!(
+        !session_id.is_empty(),
+        "session_id is empty: {begin_stdout}"
+    );
+
+    let event = spawn(
+        &home,
+        cwd.path(),
+        [
+            "trace",
+            "event",
+            "--session-dir",
+            &session_dir,
+            "--session-id",
+            &session_id,
+            "--skill",
+            "devboy-setup",
+            "--phase",
+            "tool_call",
+            "--payload",
+            r#"{"tool":"get_issues","args":{"limit":3}}"#,
+        ],
+    );
+    assert!(
+        event.status.success(),
+        "trace event should succeed: {}",
+        String::from_utf8_lossy(&event.stderr)
+    );
+
+    let end = spawn(
+        &home,
+        cwd.path(),
+        [
+            "trace",
+            "end",
+            "--session-dir",
+            &session_dir,
+            "--session-id",
+            &session_id,
+            "--skill",
+            "devboy-setup",
+            "--outcome",
+            "success",
+            "--summary",
+            "smoke-test complete",
+        ],
+    );
+    assert!(end.status.success(), "trace end should succeed");
+
+    let trace_path = std::path::PathBuf::from(&session_dir).join("trace.jsonl");
+    let trace_body = fs::read_to_string(&trace_path).expect("trace.jsonl should exist");
+    let lines: Vec<&str> = trace_body.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(
+        lines.len(),
+        3,
+        "expected 3 events (start, tool_call, end), got: {lines:?}"
+    );
+    assert!(lines[0].contains("\"phase\":\"start\""));
+    assert!(lines[1].contains("\"phase\":\"tool_call\""));
+    assert!(lines[2].contains("\"phase\":\"end\""));
+
+    let meta_path = std::path::PathBuf::from(&session_dir).join("meta.json");
+    let meta_body = fs::read_to_string(&meta_path).expect("meta.json should exist");
+    assert!(meta_body.contains("\"outcome\": \"success\""));
+    assert!(meta_body.contains("smoke-test complete"));
+    assert!(meta_body.contains("\"tool_calls\": 1"));
+}
+
+#[test]
+fn trace_event_redacts_tokens() {
+    let home = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let dir_override = TempDir::new().unwrap();
+
+    let begin = spawn(
+        &home,
+        cwd.path(),
+        [
+            "trace",
+            "begin",
+            "--skill",
+            "devboy-test",
+            "--dir",
+            dir_override.path().to_str().unwrap(),
+        ],
+    );
+    assert!(begin.status.success());
+    let meta: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&begin.stdout).trim()).unwrap();
+    let session_id = meta["session_id"].as_str().unwrap().to_string();
+    let session_dir = meta["session_dir"].as_str().unwrap().to_string();
+
+    let event = spawn(
+        &home,
+        cwd.path(),
+        [
+            "trace",
+            "event",
+            "--session-dir",
+            &session_dir,
+            "--session-id",
+            &session_id,
+            "--skill",
+            "devboy-test",
+            "--phase",
+            "tool_call",
+            "--payload",
+            r#"{"args":{"token":"ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}"#,
+        ],
+    );
+    assert!(event.status.success());
+
+    let trace_path = std::path::PathBuf::from(&session_dir).join("trace.jsonl");
+    let body = fs::read_to_string(trace_path).unwrap();
+    assert!(
+        !body.contains("ghp_aaaaaaaa"),
+        "token was not redacted: {body}"
+    );
+    assert!(body.contains("<redacted"));
+}
