@@ -36,12 +36,14 @@ to act on it.
 
 Accept one of:
 
-- `--session-dir <path>` — absolute or relative path to a
-  `.devboy/sessions/<YYYY-MM-DD>/<skill>/` directory. If the directory
-  contains `meta.json` and `trace.jsonl`, use it directly.
-- `--pick` — interactive mode: list today's sessions where `outcome
-  = success` but `errors > 0` and let the user pick one. This is the
-  common follow-up after `devboy-daily-report`.
+- `--session-dir <path>` — absolute or relative path to a real
+  per-session directory such as
+  `.devboy/sessions/<YYYY-MM-DD>/<skill>/<session_id>/`. If the
+  directory contains `meta.json` and `trace.jsonl`, use it directly.
+- `--pick` — interactive mode: enumerate today's `<skill>/<session_id>/`
+  directories whose `meta.json` has `outcome = success` and `errors > 0`,
+  and let the user pick one. This is the common follow-up after
+  `devboy-daily-report`.
 
 Exit with a clear error if neither flag is set or the directory is
 not a well-formed session.

@@ -58,10 +58,10 @@ Take the `action_items` field from the matching meeting. This is cheaper and mor
 
 ### 3. Fallback: parse the transcript
 
-If `action_items` is empty or missing, fetch the transcript and extract candidates manually:
+If `action_items` is empty or missing, fetch the transcript and extract candidates manually. `devboy tools call` has no `--budget` flag — the format-pipeline trims the response to fit the configured tool budget internally, so just call the tool and the runtime handles truncation:
 
 ```bash
-devboy tools call get_meeting_transcript '{"meeting_id": "<id>"}' --budget 6000
+devboy tools call get_meeting_transcript '{"meeting_id": "<id>"}'
 ```
 
 Look for:

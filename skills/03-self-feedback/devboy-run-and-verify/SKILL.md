@@ -47,8 +47,8 @@ Collect the following arguments from the caller:
   `1 + max-retries` times.
 - `--skill-name <name>` — the name of the skill that invoked this
   wrapper. Traces are written under
-  `.devboy/sessions/<YYYY-MM-DD>/<skill-name>/` so downstream readers
-  attribute the work correctly.
+  `.devboy/sessions/<YYYY-MM-DD>/<skill-name>/<session_id>/` so
+  downstream readers attribute the work correctly.
 - `--allow-destructive` — required before running anything that matches
   the destructive-command guardrail (see below).
 

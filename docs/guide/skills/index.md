@@ -80,7 +80,7 @@ This means you can edit installed skills to taste and later upgrade the rest of 
 
 ## Session traces
 
-Skills in the `self-feedback` category read **session traces** — append-only JSONL files at `<target>/.devboy/sessions/<YYYY-MM-DD>/<skill>/trace.jsonl` that record what another skill did. Any caller can write into that format via the `devboy trace` CLI:
+Skills in the `self-feedback` category read **session traces** — append-only JSONL files at `<target>/.devboy/sessions/<YYYY-MM-DD>/<skill>/<session_id>/trace.jsonl` that record what another skill did. Each `trace begin` gets its own `<session_id>` subdirectory with a sibling `meta.json`, so concurrent runs of the same skill on the same day never overwrite one another. Any caller can write into that format via the `devboy trace` CLI:
 
 ```bash
 result=$(devboy trace begin --skill my-skill)

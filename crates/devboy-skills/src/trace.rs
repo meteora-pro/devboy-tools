@@ -258,7 +258,8 @@ impl SessionTracer {
             summary: Some(summary.to_string()),
         };
         let bytes =
-            serde_json::to_vec_pretty(&meta).map_err(|source| SkillError::InvalidManifest {
+            serde_json::to_vec_pretty(&meta).map_err(|source| SkillError::SerdeJson {
+                operation: "serialise session meta",
                 path: self.meta_path.clone(),
                 source,
             })?;
@@ -294,7 +295,8 @@ impl SessionTracer {
             payload: redacted,
         };
         let line =
-            serde_json::to_string(&record).map_err(|source| SkillError::InvalidManifest {
+            serde_json::to_string(&record).map_err(|source| SkillError::SerdeJson {
+                operation: "serialise trace record",
                 path: self.trace_path.clone(),
                 source,
             })?;
@@ -445,7 +447,8 @@ fn append_event_inner(
         phase,
         payload: redacted,
     };
-    let line = serde_json::to_string(&record).map_err(|source| SkillError::InvalidManifest {
+    let line = serde_json::to_string(&record).map_err(|source| SkillError::SerdeJson {
+        operation: "serialise trace record",
         path: session_dir.join("trace.jsonl"),
         source,
     })?;
@@ -504,7 +507,8 @@ pub fn finalise_session(
 }
 
 fn write_meta_file(path: &Path, meta: &SessionMeta) -> Result<()> {
-    let bytes = serde_json::to_vec_pretty(meta).map_err(|source| SkillError::InvalidManifest {
+    let bytes = serde_json::to_vec_pretty(meta).map_err(|source| SkillError::SerdeJson {
+        operation: "serialise session meta",
         path: path.to_path_buf(),
         source,
     })?;
