@@ -80,7 +80,7 @@ When you respond to the user, reply with the minimum quote that answers the ques
 ## Success criteria
 
 - The user gets an answer grounded in the transcript, with speaker + timestamp, in fewer than 10 lines for a targeted question.
-- For a "give me the whole transcript" request, the skill streams chunk 1, reports `total_chunks`, and waits for the user to ask for more rather than pre-fetching all chunks.
+- For a "give me the whole transcript" request, the skill streams chunk 1, explains how to request chunk 2+ if the user wants more, and waits for the user to ask rather than pre-fetching all chunks. (The pipeline does not surface a total-chunk count, so the skill must not promise one.)
 - No untrimmed transcript content is copy-pasted into files the user did not name.
 
 ## Guardrails

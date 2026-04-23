@@ -87,4 +87,20 @@ pub enum SkillError {
         #[source]
         source: serde_json::Error,
     },
+
+    /// Non-manifest JSON (de)serialisation failure — used by the trace
+    /// subsystem for `trace.jsonl` records and `meta.json` writes so
+    /// callers do not see a misleading "manifest … invalid JSON"
+    /// error for a record that is not a manifest.
+    #[error("failed to {operation} JSON at `{path}`: {source}")]
+    SerdeJson {
+        /// What was being done when the failure happened
+        /// (`serialise trace record`, `write session meta`, …).
+        operation: &'static str,
+        /// Path associated with the record.
+        path: PathBuf,
+        /// Wrapped serde_json error.
+        #[source]
+        source: serde_json::Error,
+    },
 }

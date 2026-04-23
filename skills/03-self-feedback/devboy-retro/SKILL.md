@@ -56,10 +56,12 @@ Emit a `decision` event recording the window and the scope.
 
 ### 3. Aggregate per-skill session stats
 
-Walk every `<date>/<skill>/meta.json` in the window. Per skill,
-collect: total runs, success / failure / aborted counts, total
-`tool_calls`, total `errors`, total duration, average duration, and
-the most common `summary` strings for failing runs.
+Walk every `<date>/<skill>/<session_id>/meta.json` in the window —
+the trace subsystem nests each session one level below `<skill>/`.
+Per skill, aggregate across **all** its session directories:
+total runs, success / failure / aborted counts, total `tool_calls`,
+total `errors`, total duration, average duration, and the most
+common `summary` strings for failing runs.
 
 Additionally, read each failing session's `trace.jsonl` to find
 retry loops — sequences of `verify` events with `ok: false` followed

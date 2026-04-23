@@ -53,9 +53,12 @@ SESSION_ID=$(echo "$result" | jq -r .session_id)
 This skill is itself traceable — retro runs will see that a daily
 report ran, how long it took, and whether it succeeded.
 
-### 3. Walk the per-skill subdirectories
+### 3. Walk the per-session subdirectories
 
-For each `<skill>/` directory under the day:
+The trace subsystem writes each session under
+`<YYYY-MM-DD>/<skill>/<session_id>/`, so a single skill can produce
+several sibling session directories on the same day. Walk every
+`<skill>/<session_id>/` pair under the day:
 
 1. If `meta.json` is missing, skip the directory — the session is
    still in flight. Record a single `note` event listing the skipped
@@ -63,15 +66,16 @@ For each `<skill>/` directory under the day:
 2. Otherwise, read `meta.json` and pull:
    - `skill`, `outcome`, `tool_calls`, `errors`,
    - `summary`, `started_at`, `ended_at`.
-3. Aggregate per-skill counts: total runs, success / failure /
-   aborted, total tool-calls, total errors, average duration.
+3. Aggregate per-skill counts across **all** that skill's session
+   directories: total runs, success / failure / aborted, total
+   tool-calls, total errors, average duration.
 
-Emit an `artifact` event per skill directory so the retro skill can
-later find the raw data:
+Emit an `artifact` event per session directory so the retro skill
+can later find the raw data:
 
 ```bash
 devboy trace event ... --phase artifact \
-  --payload "$(jq -nc --arg path "$SKILL_DIR" '{path:$path,kind:"session-dir"}')"
+  --payload "$(jq -nc --arg path "$SESSION_DIR" '{path:$path,kind:"session-dir"}')"
 ```
 
 ### 4. Cross-reference with the provider
