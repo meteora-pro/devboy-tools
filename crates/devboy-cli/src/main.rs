@@ -659,7 +659,7 @@ async fn main() -> Result<()> {
 
     // stdout is a transport-layer channel for `devboy mcp` (JSON-RPC messages) and
     // any subcommand a script is expected to parse (`tools call` → MCP tool-result
-    // JSON, `tools list` → table-like output users pipe to grep/jq, `format-pipeline`
+    // JSON, `tools list` → plain-text output users pipe to grep/sed, `format-pipeline`
     // → whatever the pipeline emits to stdout, `proxy status --json`). Route tracing
     // to stderr in all those cases so `devboy tools call get_issues ... | jq` and
     // `devboy mcp` do not get their stdout clobbered with log lines. For plain
