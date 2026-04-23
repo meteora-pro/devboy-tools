@@ -1041,8 +1041,18 @@ async fn handle_init_command(
 
     // Build configuration
     let config = build_config(&options);
-    let toml_content =
+    let mut toml_content =
         toml::to_string_pretty(&config).context("Failed to serialize configuration")?;
+
+    // When `build_config` produced an empty TOML (no providers detected
+    // and the user did not opt into any proxy / remote-config settings),
+    // serialize_with-skip leaves us with a zero-byte file. Seed it with a
+    // short header comment so `cat .devboy.toml` is not blank and so that
+    // `doctor` / `config list` have something to key off of. The content
+    // is valid TOML (comments only) and does not change behaviour.
+    if toml_content.trim().is_empty() {
+        toml_content = minimal_devboy_toml_template();
+    }
 
     // Dry-run mode: just print what would be done
     if dry_run {
@@ -1569,6 +1579,27 @@ fn should_skip_git_detect(
         return true;
     }
     remote_config_url.is_some() && !detect_git
+}
+
+/// Placeholder `.devboy.toml` content used when `init --yes` is run in
+/// a directory without a detectable git remote and without any
+/// agent / proxy / remote-config flag. The file is valid TOML (only
+/// comments), so subsequent `config set` writes drop real keys into it
+/// without any cleanup needed.
+fn minimal_devboy_toml_template() -> String {
+    "# DevBoy tools configuration\n\
+     #\n\
+     # No providers were detected from git or passed on the command line.\n\
+     # Add one with:\n\
+     #   devboy config set github.owner <owner>\n\
+     #   devboy config set github.repo <repo>\n\
+     #   devboy config set-secret github.token <token>\n\
+     #\n\
+     # Or, register an agent MCP server via:\n\
+     #   devboy init --claude | --kimi | --codex-cli | --copilot | --gemini | --opencode | --forge\n\
+     #\n\
+     # See `devboy --help` for the full command surface.\n"
+        .to_string()
 }
 
 /// Build Config from collected options.
