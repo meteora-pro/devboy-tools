@@ -539,7 +539,7 @@ impl JiraClient {
             .send()
             .await
             .map_err(|e| Error::Http(e.to_string()))?;
-        self.handle_response(response).await
+        handle_structure_response(response).await
     }
 
     /// Make an authenticated POST request to the Structure API.
@@ -556,7 +556,7 @@ impl JiraClient {
             .send()
             .await
             .map_err(|e| Error::Http(e.to_string()))?;
-        self.handle_response(response).await
+        handle_structure_response(response).await
     }
 
     /// Make an authenticated PUT request to the Structure API (returns body).
@@ -573,7 +573,7 @@ impl JiraClient {
             .send()
             .await
             .map_err(|e| Error::Http(e.to_string()))?;
-        self.handle_response(response).await
+        handle_structure_response(response).await
     }
 
     /// Make an authenticated DELETE request to the Structure API.
@@ -587,11 +587,133 @@ impl JiraClient {
             .map_err(|e| Error::Http(e.to_string()))?;
         let status = response.status();
         if !status.is_success() {
-            let message = response.text().await.unwrap_or_default();
-            return Err(Error::from_status(status.as_u16(), message));
+            let (content_type, body) = read_structure_error_body(response).await;
+            return Err(structure_error_from_status(
+                status.as_u16(),
+                &content_type,
+                body,
+            ));
         }
         Ok(())
     }
+}
+
+/// Install hint shown when the Structure plugin is not detected on the Jira host.
+const STRUCTURE_PLUGIN_INSTALL_HINT: &str = "Jira Structure plugin is not installed or not enabled on this instance. \
+     Install it from the Atlassian Marketplace: \
+     https://marketplace.atlassian.com/apps/34717/structure-manage-work-your-way";
+
+/// Detect HTML/XML response bodies — Jira returns a full login/404 HTML page
+/// for missing endpoints and unauthenticated requests, and the Structure
+/// plugin itself returns XML 404 responses for unknown sub-paths. Swallow
+/// them so the tool response does not dump a multi-KB document.
+fn looks_like_html(content_type: &str, body: &str) -> bool {
+    let ct = content_type.to_ascii_lowercase();
+    if ct.contains("text/html") || ct.contains("application/xml") || ct.contains("text/xml") {
+        return true;
+    }
+    let head = body.trim_start();
+    head.starts_with("<!DOCTYPE")
+        || head.starts_with("<!doctype")
+        || head.starts_with("<html")
+        || head.starts_with("<HTML")
+        || head.starts_with("<?xml")
+}
+
+/// Read the response body + Content-Type for error diagnostics, tolerating
+/// reqwest read failures.
+async fn read_structure_error_body(response: reqwest::Response) -> (String, String) {
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let body = response.text().await.unwrap_or_default();
+    (content_type, body)
+}
+
+/// Translate a failed Structure API HTTP response into a [`Result`] error.
+///
+/// Specifically:
+///
+/// - `404` with an HTML body → «Structure plugin not installed» hint.
+/// - Any other status with an HTML body → short «status + path hint» line
+///   (we strip the HTML to avoid dumping a whole login/error page into the
+///   MCP tool response).
+/// - JSON / text bodies are forwarded as-is, trimmed to 500 chars so the
+///   MCP tool output stays readable.
+fn structure_error_from_status(status: u16, content_type: &str, body: String) -> Error {
+    let html = looks_like_html(content_type, &body);
+
+    if status == 404 && html {
+        return Error::from_status(status, STRUCTURE_PLUGIN_INSTALL_HINT);
+    }
+
+    if html {
+        return Error::from_status(
+            status,
+            format!(
+                "Jira returned an HTML response for a Structure API call (HTTP {status}). \
+                 {STRUCTURE_PLUGIN_INSTALL_HINT}"
+            ),
+        );
+    }
+
+    let trimmed = if body.len() > 500 {
+        let end = safe_char_boundary(&body, 500);
+        format!("{}...(truncated, total {} bytes)", &body[..end], body.len())
+    } else {
+        body
+    };
+    Error::from_status(status, trimmed)
+}
+
+/// Unified response handler for Structure API helpers — mirrors
+/// [`JiraClient::handle_response`] but routes errors through
+/// [`structure_error_from_status`] so HTML pages never leak into the tool
+/// output.
+async fn handle_structure_response<T: serde::de::DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<T> {
+    let status = response.status();
+
+    if !status.is_success() {
+        let (content_type, body) = read_structure_error_body(response).await;
+        warn!(
+            status = status.as_u16(),
+            content_type = %content_type,
+            body_len = body.len(),
+            "Jira Structure API error response"
+        );
+        return Err(structure_error_from_status(
+            status.as_u16(),
+            &content_type,
+            body,
+        ));
+    }
+
+    let body = response.text().await.map_err(|e| {
+        Error::InvalidData(format!("Failed to read Structure response body: {}", e))
+    })?;
+
+    serde_json::from_str::<T>(&body).map_err(|e| {
+        let preview = if body.len() > 300 {
+            let end = safe_char_boundary(&body, 300);
+            format!("{}...(truncated, total {} bytes)", &body[..end], body.len())
+        } else {
+            body.clone()
+        };
+        warn!(
+            error = %e,
+            body_preview = preview,
+            "Failed to parse Jira Structure response"
+        );
+        Error::InvalidData(format!(
+            "Failed to parse Jira Structure response: {}. Body preview: {}",
+            e, preview
+        ))
+    })
 }
 
 // =============================================================================
@@ -2180,6 +2302,90 @@ mod tests {
     use super::*;
     use crate::types::*;
     use devboy_core::{CreateCommentInput, MrFilter};
+
+    // =========================================================================
+    // Structure error mapping tests
+    // =========================================================================
+
+    #[test]
+    fn structure_404_with_html_returns_install_hint() {
+        let html = "<!DOCTYPE html><html><body>Oops, you&#39;ve found a dead link.</body></html>";
+        let err = structure_error_from_status(404, "text/html;charset=UTF-8", html.into());
+        let msg = err.to_string();
+        assert!(!msg.contains("<!DOCTYPE"), "HTML leaked into error: {msg}");
+        assert!(
+            msg.contains("Structure plugin is not installed"),
+            "missing install hint: {msg}"
+        );
+        assert!(
+            msg.contains("marketplace.atlassian.com"),
+            "missing marketplace link: {msg}"
+        );
+    }
+
+    #[test]
+    fn structure_500_with_html_strips_body() {
+        let html = "<html><body>".to_string() + &"x".repeat(20_000) + "</body></html>";
+        let err = structure_error_from_status(500, "text/html", html);
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("xxxx"),
+            "raw HTML body leaked: {}",
+            &msg[..msg.len().min(400)]
+        );
+        assert!(
+            msg.contains("HTML response"),
+            "missing short status message: {msg}"
+        );
+    }
+
+    #[test]
+    fn structure_json_error_is_forwarded_verbatim() {
+        let body = r#"{"errorMessages":["Invalid forestVersion"],"errors":{}}"#;
+        let err = structure_error_from_status(409, "application/json", body.into());
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Invalid forestVersion"),
+            "JSON body dropped: {msg}"
+        );
+    }
+
+    #[test]
+    fn structure_long_text_body_is_truncated() {
+        let body = "plain text ".repeat(200); // > 500 chars
+        let err = structure_error_from_status(400, "text/plain", body);
+        let msg = err.to_string();
+        assert!(
+            msg.contains("truncated"),
+            "truncation marker missing: {msg}"
+        );
+    }
+
+    #[test]
+    fn structure_html_detected_by_body_when_content_type_missing() {
+        assert!(looks_like_html("", "<!DOCTYPE html><html>..."));
+        assert!(looks_like_html("", "<html lang=\"en\">"));
+        assert!(!looks_like_html("", "   {\"ok\":true}"));
+        assert!(!looks_like_html("application/json", "{\"ok\":true}"));
+    }
+
+    #[test]
+    fn structure_html_detected_by_content_type_only() {
+        assert!(looks_like_html("text/html; charset=UTF-8", ""));
+        assert!(looks_like_html("Text/HTML", ""));
+    }
+
+    #[test]
+    fn structure_xml_body_treated_as_non_json() {
+        // Structure plugin returns XML 404 for unknown subpaths
+        let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><status><status-code>404</status-code><message>null for uri: /rest/structure/2.0/view?structureId=1</message></status>"#;
+        assert!(looks_like_html("application/xml", xml));
+        assert!(looks_like_html("", xml));
+        let err = structure_error_from_status(404, "application/xml", xml.into());
+        let msg = err.to_string();
+        assert!(!msg.contains("<?xml"), "XML leaked into error: {msg}");
+        assert!(msg.contains("Structure plugin"), "missing hint: {msg}");
+    }
 
     // =========================================================================
     // Flavor detection tests
