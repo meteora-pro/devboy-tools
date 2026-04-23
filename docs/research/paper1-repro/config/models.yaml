@@ -1,0 +1,132 @@
+# Model registry for Paper 1 benchmark
+# Endpoints resolve via environment variables; never hard-code hosts/keys.
+# Pricing per 1M tokens (USD). For Anthropic: cache_read = 0.1x, cache_write_5m = 1.25x, cache_write_1h = 2x.
+
+models:
+
+  # ========== Local (Ollama on remote host) ==========
+
+  - id: "gpt-oss:20b"
+    provider: ollama
+    endpoint_env: OLLAMA_BASE_URL
+    path: "/api/chat"
+    streaming: true
+    context_window: 32768
+    pricing:
+      input_per_mtok: 0.0
+      output_per_mtok: 0.0
+    notes: |
+      Reasoning model; put response parse under `.message.content` then
+      extract reasoning chain if present. No cache_control support.
+
+  - id: "gemma4:26b"
+    provider: ollama
+    endpoint_env: OLLAMA_BASE_URL
+    path: "/api/chat"
+    streaming: true
+    context_window: 131072
+    pricing:
+      input_per_mtok: 0.0
+      output_per_mtok: 0.0
+    notes: |
+      Noisy responder — enforce strict JSON mode if endpoint supports it,
+      otherwise parse defensively.
+
+  - id: "qwen3-coder:fit-3090"
+    provider: ollama
+    endpoint_env: OLLAMA_BASE_URL
+    path: "/api/chat"
+    streaming: true
+    context_window: 65536
+    pricing:
+      input_per_mtok: 0.0
+      output_per_mtok: 0.0
+    notes: |
+      Operator picks whichever qwen3-coder variant fits the RTX 3090
+      (likely 14B or 30B-A3B quantized). Record exact variant in results row.
+
+  # ========== Anthropic (Batch API + cache_control ephemeral) ==========
+
+  - id: "claude-opus-4-7"
+    provider: anthropic
+    endpoint_env: ANTHROPIC_BASE_URL
+    path: "/v1/messages/batches"   # use batch by default
+    cache_control: ephemeral
+    context_window: 1000000
+    pricing:
+      input_per_mtok: 15.00
+      output_per_mtok: 75.00
+      cache_read_per_mtok: 1.50
+      cache_write_5m_per_mtok: 18.75
+      cache_write_1h_per_mtok: 30.00
+    notes: |
+      Batch API: 50% discount applied automatically.
+      Cache: stable system prefix wrapped in cache_control=ephemeral.
+
+  - id: "claude-sonnet-4-6"
+    provider: anthropic
+    endpoint_env: ANTHROPIC_BASE_URL
+    path: "/v1/messages/batches"
+    cache_control: ephemeral
+    context_window: 1000000
+    pricing:
+      input_per_mtok: 3.00
+      output_per_mtok: 15.00
+      cache_read_per_mtok: 0.30
+      cache_write_5m_per_mtok: 3.75
+      cache_write_1h_per_mtok: 6.00
+    notes: |
+      Primary Anthropic tier for cost-sensitive runs. Use this one for H4
+      cost-efficiency study.
+
+  - id: "claude-haiku-4-5"
+    provider: anthropic
+    endpoint_env: ANTHROPIC_BASE_URL
+    path: "/v1/messages/batches"
+    cache_control: ephemeral
+    context_window: 200000
+    pricing:
+      input_per_mtok: 1.00
+      output_per_mtok: 5.00
+      cache_read_per_mtok: 0.10
+      cache_write_5m_per_mtok: 1.25
+      cache_write_1h_per_mtok: 2.00
+
+  # ========== Optional API tiers ==========
+
+  - id: "glm-4.6"
+    provider: zai
+    endpoint_env: ZAI_BASE_URL
+    path: "/v1/messages"            # Anthropic-compatible
+    cache_control: ephemeral
+    context_window: 200000
+    pricing:
+      input_per_mtok: 0.60
+      output_per_mtok: 2.20
+      cache_read_per_mtok: 0.11
+      cache_write_5m_per_mtok: 0.75
+      cache_write_1h_per_mtok: 1.20
+    notes: |
+      z.ai coding plan (Anthropic-compatible). Observed 86.6% cache hit
+      rate in prior classification run — reuse same prompt structure.
+
+  - id: "kimi-for-coding"
+    provider: moonshot
+    endpoint_env: MOONSHOT_BASE_URL
+    path: "/chat/completions"       # OpenAI-compatible
+    context_window: 131072
+    pricing:
+      input_per_mtok: 0.60
+      output_per_mtok: 2.50
+    notes: |
+      OpenAI-compat only — no cache_control. Expect higher cost per correct
+      vs Anthropic because no caching.
+
+# Global defaults; overridable per-model
+defaults:
+  max_output_tokens: 300
+  temperature: 0.0
+  top_p: 1.0
+  timeout_sec: 60
+  retry_attempts: 3
+  retry_backoff_sec: [5, 15, 45]

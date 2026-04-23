@@ -1,0 +1,91 @@
+# Value-assignment strategies for TrimTree Priority
+# Each strategy assigns a scalar value to each candidate item; knapsack
+# selects the highest-value subset that fits within the token budget.
+
+strategies:
+
+  - id: fifo
+    description: "Native discovery order from grep/find (baseline)"
+    value_fn: "1.0 - (rank / n_items)"
+    notes: "Items as returned by grep -rln; expected to match realistic CLI usage."
+
+  - id: random
+    description: "Randomized permutation (lower bound)"
+    value_fn: "uniform(0, 1)"
+    seed: 42
+
+  - id: reversed
+    description: "Reverse of FIFO (adversarial baseline)"
+    value_fn: "rank / n_items"
+
+  - id: priority_kw
+    description: "Keyword-match only — primary signal per Bash corpus"
+    value_fn: "keyword_overlap_score(path, problem_statement_tokens)"
+    notes: |
+      Compute: intersection of tokenized path (split on /, _, -, .) with
+      tokenized problem_statement (lowercased, stopword-filtered).
+      Normalize by sqrt(len(path_tokens) * len(stmt_tokens)) (cosine-ish).
+
+  - id: priority_all
+    description: "Full weighted combination"
+    value_fn: |
+      0.70 * keyword_overlap_score
+      + 0.15 * path_depth_score
+      + 0.08 * filetype_prior
+      + 0.04 * recency_score
+      + 0.03 * filename_match_score
+    components:
+      keyword_overlap_score:
+        formula: "cosine(path_tokens, stmt_tokens)"
+        range: "[0, 1]"
+
+      path_depth_score:
+        formula: "1.0 / (1.0 + depth)"
+        range: "[0.1, 1.0]"
+        notes: "Shallow paths ranked higher; depth = number of `/` in path."
+
+      filetype_prior:
+        formula: "ext_prior_lookup(ext)"
+        range: "[0, 1]"
+        table:
+          ".py": 1.00
+          ".rs": 1.00
+          ".ts": 1.00
+          ".tsx": 1.00
+          ".js": 0.90
+          ".go": 1.00
+          ".java": 1.00
+          ".cpp": 1.00
+          ".h": 0.80
+          ".hpp": 0.80
+          ".md": 0.30
+          ".txt": 0.20
+          ".json": 0.50
+          ".yaml": 0.50
+          ".yml": 0.50
+          ".toml": 0.40
+          ".lock": 0.10
+          default: 0.50
+
+      recency_score:
+        formula: "1.0 / (1.0 + days_since_mtime)"
+        range: "[0, 1]"
+        notes: |
+          mtime relative to base_commit's commit time. For SWE-bench this
+          may not be available — fall back to 0.5 uniform.
+
+      filename_match_score:
+        formula: "exact_match(filename_no_ext, any_stmt_token) ? 1.0 : 0.0"
+        range: "{0, 1}"
+
+
+# Evaluation budgets (token-equivalent; 1 tok ≈ 4 chars)
+# Passed to knapsack as max weight.
+budgets_tokens: [1000, 2000, 4000, 8000]
+
+# Chunk index format
+chunk_hint: "[showing {included} of {total} candidates | request chunk={next} for more]"
+
+# Cost accounting (for E1)
+# 1 candidate ≈ ~30 tokens including path + depth marker
+tokens_per_candidate_estimate: 30

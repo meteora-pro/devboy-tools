@@ -23,6 +23,10 @@ Thumbs.db
 /docs/research/benchmarks/paper3/
 /docs/research/benchmarks/paper4/
 
+# Paper 1 public reproducibility pipeline — tracked, but .env + local artifacts are not
+/docs/research/paper1-repro/.env
+/docs/research/paper1-repro/artifacts/
+
 # Local project config
 .devboy.toml
 
@@ -36,3 +40,8 @@ npm/devboy-tools-*/bin/
 .playwright-cli/
 # Local QA artefacts, never commit
 .qa-bug-log-snapshot.md
+
+# Personal real-world data dumps (per-user logs, raw extracts, never commit)
+# Convention: anything personal goes under docs/research/data/__personal__/
+docs/research/data/__personal__/
+docs/research/data/*.zip
