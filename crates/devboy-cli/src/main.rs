@@ -539,10 +539,10 @@ enum SkillsCommands {
     Upgrade {
         /// Upgrade only these skills (default: every skill in the manifest).
         names: Vec<String>,
-        /// Upgrade across every recorded target (`--global`, `--agent`).
+        /// Upgrade the global target at `~/.agents/skills/`.
         #[arg(long, conflicts_with = "local")]
         global: bool,
-        /// Counterpart to `--agent` (see `install`).
+        /// When combined with `--agent`, upgrade under the repo instead of the user home.
         #[arg(long)]
         local: bool,
         /// Apply to these agents' install paths.
