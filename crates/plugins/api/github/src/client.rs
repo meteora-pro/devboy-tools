@@ -696,7 +696,17 @@ impl MergeRequestProvider for GitHubClient {
                 } else {
                     "RIGHT".to_string()
                 }),
-                in_reply_to: input.discussion_id.and_then(|id| id.parse().ok()),
+                // Unified `Discussion.id` is prefixed (`review-<n>` for a
+                // review thread, `comment-<n>` for a general issue
+                // comment) — see `get_discussions` below. Strip either
+                // prefix before parsing so callers can feed the id they
+                // received from `get_merge_request_discussions` straight
+                // back into `create_merge_request_comment` and have the
+                // new comment actually thread into the existing review.
+                in_reply_to: input
+                    .discussion_id
+                    .as_deref()
+                    .and_then(parse_discussion_numeric_id),
             };
 
             let gh_comment: GitHubReviewComment = self.post(&url, &request).await?;
@@ -1438,6 +1448,19 @@ fn parse_pr_key(key: &str) -> Result<u64> {
         .ok_or_else(|| Error::InvalidData(format!("Invalid PR key: {}", key)))
 }
 
+/// Turn a unified `Discussion.id` (prefixed by `get_discussions` as
+/// `review-<n>` for a review thread or `comment-<n>` for a general
+/// issue comment) back into the numeric comment id GitHub expects in
+/// `in_reply_to`. Raw numeric strings are accepted for forward
+/// compatibility / test fixtures.
+fn parse_discussion_numeric_id(id: &str) -> Option<u64> {
+    let trimmed = id
+        .strip_prefix("review-")
+        .or_else(|| id.strip_prefix("comment-"))
+        .unwrap_or(id);
+    trimmed.parse::<u64>().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1458,6 +1481,29 @@ mod tests {
         assert_eq!(parse_pr_key("pr#1").unwrap(), 1);
         assert!(parse_pr_key("gh#123").is_err());
         assert!(parse_pr_key("456").is_err());
+    }
+
+    #[test]
+    fn test_parse_discussion_numeric_id_strips_prefixes() {
+        // Regression for #188 bug #6/#18: Discussion.id returned by
+        // get_discussions is prefixed. Callers feed it straight back
+        // into create_merge_request_comment expecting it to thread.
+        assert_eq!(
+            parse_discussion_numeric_id("review-3694869522"),
+            Some(3694869522)
+        );
+        assert_eq!(
+            parse_discussion_numeric_id("comment-4147511088"),
+            Some(4147511088)
+        );
+        // Raw numeric id passes through (forward compat).
+        assert_eq!(parse_discussion_numeric_id("12345"), Some(12345));
+        // Unknown prefix / non-numeric tail yields None — in_reply_to
+        // stays unset and we fall back to a standalone comment rather
+        // than panicking.
+        assert_eq!(parse_discussion_numeric_id("weird-42"), None);
+        assert_eq!(parse_discussion_numeric_id("review-notnumeric"), None);
+        assert_eq!(parse_discussion_numeric_id(""), None);
     }
 
     #[test]
