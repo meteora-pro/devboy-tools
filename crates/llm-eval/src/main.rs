@@ -397,7 +397,10 @@ fn strip_code_fence(s: &str) -> String {
     if let Some(rest) = s.strip_prefix("```") {
         // Drop optional language tag on the first line, then strip trailing fence.
         let after_first_line = rest.split_once('\n').map(|x| x.1).unwrap_or(rest);
-        let body = after_first_line.trim_end_matches("```").trim_end_matches('\n').trim();
+        let body = after_first_line
+            .trim_end_matches("```")
+            .trim_end_matches('\n')
+            .trim();
         return body.to_string();
     }
     s.to_string()
