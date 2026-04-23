@@ -257,12 +257,11 @@ impl SessionTracer {
             errors: self.errors.load(std::sync::atomic::Ordering::Relaxed),
             summary: Some(summary.to_string()),
         };
-        let bytes =
-            serde_json::to_vec_pretty(&meta).map_err(|source| SkillError::SerdeJson {
-                operation: "serialise session meta",
-                path: self.meta_path.clone(),
-                source,
-            })?;
+        let bytes = serde_json::to_vec_pretty(&meta).map_err(|source| SkillError::SerdeJson {
+            operation: "serialise session meta",
+            path: self.meta_path.clone(),
+            source,
+        })?;
         std::fs::write(&self.meta_path, bytes).map_err(|source| SkillError::Io {
             path: self.meta_path.clone(),
             source,
@@ -294,12 +293,11 @@ impl SessionTracer {
             phase,
             payload: redacted,
         };
-        let line =
-            serde_json::to_string(&record).map_err(|source| SkillError::SerdeJson {
-                operation: "serialise trace record",
-                path: self.trace_path.clone(),
-                source,
-            })?;
+        let line = serde_json::to_string(&record).map_err(|source| SkillError::SerdeJson {
+            operation: "serialise trace record",
+            path: self.trace_path.clone(),
+            source,
+        })?;
 
         let mut guard = self.trace_file.lock().map_err(|_| SkillError::Io {
             path: self.trace_path.clone(),
