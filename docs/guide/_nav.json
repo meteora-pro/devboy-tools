@@ -15,6 +15,11 @@
     "activeMatch": "/configuration/proxy"
   },
   {
+    "text": "Skills",
+    "link": "/skills/",
+    "activeMatch": "/skills/"
+  },
+  {
     "text": "Architecture",
     "link": "/architecture/",
     "activeMatch": "/architecture/"
