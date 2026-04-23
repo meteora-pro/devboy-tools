@@ -1,0 +1,13 @@
+# Token budget sweep for E4 Pareto study
+# Values in "rendered tokens" — the byte budget allocated to the compressed
+# candidate list (not the full prompt).
+
+# Core grid (always run — E1, E2, E3)
+core: [1000, 2000, 4000, 8000]
+
+# Extended grid (E4 only — optional)
+extended: [500, 1000, 1500, 2000, 3000, 4000, 6000, 8000]
+
+# Stable system prefix is approximately 2k tokens — add that to get total
+# input budget.
+system_prefix_estimate_tokens: 2000

@@ -51,6 +51,8 @@ struct ModelConfig {
     pub model_id: String,
     /// Max tokens to generate in response
     pub max_tokens: u32,
+    /// Provider hint — controls Ollama-only knobs like `reasoning_effort`.
+    pub is_ollama: bool,
 }
 
 /// Derive a short display name from Ollama model_id: "gemma4:26b" → "gemma4-26b"
@@ -118,6 +120,7 @@ fn load_model_configs(dotenv: &std::collections::HashMap<String, String>) -> Vec
             api_key: kimi_key,
             model_id: getv!("KIMI_MODEL", "moonshot-v1-32k"),
             max_tokens: 64,
+            is_ollama: false,
         });
     }
 
@@ -130,6 +133,7 @@ fn load_model_configs(dotenv: &std::collections::HashMap<String, String>) -> Vec
             api_key: zhipu_key,
             model_id: getv!("ZHIPU_MODEL", "glm-4-flash"),
             max_tokens: 64,
+            is_ollama: false,
         });
     }
 
@@ -149,7 +153,8 @@ fn load_model_configs(dotenv: &std::collections::HashMap<String, String>) -> Vec
                 base_url: ollama_url.clone(),
                 api_key: "ollama".into(),
                 model_id: model_id.to_string(),
-                max_tokens: 256,
+                max_tokens: 4096,
+                is_ollama: true,
             });
         }
     } else {
@@ -161,7 +166,8 @@ fn load_model_configs(dotenv: &std::collections::HashMap<String, String>) -> Vec
                 base_url: ollama_url.clone(),
                 api_key: "ollama".into(),
                 model_id: gemma_model,
-                max_tokens: 256,
+                max_tokens: 4096,
+                is_ollama: true,
             });
         }
 
@@ -172,7 +178,8 @@ fn load_model_configs(dotenv: &std::collections::HashMap<String, String>) -> Vec
                 base_url: ollama_url,
                 api_key: "ollama".into(),
                 model_id: gptoss_model,
-                max_tokens: 256,
+                max_tokens: 4096,
+                is_ollama: true,
             });
         }
     }
@@ -341,7 +348,7 @@ fn call_llm(
     );
 
     let url = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
-    let body = json!({
+    let mut body = json!({
         "model": config.model_id,
         "messages": [
             {"role": "system", "content": system},
@@ -350,6 +357,11 @@ fn call_llm(
         "max_tokens": config.max_tokens,
         "temperature": 0.0,
     });
+    // Ollama OpenAI-compat endpoint accepts reasoning_effort for thinking-capable
+    // models (gpt-oss, gemma4, qwq, deepseek-r1). On non-thinking models it's a no-op.
+    if config.is_ollama {
+        body["reasoning_effort"] = json!("high");
+    }
 
     let start = Instant::now();
     let resp = client
@@ -370,18 +382,25 @@ fn call_llm(
     let json: Value = serde_json::from_str(&text).context("failed to parse JSON response")?;
     let msg = &json["choices"][0]["message"];
 
-    // Standard content field
+    // With reasoning_effort=high + max_tokens=4096, the model has room to finish
+    // its thinking trace and emit the final answer in `content`. We deliberately
+    // ignore `reasoning` — it's the thinking stream, not the answer.
     let content = msg["content"].as_str().unwrap_or("").trim();
+    let cleaned = strip_code_fence(content);
 
-    // Some reasoning/thinking models (DeepSeek-R1, gpt-oss) put the final answer
-    // in the `reasoning` field when content is empty.
-    let text_to_judge = if content.is_empty() {
-        msg["reasoning"].as_str().unwrap_or("").trim()
-    } else {
-        content
-    };
+    Ok((cleaned.to_lowercase(), latency_ms))
+}
 
-    Ok((text_to_judge.to_lowercase(), latency_ms))
+/// Strip surrounding ```json ... ``` or ``` ... ``` wrappers (gemma4 likes them).
+fn strip_code_fence(s: &str) -> String {
+    let s = s.trim();
+    if let Some(rest) = s.strip_prefix("```") {
+        // Drop optional language tag on the first line, then strip trailing fence.
+        let after_first_line = rest.split_once('\n').map(|x| x.1).unwrap_or(rest);
+        let body = after_first_line.trim_end_matches("```").trim_end_matches('\n').trim();
+        return body.to_string();
+    }
+    s.to_string()
 }
 
 /// Check if LLM response correctly names the gold issue.
