@@ -2131,11 +2131,15 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
         }
 
         ConfigCommands::List => {
-            let config = Config::load().context("Failed to load config")?;
-            let store = get_credential_store();
-
-            println!("Configuration:");
+            // Match `tools call` / `test` / `context list` — prefer a
+            // repo-local `.devboy.toml` over the global config so
+            // `config list` reports the config that will actually be
+            // used by the rest of the CLI in this cwd.
+            let (config, source_path) = load_runtime_config()
+                .context("Failed to load config")?;
+            println!("Configuration (source: {}):", source_path.display());
             println!();
+            let store = get_credential_store();
 
             // GitHub
             if let Some(gh) = &config.github {
@@ -2280,10 +2284,21 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
             }
         }
 
-        ConfigCommands::Path => match Config::config_path() {
-            Ok(path) => println!("{}", path.display()),
-            Err(e) => println!("Error: {}", e),
-        },
+        ConfigCommands::Path => {
+            // Report the path that the rest of the CLI (`tools call` /
+            // `test` / `context list`) would actually load — prefer a
+            // repo-local `.devboy.toml` over the global config path,
+            // falling back to global when no local file exists.
+            let local_path = PathBuf::from(".devboy.toml");
+            if local_path.exists() {
+                println!("{}", local_path.display());
+            } else {
+                match Config::config_path() {
+                    Ok(path) => println!("{}", path.display()),
+                    Err(e) => println!("Error: {}", e),
+                }
+            }
+        }
     }
 
     Ok(())
