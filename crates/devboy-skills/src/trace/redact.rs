@@ -243,50 +243,86 @@ fn known_env_secrets() -> HashSet<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::Mutex;
+
+    /// Serialise every test in this module around the process-wide
+    /// environment. Two tests legitimately toggle
+    /// `DEVBOY_TRACE_REDACTION=off` via `temp_env::with_var`, and
+    /// `cargo test` runs the others concurrently — without this mutex
+    /// a sibling test's `off` setting can leak into an unrelated test
+    /// for the window it holds the var, making
+    /// `masks_bare_bearer_value_case_insensitive` and friends flake
+    /// on CI. The mutex is cheap (only contended during tests) and
+    /// keeps the production code path zero-overhead. Combined with
+    /// `temp_env::with_var`'s own save/restore logic this gives the
+    /// whole module deterministic env state.
+    static ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+    /// Helper: acquire the module-wide env-serialisation lock and run
+    /// `f` inside a `temp_env` guard that explicitly UNsets
+    /// `DEVBOY_TRACE_REDACTION`. Used by every test that expects the
+    /// default (enabled) redactor. Without this wrapper a sibling
+    /// test's `DEVBOY_TRACE_REDACTION=off` setting could race in and
+    /// silently disable redaction mid-assertion.
+    fn with_clean_env<R>(f: impl FnOnce() -> R) -> R {
+        let _guard = ENV_TEST_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
+        temp_env::with_var("DEVBOY_TRACE_REDACTION", None::<&str>, f)
+    }
 
     #[test]
     fn masks_github_pat() {
-        let v = json!({ "args": { "token": "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } });
-        let out = sanitize(v);
-        let s = serde_json::to_string(&out).unwrap();
-        assert!(!s.contains("ghp_aaaaaaaa"));
-        assert!(s.contains("<redacted"));
+        with_clean_env(|| {
+            let v = json!({ "args": { "token": "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } });
+            let out = sanitize(v);
+            let s = serde_json::to_string(&out).unwrap();
+            assert!(!s.contains("ghp_aaaaaaaa"));
+            assert!(s.contains("<redacted"));
+        });
     }
 
     #[test]
     fn masks_bearer_scheme_in_header_string() {
-        let v = json!("Authorization: Bearer xxxxxxxxxxxxyyyyyyyyyyyy");
-        let out = sanitize(v);
-        let s = out.as_str().unwrap();
-        assert!(!s.contains("xxxxxxxxxxxxyyyyyyyyyyyy"), "got: {s}");
-        assert!(s.contains("<redacted"), "got: {s}");
+        with_clean_env(|| {
+            let v = json!("Authorization: Bearer xxxxxxxxxxxxyyyyyyyyyyyy");
+            let out = sanitize(v);
+            let s = out.as_str().unwrap();
+            assert!(!s.contains("xxxxxxxxxxxxyyyyyyyyyyyy"), "got: {s}");
+            assert!(s.contains("<redacted"), "got: {s}");
+        });
     }
 
     #[test]
     fn masks_by_key_name_even_when_value_looks_harmless() {
-        // A value that does not match any known prefix but lives under
-        // a key called `password` must still be redacted.
-        let v = json!({ "password": "not-a-prefix" });
-        let out = sanitize(v);
-        assert_eq!(
-            out.get("password").and_then(|v| v.as_str()),
-            Some("<redacted:secret-field>")
-        );
+        with_clean_env(|| {
+            // A value that does not match any known prefix but lives under
+            // a key called `password` must still be redacted.
+            let v = json!({ "password": "not-a-prefix" });
+            let out = sanitize(v);
+            assert_eq!(
+                out.get("password").and_then(|v| v.as_str()),
+                Some("<redacted:secret-field>")
+            );
+        });
     }
 
     #[test]
     fn env_var_values_are_redacted_when_they_match_exactly() {
-        temp_env::with_var(
-            "DEVBOY_TEST_TOKEN",
-            Some("super-secret-value-nothing-matches"),
+        let _guard = ENV_TEST_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
+        temp_env::with_vars(
+            [
+                ("DEVBOY_TRACE_REDACTION", None::<&str>),
+                (
+                    "DEVBOY_TEST_TOKEN",
+                    Some("super-secret-value-nothing-matches"),
+                ),
+            ],
             || {
                 let v = json!({ "note": "leaked: super-secret-value-nothing-matches" });
                 let out = sanitize(v);
-                // The exact-match secret replacement only fires when the
-                // value IS the secret — not when it's embedded in a
-                // larger string. Embedded leakage is the DLP case we do
-                // not attempt to solve (see the doc comment). Assert the
-                // exact-value case instead.
+                // The exact-match secret replacement only fires when
+                // the value IS the secret — not when it's embedded in
+                // a larger string. Embedded leakage is the DLP case we
+                // don't attempt to solve (see the doc comment).
                 let note = out.get("note").and_then(|v| v.as_str()).unwrap();
                 assert_eq!(note, "leaked: super-secret-value-nothing-matches");
 
@@ -302,15 +338,18 @@ mod tests {
 
     #[test]
     fn short_strings_are_not_redacted_by_prefix_check() {
-        // `ghp_` alone must not be redacted — only long PAT-shaped
-        // strings are. This matters for documentation and for the
-        // redaction marker itself.
-        let v = json!("ghp_");
-        assert_eq!(sanitize(v).as_str(), Some("ghp_"));
+        with_clean_env(|| {
+            // `ghp_` alone must not be redacted — only long PAT-shaped
+            // strings are. This matters for documentation and for the
+            // redaction marker itself.
+            let v = json!("ghp_");
+            assert_eq!(sanitize(v).as_str(), Some("ghp_"));
+        });
     }
 
     #[test]
     fn redaction_can_be_disabled_via_env() {
+        let _guard = ENV_TEST_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         temp_env::with_var("DEVBOY_TRACE_REDACTION", Some("off"), || {
             let v = json!({ "token": "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
             let out = sanitize(v.clone());
@@ -320,71 +359,76 @@ mod tests {
 
     #[test]
     fn masks_bearer_scheme_case_insensitive() {
-        // HTTP schemes are case-insensitive per RFC 7235, so all of
-        // these variants must redact.
-        for header in [
-            "Authorization: Bearer xxxxxxxxxxxxyyyyyyyyyyyy",
-            "authorization: bearer xxxxxxxxxxxxyyyyyyyyyyyy",
-            "AUTHORIZATION: BEARER xxxxxxxxxxxxyyyyyyyyyyyy",
-            "authorization: BeArEr xxxxxxxxxxxxyyyyyyyyyyyy",
-        ] {
-            let out = sanitize(json!(header));
-            let s = out.as_str().unwrap();
-            assert!(
-                !s.contains("xxxxxxxxxxxxyyyyyyyyyyyy"),
-                "token leaked for header `{header}` → `{s}`"
-            );
-            assert!(
-                s.contains("<redacted"),
-                "no redaction marker for header `{header}` → `{s}`"
-            );
-        }
+        with_clean_env(|| {
+            // HTTP schemes are case-insensitive per RFC 7235, so all of
+            // these variants must redact.
+            for header in [
+                "Authorization: Bearer xxxxxxxxxxxxyyyyyyyyyyyy",
+                "authorization: bearer xxxxxxxxxxxxyyyyyyyyyyyy",
+                "AUTHORIZATION: BEARER xxxxxxxxxxxxyyyyyyyyyyyy",
+                "authorization: BeArEr xxxxxxxxxxxxyyyyyyyyyyyy",
+            ] {
+                let out = sanitize(json!(header));
+                let s = out.as_str().unwrap();
+                assert!(
+                    !s.contains("xxxxxxxxxxxxyyyyyyyyyyyy"),
+                    "token leaked for header `{header}` → `{s}`"
+                );
+                assert!(
+                    s.contains("<redacted"),
+                    "no redaction marker for header `{header}` → `{s}`"
+                );
+            }
+        });
     }
 
     #[test]
     fn masks_bare_bearer_value_case_insensitive() {
-        // When the caller pasted just the `Bearer <token>` segment as
-        // a standalone value, the prefix check (not the header scanner)
-        // fires — must also be case-insensitive.
-        for raw in [
-            "Bearer abcdefghijklmnopqrstuvwx",
-            "bearer abcdefghijklmnopqrstuvwx",
-            "BEARER abcdefghijklmnopqrstuvwx",
-            "Basic YWxpY2U6aHVudGVyMjpkcmFnb24=",
-        ] {
-            let out = sanitize(json!(raw));
-            let s = out.as_str().unwrap();
-            assert!(s.contains("<redacted"), "not redacted: `{raw}` → `{s}`");
-        }
+        with_clean_env(|| {
+            // When the caller pasted just the `Bearer <token>` segment as
+            // a standalone value, the prefix check (not the header scanner)
+            // fires — must also be case-insensitive.
+            for raw in [
+                "Bearer abcdefghijklmnopqrstuvwx",
+                "bearer abcdefghijklmnopqrstuvwx",
+                "BEARER abcdefghijklmnopqrstuvwx",
+                "Basic YWxpY2U6aHVudGVyMjpkcmFnb24=",
+            ] {
+                let out = sanitize(json!(raw));
+                let s = out.as_str().unwrap();
+                assert!(s.contains("<redacted"), "not redacted: `{raw}` → `{s}`");
+            }
+        });
     }
 
     #[test]
     fn masks_generic_pk_prefix() {
-        // ADR-015 calls out a generic `pk_` prefix (not just
-        // `pk_live_` / `pk_test_`). Enough bytes after the prefix to
-        // clear the length guard so a bare `pk_` literal is left alone.
-        let v = json!({ "clickup_pk": "pk_abcdefghijklmnop" });
-        let out = sanitize(v);
-        assert_eq!(
-            out.get("clickup_pk").and_then(|v| v.as_str()),
-            Some("<redacted:token-pattern>"),
-            "generic pk_ prefix should redact"
-        );
+        with_clean_env(|| {
+            // ADR-015 calls out a generic `pk_` prefix (not just
+            // `pk_live_` / `pk_test_`). Enough bytes after the prefix to
+            // clear the length guard so a bare `pk_` literal is left alone.
+            let v = json!({ "clickup_pk": "pk_abcdefghijklmnop" });
+            let out = sanitize(v);
+            assert_eq!(
+                out.get("clickup_pk").and_then(|v| v.as_str()),
+                Some("<redacted:token-pattern>"),
+                "generic pk_ prefix should redact"
+            );
 
-        // Short `pk_` literal stays untouched (e.g. in docs).
-        let doc = json!("pk_");
-        assert_eq!(sanitize(doc).as_str(), Some("pk_"));
+            // Short `pk_` literal stays untouched (e.g. in docs).
+            let doc = json!("pk_");
+            assert_eq!(sanitize(doc).as_str(), Some("pk_"));
+        });
     }
 
     #[test]
     fn redactor_snapshot_amortizes_env_scan() {
-        // The Redactor captures the env-var set at snapshot time and
-        // keeps redacting the snapshotted value even after the source
-        // env var has been unset — this is what makes reuse inside a
-        // long session cheap and consistent.
-        let redactor = temp_env::with_var(
-            "DEVBOY_REDACTOR_CACHE_TOKEN",
-            Some("cached-token-zzzzzzzz"),
+        let _guard = ENV_TEST_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
+        let redactor = temp_env::with_vars(
+            [
+                ("DEVBOY_TRACE_REDACTION", None::<&str>),
+                ("DEVBOY_REDACTOR_CACHE_TOKEN", Some("cached-token-zzzzzzzz")),
+            ],
             Redactor::snapshot,
         );
         // The env var is gone at this point, but the snapshot remembers.
@@ -397,6 +441,7 @@ mod tests {
 
     #[test]
     fn redactor_snapshot_respects_disable_env() {
+        let _guard = ENV_TEST_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         temp_env::with_var("DEVBOY_TRACE_REDACTION", Some("off"), || {
             let redactor = Redactor::snapshot();
             let v = json!({ "token": "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
