@@ -4112,9 +4112,19 @@ async fn handle_tools_call(name: &str, args: &str) -> Result<()> {
         std::process::exit(1);
     }
 
+    // MCP tools/call represents "the tool ran but returned an
+    // application-level error" via `result.isError: true`. That's not
+    // a JSON-RPC error, so the CLI used to print the body and exit 0
+    // — making shell scripting impossible. Mirror the MCP convention:
+    // print the body, but exit 1 so `$?` tells callers the tool
+    // rejected the call.
     if let Some(result) = resp.result {
+        let is_error = result.get("isError").and_then(|v| v.as_bool()) == Some(true);
         let json = serde_json::to_string_pretty(&result)?;
         println!("{}", json);
+        if is_error {
+            std::process::exit(1);
+        }
     }
 
     Ok(())
