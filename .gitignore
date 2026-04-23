@@ -34,3 +34,6 @@ dist/
 # npm platform packages (binaries added by CI)
 npm/devboy-tools-*/bin/
 .playwright-cli/
+
+# Local QA artefacts, never commit
+.qa-bug-log-snapshot.md
