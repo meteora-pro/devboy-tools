@@ -20,6 +20,26 @@ use devboy_core::ToolEnricher;
 /// Maximum file size for upload / download asset operations (10 MB).
 const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
 
+/// Parse `tools/call` args into a typed `Params` struct, turning
+/// deserialisation failures into `Error::InvalidData` so callers see
+/// the exact field that went wrong instead of the tool silently
+/// running with defaults (the previous `unwrap_or_default()` path).
+///
+/// `Value::Null` is accepted as "no arguments" and yields `T::default()`
+/// — the MCP spec allows a null `arguments` field for tools whose
+/// params are all optional, so rejecting null here would break those
+/// call sites. Actual content is validated by `serde_json::from_value`.
+fn parse_tool_params<T>(args: &Value, tool: &str) -> Result<T>
+where
+    T: Default + serde::de::DeserializeOwned,
+{
+    if args.is_null() {
+        return Ok(T::default());
+    }
+    serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid {tool} params: {e}")))
+}
+
 /// Deserialize a value that can be either a string or a number into Option<String>.
 /// Enricher may transform priority "high" → 2 (number), but executor needs String.
 fn deserialize_string_or_number<'de, D>(
@@ -253,7 +273,7 @@ async fn execute_get_messenger_chats(
     provider: &dyn MessengerProvider,
     args: &Value,
 ) -> Result<ToolOutput> {
-    let params: GetMessengerChatsParams = serde_json::from_value(args.clone()).unwrap_or_default();
+    let params: GetMessengerChatsParams = parse_tool_params(args, "get_messenger_chats")?;
     let request = GetChatsParams {
         search: params.search,
         chat_type: params.chat_type,
@@ -458,7 +478,7 @@ async fn execute_get_meeting_notes(
     provider: &dyn MeetingNotesProvider,
     args: &Value,
 ) -> Result<ToolOutput> {
-    let params: GetMeetingNotesParams = serde_json::from_value(args.clone()).unwrap_or_default();
+    let params: GetMeetingNotesParams = parse_tool_params(args, "get_meeting_notes")?;
     let filter = MeetingFilter {
         keyword: None,
         from_date: params.from_date,
@@ -554,7 +574,7 @@ async fn execute_get_issues(
     provider: &dyn devboy_core::Provider,
     args: &Value,
 ) -> Result<ToolOutput> {
-    let params: GetIssuesParams = serde_json::from_value(args.clone()).unwrap_or_default();
+    let params: GetIssuesParams = parse_tool_params(args, "get_issues")?;
     let filter = IssueFilter {
         state: params.state,
         state_category: params.state_category,
@@ -884,7 +904,7 @@ async fn execute_get_merge_requests(
     provider: &dyn devboy_core::Provider,
     args: &Value,
 ) -> Result<ToolOutput> {
-    let params: GetMergeRequestsParams = serde_json::from_value(args.clone()).unwrap_or_default();
+    let params: GetMergeRequestsParams = parse_tool_params(args, "get_merge_requests")?;
     let filter = MrFilter {
         state: params.state,
         source_branch: params.source_branch,
@@ -1034,7 +1054,7 @@ async fn execute_get_pipeline(
     provider: &dyn devboy_core::Provider,
     args: &Value,
 ) -> Result<ToolOutput> {
-    let params: GetPipelineParams = serde_json::from_value(args.clone()).unwrap_or_default();
+    let params: GetPipelineParams = parse_tool_params(args, "get_pipeline")?;
     let input = GetPipelineInput {
         branch: params.branch,
         mr_key: params.mr_key,
@@ -1118,7 +1138,7 @@ async fn execute_get_users(
     provider: &dyn devboy_core::Provider,
     args: &Value,
 ) -> Result<ToolOutput> {
-    let params: GetUsersParams = serde_json::from_value(args.clone()).unwrap_or_default();
+    let params: GetUsersParams = parse_tool_params(args, "get_users")?;
     let options = GetUsersOptions {
         user_id: params.user_id,
         project_key: params.project_key,
@@ -1231,7 +1251,7 @@ async fn execute_get_epics(
     provider: &dyn devboy_core::Provider,
     args: &Value,
 ) -> Result<ToolOutput> {
-    let params: GetEpicsParams = serde_json::from_value(args.clone()).unwrap_or_default();
+    let params: GetEpicsParams = parse_tool_params(args, "get_epics")?;
     let filter = IssueFilter {
         state: params.state,
         state_category: None,
@@ -2362,6 +2382,85 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::Issues(_, _)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_issues_invalid_params_are_rejected() {
+        // Regression for #188: before parse_tool_params the executor
+        // silently accepted `{"state": 42}` by falling through to
+        // default() and ran the tool without any filter. Now it must
+        // surface the deserialisation error instead.
+        let provider = MockProvider;
+        let args = serde_json::json!({"state": 42});
+        let err = dispatch_tool("get_issues", &args, &provider, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, devboy_core::Error::InvalidData(ref msg) if msg.contains("get_issues")),
+            "expected InvalidData referencing get_issues, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_merge_requests_invalid_params_rejected() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"limit": "not-a-number"});
+        let err = dispatch_tool("get_merge_requests", &args, &provider, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, devboy_core::Error::InvalidData(ref msg) if msg.contains("get_merge_requests")),
+            "expected InvalidData referencing get_merge_requests, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_pipeline_invalid_params_rejected() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"includeFailedLogs": "yes"});
+        let err = dispatch_tool("get_pipeline", &args, &provider, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, devboy_core::Error::InvalidData(ref msg) if msg.contains("get_pipeline")),
+            "expected InvalidData referencing get_pipeline, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_tool_params_null_yields_default() {
+        #[derive(Debug, Default, serde::Deserialize)]
+        struct P {
+            #[allow(dead_code)]
+            x: Option<String>,
+        }
+        let _: P = parse_tool_params(&Value::Null, "test").expect("null → default");
+    }
+
+    #[test]
+    fn parse_tool_params_empty_object_yields_default() {
+        // MCP clients often send `{}` for "no arguments"; the helper
+        // must accept it alongside `null`.
+        #[derive(Debug, Default, serde::Deserialize)]
+        struct P {
+            #[allow(dead_code)]
+            x: Option<String>,
+        }
+        let _: P = parse_tool_params(&serde_json::json!({}), "test").expect("{} → default");
+    }
+
+    #[test]
+    fn parse_tool_params_invalid_maps_to_invalid_data() {
+        #[derive(Debug, Default, serde::Deserialize)]
+        struct P {
+            #[allow(dead_code)]
+            n: u32,
+        }
+        let err = parse_tool_params::<P>(&serde_json::json!({"n": "nope"}), "tool-x").unwrap_err();
+        assert!(
+            matches!(err, devboy_core::Error::InvalidData(ref msg) if msg.contains("tool-x")),
+            "expected InvalidData(tool-x), got {err:?}"
+        );
     }
 
     #[tokio::test]

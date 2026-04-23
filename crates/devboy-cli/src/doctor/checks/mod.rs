@@ -34,6 +34,8 @@ pub(super) fn resolve_secret(
     context_name: Option<&str>,
     provider: &str,
 ) -> Result<Option<ResolvedSecret>, String> {
+    let mut last_error: Option<String> = None;
+
     if let Some(context_name) = context_name {
         let scoped_key = format!("contexts.{context_name}.{provider}.token");
         match ctx.credential_store.get(&scoped_key) {
@@ -45,7 +47,14 @@ pub(super) fn resolve_secret(
                 }));
             }
             Ok(None) => {}
-            Err(error) => return Err(error.to_string()),
+            // Scoped lookup failed (no keychain available, ephemeral
+            // HOME, etc.). Remember the error but keep trying the
+            // global key — the env-var backend may still expose the
+            // token via `DEVBOY_<PROVIDER>_TOKEN`. This is the same
+            // chain `tools call` uses, and #188/#5 had `doctor`
+            // diverging from it (reporting "missing" even though the
+            // env var was set and the rest of the CLI could see it).
+            Err(error) => last_error = Some(error.to_string()),
         }
     }
 
@@ -56,8 +65,15 @@ pub(super) fn resolve_secret(
             source: "global",
             value,
         })),
-        Ok(None) => Ok(None),
-        Err(error) => Err(error.to_string()),
+        // If the global lookup doesn't find anything *and* the scoped
+        // lookup erred earlier, surface that error — it is strictly
+        // more informative than "token missing". If both probes
+        // returned `None`, that's the real "missing" answer.
+        Ok(None) => match last_error {
+            Some(e) => Err(e),
+            None => Ok(None),
+        },
+        Err(error) => Err(last_error.unwrap_or_else(|| error.to_string())),
     }
 }
 
@@ -182,5 +198,87 @@ mod tests {
         let error = resolve_secret(&ctx, Some("workspace"), "github").unwrap_err();
 
         assert_eq!(error, "Storage error: secret backend unavailable");
+    }
+
+    #[test]
+    fn resolve_secret_falls_back_to_global_when_scoped_errs() {
+        // Regression for #188/#5: scoped lookup erroring (e.g. no
+        // keychain available) must not abort the resolution — an env
+        // var like `DEVBOY_GITHUB_TOKEN` that fills the global key
+        // should still surface as a successful match.
+        #[derive(Debug)]
+        struct ScopedFailingStore {
+            inner: Arc<MemoryStore>,
+        }
+
+        impl CredentialStore for ScopedFailingStore {
+            fn store(&self, key: &str, value: &str) -> devboy_core::Result<()> {
+                self.inner.store(key, value)
+            }
+
+            fn get(&self, key: &str) -> devboy_core::Result<Option<String>> {
+                if key.starts_with("contexts.") {
+                    Err(Error::Storage("scoped key backend unavailable".to_string()))
+                } else {
+                    self.inner.get(key)
+                }
+            }
+
+            fn delete(&self, key: &str) -> devboy_core::Result<()> {
+                self.inner.delete(key)
+            }
+        }
+
+        let ctx = context_with_store(
+            Arc::new(ScopedFailingStore {
+                inner: Arc::new(MemoryStore::with_credentials([(
+                    "github.token".to_string(),
+                    "ghp_from_env_var_fallback".to_string(),
+                )])),
+            }),
+            config_with_active_context(),
+        );
+
+        let resolved = resolve_secret(&ctx, Some("workspace"), "github")
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.source, "global");
+        assert_eq!(resolved.key, "github.token");
+        assert_eq!(resolved.value, "ghp_from_env_var_fallback");
+    }
+
+    #[test]
+    fn resolve_secret_surfaces_scoped_error_when_global_empty() {
+        // Companion to the fallback test above: if the scoped lookup
+        // errored AND the global probe returned `None`, the scoped
+        // error is the strictly more informative answer — better than
+        // reporting "token missing".
+        #[derive(Debug)]
+        struct ScopedOnlyFails;
+
+        impl CredentialStore for ScopedOnlyFails {
+            fn store(&self, _key: &str, _value: &str) -> devboy_core::Result<()> {
+                Err(Error::Storage("store failed".into()))
+            }
+
+            fn get(&self, key: &str) -> devboy_core::Result<Option<String>> {
+                if key.starts_with("contexts.") {
+                    Err(Error::Storage("keychain unavailable".into()))
+                } else {
+                    Ok(None)
+                }
+            }
+
+            fn delete(&self, _key: &str) -> devboy_core::Result<()> {
+                Err(Error::Storage("delete failed".into()))
+            }
+        }
+
+        let ctx = context_with_store(Arc::new(ScopedOnlyFails), config_with_active_context());
+        let err = resolve_secret(&ctx, Some("workspace"), "github").unwrap_err();
+        assert!(
+            err.contains("keychain unavailable"),
+            "expected to surface the scoped error, got: {err}"
+        );
     }
 }

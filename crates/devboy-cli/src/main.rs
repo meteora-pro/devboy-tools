@@ -229,7 +229,7 @@ enum Commands {
     /// Get information about issues
     Issues {
         /// Filter by state
-        #[arg(short, long, default_value = "open")]
+        #[arg(short, long, default_value = "open", value_parser = ["open", "closed", "all"])]
         state: String,
 
         /// Maximum number of issues to display
@@ -240,7 +240,7 @@ enum Commands {
     /// Get information about merge requests / pull requests
     Mrs {
         /// Filter by state
-        #[arg(short, long, default_value = "open")]
+        #[arg(short, long, default_value = "open", value_parser = ["open", "merged", "closed", "all"])]
         state: String,
 
         /// Maximum number of MRs to display
@@ -539,10 +539,10 @@ enum SkillsCommands {
     Upgrade {
         /// Upgrade only these skills (default: every skill in the manifest).
         names: Vec<String>,
-        /// Upgrade across every recorded target (`--global`, `--agent`).
+        /// Upgrade the global target at `~/.agents/skills/`.
         #[arg(long, conflicts_with = "local")]
         global: bool,
-        /// Counterpart to `--agent` (see `install`).
+        /// When combined with `--agent`, upgrade under the repo instead of the user home.
         #[arg(long)]
         local: bool,
         /// Apply to these agents' install paths.
@@ -1041,8 +1041,18 @@ async fn handle_init_command(
 
     // Build configuration
     let config = build_config(&options);
-    let toml_content =
+    let mut toml_content =
         toml::to_string_pretty(&config).context("Failed to serialize configuration")?;
+
+    // When `build_config` produced an empty TOML (no providers detected
+    // and the user did not opt into any proxy / remote-config settings),
+    // serialize_with-skip leaves us with a zero-byte file. Seed it with a
+    // short header comment so `cat .devboy.toml` is not blank and so that
+    // `doctor` / `config list` have something to key off of. The content
+    // is valid TOML (comments only) and does not change behaviour.
+    if toml_content.trim().is_empty() {
+        toml_content = minimal_devboy_toml_template();
+    }
 
     // Dry-run mode: just print what would be done
     if dry_run {
@@ -1569,6 +1579,27 @@ fn should_skip_git_detect(
         return true;
     }
     remote_config_url.is_some() && !detect_git
+}
+
+/// Placeholder `.devboy.toml` content used when `init --yes` is run in
+/// a directory without a detectable git remote and without any
+/// agent / proxy / remote-config flag. The file is valid TOML (only
+/// comments), so subsequent `config set` writes drop real keys into it
+/// without any cleanup needed.
+fn minimal_devboy_toml_template() -> String {
+    "# DevBoy tools configuration\n\
+     #\n\
+     # No providers were detected from git or passed on the command line.\n\
+     # Add one with:\n\
+     #   devboy config set github.owner <owner>\n\
+     #   devboy config set github.repo <repo>\n\
+     #   devboy config set-secret github.token <token>\n\
+     #\n\
+     # Or, register an agent MCP server via:\n\
+     #   devboy init --claude | --kimi | --codex-cli | --copilot | --gemini | --opencode | --forge\n\
+     #\n\
+     # See `devboy --help` for the full command surface.\n"
+        .to_string()
 }
 
 /// Build Config from collected options.
@@ -2100,11 +2131,14 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
         }
 
         ConfigCommands::List => {
-            let config = Config::load().context("Failed to load config")?;
-            let store = get_credential_store();
-
-            println!("Configuration:");
+            // Match `tools call` / `test` / `context list` — prefer a
+            // repo-local `.devboy.toml` over the global config so
+            // `config list` reports the config that will actually be
+            // used by the rest of the CLI in this cwd.
+            let (config, source_path) = load_runtime_config().context("Failed to load config")?;
+            println!("Configuration (source: {}):", source_path.display());
             println!();
+            let store = get_credential_store();
 
             // GitHub
             if let Some(gh) = &config.github {
@@ -2249,10 +2283,17 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
             }
         }
 
-        ConfigCommands::Path => match Config::config_path() {
-            Ok(path) => println!("{}", path.display()),
-            Err(e) => println!("Error: {}", e),
-        },
+        ConfigCommands::Path => {
+            // Delegate to the same resolver `tools call` / `test` /
+            // `context list` / `config list` all use. That way
+            // `config path` cannot drift from runtime behaviour — if
+            // the resolution policy ever changes (walk-up rule, new
+            // env var, …), every surface picks it up automatically.
+            match load_runtime_config() {
+                Ok((_config, source_path)) => println!("{}", source_path.display()),
+                Err(e) => println!("Error: {}", e),
+            }
+        }
     }
 
     Ok(())
@@ -4112,9 +4153,19 @@ async fn handle_tools_call(name: &str, args: &str) -> Result<()> {
         std::process::exit(1);
     }
 
+    // MCP tools/call represents "the tool ran but returned an
+    // application-level error" via `result.isError: true`. That's not
+    // a JSON-RPC error, so the CLI used to print the body and exit 0
+    // — making shell scripting impossible. Mirror the MCP convention:
+    // print the body, but exit 1 so `$?` tells callers the tool
+    // rejected the call.
     if let Some(result) = resp.result {
+        let is_error = result.get("isError").and_then(|v| v.as_bool()) == Some(true);
         let json = serde_json::to_string_pretty(&result)?;
         println!("{}", json);
+        if is_error {
+            std::process::exit(1);
+        }
     }
 
     Ok(())
