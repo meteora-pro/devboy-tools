@@ -539,7 +539,7 @@ impl JiraClient {
             .send()
             .await
             .map_err(|e| Error::Http(e.to_string()))?;
-        self.handle_response(response).await
+        handle_structure_response(response).await
     }
 
     /// Make an authenticated POST request to the Structure API.
@@ -556,7 +556,7 @@ impl JiraClient {
             .send()
             .await
             .map_err(|e| Error::Http(e.to_string()))?;
-        self.handle_response(response).await
+        handle_structure_response(response).await
     }
 
     /// Make an authenticated PUT request to the Structure API (returns body).
@@ -573,7 +573,7 @@ impl JiraClient {
             .send()
             .await
             .map_err(|e| Error::Http(e.to_string()))?;
-        self.handle_response(response).await
+        handle_structure_response(response).await
     }
 
     /// Make an authenticated DELETE request to the Structure API.
@@ -587,11 +587,162 @@ impl JiraClient {
             .map_err(|e| Error::Http(e.to_string()))?;
         let status = response.status();
         if !status.is_success() {
-            let message = response.text().await.unwrap_or_default();
-            return Err(Error::from_status(status.as_u16(), message));
+            let (content_type, body) = read_structure_error_body(response).await;
+            return Err(structure_error_from_status(
+                status.as_u16(),
+                &content_type,
+                body,
+            ));
         }
         Ok(())
     }
+}
+
+/// Install hint shown when the Structure plugin may not be detected on the
+/// Jira host. Phrased as a possibility rather than a definitive diagnosis —
+/// the same HTML/XML 404 pattern can also appear if the plugin is installed
+/// but the client hit a wrong/changed endpoint.
+const STRUCTURE_PLUGIN_HINT: &str = "The Jira Structure plugin may not be installed, not enabled, or the endpoint has moved. Install or upgrade it from the Atlassian Marketplace: https://marketplace.atlassian.com/apps/34717/structure-manage-work-your-way";
+
+/// Detect markup response bodies (HTML and XML) — Jira returns a full
+/// login/404 HTML page for missing endpoints and unauthenticated requests,
+/// and the Structure plugin itself returns an XML 404 envelope for unknown
+/// sub-paths. In both cases we refuse to dump the raw body into the MCP tool
+/// response.
+fn looks_like_html(content_type: &str, body: &str) -> bool {
+    let ct = content_type.to_ascii_lowercase();
+    if ct.contains("text/html") || ct.contains("application/xml") || ct.contains("text/xml") {
+        return true;
+    }
+    let head = body.trim_start();
+    head.starts_with("<!DOCTYPE")
+        || head.starts_with("<!doctype")
+        || head.starts_with("<html")
+        || head.starts_with("<HTML")
+        || head.starts_with("<?xml")
+}
+
+/// Read the response body + Content-Type for error diagnostics, tolerating
+/// reqwest read failures.
+async fn read_structure_error_body(response: reqwest::Response) -> (String, String) {
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let body = response.text().await.unwrap_or_default();
+    (content_type, body)
+}
+
+/// Translate a failed Structure API HTTP response into a [`Result`] error.
+///
+/// Specifically:
+///
+/// - `404` with an HTML/XML body → soft hint that the endpoint was not found
+///   and the Structure plugin may not be installed (without asserting it).
+/// - Any other status with an HTML/XML body → short «status + hint» line
+///   (we strip the markup to avoid dumping a whole login/error page into the
+///   MCP tool response).
+/// - JSON / plain-text bodies are forwarded as-is, trimmed to 500 chars so
+///   the MCP tool output stays readable.
+fn structure_error_from_status(status: u16, content_type: &str, body: String) -> Error {
+    let html = looks_like_html(content_type, &body);
+
+    if status == 404 && html {
+        return Error::from_status(
+            status,
+            format!("Structure API endpoint not found (HTTP 404). {STRUCTURE_PLUGIN_HINT}"),
+        );
+    }
+
+    if html {
+        return Error::from_status(
+            status,
+            format!(
+                "Jira returned a non-JSON (HTML/XML) response for a Structure API call (HTTP {status}). {STRUCTURE_PLUGIN_HINT}"
+            ),
+        );
+    }
+
+    let trimmed = if body.len() > 500 {
+        let end = safe_char_boundary(&body, 500);
+        format!("{}...(truncated, total {} bytes)", &body[..end], body.len())
+    } else {
+        body
+    };
+    Error::from_status(status, trimmed)
+}
+
+/// Build a redacted preview of a response body for parse-error diagnostics.
+/// If the body is markup (HTML/XML), we never include any portion of it —
+/// login pages can contain ~2 KB of boilerplate that would leak into the MCP
+/// tool output. Otherwise, truncate to 300 chars on a UTF-8 boundary.
+fn structure_parse_preview(content_type: &str, body: &str) -> String {
+    if looks_like_html(content_type, body) {
+        format!(
+            "<{} bytes of HTML/XML redacted — non-JSON body indicates a non-Structure endpoint or missing plugin>",
+            body.len()
+        )
+    } else if body.len() > 300 {
+        let end = safe_char_boundary(body, 300);
+        format!("{}...(truncated, total {} bytes)", &body[..end], body.len())
+    } else {
+        body.to_string()
+    }
+}
+
+/// Unified response handler for Structure API helpers — mirrors
+/// [`JiraClient::handle_response`] but routes both error bodies and
+/// successful-but-unparseable bodies through [`looks_like_html`] so markup
+/// never leaks into MCP tool output.
+async fn handle_structure_response<T: serde::de::DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<T> {
+    let status = response.status();
+
+    if !status.is_success() {
+        let (content_type, body) = read_structure_error_body(response).await;
+        warn!(
+            status = status.as_u16(),
+            content_type = %content_type,
+            body_len = body.len(),
+            "Jira Structure API error response"
+        );
+        return Err(structure_error_from_status(
+            status.as_u16(),
+            &content_type,
+            body,
+        ));
+    }
+
+    // Capture Content-Type before consuming the response into text — needed
+    // for markup detection on the parse-error path when Jira returns e.g. an
+    // SSO redirect HTML page with a 2xx status.
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    let body = response.text().await.map_err(|e| {
+        Error::InvalidData(format!("Failed to read Structure response body: {}", e))
+    })?;
+
+    serde_json::from_str::<T>(&body).map_err(|e| {
+        let preview = structure_parse_preview(&content_type, &body);
+        warn!(
+            error = %e,
+            body_preview = preview,
+            content_type = %content_type,
+            "Failed to parse Jira Structure response"
+        );
+        Error::InvalidData(format!(
+            "Failed to parse Jira Structure response: {}. Body preview: {}",
+            e, preview
+        ))
+    })
 }
 
 // =============================================================================
@@ -2180,6 +2331,156 @@ mod tests {
     use super::*;
     use crate::types::*;
     use devboy_core::{CreateCommentInput, MrFilter};
+
+    // =========================================================================
+    // Structure error mapping tests
+    // =========================================================================
+
+    #[test]
+    fn structure_install_hint_is_single_well_spaced_line() {
+        // Guard against the previous `"... \` with-indent multi-line literal
+        // which baked spurious inner whitespace into the error text.
+        assert!(
+            !STRUCTURE_PLUGIN_HINT.contains("  "),
+            "hint contains consecutive spaces: {STRUCTURE_PLUGIN_HINT:?}"
+        );
+        assert!(!STRUCTURE_PLUGIN_HINT.contains('\n'));
+        assert!(STRUCTURE_PLUGIN_HINT.contains("marketplace.atlassian.com"));
+    }
+
+    #[test]
+    fn structure_404_with_html_returns_soft_endpoint_hint() {
+        let html = "<!DOCTYPE html><html><body>Oops, you&#39;ve found a dead link.</body></html>";
+        let err = structure_error_from_status(404, "text/html;charset=UTF-8", html.into());
+        let msg = err.to_string();
+        assert!(!msg.contains("<!DOCTYPE"), "HTML leaked into error: {msg}");
+        // Wording must be soft — the same 404+markup signal can fire if the
+        // plugin IS installed but the endpoint path was renamed/removed.
+        assert!(
+            msg.contains("endpoint not found"),
+            "expected soft 'endpoint not found' wording: {msg}"
+        );
+        assert!(
+            msg.contains("may not be installed"),
+            "expected soft install-hint wording: {msg}"
+        );
+        assert!(
+            msg.contains("marketplace.atlassian.com"),
+            "missing marketplace link: {msg}"
+        );
+    }
+
+    #[test]
+    fn structure_500_with_html_strips_body() {
+        let html = "<html><body>".to_string() + &"x".repeat(20_000) + "</body></html>";
+        let err = structure_error_from_status(500, "text/html", html);
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("xxxx"),
+            "raw HTML body leaked: {}",
+            &msg[..msg.len().min(400)]
+        );
+        assert!(
+            msg.contains("non-JSON"),
+            "missing short status message: {msg}"
+        );
+    }
+
+    #[test]
+    fn structure_json_error_is_forwarded_verbatim() {
+        let body = r#"{"errorMessages":["Invalid forestVersion"],"errors":{}}"#;
+        let err = structure_error_from_status(409, "application/json", body.into());
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Invalid forestVersion"),
+            "JSON body dropped: {msg}"
+        );
+    }
+
+    #[test]
+    fn structure_long_text_body_is_truncated() {
+        let body = "plain text ".repeat(200); // > 500 chars
+        let err = structure_error_from_status(400, "text/plain", body);
+        let msg = err.to_string();
+        assert!(
+            msg.contains("truncated"),
+            "truncation marker missing: {msg}"
+        );
+    }
+
+    #[test]
+    fn structure_html_detected_by_body_when_content_type_missing() {
+        assert!(looks_like_html("", "<!DOCTYPE html><html>..."));
+        assert!(looks_like_html("", "<html lang=\"en\">"));
+        assert!(!looks_like_html("", "   {\"ok\":true}"));
+        assert!(!looks_like_html("application/json", "{\"ok\":true}"));
+    }
+
+    #[test]
+    fn structure_html_detected_by_content_type_only() {
+        assert!(looks_like_html("text/html; charset=UTF-8", ""));
+        assert!(looks_like_html("Text/HTML", ""));
+    }
+
+    #[test]
+    fn structure_xml_body_treated_as_non_json() {
+        // Structure plugin returns XML 404 for unknown subpaths
+        let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><status><status-code>404</status-code><message>null for uri: /rest/structure/2.0/view?structureId=1</message></status>"#;
+        assert!(looks_like_html("application/xml", xml));
+        assert!(looks_like_html("", xml));
+        let err = structure_error_from_status(404, "application/xml", xml.into());
+        let msg = err.to_string();
+        assert!(!msg.contains("<?xml"), "XML leaked into error: {msg}");
+        assert!(
+            msg.contains("endpoint not found"),
+            "expected soft wording: {msg}"
+        );
+    }
+
+    #[test]
+    fn structure_parse_preview_redacts_html_body() {
+        let html = r#"<!DOCTYPE html><html><head><title>Login</title></head><body><form>…</form></body></html>"#;
+        let preview = structure_parse_preview("text/html; charset=UTF-8", html);
+        assert!(
+            !preview.contains("<!DOCTYPE"),
+            "HTML leaked into parse preview: {preview}"
+        );
+        assert!(
+            !preview.contains("<html"),
+            "HTML leaked into parse preview: {preview}"
+        );
+        assert!(
+            preview.contains("redacted"),
+            "expected redaction marker: {preview}"
+        );
+        assert!(
+            preview.contains(&format!("{}", html.len())),
+            "expected byte count in preview: {preview}"
+        );
+    }
+
+    #[test]
+    fn structure_parse_preview_redacts_xml_body() {
+        let xml = r#"<?xml version="1.0"?><status><code>200</code></status>"#;
+        let preview = structure_parse_preview("application/xml", xml);
+        assert!(!preview.contains("<?xml"), "XML leaked: {preview}");
+        assert!(preview.contains("redacted"));
+    }
+
+    #[test]
+    fn structure_parse_preview_keeps_short_json_body_verbatim() {
+        let body = r#"{"broken":"response"#; // missing closing brace
+        let preview = structure_parse_preview("application/json", body);
+        assert_eq!(preview, body);
+    }
+
+    #[test]
+    fn structure_parse_preview_truncates_long_non_markup_body() {
+        let body = "a".repeat(2000);
+        let preview = structure_parse_preview("text/plain", &body);
+        assert!(preview.contains("truncated"));
+        assert!(preview.len() < body.len());
+    }
 
     // =========================================================================
     // Flavor detection tests
@@ -5248,6 +5549,7 @@ mod tests {
 
     mod structure_integration {
         use super::*;
+        use devboy_core::StructureRowItem;
         use httpmock::prelude::*;
 
         fn create_client(server: &MockServer) -> JiraClient {
@@ -5436,6 +5738,135 @@ mod tests {
                 }
                 other => panic!("expected InvalidData, got {other:?}"),
             }
+        }
+
+        // -----------------------------------------------------------------
+        // End-to-end error-body sanitisation through handle_structure_response
+        // -----------------------------------------------------------------
+
+        #[tokio::test]
+        async fn test_structure_api_404_html_is_sanitised_end_to_end() {
+            // Jira returns its generic 404 HTML page when the Structure
+            // plugin endpoint is missing. Full flow must come back as
+            // NotFound with soft wording + no HTML leak.
+            let server = MockServer::start();
+            let jira_404_html =
+                "<!DOCTYPE html><html><head><title>Oops, you've found a dead link.</title>"
+                    .to_string()
+                    + &"<script>var a=1;</script>".repeat(100)
+                    + "</head><body>404</body></html>";
+            server.mock(|when, then| {
+                when.method(GET).path("/rest/structure/2.0/structure");
+                then.status(404)
+                    .header("content-type", "text/html;charset=UTF-8")
+                    .body(jira_404_html.clone());
+            });
+
+            let client = create_client(&server);
+            let err = client
+                .get_structures()
+                .await
+                .expect_err("404 must error out");
+            let msg = err.to_string();
+            assert!(
+                !msg.contains("<!DOCTYPE") && !msg.contains("<script>"),
+                "HTML leaked into error message: {}",
+                &msg[..msg.len().min(400)]
+            );
+            assert!(
+                msg.contains("endpoint not found"),
+                "expected soft wording: {msg}"
+            );
+        }
+
+        #[tokio::test]
+        async fn test_structure_api_xml_404_is_sanitised_end_to_end() {
+            // Structure plugin (when installed but endpoint path changed)
+            // returns an XML 404 envelope.
+            let server = MockServer::start();
+            let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><status><status-code>404</status-code><message>null for uri: /rest/structure/2.0/structure</message></status>"#;
+            server.mock(|when, then| {
+                when.method(GET).path("/rest/structure/2.0/structure");
+                then.status(404)
+                    .header("content-type", "application/xml")
+                    .body(xml);
+            });
+
+            let client = create_client(&server);
+            let err = client
+                .get_structures()
+                .await
+                .expect_err("XML 404 must error out");
+            let msg = err.to_string();
+            assert!(!msg.contains("<?xml"), "XML leaked: {msg}");
+            assert!(msg.contains("endpoint not found"));
+        }
+
+        #[tokio::test]
+        async fn test_structure_api_json_error_forwarded_verbatim() {
+            // Concurrent-modification errors from Structure plugin come back
+            // as JSON. That body is the real diagnostic — must not be
+            // trimmed or replaced with the install hint.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(PUT).path("/rest/structure/2.0/forest/1/item");
+                then.status(409).json_body(serde_json::json!({
+                    "errorMessages": ["Forest version conflict"],
+                    "errors": {}
+                }));
+            });
+
+            let client = create_client(&server);
+            let err = client
+                .add_structure_rows(
+                    1,
+                    AddStructureRowsInput {
+                        items: vec![StructureRowItem {
+                            item_id: "PROJ-1".into(),
+                            item_type: None,
+                        }],
+                        under: None,
+                        after: None,
+                        forest_version: Some(100),
+                    },
+                )
+                .await
+                .expect_err("409 must error out");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("Forest version conflict"),
+                "JSON dropped: {msg}"
+            );
+        }
+
+        #[tokio::test]
+        async fn test_structure_api_200_with_html_body_does_not_leak() {
+            // Rare: Jira replies 200 with an SSO redirect HTML page instead
+            // of JSON. Parse-error path must redact the body rather than
+            // echo up to 300 chars of HTML.
+            let server = MockServer::start();
+            let html = "<!DOCTYPE html><html><body>".to_string()
+                + &"password=secret".repeat(50)
+                + "</body></html>";
+            server.mock(|when, then| {
+                when.method(GET).path("/rest/structure/2.0/structure");
+                then.status(200)
+                    .header("content-type", "text/html;charset=UTF-8")
+                    .body(html.clone());
+            });
+
+            let client = create_client(&server);
+            let err = client
+                .get_structures()
+                .await
+                .expect_err("HTML body must fail to parse");
+            let msg = err.to_string();
+            assert!(
+                !msg.contains("password=secret") && !msg.contains("<!DOCTYPE"),
+                "HTML body leaked into parse-error message: {}",
+                &msg[..msg.len().min(400)]
+            );
+            assert!(msg.contains("redacted"), "missing redaction marker: {msg}");
         }
     }
 }
