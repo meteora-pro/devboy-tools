@@ -824,16 +824,39 @@ fn output_to_result(output: devboy_executor::ToolOutput) -> ToolCallResult {
 
 /// Check whether an error from one provider should cause the handler to
 /// try the next. In multi-provider setups, a key like `gitlab#1` is
-/// invalid for GitHub but valid for GitLab.
+/// invalid for GitHub but valid for GitLab — that case should move on
+/// to the next provider. Real upstream errors (missing issue, 5xx,
+/// reqwest DNS failure) must not be hidden behind a generic "No
+/// provider supports …" fallback.
 fn should_try_next_provider(e: &devboy_core::Error) -> bool {
-    matches!(
+    // `ProviderUnsupported` / `ProviderNotFound` unconditionally mean
+    // "this provider can't handle the tool at all".
+    if matches!(
         e,
-        devboy_core::Error::ProviderUnsupported { .. }
-            | devboy_core::Error::ProviderNotFound(_)
-            | devboy_core::Error::NotFound(_)
-            | devboy_core::Error::InvalidData(_)
-            | devboy_core::Error::Http(_)
-    )
+        devboy_core::Error::ProviderUnsupported { .. } | devboy_core::Error::ProviderNotFound(_)
+    ) {
+        return true;
+    }
+
+    // A handful of providers surface "this key does not belong to me"
+    // as `InvalidData("Invalid {issue,mr,pr} key: <k>")` (see
+    // `parse_issue_key` / `parse_pr_key` / `parse_mr_key` across
+    // `plugins/api/*/src/client.rs`). Those are structurally
+    // equivalent to `ProviderUnsupported` — the caller asked a
+    // provider a key it cannot parse — and skipping them preserves
+    // the multi-provider chain while still letting real upstream
+    // `InvalidData` (bad payload from the server, failed
+    // deserialisation, etc.) bubble up.
+    if let devboy_core::Error::InvalidData(msg) = e {
+        let lower = msg.to_ascii_lowercase();
+        let is_key_prefix_mismatch = (lower.contains("invalid") && lower.contains("key"))
+            || lower.contains("unsupported key prefix");
+        if is_key_prefix_mismatch {
+            return true;
+        }
+    }
+
+    false
 }
 
 impl Default for McpServer {
@@ -846,6 +869,59 @@ impl Default for McpServer {
 mod tests {
     use super::*;
     use crate::protocol::{JSONRPC_VERSION, RequestId, ToolCallResult, ToolResultContent};
+
+    #[test]
+    fn should_try_next_provider_retries_unsupported_and_not_found() {
+        assert!(should_try_next_provider(
+            &devboy_core::Error::ProviderUnsupported {
+                provider: "github".into(),
+                operation: "get_structures".into(),
+            }
+        ));
+        assert!(should_try_next_provider(
+            &devboy_core::Error::ProviderNotFound("jira".into())
+        ));
+    }
+
+    #[test]
+    fn should_try_next_provider_retries_key_prefix_mismatch_invalid_data() {
+        // Regression for #187 Copilot comment — GitHub's
+        // `parse_issue_key("gitlab#1")` returns `InvalidData("Invalid
+        // issue key: gitlab#1")`. In a multi-provider chain that is
+        // structurally equivalent to "this provider can't handle that
+        // key"; we must keep iterating so GitLab gets a turn.
+        assert!(should_try_next_provider(&devboy_core::Error::InvalidData(
+            "Invalid issue key: gitlab#1".into()
+        )));
+        assert!(should_try_next_provider(&devboy_core::Error::InvalidData(
+            "Invalid PR key: gh#7".into()
+        )));
+        assert!(should_try_next_provider(&devboy_core::Error::InvalidData(
+            "Invalid mr key: pr#4".into()
+        )));
+    }
+
+    #[test]
+    fn should_try_next_provider_bubbles_up_real_errors() {
+        // The original bug: these error classes used to skip to the
+        // next provider and then produce "No provider supports …",
+        // hiding the real cause. They must not be retryable.
+        assert!(!should_try_next_provider(&devboy_core::Error::NotFound(
+            "No workflow runs found for branch 'main'".into()
+        )));
+        assert!(!should_try_next_provider(&devboy_core::Error::Http(
+            "500 Internal Server Error".into()
+        )));
+        assert!(!should_try_next_provider(
+            &devboy_core::Error::Unauthorized("Bad credentials".into())
+        ));
+        // Generic InvalidData that doesn't look like a key mismatch is
+        // also a real error (e.g., the executor's own "invalid …
+        // params" from parse_tool_params).
+        assert!(!should_try_next_provider(&devboy_core::Error::InvalidData(
+            "invalid get_issues params: expected string, found integer".into()
+        )));
+    }
 
     use async_trait::async_trait;
     use devboy_core::types::ChatType;
