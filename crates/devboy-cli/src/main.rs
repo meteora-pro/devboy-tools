@@ -229,7 +229,7 @@ enum Commands {
     /// Get information about issues
     Issues {
         /// Filter by state
-        #[arg(short, long, default_value = "open")]
+        #[arg(short, long, default_value = "open", value_parser = ["open", "closed", "all"])]
         state: String,
 
         /// Maximum number of issues to display
@@ -240,7 +240,7 @@ enum Commands {
     /// Get information about merge requests / pull requests
     Mrs {
         /// Filter by state
-        #[arg(short, long, default_value = "open")]
+        #[arg(short, long, default_value = "open", value_parser = ["open", "merged", "closed", "all"])]
         state: String,
 
         /// Maximum number of MRs to display
