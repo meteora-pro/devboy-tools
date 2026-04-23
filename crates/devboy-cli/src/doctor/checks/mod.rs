@@ -34,6 +34,8 @@ pub(super) fn resolve_secret(
     context_name: Option<&str>,
     provider: &str,
 ) -> Result<Option<ResolvedSecret>, String> {
+    let mut last_error: Option<String> = None;
+
     if let Some(context_name) = context_name {
         let scoped_key = format!("contexts.{context_name}.{provider}.token");
         match ctx.credential_store.get(&scoped_key) {
@@ -45,7 +47,14 @@ pub(super) fn resolve_secret(
                 }));
             }
             Ok(None) => {}
-            Err(error) => return Err(error.to_string()),
+            // Scoped lookup failed (no keychain available, ephemeral
+            // HOME, etc.). Remember the error but keep trying the
+            // global key — the env-var backend may still expose the
+            // token via `DEVBOY_<PROVIDER>_TOKEN`. This is the same
+            // chain `tools call` uses, and #188/#5 had `doctor`
+            // diverging from it (reporting "missing" even though the
+            // env var was set and the rest of the CLI could see it).
+            Err(error) => last_error = Some(error.to_string()),
         }
     }
 
@@ -56,8 +65,15 @@ pub(super) fn resolve_secret(
             source: "global",
             value,
         })),
-        Ok(None) => Ok(None),
-        Err(error) => Err(error.to_string()),
+        // If the global lookup doesn't find anything *and* the scoped
+        // lookup erred earlier, surface that error — it is strictly
+        // more informative than "token missing". If both probes
+        // returned `None`, that's the real "missing" answer.
+        Ok(None) => match last_error {
+            Some(e) => Err(e),
+            None => Ok(None),
+        },
+        Err(error) => Err(last_error.unwrap_or_else(|| error.to_string())),
     }
 }
 
