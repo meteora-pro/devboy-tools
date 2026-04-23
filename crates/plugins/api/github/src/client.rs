@@ -1448,14 +1448,25 @@ fn parse_pr_key(key: &str) -> Result<u64> {
         .ok_or_else(|| Error::InvalidData(format!("Invalid PR key: {}", key)))
 }
 
-/// Turn a unified `Discussion.id` (prefixed by `get_discussions` as
-/// `review-<n>` for a review thread or `comment-<n>` for a general
-/// issue comment) back into the numeric comment id GitHub expects in
-/// `in_reply_to`. Raw numeric strings are accepted for forward
-/// compatibility / test fixtures.
+/// Turn a unified `Discussion.id` back into the numeric comment id
+/// GitHub expects in `in_reply_to`. `get_discussions` emits three
+/// prefix shapes:
+///
+/// - `thread-<n>` for multi-comment review threads (one per root
+///   review comment, grouped by `in_reply_to_id`) — this is the id
+///   most skills actually feed back into `create_merge_request_comment`
+///   when they want their reply to thread.
+/// - `review-<n>` for single-comment review bodies.
+/// - `comment-<n>` for general PR comments (note: GitHub itself does
+///   not thread those, but stripping the prefix keeps the parser
+///   lossless and lets the caller pass the numeric id elsewhere).
+///
+/// Raw numeric strings pass through unchanged for forward
+/// compatibility and for test fixtures constructed by hand.
 fn parse_discussion_numeric_id(id: &str) -> Option<u64> {
     let trimmed = id
-        .strip_prefix("review-")
+        .strip_prefix("thread-")
+        .or_else(|| id.strip_prefix("review-"))
         .or_else(|| id.strip_prefix("comment-"))
         .unwrap_or(id);
     trimmed.parse::<u64>().ok()
@@ -1488,6 +1499,15 @@ mod tests {
         // Regression for #188 bug #6/#18: Discussion.id returned by
         // get_discussions is prefixed. Callers feed it straight back
         // into create_merge_request_comment expecting it to thread.
+        //
+        // `get_discussions` actually emits three prefix shapes — the
+        // `thread-` form covers multi-comment review threads and is
+        // the one most skills pass back when they reply. All three
+        // must decode to the numeric comment id.
+        assert_eq!(
+            parse_discussion_numeric_id("thread-3694869522"),
+            Some(3694869522)
+        );
         assert_eq!(
             parse_discussion_numeric_id("review-3694869522"),
             Some(3694869522)

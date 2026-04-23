@@ -2284,18 +2284,14 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
         }
 
         ConfigCommands::Path => {
-            // Report the path that the rest of the CLI (`tools call` /
-            // `test` / `context list`) would actually load — prefer a
-            // repo-local `.devboy.toml` over the global config path,
-            // falling back to global when no local file exists.
-            let local_path = PathBuf::from(".devboy.toml");
-            if local_path.exists() {
-                println!("{}", local_path.display());
-            } else {
-                match Config::config_path() {
-                    Ok(path) => println!("{}", path.display()),
-                    Err(e) => println!("Error: {}", e),
-                }
+            // Delegate to the same resolver `tools call` / `test` /
+            // `context list` / `config list` all use. That way
+            // `config path` cannot drift from runtime behaviour — if
+            // the resolution policy ever changes (walk-up rule, new
+            // env var, …), every surface picks it up automatically.
+            match load_runtime_config() {
+                Ok((_config, source_path)) => println!("{}", source_path.display()),
+                Err(e) => println!("Error: {}", e),
             }
         }
     }
