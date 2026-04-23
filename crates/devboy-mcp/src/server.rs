@@ -912,9 +912,9 @@ mod tests {
         assert!(!should_try_next_provider(&devboy_core::Error::Http(
             "500 Internal Server Error".into()
         )));
-        assert!(!should_try_next_provider(&devboy_core::Error::Unauthorized(
-            "Bad credentials".into()
-        )));
+        assert!(!should_try_next_provider(
+            &devboy_core::Error::Unauthorized("Bad credentials".into())
+        ));
         // Generic InvalidData that doesn't look like a key mismatch is
         // also a real error (e.g., the executor's own "invalid …
         // params" from parse_tool_params).
