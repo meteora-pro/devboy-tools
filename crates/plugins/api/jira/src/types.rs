@@ -290,11 +290,17 @@ pub struct CreateIssueFields {
 }
 
 /// Component reference used in create/update issue payloads (issue #197).
-/// Jira expects `{ "id": "10001" }` — name-based references also work in
-/// Cloud, but id is more stable across rename.
+///
+/// We serialise by **name** (`{ "name": "..." }`) to line up with the
+/// Jira schema enricher, which enumerates component *names* in tool
+/// schemas (`JiraComponent.name`). Jira accepts either `{id}` or `{name}`
+/// in `fields.components`, so name-based references work across Cloud +
+/// Self-Hosted without forcing callers to resolve ids first.
+///
+/// This is addressed in Copilot review on PR #205.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentRef {
-    pub id: String,
+    pub name: String,
 }
 
 /// Project key reference.

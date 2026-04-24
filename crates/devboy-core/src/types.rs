@@ -166,9 +166,12 @@ pub struct CreateIssueInput {
     /// ClickUp: Array `[{"id": "field_id", "value": val}]` — set via separate API.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_fields: Option<Value>,
-    /// Component IDs to associate with the issue (Jira-only, issue #197).
-    /// Each entry is a component `id` obtained from project metadata
-    /// (`JiraComponent.id`). Ignored by providers that don't have a
+    /// Component **names** to associate with the issue (Jira-only, issue
+    /// #197). Each entry is a component name obtained from project
+    /// metadata (`JiraComponent.name`). Jira accepts both id- and
+    /// name-based references in `fields.components`; we use names to line
+    /// up with the schema enricher, which enumerates component *names* in
+    /// the `components` enum. Ignored by providers that don't have a
     /// first-class Components concept (GitHub/GitLab/ClickUp).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub components: Vec<String>,
@@ -224,7 +227,8 @@ pub struct UpdateIssueInput {
     pub custom_fields: Option<Value>,
     /// Replace components on the issue (Jira-only, issue #197).
     /// `None` leaves components untouched. `Some(vec![])` clears all
-    /// components. `Some(vec![...])` replaces with the given component IDs.
+    /// components. `Some(vec![...])` replaces with the given component
+    /// **names** (see [`CreateIssueInput::components`] for rationale).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub components: Option<Vec<String>>,
 }
@@ -1457,10 +1461,21 @@ pub struct SyncStructureGeneratorInput {
 }
 
 /// Input for `update_structure_automation` (issue #180).
+///
+/// Structure plugin exposes automation as a collection of rules —
+/// `PUT /rest/structure/2.0/structure/{structureId}/automation/{automationId}`
+/// replaces a specific rule, and a bare
+/// `PUT /rest/structure/2.0/structure/{structureId}/automation` replaces
+/// the entire set. We support both via `automation_id` being optional:
+/// `Some(id)` → replaces that rule, `None` → replaces all rules.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateStructureAutomationInput {
     pub structure_id: u64,
-    /// Full automation configuration — passed through verbatim so we don't
-    /// need to mirror every field Structure supports.
+    /// Automation rule id. `None` means replace the entire automation
+    /// collection on the structure (legacy "set everything" behaviour).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automation_id: Option<String>,
+    /// Automation payload — passed through verbatim so we don't need to
+    /// mirror every field Structure supports.
     pub config: Value,
 }

@@ -584,37 +584,23 @@ impl JiraClient {
     }
 
     /// Authenticated GET against the Agile REST API.
+    ///
+    /// Uses generic `get` — Agile endpoints return JSON and we don't want
+    /// the Structure-plugin-specific error hint (Copilot review on PR #205)
+    /// leaking into Agile failures.
     async fn agile_get<T: serde::de::DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
         let url = self.agile_url(endpoint);
         debug!(url = %url, "Jira Agile GET");
-        let response = self
-            .request(reqwest::Method::GET, &url)
-            .send()
-            .await
-            .map_err(|e| Error::Http(e.to_string()))?;
-        handle_structure_response(response).await
+        self.get(&url).await
     }
 
-    /// Authenticated POST against the Agile REST API.
+    /// Authenticated POST against the Agile REST API with no response
+    /// body (Agile's `/sprint/{id}/issue` returns 204). Uses
+    /// `post_no_content` for the same reason as `agile_get`.
     async fn agile_post_void<B: serde::Serialize>(&self, endpoint: &str, body: &B) -> Result<()> {
         let url = self.agile_url(endpoint);
         debug!(url = %url, "Jira Agile POST");
-        let response = self
-            .request(reqwest::Method::POST, &url)
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| Error::Http(e.to_string()))?;
-        let status = response.status();
-        if !status.is_success() {
-            let (content_type, body) = read_structure_error_body(response).await;
-            return Err(structure_error_from_status(
-                status.as_u16(),
-                &content_type,
-                body,
-            ));
-        }
-        Ok(())
+        self.post_no_content(&url, body).await
     }
 
     /// Make an authenticated DELETE request to the Structure API.
@@ -1699,7 +1685,7 @@ impl IssueProvider for JiraClient {
                 input
                     .components
                     .into_iter()
-                    .map(|id| crate::types::ComponentRef { id })
+                    .map(|name| crate::types::ComponentRef { name })
                     .collect(),
             )
         };
@@ -1795,7 +1781,7 @@ impl IssueProvider for JiraClient {
         // Issue #197: components. `None` → untouched, `Some([])` → clear.
         let components = input.components.map(|ids| {
             ids.into_iter()
-                .map(|id| crate::types::ComponentRef { id })
+                .map(|name| crate::types::ComponentRef { name })
                 .collect()
         });
         let has_components = components.is_some();
@@ -2435,28 +2421,30 @@ impl IssueProvider for JiraClient {
         &self,
         input: devboy_core::AddStructureGeneratorInput,
     ) -> Result<devboy_core::StructureGenerator> {
+        // Typed response so missing `id`/`type` surface as a deserialise
+        // error instead of silent empty strings (Copilot review on PR #205).
+        #[derive(serde::Deserialize)]
+        struct Resp {
+            id: String,
+            #[serde(rename = "type")]
+            generator_type: String,
+            #[serde(default)]
+            spec: serde_json::Value,
+        }
         let body = serde_json::json!({
             "type": input.generator_type,
             "spec": input.spec,
         });
-        let resp: serde_json::Value = self
+        let resp: Resp = self
             .structure_post(
                 &format!("/structure/{}/generator", input.structure_id),
                 &body,
             )
             .await?;
         Ok(devboy_core::StructureGenerator {
-            id: resp
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            generator_type: resp
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            spec: resp.get("spec").cloned().unwrap_or(serde_json::Value::Null),
+            id: resp.id,
+            generator_type: resp.generator_type,
+            spec: resp.spec,
         })
     }
 
@@ -2488,12 +2476,13 @@ impl IssueProvider for JiraClient {
         &self,
         input: devboy_core::UpdateStructureAutomationInput,
     ) -> Result<()> {
-        let _: serde_json::Value = self
-            .structure_put(
-                &format!("/structure/{}/automation", input.structure_id),
-                &input.config,
-            )
-            .await?;
+        // `automation_id = Some(id)` → rule-scoped PUT; `None` → replace
+        // the whole automation collection (Copilot review on PR #205).
+        let endpoint = match input.automation_id.as_deref() {
+            Some(aid) => format!("/structure/{}/automation/{}", input.structure_id, aid),
+            None => format!("/structure/{}/automation", input.structure_id),
+        };
+        let _: serde_json::Value = self.structure_put(&endpoint, &input.config).await?;
         Ok(())
     }
 
@@ -4000,9 +3989,9 @@ mod tests {
             let server = MockServer::start();
 
             server.mock(|when, then| {
-                when.method(POST)
-                    .path("/issue")
-                    .body_includes("\"components\":[{\"id\":\"10001\"},{\"id\":\"10002\"}]");
+                when.method(POST).path("/issue").body_includes(
+                    "\"components\":[{\"name\":\"Backend\"},{\"name\":\"Frontend\"}]",
+                );
                 then.status(201).json_body(serde_json::json!({
                     "id": "10010",
                     "key": "PROJ-10"
@@ -4027,7 +4016,7 @@ mod tests {
             let issue = client
                 .create_issue(CreateIssueInput {
                     title: "With components".to_string(),
-                    components: vec!["10001".to_string(), "10002".to_string()],
+                    components: vec!["Backend".to_string(), "Frontend".to_string()],
                     ..Default::default()
                 })
                 .await
@@ -4089,7 +4078,7 @@ mod tests {
             server.mock(|when, then| {
                 when.method(PUT)
                     .path("/issue/PROJ-1")
-                    .body_includes("\"components\":[{\"id\":\"10001\"}]");
+                    .body_includes("\"components\":[{\"name\":\"Backend\"}]");
                 then.status(204);
             });
 
@@ -4112,7 +4101,7 @@ mod tests {
                 .update_issue(
                     "PROJ-1",
                     UpdateIssueInput {
-                        components: Some(vec!["10001".to_string()]),
+                        components: Some(vec!["Backend".to_string()]),
                         ..Default::default()
                     },
                 )
@@ -6472,14 +6461,39 @@ mod tests {
             });
 
             let client = create_client(&server);
+            // `automation_id: None` → replaces the whole automation set.
             client
                 .update_structure_automation(devboy_core::UpdateStructureAutomationInput {
                     structure_id: 5,
+                    automation_id: None,
                     config: serde_json::json!({"enabled": true}),
                 })
                 .await
                 .unwrap();
             client.trigger_structure_automation(5).await.unwrap();
+        }
+
+        /// Rule-scoped automation — `automation_id: Some(..)` routes to
+        /// `/automation/{id}` (Copilot review on PR #205).
+        #[tokio::test]
+        async fn test_structure_automation_rule_scoped() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/rest/structure/2.0/structure/5/automation/rule-7")
+                    .body_includes("\"action\":\"move\"");
+                then.status(200).json_body(serde_json::json!({}));
+            });
+
+            let client = create_client(&server);
+            client
+                .update_structure_automation(devboy_core::UpdateStructureAutomationInput {
+                    structure_id: 5,
+                    automation_id: Some("rule-7".into()),
+                    config: serde_json::json!({"action": "move"}),
+                })
+                .await
+                .unwrap();
         }
     }
 
