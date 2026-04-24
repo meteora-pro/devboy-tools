@@ -2504,17 +2504,43 @@ impl IssueProvider for JiraClient {
         board_id: u64,
         state: devboy_core::SprintState,
     ) -> Result<ProviderResult<devboy_core::Sprint>> {
+        // Walk Jira Agile pagination (`startAt` + `isLast`) so callers on
+        // boards with many closed/future sprints get the full list
+        // (Codex review on PR #205).
         #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
         struct Resp {
+            #[serde(default)]
+            is_last: bool,
             #[serde(default)]
             values: Vec<devboy_core::Sprint>,
         }
-        let endpoint = match state.as_query_value() {
-            Some(s) => format!("/board/{}/sprint?state={}", board_id, s),
-            None => format!("/board/{}/sprint", board_id),
-        };
-        let resp: Resp = self.agile_get(&endpoint).await?;
-        Ok(resp.values.into())
+        // Cap at 5k sprints — plenty for any realistic board, prevents
+        // an infinite loop if `isLast` is ever misreported.
+        const MAX_SPRINTS: usize = 5_000;
+        const PAGE_SIZE: u32 = 50;
+
+        let state_param = state
+            .as_query_value()
+            .map(|s| format!("&state={}", s))
+            .unwrap_or_default();
+
+        let mut sprints: Vec<devboy_core::Sprint> = Vec::new();
+        let mut start_at: u32 = 0;
+        loop {
+            let endpoint = format!(
+                "/board/{}/sprint?startAt={}&maxResults={}{}",
+                board_id, start_at, PAGE_SIZE, state_param
+            );
+            let resp: Resp = self.agile_get(&endpoint).await?;
+            let fetched = resp.values.len() as u32;
+            sprints.extend(resp.values);
+            if resp.is_last || fetched == 0 || sprints.len() >= MAX_SPRINTS {
+                break;
+            }
+            start_at += fetched;
+        }
+        Ok(sprints.into())
     }
 
     async fn assign_to_sprint(&self, input: devboy_core::AssignToSprintInput) -> Result<()> {
@@ -6522,6 +6548,7 @@ mod tests {
                     .path("/rest/agile/1.0/board/10/sprint")
                     .query_param("state", "active");
                 then.status(200).json_body(serde_json::json!({
+                    "isLast": true,
                     "values": [
                         {
                             "id": 1,
@@ -6542,6 +6569,44 @@ mod tests {
             assert_eq!(sprints.items.len(), 1);
             assert_eq!(sprints.items[0].state, "active");
             assert_eq!(sprints.items[0].origin_board_id, Some(10));
+        }
+
+        /// Codex P2 review on PR #205 — `/board/{id}/sprint` is paginated;
+        /// we must walk `startAt` until `isLast: true`.
+        #[tokio::test]
+        async fn test_get_board_sprints_walks_pagination() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/rest/agile/1.0/board/10/sprint")
+                    .query_param("startAt", "0");
+                then.status(200).json_body(serde_json::json!({
+                    "isLast": false,
+                    "values": [
+                        {"id": 1, "name": "S1", "state": "closed"},
+                        {"id": 2, "name": "S2", "state": "closed"}
+                    ]
+                }));
+            });
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/rest/agile/1.0/board/10/sprint")
+                    .query_param("startAt", "2");
+                then.status(200).json_body(serde_json::json!({
+                    "isLast": true,
+                    "values": [
+                        {"id": 3, "name": "S3", "state": "active"}
+                    ]
+                }));
+            });
+
+            let client = create_client(&server);
+            let sprints = client
+                .get_board_sprints(10, devboy_core::SprintState::All)
+                .await
+                .unwrap();
+            assert_eq!(sprints.items.len(), 3);
+            assert_eq!(sprints.items[2].name, "S3");
         }
 
         #[tokio::test]
