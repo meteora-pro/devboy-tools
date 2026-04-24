@@ -300,13 +300,11 @@ fn apply_tuning_rules(cfg: &mut AdaptiveConfig, stats: &CorpusStats) {
                     .endpoint_overrides
                     .insert(endpoint.clone(), "csv_from_md".into());
             }
-            "NestedObject" => {
-                // Heuristic: if dedup rate high, it's a poller — use pipeline_deep_mckp.
-                if s.dup_rate() >= 0.20 {
-                    cfg.templates
-                        .endpoint_overrides
-                        .insert(endpoint.clone(), "pipeline_deep_mckp".into());
-                }
+            // Heuristic: high dup rate on a nested object ⇒ poller ⇒ pipeline_deep_mckp.
+            "NestedObject" if s.dup_rate() >= 0.20 => {
+                cfg.templates
+                    .endpoint_overrides
+                    .insert(endpoint.clone(), "pipeline_deep_mckp".into());
             }
             _ => {}
         }
@@ -391,7 +389,7 @@ fn cmd_show(args: &[String]) -> Result<(), String> {
 
 fn print_top_endpoints(corpus: &CorpusStats, n: usize) {
     let mut endpoints: Vec<_> = corpus.per_endpoint.iter().collect();
-    endpoints.sort_by(|a, b| b.1.call_count.cmp(&a.1.call_count));
+    endpoints.sort_by_key(|e| std::cmp::Reverse(e.1.call_count));
     eprintln!();
     eprintln!("# top endpoints by call count:");
     eprintln!(
