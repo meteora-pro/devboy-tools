@@ -1,0 +1,337 @@
+# Paper 2 — MCKP Format-Adaptive Encoding Rules (v2, with deep_mckp)
+# Mined from 144,001 anonymized tool-result events in Claude Code JSONL logs.
+#
+# v2 adds recursive deep_mckp: for each string leaf inside JSON with detected
+# inner format (diff/log/md/xml/yaml/code), consider external emission as a
+# fenced block — which eliminates JSON-escape overhead (\n, \", \\).
+#
+# v2 deltas vs v1:
+#   - applicable events: 989 → 1,797 (+82%)
+#   - tokens saved:      1.13M → 1.55M (+37%)
+#   - corpus savings:    0.98% → 1.35%
+#   - new winners: pipeline responses (log+url+hash signature)
+
+version: 2.0
+corpus:
+  total_events: 144001
+  applicable_events: 1797
+  total_tokens_baseline_m: 115.17
+  total_tokens_saved_m: 1.55
+  corpus_savings_pct: 1.35
+  json_subset_events: 7165
+  json_subset_savings_pct: 7.5
+
+# Rules — evaluated top-to-bottom; first match wins within a shape bucket
+rules:
+
+  # =============================================================
+  # MARKDOWN TABLES — CSV re-encoding (primary wins)
+  # =============================================================
+
+  - id: R1_md_wide_huge
+    predicate: {shape: markdown_table, md_n_cols_min: 2, raw_chars_min: 8000}
+    action: csv_from_md
+    expected_savings_pct: {median: 99.6, avg: 97.0}
+    support: 200
+    applicable: 198
+    confidence: 0.99
+    tokens_saved_ktok: 850
+    notes: |
+      Highest-impact rule. Large MCP get_issues responses with ≥2 columns
+      and >8k chars. CSV re-encoding recovers ≥99% tokens on median.
+
+  - id: R2_md_cols_8plus
+    predicate: {shape: markdown_table, md_n_cols_min: 8, raw_chars_max: 8000}
+    action: csv_from_md
+    expected_savings_pct: {median: 97.3, avg: 85.2}
+    support: 177
+    applicable: 170
+    confidence: 0.96
+    tokens_saved_ktok: 108
+    notes: Wide tables (≥8 cols) benefit regardless of size.
+
+  - id: R3_md_cols_2to7
+    predicate: {shape: markdown_table, md_n_cols_min: 2, md_n_cols_max: 7, raw_chars_max: 8000}
+    action: csv_from_md
+    expected_savings_pct: {median: 35.5, avg: 42.7}
+    support: 659
+    applicable: 513
+    confidence: 0.78
+    tokens_saved_ktok: 158
+    notes: |
+      Mid-size tables. 78% applicability. Lower win rate reflects tables
+      with short cell values where markdown overhead is small.
+
+  - id: R4_md_single_col
+    predicate: {shape: markdown_table, md_n_cols_max: 1}
+    action: as_is
+    expected_savings_pct: {median: 0.0, avg: 13.3}
+    support: 15
+    applicable: 2
+    confidence: 0.13
+    tokens_saved_ktok: 4
+    notes: Degenerate single-column tables — not worth re-encoding.
+
+  # =============================================================
+  # NESTED OBJECTS — deep_mckp (new in v2)
+  # =============================================================
+
+  - id: R8_pipeline_sig
+    predicate:
+      shape: nested_object
+      inner_formats_contains_all: [log, url, hash]
+    action: deep_mckp
+    expected_savings_pct: {median: 20.1, avg: 17.5}
+    support: 1432
+    applicable: 720
+    confidence: 0.50
+    tokens_saved_ktok: 369
+    notes: |
+      PIPELINE / CI signature: GitLab MCP responses for get_*_pipeline,
+      get_merge_request_pipeline, get_branch_pipeline. Deep recursion
+      unwraps log strings and URL lists from JSON-escape overhead.
+      50% of such events cross the 20% threshold reliably.
+
+  - id: R9_mr_diff
+    predicate:
+      shape: nested_object
+      inner_formats_contains: diff
+    action: deep_mckp
+    expected_savings_pct: {median: 4.6, avg: 4.8}
+    support: 291
+    applicable: 0
+    confidence: 0.00
+    tokens_saved_ktok: 0
+    notes: |
+      MR diffs inside JSON (get_merge_request_diffs). Deep_mckp detects diff
+      strings but savings cap at ~5% median because diff content dominates
+      response size regardless of encoding. A better MR-specialized encoder
+      that unwraps the diffs array entirely could do more — future work.
+
+  - id: R10_issue_update
+    predicate:
+      shape: nested_object
+      inner_formats_contains_all: [prose, url, log]
+    action: deep_mckp
+    expected_savings_pct: {median: 1.7, avg: 2.7}
+    support: 1122
+    applicable: 14
+    confidence: 0.01
+    tokens_saved_ktok: 7
+    notes: |
+      Issue update responses — prose description + URLs + short logs.
+      Savings are small per-event; apply only as volumetric fallback.
+
+  - id: R11_nested_fallback
+    predicate:
+      shape: nested_object
+      inner_formats_not_containing: [log, url, diff, prose]
+    action: json_compact
+    expected_savings_pct: {median: 5.1, avg: 6.8}
+    support: 2409
+    applicable: 118
+    confidence: 0.05
+    tokens_saved_ktok: 22
+    notes: |
+      Nested objects without a dominant embedded format — minification
+      (compact JSON) is already near-optimal. Avoid deep_mckp overhead.
+
+  # =============================================================
+  # ARRAY OF OBJECTS — CSV
+  # =============================================================
+
+  - id: R5_arr_stable_many
+    predicate: {shape: array_of_objects, n_items_min: 4, key_stability_min: 0.7}
+    action: csv
+    expected_savings_pct: {median: 26.7, avg: 27.3}
+    support: 43
+    applicable: 32
+    confidence: 0.74
+    tokens_saved_ktok: 7
+    notes: Array ≥4 objects with stable keys — CSV wins cleanly.
+
+  - id: R6_arr_few_items_many_fields
+    predicate:
+      shape: array_of_objects
+      n_items_max: 3
+      n_fields_avg_min: 4
+      key_stability_min: 0.9
+    action: csv
+    expected_savings_pct: {median: 11.1, avg: 16.1}
+    support: 40
+    applicable: 12
+    confidence: 0.30
+    tokens_saved_ktok: 1
+
+  - id: R7_arr_heterog
+    predicate: {shape: array_of_objects, key_stability_max: 0.7}
+    action: json_compact
+    expected_savings_pct: {median: 15.4, avg: 14.3}
+    support: 9
+    applicable: 1
+    confidence: 0.11
+    tokens_saved_ktok: 0
+
+  # =============================================================
+  # FLAT OBJECTS — mostly skip
+  # =============================================================
+
+  - id: R12_flat_wide
+    predicate: {shape: flat_object, n_fields_min: 8}
+    action: kv
+    expected_savings_pct: {median: 7.2, avg: 9.1}
+    support: 38
+    applicable: 4
+    confidence: 0.11
+    tokens_saved_ktok: 0
+
+  - id: R13_flat_small
+    predicate: {shape: flat_object, n_fields_max: 7}
+    action: json_compact
+    expected_savings_pct: {median: 4.1, avg: 4.6}
+    support: 145
+    applicable: 0
+    confidence: 0.00
+    tokens_saved_ktok: 0
+
+  # =============================================================
+  # OUT OF SCOPE — no format selection (94% of corpus)
+  # =============================================================
+
+  - id: R14_out_of_scope
+    predicate:
+      shape_in: [code_block, numbered_list, prose, bullet_list, array_of_primitives, empty]
+    action: as_is
+    expected_savings_pct: {median: 0.0, avg: 0.0}
+    support: 135789
+    applicable: 0
+    confidence: 0.00
+    tokens_saved_ktok: 0
+    notes: |
+      Text-form responses: file reads (numbered_list), bash/grep output
+      (prose), LLM-authored content (bullet_list), code snippets
+      (code_block). Paper 2 cannot re-encode these — they stay as-is.
+
+
+# =============================================================
+# DECISION TREE — fast path for implementation
+# =============================================================
+decision_tree:
+  - if: "shape == 'markdown_table' AND md_n_cols >= 2"
+    action: csv_from_md
+    covers: [R1, R2, R3]
+    note: 1036 of 1051 md_table events (98%) — the dominant Paper 2 win
+
+  - if: "shape == 'markdown_table'"
+    action: as_is
+    covers: [R4]
+
+  - if: "shape == 'array_of_objects' AND key_stability >= 0.7 AND (n_items >= 4 OR n_fields_avg >= 4)"
+    action: csv
+    covers: [R5, R6]
+
+  - if: "shape == 'array_of_objects'"
+    action: json_compact
+    covers: [R7]
+
+  - if: "shape == 'nested_object' AND inner_formats ⊇ {log, url, hash}"
+    action: deep_mckp
+    covers: [R8]
+    note: Pipeline signature — 1432 events, 50% cross 20% threshold
+
+  - if: "shape == 'nested_object' AND inner_formats contains diff"
+    action: deep_mckp
+    covers: [R9]
+    note: MR diffs — low savings cap; apply only if cost allows
+
+  - if: "shape == 'nested_object'"
+    action: json_compact
+    covers: [R10, R11]
+    note: Minification suffices; deep_mckp adds marginal gain
+
+  - if: "shape == 'flat_object' AND n_fields >= 8"
+    action: kv
+    covers: [R12]
+
+  - if: "shape == 'flat_object'"
+    action: json_compact
+    covers: [R13]
+
+  - default: as_is
+    covers: [R14]
+
+
+# =============================================================
+# IMPACT RANKING (by tokens saved across the corpus)
+# =============================================================
+impact_ranking:
+  - {rule: R1_md_wide_huge,     ktok: 850, share_pct: 54.8}
+  - {rule: R8_pipeline_sig,     ktok: 369, share_pct: 23.8}
+  - {rule: R3_md_cols_2to7,     ktok: 158, share_pct: 10.2}
+  - {rule: R2_md_cols_8plus,    ktok: 108, share_pct:  7.0}
+  - {rule: R11_nested_fallback, ktok:  22, share_pct:  1.4}
+  - {rule: R10_issue_update,    ktok:   7, share_pct:  0.5}
+  - {rule: R5_arr_stable_many,  ktok:   7, share_pct:  0.5}
+  - {rule: R4_md_single_col,    ktok:   4, share_pct:  0.3}
+  - {rule: others,              ktok:  <5, share_pct: <0.5}
+  total_ktok_saved: 1550
+  note: |
+    Top 4 rules (R1, R8, R3, R2) account for 95.8% of all savings.
+    R1 + R3 + R2 (all markdown-table re-encoding) = 72.0% of savings.
+    R8 (pipeline deep_mckp) = 23.8%.
+    All other rules together = 4.2% (mostly minification long tail).
+
+
+# =============================================================
+# TOP PRODUCERS — which tools most benefit
+# =============================================================
+top_producers:
+  - tool: mcp__<hash>__get_issues
+    calls: 413
+    applicable_pct: 87
+    avg_savings_pct: 92
+    ktok_saved: 794
+    primary_rule: R1
+
+  - tool: Agent (summaries with md-table embedded)
+    calls: 1400
+    applicable_pct: 8.7
+    avg_savings_pct: 88.8
+    ktok_saved: 229
+    primary_rule: R1
+
+  - tool: mcp__<hash>__get_branch_pipeline
+    calls: 902
+    applicable_pct: 55
+    avg_savings_pct: 24.5
+    ktok_saved: 271
+    primary_rule: R8
+
+  - tool: mcp__<hash>__get_merge_request_pipeline
+    calls: 244
+    applicable_pct: 57
+    avg_savings_pct: 24.3
+    ktok_saved: 61
+    primary_rule: R8
+
+  - tool: Bash
+    calls: 59196
+    applicable_pct: 0.4
+    avg_savings_pct: 47.8
+    ktok_saved: 65
+    primary_rule: mixed (deep_mckp for JSON-like bash outputs)
+
+
+# =============================================================
+# SAVINGS BUCKET DISTRIBUTION (applicable events only, N=1797)
+# =============================================================
+savings_buckets:
+  - {range: "20-30%", events: 930, avg_kchars: 3.9, ktok: 408}
+  - {range: "30-50%", events: 338, avg_kchars: 0.9, ktok:  36}
+  - {range: "50-70%", events:  39, avg_kchars: 2.1, ktok:  12}
+  - {range: "70-90%", events:  79, avg_kchars: 4.3, ktok:  72}
+  - {range: "90%+",   events: 411, avg_kchars: 10.1, ktok: 1021}
+  note: |
+    Bimodal distribution: 20-30% bucket (deep_mckp on pipelines) and
+    90%+ bucket (csv_from_md on big markdown tables). The middle 30-70%
+    band is thin — events are either clearly re-encodable or not.
