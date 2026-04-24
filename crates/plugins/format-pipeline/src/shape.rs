@@ -643,7 +643,8 @@ mod tests {
 
     #[test]
     fn detects_js_style_stack_trace() {
-        let text = "Error occurred\n    at Object.<anonymous> (/foo.js:1:1)\n    at Module._compile\n";
+        let text =
+            "Error occurred\n    at Object.<anonymous> (/foo.js:1:1)\n    at Module._compile\n";
         let c = classify(text);
         assert!(c.inner_formats.contains(&InnerFormat::StackTrace));
     }

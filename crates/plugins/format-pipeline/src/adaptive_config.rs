@@ -682,10 +682,7 @@ mod tests {
         );
         a.merge_right_wins(b);
         assert_eq!(a.dedup.lru_size, 42);
-        assert_eq!(
-            a.endpoint_overrides["keep"].dedup_enabled,
-            Some(true)
-        );
+        assert_eq!(a.endpoint_overrides["keep"].dedup_enabled, Some(true));
         assert!(a.endpoint_overrides.contains_key("new"));
     }
 

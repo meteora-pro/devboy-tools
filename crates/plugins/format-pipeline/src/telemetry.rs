@@ -523,7 +523,8 @@ mod tests {
 
     #[test]
     fn jsonl_sink_creates_parent_dirs() {
-        let parent = std::env::temp_dir().join(format!("devboy_tele_nested_{}", std::process::id()));
+        let parent =
+            std::env::temp_dir().join(format!("devboy_tele_nested_{}", std::process::id()));
         let tmp = parent.join("deep/sub/events.jsonl");
         assert!(!tmp.parent().unwrap().exists());
         let sink = JsonlSink::open(&tmp).unwrap();
