@@ -138,10 +138,7 @@ pub fn mr_diff_fence(raw: &str, _cls: &ClassifiedResponse) -> Option<String> {
         let body = d
             .get("content")
             .or_else(|| d.get("diff"))
-            .and_then(|v| v.as_str());
-        let Some(body) = body else {
-            return None;
-        };
+            .and_then(|v| v.as_str())?;
         if !path.is_empty() {
             out.push_str(&format!("## diff {} ({})\n", i + 1, path));
         } else {
@@ -168,7 +165,8 @@ mod tests {
 
     #[test]
     fn csv_from_md_handles_simple_table() {
-        let md = "| id | name | status |\n|----|------|--------|\n| 1 | a | ok |\n| 2 | b | bad |\n";
+        let md =
+            "| id | name | status |\n|----|------|--------|\n| 1 | a | ok |\n| 2 | b | bad |\n";
         let cls = classify(md);
         let out = csv_from_md(md, &cls).unwrap();
         assert!(out.contains("id,name,status"));

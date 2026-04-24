@@ -127,7 +127,9 @@ pub struct PipelineEvent {
     /// `log`, `url`, `hash`). Empty when no embedded formats were seen.
     #[serde(default)]
     pub inner_formats: Vec<String>,
-    /// 16-character hex prefix of sha-256 over the response bytes.
+    /// Hex-encoded prefix of SHA-256 over the response bytes — 32 hex chars
+    /// representing the first 16 bytes (128 bits), matching the paper's
+    /// stated fingerprint width and the Python extractor's output.
     pub content_sha_prefix_hex: String,
     /// Anonymized file-path hash for `Read`/`Edit`/`Write`-family tools;
     /// `None` for tools that don't operate on a file path.
@@ -221,10 +223,7 @@ impl JsonlSink {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
         Ok(Self {
             path,
             writer: Mutex::new(BufWriter::new(file)),
@@ -240,10 +239,7 @@ impl JsonlSink {
 impl TelemetrySink for JsonlSink {
     fn record(&self, event: &PipelineEvent) -> Result<()> {
         let line = serde_json::to_string(event)?;
-        let mut w = self
-            .writer
-            .lock()
-            .expect("telemetry writer mutex poisoned");
+        let mut w = self.writer.lock().expect("telemetry writer mutex poisoned");
         w.write_all(line.as_bytes())?;
         w.write_all(b"\n")?;
         Ok(())
@@ -257,10 +253,7 @@ impl TelemetrySink for JsonlSink {
             "data": summary,
         });
         let line = serde_json::to_string(&wrapped)?;
-        let mut w = self
-            .writer
-            .lock()
-            .expect("telemetry writer mutex poisoned");
+        let mut w = self.writer.lock().expect("telemetry writer mutex poisoned");
         w.write_all(line.as_bytes())?;
         w.write_all(b"\n")?;
         Ok(())

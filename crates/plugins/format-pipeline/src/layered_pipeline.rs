@@ -49,10 +49,8 @@
 use std::sync::Arc;
 
 use crate::adaptive_config::AdaptiveConfig;
-use crate::dedup::{
-    content_hash, render_reference_hint, DedupCache, DedupDecision, ToolKind,
-};
-use crate::shape::classify;
+use crate::dedup::{DedupCache, DedupDecision, ToolKind, content_hash, render_reference_hint_with};
+use crate::shape::{ClassifiedResponse, classify};
 use crate::telemetry::{Layer, PipelineEvent, Shape, TelemetrySink};
 
 /// Input to [`LayeredPipeline::process`].
@@ -108,18 +106,26 @@ pub struct LayeredPipeline {
     dedup: DedupCache,
     telemetry: Option<Arc<dyn TelemetrySink>>,
     event_counter: u64,
+    /// Counts events that reached the sink — used to trigger periodic flush
+    /// according to `telemetry.flush_every_n`.
+    recorded_counter: u64,
 }
 
 impl LayeredPipeline {
     /// Construct a new session pipeline.
+    ///
+    /// The shared LRU cache is sized to the maximum capacity requested by any
+    /// endpoint-level override (or the global `dedup.lru_size` otherwise), so
+    /// per-endpoint hints that ask for a larger working set are respected.
     pub fn new(session_hash: String, config: AdaptiveConfig) -> Self {
-        let lru = config.dedup.lru_size.max(1);
+        let lru = config.max_lru_size();
         Self {
             session_hash,
             dedup: DedupCache::with_capacity(lru),
             config,
             telemetry: None,
             event_counter: 0,
+            recorded_counter: 0,
         }
     }
 
@@ -154,12 +160,13 @@ impl LayeredPipeline {
             .map(crate::dedup_util::file_path_hash);
 
         if tool_kind == ToolKind::FileMutate
-            && let Some(ref fh) = file_path_hash {
-                self.dedup.invalidate_file(fh);
-            }
+            && let Some(ref fh) = file_path_hash
+        {
+            self.dedup.invalidate_file(fh);
+        }
 
         // Short-circuit: L3 for too-small bodies (not worth any optimization).
-        let min_chars = self.config.dedup.min_body_chars.max(1);
+        let min_chars = self.config.effective_min_body_chars(input.tool_name).max(1);
         if input.content.len() < min_chars {
             let out = ProcessedResponse {
                 output: input.content.to_string(),
@@ -168,39 +175,43 @@ impl LayeredPipeline {
                 tokens_saved: 0,
                 tokens_final: baseline_tokens,
             };
-            self.emit_event(&input, &out, &Shape::Unknown, None, None, None);
+            self.emit_event(&input, &out, None, None, None, None);
             return out;
         }
 
         // === L0: content-hash dedup ===
-        let endpoint_ok = self.config.dedup.enabled_for(input.tool_name);
+        let endpoint_ok = self.config.effective_dedup_enabled(input.tool_name);
         let content_hash_value = content_hash(input.content.as_bytes());
-        let content_sha_hex = hex16(&content_hash_value);
+        let content_sha_hex = hex_of(&content_hash_value);
 
         if endpoint_ok
             && let DedupDecision::Hint {
                 reference_tool_call_id,
             } = self.dedup.check(&content_hash_value)
-            {
-                let hint = render_reference_hint(&reference_tool_call_id);
-                let tokens_final = est_tokens(hint.len());
-                let out = ProcessedResponse {
-                    output: hint,
-                    layer: Layer::L0,
-                    format_or_template: Some("hint_exact".into()),
-                    tokens_saved: baseline_tokens as i64 - tokens_final as i64,
-                    tokens_final,
-                };
-                self.emit_event(
-                    &input,
-                    &out,
-                    &Shape::Unknown,
-                    Some(&content_sha_hex),
-                    file_path_hash.as_deref(),
-                    None,
-                );
-                return out;
-            }
+        {
+            let hint = render_reference_hint_with(
+                &reference_tool_call_id,
+                self.config.dedup.hint_verbosity.to_runtime(),
+                Some(tool_kind),
+            );
+            let tokens_final = est_tokens(hint.len());
+            let out = ProcessedResponse {
+                output: hint,
+                layer: Layer::L0,
+                format_or_template: Some("hint_exact".into()),
+                tokens_saved: baseline_tokens as i64 - tokens_final as i64,
+                tokens_final,
+            };
+            self.emit_event(
+                &input,
+                &out,
+                None,
+                Some(&content_sha_hex),
+                file_path_hash.as_deref(),
+                None,
+            );
+            return out;
+        }
 
         // Not a duplicate — insert into cache for future reference.
         let tc_hash = short_hash(input.tool_call_id);
@@ -217,31 +228,31 @@ impl LayeredPipeline {
         // === L1: per-endpoint templates ===
         if let Some(t_id) = self
             .config
-            .templates
-            .template_for(input.tool_name)
+            .effective_template(input.tool_name)
             .map(str::to_string)
             && self.config.templates.is_template_active(&t_id)
-                && let Some(body) = crate::templates::apply_by_id(&t_id, input.content, &classified) {
-                    let tokens_final = est_tokens(body.len());
-                    if tokens_final < baseline_tokens {
-                        let out = ProcessedResponse {
-                            output: body,
-                            layer: Layer::L1,
-                            format_or_template: Some(t_id),
-                            tokens_saved: baseline_tokens as i64 - tokens_final as i64,
-                            tokens_final,
-                        };
-                        self.emit_event(
-                            &input,
-                            &out,
-                            &classified.shape,
-                            Some(&content_sha_hex),
-                            file_path_hash.as_deref(),
-                            None,
-                        );
-                        return out;
-                    }
-                }
+            && let Some(body) = crate::templates::apply_by_id(&t_id, input.content, &classified)
+        {
+            let tokens_final = est_tokens(body.len());
+            if tokens_final < baseline_tokens {
+                let out = ProcessedResponse {
+                    output: body,
+                    layer: Layer::L1,
+                    format_or_template: Some(t_id.clone()),
+                    tokens_saved: baseline_tokens as i64 - tokens_final as i64,
+                    tokens_final,
+                };
+                self.emit_event(
+                    &input,
+                    &out,
+                    Some(&classified),
+                    Some(&content_sha_hex),
+                    file_path_hash.as_deref(),
+                    Some(&t_id),
+                );
+                return out;
+            }
+        }
 
         // === L2: generic MCKP ===
         if let Some((fmt_id, body)) =
@@ -259,7 +270,7 @@ impl LayeredPipeline {
                 self.emit_event(
                     &input,
                     &out,
-                    &classified.shape,
+                    Some(&classified),
                     Some(&content_sha_hex),
                     file_path_hash.as_deref(),
                     None,
@@ -279,7 +290,7 @@ impl LayeredPipeline {
         self.emit_event(
             &input,
             &out,
-            &classified.shape,
+            Some(&classified),
             Some(&content_sha_hex),
             file_path_hash.as_deref(),
             None,
@@ -287,11 +298,28 @@ impl LayeredPipeline {
         out
     }
 
+    /// Deterministic sampler — returns `true` iff the current event should be
+    /// written to the sink under the configured `telemetry.sample_rate`.
+    ///
+    /// Deterministic so replays over the same session are reproducible.
+    fn should_sample(&self) -> bool {
+        let rate = self.config.telemetry.sample_rate.clamp(0.0, 1.0);
+        if rate >= 1.0 {
+            return true;
+        }
+        if rate <= 0.0 {
+            return false;
+        }
+        // Fixed-interval stride matching the requested rate.
+        let stride = (1.0 / rate).round().max(1.0) as u64;
+        self.event_counter.is_multiple_of(stride)
+    }
+
     fn emit_event(
-        &self,
+        &mut self,
         input: &ToolResponseInput<'_>,
         out: &ProcessedResponse,
-        shape: &Shape,
+        classified: Option<&ClassifiedResponse>,
         content_sha_hex: Option<&str>,
         file_path_hash: Option<&str>,
         template_id: Option<&str>,
@@ -299,14 +327,26 @@ impl LayeredPipeline {
         let Some(sink) = self.telemetry.clone() else {
             return;
         };
+        if !self.should_sample() {
+            return;
+        }
+        let shape = classified.map(|c| c.shape).unwrap_or(Shape::Unknown);
+        let inner_formats = classified
+            .map(|c| {
+                c.inner_formats
+                    .iter()
+                    .map(|f| f.as_tag().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let evt = PipelineEvent {
             session_hash: self.session_hash.clone(),
             tool_call_id_hash: short_hash(input.tool_call_id),
             tool_name_anon: anonymize_tool_name(input.tool_name),
             endpoint_class: input.tool_name.to_string(),
             response_chars: input.content.len() as u64,
-            shape: *shape,
-            inner_formats: vec![],
+            shape,
+            inner_formats,
             content_sha_prefix_hex: content_sha_hex.unwrap_or_default().to_string(),
             file_path_hash: file_path_hash.map(String::from),
             is_dedup_hit: matches!(out.layer, Layer::L0),
@@ -319,14 +359,23 @@ impl LayeredPipeline {
             ts_ms: input.ts_ms,
             sample_rate_applied: self.config.telemetry.sample_rate,
         };
-        let _ = sink.record(&evt); // Best-effort; do not fail the pipeline.
+        if sink.record(&evt).is_err() {
+            return; // Best-effort; do not fail the pipeline.
+        }
+        self.recorded_counter += 1;
+        let flush_every = self.config.telemetry.flush_every_n.max(1) as u64;
+        if self.recorded_counter.is_multiple_of(flush_every) {
+            let _ = sink.flush();
+        }
     }
 }
 
 // ─── INLINE HELPERS (internal; no external API surface) ─────────────────
 
-/// 16-char hex of a 16-byte content hash.
-fn hex16(bytes: &[u8; 16]) -> String {
+/// 32-char hex of a 16-byte (128-bit) content hash prefix. Matches the
+/// `content_sha_prefix_hex` field documented in
+/// `docs/research/paper-2-mckp-format-adaptive.md` §Telemetry.
+fn hex_of(bytes: &[u8; 16]) -> String {
     let mut out = String::with_capacity(32);
     for b in bytes {
         out.push_str(&format!("{:02x}", b));

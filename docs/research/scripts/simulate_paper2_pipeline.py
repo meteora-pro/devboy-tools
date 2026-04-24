@@ -6,21 +6,21 @@
 """
 Paper 2 — layered pipeline simulator.
 
-Replays every tool-response event in its real session order, applies a
-3-layer encoding pipeline, measures actual token savings and decision
+Replays every tool-response event in its real session order, applies the
+L0–L3 encoding pipeline, and measures actual token savings and decision
 breakdown.
 
 Layers:
-  L0 — LRU hint-dedup (fingerprint match within current context_partition)
+  L0 — LRU hint-dedup (content_sha256 match within current context_partition)
   L1 — per-endpoint templates (mcp_*_get_issues → csv_from_md;
                                 mcp_*_get_*_pipeline → deep_mckp;
                                 mcp_*_merge_request_diffs → deep_mckp)
   L2 — generic MCKP rules (shape + inner-format dispatched)
   L3 — as-is fallback
 
-Fingerprint for dedup = (tool_name_anon, raw_chars, shape, is_sidechain).
-(This is a size+shape proxy since anonymized parquet has no raw content.)
-LRU size and context_partition tracking are configurable.
+L0 dedup keys on `content_sha256`, so matches indicate byte-identical
+content within the current context_partition. LRU size and
+context_partition tracking are configurable.
 
 Inputs:
   /tmp/claude_analysis/paper2_format_events.parquet  — enriched events
@@ -67,10 +67,12 @@ def layer0_dedup_decision(
     event: dict,
     cache: deque,
     partition: int,
-) -> tuple[str, int, str | None]:
+) -> tuple[str | None, int, str | None]:
     """Look up content-hash match within current partition.
 
-    Uses cryptographic sha256 prefix, so matches imply byte-identical content.
+    Uses cryptographic SHA-256 prefix, so matches imply byte-identical content.
+    Returns ``(decision, tokens_final, reference_tc_id)``:
+    ``decision is None`` means no L0 hint was emitted.
     """
     sha = event["content_sha256"]
     if not sha:
