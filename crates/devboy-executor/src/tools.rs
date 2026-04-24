@@ -86,6 +86,14 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("markdown", PropertySchema::boolean("Whether the description is markdown (default: true). When true, ClickUp renders formatted text."));
                 s.add_property("projectId", PropertySchema::string("Jira project key (not numeric ID) for issue creation (e.g., \"PROJ\"). Optional — overrides the default project."));
                 s.add_property("issueType", PropertySchema::string("Issue type (e.g., \"Task\", \"Bug\", \"Story\"). Default: \"Task\". Removed by providers that don't support it."));
+                // Issue #197 — component names. The Jira enricher
+                // populates an enum at metadata-assembly time so schema
+                // consumers see the valid values; here we just declare
+                // the property exists (Codex review on PR #205).
+                s.add_property("components", PropertySchema::array(
+                    PropertySchema::string("component name"),
+                    "Jira component names to associate with the issue. Ignored by providers that don't have Components (GitHub/GitLab/ClickUp).",
+                ));
                 s.set_required("title", true);
                 s
             },
@@ -104,6 +112,12 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("assignees", PropertySchema::array(PropertySchema::string("assignee"), "New assignees"));
                 s.add_property("parentId", PropertySchema::string("Parent issue key to move task as subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp."));
                 s.add_property("markdown", PropertySchema::boolean("Whether the description is markdown (default: true). When true, ClickUp renders formatted text."));
+                // Issue #197 — `None` leaves components untouched, empty
+                // array clears them, array with names replaces them.
+                s.add_property("components", PropertySchema::array(
+                    PropertySchema::string("component name"),
+                    "Replace components with these Jira component names. Omit the field to leave existing components untouched; pass an empty array to clear.",
+                ));
                 s.set_required("key", true);
                 s
             },

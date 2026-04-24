@@ -284,6 +284,23 @@ pub struct CreateIssueFields {
     /// Assignee
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assignee: Option<serde_json::Value>,
+    /// Components (issue #197).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub components: Option<Vec<ComponentRef>>,
+}
+
+/// Component reference used in create/update issue payloads (issue #197).
+///
+/// We serialise by **name** (`{ "name": "..." }`) to line up with the
+/// Jira schema enricher, which enumerates component *names* in tool
+/// schemas (`JiraComponent.name`). Jira accepts either `{id}` or `{name}`
+/// in `fields.components`, so name-based references work across Cloud +
+/// Self-Hosted without forcing callers to resolve ids first.
+///
+/// This is addressed in Copilot review on PR #205.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentRef {
+    pub name: String,
 }
 
 /// Project key reference.
@@ -332,6 +349,10 @@ pub struct UpdateIssueFields {
     /// Assignee
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assignee: Option<serde_json::Value>,
+    /// Components (issue #197). `None` means do not touch.
+    /// `Some(vec![])` clears all components.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub components: Option<Vec<ComponentRef>>,
 }
 
 /// Request body for transitioning an issue.
