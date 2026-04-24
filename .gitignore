@@ -52,3 +52,9 @@ npm/devboy-tools-*/bin/
 # Convention: anything personal goes under docs/research/data/__personal__/
 docs/research/data/__personal__/
 docs/research/data/*.zip
+
+# Paper 2 reproducibility pipeline — tracked scripts, but large datasets are not
+/docs/research/paper2-repro/ext/
+/docs/research/paper2-repro/datasets/
+/docs/research/paper2-repro/artifacts/
+/docs/research/paper2-repro/.env
