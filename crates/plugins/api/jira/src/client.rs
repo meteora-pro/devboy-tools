@@ -576,6 +576,47 @@ impl JiraClient {
         handle_structure_response(response).await
     }
 
+    /// Build a URL for the Jira Agile REST API (`/rest/agile/1.0/*`).
+    /// Issue #198.
+    fn agile_url(&self, endpoint: &str) -> String {
+        let root = instance_url_from_base(&self.base_url);
+        format!("{}/rest/agile/1.0{}", root, endpoint)
+    }
+
+    /// Authenticated GET against the Agile REST API.
+    async fn agile_get<T: serde::de::DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
+        let url = self.agile_url(endpoint);
+        debug!(url = %url, "Jira Agile GET");
+        let response = self
+            .request(reqwest::Method::GET, &url)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        handle_structure_response(response).await
+    }
+
+    /// Authenticated POST against the Agile REST API.
+    async fn agile_post_void<B: serde::Serialize>(&self, endpoint: &str, body: &B) -> Result<()> {
+        let url = self.agile_url(endpoint);
+        debug!(url = %url, "Jira Agile POST");
+        let response = self
+            .request(reqwest::Method::POST, &url)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            let (content_type, body) = read_structure_error_body(response).await;
+            return Err(structure_error_from_status(
+                status.as_u16(),
+                &content_type,
+                body,
+            ));
+        }
+        Ok(())
+    }
+
     /// Make an authenticated DELETE request to the Structure API.
     async fn structure_delete_request(&self, endpoint: &str) -> Result<()> {
         let url = self.structure_url(endpoint);
@@ -2356,6 +2397,150 @@ impl IssueProvider for JiraClient {
         })
     }
 
+    // --- Structure generators (issue #179) -----------------------------
+
+    async fn get_structure_generators(
+        &self,
+        structure_id: u64,
+    ) -> Result<ProviderResult<devboy_core::StructureGenerator>> {
+        #[derive(serde::Deserialize)]
+        struct Resp {
+            #[serde(default)]
+            generators: Vec<RawGenerator>,
+        }
+        #[derive(serde::Deserialize)]
+        struct RawGenerator {
+            id: String,
+            #[serde(rename = "type")]
+            generator_type: String,
+            #[serde(default)]
+            spec: serde_json::Value,
+        }
+        let resp: Resp = self
+            .structure_get(&format!("/structure/{}/generator", structure_id))
+            .await?;
+        let items: Vec<devboy_core::StructureGenerator> = resp
+            .generators
+            .into_iter()
+            .map(|g| devboy_core::StructureGenerator {
+                id: g.id,
+                generator_type: g.generator_type,
+                spec: g.spec,
+            })
+            .collect();
+        Ok(items.into())
+    }
+
+    async fn add_structure_generator(
+        &self,
+        input: devboy_core::AddStructureGeneratorInput,
+    ) -> Result<devboy_core::StructureGenerator> {
+        let body = serde_json::json!({
+            "type": input.generator_type,
+            "spec": input.spec,
+        });
+        let resp: serde_json::Value = self
+            .structure_post(
+                &format!("/structure/{}/generator", input.structure_id),
+                &body,
+            )
+            .await?;
+        Ok(devboy_core::StructureGenerator {
+            id: resp
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            generator_type: resp
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            spec: resp.get("spec").cloned().unwrap_or(serde_json::Value::Null),
+        })
+    }
+
+    async fn sync_structure_generator(
+        &self,
+        input: devboy_core::SyncStructureGeneratorInput,
+    ) -> Result<()> {
+        let body = serde_json::json!({});
+        let _: serde_json::Value = self
+            .structure_post(
+                &format!(
+                    "/structure/{}/generator/{}/sync",
+                    input.structure_id, input.generator_id
+                ),
+                &body,
+            )
+            .await?;
+        Ok(())
+    }
+
+    // --- Structure delete + automation (issue #180) --------------------
+
+    async fn delete_structure(&self, structure_id: u64) -> Result<()> {
+        self.structure_delete_request(&format!("/structure/{}", structure_id))
+            .await
+    }
+
+    async fn update_structure_automation(
+        &self,
+        input: devboy_core::UpdateStructureAutomationInput,
+    ) -> Result<()> {
+        let _: serde_json::Value = self
+            .structure_put(
+                &format!("/structure/{}/automation", input.structure_id),
+                &input.config,
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn trigger_structure_automation(&self, structure_id: u64) -> Result<()> {
+        let body = serde_json::json!({});
+        let _: serde_json::Value = self
+            .structure_post(
+                &format!("/structure/{}/automation/run", structure_id),
+                &body,
+            )
+            .await?;
+        Ok(())
+    }
+
+    // --- Agile / Sprint (issue #198) -----------------------------------
+
+    async fn get_board_sprints(
+        &self,
+        board_id: u64,
+        state: devboy_core::SprintState,
+    ) -> Result<ProviderResult<devboy_core::Sprint>> {
+        #[derive(serde::Deserialize)]
+        struct Resp {
+            #[serde(default)]
+            values: Vec<devboy_core::Sprint>,
+        }
+        let endpoint = match state.as_query_value() {
+            Some(s) => format!("/board/{}/sprint?state={}", board_id, s),
+            None => format!("/board/{}/sprint", board_id),
+        };
+        let resp: Resp = self.agile_get(&endpoint).await?;
+        Ok(resp.values.into())
+    }
+
+    async fn assign_to_sprint(&self, input: devboy_core::AssignToSprintInput) -> Result<()> {
+        // Jira accepts issue keys in the form `["PROJ-1", ...]`. Our
+        // provider-normalised keys may carry a `jira#` prefix — strip it.
+        let issues: Vec<String> = input
+            .issue_keys
+            .into_iter()
+            .map(|k| parse_jira_key(&k).to_string())
+            .collect();
+        let body = serde_json::json!({ "issues": issues });
+        self.agile_post_void(&format!("/sprint/{}/issue", input.sprint_id), &body)
+            .await
+    }
+
     fn provider_name(&self) -> &'static str {
         "jira"
     }
@@ -3825,7 +4010,7 @@ mod tests {
             let server = MockServer::start();
 
             server.mock(|when, then| {
-                when.method(POST).path("/issue").matches(|req| {
+                when.method(POST).path("/issue").is_true(|req| {
                     let body = String::from_utf8_lossy(req.body().as_ref());
                     !body.contains("\"components\"")
                 });
@@ -6158,6 +6343,197 @@ mod tests {
                 .await
                 .expect_err("403 must not be swallowed");
             assert!(matches!(err, Error::Forbidden(_)), "got {err:?}");
+        }
+
+        // =====================================================================
+        // Structure generators — issue #179
+        // =====================================================================
+
+        #[tokio::test]
+        async fn test_structure_generator_lifecycle() {
+            let server = MockServer::start();
+
+            // GET list
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/rest/structure/2.0/structure/1/generator");
+                then.status(200).json_body(serde_json::json!({
+                    "generators": [
+                        { "id": "g1", "type": "jql", "spec": {"query": "project = PROJ"} }
+                    ]
+                }));
+            });
+            // POST add
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/rest/structure/2.0/structure/1/generator")
+                    .body_includes("\"type\":\"agile-board\"");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "g2",
+                    "type": "agile-board",
+                    "spec": {"boardId": 42}
+                }));
+            });
+            // POST sync
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/rest/structure/2.0/structure/1/generator/g2/sync");
+                then.status(200).json_body(serde_json::json!({}));
+            });
+
+            let client = create_client(&server);
+
+            let list = client.get_structure_generators(1).await.unwrap();
+            assert_eq!(list.items.len(), 1);
+            assert_eq!(list.items[0].generator_type, "jql");
+
+            let added = client
+                .add_structure_generator(devboy_core::AddStructureGeneratorInput {
+                    structure_id: 1,
+                    generator_type: "agile-board".into(),
+                    spec: serde_json::json!({"boardId": 42}),
+                })
+                .await
+                .unwrap();
+            assert_eq!(added.id, "g2");
+
+            client
+                .sync_structure_generator(devboy_core::SyncStructureGeneratorInput {
+                    structure_id: 1,
+                    generator_id: "g2".into(),
+                })
+                .await
+                .unwrap();
+        }
+
+        // =====================================================================
+        // Structure delete + automation — issue #180
+        // =====================================================================
+
+        #[tokio::test]
+        async fn test_delete_structure() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(DELETE).path("/rest/structure/2.0/structure/7");
+                then.status(204);
+            });
+
+            let client = create_client(&server);
+            client.delete_structure(7).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_structure_automation() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/rest/structure/2.0/structure/5/automation")
+                    .body_includes("\"enabled\":true");
+                then.status(200).json_body(serde_json::json!({}));
+            });
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/rest/structure/2.0/structure/5/automation/run");
+                then.status(200).json_body(serde_json::json!({}));
+            });
+
+            let client = create_client(&server);
+            client
+                .update_structure_automation(devboy_core::UpdateStructureAutomationInput {
+                    structure_id: 5,
+                    config: serde_json::json!({"enabled": true}),
+                })
+                .await
+                .unwrap();
+            client.trigger_structure_automation(5).await.unwrap();
+        }
+    }
+
+    // =====================================================================
+    // Agile / Sprint — issue #198
+    // =====================================================================
+    mod agile_integration {
+        use super::*;
+        use httpmock::prelude::*;
+
+        fn create_client(server: &MockServer) -> JiraClient {
+            JiraClient::with_base_url(
+                server.base_url(),
+                "PROJ",
+                "user@example.com",
+                "token",
+                false,
+            )
+        }
+
+        #[tokio::test]
+        async fn test_get_board_sprints_active() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/rest/agile/1.0/board/10/sprint")
+                    .query_param("state", "active");
+                then.status(200).json_body(serde_json::json!({
+                    "values": [
+                        {
+                            "id": 1,
+                            "name": "Sprint 1",
+                            "state": "active",
+                            "originBoardId": 10,
+                            "startDate": "2026-04-01T00:00:00.000Z"
+                        }
+                    ]
+                }));
+            });
+
+            let client = create_client(&server);
+            let sprints = client
+                .get_board_sprints(10, devboy_core::SprintState::Active)
+                .await
+                .unwrap();
+            assert_eq!(sprints.items.len(), 1);
+            assert_eq!(sprints.items[0].state, "active");
+            assert_eq!(sprints.items[0].origin_board_id, Some(10));
+        }
+
+        #[tokio::test]
+        async fn test_get_board_sprints_all_omits_state() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/rest/agile/1.0/board/10/sprint")
+                    .is_true(|req| req.query_params().iter().all(|(k, _)| k != "state"));
+                then.status(200)
+                    .json_body(serde_json::json!({"values": []}));
+            });
+
+            let client = create_client(&server);
+            let sprints = client
+                .get_board_sprints(10, devboy_core::SprintState::All)
+                .await
+                .unwrap();
+            assert_eq!(sprints.items.len(), 0);
+        }
+
+        #[tokio::test]
+        async fn test_assign_to_sprint_strips_jira_prefix() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/rest/agile/1.0/sprint/42/issue")
+                    .body_includes("\"issues\":[\"PROJ-1\",\"PROJ-2\"]");
+                then.status(204);
+            });
+
+            let client = create_client(&server);
+            client
+                .assign_to_sprint(devboy_core::AssignToSprintInput {
+                    sprint_id: 42,
+                    issue_keys: vec!["jira#PROJ-1".to_string(), "PROJ-2".to_string()],
+                })
+                .await
+                .unwrap();
         }
     }
 }

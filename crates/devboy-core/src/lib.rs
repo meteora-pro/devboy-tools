@@ -44,18 +44,19 @@ pub use provider::{
 
 // Re-export all types
 pub use types::{
-    AddStructureRowsInput, CodePosition, Comment, CreateCommentInput, CreateIssueInput,
-    CreateMergeRequestInput, CreateStructureInput, Discussion, FailedJob, FileDiff,
-    ForestModifyResult, GetChatsParams, GetForestOptions, GetMessagesParams, GetPipelineInput,
-    GetStructureValuesInput, GetUsersOptions, Issue, IssueFilter, IssueLink, IssueRelations,
-    IssueStatus, JobLogMode, JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote,
-    MeetingSpeaker, MeetingTranscript, MergeRequest, MessageAttachment, MessageAuthor,
-    MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, Pagination, PipelineInfo,
-    PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, ProviderResult, Release,
-    ReleaseAsset, SaveStructureViewInput, SearchMessagesParams, SendMessageParams, SortInfo,
-    SortOrder, Structure, StructureColumnValue, StructureForest, StructureNode, StructureRowItem,
-    StructureRowValues, StructureValues, StructureView, StructureViewColumn, TranscriptSentence,
-    UpdateIssueInput, UpdateMergeRequestInput, User,
+    AddStructureGeneratorInput, AddStructureRowsInput, AssignToSprintInput, CodePosition, Comment,
+    CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, CreateStructureInput,
+    Discussion, FailedJob, FileDiff, ForestModifyResult, GetChatsParams, GetForestOptions,
+    GetMessagesParams, GetPipelineInput, GetStructureValuesInput, GetUsersOptions, Issue,
+    IssueFilter, IssueLink, IssueRelations, IssueStatus, JobLogMode, JobLogOptions, JobLogOutput,
+    MeetingFilter, MeetingNote, MeetingSpeaker, MeetingTranscript, MergeRequest, MessageAttachment,
+    MessageAuthor, MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, Pagination,
+    PipelineInfo, PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, ProviderResult,
+    Release, ReleaseAsset, SaveStructureViewInput, SearchMessagesParams, SendMessageParams,
+    SortInfo, SortOrder, Sprint, SprintState, Structure, StructureColumnValue, StructureForest,
+    StructureGenerator, StructureNode, StructureRowItem, StructureRowValues, StructureValues,
+    StructureView, StructureViewColumn, SyncStructureGeneratorInput, TranscriptSentence,
+    UpdateIssueInput, UpdateMergeRequestInput, UpdateStructureAutomationInput, User,
 };
 
 // Re-export enricher traits and utilities
