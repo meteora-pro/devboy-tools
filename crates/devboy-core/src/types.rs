@@ -166,6 +166,12 @@ pub struct CreateIssueInput {
     /// ClickUp: Array `[{"id": "field_id", "value": val}]` — set via separate API.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_fields: Option<Value>,
+    /// Component IDs to associate with the issue (Jira-only, issue #197).
+    /// Each entry is a component `id` obtained from project metadata
+    /// (`JiraComponent.id`). Ignored by providers that don't have a
+    /// first-class Components concept (GitHub/GitLab/ClickUp).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<String>,
 }
 
 impl Default for CreateIssueInput {
@@ -181,6 +187,7 @@ impl Default for CreateIssueInput {
             project_id: None,
             issue_type: None,
             custom_fields: None,
+            components: Vec::new(),
         }
     }
 }
@@ -215,6 +222,11 @@ pub struct UpdateIssueInput {
     /// Provider-specific custom fields (same format as CreateIssueInput).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_fields: Option<Value>,
+    /// Replace components on the issue (Jira-only, issue #197).
+    /// `None` leaves components untouched. `Some(vec![])` clears all
+    /// components. `Some(vec![...])` replaces with the given component IDs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub components: Option<Vec<String>>,
 }
 
 impl Default for UpdateIssueInput {
@@ -229,6 +241,7 @@ impl Default for UpdateIssueInput {
             parent_id: None,
             markdown: true,
             custom_fields: None,
+            components: None,
         }
     }
 }

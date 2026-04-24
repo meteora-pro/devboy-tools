@@ -284,6 +284,17 @@ pub struct CreateIssueFields {
     /// Assignee
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assignee: Option<serde_json::Value>,
+    /// Components (issue #197).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub components: Option<Vec<ComponentRef>>,
+}
+
+/// Component reference used in create/update issue payloads (issue #197).
+/// Jira expects `{ "id": "10001" }` — name-based references also work in
+/// Cloud, but id is more stable across rename.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentRef {
+    pub id: String,
 }
 
 /// Project key reference.
@@ -332,6 +343,10 @@ pub struct UpdateIssueFields {
     /// Assignee
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assignee: Option<serde_json::Value>,
+    /// Components (issue #197). `None` means do not touch.
+    /// `Some(vec![])` clears all components.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub components: Option<Vec<ComponentRef>>,
 }
 
 /// Request body for transitioning an issue.
