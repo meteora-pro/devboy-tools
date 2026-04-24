@@ -1,0 +1,15 @@
+rule_id,desc,action,support,avg_sav_pct,med_sav_pct,ktok_saved,applic_n,confidence
+R1_md_wide_huge,markdown_table: cols>=2 & chars>8000,csv_from_md,200,97.0,99.6,850.0,198,0.99
+R8_pipeline_sig,nested_object + log+url+hash (pipeline signature),deep_mckp,1432,17.5,20.1,369.0,720,0.5
+R3_md_cols_2to7,markdown_table: cols 2-7 (mid-size),csv_from_md,659,42.7,35.5,158.0,513,0.78
+R2_md_cols_8plus,markdown_table: cols>=8 (any size),csv_from_md,177,85.2,97.3,108.0,170,0.96
+R11_nested_fallback,nested_object: no special inner signal,json_compact,2409,6.8,5.1,22.0,118,0.05
+R5_arr_stable_many,array_of_objects: items>=4 & stable,csv,43,27.3,26.7,7.0,32,0.74
+R10_issue_update,nested_object + prose+url+log (issue body),deep_mckp,1122,2.7,1.7,7.0,14,0.01
+R4_md_single_col,markdown_table: cols<=1 (degenerate),as_is,15,13.3,0.0,4.0,2,0.13
+R6_arr_few_items_many_fields,array_of_objects: items<=3 & fields>=4,csv,40,16.1,11.1,1.0,12,0.3
+R7_arr_heterog,array_of_objects: heterog keys,json_compact,9,14.3,15.4,0.0,1,0.11
+R9_mr_diff,nested_object + diff inside (MR diffs),deep_mckp,291,4.8,4.6,0.0,0,0.0
+R12_flat_wide,flat_object: fields>=8,kv,38,9.1,7.2,0.0,4,0.11
+R13_flat_small,flat_object: fields<=7,json_compact,145,4.6,4.1,0.0,0,0.0
+R14_out_of_scope,text shapes: code/numbered/prose/bullet,as_is,135789,0.0,0.0,0.0,0,0.0
