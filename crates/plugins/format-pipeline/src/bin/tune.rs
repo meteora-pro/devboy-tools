@@ -745,7 +745,10 @@ mod tests {
         let dir = TempDir::new("non_jsonl");
         std::fs::write(dir.path().join("notes.txt"), "ignored").unwrap();
         std::fs::write(dir.path().join("backup.json"), "{}").unwrap();
-        write_jsonl(&dir.path().join("events.jsonl"), &[event_line("a", false, 50)]);
+        write_jsonl(
+            &dir.path().join("events.jsonl"),
+            &[event_line("a", false, 50)],
+        );
 
         let mut corpus = CorpusStats::default();
         let n = scan_jsonl_dir(dir.path(), &mut corpus).unwrap();

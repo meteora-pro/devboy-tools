@@ -626,8 +626,8 @@ mod tests {
     #[test]
     fn inner_formats_populated_in_telemetry() {
         let sink = Arc::new(MemorySink::new());
-        let mut p =
-            LayeredPipeline::new("s_inner".into(), AdaptiveConfig::default()).with_telemetry(sink.clone());
+        let mut p = LayeredPipeline::new("s_inner".into(), AdaptiveConfig::default())
+            .with_telemetry(sink.clone());
         // Response with embedded URL — classifier should populate inner_formats.
         let body = format!(
             "Line 1\nSee https://example.com/resource for details.\n{}",
@@ -635,7 +635,10 @@ mod tests {
         );
         p.process(input("tc_1", "Bash", None, &body));
         let events = sink.events();
-        assert!(!events[0].inner_formats.is_empty(), "inner_formats should populate from classifier");
+        assert!(
+            !events[0].inner_formats.is_empty(),
+            "inner_formats should populate from classifier"
+        );
         assert!(events[0].inner_formats.iter().any(|f| f == "url"));
     }
 
