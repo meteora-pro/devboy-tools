@@ -27,6 +27,13 @@ Thumbs.db
 /docs/research/paper1-repro/.env
 /docs/research/paper1-repro/artifacts/
 
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Claude Code session runtime state
+.claude/scheduled_tasks.lock
+
 # Local project config
 .devboy.toml
 
