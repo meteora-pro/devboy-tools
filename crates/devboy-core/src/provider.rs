@@ -346,6 +346,43 @@ pub trait IssueProvider: Send + Sync {
     fn provider_name(&self) -> &'static str;
 }
 
+/// Provider for working with user profiles across issue trackers and
+/// messengers (issue #177).
+///
+/// Existing providers expose users piecemeal: `IssueProvider::get_users`
+/// returns a paginated list scoped to an issue tracker, `MessengerProvider`
+/// resolves user IDs inside a chat. This trait standardises the "fetch a
+/// `User` by stable id / email" surface so cross-provider lookups (e.g.
+/// when a meeting participant mentioned by email needs to be matched to a
+/// Slack handle) have a single contract.
+///
+/// Default methods return [`Error::ProviderUnsupported`] so providers only
+/// implement what they actually support.
+#[async_trait]
+pub trait UserProvider: Send + Sync {
+    /// Provider name for logging / error reporting.
+    fn provider_name(&self) -> &'static str;
+
+    /// Resolve a user by their provider-native id (Slack `U0123`, Jira
+    /// `accountId` / `name`, ClickUp user id, etc.).
+    async fn get_user_profile(&self, _user_id: &str) -> Result<User> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_user_profile".to_string(),
+        })
+    }
+
+    /// Look up a user by email. Returns `None` if the provider can issue
+    /// the query but there is no match, [`Error::ProviderUnsupported`]
+    /// when the provider simply doesn't expose an email lookup.
+    async fn lookup_user_by_email(&self, _email: &str) -> Result<Option<User>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "lookup_user_by_email".to_string(),
+        })
+    }
+}
+
 /// Provider for working with merge requests / pull requests.
 ///
 /// Only `provider_name()` is required. All other methods have default implementations
