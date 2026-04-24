@@ -177,6 +177,10 @@ struct SlackUserProfile {
     real_name: Option<String>,
     display_name: Option<String>,
     image_72: Option<String>,
+    /// Email — present on `users.info` + `users.lookupByEmail` when the
+    /// app has the `users:read.email` scope. Issue #177.
+    #[serde(default)]
+    email: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1213,6 +1217,66 @@ fn normalize_slack_token(token: &str) -> String {
     token.to_string()
 }
 
+fn slack_user_to_core(user: SlackUser) -> devboy_core::User {
+    let profile = user.profile.clone();
+    let display = profile
+        .as_ref()
+        .and_then(|p| p.display_name.clone())
+        .filter(|s| !s.is_empty());
+    let real = profile
+        .as_ref()
+        .and_then(|p| p.real_name.clone())
+        .filter(|s| !s.is_empty());
+    let username_candidate = user.name.clone().filter(|s| !s.is_empty());
+    let name = display
+        .clone()
+        .or(real.clone())
+        .or(username_candidate.clone());
+    devboy_core::User {
+        id: user.id,
+        username: username_candidate.unwrap_or_default(),
+        name,
+        email: profile.as_ref().and_then(|p| p.email.clone()),
+        avatar_url: profile.and_then(|p| p.image_72),
+    }
+}
+
+#[async_trait]
+impl devboy_core::UserProvider for SlackClient {
+    fn provider_name(&self) -> &'static str {
+        "slack"
+    }
+
+    async fn get_user_profile(&self, user_id: &str) -> Result<devboy_core::User> {
+        let payload: SlackUsersInfoResponse = self
+            .post_form("users.info", &[("user", user_id.to_string())])
+            .await?;
+        ensure_ok(payload.ok, payload.error)?;
+        let user = payload
+            .user
+            .ok_or_else(|| Error::InvalidData("Slack users.info returned no user".to_string()))?;
+        Ok(slack_user_to_core(user))
+    }
+
+    async fn lookup_user_by_email(&self, email: &str) -> Result<Option<devboy_core::User>> {
+        let payload: SlackUsersInfoResponse = self
+            .post_form("users.lookupByEmail", &[("email", email.to_string())])
+            .await?;
+        if !payload.ok {
+            // Slack returns `users_not_found` when the email simply has no
+            // match — surface this as Ok(None) rather than an error so
+            // callers can treat "no match" and "api error" distinctly.
+            match payload.error.as_deref() {
+                Some("users_not_found") => return Ok(None),
+                _ => {
+                    ensure_ok(payload.ok, payload.error)?;
+                }
+            }
+        }
+        Ok(payload.user.map(slack_user_to_core))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2051,5 +2115,119 @@ mod tests {
         let encoded = serialize_search_cursor(&SlackSearchCursor::default()).unwrap();
 
         assert!(encoded.is_none());
+    }
+
+    // =========================================================================
+    // UserProvider — issue #177
+    // =========================================================================
+
+    #[tokio::test]
+    async fn user_provider_get_user_profile_maps_fields() {
+        use devboy_core::UserProvider;
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/users.info");
+            then.status(200).json_body(serde_json::json!({
+                "ok": true,
+                "user": {
+                    "id": "U1",
+                    "name": "alice",
+                    "profile": {
+                        "real_name": "Alice Liddell",
+                        "display_name": "alice.l",
+                        "image_72": "https://cdn/alice.png",
+                        "email": "alice@example.com"
+                    }
+                }
+            }));
+        });
+
+        let user = SlackClient::new("xoxb-test")
+            .with_base_url(server.base_url())
+            .get_user_profile("U1")
+            .await
+            .unwrap();
+
+        assert_eq!(user.id, "U1");
+        assert_eq!(user.username, "alice");
+        assert_eq!(user.name.as_deref(), Some("alice.l"));
+        assert_eq!(user.email.as_deref(), Some("alice@example.com"));
+        assert_eq!(user.avatar_url.as_deref(), Some("https://cdn/alice.png"));
+    }
+
+    #[tokio::test]
+    async fn user_provider_lookup_by_email_users_not_found_returns_none() {
+        use devboy_core::UserProvider;
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/users.lookupByEmail");
+            then.status(200).json_body(serde_json::json!({
+                "ok": false,
+                "error": "users_not_found"
+            }));
+        });
+
+        let result = SlackClient::new("xoxb-test")
+            .with_base_url(server.base_url())
+            .lookup_user_by_email("missing@example.com")
+            .await
+            .unwrap();
+
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn user_provider_lookup_by_email_hit_returns_user() {
+        use devboy_core::UserProvider;
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/users.lookupByEmail");
+            then.status(200).json_body(serde_json::json!({
+                "ok": true,
+                "user": {
+                    "id": "U2",
+                    "name": "bob",
+                    "profile": {
+                        "real_name": "Bob",
+                        "display_name": "",
+                        "image_72": null,
+                        "email": "bob@example.com"
+                    }
+                }
+            }));
+        });
+
+        let user = SlackClient::new("xoxb-test")
+            .with_base_url(server.base_url())
+            .lookup_user_by_email("bob@example.com")
+            .await
+            .unwrap()
+            .expect("user match");
+
+        assert_eq!(user.id, "U2");
+        assert_eq!(user.email.as_deref(), Some("bob@example.com"));
+        // display_name empty → falls back to real_name
+        assert_eq!(user.name.as_deref(), Some("Bob"));
+    }
+
+    #[tokio::test]
+    async fn user_provider_lookup_by_email_propagates_other_errors() {
+        use devboy_core::UserProvider;
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/users.lookupByEmail");
+            then.status(200).json_body(serde_json::json!({
+                "ok": false,
+                "error": "missing_scope"
+            }));
+        });
+
+        let err = SlackClient::new("xoxb-test")
+            .with_base_url(server.base_url())
+            .lookup_user_by_email("alice@example.com")
+            .await
+            .expect_err("missing_scope must not be silently swallowed");
+        let msg = err.to_string();
+        assert!(msg.contains("missing_scope"), "unexpected: {msg}");
     }
 }

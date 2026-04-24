@@ -39,7 +39,7 @@ pub use error::{Error, Result};
 // Re-export provider traits
 pub use provider::{
     IssueProvider, MeetingNotesProvider, MergeRequestProvider, MessengerProvider, PipelineProvider,
-    Provider,
+    Provider, UserProvider,
 };
 
 // Re-export all types

@@ -2569,6 +2569,39 @@ impl Provider for JiraClient {
     }
 }
 
+// Issue #177 — UserProvider. Jira exposes user lookup via /user?accountId
+// (Cloud) or /user?username (Self-Hosted); email lookup uses /user/search.
+#[async_trait]
+impl devboy_core::UserProvider for JiraClient {
+    fn provider_name(&self) -> &'static str {
+        "jira"
+    }
+
+    async fn get_user_profile(&self, user_id: &str) -> Result<User> {
+        let url = match self.flavor {
+            JiraFlavor::Cloud => format!("{}/user?accountId={}", self.base_url, user_id),
+            JiraFlavor::SelfHosted => format!("{}/user?username={}", self.base_url, user_id),
+        };
+        let jira_user: JiraUser = self.get(&url).await?;
+        map_user(Some(&jira_user))
+            .ok_or_else(|| Error::InvalidData("Jira /user returned no user".to_string()))
+    }
+
+    async fn lookup_user_by_email(&self, email: &str) -> Result<Option<User>> {
+        // /user/search accepts `query=` on Cloud (searches display name /
+        // email) and `username=` on Self-Hosted. Email is the more useful
+        // parameter for cross-provider correlation.
+        let url = match self.flavor {
+            JiraFlavor::Cloud => format!("{}/user/search?query={}", self.base_url, email),
+            JiraFlavor::SelfHosted => {
+                format!("{}/user/search?username={}", self.base_url, email)
+            }
+        };
+        let users: Vec<JiraUser> = self.get(&url).await?;
+        Ok(users.into_iter().find_map(|u| map_user(Some(&u))))
+    }
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
