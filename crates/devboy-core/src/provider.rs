@@ -10,14 +10,16 @@ use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::types::JobLogMode;
 use crate::types::{
-    AddStructureRowsInput, Comment, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
-    CreateStructureInput, Discussion, FileDiff, ForestModifyResult, GetChatsParams,
-    GetForestOptions, GetMessagesParams, GetPipelineInput, GetStructureValuesInput,
-    GetUsersOptions, Issue, IssueFilter, IssueRelations, IssueStatus, JobLogOptions, JobLogOutput,
-    MeetingFilter, MeetingNote, MeetingTranscript, MergeRequest, MessengerChat, MessengerMessage,
-    MoveStructureRowsInput, MrFilter, PipelineInfo, ProviderResult, Release,
-    SaveStructureViewInput, SearchMessagesParams, SendMessageParams, Structure, StructureForest,
-    StructureValues, StructureView, UpdateIssueInput, UpdateMergeRequestInput, User,
+    AddStructureGeneratorInput, AddStructureRowsInput, AssignToSprintInput, Comment,
+    CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, CreateStructureInput,
+    Discussion, FileDiff, ForestModifyResult, GetChatsParams, GetForestOptions, GetMessagesParams,
+    GetPipelineInput, GetStructureValuesInput, GetUsersOptions, Issue, IssueFilter, IssueRelations,
+    IssueStatus, JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote, MeetingTranscript,
+    MergeRequest, MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, PipelineInfo,
+    ProviderResult, Release, SaveStructureViewInput, SearchMessagesParams, SendMessageParams,
+    Sprint, SprintState, Structure, StructureForest, StructureGenerator, StructureValues,
+    StructureView, SyncStructureGeneratorInput, UpdateIssueInput, UpdateMergeRequestInput,
+    UpdateStructureAutomationInput, User,
 };
 
 /// Provider for working with issues.
@@ -254,6 +256,89 @@ pub trait IssueProvider: Send + Sync {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "create_structure".to_string(),
+        })
+    }
+
+    // --- Structure generators (issue #179) -----------------------------
+
+    /// List generators configured on a structure.
+    async fn get_structure_generators(
+        &self,
+        _structure_id: u64,
+    ) -> Result<ProviderResult<StructureGenerator>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_structure_generators".to_string(),
+        })
+    }
+
+    /// Attach a new generator to a structure.
+    async fn add_structure_generator(
+        &self,
+        _input: AddStructureGeneratorInput,
+    ) -> Result<StructureGenerator> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "add_structure_generator".to_string(),
+        })
+    }
+
+    /// Force a generator to refresh its produced rows.
+    async fn sync_structure_generator(&self, _input: SyncStructureGeneratorInput) -> Result<()> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "sync_structure_generator".to_string(),
+        })
+    }
+
+    // --- Structure delete + automation (issue #180) --------------------
+
+    /// Delete a structure permanently.
+    async fn delete_structure(&self, _structure_id: u64) -> Result<()> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "delete_structure".to_string(),
+        })
+    }
+
+    /// Replace a structure's automation configuration.
+    async fn update_structure_automation(
+        &self,
+        _input: UpdateStructureAutomationInput,
+    ) -> Result<()> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "update_structure_automation".to_string(),
+        })
+    }
+
+    /// Run a structure's automation pass on demand.
+    async fn trigger_structure_automation(&self, _structure_id: u64) -> Result<()> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "trigger_structure_automation".to_string(),
+        })
+    }
+
+    // --- Agile / Sprint (issue #198) -----------------------------------
+
+    /// List sprints visible on a board, optionally filtered by state.
+    async fn get_board_sprints(
+        &self,
+        _board_id: u64,
+        _state: SprintState,
+    ) -> Result<ProviderResult<Sprint>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "get_board_sprints".to_string(),
+        })
+    }
+
+    /// Move one or more issues onto a sprint.
+    async fn assign_to_sprint(&self, _input: AssignToSprintInput) -> Result<()> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "assign_to_sprint".to_string(),
         })
     }
 

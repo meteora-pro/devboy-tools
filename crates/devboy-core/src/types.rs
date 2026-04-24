@@ -1359,3 +1359,108 @@ pub struct CreateStructureInput {
     /// Structure description
     pub description: Option<String>,
 }
+
+// =============================================================================
+// Agile (Sprint) types — issue #198
+// =============================================================================
+
+/// A Jira Agile Sprint as returned by `/rest/agile/1.0/board/{id}/sprint`.
+///
+/// Jira serialises fields in `camelCase` — `origin_board_id` matches
+/// `originBoardId`, `start_date` matches `startDate`, etc.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Sprint {
+    pub id: u64,
+    pub name: String,
+    /// `future`, `active`, or `closed`.
+    pub state: String,
+    /// Board this sprint belongs to (when returned from a board query).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_board_id: Option<u64>,
+    /// Planned start of the sprint, if set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_date: Option<String>,
+    /// Planned end of the sprint, if set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_date: Option<String>,
+    /// Sprint goal, if set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+}
+
+/// Filter applied when listing sprints for a board.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SprintState {
+    Active,
+    Future,
+    Closed,
+    All,
+}
+
+impl SprintState {
+    pub fn as_query_value(&self) -> Option<&'static str> {
+        match self {
+            SprintState::Active => Some("active"),
+            SprintState::Future => Some("future"),
+            SprintState::Closed => Some("closed"),
+            // `all` → omit the state query param, Jira returns every sprint.
+            SprintState::All => None,
+        }
+    }
+}
+
+/// Input for moving a set of issues onto a sprint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssignToSprintInput {
+    /// Target sprint id.
+    pub sprint_id: u64,
+    /// Issue keys to move (e.g. `["PROJ-1", "PROJ-2"]`).
+    pub issue_keys: Vec<String>,
+}
+
+// =============================================================================
+// Structure plugin extensions — issues #179 / #180
+// =============================================================================
+
+/// Reference to a Structure "generator" — the rule engine that auto-populates
+/// rows from JQL / Agile boards / manual lists. Issue #179.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructureGenerator {
+    /// Generator id within the structure.
+    pub id: String,
+    /// Generator type (e.g. `"jql"`, `"agile-board"`, `"insert"`).
+    #[serde(rename = "type")]
+    pub generator_type: String,
+    /// Arbitrary generator-specific configuration — opaque to us.
+    #[serde(default)]
+    pub spec: Value,
+}
+
+/// Input for `add_structure_generator` (issue #179).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddStructureGeneratorInput {
+    pub structure_id: u64,
+    /// Generator type, e.g. `"jql"` or `"agile-board"`.
+    #[serde(rename = "type")]
+    pub generator_type: String,
+    /// Generator configuration passed through verbatim.
+    pub spec: Value,
+}
+
+/// Input for `sync_structure_generator` (issue #179).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncStructureGeneratorInput {
+    pub structure_id: u64,
+    pub generator_id: String,
+}
+
+/// Input for `update_structure_automation` (issue #180).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateStructureAutomationInput {
+    pub structure_id: u64,
+    /// Full automation configuration — passed through verbatim so we don't
+    /// need to mirror every field Structure supports.
+    pub config: Value,
+}
