@@ -144,7 +144,9 @@ pub struct JiraFieldOption {
 ///
 /// Populated from `/rest/structure/2.0/structure`. Stored in
 /// [`JiraMetadata::structures`] and consumed by `JiraSchemaEnricher` to
-/// populate the `structureId` enum on the 7 Structure tools that take it.
+/// add description-based hints for the `structureId` parameter on the 7
+/// Structure tools that take it (the strict JSON Schema `enum` is deferred
+/// until `PropertySchema.enum_values` supports non-string variants).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JiraStructureRef {
     pub id: u64,
