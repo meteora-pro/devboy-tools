@@ -13,11 +13,26 @@ use crate::metadata::{JiraFieldType, JiraMetadata};
 /// Multi-project mode: keeps `projectId` as enum, shows known values in descriptions.
 pub struct JiraSchemaEnricher {
     metadata: JiraMetadata,
+    /// Precomputed category list: always advertises `IssueTracker`, and
+    /// additionally advertises `JiraStructure` only when the metadata
+    /// actually carries accessible structures. `Executor::list_tools` uses
+    /// `supported_categories()` as a visibility filter, so returning
+    /// `JiraStructure` unconditionally would surface the 9 Structure tools
+    /// on Jira hosts without the plugin (pre-existing behaviour was to hide
+    /// them because no enricher claimed the category).
+    supported_categories: Vec<ToolCategory>,
 }
 
 impl JiraSchemaEnricher {
     pub fn new(metadata: JiraMetadata) -> Self {
-        Self { metadata }
+        let mut supported_categories = vec![ToolCategory::IssueTracker];
+        if !metadata.structures.is_empty() {
+            supported_categories.push(ToolCategory::JiraStructure);
+        }
+        Self {
+            metadata,
+            supported_categories,
+        }
     }
 
     /// Enrich the `structureId` parameter on the 7 Structure tools that
@@ -25,16 +40,17 @@ impl JiraSchemaEnricher {
     /// we embed `id (name) — description` for each one in the parameter's
     /// description so an LLM sees the concrete IDs it can pick from.
     ///
-    /// JSON Schema's `enum` on an integer-typed property is technically
-    /// supported but `PropertySchema.enum_values` only holds `Vec<String>`
-    /// today; widening that would be a cross-workspace breaking change.
-    /// The description-based enrichment mirrors the existing priority-alias
-    /// hint and is enough for LLM tool use — the strict enum can follow if
-    /// `PropertySchema` grows a typed enum value type.
+    /// Note this is description-based enrichment, not a strict JSON Schema
+    /// `enum`: `PropertySchema.enum_values` is `Option<Vec<String>>` today
+    /// and widening that to support integer enums would be a cross-workspace
+    /// breaking change. The description-based hint mirrors the existing
+    /// priority-alias behaviour and is sufficient for LLM tool use; a
+    /// strict enum can follow when `PropertySchema` grows a typed enum
+    /// value type.
     ///
-    /// When `metadata.structures` is empty the schema is left untouched so
-    /// hosts without the Structure plugin continue to see the original
-    /// "Use get_structures to find it" description.
+    /// When `metadata.structures` is empty the category is not advertised
+    /// in [`Self::supported_categories`] so this method will not be
+    /// invoked — but we still short-circuit defensively.
     fn enrich_structure_id(&self, schema: &mut ToolSchema) {
         if self.metadata.structures.is_empty() {
             return;
@@ -63,10 +79,27 @@ impl JiraSchemaEnricher {
 const REMOVE_PARAMS: &[&str] = &["points"];
 const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["stateCategory"];
 
-/// Structure tools that take a `structureId` parameter and therefore benefit
-/// from enum/description enrichment when the metadata carries a list of
-/// accessible structures. `get_structures` (no input) and `create_structure`
-/// (creates a new id) are intentionally absent.
+/// Every tool in `ToolCategory::JiraStructure`. Structure-category schemas
+/// have a different parameter surface from IssueTracker tools (no
+/// `projectId`, no custom fields, etc), so the enricher routes them to a
+/// dedicated branch and skips the IssueTracker enrichment path entirely —
+/// even for `get_structures` and `create_structure`, which have no
+/// `structureId` to enrich but also nothing for the IssueTracker branch to
+/// say about them.
+const STRUCTURE_TOOLS: &[&str] = &[
+    "get_structures",
+    "get_structure_forest",
+    "add_structure_rows",
+    "move_structure_rows",
+    "remove_structure_row",
+    "get_structure_values",
+    "get_structure_views",
+    "save_structure_view",
+    "create_structure",
+];
+
+/// Subset of [`STRUCTURE_TOOLS`] that carry a `structureId` parameter —
+/// the only ones that receive description enrichment today.
 const STRUCTURE_ID_TOOLS: &[&str] = &[
     "get_structure_forest",
     "add_structure_rows",
@@ -79,17 +112,20 @@ const STRUCTURE_ID_TOOLS: &[&str] = &[
 
 impl ToolEnricher for JiraSchemaEnricher {
     fn supported_categories(&self) -> &[ToolCategory] {
-        &[ToolCategory::IssueTracker, ToolCategory::JiraStructure]
+        &self.supported_categories
     }
 
     fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema) {
-        // Structure-category tools live on a different parameter surface than
-        // IssueTracker (no projectId, no custom fields, etc). Handle them on
-        // a dedicated branch and return — the IssueTracker enrichment below
-        // would otherwise try to `remove_params(REMOVE_PARAMS)` on schemas it
-        // does not own.
-        if STRUCTURE_ID_TOOLS.contains(&tool_name) {
-            self.enrich_structure_id(schema);
+        // Structure-category tools early-return regardless of whether they
+        // take `structureId` — the IssueTracker branch below would try to
+        // `remove_params(REMOVE_PARAMS)` / apply `priority`/`issueType` enums
+        // on schemas that do not own those parameters. Only the
+        // `structureId`-taking subset receives description enrichment today;
+        // `get_structures` and `create_structure` simply pass through.
+        if STRUCTURE_TOOLS.contains(&tool_name) {
+            if STRUCTURE_ID_TOOLS.contains(&tool_name) {
+                self.enrich_structure_id(schema);
+            }
             return;
         }
 
@@ -561,8 +597,27 @@ mod tests {
     }
 
     #[test]
-    fn jira_enricher_declares_jira_structure_category() {
+    fn jira_enricher_does_not_advertise_jira_structure_when_no_structures() {
+        // `Executor::list_tools` uses `supported_categories()` as a visibility
+        // filter. Advertising `JiraStructure` unconditionally would surface
+        // the 9 Structure tools on Jira hosts without the plugin — a
+        // regression relative to pre-patch behaviour, where no enricher
+        // claimed the category and the tools were hidden.
         let enricher = JiraSchemaEnricher::new(single_project_metadata());
+        let categories = enricher.supported_categories();
+        assert!(categories.contains(&ToolCategory::IssueTracker));
+        assert!(!categories.contains(&ToolCategory::JiraStructure));
+    }
+
+    #[test]
+    fn jira_enricher_advertises_jira_structure_when_metadata_has_structures() {
+        let enricher = JiraSchemaEnricher::new(metadata_with_structures(vec![
+            crate::metadata::JiraStructureRef {
+                id: 1,
+                name: "Only One".into(),
+                description: None,
+            },
+        ]));
         let categories = enricher.supported_categories();
         assert!(categories.contains(&ToolCategory::IssueTracker));
         assert!(categories.contains(&ToolCategory::JiraStructure));
@@ -666,9 +721,13 @@ mod tests {
 
     #[test]
     fn jira_enricher_does_not_touch_get_structures_or_create_structure() {
-        // These two tools do not take `structureId` — `get_structures`
-        // returns the list, `create_structure` makes a new one. Running the
-        // enricher on them must not invent a `structureId` property.
+        // These two tools carry the `JiraStructure` category but do not take
+        // `structureId`. Previously the IssueTracker branch still ran on
+        // them (because the early-return only covered the 7 id-taking
+        // tools), which risked mutating unrelated params. After the fix
+        // both should pass through unchanged: the enricher must not invent
+        // `structureId` AND must not mutate parameters the Structure tools
+        // actually own (e.g. `name` on `create_structure`).
         let enricher = JiraSchemaEnricher::new(metadata_with_structures(vec![
             crate::metadata::JiraStructureRef {
                 id: 1,
@@ -681,13 +740,26 @@ mod tests {
             let mut schema = ToolSchema::from_json(&json!({
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string" }
+                    "name": { "type": "string", "description": "original" },
+                    "points": { "type": "integer", "description": "must survive" }
                 }
             }));
             enricher.enrich_schema(tool, &mut schema);
             assert!(
                 !schema.properties.contains_key("structureId"),
                 "enricher inserted structureId on {tool}",
+            );
+            // `points` is in REMOVE_PARAMS for the IssueTracker branch —
+            // must stay intact here because we early-return for
+            // Structure-category tools.
+            assert!(
+                schema.properties.contains_key("points"),
+                "enricher dropped `points` on {tool} — IssueTracker branch leaked into Structure handling",
+            );
+            assert_eq!(
+                schema.properties["name"].description.as_deref(),
+                Some("original"),
+                "enricher mutated `name` description on {tool}",
             );
         }
     }
