@@ -22,10 +22,18 @@
 //! println!("{}", output.to_string_with_hints());
 //! ```
 
+pub mod adaptive_config;
 pub mod budget;
+pub mod dedup;
+pub(crate) mod dedup_util;
+pub mod layered_pipeline;
+pub mod mckp_router;
 pub mod page_index;
 pub mod pagination;
+pub mod shape;
 pub mod strategy;
+pub mod telemetry;
+pub mod templates;
 pub mod token_counter;
 pub mod toon;
 pub mod tree;
