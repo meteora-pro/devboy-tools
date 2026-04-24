@@ -600,4 +600,130 @@ mod tests {
         let c = classify("[]");
         assert_eq!(c.shape, Shape::Empty);
     }
+
+    #[test]
+    fn empty_object_is_empty() {
+        let c = classify("{}");
+        assert_eq!(c.shape, Shape::Empty);
+    }
+
+    #[test]
+    fn classifies_array_of_primitives() {
+        let c = classify("[1, 2, 3, 4, 5]");
+        assert_eq!(c.shape, Shape::ArrayOfPrimitives);
+        assert_eq!(c.n_items, Some(5));
+    }
+
+    #[test]
+    fn classifies_heterogeneous_array_as_nested() {
+        // Mixed types → fallthrough to NestedObject treatment.
+        let c = classify(r#"[1, "two", {"three": 3}]"#);
+        assert_eq!(c.shape, Shape::NestedObject);
+    }
+
+    #[test]
+    fn classifies_bullet_list() {
+        let text = "Items:\n- one\n- two\n- three\n";
+        let c = classify(text);
+        assert_eq!(c.shape, Shape::BulletList);
+    }
+
+    #[test]
+    fn classifies_plain_prose_fallback() {
+        let c = classify("Just one sentence, no structure.");
+        assert_eq!(c.shape, Shape::Prose);
+    }
+
+    #[test]
+    fn detects_python_traceback_in_prose() {
+        let text = "Traceback (most recent call last):\n  File \"x.py\", line 1, in <module>\n    raise ValueError(\"bad\")\nValueError: bad\n";
+        let c = classify(text);
+        assert!(c.inner_formats.contains(&InnerFormat::StackTrace));
+    }
+
+    #[test]
+    fn detects_js_style_stack_trace() {
+        let text = "Error occurred\n    at Object.<anonymous> (/foo.js:1:1)\n    at Module._compile\n";
+        let c = classify(text);
+        assert!(c.inner_formats.contains(&InnerFormat::StackTrace));
+    }
+
+    #[test]
+    fn detects_git_diff_header() {
+        let text = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n";
+        let c = classify(text);
+        assert!(c.inner_formats.contains(&InnerFormat::Diff));
+    }
+
+    #[test]
+    fn classifies_nested_object_with_diff_inside() {
+        let text = r#"{"mr_id":42,"diffs":"@@ -1,3 +1,3 @@\n-old\n+new"}"#;
+        let c = classify(text);
+        assert_eq!(c.shape, Shape::FlatObject);
+        assert!(c.inner_formats.contains(&InnerFormat::Diff));
+    }
+
+    #[test]
+    fn detects_md_table_inside_json_string() {
+        let text = r#"{"body":"| a | b |\n|---|---|\n| 1 | 2 |\n"}"#;
+        let c = classify(text);
+        assert!(c.inner_formats.contains(&InnerFormat::MarkdownTable));
+    }
+
+    #[test]
+    fn inner_format_as_tag_covers_all_variants() {
+        // Guards against a new InnerFormat variant forgetting a tag.
+        let variants = [
+            InnerFormat::Url,
+            InnerFormat::Log,
+            InnerFormat::Hash,
+            InnerFormat::Diff,
+            InnerFormat::Markdown,
+            InnerFormat::MarkdownTable,
+            InnerFormat::MarkdownWithCode,
+            InnerFormat::CodeFence,
+            InnerFormat::XmlHtml,
+            InnerFormat::Yaml,
+            InnerFormat::StackTrace,
+            InnerFormat::NumberedList,
+            InnerFormat::InlineJson,
+            InnerFormat::Prose,
+        ];
+        for v in &variants {
+            assert!(!v.as_tag().is_empty(), "missing tag for {v:?}");
+        }
+    }
+
+    #[test]
+    fn array_of_objects_key_stability_detects_drift() {
+        // Two objects with zero key overlap → stability close to 0.
+        let text = r#"[{"a":1,"b":2}, {"c":3,"d":4}]"#;
+        let c = classify(text);
+        assert_eq!(c.shape, Shape::ArrayOfObjects);
+        assert!(
+            c.key_stability.unwrap() < 0.1,
+            "expected low stability, got {:?}",
+            c.key_stability
+        );
+    }
+
+    #[test]
+    fn malformed_json_falls_through_to_text_classifier() {
+        let text = "{ malformed, not json at all";
+        let c = classify(text);
+        // Neither object nor array → classified as prose / text fallback.
+        assert!(matches!(
+            c.shape,
+            Shape::Prose | Shape::BulletList | Shape::CodeBlock | Shape::MarkdownTable
+        ));
+    }
+
+    #[test]
+    fn json_inside_string_opens_up_recursion() {
+        // Very nested JSON containing long URLs — exercise walk_json_strings recursion.
+        let deep = r#"{"a":{"b":{"c":{"d":{"e":"https://nested.example/path/here"}}}}}"#;
+        let c = classify(deep);
+        assert_eq!(c.shape, Shape::NestedObject);
+        assert!(c.inner_formats.contains(&InnerFormat::Url));
+    }
 }

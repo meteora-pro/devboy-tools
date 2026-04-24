@@ -535,4 +535,132 @@ mod tests {
         let o2 = p2.process(input("tc_1", "Bash", None, &body));
         assert_eq!(o2.layer, Layer::L3);
     }
+
+    #[test]
+    fn partition_counter_advances_on_compaction() {
+        let mut p = LayeredPipeline::new("s_part".into(), AdaptiveConfig::default());
+        assert_eq!(p.partition(), 0);
+        p.on_compaction_boundary();
+        assert_eq!(p.partition(), 1);
+        p.on_compaction_boundary();
+        assert_eq!(p.partition(), 2);
+    }
+
+    #[test]
+    fn endpoint_override_disables_dedup() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.endpoint_overrides.insert(
+            "Bash".into(),
+            crate::adaptive_config::EndpointOverride {
+                dedup_enabled: Some(false),
+                ..Default::default()
+            },
+        );
+        let sink = Arc::new(MemorySink::new());
+        let mut p = LayeredPipeline::new("s_disabled".into(), cfg).with_telemetry(sink.clone());
+        let body = "y".repeat(500);
+        p.process(input("tc_1", "Bash", None, &body));
+        let o2 = p.process(input("tc_2", "Bash", None, &body));
+        // dedup disabled → no L0 hint even on identical content
+        assert_eq!(o2.layer, Layer::L3);
+        assert!(!sink.events()[1].is_dedup_hit);
+    }
+
+    #[test]
+    fn per_endpoint_min_body_chars_override() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.endpoint_overrides.insert(
+            "Bash".into(),
+            crate::adaptive_config::EndpointOverride {
+                min_body_chars: Some(50),
+                ..Default::default()
+            },
+        );
+        let mut p = LayeredPipeline::new("s_min".into(), cfg);
+        // 60-char body would be skipped under default 200 but processed under override 50.
+        let body = "z".repeat(60);
+        p.process(input("tc_1", "Bash", None, &body));
+        let o2 = p.process(input("tc_2", "Bash", None, &body));
+        assert_eq!(o2.layer, Layer::L0); // dedup fires because we cached tc_1
+    }
+
+    #[test]
+    fn sample_rate_zero_skips_all_events() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.telemetry.sample_rate = 0.0;
+        let sink = Arc::new(MemorySink::new());
+        let mut p = LayeredPipeline::new("s_rate0".into(), cfg).with_telemetry(sink.clone());
+        let body = "q".repeat(500);
+        for i in 0..5 {
+            p.process(input(&format!("tc_{i}"), "Bash", None, &body));
+        }
+        assert_eq!(sink.events().len(), 0);
+    }
+
+    #[test]
+    fn sample_rate_half_keeps_every_other() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.telemetry.sample_rate = 0.5;
+        let sink = Arc::new(MemorySink::new());
+        let mut p = LayeredPipeline::new("s_half".into(), cfg).with_telemetry(sink.clone());
+        let body = "w".repeat(500);
+        for i in 0..10 {
+            p.process(input(&format!("tc_{i}"), "Bash", None, &body));
+        }
+        // Stride sampler keeps 1-in-2 events (events 2, 4, 6, 8, 10).
+        assert_eq!(sink.events().len(), 5);
+    }
+
+    #[test]
+    fn hint_verbosity_terse_is_honoured() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.dedup.hint_verbosity = crate::adaptive_config::HintVerbosity::Terse;
+        let mut p = LayeredPipeline::new("s_terse".into(), cfg);
+        let body = "terse body of sufficient length ".repeat(20);
+        p.process(input("tc_1", "Bash", None, &body));
+        let o2 = p.process(input("tc_2", "Bash", None, &body));
+        assert_eq!(o2.layer, Layer::L0);
+        assert!(!o2.output.contains("byte-identical"));
+    }
+
+    #[test]
+    fn inner_formats_populated_in_telemetry() {
+        let sink = Arc::new(MemorySink::new());
+        let mut p =
+            LayeredPipeline::new("s_inner".into(), AdaptiveConfig::default()).with_telemetry(sink.clone());
+        // Response with embedded URL — classifier should populate inner_formats.
+        let body = format!(
+            "Line 1\nSee https://example.com/resource for details.\n{}",
+            "filler ".repeat(50)
+        );
+        p.process(input("tc_1", "Bash", None, &body));
+        let events = sink.events();
+        assert!(!events[0].inner_formats.is_empty(), "inner_formats should populate from classifier");
+        assert!(events[0].inner_formats.iter().any(|f| f == "url"));
+    }
+
+    #[test]
+    fn cache_capacity_grows_via_endpoint_lru_override() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.endpoint_overrides.insert(
+            "ep".into(),
+            crate::adaptive_config::EndpointOverride {
+                lru_size: Some(12),
+                ..Default::default()
+            },
+        );
+        // Pipeline is constructed with the larger capacity — no direct getter,
+        // but we can verify by inserting many distinct responses and confirming
+        // that the 12th+ entry evicts the 1st.
+        let mut p = LayeredPipeline::new("s_lru".into(), cfg);
+        let distinct: Vec<String> = (0..13)
+            .map(|i| format!("{}{}", i, "x".repeat(300)))
+            .collect();
+        for (i, b) in distinct.iter().enumerate() {
+            p.process(input(&format!("tc_{i}"), "Bash", None, b));
+        }
+        // First entry now evicted (capacity 12), so recalling it should be Fresh.
+        let o = p.process(input("tc_recheck", "Bash", None, &distinct[0]));
+        assert_eq!(o.layer, Layer::L3);
+    }
 }

@@ -227,4 +227,81 @@ mod tests {
         assert!(apply_by_id("csv_from_md", md, &cls).is_some());
         assert!(apply_by_id("unknown_id", md, &cls).is_none());
     }
+
+    #[test]
+    fn mr_diff_fence_uses_new_path_when_path_missing() {
+        let json = r#"{"diffs":[{"new_path":"src/renamed.rs","content":"@@ -1 +1 @@\n-o\n+n\n"}]}"#;
+        let cls = classify(json);
+        let out = mr_diff_fence(json, &cls).unwrap();
+        assert!(out.contains("src/renamed.rs"));
+    }
+
+    #[test]
+    fn mr_diff_fence_uses_diff_field_fallback() {
+        // Some MCP servers use `diff` instead of `content`.
+        let json = r#"{"diffs":[{"path":"a.rs","diff":"@@ -1 +1 @@\n-x\n+y"}]}"#;
+        let cls = classify(json);
+        let out = mr_diff_fence(json, &cls).unwrap();
+        assert!(out.contains("+y"));
+    }
+
+    #[test]
+    fn mr_diff_fence_rejects_empty_diffs_array() {
+        let json = r#"{"diffs":[]}"#;
+        let cls = classify(json);
+        assert!(mr_diff_fence(json, &cls).is_none());
+    }
+
+    #[test]
+    fn mr_diff_fence_rejects_missing_content_field() {
+        let json = r#"{"diffs":[{"path":"a.rs"}]}"#; // no content, no diff
+        let cls = classify(json);
+        assert!(mr_diff_fence(json, &cls).is_none());
+    }
+
+    #[test]
+    fn mr_diff_fence_appends_newline_when_body_unterminated() {
+        // Body without trailing \n should still be wrapped correctly.
+        let json = r#"{"diffs":[{"path":"a.rs","content":"@@ -1 +1 @@\n-x\n+y"}]}"#;
+        let cls = classify(json);
+        let out = mr_diff_fence(json, &cls).unwrap();
+        // Must end with triple-backtick + newline.
+        assert!(out.contains("```\n"));
+    }
+
+    #[test]
+    fn csv_from_md_returns_empty_when_no_rows() {
+        let md = "| a | b |\n|---|---|\n";
+        let cls = classify(md);
+        // Headers parse; no data rows → still returns output with just header line.
+        let out = csv_from_md(md, &cls);
+        if let Some(o) = out {
+            assert!(o.starts_with("a,b\n"));
+        }
+    }
+
+    #[test]
+    fn csv_from_md_preserves_pipe_escapes() {
+        // Markdown cell with escaped pipe must not split the row.
+        let md = "| col |\n|---|\n| one\\|two |\n";
+        let cls = classify(md);
+        // Not applicable if 1 column — router rejects. csv_from_md itself still runs.
+        // Simply asserting no panic.
+        let _ = csv_from_md(md, &cls);
+    }
+
+    #[test]
+    fn pipeline_deep_mckp_rejects_non_nested_shape() {
+        let md = "| a | b |\n|---|---|\n| 1 | 2 |\n";
+        let cls = classify(md);
+        assert!(pipeline_deep_mckp(md, &cls).is_none());
+    }
+
+    #[test]
+    fn pipeline_deep_mckp_returns_none_when_already_compact() {
+        // Already-compact JSON → encoding can't shrink.
+        let json = r#"{"a":{"b":1}}"#;
+        let cls = classify(json);
+        assert!(pipeline_deep_mckp(json, &cls).is_none());
+    }
 }

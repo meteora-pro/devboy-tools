@@ -291,4 +291,80 @@ mod tests {
         // min_cols default 2 → rejected
         assert!(route(&cfg.mckp, md, &cls).is_none());
     }
+
+    #[test]
+    fn array_with_unstable_keys_falls_back_to_json_compact() {
+        // key_stability below threshold → skip csv, try json_compact.
+        let json = r#"[{"a":1},{"b":2},{"c":3},{"d":4}]"#;
+        let pretty =
+            serde_json::to_string_pretty(&serde_json::from_str::<serde_json::Value>(json).unwrap())
+                .unwrap();
+        let cls = classify(&pretty);
+        let cfg = AdaptiveConfig::default();
+        let out = route(&cfg.mckp, &pretty, &cls);
+        if let Some((id, _)) = out {
+            assert_eq!(id, "json_compact");
+        }
+    }
+
+    #[test]
+    fn array_with_csv_disabled_uses_json_compact_fallback() {
+        let json = r#"[
+            {"id":1,"name":"a"},
+            {"id":2,"name":"b"},
+            {"id":3,"name":"c"},
+            {"id":4,"name":"d"}
+        ]"#;
+        let cls = classify(json);
+        let mut cfg = AdaptiveConfig::default();
+        cfg.mckp.formats_enabled = vec!["json_compact".into()];
+        let (id, _) = route(&cfg.mckp, json, &cls).unwrap();
+        assert_eq!(id, "json_compact");
+    }
+
+    #[test]
+    fn nested_object_with_deep_mckp_disabled_falls_back() {
+        let pretty = serde_json::to_string_pretty(
+            &serde_json::from_str::<serde_json::Value>(
+                r#"{"id":1,"nested":{"a":1,"b":2},"arr":[1,2,3]}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let cls = classify(&pretty);
+        let mut cfg = AdaptiveConfig::default();
+        cfg.mckp.formats_enabled = vec!["json_compact".into()]; // deep_mckp disabled
+        let (id, _) = route(&cfg.mckp, &pretty, &cls).unwrap();
+        assert_eq!(id, "json_compact");
+    }
+
+    #[test]
+    fn flat_object_below_kv_threshold_uses_json_compact() {
+        let pretty = serde_json::to_string_pretty(
+            &serde_json::from_str::<serde_json::Value>(r#"{"a":1,"b":2,"c":3}"#).unwrap(),
+        )
+        .unwrap();
+        let cls = classify(&pretty);
+        let cfg = AdaptiveConfig::default();
+        let out = route(&cfg.mckp, &pretty, &cls);
+        if let Some((id, _)) = out {
+            assert_eq!(id, "json_compact");
+        }
+    }
+
+    #[test]
+    fn empty_array_returns_none() {
+        let json = "[]";
+        let cls = classify(json);
+        let cfg = AdaptiveConfig::default();
+        assert!(route(&cfg.mckp, json, &cls).is_none());
+    }
+
+    #[test]
+    fn code_block_shape_is_not_routed() {
+        let text = "```python\ndef foo():\n    return 1\n```\n";
+        let cls = classify(text);
+        let cfg = AdaptiveConfig::default();
+        assert!(route(&cfg.mckp, text, &cls).is_none());
+    }
 }

@@ -486,4 +486,77 @@ mod tests {
         let pid = std::process::id();
         std::env::temp_dir().join(format!("devboy_tele_test_{pid}_{n}.jsonl"))
     }
+
+    #[test]
+    fn memory_sink_accessors() {
+        let sink = MemorySink::new();
+        assert!(sink.is_empty());
+        assert_eq!(sink.len(), 0);
+        sink.record(&sample_event()).unwrap();
+        assert!(!sink.is_empty());
+        assert_eq!(sink.len(), 1);
+        // flush() is a no-op on MemorySink
+        sink.flush().unwrap();
+    }
+
+    #[test]
+    fn memory_sink_captures_summaries() {
+        let sink = MemorySink::new();
+        let summary = SessionSummary {
+            session_hash: "abcd".into(),
+            total_events: 7,
+            savings_pct: 0.33,
+            ..Default::default()
+        };
+        sink.record_summary(&summary).unwrap();
+        assert_eq!(sink.summaries().len(), 1);
+        assert_eq!(sink.summaries()[0].total_events, 7);
+    }
+
+    #[test]
+    fn jsonl_sink_path_getter() {
+        let tmp = tempfile();
+        let sink = JsonlSink::open(&tmp).unwrap();
+        assert_eq!(sink.path(), tmp.as_path());
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn jsonl_sink_creates_parent_dirs() {
+        let parent = std::env::temp_dir().join(format!("devboy_tele_nested_{}", std::process::id()));
+        let tmp = parent.join("deep/sub/events.jsonl");
+        assert!(!tmp.parent().unwrap().exists());
+        let sink = JsonlSink::open(&tmp).unwrap();
+        sink.record(&sample_event()).unwrap();
+        sink.flush().unwrap();
+        assert!(tmp.exists());
+        std::fs::remove_dir_all(&parent).ok();
+    }
+
+    #[test]
+    fn shape_and_layer_defaults() {
+        assert_eq!(Shape::default(), Shape::Unknown);
+        assert_eq!(Layer::default(), Layer::L3);
+    }
+
+    #[test]
+    fn shape_serde_snake_case() {
+        let j = serde_json::to_string(&Shape::MarkdownTable).unwrap();
+        assert_eq!(j, "\"markdown_table\"");
+        let parsed: Shape = serde_json::from_str("\"array_of_objects\"").unwrap();
+        assert_eq!(parsed, Shape::ArrayOfObjects);
+    }
+
+    #[test]
+    fn null_sink_flush_is_noop() {
+        let sink = NullSink;
+        sink.flush().unwrap();
+    }
+
+    #[test]
+    fn telemetry_error_display() {
+        let io_err = TelemetryError::Io(std::io::Error::other("boom"));
+        let msg = format!("{io_err}");
+        assert!(msg.contains("telemetry"));
+    }
 }

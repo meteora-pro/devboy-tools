@@ -558,4 +558,165 @@ mod tests {
         assert_eq!(o.lru_size, Some(10));
         assert_eq!(o.template_id.as_deref(), Some("custom"));
     }
+
+    #[test]
+    fn effective_dedup_enabled_falls_back_correctly() {
+        let mut cfg = AdaptiveConfig::default();
+        // No override → default true.
+        assert!(cfg.effective_dedup_enabled("anything"));
+        // enabled_per_endpoint override → respected.
+        cfg.dedup.enabled_per_endpoint.insert("a".into(), false);
+        assert!(!cfg.effective_dedup_enabled("a"));
+        // endpoint_overrides takes precedence over enabled_per_endpoint.
+        cfg.endpoint_overrides.insert(
+            "a".into(),
+            EndpointOverride {
+                dedup_enabled: Some(true),
+                ..Default::default()
+            },
+        );
+        assert!(cfg.effective_dedup_enabled("a"));
+    }
+
+    #[test]
+    fn effective_min_body_chars_uses_override() {
+        let mut cfg = AdaptiveConfig::default();
+        assert_eq!(cfg.effective_min_body_chars("x"), cfg.dedup.min_body_chars);
+        cfg.endpoint_overrides.insert(
+            "x".into(),
+            EndpointOverride {
+                min_body_chars: Some(42),
+                ..Default::default()
+            },
+        );
+        assert_eq!(cfg.effective_min_body_chars("x"), 42);
+    }
+
+    #[test]
+    fn effective_lru_size_uses_override_when_larger() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.dedup.lru_size = 5;
+        cfg.endpoint_overrides.insert(
+            "big".into(),
+            EndpointOverride {
+                lru_size: Some(15),
+                ..Default::default()
+            },
+        );
+        // Override larger than global → use override.
+        assert_eq!(cfg.effective_lru_size("big"), 15);
+        // Override smaller → use global (cache must accommodate everyone).
+        cfg.endpoint_overrides.insert(
+            "small".into(),
+            EndpointOverride {
+                lru_size: Some(2),
+                ..Default::default()
+            },
+        );
+        assert_eq!(cfg.effective_lru_size("small"), 5);
+    }
+
+    #[test]
+    fn max_lru_size_across_all_overrides() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.dedup.lru_size = 5;
+        cfg.endpoint_overrides.insert(
+            "a".into(),
+            EndpointOverride {
+                lru_size: Some(12),
+                ..Default::default()
+            },
+        );
+        cfg.endpoint_overrides.insert(
+            "b".into(),
+            EndpointOverride {
+                lru_size: Some(8),
+                ..Default::default()
+            },
+        );
+        assert_eq!(cfg.max_lru_size(), 12);
+    }
+
+    #[test]
+    fn effective_template_prefers_endpoint_override() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.templates
+            .endpoint_overrides
+            .insert("x".into(), "csv_from_md".into());
+        assert_eq!(cfg.effective_template("x"), Some("csv_from_md"));
+        cfg.endpoint_overrides.insert(
+            "x".into(),
+            EndpointOverride {
+                template_id: Some("custom_tpl".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(cfg.effective_template("x"), Some("custom_tpl"));
+    }
+
+    #[test]
+    fn merge_right_wins_overwrites_sections() {
+        let mut a = AdaptiveConfig::default();
+        a.endpoint_overrides.insert(
+            "keep".into(),
+            EndpointOverride {
+                dedup_enabled: Some(false),
+                ..Default::default()
+            },
+        );
+        let mut b = AdaptiveConfig::default();
+        b.dedup.lru_size = 42;
+        b.endpoint_overrides.insert(
+            "keep".into(),
+            EndpointOverride {
+                dedup_enabled: Some(true),
+                ..Default::default()
+            },
+        );
+        b.endpoint_overrides.insert(
+            "new".into(),
+            EndpointOverride {
+                dedup_enabled: Some(true),
+                ..Default::default()
+            },
+        );
+        a.merge_right_wins(b);
+        assert_eq!(a.dedup.lru_size, 42);
+        assert_eq!(
+            a.endpoint_overrides["keep"].dedup_enabled,
+            Some(true)
+        );
+        assert!(a.endpoint_overrides.contains_key("new"));
+    }
+
+    #[test]
+    fn hint_verbosity_to_runtime_mapping() {
+        assert_eq!(
+            HintVerbosity::Terse.to_runtime(),
+            crate::dedup::HintVerbosity::Terse
+        );
+        assert_eq!(
+            HintVerbosity::Standard.to_runtime(),
+            crate::dedup::HintVerbosity::Standard
+        );
+        assert_eq!(
+            HintVerbosity::Verbose.to_runtime(),
+            crate::dedup::HintVerbosity::Verbose
+        );
+    }
+
+    #[test]
+    fn mckp_config_format_disabled_is_respected() {
+        let mut cfg = MckpConfig::default();
+        assert!(cfg.format_enabled("csv"));
+        cfg.formats_enabled = vec![];
+        assert!(!cfg.format_enabled("csv"));
+    }
+
+    #[test]
+    fn templates_is_template_active_false_for_unknown() {
+        let t = TemplatesConfig::default();
+        assert!(!t.is_template_active("not_a_real_template"));
+        assert!(t.is_template_active("csv_from_md"));
+    }
 }
