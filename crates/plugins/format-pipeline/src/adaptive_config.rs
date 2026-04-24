@@ -138,6 +138,66 @@ impl AdaptiveConfig {
         Ok(())
     }
 
+    /// Effective L0-dedup enabled flag for `endpoint`. Reads
+    /// `endpoint_overrides[endpoint].dedup_enabled` first, then falls back to
+    /// `dedup.enabled_per_endpoint`, then to the permissive default (`true`).
+    pub fn effective_dedup_enabled(&self, endpoint: &str) -> bool {
+        if let Some(o) = self.endpoint_overrides.get(endpoint)
+            && let Some(v) = o.dedup_enabled
+        {
+            return v;
+        }
+        self.dedup.enabled_for(endpoint)
+    }
+
+    /// Effective `min_body_chars` threshold for `endpoint`. Per-endpoint
+    /// override wins; otherwise the global `dedup.min_body_chars` applies.
+    pub fn effective_min_body_chars(&self, endpoint: &str) -> usize {
+        self.endpoint_overrides
+            .get(endpoint)
+            .and_then(|o| o.min_body_chars)
+            .unwrap_or(self.dedup.min_body_chars)
+    }
+
+    /// Effective LRU capacity for `endpoint`. The base cache uses the global
+    /// `dedup.lru_size`; if an endpoint requests a *larger* capacity the
+    /// caller should widen the shared cache accordingly. The hint is read
+    /// once at construction time.
+    pub fn effective_lru_size(&self, endpoint: &str) -> usize {
+        let per_ep = self
+            .endpoint_overrides
+            .get(endpoint)
+            .and_then(|o| o.lru_size);
+        match per_ep {
+            Some(n) => n.max(self.dedup.lru_size),
+            None => self.dedup.lru_size,
+        }
+    }
+
+    /// Maximum LRU capacity requested across all endpoint overrides and the
+    /// global `dedup.lru_size`. Used at `LayeredPipeline::new` time to size
+    /// the shared cache.
+    pub fn max_lru_size(&self) -> usize {
+        let mut n = self.dedup.lru_size;
+        for o in self.endpoint_overrides.values() {
+            if let Some(v) = o.lru_size {
+                n = n.max(v);
+            }
+        }
+        n.max(1)
+    }
+
+    /// Effective L1 template id for `endpoint`. Per-endpoint override wins;
+    /// falls back to `templates.endpoint_overrides`.
+    pub fn effective_template(&self, endpoint: &str) -> Option<&str> {
+        if let Some(o) = self.endpoint_overrides.get(endpoint)
+            && let Some(t) = o.template_id.as_deref()
+        {
+            return Some(t);
+        }
+        self.templates.template_for(endpoint)
+    }
+
     /// Merge another config into self. Fields present in `other` override `self`.
     /// Endpoint overrides are unioned (right-wins on collisions).
     pub fn merge_right_wins(&mut self, other: AdaptiveConfig) {
@@ -194,10 +254,18 @@ impl Default for DedupConfig {
 impl DedupConfig {
     /// Is L0 dedup active for this endpoint? Defaults to true if unspecified.
     pub fn enabled_for(&self, endpoint: &str) -> bool {
-        self.enabled_per_endpoint.get(endpoint).copied().unwrap_or(true)
+        self.enabled_per_endpoint
+            .get(endpoint)
+            .copied()
+            .unwrap_or(true)
     }
 }
 
+/// Verbosity of emitted reference hints.
+///
+/// Wire-compatible with [`crate::dedup::HintVerbosity`]; kept as a separate
+/// type so the config schema stays independent of the runtime module.
+/// Convert via [`HintVerbosity::to_runtime`] before rendering.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HintVerbosity {
@@ -208,6 +276,18 @@ pub enum HintVerbosity {
     Standard,
     /// `> [ref: abc1234, byte-identical, from: tool_name]` (~15 tokens)
     Verbose,
+}
+
+impl HintVerbosity {
+    /// Convert to the runtime enum used by
+    /// [`crate::dedup::render_reference_hint_with`].
+    pub fn to_runtime(self) -> crate::dedup::HintVerbosity {
+        match self {
+            Self::Terse => crate::dedup::HintVerbosity::Terse,
+            Self::Standard => crate::dedup::HintVerbosity::Standard,
+            Self::Verbose => crate::dedup::HintVerbosity::Verbose,
+        }
+    }
 }
 
 // ─── L1 TEMPLATES ───────────────────────────────────────────────────────────
@@ -429,15 +509,13 @@ mod tests {
             ..Default::default()
         };
         let s = toml::to_string(&cfg).unwrap();
-        let err = toml::from_str::<AdaptiveConfig>(&s)
-            .ok()
-            .and_then(|c| {
-                if c.schema_version != CURRENT_SCHEMA_VERSION {
-                    Some(c.schema_version)
-                } else {
-                    None
-                }
-            });
+        let err = toml::from_str::<AdaptiveConfig>(&s).ok().and_then(|c| {
+            if c.schema_version != CURRENT_SCHEMA_VERSION {
+                Some(c.schema_version)
+            } else {
+                None
+            }
+        });
         assert_eq!(err, Some(99));
     }
 

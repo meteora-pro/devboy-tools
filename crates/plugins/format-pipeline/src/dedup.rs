@@ -66,9 +66,7 @@ pub enum DedupDecision {
     Fresh,
     /// Content matches a cached response — caller should emit a reference
     /// hint (see [`render_reference_hint`]) instead of the full payload.
-    Hint {
-        reference_tool_call_id: String,
-    },
+    Hint { reference_tool_call_id: String },
 }
 
 /// Classification used to drive mutation-based invalidation.
@@ -149,14 +147,23 @@ impl DedupCache {
         self.entries.is_empty()
     }
 
-    /// Non-mutating lookup. Returns `Hint` iff a matching entry exists.
-    pub fn check(&self, hash: &ContentHash) -> DedupDecision {
-        for e in &self.entries {
-            if &e.hash == hash {
-                return DedupDecision::Hint {
-                    reference_tool_call_id: e.tool_call_id.clone(),
-                };
-            }
+    /// LRU lookup that refreshes recency on hits.
+    ///
+    /// A match promotes the entry to the most-recently-used position, so
+    /// repeated references protect frequently-used content from eviction
+    /// when new responses are inserted.
+    pub fn check(&mut self, hash: &ContentHash) -> DedupDecision {
+        if let Some(idx) = self.entries.iter().position(|e| &e.hash == hash) {
+            // Move the matched entry to the back (most-recent position).
+            let entry = self
+                .entries
+                .remove(idx)
+                .expect("index came from VecDeque::position");
+            let reference_tool_call_id = entry.tool_call_id.clone();
+            self.entries.push_back(entry);
+            return DedupDecision::Hint {
+                reference_tool_call_id,
+            };
         }
         DedupDecision::Fresh
     }
@@ -214,18 +221,67 @@ impl Default for DedupCache {
     }
 }
 
-/// Render a reference hint that replaces a duplicate response.
+/// Verbosity level for rendered reference hints.
 ///
-/// The hint is a terse Markdown blockquote (~15 tokens):
+/// Verbosity is tunable via `AdaptiveConfig::dedup::hint_verbosity` so
+/// deployments can trade one or two tokens of clarity for explicit
+/// byte-identity / source-tool metadata.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum HintVerbosity {
+    /// `> [ref: tc_42]` (~8 tokens)
+    Terse,
+    /// `> [ref: tc_42, byte-identical]` (~11 tokens, default)
+    #[default]
+    Standard,
+    /// `> [ref: tc_42, byte-identical, from: Read]` (~15 tokens)
+    Verbose,
+}
+
+/// Render a reference hint using the default (Standard) verbosity.
+///
+/// Kept as a convenience wrapper around [`render_reference_hint_with`]
+/// for callers that do not thread configuration yet.
+pub fn render_reference_hint(tool_call_id: &str) -> String {
+    render_reference_hint_with(tool_call_id, HintVerbosity::Standard, None)
+}
+
+/// Render a reference hint at the requested verbosity.
+///
+/// Forms (measured with `cl100k_base`):
 ///
 /// ```text
-/// > [ref: tc_42]
+/// Terse     > [ref: tc_42]                               ~8 tok
+/// Standard  > [ref: tc_42, byte-identical]               ~11 tok
+/// Verbose   > [ref: tc_42, byte-identical, from: Read]   ~15 tok
 /// ```
 ///
-/// Most LLMs treat blockquotes as metadata and retrieve the referenced
-/// response from their earlier context without re-fetching.
-pub fn render_reference_hint(tool_call_id: &str) -> String {
-    format!("> [ref: {}]", tool_call_id)
+/// `source_tool`, when provided, is included only in the `Verbose`
+/// form — earlier verbosities intentionally drop it to stay terse.
+pub fn render_reference_hint_with(
+    tool_call_id: &str,
+    verbosity: HintVerbosity,
+    source_tool: Option<ToolKind>,
+) -> String {
+    match verbosity {
+        HintVerbosity::Terse => format!("> [ref: {}]", tool_call_id),
+        HintVerbosity::Standard => format!("> [ref: {}, byte-identical]", tool_call_id),
+        HintVerbosity::Verbose => {
+            let tool_tag = match source_tool {
+                Some(ToolKind::FileRead) => "file-read",
+                Some(ToolKind::FileMutate) => "file-mutate",
+                Some(ToolKind::Other) => "other",
+                None => "",
+            };
+            if tool_tag.is_empty() {
+                format!("> [ref: {}, byte-identical]", tool_call_id)
+            } else {
+                format!(
+                    "> [ref: {}, byte-identical, from: {}]",
+                    tool_call_id, tool_tag
+                )
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -282,12 +338,7 @@ mod tests {
     fn mutation_on_different_file_preserves_entry() {
         let mut c = DedupCache::with_capacity(5);
         let content = h("irrelevant file body");
-        c.insert(
-            content,
-            "tc_1",
-            ToolKind::FileRead,
-            Some("hash_a".into()),
-        );
+        c.insert(content, "tc_1", ToolKind::FileRead, Some("hash_a".into()));
         assert_eq!(c.invalidate_file("hash_b"), 0);
         assert!(matches!(c.check(&content), DedupDecision::Hint { .. }));
     }
@@ -312,7 +363,10 @@ mod tests {
         assert_eq!(ToolKind::from_tool_name("Write"), ToolKind::FileMutate);
         assert_eq!(ToolKind::from_tool_name("MultiEdit"), ToolKind::FileMutate);
         assert_eq!(ToolKind::from_tool_name("Bash"), ToolKind::Other);
-        assert_eq!(ToolKind::from_tool_name("mcp__x__get_issues"), ToolKind::Other);
+        assert_eq!(
+            ToolKind::from_tool_name("mcp__x__get_issues"),
+            ToolKind::Other
+        );
     }
 
     #[test]
@@ -320,8 +374,25 @@ mod tests {
         let hint = render_reference_hint("tc_42");
         assert!(hint.starts_with("> [ref:"));
         assert!(hint.contains("tc_42"));
+        assert!(hint.contains("byte-identical"));
         // Hint must stay small vs any realistic response.
-        assert!(hint.len() < 30);
+        assert!(hint.len() < 40);
+    }
+
+    #[test]
+    fn hint_verbosity_variants() {
+        let terse = render_reference_hint_with("tc_1", HintVerbosity::Terse, None);
+        assert_eq!(terse, "> [ref: tc_1]");
+
+        let standard =
+            render_reference_hint_with("tc_1", HintVerbosity::Standard, Some(ToolKind::FileRead));
+        // source_tool is dropped below Verbose
+        assert_eq!(standard, "> [ref: tc_1, byte-identical]");
+
+        let verbose =
+            render_reference_hint_with("tc_1", HintVerbosity::Verbose, Some(ToolKind::FileRead));
+        assert!(verbose.contains("byte-identical"));
+        assert!(verbose.contains("file-read"));
     }
 
     #[test]

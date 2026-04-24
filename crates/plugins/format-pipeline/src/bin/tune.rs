@@ -227,14 +227,31 @@ fn scan_jsonl_dir(dir: &Path, out: &mut CorpusStats) -> Result<usize, String> {
         };
         let br = BufReader::new(f);
         for line in br.lines().map_while(|r| r.ok()) {
-            if line.trim().is_empty() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
                 continue;
             }
-            // Skip non-event lines (session_summary wrappers).
-            if line.starts_with("{\"type\":") {
+            // Parse once as a generic JSON value so we can robustly distinguish
+            // PipelineEvent records from session_summary wrappers — even if
+            // future schema additions introduce a `type` field on
+            // PipelineEvent itself.
+            let value: serde_json::Value = match serde_json::from_str(trimmed) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let Some(obj) = value.as_object() else {
+                continue;
+            };
+            // Explicit session_summary wrapper: `{"type":"session_summary","data":{…}}`.
+            if obj.get("data").is_some()
+                && obj
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|t| t == "session_summary")
+            {
                 continue;
             }
-            if let Ok(ev) = serde_json::from_str::<PipelineEvent>(&line) {
+            if let Ok(ev) = serde_json::from_value::<PipelineEvent>(value) {
                 out.update(&ev);
                 read += 1;
             }
@@ -297,8 +314,7 @@ fn apply_tuning_rules(cfg: &mut AdaptiveConfig, stats: &CorpusStats) {
 
     // R3: global LRU sizing based on compaction frequency.
     if stats.total_events > 0 {
-        let compaction_rate =
-            stats.compaction_events as f32 / stats.total_events as f32;
+        let compaction_rate = stats.compaction_events as f32 / stats.total_events as f32;
         if compaction_rate > 0.05 {
             cfg.dedup.lru_size = 10;
         } else if stats.total_sessions > 0
@@ -315,8 +331,7 @@ fn apply_tuning_rules(cfg: &mut AdaptiveConfig, stats: &CorpusStats) {
 
     // R5: min_body_chars based on p25 (approx via mean / 4).
     if stats.total_events > 0 {
-        let mean_chars = stats.total_baseline_tokens as f32 * 4.0
-            / stats.total_events as f32;
+        let mean_chars = stats.total_baseline_tokens as f32 * 4.0 / stats.total_events as f32;
         let suggested = (mean_chars * 0.25) as usize;
         cfg.dedup.min_body_chars = suggested.clamp(100, 500);
     }
@@ -354,7 +369,8 @@ fn cmd_analyze(args: &[String]) -> Result<(), String> {
     let mut cfg = AdaptiveConfig::load_or_default(&output)
         .map_err(|e| format!("load existing config: {e}"))?;
     apply_tuning_rules(&mut cfg, &corpus);
-    cfg.save(&output).map_err(|e| format!("write config: {e}"))?;
+    cfg.save(&output)
+        .map_err(|e| format!("write config: {e}"))?;
 
     eprintln!("# tuned config → {}", output.display());
     print_top_endpoints(&corpus, 10);
@@ -366,7 +382,10 @@ fn cmd_show(args: &[String]) -> Result<(), String> {
         .map(PathBuf::from)
         .unwrap_or_else(default_output);
     let cfg = AdaptiveConfig::load(&cfg_path).map_err(|e| format!("load config: {e}"))?;
-    println!("{}", toml::to_string_pretty(&cfg).map_err(|e| e.to_string())?);
+    println!(
+        "{}",
+        toml::to_string_pretty(&cfg).map_err(|e| e.to_string())?
+    );
     Ok(())
 }
 

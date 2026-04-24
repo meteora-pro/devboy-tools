@@ -148,11 +148,13 @@ fn try_kv_or_compact(
 ) -> Option<(&'static str, String)> {
     let min_fields = config.shape_thresholds.flat_object_min_fields;
     let fields = cls.n_fields.unwrap_or(0);
-    if config.format_enabled("kv") && fields >= min_fields
+    if config.format_enabled("kv")
+        && fields >= min_fields
         && let Some(body) = kv_format(raw)
-            && body.len() < raw.len() {
-                return Some(("kv", body));
-            }
+        && body.len() < raw.len()
+    {
+        return Some(("kv", body));
+    }
     json_compact_fallback(config, raw, "flat")
 }
 
@@ -201,7 +203,8 @@ mod tests {
 
     #[test]
     fn markdown_table_routes_to_csv_from_md() {
-        let md = "| id | name | status |\n|---|---|---|\n| 1 | a | x |\n| 2 | b | y |\n| 3 | c | z |\n";
+        let md =
+            "| id | name | status |\n|---|---|---|\n| 1 | a | x |\n| 2 | b | y |\n| 3 | c | z |\n";
         let cls = classify(md);
         let cfg = AdaptiveConfig::default();
         let (id, body) = route(&cfg.mckp, md, &cls).unwrap();
@@ -240,11 +243,9 @@ mod tests {
     fn flat_object_with_many_fields_uses_kv() {
         // 9 fields triggers kv_min_fields=8 threshold.
         let json = r#"{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"j":10}"#;
-        let pretty = format!(
-            "{}",
+        let pretty =
             serde_json::to_string_pretty(&serde_json::from_str::<serde_json::Value>(json).unwrap())
-                .unwrap()
-        );
+                .unwrap();
         let cls = classify(&pretty);
         let cfg = AdaptiveConfig::default();
         if let Some((id, _)) = route(&cfg.mckp, &pretty, &cls) {
@@ -255,10 +256,9 @@ mod tests {
     #[test]
     fn nested_object_falls_through_deep_mckp() {
         let json = r#"{"id":1,"nested":{"a":1,"b":2},"arr":[1,2,3]}"#;
-        let pretty = serde_json::to_string_pretty(
-            &serde_json::from_str::<serde_json::Value>(json).unwrap(),
-        )
-        .unwrap();
+        let pretty =
+            serde_json::to_string_pretty(&serde_json::from_str::<serde_json::Value>(json).unwrap())
+                .unwrap();
         let cls = classify(&pretty);
         let cfg = AdaptiveConfig::default();
         let (id, body) = route(&cfg.mckp, &pretty, &cls).unwrap();

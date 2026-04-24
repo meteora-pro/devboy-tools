@@ -112,7 +112,10 @@ fn has_md_table(text: &str) -> Option<(usize, usize)> {
 }
 
 fn has_code_fence(text: &str) -> bool {
-    text.lines().filter(|l| l.trim_start().starts_with("```")).count() >= 2
+    text.lines()
+        .filter(|l| l.trim_start().starts_with("```"))
+        .count()
+        >= 2
 }
 
 fn has_numbered_list(text: &str) -> bool {
@@ -223,8 +226,7 @@ fn has_diff(text: &str) -> bool {
 }
 
 fn has_stack_trace(text: &str) -> bool {
-    text.contains("Traceback (most recent call last):")
-        || text.contains("\n    at ")
+    text.contains("Traceback (most recent call last):") || text.contains("\n    at ")
 }
 
 // ─── JSON CLASSIFIER ────────────────────────────────────────────────────
@@ -241,16 +243,18 @@ fn classify_json(val: &Value) -> (Shape, JsonDetails) {
             let all_objects = items.iter().all(|v| v.is_object());
             if all_objects {
                 details.key_stability = Some(compute_key_stability(items));
-                details.has_nested_values =
-                    items.iter().take(20).any(|v| {
-                        if let Value::Object(m) = v {
-                            m.values().any(|vv| vv.is_object() || vv.is_array())
-                        } else {
-                            false
-                        }
-                    });
+                details.has_nested_values = items.iter().take(20).any(|v| {
+                    if let Value::Object(m) = v {
+                        m.values().any(|vv| vv.is_object() || vv.is_array())
+                    } else {
+                        false
+                    }
+                });
                 (Shape::ArrayOfObjects, details)
-            } else if items.iter().all(|v| v.is_string() || v.is_number() || v.is_boolean() || v.is_null()) {
+            } else if items
+                .iter()
+                .all(|v| v.is_string() || v.is_number() || v.is_boolean() || v.is_null())
+            {
                 (Shape::ArrayOfPrimitives, details)
             } else {
                 (Shape::NestedObject, details) // heterogeneous array → treat as nested
@@ -302,7 +306,7 @@ fn compute_key_stability(items: &[Value]) -> f32 {
             jac.push(inter.len() as f32 / union.len() as f32);
         }
     }
-    
+
     jac.iter().sum::<f32>() / jac.len() as f32
 }
 
@@ -325,21 +329,22 @@ pub fn classify(content: &str) -> ClassifiedResponse {
     // Try JSON first.
     let trimmed = content.trim_start();
     if (trimmed.starts_with('{') || trimmed.starts_with('['))
-        && let Ok(val) = serde_json::from_str::<Value>(trimmed) {
-            let (shape, details) = classify_json(&val);
-            let inner = scan_inner_formats_in_json(&val);
-            return ClassifiedResponse {
-                shape,
-                raw_chars,
-                inner_formats: inner,
-                md_n_cols: None,
-                md_n_rows: None,
-                n_items: details.n_items,
-                key_stability: details.key_stability,
-                n_fields: details.n_fields,
-                depth_max: details.depth_max,
-            };
-        }
+        && let Ok(val) = serde_json::from_str::<Value>(trimmed)
+    {
+        let (shape, details) = classify_json(&val);
+        let inner = scan_inner_formats_in_json(&val);
+        return ClassifiedResponse {
+            shape,
+            raw_chars,
+            inner_formats: inner,
+            md_n_cols: None,
+            md_n_rows: None,
+            n_items: details.n_items,
+            key_stability: details.key_stability,
+            n_fields: details.n_fields,
+            depth_max: details.depth_max,
+        };
+    }
 
     // Text-level classification.
     if let Some((cols, rows)) = has_md_table(content) {
@@ -465,7 +470,11 @@ fn scan_inner_formats_in_json(val: &Value) -> Vec<InnerFormat> {
     out
 }
 
-fn walk_json_strings(val: &Value, seen: &mut std::collections::HashSet<&'static str>, depth: usize) {
+fn walk_json_strings(
+    val: &Value,
+    seen: &mut std::collections::HashSet<&'static str>,
+    depth: usize,
+) {
     if depth > 5 {
         return;
     }

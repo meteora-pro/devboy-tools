@@ -52,12 +52,7 @@ fn bench_check(c: &mut Criterion) {
         let mut cache = DedupCache::with_capacity(cap);
         for i in 0..cap {
             let h = content_hash(format!("response_{i}").as_bytes());
-            cache.insert(
-                h,
-                format!("tc_{i}"),
-                ToolKind::Other,
-                None,
-            );
+            cache.insert(h, format!("tc_{i}"), ToolKind::Other, None);
         }
         let miss_hash = content_hash(b"miss_payload_never_inserted");
         group.bench_with_input(BenchmarkId::new("miss", cap), &cap, |b, _| {
@@ -194,7 +189,9 @@ fn bench_end_to_end(c: &mut Criterion) {
                     let decision = cache.check(&h);
                     // 3. emit hint or insert fresh
                     match decision {
-                        DedupDecision::Hint { reference_tool_call_id } => {
+                        DedupDecision::Hint {
+                            reference_tool_call_id,
+                        } => {
                             let out = render_reference_hint(&reference_tool_call_id);
                             black_box(out);
                         }

@@ -969,8 +969,12 @@ def derive_endpoint_class(tool: str, input_dict: Any) -> str:
 
 
 def _content_hash(text: str) -> str:
-    """8-byte (16 hex chars) content fingerprint. Not leaky — pure digest."""
-    return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    """16-byte (32 hex chars) content fingerprint — 128-bit prefix of SHA-256.
+
+    Width matches `PipelineEvent.content_sha_prefix_hex` in the Rust crate
+    and the fingerprint size claimed in Paper 2. Not leaky — pure digest.
+    """
+    return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:32]
 
 
 def _file_path_hash(tool: str, input_dict: Any) -> str:
