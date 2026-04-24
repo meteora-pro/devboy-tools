@@ -1650,6 +1650,19 @@ impl IssueProvider for JiraClient {
         let effective_project = input.project_id.unwrap_or_else(|| self.project_key.clone());
         let effective_issue_type = input.issue_type.unwrap_or_else(|| "Task".to_string());
 
+        // Issue #197: pass through component IDs to the payload.
+        let components = if input.components.is_empty() {
+            None
+        } else {
+            Some(
+                input
+                    .components
+                    .into_iter()
+                    .map(|id| crate::types::ComponentRef { id })
+                    .collect(),
+            )
+        };
+
         let payload = CreateIssuePayload {
             fields: CreateIssueFields {
                 project: ProjectKey {
@@ -1663,6 +1676,7 @@ impl IssueProvider for JiraClient {
                 labels,
                 priority,
                 assignee,
+                components,
             },
         };
 
@@ -1737,12 +1751,21 @@ impl IssueProvider for JiraClient {
 
         let labels = input.labels;
 
+        // Issue #197: components. `None` → untouched, `Some([])` → clear.
+        let components = input.components.map(|ids| {
+            ids.into_iter()
+                .map(|id| crate::types::ComponentRef { id })
+                .collect()
+        });
+        let has_components = components.is_some();
+
         let fields = UpdateIssueFields {
             summary: input.title,
             description,
             labels,
             priority,
             assignee,
+            components,
         };
 
         let has_custom_fields = input.custom_fields.as_ref().is_some_and(|v| {
@@ -1756,6 +1779,7 @@ impl IssueProvider for JiraClient {
             || fields.labels.is_some()
             || fields.priority.is_some()
             || fields.assignee.is_some()
+            || has_components
             || has_custom_fields;
 
         if has_field_updates {
@@ -3752,6 +3776,134 @@ mod tests {
             assert_eq!(issue.key, "jira#PROJ-1");
         }
 
+        /// Issue #197 — components pass-through on create.
+        #[tokio::test]
+        async fn test_create_issue_with_components() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issue")
+                    .body_includes("\"components\":[{\"id\":\"10001\"},{\"id\":\"10002\"}]");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10010",
+                    "key": "PROJ-10"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-10");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10010",
+                    "key": "PROJ-10",
+                    "fields": {
+                        "summary": "With components",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-05T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "With components".to_string(),
+                    components: vec!["10001".to_string(), "10002".to_string()],
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-10");
+        }
+
+        /// Issue #197 — empty components list on create must not emit a
+        /// `"components": []` into the payload (confusing to server).
+        #[tokio::test]
+        async fn test_create_issue_without_components_omits_field() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST).path("/issue").matches(|req| {
+                    let body = String::from_utf8_lossy(req.body().as_ref());
+                    !body.contains("\"components\"")
+                });
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10011",
+                    "key": "PROJ-11"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-11");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10011",
+                    "key": "PROJ-11",
+                    "fields": {
+                        "summary": "No components",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-05T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "No components".to_string(),
+                    components: vec![],
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-11");
+        }
+
+        /// Issue #197 — update_issue with components replaces them.
+        /// `Some(vec![])` clears; `None` does not touch (handled upstream).
+        #[tokio::test]
+        async fn test_update_issue_replaces_components() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/issue/PROJ-1")
+                    .body_includes("\"components\":[{\"id\":\"10001\"}]");
+                then.status(204);
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "summary": "Updated",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .update_issue(
+                    "PROJ-1",
+                    UpdateIssueInput {
+                        components: Some(vec!["10001".to_string()]),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
         #[tokio::test]
         async fn test_update_issue() {
             let server = MockServer::start();
@@ -4703,6 +4855,7 @@ mod tests {
                     labels: None,
                     priority: None,
                     assignee: None,
+                    components: None,
                 },
             };
 
@@ -4731,6 +4884,7 @@ mod tests {
                     labels: None,
                     priority: None,
                     assignee: None,
+                    components: None,
                 },
             };
 
@@ -4755,6 +4909,7 @@ mod tests {
                     labels: None,
                     priority: None,
                     assignee: None,
+                    components: None,
                 },
             };
 
