@@ -19,17 +19,80 @@ impl JiraSchemaEnricher {
     pub fn new(metadata: JiraMetadata) -> Self {
         Self { metadata }
     }
+
+    /// Enrich the `structureId` parameter on the 7 Structure tools that
+    /// accept it. When the metadata carries a list of accessible structures
+    /// we embed `id (name) — description` for each one in the parameter's
+    /// description so an LLM sees the concrete IDs it can pick from.
+    ///
+    /// JSON Schema's `enum` on an integer-typed property is technically
+    /// supported but `PropertySchema.enum_values` only holds `Vec<String>`
+    /// today; widening that would be a cross-workspace breaking change.
+    /// The description-based enrichment mirrors the existing priority-alias
+    /// hint and is enough for LLM tool use — the strict enum can follow if
+    /// `PropertySchema` grows a typed enum value type.
+    ///
+    /// When `metadata.structures` is empty the schema is left untouched so
+    /// hosts without the Structure plugin continue to see the original
+    /// "Use get_structures to find it" description.
+    fn enrich_structure_id(&self, schema: &mut ToolSchema) {
+        if self.metadata.structures.is_empty() {
+            return;
+        }
+
+        let mut entries: Vec<&crate::metadata::JiraStructureRef> =
+            self.metadata.structures.iter().collect();
+        entries.sort_by_key(|s| s.id);
+
+        let list = entries
+            .iter()
+            .map(|s| match s.description.as_deref() {
+                Some(desc) if !desc.is_empty() => format!("{} ({}) — {}", s.id, s.name, desc),
+                _ => format!("{} ({})", s.id, s.name),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let desc = format!(
+            "Structure ID. Must be one of the accessible structures: {list}. Pick the numeric ID (the part before parentheses).",
+        );
+        schema.set_description("structureId", &desc);
+    }
 }
 
 const REMOVE_PARAMS: &[&str] = &["points"];
 const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["stateCategory"];
 
+/// Structure tools that take a `structureId` parameter and therefore benefit
+/// from enum/description enrichment when the metadata carries a list of
+/// accessible structures. `get_structures` (no input) and `create_structure`
+/// (creates a new id) are intentionally absent.
+const STRUCTURE_ID_TOOLS: &[&str] = &[
+    "get_structure_forest",
+    "add_structure_rows",
+    "move_structure_rows",
+    "remove_structure_row",
+    "get_structure_values",
+    "get_structure_views",
+    "save_structure_view",
+];
+
 impl ToolEnricher for JiraSchemaEnricher {
     fn supported_categories(&self) -> &[ToolCategory] {
-        &[ToolCategory::IssueTracker]
+        &[ToolCategory::IssueTracker, ToolCategory::JiraStructure]
     }
 
     fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema) {
+        // Structure-category tools live on a different parameter surface than
+        // IssueTracker (no projectId, no custom fields, etc). Handle them on
+        // a dedicated branch and return — the IssueTracker enrichment below
+        // would otherwise try to `remove_params(REMOVE_PARAMS)` on schemas it
+        // does not own.
+        if STRUCTURE_ID_TOOLS.contains(&tool_name) {
+            self.enrich_structure_id(schema);
+            return;
+        }
+
         schema.remove_params(REMOVE_PARAMS);
 
         if tool_name == "get_issues" {
@@ -277,6 +340,7 @@ mod tests {
         JiraMetadata {
             flavor: JiraFlavor::Cloud,
             projects,
+            structures: vec![],
         }
     }
 
@@ -471,5 +535,186 @@ mod tests {
         enricher.enrich_schema("get_issues", &mut schema);
         assert!(!schema.properties.contains_key("stateCategory"));
         assert!(schema.properties.contains_key("state"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Structure tool enrichment (depends on JiraMetadata.structures)
+    // -------------------------------------------------------------------------
+
+    fn metadata_with_structures(refs: Vec<crate::metadata::JiraStructureRef>) -> JiraMetadata {
+        let mut meta = single_project_metadata();
+        meta.structures = refs;
+        meta
+    }
+
+    fn structureid_schema() -> ToolSchema {
+        ToolSchema::from_json(&json!({
+            "type": "object",
+            "properties": {
+                "structureId": {
+                    "type": "integer",
+                    "description": "Structure ID. Use get_structures to find it."
+                }
+            },
+            "required": ["structureId"],
+        }))
+    }
+
+    #[test]
+    fn jira_enricher_declares_jira_structure_category() {
+        let enricher = JiraSchemaEnricher::new(single_project_metadata());
+        let categories = enricher.supported_categories();
+        assert!(categories.contains(&ToolCategory::IssueTracker));
+        assert!(categories.contains(&ToolCategory::JiraStructure));
+    }
+
+    #[test]
+    fn jira_enricher_populates_structureid_description_for_all_seven_tools() {
+        let enricher = JiraSchemaEnricher::new(metadata_with_structures(vec![
+            crate::metadata::JiraStructureRef {
+                id: 1,
+                name: "Q1 Planning".into(),
+                description: Some("Quarter 1 plan".into()),
+            },
+            crate::metadata::JiraStructureRef {
+                id: 7,
+                name: "Sprint Board".into(),
+                description: None,
+            },
+        ]));
+
+        for tool in [
+            "get_structure_forest",
+            "add_structure_rows",
+            "move_structure_rows",
+            "remove_structure_row",
+            "get_structure_values",
+            "get_structure_views",
+            "save_structure_view",
+        ] {
+            let mut schema = structureid_schema();
+            enricher.enrich_schema(tool, &mut schema);
+
+            let prop = schema.properties.get("structureId").unwrap();
+            let desc = prop.description.as_deref().unwrap_or("");
+            assert!(
+                desc.contains("Must be one of the accessible structures"),
+                "tool={tool} desc={desc}",
+            );
+            assert!(
+                desc.contains("1 (Q1 Planning) — Quarter 1 plan"),
+                "tool={tool}"
+            );
+            assert!(desc.contains("7 (Sprint Board)"), "tool={tool}");
+        }
+    }
+
+    #[test]
+    fn jira_enricher_sorts_structures_by_id_in_description() {
+        let enricher = JiraSchemaEnricher::new(metadata_with_structures(vec![
+            crate::metadata::JiraStructureRef {
+                id: 42,
+                name: "Roadmap".into(),
+                description: None,
+            },
+            crate::metadata::JiraStructureRef {
+                id: 1,
+                name: "Q1".into(),
+                description: None,
+            },
+            crate::metadata::JiraStructureRef {
+                id: 7,
+                name: "Sprint".into(),
+                description: None,
+            },
+        ]));
+
+        let mut schema = structureid_schema();
+        enricher.enrich_schema("get_structure_forest", &mut schema);
+
+        let desc = schema.properties["structureId"]
+            .description
+            .clone()
+            .unwrap();
+        let idx_1 = desc.find("1 (Q1)").expect("id 1 missing");
+        let idx_7 = desc.find("7 (Sprint)").expect("id 7 missing");
+        let idx_42 = desc.find("42 (Roadmap)").expect("id 42 missing");
+        assert!(
+            idx_1 < idx_7 && idx_7 < idx_42,
+            "structures not sorted: {desc}"
+        );
+    }
+
+    #[test]
+    fn jira_enricher_leaves_schema_untouched_when_no_structures() {
+        let enricher = JiraSchemaEnricher::new(metadata_with_structures(vec![]));
+
+        let mut schema = structureid_schema();
+        let original_desc = schema.properties["structureId"]
+            .description
+            .clone()
+            .unwrap();
+
+        enricher.enrich_schema("get_structure_forest", &mut schema);
+
+        let desc_after = schema.properties["structureId"]
+            .description
+            .clone()
+            .unwrap();
+        assert_eq!(desc_after, original_desc);
+    }
+
+    #[test]
+    fn jira_enricher_does_not_touch_get_structures_or_create_structure() {
+        // These two tools do not take `structureId` — `get_structures`
+        // returns the list, `create_structure` makes a new one. Running the
+        // enricher on them must not invent a `structureId` property.
+        let enricher = JiraSchemaEnricher::new(metadata_with_structures(vec![
+            crate::metadata::JiraStructureRef {
+                id: 1,
+                name: "One".into(),
+                description: None,
+            },
+        ]));
+
+        for tool in ["get_structures", "create_structure"] {
+            let mut schema = ToolSchema::from_json(&json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" }
+                }
+            }));
+            enricher.enrich_schema(tool, &mut schema);
+            assert!(
+                !schema.properties.contains_key("structureId"),
+                "enricher inserted structureId on {tool}",
+            );
+        }
+    }
+
+    #[test]
+    fn jira_enricher_skips_issuetracker_branch_for_structure_tools() {
+        // Structure schemas have different parameters from IssueTracker tools
+        // (e.g. no `points`). The Structure branch must early-return so the
+        // IssueTracker `remove_params`/enum steps do not accidentally mutate
+        // unrelated parameters.
+        let enricher = JiraSchemaEnricher::new(metadata_with_structures(vec![
+            crate::metadata::JiraStructureRef {
+                id: 1,
+                name: "One".into(),
+                description: None,
+            },
+        ]));
+
+        let mut schema = ToolSchema::from_json(&json!({
+            "type": "object",
+            "properties": {
+                "structureId": { "type": "integer", "description": "old" },
+                "points": { "type": "integer", "description": "must survive" }
+            }
+        }));
+        enricher.enrich_schema("get_structure_forest", &mut schema);
+
+        assert!(schema.properties.contains_key("points"));
     }
 }

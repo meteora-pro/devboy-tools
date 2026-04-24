@@ -13,6 +13,16 @@ pub struct JiraMetadata {
     pub flavor: JiraFlavor,
     /// Per-project metadata keyed by project key (e.g., "PROJ").
     pub projects: std::collections::HashMap<String, JiraProjectMetadata>,
+    /// Structures the integration user can see across the Jira instance.
+    ///
+    /// `/rest/structure/2.0/structure` is **not** keyed by Jira project — it
+    /// returns every structure the caller has read access to. Placed here
+    /// (on the instance-level metadata) rather than on `JiraProjectMetadata`.
+    /// Empty when the Structure plugin is not installed or the user has no
+    /// read access; that is the graceful-degrade signal the schema enricher
+    /// keys on to decide whether to enrich Structure tools.
+    #[serde(default)]
+    pub structures: Vec<JiraStructureRef>,
 }
 
 fn default_flavor() -> JiraFlavor {
@@ -128,6 +138,19 @@ pub enum JiraFieldType {
 pub struct JiraFieldOption {
     pub id: String,
     pub name: String,
+}
+
+/// Reference to a Jira Structure the integration user can access.
+///
+/// Populated from `/rest/structure/2.0/structure`. Stored in
+/// [`JiraMetadata::structures`] and consumed by `JiraSchemaEnricher` to
+/// populate the `structureId` enum on the 7 Structure tools that take it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JiraStructureRef {
+    pub id: u64,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 impl JiraCustomField {
@@ -317,6 +340,7 @@ mod tests {
             )]
             .into_iter()
             .collect(),
+            structures: vec![],
         };
         assert!(meta.is_single_project());
     }
@@ -376,8 +400,49 @@ mod tests {
             ]
             .into_iter()
             .collect(),
+            structures: vec![],
         };
         let types = meta.all_issue_types();
         assert_eq!(types, vec!["Bug", "Epic", "Task"]); // sorted, deduped, no subtask
+    }
+
+    #[test]
+    fn jira_metadata_deserialises_without_structures_field() {
+        // Back-compat: pre-existing persisted metadata does not carry the
+        // new `structures` field. `#[serde(default)]` must fill in an
+        // empty vec so old payloads still round-trip cleanly.
+        let raw = serde_json::json!({
+            "flavor": "cloud",
+            "projects": {}
+        });
+        let meta: JiraMetadata = serde_json::from_value(raw).unwrap();
+        assert!(meta.structures.is_empty());
+    }
+
+    #[test]
+    fn jira_metadata_roundtrips_structures_list() {
+        let meta = JiraMetadata {
+            flavor: JiraFlavor::Cloud,
+            projects: Default::default(),
+            structures: vec![
+                JiraStructureRef {
+                    id: 7,
+                    name: "Q1 Planning".into(),
+                    description: Some("Top-level roadmap".into()),
+                },
+                JiraStructureRef {
+                    id: 42,
+                    name: "Sprint Board".into(),
+                    description: None,
+                },
+            ],
+        };
+
+        let json = serde_json::to_value(&meta).unwrap();
+        // `description: None` is skipped on serialize for compactness.
+        assert_eq!(json["structures"][1].get("description"), None);
+
+        let restored: JiraMetadata = serde_json::from_value(json).unwrap();
+        assert_eq!(restored.structures, meta.structures);
     }
 }
