@@ -710,6 +710,10 @@ struct CreateIssueParams {
     project_id: Option<String>,
     #[serde(rename = "issueType")]
     issue_type: Option<String>,
+    /// Jira component names (issue #197). Serde rejects non-string-array
+    /// input instead of silently dropping entries (Copilot review on PR #205).
+    #[serde(default)]
+    components: Vec<String>,
 }
 
 async fn execute_create_issue(
@@ -730,6 +734,7 @@ async fn execute_create_issue(
         project_id: params.project_id,
         issue_type: params.issue_type,
         custom_fields,
+        components: params.components,
     };
     let issue = provider.create_issue(input).await?;
 
@@ -757,6 +762,11 @@ struct UpdateIssueParams {
     #[serde(rename = "parentId")]
     parent_id: Option<String>,
     markdown: Option<bool>,
+    /// Jira component names (issue #197). `None` (key absent) leaves
+    /// components untouched; `Some([])` clears all; `Some([...])` replaces.
+    /// Serde-parsed so non-array / non-string input errors fast.
+    #[serde(default)]
+    components: Option<Vec<String>>,
 }
 
 async fn execute_update_issue(
@@ -776,6 +786,7 @@ async fn execute_update_issue(
         parent_id: params.parent_id,
         markdown: params.markdown.unwrap_or(true),
         custom_fields,
+        components: params.components,
     };
     let key = params.key;
     let issue = provider.update_issue(&key, input).await?;
@@ -1338,6 +1349,7 @@ async fn execute_create_epic(
         project_id: None,
         issue_type: None,
         custom_fields: args.get("customFields").cloned(),
+        components: Vec::new(),
     };
     let issue = provider.create_issue(input).await?;
 
@@ -1424,6 +1436,7 @@ async fn execute_update_epic(
         parent_id: None,
         markdown: params.markdown.unwrap_or(true),
         custom_fields: args.get("customFields").cloned(),
+        components: None,
     };
     let key = params.key;
     let issue = provider.update_issue(&key, input).await?;

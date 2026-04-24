@@ -576,6 +576,33 @@ impl JiraClient {
         handle_structure_response(response).await
     }
 
+    /// Build a URL for the Jira Agile REST API (`/rest/agile/1.0/*`).
+    /// Issue #198.
+    fn agile_url(&self, endpoint: &str) -> String {
+        let root = instance_url_from_base(&self.base_url);
+        format!("{}/rest/agile/1.0{}", root, endpoint)
+    }
+
+    /// Authenticated GET against the Agile REST API.
+    ///
+    /// Uses generic `get` — Agile endpoints return JSON and we don't want
+    /// the Structure-plugin-specific error hint (Copilot review on PR #205)
+    /// leaking into Agile failures.
+    async fn agile_get<T: serde::de::DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
+        let url = self.agile_url(endpoint);
+        debug!(url = %url, "Jira Agile GET");
+        self.get(&url).await
+    }
+
+    /// Authenticated POST against the Agile REST API with no response
+    /// body (Agile's `/sprint/{id}/issue` returns 204). Uses
+    /// `post_no_content` for the same reason as `agile_get`.
+    async fn agile_post_void<B: serde::Serialize>(&self, endpoint: &str, body: &B) -> Result<()> {
+        let url = self.agile_url(endpoint);
+        debug!(url = %url, "Jira Agile POST");
+        self.post_no_content(&url, body).await
+    }
+
     /// Make an authenticated DELETE request to the Structure API.
     async fn structure_delete_request(&self, endpoint: &str) -> Result<()> {
         let url = self.structure_url(endpoint);
@@ -1650,6 +1677,19 @@ impl IssueProvider for JiraClient {
         let effective_project = input.project_id.unwrap_or_else(|| self.project_key.clone());
         let effective_issue_type = input.issue_type.unwrap_or_else(|| "Task".to_string());
 
+        // Issue #197: pass through component IDs to the payload.
+        let components = if input.components.is_empty() {
+            None
+        } else {
+            Some(
+                input
+                    .components
+                    .into_iter()
+                    .map(|name| crate::types::ComponentRef { name })
+                    .collect(),
+            )
+        };
+
         let payload = CreateIssuePayload {
             fields: CreateIssueFields {
                 project: ProjectKey {
@@ -1663,6 +1703,7 @@ impl IssueProvider for JiraClient {
                 labels,
                 priority,
                 assignee,
+                components,
             },
         };
 
@@ -1737,12 +1778,21 @@ impl IssueProvider for JiraClient {
 
         let labels = input.labels;
 
+        // Issue #197: components. `None` → untouched, `Some([])` → clear.
+        let components = input.components.map(|ids| {
+            ids.into_iter()
+                .map(|name| crate::types::ComponentRef { name })
+                .collect()
+        });
+        let has_components = components.is_some();
+
         let fields = UpdateIssueFields {
             summary: input.title,
             description,
             labels,
             priority,
             assignee,
+            components,
         };
 
         let has_custom_fields = input.custom_fields.as_ref().is_some_and(|v| {
@@ -1756,6 +1806,7 @@ impl IssueProvider for JiraClient {
             || fields.labels.is_some()
             || fields.priority.is_some()
             || fields.assignee.is_some()
+            || has_components
             || has_custom_fields;
 
         if has_field_updates {
@@ -2332,6 +2383,179 @@ impl IssueProvider for JiraClient {
         })
     }
 
+    // --- Structure generators (issue #179) -----------------------------
+
+    async fn get_structure_generators(
+        &self,
+        structure_id: u64,
+    ) -> Result<ProviderResult<devboy_core::StructureGenerator>> {
+        #[derive(serde::Deserialize)]
+        struct Resp {
+            #[serde(default)]
+            generators: Vec<RawGenerator>,
+        }
+        #[derive(serde::Deserialize)]
+        struct RawGenerator {
+            id: String,
+            #[serde(rename = "type")]
+            generator_type: String,
+            #[serde(default)]
+            spec: serde_json::Value,
+        }
+        let resp: Resp = self
+            .structure_get(&format!("/structure/{}/generator", structure_id))
+            .await?;
+        let items: Vec<devboy_core::StructureGenerator> = resp
+            .generators
+            .into_iter()
+            .map(|g| devboy_core::StructureGenerator {
+                id: g.id,
+                generator_type: g.generator_type,
+                spec: g.spec,
+            })
+            .collect();
+        Ok(items.into())
+    }
+
+    async fn add_structure_generator(
+        &self,
+        input: devboy_core::AddStructureGeneratorInput,
+    ) -> Result<devboy_core::StructureGenerator> {
+        // Typed response so missing `id`/`type` surface as a deserialise
+        // error instead of silent empty strings (Copilot review on PR #205).
+        #[derive(serde::Deserialize)]
+        struct Resp {
+            id: String,
+            #[serde(rename = "type")]
+            generator_type: String,
+            #[serde(default)]
+            spec: serde_json::Value,
+        }
+        let body = serde_json::json!({
+            "type": input.generator_type,
+            "spec": input.spec,
+        });
+        let resp: Resp = self
+            .structure_post(
+                &format!("/structure/{}/generator", input.structure_id),
+                &body,
+            )
+            .await?;
+        Ok(devboy_core::StructureGenerator {
+            id: resp.id,
+            generator_type: resp.generator_type,
+            spec: resp.spec,
+        })
+    }
+
+    async fn sync_structure_generator(
+        &self,
+        input: devboy_core::SyncStructureGeneratorInput,
+    ) -> Result<()> {
+        let body = serde_json::json!({});
+        let _: serde_json::Value = self
+            .structure_post(
+                &format!(
+                    "/structure/{}/generator/{}/sync",
+                    input.structure_id, input.generator_id
+                ),
+                &body,
+            )
+            .await?;
+        Ok(())
+    }
+
+    // --- Structure delete + automation (issue #180) --------------------
+
+    async fn delete_structure(&self, structure_id: u64) -> Result<()> {
+        self.structure_delete_request(&format!("/structure/{}", structure_id))
+            .await
+    }
+
+    async fn update_structure_automation(
+        &self,
+        input: devboy_core::UpdateStructureAutomationInput,
+    ) -> Result<()> {
+        // `automation_id = Some(id)` → rule-scoped PUT; `None` → replace
+        // the whole automation collection (Copilot review on PR #205).
+        let endpoint = match input.automation_id.as_deref() {
+            Some(aid) => format!("/structure/{}/automation/{}", input.structure_id, aid),
+            None => format!("/structure/{}/automation", input.structure_id),
+        };
+        let _: serde_json::Value = self.structure_put(&endpoint, &input.config).await?;
+        Ok(())
+    }
+
+    async fn trigger_structure_automation(&self, structure_id: u64) -> Result<()> {
+        let body = serde_json::json!({});
+        let _: serde_json::Value = self
+            .structure_post(
+                &format!("/structure/{}/automation/run", structure_id),
+                &body,
+            )
+            .await?;
+        Ok(())
+    }
+
+    // --- Agile / Sprint (issue #198) -----------------------------------
+
+    async fn get_board_sprints(
+        &self,
+        board_id: u64,
+        state: devboy_core::SprintState,
+    ) -> Result<ProviderResult<devboy_core::Sprint>> {
+        // Walk Jira Agile pagination (`startAt` + `isLast`) so callers on
+        // boards with many closed/future sprints get the full list
+        // (Codex review on PR #205).
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Resp {
+            #[serde(default)]
+            is_last: bool,
+            #[serde(default)]
+            values: Vec<devboy_core::Sprint>,
+        }
+        // Cap at 5k sprints — plenty for any realistic board, prevents
+        // an infinite loop if `isLast` is ever misreported.
+        const MAX_SPRINTS: usize = 5_000;
+        const PAGE_SIZE: u32 = 50;
+
+        let state_param = state
+            .as_query_value()
+            .map(|s| format!("&state={}", s))
+            .unwrap_or_default();
+
+        let mut sprints: Vec<devboy_core::Sprint> = Vec::new();
+        let mut start_at: u32 = 0;
+        loop {
+            let endpoint = format!(
+                "/board/{}/sprint?startAt={}&maxResults={}{}",
+                board_id, start_at, PAGE_SIZE, state_param
+            );
+            let resp: Resp = self.agile_get(&endpoint).await?;
+            let fetched = resp.values.len() as u32;
+            sprints.extend(resp.values);
+            if resp.is_last || fetched == 0 || sprints.len() >= MAX_SPRINTS {
+                break;
+            }
+            start_at += fetched;
+        }
+        Ok(sprints.into())
+    }
+
+    async fn assign_to_sprint(&self, input: devboy_core::AssignToSprintInput) -> Result<()> {
+        // Jira accepts issue keys in the form `["PROJ-1", ...]`. Our
+        // provider-normalised keys may carry a `jira#` prefix — strip it.
+        let issues: Vec<String> = input
+            .issue_keys
+            .into_iter()
+            .map(|k| parse_jira_key(&k).to_string())
+            .collect();
+        let body = serde_json::json!({ "issues": issues });
+        self.agile_post_void(&format!("/sprint/{}/issue", input.sprint_id), &body)
+            .await
+    }
+
     fn provider_name(&self) -> &'static str {
         "jira"
     }
@@ -2357,6 +2581,39 @@ impl Provider for JiraClient {
         let url = format!("{}/myself", self.base_url);
         let jira_user: JiraUser = self.get(&url).await?;
         Ok(map_user(Some(&jira_user)).unwrap_or_default())
+    }
+}
+
+// Issue #177 — UserProvider. Jira exposes user lookup via /user?accountId
+// (Cloud) or /user?username (Self-Hosted); email lookup uses /user/search.
+#[async_trait]
+impl devboy_core::UserProvider for JiraClient {
+    fn provider_name(&self) -> &'static str {
+        "jira"
+    }
+
+    async fn get_user_profile(&self, user_id: &str) -> Result<User> {
+        let url = match self.flavor {
+            JiraFlavor::Cloud => format!("{}/user?accountId={}", self.base_url, user_id),
+            JiraFlavor::SelfHosted => format!("{}/user?username={}", self.base_url, user_id),
+        };
+        let jira_user: JiraUser = self.get(&url).await?;
+        map_user(Some(&jira_user))
+            .ok_or_else(|| Error::InvalidData("Jira /user returned no user".to_string()))
+    }
+
+    async fn lookup_user_by_email(&self, email: &str) -> Result<Option<User>> {
+        // /user/search accepts `query=` on Cloud (searches display name /
+        // email) and `username=` on Self-Hosted. Email is the more useful
+        // parameter for cross-provider correlation.
+        let url = match self.flavor {
+            JiraFlavor::Cloud => format!("{}/user/search?query={}", self.base_url, email),
+            JiraFlavor::SelfHosted => {
+                format!("{}/user/search?username={}", self.base_url, email)
+            }
+        };
+        let users: Vec<JiraUser> = self.get(&url).await?;
+        Ok(users.into_iter().find_map(|u| map_user(Some(&u))))
     }
 }
 
@@ -3752,6 +4009,134 @@ mod tests {
             assert_eq!(issue.key, "jira#PROJ-1");
         }
 
+        /// Issue #197 — components pass-through on create.
+        #[tokio::test]
+        async fn test_create_issue_with_components() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST).path("/issue").body_includes(
+                    "\"components\":[{\"name\":\"Backend\"},{\"name\":\"Frontend\"}]",
+                );
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10010",
+                    "key": "PROJ-10"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-10");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10010",
+                    "key": "PROJ-10",
+                    "fields": {
+                        "summary": "With components",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-05T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "With components".to_string(),
+                    components: vec!["Backend".to_string(), "Frontend".to_string()],
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-10");
+        }
+
+        /// Issue #197 — empty components list on create must not emit a
+        /// `"components": []` into the payload (confusing to server).
+        #[tokio::test]
+        async fn test_create_issue_without_components_omits_field() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST).path("/issue").is_true(|req| {
+                    let body = String::from_utf8_lossy(req.body().as_ref());
+                    !body.contains("\"components\"")
+                });
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10011",
+                    "key": "PROJ-11"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-11");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10011",
+                    "key": "PROJ-11",
+                    "fields": {
+                        "summary": "No components",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-05T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "No components".to_string(),
+                    components: vec![],
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-11");
+        }
+
+        /// Issue #197 — update_issue with components replaces them.
+        /// `Some(vec![])` clears; `None` does not touch (handled upstream).
+        #[tokio::test]
+        async fn test_update_issue_replaces_components() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/issue/PROJ-1")
+                    .body_includes("\"components\":[{\"name\":\"Backend\"}]");
+                then.status(204);
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "summary": "Updated",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .update_issue(
+                    "PROJ-1",
+                    UpdateIssueInput {
+                        components: Some(vec!["Backend".to_string()]),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
         #[tokio::test]
         async fn test_update_issue() {
             let server = MockServer::start();
@@ -4703,6 +5088,7 @@ mod tests {
                     labels: None,
                     priority: None,
                     assignee: None,
+                    components: None,
                 },
             };
 
@@ -4731,6 +5117,7 @@ mod tests {
                     labels: None,
                     priority: None,
                     assignee: None,
+                    components: None,
                 },
             };
 
@@ -4755,6 +5142,7 @@ mod tests {
                     labels: None,
                     priority: None,
                     assignee: None,
+                    components: None,
                 },
             };
 
@@ -6003,6 +6391,261 @@ mod tests {
                 .await
                 .expect_err("403 must not be swallowed");
             assert!(matches!(err, Error::Forbidden(_)), "got {err:?}");
+        }
+
+        // =====================================================================
+        // Structure generators — issue #179
+        // =====================================================================
+
+        #[tokio::test]
+        async fn test_structure_generator_lifecycle() {
+            let server = MockServer::start();
+
+            // GET list
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/rest/structure/2.0/structure/1/generator");
+                then.status(200).json_body(serde_json::json!({
+                    "generators": [
+                        { "id": "g1", "type": "jql", "spec": {"query": "project = PROJ"} }
+                    ]
+                }));
+            });
+            // POST add
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/rest/structure/2.0/structure/1/generator")
+                    .body_includes("\"type\":\"agile-board\"");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "g2",
+                    "type": "agile-board",
+                    "spec": {"boardId": 42}
+                }));
+            });
+            // POST sync
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/rest/structure/2.0/structure/1/generator/g2/sync");
+                then.status(200).json_body(serde_json::json!({}));
+            });
+
+            let client = create_client(&server);
+
+            let list = client.get_structure_generators(1).await.unwrap();
+            assert_eq!(list.items.len(), 1);
+            assert_eq!(list.items[0].generator_type, "jql");
+
+            let added = client
+                .add_structure_generator(devboy_core::AddStructureGeneratorInput {
+                    structure_id: 1,
+                    generator_type: "agile-board".into(),
+                    spec: serde_json::json!({"boardId": 42}),
+                })
+                .await
+                .unwrap();
+            assert_eq!(added.id, "g2");
+
+            client
+                .sync_structure_generator(devboy_core::SyncStructureGeneratorInput {
+                    structure_id: 1,
+                    generator_id: "g2".into(),
+                })
+                .await
+                .unwrap();
+        }
+
+        // =====================================================================
+        // Structure delete + automation — issue #180
+        // =====================================================================
+
+        #[tokio::test]
+        async fn test_delete_structure() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(DELETE).path("/rest/structure/2.0/structure/7");
+                then.status(204);
+            });
+
+            let client = create_client(&server);
+            client.delete_structure(7).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_structure_automation() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/rest/structure/2.0/structure/5/automation")
+                    .body_includes("\"enabled\":true");
+                then.status(200).json_body(serde_json::json!({}));
+            });
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/rest/structure/2.0/structure/5/automation/run");
+                then.status(200).json_body(serde_json::json!({}));
+            });
+
+            let client = create_client(&server);
+            // `automation_id: None` → replaces the whole automation set.
+            client
+                .update_structure_automation(devboy_core::UpdateStructureAutomationInput {
+                    structure_id: 5,
+                    automation_id: None,
+                    config: serde_json::json!({"enabled": true}),
+                })
+                .await
+                .unwrap();
+            client.trigger_structure_automation(5).await.unwrap();
+        }
+
+        /// Rule-scoped automation — `automation_id: Some(..)` routes to
+        /// `/automation/{id}` (Copilot review on PR #205).
+        #[tokio::test]
+        async fn test_structure_automation_rule_scoped() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/rest/structure/2.0/structure/5/automation/rule-7")
+                    .body_includes("\"action\":\"move\"");
+                then.status(200).json_body(serde_json::json!({}));
+            });
+
+            let client = create_client(&server);
+            client
+                .update_structure_automation(devboy_core::UpdateStructureAutomationInput {
+                    structure_id: 5,
+                    automation_id: Some("rule-7".into()),
+                    config: serde_json::json!({"action": "move"}),
+                })
+                .await
+                .unwrap();
+        }
+    }
+
+    // =====================================================================
+    // Agile / Sprint — issue #198
+    // =====================================================================
+    mod agile_integration {
+        use super::*;
+        use httpmock::prelude::*;
+
+        fn create_client(server: &MockServer) -> JiraClient {
+            JiraClient::with_base_url(
+                server.base_url(),
+                "PROJ",
+                "user@example.com",
+                "token",
+                false,
+            )
+        }
+
+        #[tokio::test]
+        async fn test_get_board_sprints_active() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/rest/agile/1.0/board/10/sprint")
+                    .query_param("state", "active");
+                then.status(200).json_body(serde_json::json!({
+                    "isLast": true,
+                    "values": [
+                        {
+                            "id": 1,
+                            "name": "Sprint 1",
+                            "state": "active",
+                            "originBoardId": 10,
+                            "startDate": "2026-04-01T00:00:00.000Z"
+                        }
+                    ]
+                }));
+            });
+
+            let client = create_client(&server);
+            let sprints = client
+                .get_board_sprints(10, devboy_core::SprintState::Active)
+                .await
+                .unwrap();
+            assert_eq!(sprints.items.len(), 1);
+            assert_eq!(sprints.items[0].state, "active");
+            assert_eq!(sprints.items[0].origin_board_id, Some(10));
+        }
+
+        /// Codex P2 review on PR #205 — `/board/{id}/sprint` is paginated;
+        /// we must walk `startAt` until `isLast: true`.
+        #[tokio::test]
+        async fn test_get_board_sprints_walks_pagination() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/rest/agile/1.0/board/10/sprint")
+                    .query_param("startAt", "0");
+                then.status(200).json_body(serde_json::json!({
+                    "isLast": false,
+                    "values": [
+                        {"id": 1, "name": "S1", "state": "closed"},
+                        {"id": 2, "name": "S2", "state": "closed"}
+                    ]
+                }));
+            });
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/rest/agile/1.0/board/10/sprint")
+                    .query_param("startAt", "2");
+                then.status(200).json_body(serde_json::json!({
+                    "isLast": true,
+                    "values": [
+                        {"id": 3, "name": "S3", "state": "active"}
+                    ]
+                }));
+            });
+
+            let client = create_client(&server);
+            let sprints = client
+                .get_board_sprints(10, devboy_core::SprintState::All)
+                .await
+                .unwrap();
+            assert_eq!(sprints.items.len(), 3);
+            assert_eq!(sprints.items[2].name, "S3");
+        }
+
+        #[tokio::test]
+        async fn test_get_board_sprints_all_omits_state() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/rest/agile/1.0/board/10/sprint")
+                    .is_true(|req| req.query_params().iter().all(|(k, _)| k != "state"));
+                then.status(200)
+                    .json_body(serde_json::json!({"values": []}));
+            });
+
+            let client = create_client(&server);
+            let sprints = client
+                .get_board_sprints(10, devboy_core::SprintState::All)
+                .await
+                .unwrap();
+            assert_eq!(sprints.items.len(), 0);
+        }
+
+        #[tokio::test]
+        async fn test_assign_to_sprint_strips_jira_prefix() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/rest/agile/1.0/sprint/42/issue")
+                    .body_includes("\"issues\":[\"PROJ-1\",\"PROJ-2\"]");
+                then.status(204);
+            });
+
+            let client = create_client(&server);
+            client
+                .assign_to_sprint(devboy_core::AssignToSprintInput {
+                    sprint_id: 42,
+                    issue_keys: vec!["jira#PROJ-1".to_string(), "PROJ-2".to_string()],
+                })
+                .await
+                .unwrap();
         }
     }
 }
