@@ -528,4 +528,252 @@ mod tests {
         assert!((s.dup_rate() - 0.5).abs() < 1e-6);
         assert!((s.savings_pct() - 0.45).abs() < 1e-6);
     }
+
+    #[test]
+    fn endpoint_stats_empty_corpus_returns_zero_rates() {
+        let s = EndpointStats::default();
+        assert_eq!(s.dup_rate(), 0.0);
+        assert_eq!(s.avg_chars(), 0.0);
+        assert_eq!(s.savings_pct(), 0.0);
+        assert!(s.dominant_shape().is_none());
+    }
+
+    #[test]
+    fn endpoint_stats_dominant_shape_picks_max() {
+        let mut s = EndpointStats::default();
+        for _ in 0..3 {
+            s.update(&ev("x", false, Shape::Prose, 10, 10));
+        }
+        for _ in 0..7 {
+            s.update(&ev("x", false, Shape::MarkdownTable, 10, 10));
+        }
+        assert_eq!(s.dominant_shape(), Some("MarkdownTable"));
+    }
+
+    #[test]
+    fn corpus_stats_tracks_sessions_and_compactions() {
+        let mut corpus = CorpusStats::default();
+        for _ in 0..3 {
+            let mut e = ev("x", false, Shape::Prose, 10, 10);
+            e.context_partition = 2;
+            corpus.update(&e);
+        }
+        for _ in 0..2 {
+            let mut e = ev("x", false, Shape::Prose, 10, 10);
+            e.session_hash = "s2".into();
+            e.context_partition = 0;
+            corpus.update(&e);
+        }
+        corpus.finalize();
+        assert_eq!(corpus.total_sessions, 2);
+        assert_eq!(corpus.compaction_events, 3);
+        assert_eq!(corpus.total_events, 5);
+    }
+
+    #[test]
+    fn corpus_savings_pct_zero_when_no_tokens() {
+        let corpus = CorpusStats::default();
+        assert_eq!(corpus.savings_pct(), 0.0);
+    }
+
+    #[test]
+    fn rule_r3_raises_lru_under_frequent_compactions() {
+        let mut corpus = CorpusStats::default();
+        for _ in 0..100 {
+            let mut e = ev("x", false, Shape::Prose, 10, 10);
+            e.context_partition = 3; // Every event is post-compaction.
+            corpus.update(&e);
+        }
+        corpus.finalize();
+        let mut cfg = AdaptiveConfig::default();
+        apply_tuning_rules(&mut cfg, &corpus);
+        assert_eq!(cfg.dedup.lru_size, 10);
+    }
+
+    #[test]
+    fn rule_r3_shrinks_lru_on_tiny_sessions() {
+        let mut corpus = CorpusStats::default();
+        // 5 sessions × 3 events = 15 events, 3 events/session avg — tiny.
+        for s in 0..5 {
+            for _ in 0..3 {
+                let mut e = ev("x", false, Shape::Prose, 10, 10);
+                e.session_hash = format!("s{s}");
+                corpus.update(&e);
+            }
+        }
+        corpus.finalize();
+        let mut cfg = AdaptiveConfig::default();
+        apply_tuning_rules(&mut cfg, &corpus);
+        assert_eq!(cfg.dedup.lru_size, 3);
+    }
+
+    #[test]
+    fn rule_r5_clamps_min_body_chars() {
+        let mut corpus = CorpusStats::default();
+        for _ in 0..30 {
+            corpus.update(&ev("x", false, Shape::Prose, 2000, 2000));
+        }
+        corpus.finalize();
+        let mut cfg = AdaptiveConfig::default();
+        apply_tuning_rules(&mut cfg, &corpus);
+        assert!((100..=500).contains(&cfg.dedup.min_body_chars));
+    }
+
+    #[test]
+    fn parse_flag_handles_missing_and_present_keys() {
+        let args: Vec<String> = vec!["--foo".into(), "bar".into(), "--baz".into(), "qux".into()];
+        assert_eq!(parse_flag(&args, "--foo"), Some("bar"));
+        assert_eq!(parse_flag(&args, "--baz"), Some("qux"));
+        assert_eq!(parse_flag(&args, "--missing"), None);
+    }
+
+    #[test]
+    fn truncate_returns_short_inputs_unchanged() {
+        assert_eq!(truncate("hi", 10), "hi");
+        assert_eq!(truncate("", 10), "");
+    }
+
+    #[test]
+    fn truncate_ellipsises_long_inputs() {
+        let out = truncate("abcdefghij", 5);
+        assert!(out.ends_with('…'));
+        assert!(out.chars().count() <= 5);
+    }
+
+    #[test]
+    fn default_paths_point_under_home_config_devboy() {
+        let inp = default_input_dir();
+        let out = default_output();
+        // We don't assert the HOME is set; just verify the shape — the path
+        // ends with the documented suffix.
+        assert!(inp.ends_with(".config/devboy/telemetry/events"));
+        assert!(out.ends_with(".config/devboy/pipeline_config.toml"));
+    }
+
+    #[test]
+    fn print_top_endpoints_does_not_panic_on_empty() {
+        // Smoke — prints to stderr; just ensures no division-by-zero or overflow.
+        let c = CorpusStats::default();
+        print_top_endpoints(&c, 10);
+    }
+
+    #[test]
+    fn print_top_endpoints_handles_long_names() {
+        let mut c = CorpusStats::default();
+        let name = "a".repeat(60); // forces truncate() to engage
+        let mut e = ev(&name, false, Shape::Prose, 100, 100);
+        e.endpoint_class = name.clone();
+        for _ in 0..3 {
+            c.update(&e);
+        }
+        c.finalize();
+        print_top_endpoints(&c, 5);
+    }
+
+    // ─── Integration: exercises the on-disk JSONL scanner ─────────────
+
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let pid = std::process::id();
+            let p = std::env::temp_dir().join(format!("devboy_tune_test_{pid}_{tag}"));
+            std::fs::create_dir_all(&p).unwrap();
+            Self(p)
+        }
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn write_jsonl(path: &std::path::Path, lines: &[String]) {
+        let mut contents = String::new();
+        for l in lines {
+            contents.push_str(l);
+            contents.push('\n');
+        }
+        std::fs::write(path, contents).unwrap();
+    }
+
+    fn event_line(endpoint: &str, dup: bool, tok_final: u32) -> String {
+        let mut e = ev(endpoint, dup, Shape::Prose, 100, tok_final);
+        e.session_hash = "sess".into();
+        serde_json::to_string(&e).unwrap()
+    }
+
+    #[test]
+    fn scan_jsonl_aggregates_real_file() {
+        let dir = TempDir::new("real");
+        let lines: Vec<String> = (0..25).map(|i| event_line("ep", i < 10, 50)).collect();
+        write_jsonl(&dir.path().join("s1.jsonl"), &lines);
+
+        let mut corpus = CorpusStats::default();
+        let read = scan_jsonl_dir(dir.path(), &mut corpus).unwrap();
+        assert_eq!(read, 25);
+        assert_eq!(corpus.total_events, 25);
+        let s = corpus.per_endpoint.get("ep").unwrap();
+        assert_eq!(s.call_count, 25);
+        assert!((s.dup_rate() - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn scan_jsonl_skips_session_summary_wrappers() {
+        let dir = TempDir::new("skip_summary");
+        let ev_line = event_line("ep", false, 100);
+        let summary = r#"{"type":"session_summary","data":{"session_hash":"x","total_events":5}}"#;
+        let malformed = r#"{"not_json at all"#;
+        let lines = vec![
+            ev_line.clone(),
+            summary.to_string(),
+            malformed.to_string(),
+            "".to_string(),
+            ev_line.clone(),
+        ];
+        write_jsonl(&dir.path().join("mixed.jsonl"), &lines);
+
+        let mut corpus = CorpusStats::default();
+        let read = scan_jsonl_dir(dir.path(), &mut corpus).unwrap();
+        assert_eq!(read, 2);
+    }
+
+    #[test]
+    fn scan_jsonl_ignores_non_jsonl_files() {
+        let dir = TempDir::new("non_jsonl");
+        std::fs::write(dir.path().join("notes.txt"), "ignored").unwrap();
+        std::fs::write(dir.path().join("backup.json"), "{}").unwrap();
+        write_jsonl(&dir.path().join("events.jsonl"), &[event_line("a", false, 50)]);
+
+        let mut corpus = CorpusStats::default();
+        let n = scan_jsonl_dir(dir.path(), &mut corpus).unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn scan_jsonl_missing_dir_errors() {
+        let mut corpus = CorpusStats::default();
+        let res = scan_jsonl_dir(std::path::Path::new("/no/such/path/really"), &mut corpus);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn scan_jsonl_tolerates_type_field_without_data_wrapper() {
+        // If PipelineEvent later gains a `type` field it must still parse.
+        let dir = TempDir::new("future_type");
+        let mut e = ev("ep", false, Shape::Prose, 100, 100);
+        e.session_hash = "sess".into();
+        let mut val = serde_json::to_value(&e).unwrap();
+        if let Some(obj) = val.as_object_mut() {
+            obj.insert("type".into(), serde_json::json!("pipeline_event"));
+        }
+        let line = serde_json::to_string(&val).unwrap();
+        write_jsonl(&dir.path().join("future.jsonl"), &[line]);
+
+        let mut corpus = CorpusStats::default();
+        let n = scan_jsonl_dir(dir.path(), &mut corpus).unwrap();
+        assert_eq!(n, 1);
+    }
 }
