@@ -596,6 +596,44 @@ impl JiraClient {
         }
         Ok(())
     }
+
+    /// Fetch a compact list of accessible Structures for metadata enrichment.
+    ///
+    /// Unlike [`Self::get_structures`], this is intended to be called from a
+    /// metadata-assembly pipeline and **swallows the "Structure plugin not
+    /// installed" error** (HTTP 404, which the Structure endpoint returns as
+    /// a generic Jira "dead link" HTML page) into an empty [`Vec`]. The
+    /// resulting `Ok(vec![])` is the "no structures are available here"
+    /// signal that downstream enrichers key on to decide whether to touch
+    /// the `structureId` parameter of Structure tools.
+    ///
+    /// Credential / permission failures (401 `Unauthorized`, 403
+    /// `Forbidden`) still propagate — those indicate the caller's
+    /// integration is misconfigured, not that the feature is absent, and
+    /// the metadata build should surface the error rather than silently
+    /// pretend no structures exist.
+    pub async fn list_structures_for_metadata(
+        &self,
+    ) -> Result<Vec<crate::metadata::JiraStructureRef>> {
+        match self
+            .structure_get::<crate::types::JiraStructureListResponse>("/structure")
+            .await
+        {
+            Ok(resp) => Ok(resp
+                .structures
+                .into_iter()
+                .map(|s| crate::metadata::JiraStructureRef {
+                    id: s.id,
+                    name: s.name,
+                    description: s.description,
+                })
+                .collect()),
+            // Structure plugin not installed or endpoint removed — treat as
+            // "no structures available" so metadata build keeps going.
+            Err(Error::NotFound(_)) => Ok(vec![]),
+            Err(other) => Err(other),
+        }
+    }
 }
 
 /// Install hint shown when the Structure plugin may not be detected on the
@@ -5867,6 +5905,104 @@ mod tests {
                 &msg[..msg.len().min(400)]
             );
             assert!(msg.contains("redacted"), "missing redaction marker: {msg}");
+        }
+
+        // -----------------------------------------------------------------
+        // list_structures_for_metadata — graceful-degrade variant used by
+        // the metadata-assembly pipeline (swallows "plugin missing" 404,
+        // propagates auth/network failures).
+        // -----------------------------------------------------------------
+
+        #[tokio::test]
+        async fn test_list_structures_for_metadata_maps_response() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/rest/structure/2.0/structure");
+                then.status(200).json_body(serde_json::json!({
+                    "structures": [
+                        {"id": 1, "name": "Q1 Planning", "description": "Quarter 1 plan"},
+                        {"id": 2, "name": "Sprint Board"}
+                    ]
+                }));
+            });
+
+            let client = create_client(&server);
+            let refs = client.list_structures_for_metadata().await.unwrap();
+
+            assert_eq!(refs.len(), 2);
+            assert_eq!(refs[0].id, 1);
+            assert_eq!(refs[0].name, "Q1 Planning");
+            assert_eq!(refs[0].description.as_deref(), Some("Quarter 1 plan"));
+            assert_eq!(refs[1].id, 2);
+            assert_eq!(refs[1].description, None);
+        }
+
+        #[tokio::test]
+        async fn test_list_structures_for_metadata_returns_empty_on_plugin_missing() {
+            // Structure plugin uninstalled → Jira returns 404 HTML page.
+            // `structure_error_from_status` maps this to `Error::NotFound`,
+            // which `list_structures_for_metadata` swallows into `Ok(vec![])`
+            // so a broader metadata build can continue without try/catch.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/rest/structure/2.0/structure");
+                then.status(404)
+                    .header("content-type", "text/html;charset=UTF-8")
+                    .body("<!DOCTYPE html><html><title>Oops</title></html>");
+            });
+
+            let client = create_client(&server);
+            let refs = client.list_structures_for_metadata().await.unwrap();
+            assert!(refs.is_empty());
+        }
+
+        #[tokio::test]
+        async fn test_list_structures_for_metadata_returns_empty_on_200_empty_list() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/rest/structure/2.0/structure");
+                then.status(200)
+                    .json_body(serde_json::json!({ "structures": [] }));
+            });
+
+            let client = create_client(&server);
+            let refs = client.list_structures_for_metadata().await.unwrap();
+            assert!(refs.is_empty());
+        }
+
+        #[tokio::test]
+        async fn test_list_structures_for_metadata_propagates_401() {
+            // Bad / expired credentials must surface as an error — otherwise
+            // the caller would silently record "no structures" and swallow
+            // a real integration misconfiguration.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/rest/structure/2.0/structure");
+                then.status(401).body("Unauthorized");
+            });
+
+            let client = create_client(&server);
+            let err = client
+                .list_structures_for_metadata()
+                .await
+                .expect_err("401 must not be swallowed");
+            assert!(matches!(err, Error::Unauthorized(_)), "got {err:?}");
+        }
+
+        #[tokio::test]
+        async fn test_list_structures_for_metadata_propagates_403() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/rest/structure/2.0/structure");
+                then.status(403).body("Forbidden");
+            });
+
+            let client = create_client(&server);
+            let err = client
+                .list_structures_for_metadata()
+                .await
+                .expect_err("403 must not be swallowed");
+            assert!(matches!(err, Error::Forbidden(_)), "got {err:?}");
         }
     }
 }
