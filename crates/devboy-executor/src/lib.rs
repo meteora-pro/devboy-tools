@@ -46,6 +46,7 @@ pub mod executor;
 pub mod factory;
 pub mod format;
 pub mod output;
+pub mod tool_docs;
 pub mod tools;
 
 // Re-export main types at crate root
