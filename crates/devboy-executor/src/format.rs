@@ -71,6 +71,7 @@ pub fn format_output(
 ) -> Result<FormatResult> {
     let output_format = match format {
         Some("json") => OutputFormat::Json,
+        Some("mckp") => OutputFormat::Mckp,
         _ => OutputFormat::Toon,
     };
 
@@ -88,6 +89,7 @@ pub fn format_output(
     let format_name = match output_format {
         OutputFormat::Json => "json",
         OutputFormat::Toon => "toon",
+        OutputFormat::Mckp => "mckp",
     };
 
     let requested_chunk = pipeline_config.chunk.unwrap_or(1);
