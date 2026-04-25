@@ -240,14 +240,67 @@ impl LayeredPipeline {
             return out;
         }
 
-        // Not a duplicate — insert into cache for future reference.
+        // Not byte-identical — try Type-2 (near-duplicate) hint when
+        // enabled. The cache must hold a body snapshot for at least one
+        // matching prior entry; otherwise this is a no-op fall-through
+        // to L1.
+        if endpoint_ok && self.config.dedup.near_ref_enabled {
+            let near_cfg = crate::near_ref::NearRefConfig::default();
+            if let Some((reference_tool_call_id, deltas)) =
+                self.dedup.find_near_ref(input.content, &near_cfg)
+            {
+                let hint = crate::near_ref::render_near_ref_hint(&reference_tool_call_id, &deltas);
+                let tokens_final = self.tokens(&hint);
+                let out = ProcessedResponse {
+                    output: hint,
+                    layer: Layer::L0,
+                    format_or_template: Some("hint_near".into()),
+                    tokens_saved: baseline_tokens as i64 - tokens_final as i64,
+                    tokens_final,
+                };
+                self.emit_event(
+                    &input,
+                    &out,
+                    None,
+                    Some(&content_sha_hex),
+                    file_path_hash.as_deref(),
+                    None,
+                );
+                // Even on a near-ref hit, still cache the *new* body so
+                // a later turn that drifts further can build a delta off
+                // the most recent state.
+                let tc_hash = short_hash(input.tool_call_id);
+                self.dedup.insert_with_body(
+                    content_hash_value,
+                    tc_hash,
+                    tool_kind,
+                    file_path_hash.clone(),
+                    std::sync::Arc::new(input.content.to_string()),
+                );
+                return out;
+            }
+        }
+
+        // Not a duplicate — insert into cache for future reference. When
+        // near-ref is enabled, also retain the body so future turns can
+        // diff against it; otherwise stick to the cheaper hash-only entry.
         let tc_hash = short_hash(input.tool_call_id);
-        self.dedup.insert(
-            content_hash_value,
-            tc_hash.clone(),
-            tool_kind,
-            file_path_hash.clone(),
-        );
+        if self.config.dedup.near_ref_enabled {
+            self.dedup.insert_with_body(
+                content_hash_value,
+                tc_hash.clone(),
+                tool_kind,
+                file_path_hash.clone(),
+                std::sync::Arc::new(input.content.to_string()),
+            );
+        } else {
+            self.dedup.insert(
+                content_hash_value,
+                tc_hash.clone(),
+                tool_kind,
+                file_path_hash.clone(),
+            );
+        }
 
         // === Shape classification (used by L1/L2) ===
         let classified = classify(input.content);
@@ -711,6 +764,65 @@ mod tests {
             bpe_count < heuristic,
             "expected BPE count {bpe_count} < heuristic {heuristic} on a degenerate input"
         );
+    }
+
+    #[test]
+    fn near_ref_enabled_emits_delta_hint_for_pipeline_polling() {
+        // Two responses to the same MCP endpoint differing only in
+        // `status` and `duration` — the canonical Type-2 case.
+        let body_a = format!(
+            r#"{{"id":42,"name":"deploy","status":"pending","duration":10,"url":"https://example.com/p/42","commit_sha":"abcd","triggered_by":"webhook","preview":"{}"}}"#,
+            "x".repeat(500)
+        );
+        let body_b = format!(
+            r#"{{"id":42,"name":"deploy","status":"success","duration":42,"url":"https://example.com/p/42","commit_sha":"abcd","triggered_by":"webhook","preview":"{}"}}"#,
+            "x".repeat(500)
+        );
+
+        let mut cfg = AdaptiveConfig::default();
+        cfg.dedup.near_ref_enabled = true;
+        let mut p = LayeredPipeline::new("s_near".into(), cfg);
+
+        let r1 = p.process(input("tc_pipeline_1", "Bash", None, &body_a));
+        assert_eq!(r1.layer, Layer::L3, "first call must be fresh");
+
+        let r2 = p.process(input("tc_pipeline_2", "Bash", None, &body_b));
+        assert_eq!(r2.layer, Layer::L0, "second call must hit L0 via near-ref");
+        assert_eq!(r2.format_or_template.as_deref(), Some("hint_near"));
+        assert!(
+            r2.output.contains("near-ref"),
+            "expected near-ref hint, got `{}`",
+            r2.output
+        );
+        // Both differing scalar fields must show in the hint.
+        assert!(r2.output.contains("status"));
+        assert!(r2.output.contains("duration"));
+        // Compaction-friendly bound — the rendered hint must be tiny.
+        assert!(
+            r2.output.len() < body_b.len() / 5,
+            "near-ref hint should be far smaller than the body"
+        );
+    }
+
+    #[test]
+    fn near_ref_disabled_falls_through_when_bodies_drift() {
+        let body_a = format!(
+            r#"{{"id":42,"status":"pending","preview":"{}"}}"#,
+            "x".repeat(500)
+        );
+        let body_b = format!(
+            r#"{{"id":42,"status":"success","preview":"{}"}}"#,
+            "x".repeat(500)
+        );
+
+        let mut cfg = AdaptiveConfig::default();
+        cfg.dedup.near_ref_enabled = false; // explicit
+        let mut p = LayeredPipeline::new("s_no_near".into(), cfg);
+        let _ = p.process(input("tc_a", "Bash", None, &body_a));
+        let r2 = p.process(input("tc_b", "Bash", None, &body_b));
+        // Without near-ref, the second call goes to L3 (or L2 if shape
+        // happens to match) — but never to L0/hint_near.
+        assert_ne!(r2.format_or_template.as_deref(), Some("hint_near"));
     }
 
     #[test]
