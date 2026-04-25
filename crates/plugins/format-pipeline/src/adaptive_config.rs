@@ -480,6 +480,20 @@ impl Default for ShapeThresholds {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelemetryConfig {
+    /// Master switch — when `false`, no sink is opened on the host even
+    /// if `path` is set. Default: `false` so a fresh install does not
+    /// silently start writing files to the user's `$HOME`.
+    #[serde(default = "default_telemetry_enabled")]
+    pub enabled: bool,
+    /// Optional override for the JSONL sink directory. When `None`, the
+    /// host falls back to `~/.devboy/telemetry/`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Soft size cap per JSONL file (MiB). When the active sink crosses
+    /// this size, the host opens a new file with a numeric suffix
+    /// (`<session>.<n>.jsonl`). 0 disables rotation.
+    #[serde(default = "default_rotate_mib")]
+    pub rotate_mib: u32,
     /// Fraction of events to record (1.0 = all).
     #[serde(default = "default_sample_rate")]
     pub sample_rate: f32,
@@ -488,6 +502,12 @@ pub struct TelemetryConfig {
     pub flush_every_n: usize,
 }
 
+fn default_telemetry_enabled() -> bool {
+    false
+}
+fn default_rotate_mib() -> u32 {
+    100
+}
 fn default_sample_rate() -> f32 {
     1.0
 }
@@ -498,6 +518,9 @@ fn default_flush_every() -> usize {
 impl Default for TelemetryConfig {
     fn default() -> Self {
         Self {
+            enabled: default_telemetry_enabled(),
+            path: None,
+            rotate_mib: default_rotate_mib(),
             sample_rate: default_sample_rate(),
             flush_every_n: default_flush_every(),
         }
