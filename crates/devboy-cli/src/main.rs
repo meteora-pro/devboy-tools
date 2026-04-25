@@ -2998,6 +2998,33 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
         server.set_telemetry(pipeline.buffer());
     }
 
+    // Paper 2 — enable the layered pipeline (L0 cross-turn dedup + format
+    // dispatch). Config lives at $DEVBOY_PIPELINE_CONFIG, falling back to
+    // ~/.devboy/pipeline_config.toml. A missing file resolves to defaults
+    // so the server still starts on a fresh install.
+    let pipeline_cfg_path = std::env::var_os("DEVBOY_PIPELINE_CONFIG")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            let home = std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_default();
+            home.join(".devboy").join("pipeline_config.toml")
+        });
+    let pipeline_cfg =
+        match devboy_format_pipeline::adaptive_config::AdaptiveConfig::load_or_default(
+            &pipeline_cfg_path,
+        ) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                tracing::warn!(
+                    "pipeline_config.toml at {} failed to parse: {e}; falling back to defaults",
+                    pipeline_cfg_path.display()
+                );
+                devboy_format_pipeline::adaptive_config::AdaptiveConfig::default()
+            }
+        };
+    server.enable_layered_pipeline(devboy_mcp::layered::SessionPipeline::new(pipeline_cfg));
+
     if !any_provider_added && !skip_config {
         tracing::warn!("No providers configured. MCP server will have limited functionality.");
         tracing::info!("Configure GitHub: devboy config set github.owner <owner>");
