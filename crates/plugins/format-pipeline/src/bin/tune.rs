@@ -19,14 +19,16 @@
 //! analyzed. When absent, the tuner emits a default config and exits OK
 //! (so first-time setup succeeds without prior telemetry).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use devboy_format_pipeline::adaptive_config::AdaptiveConfig;
+use devboy_format_pipeline::adaptive_config::{
+    AdaptiveConfig, DataProfile, SessionStats,
+};
 use devboy_format_pipeline::telemetry::PipelineEvent;
 
 fn main() -> ExitCode {
@@ -50,6 +52,13 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        "from-claude-logs" => match cmd_from_claude_logs(&args[2..]) {
+            Ok(_) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
         "help" | "-h" | "--help" => {
             println!("{USAGE}");
             ExitCode::SUCCESS
@@ -66,7 +75,14 @@ devboy-tune — offline tuner for the layered pipeline
 
 Usage:
     devboy-tune analyze [--input-dir <PATH>] [--output <PATH>]
-        Aggregate telemetry and emit a tuned pipeline_config.toml.
+        Aggregate pipeline telemetry and emit a tuned pipeline_config.toml.
+
+    devboy-tune from-claude-logs [--input-dir <PATH>] [--project <NAME>]
+                                 [--output <PATH>] [--dry-run]
+        Mine Claude Code JSONL logs (~/.claude/projects/...), classify the
+        user's tool/data/agent profile, and emit a tuned pipeline_config.toml.
+        Use this when no telemetry has been collected yet — the logs already
+        capture model_id, tool usage, and endpoint distribution.
 
     devboy-tune show [--config <PATH>]
         Pretty-print the current config.
@@ -75,9 +91,10 @@ Usage:
         Show this message.
 
 Defaults:
-    --input-dir  ~/.config/devboy/telemetry/events
-    --output     ~/.config/devboy/pipeline_config.toml
-    --config     ~/.config/devboy/pipeline_config.toml
+    --input-dir          ~/.config/devboy/telemetry/events
+    --input-dir (logs)   ~/.claude/projects
+    --output             ~/.config/devboy/pipeline_config.toml
+    --config             ~/.config/devboy/pipeline_config.toml
 ";
 
 // ─── ENDPOINT STATISTICS ────────────────────────────────────────────────
@@ -335,6 +352,291 @@ fn apply_tuning_rules(cfg: &mut AdaptiveConfig, stats: &CorpusStats) {
     }
 }
 
+// ─── CLAUDE-LOG SCANNER ──────────────────────────────────────────────────
+
+/// Aggregate observed from Claude Code session JSONL logs.
+///
+/// We never store raw text — only counts, model ids, and tool / endpoint names.
+/// Used by the `from-claude-logs` subcommand to seed `pipeline_config.toml`
+/// when no `[crate::telemetry]` events have been collected yet.
+#[derive(Debug, Default)]
+struct ClaudeLogStats {
+    total_events: u64,
+    sessions: BTreeSet<String>,
+    /// model_id (`message.model`) → event count.
+    model_counts: BTreeMap<String, u64>,
+    /// tool name (`message.content[].name`) → invocation count.
+    tool_counts: BTreeMap<String, u64>,
+    /// Endpoint-pattern hits — used to auto-enable matching data profiles.
+    /// Key is the full tool name (e.g. `mcp__gitlab__get_issues`).
+    endpoints: BTreeMap<String, u64>,
+    /// Read-class tools (Read, Glob, Grep, NotebookRead, …).
+    read_invocations: u64,
+    /// Total tool invocations (read + write + mcp + bash + …).
+    total_invocations: u64,
+    /// Number of `/compact` events seen (heuristic — looks for the explicit token).
+    compactions: u64,
+}
+
+impl ClaudeLogStats {
+    fn dominant_model(&self) -> Option<&str> {
+        self.model_counts
+            .iter()
+            .max_by_key(|(_, c)| **c)
+            .map(|(s, _)| s.as_str())
+    }
+
+    fn read_share(&self) -> f32 {
+        if self.total_invocations == 0 {
+            0.0
+        } else {
+            self.read_invocations as f32 / self.total_invocations as f32
+        }
+    }
+
+    fn to_session_stats(&self) -> SessionStats {
+        let avg = if self.sessions.is_empty() {
+            self.total_events as usize
+        } else {
+            (self.total_events as usize) / self.sessions.len().max(1)
+        };
+        SessionStats {
+            event_count: avg,
+            compaction_count: if self.sessions.is_empty() {
+                self.compactions as usize
+            } else {
+                (self.compactions as usize) / self.sessions.len().max(1)
+            },
+            read_share: self.read_share(),
+        }
+    }
+}
+
+const READ_TOOLS: &[&str] = &[
+    "Read",
+    "Glob",
+    "Grep",
+    "NotebookRead",
+    "WebFetch",
+    "WebSearch",
+];
+
+/// Update `stats` with one parsed JSONL line. Returns `true` if the line
+/// contributed something (so the caller can count "read" events).
+fn ingest_claude_line(line: &str, stats: &mut ClaudeLogStats) -> bool {
+    let val: serde_json::Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let Some(obj) = val.as_object() else {
+        return false;
+    };
+
+    if let Some(sid) = obj.get("sessionId").and_then(|v| v.as_str()) {
+        stats.sessions.insert(sid.to_string());
+    } else if let Some(sid) = obj.get("session_id").and_then(|v| v.as_str()) {
+        stats.sessions.insert(sid.to_string());
+    }
+    stats.total_events += 1;
+
+    // model id from assistant messages
+    if let Some(model) = val
+        .pointer("/message/model")
+        .and_then(|v| v.as_str())
+        .or_else(|| val.pointer("/model").and_then(|v| v.as_str()))
+    {
+        *stats
+            .model_counts
+            .entry(model.to_string())
+            .or_insert(0) += 1;
+    }
+
+    // tool uses inside content blocks
+    let content = val
+        .pointer("/message/content")
+        .and_then(|v| v.as_array())
+        .or_else(|| val.pointer("/content").and_then(|v| v.as_array()));
+    if let Some(arr) = content {
+        for blk in arr {
+            let Some(t) = blk.get("type").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if t == "tool_use" {
+                if let Some(name) = blk.get("name").and_then(|v| v.as_str()) {
+                    *stats
+                        .tool_counts
+                        .entry(name.to_string())
+                        .or_insert(0) += 1;
+                    stats.total_invocations += 1;
+                    if READ_TOOLS.contains(&name) {
+                        stats.read_invocations += 1;
+                    }
+                    if name.starts_with("mcp__") {
+                        *stats
+                            .endpoints
+                            .entry(name.to_string())
+                            .or_insert(0) += 1;
+                    }
+                }
+            }
+            // /compact heuristic: a user message containing the token
+            if t == "text"
+                && blk
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| s.starts_with("/compact"))
+            {
+                stats.compactions += 1;
+            }
+        }
+    }
+    true
+}
+
+fn scan_claude_jsonl_dir(dir: &Path, stats: &mut ClaudeLogStats) -> Result<usize, String> {
+    let mut read = 0usize;
+    let entries =
+        std::fs::read_dir(dir).map_err(|e| format!("read_dir({:?}): {e}", dir))?;
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            // Recurse one level — ~/.claude/projects/<project>/*.jsonl
+            read += scan_claude_jsonl_dir(&p, stats).unwrap_or(0);
+            continue;
+        }
+        if p.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let f = match File::open(&p) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        let br = BufReader::new(f);
+        for line in br.lines().map_while(|r| r.ok()) {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if ingest_claude_line(trimmed, stats) {
+                read += 1;
+            }
+        }
+    }
+    Ok(read)
+}
+
+/// Apply v2 profile rules to `cfg` based on `claude_stats`.
+///
+/// Rules:
+/// - **P1** (LLM): if a single model dominates ≥80% of assistant events,
+///   set `profiles.llm.active` to that model id (when it matches a known
+///   variant; otherwise leave at `"auto"`).
+/// - **P2** (Agent): set `profiles.agent.active` from the auto classifier
+///   so subsequent loads pin the choice (no surprise on different sessions).
+/// - **P3** (Data): for every observed `mcp__*` endpoint, ensure a matching
+///   data-profile variant exists; if absent, register a placeholder so the
+///   user can edit it.
+fn apply_profile_rules(cfg: &mut AdaptiveConfig, claude_stats: &ClaudeLogStats) {
+    // P1: dominant model
+    if let Some(model) = claude_stats.dominant_model() {
+        let total: u64 = claude_stats.model_counts.values().sum();
+        let count = claude_stats
+            .model_counts
+            .get(model)
+            .copied()
+            .unwrap_or(0);
+        if total > 0 && (count * 100 / total) >= 80
+            && cfg.profiles.llm.variants.contains_key(model)
+        {
+            cfg.profiles.llm.active = model.to_string();
+        }
+    }
+
+    // P2: pin agent variant
+    let session = claude_stats.to_session_stats();
+    let picked = cfg.profiles.agent.resolve(&session).clone();
+    // Find which key resolves to this profile. Match by reference is awkward;
+    // re-classify with the same heuristic and look up the name.
+    let pinned: &str = if session.event_count >= 500 && session.compaction_count >= 3 {
+        "marathon_refactor"
+    } else if session.event_count <= 200 && session.read_share >= 0.5 {
+        "file_search_heavy"
+    } else {
+        "default"
+    };
+    if cfg.profiles.agent.variants.contains_key(pinned) {
+        cfg.profiles.agent.active = pinned.to_string();
+    }
+    let _ = picked; // documentational
+
+    // P3: register unknown endpoints as placeholder data profiles
+    let known_patterns: BTreeSet<String> = cfg
+        .profiles
+        .data
+        .variants
+        .values()
+        .map(|v| v.endpoint_pattern.clone())
+        .collect();
+    for endpoint in claude_stats.endpoints.keys() {
+        let already = known_patterns.iter().any(|p| {
+            endpoint == p || endpoint.starts_with(p)
+        });
+        if already {
+            continue;
+        }
+        // Generate a key from the last segment of the mcp tool name.
+        let key = endpoint
+            .rsplit("__")
+            .next()
+            .unwrap_or(endpoint)
+            .to_string();
+        cfg.profiles.data.variants.entry(key).or_insert_with(|| {
+            DataProfile {
+                endpoint_pattern: endpoint.clone(),
+                preferred_format: None, // user picks
+                hint_set: Vec::new(),
+            }
+        });
+    }
+}
+
+fn default_claude_logs_dir() -> PathBuf {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".claude/projects")
+}
+
+fn print_claude_summary(stats: &ClaudeLogStats) {
+    eprintln!();
+    eprintln!("# claude logs scanned:");
+    eprintln!("#   events:   {}", stats.total_events);
+    eprintln!("#   sessions: {}", stats.sessions.len());
+    eprintln!(
+        "#   tools:    {} invocations ({} read-class, {:.1}% read-share)",
+        stats.total_invocations,
+        stats.read_invocations,
+        stats.read_share() * 100.0
+    );
+    eprintln!("#   compactions: {}", stats.compactions);
+    eprintln!();
+    eprintln!("#   model distribution:");
+    let mut models: Vec<_> = stats.model_counts.iter().collect();
+    models.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
+    for (m, c) in models.iter().take(8) {
+        eprintln!("#     {:<35} {:>8}", truncate(m, 35), c);
+    }
+    if !stats.endpoints.is_empty() {
+        eprintln!();
+        eprintln!("#   top mcp endpoints:");
+        let mut eps: Vec<_> = stats.endpoints.iter().collect();
+        eps.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
+        for (e, c) in eps.iter().take(10) {
+            eprintln!("#     {:<45} {:>8}", truncate(e, 45), c);
+        }
+    }
+}
+
 // ─── SUBCOMMANDS ────────────────────────────────────────────────────────
 
 fn cmd_analyze(args: &[String]) -> Result<(), String> {
@@ -372,6 +674,72 @@ fn cmd_analyze(args: &[String]) -> Result<(), String> {
 
     eprintln!("# tuned config → {}", output.display());
     print_top_endpoints(&corpus, 10);
+    Ok(())
+}
+
+fn cmd_from_claude_logs(args: &[String]) -> Result<(), String> {
+    let input_dir = parse_flag(args, "--input-dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(default_claude_logs_dir);
+    let output = parse_flag(args, "--output")
+        .map(PathBuf::from)
+        .unwrap_or_else(default_output);
+    let project = parse_flag(args, "--project").map(String::from);
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+
+    eprintln!("# input:   {}", input_dir.display());
+    if let Some(p) = &project {
+        eprintln!("# project: {p}");
+    }
+    eprintln!("# output:  {}{}", output.display(), if dry_run { " (dry-run)" } else { "" });
+
+    if !input_dir.exists() {
+        return Err(format!(
+            "claude logs directory not found: {}",
+            input_dir.display()
+        ));
+    }
+
+    let scan_root = match &project {
+        Some(p) => input_dir.join(p),
+        None => input_dir.clone(),
+    };
+    let mut stats = ClaudeLogStats::default();
+    let read = scan_claude_jsonl_dir(&scan_root, &mut stats)?;
+    eprintln!("# read {read} jsonl lines");
+
+    if read == 0 {
+        return Err("no jsonl events parsed — check the path".into());
+    }
+
+    print_claude_summary(&stats);
+
+    let mut cfg = AdaptiveConfig::load_or_default(&output)
+        .map_err(|e| format!("load existing config: {e}"))?;
+    apply_profile_rules(&mut cfg, &stats);
+
+    eprintln!();
+    eprintln!("# proposed profile pins:");
+    eprintln!("#   profiles.llm.active   = {:?}", cfg.profiles.llm.active);
+    eprintln!("#   profiles.agent.active = {:?}", cfg.profiles.agent.active);
+    let new_data: Vec<&str> = cfg
+        .profiles
+        .data
+        .variants
+        .keys()
+        .map(String::as_str)
+        .collect();
+    eprintln!("#   profiles.data.variants = {} ({:?})", new_data.len(), new_data);
+
+    if dry_run {
+        eprintln!();
+        eprintln!("# dry-run: not writing config. Re-run without --dry-run to apply.");
+        return Ok(());
+    }
+
+    cfg.save(&output)
+        .map_err(|e| format!("write config: {e}"))?;
+    eprintln!("# wrote → {}", output.display());
     Ok(())
 }
 
@@ -760,6 +1128,129 @@ mod tests {
         let mut corpus = CorpusStats::default();
         let res = scan_jsonl_dir(std::path::Path::new("/no/such/path/really"), &mut corpus);
         assert!(res.is_err());
+    }
+
+    // ─── Claude-log scanner tests ─────────────────────────────────────
+
+    #[test]
+    fn ingest_claude_line_extracts_model_and_tools() {
+        let line = r#"{
+            "sessionId": "sess1",
+            "message": {
+                "model": "claude-sonnet-4-6",
+                "content": [
+                    {"type": "tool_use", "name": "Read", "input": {"file_path": "/x"}},
+                    {"type": "tool_use", "name": "mcp__gitlab__get_issues", "input": {}}
+                ]
+            }
+        }"#;
+        let mut s = ClaudeLogStats::default();
+        assert!(ingest_claude_line(line, &mut s));
+        assert_eq!(s.total_events, 1);
+        assert_eq!(s.sessions.len(), 1);
+        assert_eq!(s.model_counts.get("claude-sonnet-4-6"), Some(&1));
+        assert_eq!(s.tool_counts.get("Read"), Some(&1));
+        assert_eq!(s.tool_counts.get("mcp__gitlab__get_issues"), Some(&1));
+        assert_eq!(s.read_invocations, 1);
+        assert_eq!(s.total_invocations, 2);
+        assert_eq!(s.endpoints.get("mcp__gitlab__get_issues"), Some(&1));
+    }
+
+    #[test]
+    fn ingest_claude_line_detects_compact_command() {
+        let line = r#"{
+            "sessionId": "s1",
+            "message": {
+                "content": [{"type": "text", "text": "/compact"}]
+            }
+        }"#;
+        let mut s = ClaudeLogStats::default();
+        ingest_claude_line(line, &mut s);
+        assert_eq!(s.compactions, 1);
+    }
+
+    #[test]
+    fn ingest_claude_line_handles_malformed_json() {
+        let mut s = ClaudeLogStats::default();
+        assert!(!ingest_claude_line("not json", &mut s));
+        assert_eq!(s.total_events, 0);
+    }
+
+    #[test]
+    fn claude_log_stats_dominant_model() {
+        let mut s = ClaudeLogStats::default();
+        for _ in 0..7 {
+            *s.model_counts.entry("glm-5.1".into()).or_insert(0) += 1;
+        }
+        for _ in 0..2 {
+            *s.model_counts.entry("gpt-oss:20b".into()).or_insert(0) += 1;
+        }
+        assert_eq!(s.dominant_model(), Some("glm-5.1"));
+    }
+
+    #[test]
+    fn apply_profile_rules_pins_dominant_model_when_known() {
+        let mut s = ClaudeLogStats::default();
+        // 90% glm-5.1, 10% other → above 80% threshold
+        for _ in 0..90 {
+            *s.model_counts.entry("glm-5.1".into()).or_insert(0) += 1;
+        }
+        for _ in 0..10 {
+            *s.model_counts.entry("other-model".into()).or_insert(0) += 1;
+        }
+        let mut cfg = AdaptiveConfig::default();
+        apply_profile_rules(&mut cfg, &s);
+        assert_eq!(cfg.profiles.llm.active, "glm-5.1");
+    }
+
+    #[test]
+    fn apply_profile_rules_keeps_auto_for_unknown_dominant_model() {
+        let mut s = ClaudeLogStats::default();
+        for _ in 0..100 {
+            *s.model_counts.entry("totally-unknown".into()).or_insert(0) += 1;
+        }
+        let mut cfg = AdaptiveConfig::default();
+        apply_profile_rules(&mut cfg, &s);
+        assert_eq!(cfg.profiles.llm.active, "auto");
+    }
+
+    #[test]
+    fn apply_profile_rules_registers_new_endpoints() {
+        let mut s = ClaudeLogStats::default();
+        s.endpoints.insert("mcp__brand_new__do_thing".into(), 5);
+        let mut cfg = AdaptiveConfig::default();
+        let n_before = cfg.profiles.data.variants.len();
+        apply_profile_rules(&mut cfg, &s);
+        assert!(cfg.profiles.data.variants.len() > n_before);
+        // Variant key is the last "__" segment.
+        let k = "do_thing";
+        assert!(cfg.profiles.data.variants.contains_key(k));
+    }
+
+    #[test]
+    fn apply_profile_rules_classifies_marathon_session() {
+        let mut s = ClaudeLogStats::default();
+        s.total_events = 1500;
+        s.sessions.insert("s1".into());
+        s.compactions = 5;
+        s.read_invocations = 100;
+        s.total_invocations = 500;
+        let mut cfg = AdaptiveConfig::default();
+        apply_profile_rules(&mut cfg, &s);
+        assert_eq!(cfg.profiles.agent.active, "marathon_refactor");
+    }
+
+    #[test]
+    fn scan_claude_jsonl_dir_recurses_into_project_subdir() {
+        let dir = TempDir::new("claude_recurse");
+        let project = dir.path().join("proj-foo");
+        std::fs::create_dir_all(&project).unwrap();
+        let line = r#"{"sessionId":"s","message":{"model":"glm-5.1","content":[{"type":"tool_use","name":"Read","input":{}}]}}"#;
+        std::fs::write(project.join("session1.jsonl"), format!("{line}\n")).unwrap();
+        let mut stats = ClaudeLogStats::default();
+        let n = scan_claude_jsonl_dir(dir.path(), &mut stats).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(stats.read_invocations, 1);
     }
 
     #[test]
