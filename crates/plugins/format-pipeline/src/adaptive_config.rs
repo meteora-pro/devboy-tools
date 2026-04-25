@@ -61,7 +61,10 @@ pub enum ConfigError {
 
 pub type Result<T> = std::result::Result<T, ConfigError>;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+
+/// Lowest schema version we still accept on load (auto-upgraded in memory).
+pub const MIN_SUPPORTED_SCHEMA_VERSION: u32 = 1;
 
 /// Root configuration for the layered pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +82,12 @@ pub struct AdaptiveConfig {
     /// Per-endpoint overrides. Keyed by `endpoint_class` (see telemetry schema).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub endpoint_overrides: BTreeMap<String, EndpointOverride>,
+    /// Schema-v2: profile axes (tokenizer / llm / agent / data).
+    #[serde(default)]
+    pub profiles: ProfilesConfig,
+    /// Schema-v2: horizontal hint policy.
+    #[serde(default)]
+    pub hints: HintsConfig,
 }
 
 fn default_schema_version() -> u32 {
@@ -94,6 +103,8 @@ impl Default for AdaptiveConfig {
             mckp: MckpConfig::default(),
             telemetry: TelemetryConfig::default(),
             endpoint_overrides: BTreeMap::new(),
+            profiles: ProfilesConfig::default(),
+            hints: HintsConfig::default(),
         }
     }
 }
@@ -107,21 +118,36 @@ impl AdaptiveConfig {
             return Ok(Self::default());
         }
         let s = fs::read_to_string(path)?;
-        let cfg: AdaptiveConfig = toml::from_str(&s)?;
-        if cfg.schema_version != CURRENT_SCHEMA_VERSION {
-            return Err(ConfigError::UnsupportedSchemaVersion(cfg.schema_version));
-        }
+        let mut cfg: AdaptiveConfig = toml::from_str(&s)?;
+        cfg.upgrade_in_place()?;
         Ok(cfg)
     }
 
     /// Strict load — fails if the file is missing.
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let s = fs::read_to_string(path)?;
-        let cfg: AdaptiveConfig = toml::from_str(&s)?;
-        if cfg.schema_version != CURRENT_SCHEMA_VERSION {
-            return Err(ConfigError::UnsupportedSchemaVersion(cfg.schema_version));
-        }
+        let mut cfg: AdaptiveConfig = toml::from_str(&s)?;
+        cfg.upgrade_in_place()?;
         Ok(cfg)
+    }
+
+    /// Migrate a config in place to `CURRENT_SCHEMA_VERSION`.
+    ///
+    /// v1 → v2: the on-disk file lacks `[profiles.*]` and `[hints]` sections;
+    /// `serde(default)` already populates them with the v2 defaults, so the
+    /// only work here is bumping `schema_version`.
+    fn upgrade_in_place(&mut self) -> Result<()> {
+        if self.schema_version > CURRENT_SCHEMA_VERSION {
+            return Err(ConfigError::UnsupportedSchemaVersion(self.schema_version));
+        }
+        if self.schema_version < MIN_SUPPORTED_SCHEMA_VERSION {
+            return Err(ConfigError::UnsupportedSchemaVersion(self.schema_version));
+        }
+        // v1 → v2: defaults already injected; just stamp the version.
+        if self.schema_version < CURRENT_SCHEMA_VERSION {
+            self.schema_version = CURRENT_SCHEMA_VERSION;
+        }
+        Ok(())
     }
 
     /// Serialize to TOML and write atomically.
@@ -205,6 +231,8 @@ impl AdaptiveConfig {
         self.templates = other.templates;
         self.mckp = other.mckp;
         self.telemetry = other.telemetry;
+        self.profiles = other.profiles;
+        self.hints = other.hints;
         for (k, v) in other.endpoint_overrides {
             self.endpoint_overrides.insert(k, v);
         }
@@ -456,6 +484,676 @@ pub struct EndpointOverride {
     pub min_body_chars: Option<usize>,
 }
 
+// ─── SCHEMA v2 — PROFILES & HINTS ──────────────────────────────────────────
+//
+// Four profile axes, each independently overridable:
+//   1. tokenizer  — anthropic_class / openai_o200k / ollama_bpe (cost models)
+//   2. llm        — model_id → tokenizer + context_window + style knobs
+//   3. agent      — priority (latency/balanced/accuracy), recursion depth
+//   4. data       — endpoint_pattern → preferred_format + hint_set
+//
+// Plus a horizontal `hints` policy that gates every emit_hint() through
+// per-type rules (enabled, max_per_session, applies_to_models).
+//
+// Resolution: SessionContext → EffectiveConfig::resolve() collapses all
+// four axes plus the legacy v1 fields into a single runtime view.
+
+/// Container for all profile axes. Lives at `[profiles]` in TOML.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProfilesConfig {
+    #[serde(default)]
+    pub tokenizer: TokenizerProfilesConfig,
+    #[serde(default)]
+    pub llm: LlmProfilesConfig,
+    #[serde(default)]
+    pub agent: AgentProfilesConfig,
+    #[serde(default)]
+    pub data: DataProfilesConfig,
+}
+
+// ── TOKENIZER ─────────────────────────────────────────────────────────────
+
+/// Cost model for one tokenizer family.
+///
+/// Captures the empirical observation that the *same* encoder produces wildly
+/// different token counts depending on the receiving model's tokenizer (e.g.,
+/// `inline_json_cost` is 2.2x on Anthropic-class but 1.0x on Ollama BPE).
+/// See Paper 2 §Encoder Bug Postmortem (2026-04-25).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenizerProfile {
+    /// Average characters per token observed for this tokenizer.
+    pub chars_per_token: f32,
+    /// Penalty multiplier for inline-JSON cells inside markdown tables.
+    /// Use to decide between inline-JSON nested cells vs. recursive sections.
+    #[serde(default = "default_inline_json_cost")]
+    pub inline_json_cost: f32,
+    /// Multiplicative cost of TOON encoding vs json_compact for this tokenizer.
+    /// (TOON's "−40% tokens" claim is only valid for `openai_o200k`.)
+    #[serde(default = "default_toon_overhead")]
+    pub toon_overhead: f32,
+    /// Optional per-format cost factors (multiplied with raw-char-based estimate).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub format_factors: BTreeMap<String, f32>,
+}
+
+fn default_inline_json_cost() -> f32 {
+    1.0
+}
+fn default_toon_overhead() -> f32 {
+    1.0
+}
+
+impl Default for TokenizerProfile {
+    fn default() -> Self {
+        Self {
+            chars_per_token: 4.0,
+            inline_json_cost: default_inline_json_cost(),
+            toon_overhead: default_toon_overhead(),
+            format_factors: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenizerProfilesConfig {
+    /// Active variant id, or `"auto"` to resolve from `profiles.llm`.
+    #[serde(default = "default_active_auto")]
+    pub active: String,
+    #[serde(default = "default_tokenizer_variants")]
+    pub variants: BTreeMap<String, TokenizerProfile>,
+}
+
+fn default_active_auto() -> String {
+    "auto".to_string()
+}
+
+fn default_tokenizer_variants() -> BTreeMap<String, TokenizerProfile> {
+    let mut m = BTreeMap::new();
+    m.insert(
+        "anthropic_class".into(),
+        TokenizerProfile {
+            chars_per_token: 3.5,
+            inline_json_cost: 2.2,
+            toon_overhead: 1.13,
+            format_factors: BTreeMap::new(),
+        },
+    );
+    m.insert(
+        "openai_o200k".into(),
+        TokenizerProfile {
+            chars_per_token: 4.0,
+            inline_json_cost: 1.0,
+            toon_overhead: 0.60,
+            format_factors: BTreeMap::new(),
+        },
+    );
+    m.insert(
+        "ollama_bpe".into(),
+        TokenizerProfile {
+            chars_per_token: 3.8,
+            inline_json_cost: 1.0,
+            toon_overhead: 1.00,
+            format_factors: BTreeMap::new(),
+        },
+    );
+    m
+}
+
+impl Default for TokenizerProfilesConfig {
+    fn default() -> Self {
+        Self {
+            active: default_active_auto(),
+            variants: default_tokenizer_variants(),
+        }
+    }
+}
+
+impl TokenizerProfilesConfig {
+    /// Lookup a variant; returns `None` if missing.
+    pub fn get(&self, id: &str) -> Option<&TokenizerProfile> {
+        self.variants.get(id)
+    }
+}
+
+// ── LLM ───────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmProfile {
+    /// Tokenizer variant id (resolved against `profiles.tokenizer.variants`).
+    pub tokenizer: String,
+    /// Whether the encoder should keep explicit field names (`shop: Acme\n`)
+    /// instead of dropping them in compact forms — often pays off on
+    /// instruction-tuned models that ground answers in names.
+    #[serde(default = "default_prefer_explicit_keys")]
+    pub prefer_explicit_keys: bool,
+    /// Hard context-window limit; encoders should never produce more than this.
+    #[serde(default = "default_context_window")]
+    pub context_window: u32,
+    /// Maximum size (chars) of an inline-nested JSON cell before falling back
+    /// to a recursive section. `None` = unlimited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_inline_nested: Option<u32>,
+}
+
+fn default_prefer_explicit_keys() -> bool {
+    true
+}
+fn default_context_window() -> u32 {
+    32_000
+}
+
+impl Default for LlmProfile {
+    fn default() -> Self {
+        Self {
+            tokenizer: "ollama_bpe".to_string(),
+            prefer_explicit_keys: default_prefer_explicit_keys(),
+            context_window: default_context_window(),
+            max_inline_nested: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmProfilesConfig {
+    /// Active variant id (model name) or `"auto"` to resolve from
+    /// `SessionContext::model_id`.
+    #[serde(default = "default_active_auto")]
+    pub active: String,
+    #[serde(default = "default_llm_variants")]
+    pub variants: BTreeMap<String, LlmProfile>,
+}
+
+fn default_llm_variants() -> BTreeMap<String, LlmProfile> {
+    let mut m = BTreeMap::new();
+    m.insert(
+        "default".into(),
+        LlmProfile {
+            tokenizer: "openai_o200k".into(),
+            prefer_explicit_keys: true,
+            context_window: 32_000,
+            max_inline_nested: Some(256),
+        },
+    );
+    m.insert(
+        "glm-5.1".into(),
+        LlmProfile {
+            tokenizer: "anthropic_class".into(),
+            prefer_explicit_keys: true,
+            context_window: 128_000,
+            max_inline_nested: Some(128),
+        },
+    );
+    m.insert(
+        "claude-sonnet-4.6".into(),
+        LlmProfile {
+            tokenizer: "anthropic_class".into(),
+            prefer_explicit_keys: true,
+            context_window: 200_000,
+            max_inline_nested: Some(64),
+        },
+    );
+    m.insert(
+        "gpt-oss:20b".into(),
+        LlmProfile {
+            tokenizer: "ollama_bpe".into(),
+            prefer_explicit_keys: false,
+            context_window: 8_192,
+            max_inline_nested: Some(512),
+        },
+    );
+    m.insert(
+        "gemma4:26b".into(),
+        LlmProfile {
+            tokenizer: "ollama_bpe".into(),
+            prefer_explicit_keys: false,
+            context_window: 8_192,
+            max_inline_nested: Some(512),
+        },
+    );
+    m
+}
+
+impl Default for LlmProfilesConfig {
+    fn default() -> Self {
+        Self {
+            active: default_active_auto(),
+            variants: default_llm_variants(),
+        }
+    }
+}
+
+impl LlmProfilesConfig {
+    /// Resolve the active LLM variant given an optional session model id.
+    /// `"auto"` + `Some(model_id)` → exact match falls back to `"default"`.
+    pub fn resolve<'a>(&'a self, session_model_id: Option<&str>) -> &'a LlmProfile {
+        let key: &str = if self.active == "auto" {
+            session_model_id.unwrap_or("default")
+        } else {
+            self.active.as_str()
+        };
+        self.variants
+            .get(key)
+            .or_else(|| self.variants.get("default"))
+            .unwrap_or_else(|| {
+                // Static-default fallback — should never trigger because
+                // `default_llm_variants` always inserts "default".
+                static FALLBACK: std::sync::OnceLock<LlmProfile> = std::sync::OnceLock::new();
+                FALLBACK.get_or_init(LlmProfile::default)
+            })
+    }
+}
+
+// ── AGENT / SESSION ───────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Priority {
+    Latency,
+    #[default]
+    Balanced,
+    Accuracy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentProfile {
+    #[serde(default)]
+    pub priority: Priority,
+    #[serde(default = "default_recursion_depth")]
+    pub mckp_recursion_depth: usize,
+    /// 0.0 = never emit hints, 1.0 = always (scaled by `HintsConfig` rules).
+    #[serde(default = "default_hint_aggressiveness")]
+    pub hint_aggressiveness: f32,
+    #[serde(default)]
+    pub near_ref_enabled: bool,
+}
+
+fn default_hint_aggressiveness() -> f32 {
+    0.5
+}
+
+impl Default for AgentProfile {
+    fn default() -> Self {
+        Self {
+            priority: Priority::Balanced,
+            mckp_recursion_depth: default_recursion_depth(),
+            hint_aggressiveness: default_hint_aggressiveness(),
+            near_ref_enabled: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentProfilesConfig {
+    #[serde(default = "default_active_auto")]
+    pub active: String,
+    /// How many events to observe before auto-classifying the agent profile.
+    #[serde(default = "default_auto_window")]
+    pub auto_detect_window: usize,
+    #[serde(default = "default_agent_variants")]
+    pub variants: BTreeMap<String, AgentProfile>,
+}
+
+fn default_auto_window() -> usize {
+    50
+}
+
+fn default_agent_variants() -> BTreeMap<String, AgentProfile> {
+    let mut m = BTreeMap::new();
+    m.insert("default".into(), AgentProfile::default());
+    m.insert(
+        "file_search_heavy".into(),
+        AgentProfile {
+            priority: Priority::Latency,
+            mckp_recursion_depth: 3,
+            hint_aggressiveness: 0.3,
+            near_ref_enabled: false,
+        },
+    );
+    m.insert(
+        "marathon_refactor".into(),
+        AgentProfile {
+            priority: Priority::Accuracy,
+            mckp_recursion_depth: 7,
+            hint_aggressiveness: 0.7,
+            near_ref_enabled: true,
+        },
+    );
+    m
+}
+
+impl Default for AgentProfilesConfig {
+    fn default() -> Self {
+        Self {
+            active: default_active_auto(),
+            auto_detect_window: default_auto_window(),
+            variants: default_agent_variants(),
+        }
+    }
+}
+
+impl AgentProfilesConfig {
+    /// Pick a variant for the given session statistics. `"auto"` triggers
+    /// rule-based classification; an explicit `active` value short-circuits.
+    pub fn resolve<'a>(&'a self, stats: &SessionStats) -> &'a AgentProfile {
+        let key: &str = if self.active == "auto" {
+            classify_agent(stats)
+        } else {
+            self.active.as_str()
+        };
+        self.variants
+            .get(key)
+            .or_else(|| self.variants.get("default"))
+            .unwrap_or_else(|| {
+                static FALLBACK: std::sync::OnceLock<AgentProfile> = std::sync::OnceLock::new();
+                FALLBACK.get_or_init(AgentProfile::default)
+            })
+    }
+}
+
+/// Coarse heuristic: pick an agent variant from rolling session stats.
+///
+/// Rules (intentionally simple, easy to override via explicit `active = "..."`):
+/// - long sessions with many compactions → `marathon_refactor`
+/// - short sessions dominated by file-read tools → `file_search_heavy`
+/// - everything else → `default`
+fn classify_agent(stats: &SessionStats) -> &'static str {
+    if stats.event_count >= 500 && stats.compaction_count >= 3 {
+        "marathon_refactor"
+    } else if stats.event_count <= 200 && stats.read_share >= 0.5 {
+        "file_search_heavy"
+    } else {
+        "default"
+    }
+}
+
+// ── DATA / DOMAIN ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataProfile {
+    /// Glob-like pattern (currently exact-match-or-prefix on `endpoint_class`).
+    pub endpoint_pattern: String,
+    /// Format id to prefer when the pattern matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_format: Option<String>,
+    /// Hint type ids to emit for this domain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hint_set: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataProfilesConfig {
+    #[serde(default = "default_active_auto")]
+    pub active: String,
+    #[serde(default = "default_data_variants")]
+    pub variants: BTreeMap<String, DataProfile>,
+}
+
+fn default_data_variants() -> BTreeMap<String, DataProfile> {
+    let mut m = BTreeMap::new();
+    m.insert(
+        "gitlab_issues".into(),
+        DataProfile {
+            endpoint_pattern: "mcp__gitlab__get_issues".into(),
+            preferred_format: Some("csv_from_md".into()),
+            hint_set: vec!["near_ref".into()],
+        },
+    );
+    m.insert(
+        "github_pulls".into(),
+        DataProfile {
+            endpoint_pattern: "mcp__github__list_pulls".into(),
+            preferred_format: Some("csv_from_md".into()),
+            hint_set: vec!["near_ref".into()],
+        },
+    );
+    m.insert(
+        "k8s_logs".into(),
+        DataProfile {
+            endpoint_pattern: "mcp__k8s__get_logs".into(),
+            preferred_format: Some("pipeline_deep_mckp".into()),
+            hint_set: vec!["timestamp_ref".into()],
+        },
+    );
+    m.insert(
+        "mr_diffs".into(),
+        DataProfile {
+            endpoint_pattern: "mcp__gitlab__get_mr_diff".into(),
+            preferred_format: Some("mr_diff_fence".into()),
+            hint_set: Vec::new(),
+        },
+    );
+    m
+}
+
+impl Default for DataProfilesConfig {
+    fn default() -> Self {
+        Self {
+            active: default_active_auto(),
+            variants: default_data_variants(),
+        }
+    }
+}
+
+impl DataProfilesConfig {
+    /// Find the first variant whose `endpoint_pattern` matches (exact or prefix).
+    pub fn match_endpoint(&self, endpoint: &str) -> Option<&DataProfile> {
+        // When `active != "auto"`, restrict to that single variant.
+        if self.active != "auto" {
+            return self.variants.get(&self.active);
+        }
+        for v in self.variants.values() {
+            if endpoint == v.endpoint_pattern || endpoint.starts_with(&v.endpoint_pattern) {
+                return Some(v);
+            }
+        }
+        None
+    }
+}
+
+// ── HINTS ─────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HintTypeRule {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Cap on how often this hint type may be emitted in one session.
+    /// `None` = unlimited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_per_session: Option<u32>,
+    /// Restrict emission to specific model ids; `["*"]` = any.
+    #[serde(default = "default_any_model")]
+    pub applies_to_models: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_any_model() -> Vec<String> {
+    vec!["*".to_string()]
+}
+
+impl Default for HintTypeRule {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_per_session: None,
+            applies_to_models: default_any_model(),
+        }
+    }
+}
+
+impl HintTypeRule {
+    /// Does this rule allow emission for the given model id?
+    pub fn applies_to(&self, model_id: &str) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        self.applies_to_models
+            .iter()
+            .any(|m| m == "*" || m == model_id)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HintsConfig {
+    #[serde(default)]
+    pub default_verbosity: HintVerbosity,
+    #[serde(default = "default_hint_types")]
+    pub types: BTreeMap<String, HintTypeRule>,
+}
+
+fn default_hint_types() -> BTreeMap<String, HintTypeRule> {
+    let mut m = BTreeMap::new();
+    m.insert(
+        "near_ref".into(),
+        HintTypeRule {
+            enabled: true,
+            max_per_session: Some(50),
+            applies_to_models: default_any_model(),
+        },
+    );
+    m.insert(
+        "timestamp_ref".into(),
+        HintTypeRule {
+            enabled: true,
+            max_per_session: Some(100),
+            applies_to_models: default_any_model(),
+        },
+    );
+    m.insert(
+        "delta".into(),
+        HintTypeRule {
+            enabled: false, // experimental — keep off until shipped
+            max_per_session: Some(20),
+            applies_to_models: default_any_model(),
+        },
+    );
+    m.insert(
+        // Confirmed 0 lift in 2026-04-25 evaluation; default off.
+        "schema_explainer".into(),
+        HintTypeRule {
+            enabled: false,
+            max_per_session: None,
+            applies_to_models: default_any_model(),
+        },
+    );
+    m.insert(
+        // Local models benefit from one-line format hints; cloud models don't.
+        "inline_format_hint".into(),
+        HintTypeRule {
+            enabled: true,
+            max_per_session: Some(10),
+            applies_to_models: vec!["gpt-oss:20b".into(), "gemma4:26b".into()],
+        },
+    );
+    m
+}
+
+impl Default for HintsConfig {
+    fn default() -> Self {
+        Self {
+            default_verbosity: HintVerbosity::Standard,
+            types: default_hint_types(),
+        }
+    }
+}
+
+impl HintsConfig {
+    /// Should we emit a hint of `type_id` for `model_id`?
+    /// Caller is responsible for tracking per-session counts and
+    /// re-checking against `max_per_session`.
+    pub fn allow(&self, type_id: &str, model_id: &str) -> bool {
+        match self.types.get(type_id) {
+            Some(rule) => rule.applies_to(model_id),
+            None => false, // unknown type → fail closed
+        }
+    }
+}
+
+// ── SESSION CONTEXT & EFFECTIVE CONFIG ────────────────────────────────────
+
+/// Statistics observed from a session's first N events. Used by
+/// `AgentProfilesConfig::resolve` to auto-classify the agent profile.
+#[derive(Debug, Clone, Default)]
+pub struct SessionStats {
+    pub event_count: usize,
+    pub compaction_count: usize,
+    /// Fraction of events that were file-read tools (Read, Glob, Grep, …).
+    pub read_share: f32,
+}
+
+/// Everything the pipeline needs to know about *this* session in order to
+/// resolve the four profile axes plus the legacy v1 fields.
+#[derive(Debug, Clone, Default)]
+pub struct SessionContext {
+    pub model_id: Option<String>,
+    pub stats: SessionStats,
+}
+
+/// Resolved per-session view of the configuration. This is what the layered
+/// pipeline reads on the hot path; produce it once at session start.
+#[derive(Debug, Clone)]
+pub struct EffectiveConfig {
+    pub tokenizer: TokenizerProfile,
+    pub llm: LlmProfile,
+    pub agent: AgentProfile,
+    pub hints: HintsConfig,
+    /// Cached MckpConfig — recursion_depth comes from the agent profile,
+    /// other fields are inherited from the legacy `[mckp]` section.
+    pub mckp: MckpConfig,
+}
+
+impl EffectiveConfig {
+    /// Collapse `AdaptiveConfig` + `SessionContext` into a single runtime view.
+    pub fn resolve(cfg: &AdaptiveConfig, ctx: &SessionContext) -> Self {
+        let llm = cfg.profiles.llm.resolve(ctx.model_id.as_deref()).clone();
+        let tokenizer_id = if cfg.profiles.tokenizer.active == "auto" {
+            llm.tokenizer.as_str()
+        } else {
+            cfg.profiles.tokenizer.active.as_str()
+        };
+        let tokenizer = cfg
+            .profiles
+            .tokenizer
+            .get(tokenizer_id)
+            .cloned()
+            .unwrap_or_default();
+        let agent = cfg.profiles.agent.resolve(&ctx.stats).clone();
+        let mut mckp = cfg.mckp.clone();
+        mckp.recursion_depth = agent.mckp_recursion_depth;
+        Self {
+            tokenizer,
+            llm,
+            agent,
+            hints: cfg.hints.clone(),
+            mckp,
+        }
+    }
+
+    /// Per-endpoint format choice: data profile pattern wins over template overrides.
+    pub fn preferred_format_for<'a>(
+        &self,
+        cfg: &'a AdaptiveConfig,
+        endpoint: &str,
+    ) -> Option<&'a str> {
+        if let Some(dp) = cfg.profiles.data.match_endpoint(endpoint) {
+            if let Some(f) = dp.preferred_format.as_deref() {
+                return Some(f);
+            }
+        }
+        cfg.effective_template(endpoint)
+    }
+
+    /// Should this hint type fire for the active model? Callers still must
+    /// enforce `max_per_session` themselves (state lives outside config).
+    pub fn allow_hint(&self, type_id: &str) -> bool {
+        let model_id = "default"; // resolved-LLM doesn't carry id; allow_hint's
+        // "*" rule covers it. Keep simple — caller passes model id via config.
+        let _ = model_id;
+        self.hints.allow(type_id, "*")
+    }
+}
+
 // ─── TESTS ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -538,6 +1236,236 @@ mod tests {
         assert_eq!(loaded.dedup.lru_size, 10);
         assert_eq!(loaded.mckp.recursion_depth, 7);
         std::fs::remove_file(&p).ok();
+    }
+
+    // ── Schema v2 — profiles & hints ───────────────────────────────────
+
+    #[test]
+    fn default_profiles_have_expected_variants() {
+        let cfg = AdaptiveConfig::default();
+        // Tokenizer
+        assert!(cfg.profiles.tokenizer.get("anthropic_class").is_some());
+        assert!(cfg.profiles.tokenizer.get("openai_o200k").is_some());
+        assert!(cfg.profiles.tokenizer.get("ollama_bpe").is_some());
+        // LLM
+        assert!(cfg.profiles.llm.variants.contains_key("default"));
+        assert!(cfg.profiles.llm.variants.contains_key("glm-5.1"));
+        assert!(cfg.profiles.llm.variants.contains_key("gpt-oss:20b"));
+        // Agent
+        assert!(cfg.profiles.agent.variants.contains_key("default"));
+        assert!(cfg.profiles.agent.variants.contains_key("file_search_heavy"));
+        assert!(cfg.profiles.agent.variants.contains_key("marathon_refactor"));
+        // Data
+        assert!(cfg.profiles.data.variants.contains_key("gitlab_issues"));
+        assert!(cfg.profiles.data.variants.contains_key("k8s_logs"));
+    }
+
+    #[test]
+    fn anthropic_tokenizer_has_inline_json_penalty() {
+        let cfg = AdaptiveConfig::default();
+        let p = cfg.profiles.tokenizer.get("anthropic_class").unwrap();
+        // Captured from 2026-04-25 mckp_v2 evaluation:
+        // inline-JSON cells cost ~2.2x on glm-5.1 vs ~1.0x on local Ollama BPE.
+        assert!(p.inline_json_cost > 2.0);
+        assert!((p.toon_overhead - 1.13).abs() < 0.001);
+    }
+
+    #[test]
+    fn llm_resolve_picks_exact_model_match() {
+        let cfg = AdaptiveConfig::default();
+        let p = cfg.profiles.llm.resolve(Some("glm-5.1"));
+        assert_eq!(p.tokenizer, "anthropic_class");
+        assert_eq!(p.context_window, 128_000);
+    }
+
+    #[test]
+    fn llm_resolve_falls_back_to_default_for_unknown() {
+        let cfg = AdaptiveConfig::default();
+        let p = cfg.profiles.llm.resolve(Some("unknown-model-xyz"));
+        // Falls through to "default" variant
+        assert_eq!(p.tokenizer, "openai_o200k");
+    }
+
+    #[test]
+    fn agent_classifier_picks_marathon_for_long_session() {
+        let cfg = AdaptiveConfig::default();
+        let stats = SessionStats {
+            event_count: 800,
+            compaction_count: 5,
+            read_share: 0.3,
+        };
+        let p = cfg.profiles.agent.resolve(&stats);
+        assert_eq!(p.priority, Priority::Accuracy);
+        assert_eq!(p.mckp_recursion_depth, 7);
+        assert!(p.near_ref_enabled);
+    }
+
+    #[test]
+    fn agent_classifier_picks_file_search_for_short_read_heavy() {
+        let cfg = AdaptiveConfig::default();
+        let stats = SessionStats {
+            event_count: 80,
+            compaction_count: 0,
+            read_share: 0.7,
+        };
+        let p = cfg.profiles.agent.resolve(&stats);
+        assert_eq!(p.priority, Priority::Latency);
+        assert_eq!(p.mckp_recursion_depth, 3);
+    }
+
+    #[test]
+    fn agent_classifier_default_for_balanced_session() {
+        let cfg = AdaptiveConfig::default();
+        let stats = SessionStats {
+            event_count: 300,
+            compaction_count: 0,
+            read_share: 0.4,
+        };
+        let p = cfg.profiles.agent.resolve(&stats);
+        assert_eq!(p.priority, Priority::Balanced);
+    }
+
+    #[test]
+    fn data_profile_matches_endpoint_prefix() {
+        let cfg = AdaptiveConfig::default();
+        let dp = cfg.profiles.data.match_endpoint("mcp__gitlab__get_issues");
+        assert!(dp.is_some());
+        assert_eq!(
+            dp.unwrap().preferred_format.as_deref(),
+            Some("csv_from_md")
+        );
+    }
+
+    #[test]
+    fn data_profile_returns_none_for_unmatched() {
+        let cfg = AdaptiveConfig::default();
+        let dp = cfg.profiles.data.match_endpoint("Bash:git_log");
+        assert!(dp.is_none());
+    }
+
+    #[test]
+    fn hint_policy_disables_schema_explainer_by_default() {
+        // Encoder-bug postmortem 2026-04-25: schema_explainer hint added
+        // 0 lift to CSV/Markdown accuracy because data was structurally absent.
+        let cfg = AdaptiveConfig::default();
+        assert!(!cfg.hints.allow("schema_explainer", "glm-5.1"));
+        assert!(!cfg.hints.allow("schema_explainer", "gpt-oss:20b"));
+    }
+
+    #[test]
+    fn hint_policy_inline_format_hint_only_for_local_models() {
+        let cfg = AdaptiveConfig::default();
+        assert!(cfg.hints.allow("inline_format_hint", "gpt-oss:20b"));
+        assert!(cfg.hints.allow("inline_format_hint", "gemma4:26b"));
+        assert!(!cfg.hints.allow("inline_format_hint", "glm-5.1"));
+        assert!(!cfg.hints.allow("inline_format_hint", "claude-sonnet-4.6"));
+    }
+
+    #[test]
+    fn hint_policy_unknown_type_fails_closed() {
+        let cfg = AdaptiveConfig::default();
+        assert!(!cfg.hints.allow("never_seen_hint_type", "anything"));
+    }
+
+    #[test]
+    fn effective_config_resolves_glm_to_anthropic_tokenizer() {
+        let cfg = AdaptiveConfig::default();
+        let ctx = SessionContext {
+            model_id: Some("glm-5.1".to_string()),
+            stats: SessionStats::default(),
+        };
+        let eff = EffectiveConfig::resolve(&cfg, &ctx);
+        assert_eq!(eff.llm.tokenizer, "anthropic_class");
+        assert!(eff.tokenizer.inline_json_cost > 2.0);
+        assert_eq!(eff.llm.context_window, 128_000);
+    }
+
+    #[test]
+    fn effective_config_recursion_depth_from_agent_profile() {
+        let cfg = AdaptiveConfig::default();
+        let ctx = SessionContext {
+            model_id: Some("gpt-oss:20b".to_string()),
+            stats: SessionStats {
+                event_count: 1000,
+                compaction_count: 5,
+                read_share: 0.2,
+            },
+        };
+        let eff = EffectiveConfig::resolve(&cfg, &ctx);
+        // marathon_refactor variant
+        assert_eq!(eff.mckp.recursion_depth, 7);
+        assert_eq!(eff.agent.priority, Priority::Accuracy);
+    }
+
+    #[test]
+    fn effective_config_preferred_format_from_data_profile() {
+        let cfg = AdaptiveConfig::default();
+        let ctx = SessionContext::default();
+        let eff = EffectiveConfig::resolve(&cfg, &ctx);
+        let f = eff.preferred_format_for(&cfg, "mcp__gitlab__get_issues");
+        assert_eq!(f, Some("csv_from_md"));
+    }
+
+    #[test]
+    fn schema_v1_file_upgrades_to_v2_in_memory() {
+        // Simulate an on-disk v1 file lacking [profiles] and [hints] sections.
+        let v1 = r#"
+schema_version = 1
+
+[dedup]
+lru_size = 7
+
+[mckp]
+recursion_depth = 6
+"#;
+        let pid = std::process::id();
+        let p = std::env::temp_dir().join(format!("devboy_cfg_v1_{pid}.toml"));
+        std::fs::write(&p, v1).unwrap();
+        let loaded = AdaptiveConfig::load(&p).unwrap();
+        assert_eq!(loaded.schema_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(loaded.dedup.lru_size, 7);
+        assert_eq!(loaded.mckp.recursion_depth, 6);
+        // v2 defaults populated
+        assert!(loaded.profiles.tokenizer.get("anthropic_class").is_some());
+        assert!(loaded.hints.types.contains_key("near_ref"));
+        std::fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn future_schema_version_is_rejected_on_load() {
+        let s = format!(
+            "schema_version = {}\n[dedup]\n",
+            CURRENT_SCHEMA_VERSION + 1
+        );
+        let pid = std::process::id();
+        let p = std::env::temp_dir().join(format!("devboy_cfg_future_{pid}.toml"));
+        std::fs::write(&p, s).unwrap();
+        let err = AdaptiveConfig::load(&p);
+        assert!(matches!(
+            err,
+            Err(ConfigError::UnsupportedSchemaVersion(_))
+        ));
+        std::fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn profiles_roundtrip_through_toml() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.profiles.llm.active = "claude-sonnet-4.6".to_string();
+        cfg.profiles.agent.active = "marathon_refactor".to_string();
+        cfg.hints
+            .types
+            .get_mut("near_ref")
+            .unwrap()
+            .max_per_session = Some(99);
+        let s = toml::to_string_pretty(&cfg).unwrap();
+        let parsed: AdaptiveConfig = toml::from_str(&s).unwrap();
+        assert_eq!(parsed.profiles.llm.active, "claude-sonnet-4.6");
+        assert_eq!(parsed.profiles.agent.active, "marathon_refactor");
+        assert_eq!(
+            parsed.hints.types["near_ref"].max_per_session,
+            Some(99)
+        );
     }
 
     #[test]
