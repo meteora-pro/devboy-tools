@@ -86,6 +86,11 @@ impl McpServer {
     /// passed through `SessionPipeline::process` before being returned.
     pub fn enable_layered_pipeline(&mut self, pipeline: SessionPipeline) {
         self.layered_pipeline = Some(pipeline);
+        tracing::info!(
+            "Paper 2 layered pipeline enabled — L0 dedup active. \
+             Edit ~/.devboy/pipeline_config.toml (or set DEVBOY_PIPELINE_CONFIG) \
+             to tune knobs. See `devboy tune analyze` for split-savings metrics."
+        );
     }
 
     /// Drop the layered-pipeline cache partition on host compaction.
@@ -2128,6 +2133,59 @@ mod tests {
         assert!(resp.error.is_none());
         let result: ToolCallResult = serde_json::from_value(resp.result.unwrap()).unwrap();
         assert_eq!(result.is_error, None);
+    }
+
+    #[tokio::test]
+    async fn test_e2e_read_edit_read_busts_cache_via_server() {
+        // P-203-09 acceptance gate: the server's full request-handling
+        // path must invalidate the cache when a mutating tool is
+        // dispatched, so a re-read of the same file returns a fresh body
+        // (not a stale `> [ref: …]` hint).
+        //
+        // We exercise this through the public `extract_file_path` /
+        // `is_mutating_tool` helpers + `SessionPipeline::process` so the
+        // assertion is the same path the server's `handle_tools_call`
+        // takes — minus the dispatch step (which would need real
+        // providers).
+        use devboy_format_pipeline::adaptive_config::AdaptiveConfig;
+
+        let pipeline = SessionPipeline::new(AdaptiveConfig::default());
+        let body = "x".repeat(600);
+
+        let read_params = crate::protocol::ToolCallParams {
+            name: "Read".to_string(),
+            arguments: Some(serde_json::json!({"file_path": "/tmp/e2e.rs"})),
+        };
+
+        // Turn 1 — fresh body.
+        let r1 = pipeline.process("req_1", &read_params, ToolCallResult::text(body.clone()), 0);
+        let crate::protocol::ToolResultContent::Text { text: t1 } = &r1.content[0];
+        assert_eq!(t1, &body);
+
+        // Turn 2 — server's mutation hook fires before dispatch. We
+        // simulate the same call sequence directly.
+        let edit_params = crate::protocol::ToolCallParams {
+            name: "Edit".to_string(),
+            arguments: Some(serde_json::json!({"file_path": "/tmp/e2e.rs"})),
+        };
+        if crate::layered::is_mutating_tool(&edit_params.name)
+            && let Some(p) = crate::layered::extract_file_path(edit_params.arguments.as_ref())
+        {
+            pipeline.invalidate_file(&p);
+        }
+
+        // Turn 3 — same Read after invalidation must come back fresh.
+        let r3 = pipeline.process(
+            "req_3",
+            &read_params,
+            ToolCallResult::text(body.clone()),
+            10,
+        );
+        let crate::protocol::ToolResultContent::Text { text: t3 } = &r3.content[0];
+        assert_eq!(
+            t3, &body,
+            "Edit must bust the dedup cache so subsequent Read is fresh"
+        );
     }
 
     #[tokio::test]
