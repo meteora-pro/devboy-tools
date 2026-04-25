@@ -28,6 +28,7 @@ pub mod dedup;
 pub(crate) mod dedup_util;
 pub mod layered_pipeline;
 pub mod mckp_router;
+pub mod near_ref;
 pub mod page_index;
 pub mod pagination;
 pub mod round_trip;
