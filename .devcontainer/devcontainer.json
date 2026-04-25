@@ -1,0 +1,42 @@
+{
+  "name": "devboy-tools (Linux Rust dev)",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "args": {
+      "RUST_VERSION": "1.86"
+    }
+  },
+  "runArgs": [
+    "--init"
+  ],
+  "mounts": [
+    "source=devboy-cargo-registry,target=/usr/local/cargo/registry,type=volume",
+    "source=devboy-cargo-git,target=/usr/local/cargo/git,type=volume",
+    "source=devboy-target,target=${containerWorkspaceFolder}/target,type=volume"
+  ],
+  "remoteEnv": {
+    "CARGO_TERM_COLOR": "always",
+    "RUST_BACKTRACE": "1"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "vadimcn.vscode-lldb"
+      ],
+      "settings": {
+        "rust-analyzer.check.command": "clippy",
+        "rust-analyzer.cargo.targetDir": true,
+        "editor.formatOnSave": true,
+        "[rust]": {
+          "editor.defaultFormatter": "rust-lang.rust-analyzer"
+        }
+      }
+    }
+  },
+  "postCreateCommand": "rustup component add rustfmt clippy && cargo fetch",
+  "remoteUser": "vscode",
+  "workspaceFolder": "/workspaces/devboy-tools"
+}
