@@ -131,8 +131,16 @@ fn try_deep_mckp(
     if !config.format_enabled("deep_mckp") {
         return json_compact_fallback(config, raw, "nested");
     }
-    // Use the pipeline-template encoder as the baseline (compact JSON).
-    // Future: true recursive per-leaf format selection with fence extraction.
+    // True per-subtree MCKP: object wrapping a homogeneous inner array →
+    // top-level kv lines + array as union-of-keys table (nested cells = inline JSON).
+    // This preserves all data — fix for the encoder bug where naive CSV/Markdown
+    // dropped wrapping object's top-level fields (Paper 2, §Encoder Bug Postmortem).
+    if let Some(body) = templates::deep_mckp_with_inner_table(raw, cls) {
+        if body.len() < raw.len() {
+            return Some(("deep_mckp_inner_table", body));
+        }
+    }
+    // Fall back to compact JSON when no inner array is found or no gain.
     let body = templates::pipeline_deep_mckp(raw, cls)?;
     if body.len() < raw.len() {
         Some(("deep_mckp", body))
