@@ -28,6 +28,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -39,6 +43,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
         working-directory: docs
+      # Detect drift between the auto-generated tools reference checked into
+      # the repo and what `devboy tools docs` would emit today. Same command
+      # contributors run locally — if it fails, regenerate and commit.
+      - name: Check tools reference is up to date
+        run: |
+          cargo run -p devboy-cli --quiet -- tools docs \
+            --output docs/guide/reference/tools.md --check
       - name: Build docs
         run: pnpm build
         working-directory: docs

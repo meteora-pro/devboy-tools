@@ -26,9 +26,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use devboy_format_pipeline::adaptive_config::{
-    AdaptiveConfig, DataProfile, SessionStats,
-};
+use devboy_format_pipeline::adaptive_config::{AdaptiveConfig, DataProfile, SessionStats};
 use devboy_format_pipeline::telemetry::PipelineEvent;
 
 fn main() -> ExitCode {
@@ -476,10 +474,7 @@ fn ingest_claude_line(line: &str, stats: &mut ClaudeLogStats) -> bool {
         .and_then(|v| v.as_str())
         .or_else(|| val.pointer("/model").and_then(|v| v.as_str()))
     {
-        *stats
-            .model_counts
-            .entry(model.to_string())
-            .or_insert(0) += 1;
+        *stats.model_counts.entry(model.to_string()).or_insert(0) += 1;
     }
 
     // tool uses inside content blocks
@@ -492,22 +487,16 @@ fn ingest_claude_line(line: &str, stats: &mut ClaudeLogStats) -> bool {
             let Some(t) = blk.get("type").and_then(|v| v.as_str()) else {
                 continue;
             };
-            if t == "tool_use" {
-                if let Some(name) = blk.get("name").and_then(|v| v.as_str()) {
-                    *stats
-                        .tool_counts
-                        .entry(name.to_string())
-                        .or_insert(0) += 1;
-                    stats.total_invocations += 1;
-                    if READ_TOOLS.contains(&name) {
-                        stats.read_invocations += 1;
-                    }
-                    if name.starts_with("mcp__") {
-                        *stats
-                            .endpoints
-                            .entry(name.to_string())
-                            .or_insert(0) += 1;
-                    }
+            if t == "tool_use"
+                && let Some(name) = blk.get("name").and_then(|v| v.as_str())
+            {
+                *stats.tool_counts.entry(name.to_string()).or_insert(0) += 1;
+                stats.total_invocations += 1;
+                if READ_TOOLS.contains(&name) {
+                    stats.read_invocations += 1;
+                }
+                if name.starts_with("mcp__") {
+                    *stats.endpoints.entry(name.to_string()).or_insert(0) += 1;
                 }
             }
             // /compact heuristic: a user message containing the token
@@ -526,8 +515,7 @@ fn ingest_claude_line(line: &str, stats: &mut ClaudeLogStats) -> bool {
 
 fn scan_claude_jsonl_dir(dir: &Path, stats: &mut ClaudeLogStats) -> Result<usize, String> {
     let mut read = 0usize;
-    let entries =
-        std::fs::read_dir(dir).map_err(|e| format!("read_dir({:?}): {e}", dir))?;
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("read_dir({:?}): {e}", dir))?;
     for e in entries.flatten() {
         let p = e.path();
         if p.is_dir() {
@@ -571,13 +559,8 @@ fn apply_profile_rules(cfg: &mut AdaptiveConfig, claude_stats: &ClaudeLogStats) 
     // P1: dominant model
     if let Some(model) = claude_stats.dominant_model() {
         let total: u64 = claude_stats.model_counts.values().sum();
-        let count = claude_stats
-            .model_counts
-            .get(model)
-            .copied()
-            .unwrap_or(0);
-        if total > 0 && (count * 100 / total) >= 80
-            && cfg.profiles.llm.variants.contains_key(model)
+        let count = claude_stats.model_counts.get(model).copied().unwrap_or(0);
+        if total > 0 && (count * 100 / total) >= 80 && cfg.profiles.llm.variants.contains_key(model)
         {
             cfg.profiles.llm.active = model.to_string();
         }
@@ -609,18 +592,14 @@ fn apply_profile_rules(cfg: &mut AdaptiveConfig, claude_stats: &ClaudeLogStats) 
         .map(|v| v.endpoint_pattern.clone())
         .collect();
     for endpoint in claude_stats.endpoints.keys() {
-        let already = known_patterns.iter().any(|p| {
-            endpoint == p || endpoint.starts_with(p)
-        });
+        let already = known_patterns
+            .iter()
+            .any(|p| endpoint == p || endpoint.starts_with(p));
         if already {
             continue;
         }
         // Generate a key from the last segment of the mcp tool name.
-        let key = endpoint
-            .rsplit("__")
-            .next()
-            .unwrap_or(endpoint)
-            .to_string();
+        let key = endpoint.rsplit("__").next().unwrap_or(endpoint).to_string();
         cfg.profiles.data.variants.entry(key).or_insert_with(|| {
             DataProfile {
                 endpoint_pattern: endpoint.clone(),
@@ -744,7 +723,11 @@ fn cmd_from_claude_logs(args: &[String]) -> Result<(), String> {
     if let Some(p) = &project {
         eprintln!("# project: {p}");
     }
-    eprintln!("# output:  {}{}", output.display(), if dry_run { " (dry-run)" } else { "" });
+    eprintln!(
+        "# output:  {}{}",
+        output.display(),
+        if dry_run { " (dry-run)" } else { "" }
+    );
 
     if !input_dir.exists() {
         return Err(format!(
@@ -774,7 +757,10 @@ fn cmd_from_claude_logs(args: &[String]) -> Result<(), String> {
     eprintln!();
     eprintln!("# proposed profile pins:");
     eprintln!("#   profiles.llm.active   = {:?}", cfg.profiles.llm.active);
-    eprintln!("#   profiles.agent.active = {:?}", cfg.profiles.agent.active);
+    eprintln!(
+        "#   profiles.agent.active = {:?}",
+        cfg.profiles.agent.active
+    );
     let new_data: Vec<&str> = cfg
         .profiles
         .data
@@ -782,7 +768,11 @@ fn cmd_from_claude_logs(args: &[String]) -> Result<(), String> {
         .keys()
         .map(String::as_str)
         .collect();
-    eprintln!("#   profiles.data.variants = {} ({:?})", new_data.len(), new_data);
+    eprintln!(
+        "#   profiles.data.variants = {} ({:?})",
+        new_data.len(),
+        new_data
+    );
 
     if dry_run {
         eprintln!();
@@ -815,8 +805,7 @@ fn print_top_endpoints(corpus: &CorpusStats, n: usize) {
     eprintln!("# top endpoints by call count:");
     eprintln!(
         "#   {:<35} {:>7} {:>8} {:>8} {:>9} {:>9} {:>9}",
-        "endpoint", "calls", "dup_rate", "avg_chars",
-        "dedup%", "encoder%", "total%"
+        "endpoint", "calls", "dup_rate", "avg_chars", "dedup%", "encoder%", "total%"
     );
     for (name, s) in endpoints.iter().take(n) {
         eprintln!(
@@ -988,10 +977,7 @@ mod tests {
         // total = 1 - 180/300 = 40%
         assert!((s.savings_pct() - 0.40).abs() < 1e-6);
         // Decomposition holds: dedup + encoder = total
-        assert!(
-            (s.dedup_savings_pct() + s.encoder_savings_pct() - s.savings_pct())
-                .abs() < 1e-6
-        );
+        assert!((s.dedup_savings_pct() + s.encoder_savings_pct() - s.savings_pct()).abs() < 1e-6);
     }
 
     #[test]
@@ -1317,12 +1303,14 @@ mod tests {
 
     #[test]
     fn apply_profile_rules_classifies_marathon_session() {
-        let mut s = ClaudeLogStats::default();
-        s.total_events = 1500;
+        let mut s = ClaudeLogStats {
+            total_events: 1500,
+            compactions: 5,
+            read_invocations: 100,
+            total_invocations: 500,
+            ..Default::default()
+        };
         s.sessions.insert("s1".into());
-        s.compactions = 5;
-        s.read_invocations = 100;
-        s.total_invocations = 500;
         let mut cfg = AdaptiveConfig::default();
         apply_profile_rules(&mut cfg, &s);
         assert_eq!(cfg.profiles.agent.active, "marathon_refactor");

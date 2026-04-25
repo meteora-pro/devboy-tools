@@ -28,5 +28,10 @@
     "text": "Integrations",
     "link": "/integrations/github",
     "activeMatch": "/integrations/"
+  },
+  {
+    "text": "Reference",
+    "link": "/reference/tools",
+    "activeMatch": "/reference/"
   }
 ]

@@ -8,16 +8,19 @@ use serde::{Deserialize, Serialize};
 
 /// Category of MCP tools — determines which tools are available
 /// based on provider capabilities.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// Variant order is also the canonical display order used by
+/// auto-generated documentation (`devboy tools docs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolCategory {
-    /// Git repository tools: MR/PR, pipeline, diffs, discussions.
-    /// Providers: GitLab, GitHub
-    GitRepository,
-
     /// Issue tracker tools: issues CRUD, comments, statuses.
     /// Providers: GitLab, GitHub, ClickUp, Jira, YouGile, Linear
     IssueTracker,
+
+    /// Git repository tools: MR/PR, pipeline, diffs, discussions.
+    /// Providers: GitLab, GitHub
+    GitRepository,
 
     /// Epic tools: high-level tasks with goals and progress.
     /// Providers: ClickUp
@@ -38,4 +41,32 @@ pub enum ToolCategory {
     /// Jira Structure plugin tools: hierarchies, views, formulas.
     /// Providers: Jira (requires Structure plugin)
     JiraStructure,
+}
+
+impl ToolCategory {
+    /// Stable, human-readable display name used in documentation.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            ToolCategory::IssueTracker => "Issue Tracker",
+            ToolCategory::GitRepository => "Git Repository",
+            ToolCategory::Epics => "Epics",
+            ToolCategory::Releases => "Releases",
+            ToolCategory::MeetingNotes => "Meeting Notes",
+            ToolCategory::Messenger => "Messenger",
+            ToolCategory::JiraStructure => "Jira Structure",
+        }
+    }
+
+    /// Snake-case key used in JSON output (matches `serde(rename_all)`).
+    pub fn key(self) -> &'static str {
+        match self {
+            ToolCategory::IssueTracker => "issue_tracker",
+            ToolCategory::GitRepository => "git_repository",
+            ToolCategory::Epics => "epics",
+            ToolCategory::Releases => "releases",
+            ToolCategory::MeetingNotes => "meeting_notes",
+            ToolCategory::Messenger => "messenger",
+            ToolCategory::JiraStructure => "jira_structure",
+        }
+    }
 }
