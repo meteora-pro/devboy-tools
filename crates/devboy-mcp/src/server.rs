@@ -343,6 +343,15 @@ impl McpServer {
             "notifications/cancelled" => {
                 tracing::debug!("Request cancelled by client");
             }
+            // devboy-specific extension — host signals that it just
+            // compacted its conversation context. The L0 dedup cache
+            // advances its partition counter so any earlier-turn
+            // entries are dropped on the next eviction sweep, matching
+            // the agent's *visible* context.
+            "notifications/devboy/compact" => {
+                tracing::info!("Host compaction signal received — advancing dedup partition");
+                self.on_compaction_boundary();
+            }
             _ => {
                 tracing::debug!("Ignoring notification: {}", method);
             }
@@ -613,6 +622,15 @@ impl McpServer {
                 Some(ToolCallResult::text(content))
             }
             "get_current_context" => Some(ToolCallResult::text(self.active_context_name())),
+            "compact_pipeline_cache" => {
+                // Tool-call entry point for hosts that can't emit
+                // `notifications/devboy/compact`. Same effect: advance
+                // the dedup partition.
+                self.on_compaction_boundary();
+                Some(ToolCallResult::text(
+                    "pipeline cache partition advanced".to_string(),
+                ))
+            }
             "use_context" => {
                 #[derive(Deserialize)]
                 struct UseContextParams {
@@ -2076,6 +2094,40 @@ mod tests {
         // on_compaction_boundary must be a no-op on the disabled path and
         // a no-panic on the enabled path.
         server.on_compaction_boundary();
+    }
+
+    #[tokio::test]
+    async fn test_compaction_notification_advances_partition() {
+        use devboy_format_pipeline::adaptive_config::AdaptiveConfig;
+
+        let mut server = McpServer::new();
+        server.enable_layered_pipeline(SessionPipeline::new(AdaptiveConfig::default()));
+        // Notification path — must not panic and must not error.
+        server.handle_notification("notifications/devboy/compact");
+        // Unknown notifications are still ignored.
+        server.handle_notification("notifications/totally/unrelated");
+    }
+
+    #[tokio::test]
+    async fn test_compact_pipeline_cache_internal_tool() {
+        use devboy_format_pipeline::adaptive_config::AdaptiveConfig;
+
+        let mut server = McpServer::new();
+        server.enable_layered_pipeline(SessionPipeline::new(AdaptiveConfig::default()));
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "compact_pipeline_cache",
+                "arguments": {}
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none());
+        let result: ToolCallResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+        assert_eq!(result.is_error, None);
     }
 
     #[tokio::test]
