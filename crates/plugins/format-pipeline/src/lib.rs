@@ -30,6 +30,7 @@ pub mod layered_pipeline;
 pub mod mckp_router;
 pub mod page_index;
 pub mod pagination;
+pub mod round_trip;
 pub mod shape;
 pub mod strategy;
 pub mod telemetry;
