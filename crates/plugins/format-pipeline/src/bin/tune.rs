@@ -108,10 +108,17 @@ struct EndpointStats {
     layer_counts: BTreeMap<String, u64>,
     total_baseline_tokens: u64,
     total_final_tokens: u64,
+    /// Tokens saved by L0 dedup hits only (baseline − final, summed
+    /// across events whose `layer_used == L0`).
+    dedup_saved_tokens: u64,
+    /// Tokens saved by L1 / L2 encoders (baseline − final on the L0-miss
+    /// branch only).
+    encoder_saved_tokens: u64,
 }
 
 impl EndpointStats {
     fn update(&mut self, ev: &PipelineEvent) {
+        use devboy_format_pipeline::telemetry::Layer;
         self.call_count += 1;
         self.total_chars += ev.response_chars;
         if ev.is_dedup_hit {
@@ -127,6 +134,12 @@ impl EndpointStats {
             .or_insert(0) += 1;
         self.total_baseline_tokens += ev.tokens_baseline as u64;
         self.total_final_tokens += ev.tokens_final as u64;
+        let saved = (ev.tokens_baseline as i64 - ev.tokens_final as i64).max(0) as u64;
+        match ev.layer_used {
+            Layer::L0 => self.dedup_saved_tokens += saved,
+            Layer::L1 | Layer::L2 => self.encoder_saved_tokens += saved,
+            Layer::L3 => {} // passthrough — no savings
+        }
     }
 
     fn dup_rate(&self) -> f32 {
@@ -157,6 +170,24 @@ impl EndpointStats {
             0.0
         } else {
             1.0 - (self.total_final_tokens as f32 / self.total_baseline_tokens as f32)
+        }
+    }
+
+    /// Fraction of total baseline tokens reclaimed by L0 dedup hints.
+    fn dedup_savings_pct(&self) -> f32 {
+        if self.total_baseline_tokens == 0 {
+            0.0
+        } else {
+            self.dedup_saved_tokens as f32 / self.total_baseline_tokens as f32
+        }
+    }
+
+    /// Fraction of total baseline tokens reclaimed by L1 / L2 encoders.
+    fn encoder_savings_pct(&self) -> f32 {
+        if self.total_baseline_tokens == 0 {
+            0.0
+        } else {
+            self.encoder_saved_tokens as f32 / self.total_baseline_tokens as f32
         }
     }
 }
@@ -658,11 +689,33 @@ fn cmd_analyze(args: &[String]) -> Result<(), String> {
         0
     };
 
+    let agg_dedup_saved: u64 = corpus
+        .per_endpoint
+        .values()
+        .map(|s| s.dedup_saved_tokens)
+        .sum();
+    let agg_encoder_saved: u64 = corpus
+        .per_endpoint
+        .values()
+        .map(|s| s.encoder_saved_tokens)
+        .sum();
+    let dedup_pct = if corpus.total_baseline_tokens == 0 {
+        0.0
+    } else {
+        agg_dedup_saved as f32 / corpus.total_baseline_tokens as f32 * 100.0
+    };
+    let encoder_pct = if corpus.total_baseline_tokens == 0 {
+        0.0
+    } else {
+        agg_encoder_saved as f32 / corpus.total_baseline_tokens as f32 * 100.0
+    };
     eprintln!(
-        "# events: {} | sessions: {} | endpoints: {} | savings: {:.1}%",
+        "# events: {} | sessions: {} | endpoints: {} | dedup: {:.1}% | encoder: {:.1}% | total: {:.1}%",
         read,
         corpus.total_sessions,
         corpus.per_endpoint.len(),
+        dedup_pct,
+        encoder_pct,
         corpus.savings_pct() * 100.0,
     );
 
@@ -761,16 +814,19 @@ fn print_top_endpoints(corpus: &CorpusStats, n: usize) {
     eprintln!();
     eprintln!("# top endpoints by call count:");
     eprintln!(
-        "#   {:<40} {:>8} {:>8} {:>8} {:>10}",
-        "endpoint", "calls", "dup_rate", "avg_chars", "savings"
+        "#   {:<35} {:>7} {:>8} {:>8} {:>9} {:>9} {:>9}",
+        "endpoint", "calls", "dup_rate", "avg_chars",
+        "dedup%", "encoder%", "total%"
     );
     for (name, s) in endpoints.iter().take(n) {
         eprintln!(
-            "#   {:<40} {:>8} {:>8.1}% {:>8.0} {:>9.1}%",
-            truncate(name, 40),
+            "#   {:<35} {:>7} {:>7.1}% {:>8.0} {:>8.1}% {:>8.1}% {:>8.1}%",
+            truncate(name, 35),
             s.call_count,
             s.dup_rate() * 100.0,
             s.avg_chars(),
+            s.dedup_savings_pct() * 100.0,
+            s.encoder_savings_pct() * 100.0,
             s.savings_pct() * 100.0,
         );
     }
@@ -904,6 +960,38 @@ mod tests {
         assert_eq!(s.avg_chars(), 0.0);
         assert_eq!(s.savings_pct(), 0.0);
         assert!(s.dominant_shape().is_none());
+    }
+
+    #[test]
+    fn endpoint_stats_splits_dedup_vs_encoder_savings() {
+        // L0 hit on event 1: baseline=100, final=10 -> dedup_saved=90
+        // L2 encode on event 2: baseline=100, final=70 -> encoder_saved=30
+        // L3 passthrough on event 3: baseline=100, final=100 -> 0 saved
+        let mut s = EndpointStats::default();
+        let mut e1 = ev("ep", true, Shape::Prose, 100, 10);
+        e1.layer_used = Layer::L0;
+        s.update(&e1);
+        let mut e2 = ev("ep", false, Shape::ArrayOfObjects, 100, 70);
+        e2.layer_used = Layer::L2;
+        s.update(&e2);
+        let mut e3 = ev("ep", false, Shape::Prose, 100, 100);
+        e3.layer_used = Layer::L3;
+        s.update(&e3);
+
+        assert_eq!(s.dedup_saved_tokens, 90);
+        assert_eq!(s.encoder_saved_tokens, 30);
+        assert_eq!(s.total_baseline_tokens, 300);
+        // 90/300 = 30%
+        assert!((s.dedup_savings_pct() - 0.30).abs() < 1e-6);
+        // 30/300 = 10%
+        assert!((s.encoder_savings_pct() - 0.10).abs() < 1e-6);
+        // total = 1 - 180/300 = 40%
+        assert!((s.savings_pct() - 0.40).abs() < 1e-6);
+        // Decomposition holds: dedup + encoder = total
+        assert!(
+            (s.dedup_savings_pct() + s.encoder_savings_pct() - s.savings_pct())
+                .abs() < 1e-6
+        );
     }
 
     #[test]

@@ -919,6 +919,90 @@ Total: **242 tests** (233 lib + 6 bin + 3 doctests) passing; `cargo clippy --all
 - [ ] **Team- and provider-shared fingerprints** (§Deployment Patterns B/C). Requires shared-bucket protocol and k-anonymity enforcement.
 - [ ] **Format round-trip correctness tests** — sample 50 L1/L2-encoded responses, verify that a downstream decoder recovers full information vs the raw baseline.
 
+## Savings Accounting
+
+A single number — "we saved X% of tokens" — hides the source of the
+saving. The layered pipeline has two independent compression
+mechanisms, and the headline number must report both, separately.
+
+### Two orthogonal sources
+
+```
+                  ┌─────────┐  L0 hits → emit ~10-token reference hint
+   raw response ─►│   L0    │─────────────────────────────────────► output
+                  │  dedup  │                                         (≈ 100% saved
+                  └────┬────┘                                          on this branch)
+                       │ miss
+                       ▼
+                  ┌─────────┐
+                  │ L1 / L2 │  encoder savings — depend on shape & format
+                  │ encoder │  (mckp_v2: −16% vs json_compact on our corpus)
+                  └────┬────┘
+                       ▼
+                    output
+```
+
+The two saving rates are **multiplicative**, not additive: the encoder
+only sees the fraction of events that did not hit L0.
+
+```
+combined_saving = dedup_share × 1.0  +  fresh_share × encoder_saving_vs_json
+                = p(L0 hit)   × 1.0  +  (1 − p(L0 hit)) × encoder_saving
+```
+
+### What the corpus shows
+
+Numbers are from the 2026-04-25 Paper 2 evaluation (`o200k_base`
+tokenizer, 431 records × 109 questions × 3 LLMs). Dedup numbers are
+from the 144 658-event simulation in §"Validation snapshot on our
+corpus".
+
+| Encoder | Encoder vs `json_compact` | Encoder vs `toon` | Combined w/ L0 dedup (29.9% hit rate) |
+|---|---:|---:|---:|
+| `json_pretty` | −50% | −20% | **−5%** |
+| `csv` (naive monolithic) | −4% | +18% | +27% |
+| `markdown_table` (naive) | −23% | +2% | +14% |
+| `toon` | **−26%** | 0% | +12% |
+| `mckp` (lossy v1) | +25% | +40% | +47% (but −1.9 p.p. accuracy) |
+| **`mckp_v2`** | **+16%** | **+34%** | **+41%** |
+| `mckp_v2` (Rust port) | +17% | +34% | +42% |
+
+**Key reads:**
+
+1. **TOON is not a saver on this tokenizer.** The advertised −40% holds
+   only on the specific tokenization profile used by `toon-format`'s
+   defaults; on the `o200k_base` family that GPT/Anthropic models share,
+   TOON costs ~26% **more** than `json_compact`.
+2. **Naive CSV / Markdown look like they save tokens, but they lose
+   data** — see §Encoder Bug Postmortem. The 4–23% headline saving on
+   table A becomes a −30 p.p. accuracy regression on deep / nested
+   shapes; the saving is bought with answers the model can no longer
+   give.
+3. **L0 dedup is the dominant saver**, contributing 29.9% of combined
+   savings on our corpus before the encoder runs at all. The encoder
+   contributes the *remaining* fraction multiplicatively.
+4. **`mckp_v2` (and its Rust port) is the only encoder that wins both
+   axes**: +16% tokens vs `json_compact`, +34% vs `toon`, no accuracy
+   loss on any of the three evaluated LLMs.
+
+### Reporting rule
+
+Every quoted savings number in this paper, in production telemetry, and
+in `devboy tune` output **must** distinguish:
+
+- `dedup_savings_pct` — fraction of total tokens saved by L0 hint emits;
+- `encoder_savings_pct` — fraction saved by L1 / L2 encoding (computed
+  over the L0-miss branch only);
+- `combined_savings_pct` — the multiplicative composition above;
+- The **baseline** the percentages are taken against (`json_compact`,
+  `json_pretty`, or `toon` — they differ by tens of percentage points).
+
+The `tune analyze` and `tune from-claude-logs` CLIs surface all three
+columns in `print_top_endpoints`. The Paper 2 reproducibility script
+`scripts/06_savings_breakdown.py` produces a per-format / per-shape /
+per-baseline matrix from `fixtures/encoded.parquet` and the live
+comprehension parquets.
+
 ## Encoder Bug Postmortem (2026-04-25)
 
 During end-to-end LLM-comprehension validation we discovered a class of
