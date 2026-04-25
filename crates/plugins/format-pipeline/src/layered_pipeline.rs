@@ -150,6 +150,14 @@ impl LayeredPipeline {
         self.dedup.partition()
     }
 
+    /// Drop every cache entry tagged with `file_path`. Called by the host
+    /// after a mutating tool (`Edit` / `Write` / `MultiEdit` / …) so the
+    /// next `Read` of the same file returns the fresh body, not a hint.
+    pub fn invalidate_file(&mut self, file_path: &str) -> usize {
+        let hash = crate::dedup_util::file_path_hash(file_path);
+        self.dedup.invalidate_file(&hash)
+    }
+
     /// Token count for `text` under the active tokenizer profile.
     ///
     /// Honours `profiles.tokenizer.active`: when the resolved profile uses

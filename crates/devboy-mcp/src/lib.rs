@@ -22,6 +22,7 @@
 //! ```
 
 pub mod handlers;
+pub mod layered;
 pub mod protocol;
 pub mod proxy;
 pub mod routing;
