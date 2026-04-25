@@ -40,6 +40,7 @@ pub mod tree;
 pub mod trim;
 pub mod truncation;
 
+pub use token_counter::{Tokenizer, estimate_tokens, tokens_to_chars};
 pub use truncation::TruncationPlugin;
 
 use devboy_core::{Comment, Discussion, FileDiff, Issue, MergeRequest, Result};

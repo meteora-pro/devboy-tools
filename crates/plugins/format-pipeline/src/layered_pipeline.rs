@@ -52,6 +52,7 @@ use crate::adaptive_config::AdaptiveConfig;
 use crate::dedup::{DedupCache, DedupDecision, ToolKind, content_hash, render_reference_hint_with};
 use crate::shape::{ClassifiedResponse, classify};
 use crate::telemetry::{Layer, PipelineEvent, Shape, TelemetrySink};
+use crate::token_counter::Tokenizer;
 
 /// Input to [`LayeredPipeline::process`].
 #[derive(Debug, Clone, Copy)]
@@ -88,8 +89,11 @@ pub struct ProcessedResponse {
     pub tokens_final: u32,
 }
 
-/// Convert char count to a token estimate.
-/// Matches the Python extractor's `chars/4` approximation — keep in sync.
+/// Legacy `chars/4` token approximation matching the Python research
+/// extractor. Used as a hot-path fallback when the pipeline's adaptive
+/// config selects `Tokenizer::Heuristic` (i.e. has not been pointed at a
+/// real BPE table). Pipeline-internal callers go through
+/// [`LayeredPipeline::tokens`], which honours the config.
 #[inline]
 fn est_tokens(chars: usize) -> u32 {
     (chars.max(4) / 4) as u32
@@ -146,10 +150,25 @@ impl LayeredPipeline {
         self.dedup.partition()
     }
 
+    /// Token count for `text` under the active tokenizer profile.
+    ///
+    /// Honours `profiles.tokenizer.active`: when the resolved profile uses
+    /// `Tokenizer::Heuristic`, falls back to the legacy `chars/4` approximation
+    /// (kept in sync with the Python extractor) so existing telemetry stays
+    /// stable. When a real BPE profile is selected, returns the exact count.
+    fn tokens(&self, text: &str) -> u32 {
+        let profile = self.config.effective_tokenizer_profile();
+        if profile.bpe == Tokenizer::Heuristic {
+            est_tokens(text.len())
+        } else {
+            profile.count_tokens(text) as u32
+        }
+    }
+
     /// Dispatch a tool response through the 4-layer pipeline.
     pub fn process(&mut self, input: ToolResponseInput<'_>) -> ProcessedResponse {
         self.event_counter += 1;
-        let baseline_tokens = est_tokens(input.content.len());
+        let baseline_tokens = self.tokens(input.content);
 
         // Mutation-aware invalidation must fire even for tiny Edit responses —
         // the invalidation itself is correctness-critical, not an optimization.
@@ -194,7 +213,7 @@ impl LayeredPipeline {
                 self.config.dedup.hint_verbosity.to_runtime(),
                 Some(tool_kind),
             );
-            let tokens_final = est_tokens(hint.len());
+            let tokens_final = self.tokens(&hint);
             let out = ProcessedResponse {
                 output: hint,
                 layer: Layer::L0,
@@ -233,7 +252,7 @@ impl LayeredPipeline {
             && self.config.templates.is_template_active(&t_id)
             && let Some(body) = crate::templates::apply_by_id(&t_id, input.content, &classified)
         {
-            let tokens_final = est_tokens(body.len());
+            let tokens_final = self.tokens(&body);
             if tokens_final < baseline_tokens {
                 let out = ProcessedResponse {
                     output: body,
@@ -258,7 +277,7 @@ impl LayeredPipeline {
         if let Some((fmt_id, body)) =
             crate::mckp_router::route(&self.config.mckp, input.content, &classified)
         {
-            let tokens_final = est_tokens(body.len());
+            let tokens_final = self.tokens(&body);
             if tokens_final < baseline_tokens {
                 let out = ProcessedResponse {
                     output: body,
@@ -352,7 +371,7 @@ impl LayeredPipeline {
             is_dedup_hit: matches!(out.layer, Layer::L0),
             layer_used: out.layer,
             template_id: template_id.map(String::from),
-            tokens_baseline: est_tokens(input.content.len()),
+            tokens_baseline: self.tokens(input.content),
             tokens_final: out.tokens_final,
             context_partition: self.dedup.partition() as u32,
             is_sidechain: input.is_sidechain,
@@ -665,5 +684,37 @@ mod tests {
         // First entry now evicted (capacity 12), so recalling it should be Fresh.
         let o = p.process(input("tc_recheck", "Bash", None, &distinct[0]));
         assert_eq!(o.layer, Layer::L3);
+    }
+
+    #[test]
+    fn tokens_method_falls_back_to_heuristic_by_default() {
+        let cfg = AdaptiveConfig::default();
+        // Default profile is "auto" → resolves to anthropic_class which now
+        // selects O200kBase BPE. Pipeline.tokens should therefore *not* match
+        // the legacy chars/4 estimate on a sufficiently long body.
+        let p = LayeredPipeline::new("s_tk".into(), cfg);
+        let body = "a".repeat(2_000);
+        let bpe_count = p.tokens(&body);
+        let heuristic = (body.len() / 4) as u32;
+        // BPE on a long run of a single character compresses much better than
+        // chars/4 — assert they differ (and BPE is smaller, the whole point of
+        // bringing in tiktoken-rs).
+        assert!(
+            bpe_count < heuristic,
+            "expected BPE count {bpe_count} < heuristic {heuristic} on a degenerate input"
+        );
+    }
+
+    #[test]
+    fn tokens_method_uses_heuristic_when_profile_is_heuristic() {
+        let mut cfg = AdaptiveConfig::default();
+        // Force the active tokenizer to ollama_bpe, which is configured with
+        // Tokenizer::Heuristic — that path must hit the legacy chars/4 fallback.
+        cfg.profiles.tokenizer.active = "ollama_bpe".into();
+        let p = LayeredPipeline::new("s_h".into(), cfg);
+        let body = "abcdefgh"; // 8 chars
+        // chars/4 → 2 tokens. Confirm the legacy formula is preserved so that
+        // existing telemetry/snapshot tests downstream don't shift.
+        assert_eq!(p.tokens(body), 2);
     }
 }

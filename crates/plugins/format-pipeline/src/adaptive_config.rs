@@ -47,6 +47,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::token_counter::Tokenizer;
+
 #[derive(Error, Debug)]
 pub enum ConfigError {
     #[error("adaptive-config I/O: {0}")]
@@ -211,6 +213,40 @@ impl AdaptiveConfig {
             }
         }
         n.max(1)
+    }
+
+    /// Effective tokenizer profile resolved from `profiles.tokenizer.active`
+    /// (or `auto` → `anthropic_class`). Always returns *some* profile —
+    /// falls back to the default `anthropic_class` if the active id is
+    /// missing from `variants`.
+    pub fn effective_tokenizer_profile(&self) -> &TokenizerProfile {
+        let active = self.profiles.tokenizer.active.as_str();
+        let id = if active == "auto" || active.is_empty() {
+            "anthropic_class"
+        } else {
+            active
+        };
+        self.profiles
+            .tokenizer
+            .variants
+            .get(id)
+            .or_else(|| self.profiles.tokenizer.variants.get("anthropic_class"))
+            .unwrap_or_else(|| {
+                // Last resort: a static default kept for the lifetime of the
+                // process. We never expect to hit this branch — `Default`
+                // populates `anthropic_class` — but safe-guard against a
+                // hand-edited config that wiped variants.
+                static FALLBACK: std::sync::OnceLock<TokenizerProfile> = std::sync::OnceLock::new();
+                FALLBACK.get_or_init(TokenizerProfile::default)
+            })
+    }
+
+    /// Token count for `text` under the active tokenizer profile. Hot path:
+    /// when the profile selects `Tokenizer::Heuristic`, this is a single
+    /// integer division on `text.len()`. When BPE is selected, it pays one
+    /// `tiktoken-rs` encode call (typically 1–10 µs).
+    pub fn effective_token_count(&self, text: &str) -> usize {
+        self.effective_tokenizer_profile().count_tokens(text)
     }
 
     /// Effective L1 template id for `endpoint`. Per-endpoint override wins;
@@ -519,10 +555,20 @@ pub struct ProfilesConfig {
 /// different token counts depending on the receiving model's tokenizer (e.g.,
 /// `inline_json_cost` is 2.2x on Anthropic-class but 1.0x on Ollama BPE).
 /// See Paper 2 §Encoder Bug Postmortem (2026-04-25).
+///
+/// `bpe` selects the actual byte-pair encoder used to count tokens. When set
+/// to [`Tokenizer::Heuristic`] (default for backward compat), `chars_per_token`
+/// drives the estimate. When set to a real BPE variant, that BPE is used and
+/// `chars_per_token` is informational only.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenizerProfile {
     /// Average characters per token observed for this tokenizer.
+    /// Only used when `bpe == Heuristic`.
     pub chars_per_token: f32,
+    /// Real BPE tokenizer to use for accurate counts. Falls back to the
+    /// `chars_per_token` heuristic when set to `heuristic`.
+    #[serde(default)]
+    pub bpe: Tokenizer,
     /// Penalty multiplier for inline-JSON cells inside markdown tables.
     /// Use to decide between inline-JSON nested cells vs. recursive sections.
     #[serde(default = "default_inline_json_cost")]
@@ -547,9 +593,33 @@ impl Default for TokenizerProfile {
     fn default() -> Self {
         Self {
             chars_per_token: 4.0,
+            bpe: Tokenizer::Heuristic,
             inline_json_cost: default_inline_json_cost(),
             toon_overhead: default_toon_overhead(),
             format_factors: BTreeMap::new(),
+        }
+    }
+}
+
+impl TokenizerProfile {
+    /// Count tokens in `text` using this profile's resolved tokenizer.
+    ///
+    /// - If `bpe == Heuristic`, applies `text.len() / chars_per_token` (ceiled).
+    /// - Otherwise delegates to the real BPE encoder.
+    pub fn count_tokens(&self, text: &str) -> usize {
+        if text.is_empty() {
+            return 0;
+        }
+        match self.bpe {
+            Tokenizer::Heuristic => {
+                let cpt = if self.chars_per_token > 0.0 {
+                    self.chars_per_token as f64
+                } else {
+                    3.5
+                };
+                (text.len() as f64 / cpt).ceil() as usize
+            }
+            tk => tk.count(text),
         }
     }
 }
@@ -573,6 +643,7 @@ fn default_tokenizer_variants() -> BTreeMap<String, TokenizerProfile> {
         "anthropic_class".into(),
         TokenizerProfile {
             chars_per_token: 3.5,
+            bpe: Tokenizer::O200kBase,
             inline_json_cost: 2.2,
             toon_overhead: 1.13,
             format_factors: BTreeMap::new(),
@@ -582,6 +653,17 @@ fn default_tokenizer_variants() -> BTreeMap<String, TokenizerProfile> {
         "openai_o200k".into(),
         TokenizerProfile {
             chars_per_token: 4.0,
+            bpe: Tokenizer::O200kBase,
+            inline_json_cost: 1.0,
+            toon_overhead: 0.60,
+            format_factors: BTreeMap::new(),
+        },
+    );
+    m.insert(
+        "openai_cl100k".into(),
+        TokenizerProfile {
+            chars_per_token: 3.7,
+            bpe: Tokenizer::Cl100kBase,
             inline_json_cost: 1.0,
             toon_overhead: 0.60,
             format_factors: BTreeMap::new(),
@@ -591,6 +673,7 @@ fn default_tokenizer_variants() -> BTreeMap<String, TokenizerProfile> {
         "ollama_bpe".into(),
         TokenizerProfile {
             chars_per_token: 3.8,
+            bpe: Tokenizer::Heuristic,
             inline_json_cost: 1.0,
             toon_overhead: 1.00,
             format_factors: BTreeMap::new(),
@@ -1634,5 +1717,53 @@ recursion_depth = 6
         let t = TemplatesConfig::default();
         assert!(!t.is_template_active("not_a_real_template"));
         assert!(t.is_template_active("csv_from_md"));
+    }
+
+    #[test]
+    fn tokenizer_profile_heuristic_uses_chars_per_token() {
+        let p = TokenizerProfile {
+            chars_per_token: 4.0,
+            bpe: Tokenizer::Heuristic,
+            ..Default::default()
+        };
+        // 8 chars / 4.0 = 2 tokens
+        assert_eq!(p.count_tokens("abcdefgh"), 2);
+        // empty stays zero regardless of chars_per_token
+        assert_eq!(p.count_tokens(""), 0);
+    }
+
+    #[test]
+    fn tokenizer_profile_bpe_overrides_heuristic() {
+        let p = TokenizerProfile {
+            // Deliberately wrong cpt — should be ignored when bpe is set.
+            chars_per_token: 1.0,
+            bpe: Tokenizer::O200kBase,
+            ..Default::default()
+        };
+        // BPE count is small for "hello world", definitely not 11 (= 11 chars / 1.0).
+        let n = p.count_tokens("hello world");
+        assert!(n > 0 && n < 5, "BPE should win, got {n}");
+    }
+
+    #[test]
+    fn default_tokenizer_variants_have_real_bpe_for_modern_models() {
+        let variants = default_tokenizer_variants();
+        assert_eq!(
+            variants.get("anthropic_class").unwrap().bpe,
+            Tokenizer::O200kBase
+        );
+        assert_eq!(
+            variants.get("openai_o200k").unwrap().bpe,
+            Tokenizer::O200kBase
+        );
+        assert_eq!(
+            variants.get("openai_cl100k").unwrap().bpe,
+            Tokenizer::Cl100kBase
+        );
+        // Ollama-class models keep the heuristic until we ship a per-model BPE.
+        assert_eq!(
+            variants.get("ollama_bpe").unwrap().bpe,
+            Tokenizer::Heuristic
+        );
     }
 }
