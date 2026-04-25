@@ -54,6 +54,21 @@ fn estimate_tokens_from_chars(chars: usize) -> usize {
     (chars as f64 / 3.5).ceil() as usize
 }
 
+/// Serialize a `Serialize` slice to JSON pretty, then route the JSON
+/// through the L2 MCKP shape dispatcher. Falls back to the pretty-printed
+/// JSON when no shape applies. The L0 dedup layer is host-side (per
+/// session) and is wired separately in P-203-04.
+fn encode_mckp<T: serde::Serialize>(items: &[T]) -> Result<String> {
+    let json = serde_json::to_string_pretty(items)?;
+    let cls = shape::classify(&json);
+    let cfg = adaptive_config::MckpConfig::default();
+    if let Some((_id, body)) = mckp_router::route(&cfg, &json, &cls) {
+        Ok(body)
+    } else {
+        Ok(json)
+    }
+}
+
 /// Output from a pipeline transformation.
 ///
 /// Contains the transformed data and metadata about truncation/pagination.
@@ -183,10 +198,19 @@ impl Default for PipelineConfig {
 /// Output format for transformations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
-    /// TOON format (default) -- token-optimized, saves 39-90% vs JSON
+    /// TOON format -- token-optimized custom format. Wins on `cl100k_base`
+    /// tokenizers but *loses* ~26% on `o200k_base` (the modern Anthropic /
+    /// OpenAI family). Kept as a baseline; not the recommended default.
+    /// See Paper 2 §Savings Accounting.
     Toon,
-    /// JSON format -- for programmatic processing
+    /// JSON pretty-printed -- for programmatic processing.
     Json,
+    /// MCKP v2 -- format-adaptive encoder dispatched by structural shape.
+    /// Routes object-wrapping-array shapes through the union-of-keys table
+    /// renderer (`deep_mckp_with_inner_table`) and falls back to compact
+    /// JSON when no shape applies. Tokenizer-agnostic — see Paper 2
+    /// §Encoder Bug Postmortem and §Savings Accounting.
+    Mckp,
 }
 
 /// Pipeline for chaining output transformations.
@@ -217,6 +241,7 @@ impl Pipeline {
         let full_content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&issues)?,
             OutputFormat::Toon => toon::encode_issues(&issues, toon::TrimLevel::Full)?,
+            OutputFormat::Mckp => encode_mckp(&issues)?,
         };
 
         if self.config.max_chars == 0 || full_content.len() <= self.config.max_chars {
@@ -237,6 +262,7 @@ impl Pipeline {
             let content = match self.config.format {
                 OutputFormat::Json => serde_json::to_string_pretty(chunk_items)?,
                 OutputFormat::Toon => toon::encode_issues(chunk_items, toon::TrimLevel::Full)?,
+                OutputFormat::Mckp => encode_mckp(chunk_items)?,
             };
             let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
             output.included_count = chunk_items.len();
@@ -266,6 +292,7 @@ impl Pipeline {
         let full_content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&mrs)?,
             OutputFormat::Toon => toon::encode_merge_requests(&mrs, toon::TrimLevel::Full)?,
+            OutputFormat::Mckp => encode_mckp(&mrs)?,
         };
 
         if self.config.max_chars == 0 || full_content.len() <= self.config.max_chars {
@@ -286,6 +313,7 @@ impl Pipeline {
                 OutputFormat::Toon => {
                     toon::encode_merge_requests(chunk_items, toon::TrimLevel::Full)?
                 }
+                OutputFormat::Mckp => encode_mckp(chunk_items)?,
             };
             let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
             output.included_count = chunk_items.len();
@@ -327,6 +355,7 @@ impl Pipeline {
         let full_content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&diffs)?,
             OutputFormat::Toon => toon::encode_diffs(&diffs)?,
+            OutputFormat::Mckp => encode_mckp(&diffs)?,
         };
 
         if self.config.max_chars == 0 || full_content.len() <= self.config.max_chars {
@@ -345,6 +374,7 @@ impl Pipeline {
             let content = match self.config.format {
                 OutputFormat::Json => serde_json::to_string_pretty(chunk_items)?,
                 OutputFormat::Toon => toon::encode_diffs(chunk_items)?,
+                OutputFormat::Mckp => encode_mckp(chunk_items)?,
             };
             let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
             output.included_count = chunk_items.len();
@@ -373,6 +403,7 @@ impl Pipeline {
         let full_content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&comments)?,
             OutputFormat::Toon => toon::encode_comments(&comments)?,
+            OutputFormat::Mckp => encode_mckp(&comments)?,
         };
 
         if self.config.max_chars == 0 || full_content.len() <= self.config.max_chars {
@@ -391,6 +422,7 @@ impl Pipeline {
             let content = match self.config.format {
                 OutputFormat::Json => serde_json::to_string_pretty(chunk_items)?,
                 OutputFormat::Toon => toon::encode_comments(chunk_items)?,
+                OutputFormat::Mckp => encode_mckp(chunk_items)?,
             };
             let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
             output.included_count = chunk_items.len();
@@ -419,6 +451,7 @@ impl Pipeline {
         let full_content = match self.config.format {
             OutputFormat::Json => serde_json::to_string_pretty(&discussions)?,
             OutputFormat::Toon => toon::encode_discussions(&discussions)?,
+            OutputFormat::Mckp => encode_mckp(&discussions)?,
         };
 
         if self.config.max_chars == 0 || full_content.len() <= self.config.max_chars {
@@ -437,6 +470,7 @@ impl Pipeline {
             let content = match self.config.format {
                 OutputFormat::Json => serde_json::to_string_pretty(chunk_items)?,
                 OutputFormat::Toon => toon::encode_discussions(chunk_items)?,
+                OutputFormat::Mckp => encode_mckp(chunk_items)?,
             };
             let mut output = TransformOutput::new(content).with_raw_chars(raw_chars);
             output.included_count = chunk_items.len();
@@ -1200,5 +1234,57 @@ mod tests {
             toon_output.content.len(),
             json_output.content.len()
         );
+    }
+
+    #[test]
+    fn test_mckp_routes_issues_through_inner_table() {
+        let issues: Vec<Issue> = sample_issues().into_iter().take(10).collect();
+
+        let mckp_pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Mckp,
+            max_chars: 1_000_000,
+            ..Default::default()
+        });
+        let json_pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Json,
+            max_chars: 1_000_000,
+            ..Default::default()
+        });
+
+        let mckp_out = mckp_pipeline.transform_issues(issues.clone()).unwrap();
+        let json_out = json_pipeline.transform_issues(issues).unwrap();
+
+        // MCKP must beat the pretty-printed JSON baseline on this shape
+        // (array of objects → routes to `csv` via try_array_csv).
+        assert!(
+            mckp_out.content.len() < json_out.content.len(),
+            "MCKP ({}) should be smaller than JSON ({})",
+            mckp_out.content.len(),
+            json_out.content.len(),
+        );
+        // Round-trip key parity: every Issue field still appears in the
+        // output (the encoder bug regression).
+        for k in ["key", "title", "state", "source"] {
+            assert!(
+                mckp_out.content.contains(k),
+                "MCKP output is missing field `{k}`: {}",
+                &mckp_out.content[..mckp_out.content.len().min(200)]
+            );
+        }
+    }
+
+    #[test]
+    fn test_mckp_falls_back_to_pretty_json_on_unstable_keys() {
+        // Single issue → array length 1, below the min_items threshold for
+        // try_array_csv. encode_mckp must not crash; it should fall back
+        // to the pretty JSON.
+        let issues: Vec<Issue> = sample_issues().into_iter().take(1).collect();
+        let mckp_pipeline = Pipeline::with_config(PipelineConfig {
+            format: OutputFormat::Mckp,
+            max_chars: 1_000_000,
+            ..Default::default()
+        });
+        let out = mckp_pipeline.transform_issues(issues).unwrap();
+        assert!(out.content.contains("gh#1"));
     }
 }
