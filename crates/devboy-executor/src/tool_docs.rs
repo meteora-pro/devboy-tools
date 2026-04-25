@@ -97,8 +97,12 @@ pub fn render(format: DocsFormat) -> String {
     match format {
         DocsFormat::Markdown => render_markdown(),
         DocsFormat::Json => {
-            // Pretty-printed JSON — small file, easier to diff in CI drift checks.
-            serde_json::to_string_pretty(&render_json()).unwrap_or_else(|_| "{}".into())
+            // The Value tree is built from owned strings and primitives — it
+            // cannot fail to serialize. Panic loudly if that ever changes,
+            // rather than emitting an empty doc that would silently pass
+            // the CI drift check.
+            serde_json::to_string_pretty(&render_json())
+                .expect("tool_docs::render_json() should produce a serializable Value")
         }
     }
 }

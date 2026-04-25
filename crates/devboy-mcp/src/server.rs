@@ -454,7 +454,11 @@ impl McpServer {
         // truth lives in `devboy_executor::tools::mcp_only_tools()` so the
         // published reference doc renders the same list.
         for tool in devboy_executor::tools::mcp_only_tools() {
-            let mut schema = serde_json::to_value(&tool.input_schema).unwrap_or_default();
+            // `ToolSchema` derives `Serialize` and is built from owned data,
+            // so this can only fail if the schema layout itself is broken —
+            // panic instead of advertising a `null` schema to clients.
+            let mut schema = serde_json::to_value(&tool.input_schema)
+                .expect("McpOnlyTool::input_schema must be serializable");
             if let Some(obj) = schema.as_object_mut() {
                 obj.entry("type").or_insert_with(|| "object".into());
             }
