@@ -23,11 +23,12 @@
 //!   partition counter and drop entries that would otherwise outlive
 //!   the cache window.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use devboy_format_pipeline::adaptive_config::AdaptiveConfig;
 use devboy_format_pipeline::layered_pipeline::{LayeredPipeline, ToolResponseInput};
-use devboy_format_pipeline::telemetry::Layer;
+use devboy_format_pipeline::telemetry::{JsonlSink, Layer, TelemetrySink};
 
 use crate::protocol::{ToolCallParams, ToolCallResult, ToolResultContent};
 
@@ -42,10 +43,37 @@ impl SessionPipeline {
     /// Create a new pipeline for the current MCP server process. The
     /// session id is derived from the process id so multiple concurrent
     /// `devboy mcp` instances do not collide in shared telemetry.
+    ///
+    /// When `config.telemetry.enabled` is `true`, a [`JsonlSink`] is
+    /// opened at `<config.telemetry.path | ~/.devboy/telemetry>/<session>.jsonl`
+    /// and attached to the pipeline. Failures to open the sink (missing
+    /// permissions, etc.) are logged at WARN level and degrade to a
+    /// no-op telemetry — they never fail the server start-up.
     pub fn new(config: AdaptiveConfig) -> Self {
         let session_id = format!("mcp_{}", std::process::id());
+        let mut pipeline = LayeredPipeline::new(session_id.clone(), config.clone());
+
+        if config.telemetry.enabled
+            && let Some(path) = resolve_telemetry_path(&config, &session_id)
+        {
+            match JsonlSink::open(&path) {
+                Ok(sink) => {
+                    let arc: Arc<dyn TelemetrySink> = Arc::new(sink);
+                    pipeline = pipeline.with_telemetry(arc);
+                    tracing::info!(target: "devboy_mcp::telemetry", "telemetry sink opened at {}", path.display());
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "devboy_mcp::telemetry",
+                        "telemetry sink at {} failed to open: {e} — running without telemetry",
+                        path.display()
+                    );
+                }
+            }
+        }
+
         Self {
-            inner: Arc::new(Mutex::new(LayeredPipeline::new(session_id, config))),
+            inner: Arc::new(Mutex::new(pipeline)),
         }
     }
 
@@ -147,6 +175,22 @@ pub fn is_mutating_tool(name: &str) -> bool {
     matches!(name, "Edit" | "Write" | "MultiEdit" | "NotebookEdit")
 }
 
+/// Resolve the JSONL sink target for a session. Honours
+/// `telemetry.path`, then `$DEVBOY_TELEMETRY_DIR`, then
+/// `$HOME/.devboy/telemetry/`, then `$TMPDIR/.devboy-telemetry/`.
+fn resolve_telemetry_path(config: &AdaptiveConfig, session_id: &str) -> Option<PathBuf> {
+    let dir: PathBuf = if let Some(p) = config.telemetry.path.as_deref() {
+        Path::new(p).to_path_buf()
+    } else if let Ok(env_dir) = std::env::var("DEVBOY_TELEMETRY_DIR") {
+        PathBuf::from(env_dir)
+    } else if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        home.join(".devboy").join("telemetry")
+    } else {
+        std::env::temp_dir().join(".devboy-telemetry")
+    };
+    Some(dir.join(format!("{session_id}.jsonl")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,6 +276,67 @@ mod tests {
         let r2 = pipeline.process("req_2", &read_params("/tmp/c.rs"), err, 10);
         let ToolResultContent::Text { text: t2 } = &r2.content[0];
         assert_eq!(t2, &body, "errors must pass through untouched");
+    }
+
+    #[test]
+    fn telemetry_disabled_by_default_writes_no_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = AdaptiveConfig::default();
+        cfg.telemetry.path = Some(tmp.path().to_string_lossy().into_owned());
+        // enabled stays false (the default)
+        let pipeline = SessionPipeline::new(cfg);
+        let body = long_text("file-T:");
+        let _ = pipeline.process(
+            "req_1",
+            &read_params("/tmp/t.rs"),
+            ToolCallResult::text(body),
+            0,
+        );
+        // Default is `enabled = false` → directory must remain empty.
+        let entries: Vec<_> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(
+            entries.is_empty(),
+            "telemetry must be silent until explicitly enabled, found {entries:?}"
+        );
+    }
+
+    #[test]
+    fn telemetry_enabled_creates_jsonl_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = AdaptiveConfig::default();
+        cfg.telemetry.enabled = true;
+        cfg.telemetry.path = Some(tmp.path().to_string_lossy().into_owned());
+        // Flush after every event so the file is non-empty when we read it.
+        cfg.telemetry.flush_every_n = 1;
+        let pipeline = SessionPipeline::new(cfg);
+        let body = long_text("file-U:");
+        let _ = pipeline.process(
+            "req_1",
+            &read_params("/tmp/u.rs"),
+            ToolCallResult::text(body),
+            0,
+        );
+        let mut found = false;
+        for entry in std::fs::read_dir(tmp.path()).unwrap() {
+            let entry = entry.unwrap();
+            if entry.path().extension().and_then(|s| s.to_str()) == Some("jsonl") {
+                let contents = std::fs::read_to_string(entry.path()).unwrap();
+                assert!(
+                    contents.contains("\"endpoint_class\":\"Read\""),
+                    "expected Read event in JSONL, got {contents}"
+                );
+                found = true;
+                break;
+            }
+        }
+        assert!(
+            found,
+            "expected at least one .jsonl file in {:?}",
+            tmp.path()
+        );
     }
 
     #[test]
