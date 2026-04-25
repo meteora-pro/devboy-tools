@@ -135,10 +135,10 @@ fn try_deep_mckp(
     // top-level kv lines + array as union-of-keys table (nested cells = inline JSON).
     // This preserves all data — fix for the encoder bug where naive CSV/Markdown
     // dropped wrapping object's top-level fields (Paper 2, §Encoder Bug Postmortem).
-    if let Some(body) = templates::deep_mckp_with_inner_table(raw, cls) {
-        if body.len() < raw.len() {
-            return Some(("deep_mckp_inner_table", body));
-        }
+    if let Some(body) = templates::deep_mckp_with_inner_table(raw, cls)
+        && body.len() < raw.len()
+    {
+        return Some(("deep_mckp_inner_table", body));
     }
     // Fall back to compact JSON when no inner array is found or no gain.
     let body = templates::pipeline_deep_mckp(raw, cls)?;

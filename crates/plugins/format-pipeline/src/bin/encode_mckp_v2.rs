@@ -48,10 +48,7 @@ fn main() -> io::Result<()> {
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
-        let raw = req
-            .get("raw")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
+        let raw = req.get("raw").and_then(|v| v.as_str()).unwrap_or_default();
         let encoded = encode_one(raw);
         let resp = serde_json::json!({
             "record_id": record_id,
