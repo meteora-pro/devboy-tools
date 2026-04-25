@@ -676,6 +676,44 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
     ]
 }
 
+/// Always-available MCP tools that don't belong to a provider category.
+///
+/// These are surfaced by `devboy-mcp` on every `tools/list` regardless of
+/// which providers are configured. They live here (not in the MCP crate)
+/// so the published reference doc can render them from a single source.
+#[derive(Debug, Clone)]
+pub struct McpOnlyTool {
+    pub name: String,
+    pub description: String,
+    pub input_schema: ToolSchema,
+}
+
+/// MCP-only tools (context management). Always advertised by the server.
+pub fn mcp_only_tools() -> Vec<McpOnlyTool> {
+    vec![
+        McpOnlyTool {
+            name: "list_contexts".into(),
+            description: "List configured contexts and indicate the active context.".into(),
+            input_schema: ToolSchema::new(),
+        },
+        McpOnlyTool {
+            name: "use_context".into(),
+            description: "Switch active context at runtime.".into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("name", PropertySchema::string("Context name to activate"));
+                s.set_required("name", true);
+                s
+            },
+        },
+        McpOnlyTool {
+            name: "get_current_context".into(),
+            description: "Get current active context name.".into(),
+            input_schema: ToolSchema::new(),
+        },
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -60,4 +60,4 @@ pub use executor::{Executor, SUPPORTED_TOOLS};
 pub use factory::create_enricher;
 pub use format::{FormatMetadata, FormatResult, execute_and_format, format_output};
 pub use output::{ResultMeta, ToolOutput};
-pub use tools::ToolDefinition;
+pub use tools::{McpOnlyTool, ToolDefinition};
