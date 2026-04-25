@@ -62,6 +62,8 @@ pub const KNOWN_BUILTIN_TOOLS: &[&str] = &[
     "list_contexts",
     "use_context",
     "get_current_context",
+    // Layered-pipeline lifecycle (Paper 2 §Implementation Status)
+    "compact_pipeline_cache",
 ];
 
 #[cfg(test)]
@@ -88,7 +90,12 @@ mod tests {
     #[test]
     fn test_known_builtin_tools_matches_executor() {
         let base_tools = devboy_executor::tools::base_tool_definitions();
-        let context_tools = &["list_contexts", "use_context", "get_current_context"];
+        let context_tools = &[
+            "list_contexts",
+            "use_context",
+            "get_current_context",
+            "compact_pipeline_cache",
+        ];
 
         // Every base tool should be in KNOWN_BUILTIN_TOOLS
         for tool in &base_tools {
