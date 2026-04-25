@@ -957,15 +957,17 @@ tokenizer, 431 records × 109 questions × 3 LLMs). Dedup numbers are
 from the 144 658-event simulation in §"Validation snapshot on our
 corpus".
 
-| Encoder | Encoder vs `json_compact` | Encoder vs `toon` | Combined w/ L0 dedup (29.9% hit rate) |
-|---|---:|---:|---:|
-| `json_pretty` | −50% | −20% | **−5%** |
-| `csv` (naive monolithic) | −4% | +18% | +27% |
-| `markdown_table` (naive) | −23% | +2% | +14% |
-| `toon` | **−26%** | 0% | +12% |
-| `mckp` (lossy v1) | +25% | +40% | +47% (but −1.9 p.p. accuracy) |
-| **`mckp_v2`** | **+16%** | **+34%** | **+41%** |
-| `mckp_v2` (Rust port) | +17% | +34% | +42% |
+| Encoder | Encoder vs `json_compact` | Encoder vs `toon` | Combined w/ L0 dedup (29.9% hit rate) | Accuracy on glm-5.1 |
+|---|---:|---:|---:|---:|
+| `json_pretty` | −50% | −20% | **−5%** | (n/a) |
+| `csv` (naive monolithic) | −4% | +18% | +27% | 66.7% (−31.5 p.p.) |
+| `markdown_table` (naive) | −23% | +2% | +14% | 66.7% (−31.5 p.p.) |
+| `toon` | **−26%** | 0% | +12% | 98.2% (=json) |
+| `mckp` (lossy v1) | +25% | +40% | +47% | 96.3% (−1.9 p.p.) |
+| `jton_human` (AlphaEvolve v8-v20) | +17% | +34% | +42% | 93.6% (−4.6 p.p.) |
+| `jton_machine` (AlphaEvolve v27-v31) | **+20%** | **+37%** | **+44%** | 94.5% (−3.7 p.p.) |
+| **`mckp_v2`** | **+16%** | **+34%** | **+41%** | **98.2% (=json)** |
+| `mckp_v2` (Rust port) | +17% | +34% | +42% | 97.2% (−1.0 p.p.) |
 
 **Key reads:**
 
@@ -978,12 +980,25 @@ corpus".
    table A becomes a −30 p.p. accuracy regression on deep / nested
    shapes; the saving is bought with answers the model can no longer
    give.
-3. **L0 dedup is the dominant saver**, contributing 29.9% of combined
+3. **JTON saves slightly more tokens than `mckp_v2` but costs ~4 p.p.
+   accuracy.** JTON is an LLM-evolved (AlphaEvolve, 32 generations)
+   binary-packed compressor — base64-encoded `struct.pack` blobs
+   inside a JSON wrapper. Modern LLMs *do* parse it surprisingly well
+   (94–95% accuracy on glm-5.1, not the catastrophic <50% one might
+   expect from binary blobs in a prompt), but the regression is
+   measurable: −3.7 p.p. for `jton_machine`, −4.6 p.p. for
+   `jton_human` vs the `json_compact` baseline (98.2%). Per-shape it
+   collapses on `deep` (50% vs 100% for `mckp_v2`) where the binary
+   compaction is most aggressive.
+4. **L0 dedup is the dominant saver**, contributing 29.9% of combined
    savings on our corpus before the encoder runs at all. The encoder
    contributes the *remaining* fraction multiplicatively.
-4. **`mckp_v2` (and its Rust port) is the only encoder that wins both
+5. **`mckp_v2` (and its Rust port) is the only encoder that wins both
    axes**: +16% tokens vs `json_compact`, +34% vs `toon`, no accuracy
-   loss on any of the three evaluated LLMs.
+   loss on any of the three evaluated LLMs. The JTON head-to-head
+   confirms this: +4 p.p. extra token saving from JTON costs ~4 p.p.
+   accuracy — a worse trade than mckp_v2's structured-but-readable
+   output.
 
 ### Reporting rule
 
