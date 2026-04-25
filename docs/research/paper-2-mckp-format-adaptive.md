@@ -573,6 +573,142 @@ The tuner is **offline**: no runtime reconfiguration mid-session. This
 keeps the hot path free of control-plane logic and makes behavior
 reproducible for a given config file.
 
+## Configuration Extensibility
+
+The tuner described above mines pipeline telemetry. That presupposes the
+pipeline is already running and emitting events. To bootstrap a brand-new
+user *and* to adapt to per-axis variation that the rule set in
+§Adaptive Configuration cannot express, schema v2 introduces four
+orthogonal **profile axes** plus a horizontal **hint policy**.
+
+### Why four axes (and not more knobs on one config)
+
+The 2026-04-25 evaluation surfaced a class of measurements that no global
+knob can encode. For example: inline-JSON cells in a Markdown table cost
++119% prompt tokens on `glm-5.1` (Anthropic-class tokenizer) but ±0% on
+local Ollama models (BPE). The encoder choice is not the problem — the
+*receiving model's tokenizer* is. Likewise, `schema_explainer` hints add
++0 p.p. accuracy on capable cloud models but unlock the remaining 5
+errors on `gpt-oss:20b`. Capturing this without an explosion of
+endpoint-specific exceptions requires factoring the configuration along
+the dimensions that actually vary.
+
+### The four axes
+
+```
+┌─ profiles ──────────────────────────────────────────────────────────┐
+│                                                                     │
+│  tokenizer   {anthropic_class | openai_o200k | ollama_bpe | …}      │
+│      │ chars_per_token, inline_json_cost, toon_overhead             │
+│      ▼                                                              │
+│  llm         model_id → tokenizer + context_window + style flags    │
+│      │ resolves "auto" against SessionContext.model_id              │
+│      ▼                                                              │
+│  agent       {default | file_search_heavy | marathon_refactor}      │
+│      │ priority (latency/balanced/accuracy), recursion_depth,       │
+│      │ hint_aggressiveness, near_ref_enabled                        │
+│      │ resolves "auto" by classifying session stats                 │
+│      ▼                                                              │
+│  data        endpoint_pattern → preferred_format + hint_set         │
+│              first match wins; placeholder variants auto-registered │
+│              for unknown observed endpoints                         │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+Plus, at the same level as `[profiles]`, a **`[hints]`** policy with
+per-type rules (`enabled`, `max_per_session`, `applies_to_models`) gates
+every emit through one chokepoint. Every axis defaults to `active =
+"auto"` so a user with no explicit overrides still gets a coherent view
+resolved at session start.
+
+### Resolution chain
+
+```
+SessionContext { model_id, stats { event_count, compaction_count, read_share } }
+        │
+        ▼
+profiles.llm.resolve(model_id)        ──► LlmProfile (incl. tokenizer ref)
+        │
+profiles.tokenizer.get(llm.tokenizer) ──► TokenizerProfile (cost model)
+        │
+profiles.agent.resolve(stats)         ──► AgentProfile (recursion_depth, …)
+        │
+hints                                 ──► HintsConfig (allow(type, model))
+        │
+        ▼
+EffectiveConfig — single value the LayeredPipeline reads on the hot path
+```
+
+The collapse is a pure function: same config + same context → same
+EffectiveConfig. There is no run-time learning inside the pipeline; the
+adaptation lives entirely in offline tuning.
+
+### Built-in defaults (excerpt)
+
+| Axis | Variant | Where it wins |
+|---|---|---|
+| **tokenizer** | `anthropic_class` | `chars_per_token = 3.5`, `inline_json_cost = 2.2`, `toon_overhead = 1.13`. Chosen automatically when the LLM profile points to Sonnet, Opus, or GLM. |
+| **tokenizer** | `openai_o200k` | `chars_per_token = 4.0`, `toon_overhead = 0.60` (the only tokenizer where TOON's −40% claim holds). |
+| **tokenizer** | `ollama_bpe` | Used by every local Ollama LLM profile — inline-JSON cells are free here, so `mckp_v2` collapses to `mckp_v1` cost without the data loss. |
+| **llm** | `glm-5.1` | `tokenizer = anthropic_class`, `context_window = 128k`, `prefer_explicit_keys = true`, `max_inline_nested = 128`. |
+| **llm** | `claude-sonnet-4.6` | Same tokenizer family, `context_window = 200k`, tighter `max_inline_nested = 64` (cells are expensive on this tokenizer). |
+| **llm** | `gpt-oss:20b` / `gemma4:26b` | `tokenizer = ollama_bpe`, `context_window = 8 192`, `prefer_explicit_keys = false`, `max_inline_nested = 512`. |
+| **agent** | `default` | Balanced, `recursion_depth = 5`, `hint_aggressiveness = 0.5`. |
+| **agent** | `file_search_heavy` | Activates when ≤200 events and read-share ≥0.5. Drops `recursion_depth` to 3 and `hint_aggressiveness` to 0.3 — latency-prioritised. |
+| **agent** | `marathon_refactor` | Activates when ≥500 events and ≥3 compactions. Lifts `recursion_depth` to 7, enables `near_ref` hints. |
+| **data** | `gitlab_issues`, `github_pulls`, `k8s_logs`, `mr_diffs` | Pre-shipped endpoint-pattern → preferred-format + hint-set bindings. |
+| **hints** | `schema_explainer` | **`enabled = false`** — confirmed 0 p.p. lift in 2026-04-25 evaluation; documenting the negative result keeps future tuners from rediscovering it. |
+| **hints** | `inline_format_hint` | `applies_to_models = ["gpt-oss:20b", "gemma4:26b"]` — only fires for the local models that benefit. |
+
+### CLI: `devboy tune from-claude-logs`
+
+When a user has no pipeline telemetry yet (a fresh install, or a new
+project), the agent already collected most of the necessary signal in
+its session log. The new subcommand `devboy tune from-claude-logs`:
+
+1. Walks `~/.claude/projects/<project>/*.jsonl` (or any `--input-dir`).
+2. Counts model ids, tool invocations (read-class vs other), `mcp__*`
+   endpoint hits, sessions, and `/compact` events.
+3. Applies three rules — **P1** dominant-model pin (≥80% share),
+   **P2** agent classifier from session stats, **P3** placeholder
+   data-profile registration for every observed `mcp__*` endpoint.
+4. Writes (or, with `--dry-run`, prints) the proposed
+   `pipeline_config.toml`.
+
+This complements the existing `devboy tune analyze` (which mines
+emitted telemetry events) and lets a fresh install converge to a
+near-tuned configuration on first run.
+
+### Skill: `devboy-pipeline-tune`
+
+`skills/00-self-bootstrap/devboy-pipeline-tune/SKILL.md` is a procedural
+recipe for an agent driving the CLI on a user's behalf:
+
+1. Sanity-check that `~/.claude/projects` exists and has data.
+2. Run with `--dry-run` first; surface the proposed pins to the user.
+3. Apply on confirmation; verify with `devboy tune show`.
+4. Per-tool refinement: ask the user what shape each `mcp__*` endpoint
+   returns, fill in `preferred_format`.
+5. Watch for accuracy regressions in subsequent sessions.
+
+The skill is opinionated about anti-patterns: don't enable
+`schema_explainer`, don't pin a model whose tokenizer profile is wrong,
+don't run across mixed-project log directories.
+
+### Schema v1 → v2 migration
+
+`AdaptiveConfig::load` accepts both schemas. When loading a v1 file the
+deserializer uses `serde(default)` to populate the new `[profiles]` and
+`[hints]` sections from the v2 defaults, then bumps `schema_version` in
+memory. Saving back writes a v2 file. The migration is one-way (v2 cannot
+be read by v1 binaries) but the on-disk v1 file is left untouched until
+the user explicitly saves.
+
+A future schema version is rejected at load time
+(`ConfigError::UnsupportedSchemaVersion`) — old binaries won't silently
+mis-parse a newer file.
+
 ## Telemetry & Observability
 
 ### Per-response event (atomic unit)
@@ -782,6 +918,104 @@ Total: **242 tests** (233 lib + 6 bin + 3 doctests) passing; `cargo clippy --all
 - [ ] **Near-dup (Type-2) hints** — `> [near-ref: tc_42, status: pending→success]`. Requires delta extraction and `delta_match` primitive. Projected extra yield: +3-5 pp on pipeline-polling endpoints.
 - [ ] **Team- and provider-shared fingerprints** (§Deployment Patterns B/C). Requires shared-bucket protocol and k-anonymity enforcement.
 - [ ] **Format round-trip correctness tests** — sample 50 L1/L2-encoded responses, verify that a downstream decoder recovers full information vs the raw baseline.
+
+## Encoder Bug Postmortem (2026-04-25)
+
+During end-to-end LLM-comprehension validation we discovered a class of
+silent data-loss bugs in the original Python reference encoder. The bug
+is structural — not a transcription mistake — and it has implications
+for any format-adaptive system that picks a single best encoding for a
+mixed-shape input. The Rust production encoder is partially affected;
+the relevant fix is described below.
+
+### Symptom
+
+On `deep`-shape and `nested`-shape records, naive monolithic CSV /
+Markdown encoding scored 8.3% and 33.3% accuracy respectively, vs.
+98.2% / 100% for `json_compact`. A schema-explainer hint prefix added 0
+percentage points of recovery. The cost / accuracy frontier looked
+catastrophic for "compressed" formats.
+
+### Root cause
+
+`_find_main_homogeneous_array(obj)` walked every subtree, picked the
+largest array of objects, and emitted **only that array** as a CSV /
+Markdown table. Two layers of data loss followed:
+
+1. **Wrapping object's top-level fields are dropped.** If the input is
+   `{"company":"Acme","year":2026,"employees":[...]}`, the encoder
+   emitted a table of `employees` and silently discarded `company` and
+   `year`. Any question whose gold answer references the wrapper
+   ("What company is this?", "What year was this snapshot taken?")
+   becomes unanswerable — not because the LLM is weak, but because the
+   data is no longer in the prompt.
+
+2. **Nested fields inside array elements are dropped.** Inside the
+   chosen array, the encoder filtered to *primitive-only* columns. For
+   `orders=[{id, total, customer:{...}, items:[...]}, ...]`, the table
+   carried only `id` and `total`. Questions about `customer.email` or
+   `items` returned `null`.
+
+The first defect cost roughly −30 p.p. accuracy in aggregate; the
+second cost a further ~−1.9 p.p. on the (smaller) population of
+nested-in-array questions.
+
+### Fix — `mckp_v2`
+
+The corrected encoder applies the same per-subtree dispatch but with two
+guarantees:
+
+- **Top-level non-array fields are pre-rendered** as `key: value` lines
+  (nested values become inline JSON) above the main table.
+- **The main table uses the union of keys across all elements**;
+  nested-typed cells are emitted as inline JSON in their cell, never
+  dropped.
+
+In Rust, `templates::deep_mckp_with_inner_table` implements this and is
+invoked from `mckp_router::try_deep_mckp` ahead of the compact-JSON
+fallback. It returns `None` when the input is not an object wrapping a
+homogeneous array, so the rest of the pipeline is unchanged.
+`mckp_router::try_array_csv` was already correct — it has used union
+of keys since PR #204 — so the bug was confined to the
+`Shape::NestedObject` branch and to the Python research encoder.
+
+### Validation
+
+109-question evaluation across {`glm-5.1`, `gpt-oss:20b`, `gemma4:26b`}:
+
+| Encoder | glm-5.1 | gpt-oss:20b | gemma4:26b | Tokens vs `json_compact` |
+|---|---:|---:|---:|---:|
+| `json_compact` baseline | 98.2% | 95.4% | 95.4% | — |
+| `csv` (naive monolithic) | 66.7% | 64.8% | 64.8% | −5% |
+| `markdown` (naive monolithic) | 66.7% | 64.8% | 64.8% | +23% |
+| `mckp_v1` (lossy reference) | 96.3% | 94.5% | 94.5% | −25% |
+| **`mckp_v2`** | **98.2%** | **95.4%** | **95.4%** | **−16%** |
+
+After the fix, MCKP per-subtree matches the JSON baseline accuracy on all
+three models while preserving a 16% token saving overall. Two flips
+were observed (both `glm-5.1` deep-shape questions whose gold answer
+referenced a previously-dropped nested field), zero regressions.
+
+### Implications
+
+1. **Any "format X reduces tokens by N%" claim must be paired with an
+   accuracy measurement on the same prompts.** Naive monolithic CSV
+   looks like a 5% token saving on this corpus and is in fact a
+   −30 p.p. accuracy regression.
+2. **Hint prefixes cannot recover dropped data.** The hint experiments
+   (`chunk1` vs `hint1`) confirmed this empirically: a one-line schema
+   explainer added 0 lift to CSV / Markdown accuracy because the
+   information was no longer present in the prompt.
+3. **Encoders should fail closed on data loss.** A useful regression
+   test is: for each encoder, parse the encoded form back and compare
+   the recovered key set to the input's key set. Any drop is a bug.
+4. **Token-cost numbers are tokenizer-dependent and must be reported
+   alongside the tokenizer.** Inline JSON cells cost +119% prompt
+   tokens per question on `glm-5.1` (Anthropic-class) but ±0% on
+   gpt-oss / gemma (BPE). Same encoder, same prompts.
+
+The Rust fix and a regression test (`deep_mckp_inner_table_*`) ship in
+`crates/plugins/format-pipeline/src/templates.rs`.
 
 ## Related Work
 
