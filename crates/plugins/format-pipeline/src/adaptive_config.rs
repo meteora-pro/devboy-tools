@@ -941,12 +941,9 @@ impl DataProfilesConfig {
         if self.active != "auto" {
             return self.variants.get(&self.active);
         }
-        for v in self.variants.values() {
-            if endpoint == v.endpoint_pattern || endpoint.starts_with(&v.endpoint_pattern) {
-                return Some(v);
-            }
-        }
-        None
+        self.variants
+            .values()
+            .find(|v| endpoint == v.endpoint_pattern || endpoint.starts_with(&v.endpoint_pattern))
     }
 }
 
@@ -1136,10 +1133,10 @@ impl EffectiveConfig {
         cfg: &'a AdaptiveConfig,
         endpoint: &str,
     ) -> Option<&'a str> {
-        if let Some(dp) = cfg.profiles.data.match_endpoint(endpoint) {
-            if let Some(f) = dp.preferred_format.as_deref() {
-                return Some(f);
-            }
+        if let Some(dp) = cfg.profiles.data.match_endpoint(endpoint)
+            && let Some(f) = dp.preferred_format.as_deref()
+        {
+            return Some(f);
         }
         cfg.effective_template(endpoint)
     }
@@ -1253,8 +1250,18 @@ mod tests {
         assert!(cfg.profiles.llm.variants.contains_key("gpt-oss:20b"));
         // Agent
         assert!(cfg.profiles.agent.variants.contains_key("default"));
-        assert!(cfg.profiles.agent.variants.contains_key("file_search_heavy"));
-        assert!(cfg.profiles.agent.variants.contains_key("marathon_refactor"));
+        assert!(
+            cfg.profiles
+                .agent
+                .variants
+                .contains_key("file_search_heavy")
+        );
+        assert!(
+            cfg.profiles
+                .agent
+                .variants
+                .contains_key("marathon_refactor")
+        );
         // Data
         assert!(cfg.profiles.data.variants.contains_key("gitlab_issues"));
         assert!(cfg.profiles.data.variants.contains_key("k8s_logs"));
@@ -1330,10 +1337,7 @@ mod tests {
         let cfg = AdaptiveConfig::default();
         let dp = cfg.profiles.data.match_endpoint("mcp__gitlab__get_issues");
         assert!(dp.is_some());
-        assert_eq!(
-            dp.unwrap().preferred_format.as_deref(),
-            Some("csv_from_md")
-        );
+        assert_eq!(dp.unwrap().preferred_format.as_deref(), Some("csv_from_md"));
     }
 
     #[test]
@@ -1433,18 +1437,12 @@ recursion_depth = 6
 
     #[test]
     fn future_schema_version_is_rejected_on_load() {
-        let s = format!(
-            "schema_version = {}\n[dedup]\n",
-            CURRENT_SCHEMA_VERSION + 1
-        );
+        let s = format!("schema_version = {}\n[dedup]\n", CURRENT_SCHEMA_VERSION + 1);
         let pid = std::process::id();
         let p = std::env::temp_dir().join(format!("devboy_cfg_future_{pid}.toml"));
         std::fs::write(&p, s).unwrap();
         let err = AdaptiveConfig::load(&p);
-        assert!(matches!(
-            err,
-            Err(ConfigError::UnsupportedSchemaVersion(_))
-        ));
+        assert!(matches!(err, Err(ConfigError::UnsupportedSchemaVersion(_))));
         std::fs::remove_file(&p).ok();
     }
 
@@ -1453,19 +1451,12 @@ recursion_depth = 6
         let mut cfg = AdaptiveConfig::default();
         cfg.profiles.llm.active = "claude-sonnet-4.6".to_string();
         cfg.profiles.agent.active = "marathon_refactor".to_string();
-        cfg.hints
-            .types
-            .get_mut("near_ref")
-            .unwrap()
-            .max_per_session = Some(99);
+        cfg.hints.types.get_mut("near_ref").unwrap().max_per_session = Some(99);
         let s = toml::to_string_pretty(&cfg).unwrap();
         let parsed: AdaptiveConfig = toml::from_str(&s).unwrap();
         assert_eq!(parsed.profiles.llm.active, "claude-sonnet-4.6");
         assert_eq!(parsed.profiles.agent.active, "marathon_refactor");
-        assert_eq!(
-            parsed.hints.types["near_ref"].max_per_session,
-            Some(99)
-        );
+        assert_eq!(parsed.hints.types["near_ref"].max_per_session, Some(99));
     }
 
     #[test]

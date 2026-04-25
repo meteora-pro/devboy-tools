@@ -499,6 +499,34 @@ enum ToolsCommands {
         #[arg(default_value = "{}")]
         args: String,
     },
+    /// Generate auto-built reference docs for built-in tools
+    Docs {
+        /// Output format
+        #[arg(long, value_enum, default_value_t = ToolsDocsFormat::Markdown)]
+        format: ToolsDocsFormat,
+        /// Write to a file instead of stdout
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Compare the rendered docs to an existing file and exit non-zero if they differ.
+        /// Useful in CI: `--check --output docs/guide/reference/tools.md`.
+        #[arg(long, requires = "output")]
+        check: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ToolsDocsFormat {
+    Markdown,
+    Json,
+}
+
+impl From<ToolsDocsFormat> for devboy_executor::tool_docs::DocsFormat {
+    fn from(value: ToolsDocsFormat) -> Self {
+        match value {
+            ToolsDocsFormat::Markdown => devboy_executor::tool_docs::DocsFormat::Markdown,
+            ToolsDocsFormat::Json => devboy_executor::tool_docs::DocsFormat::Json,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -4014,7 +4042,58 @@ async fn handle_tools_command(command: Option<ToolsCommands>) -> Result<()> {
         Some(ToolsCommands::Enable { names }) => handle_tools_enable(names)?,
         Some(ToolsCommands::Reset) => handle_tools_reset()?,
         Some(ToolsCommands::Call { name, args }) => handle_tools_call(&name, &args).await?,
+        Some(ToolsCommands::Docs {
+            format,
+            output,
+            check,
+        }) => handle_tools_docs(format.into(), output.as_deref(), check)?,
     }
+    Ok(())
+}
+
+fn handle_tools_docs(
+    format: devboy_executor::tool_docs::DocsFormat,
+    output: Option<&std::path::Path>,
+    check: bool,
+) -> Result<()> {
+    let rendered = devboy_executor::tool_docs::render(format);
+
+    let Some(path) = output else {
+        // Stdout — print as-is.
+        print!("{}", rendered);
+        if !rendered.ends_with('\n') {
+            println!();
+        }
+        return Ok(());
+    };
+
+    if check {
+        let existing = std::fs::read_to_string(path).with_context(|| {
+            format!(
+                "--check: reference file `{}` is missing — run without --check to generate it",
+                path.display()
+            )
+        })?;
+        if existing != rendered {
+            anyhow::bail!(
+                "{} is out of date — re-run `devboy tools docs --output {}`",
+                path.display(),
+                path.display()
+            );
+        }
+        println!("{} is up to date", path.display());
+        return Ok(());
+    }
+
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create parent directory `{}`", parent.display()))?;
+    }
+    std::fs::write(path, &rendered)
+        .with_context(|| format!("failed to write `{}`", path.display()))?;
+    println!("Wrote {}", path.display());
     Ok(())
 }
 

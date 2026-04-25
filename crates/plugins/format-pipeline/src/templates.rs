@@ -158,9 +158,7 @@ pub fn deep_mckp_with_inner_table(raw: &str, _cls: &ClassifiedResponse) -> Optio
             .iter()
             .filter(|x| {
                 x.as_object()
-                    .map(|o| {
-                        o.keys().map(|s| s.as_str()).collect::<BTreeSet<_>>() == first_keys
-                    })
+                    .map(|o| o.keys().map(|s| s.as_str()).collect::<BTreeSet<_>>() == first_keys)
                     .unwrap_or(false)
             })
             .count();
@@ -238,11 +236,7 @@ pub fn deep_mckp_with_inner_table(raw: &str, _cls: &ClassifiedResponse) -> Optio
                 }
                 Some(other) => other.to_string(),
             })
-            .map(|s| {
-                s.replace('|', "\\|")
-                    .replace('\n', " ")
-                    .replace('\r', " ")
-            })
+            .map(|s| s.replace('|', "\\|").replace(['\n', '\r'], " "))
             .collect();
         out.push_str("| ");
         out.push_str(&cells.join(" | "));
@@ -470,8 +464,10 @@ mod tests {
         assert!(out.contains("shop: X"));
         assert!(out.contains("| id | total | customer |"));
         // Customer rendered as inline JSON in the cell
-        assert!(out.contains(r#"{"id":100,"email":"a@x"}"#),
-                "missing inline JSON cell: {out}");
+        assert!(
+            out.contains(r#"{"id":100,"email":"a@x"}"#),
+            "missing inline JSON cell: {out}"
+        );
         assert!(out.contains(r#"{"id":101,"email":"b@x"}"#));
     }
 
