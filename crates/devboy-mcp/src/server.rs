@@ -450,37 +450,21 @@ impl McpServer {
                 .unwrap_or(true) // Tools without category are always available
         });
 
-        // Context management tools are always available
-        tools.push(crate::protocol::ToolDefinition {
-            name: "list_contexts".to_string(),
-            description: "List configured contexts and indicate the active context.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {}
-            }),
-            category: None,
-        });
-        tools.push(crate::protocol::ToolDefinition {
-            name: "use_context".to_string(),
-            description: "Switch active context at runtime.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "required": ["name"],
-                "properties": {
-                    "name": { "type": "string", "description": "Context name to activate" }
-                }
-            }),
-            category: None,
-        });
-        tools.push(crate::protocol::ToolDefinition {
-            name: "get_current_context".to_string(),
-            description: "Get current active context name.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {}
-            }),
-            category: None,
-        });
+        // Context management tools are always available — single source of
+        // truth lives in `devboy_executor::tools::mcp_only_tools()` so the
+        // published reference doc renders the same list.
+        for tool in devboy_executor::tools::mcp_only_tools() {
+            let mut schema = serde_json::to_value(&tool.input_schema).unwrap_or_default();
+            if let Some(obj) = schema.as_object_mut() {
+                obj.entry("type").or_insert_with(|| "object".into());
+            }
+            tools.push(crate::protocol::ToolDefinition {
+                name: tool.name,
+                description: tool.description,
+                input_schema: schema,
+                category: None,
+            });
+        }
 
         // Filter built-in tools based on config (static filtering)
         if !self.builtin_tools_config.is_empty() {

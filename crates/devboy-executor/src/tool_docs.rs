@@ -13,7 +13,7 @@ use std::fmt::Write as _;
 use devboy_core::{PropertySchema, ToolCategory};
 use serde_json::{Value, json};
 
-use crate::tools::{ToolDefinition, base_tool_definitions};
+use crate::tools::{McpOnlyTool, ToolDefinition, base_tool_definitions, mcp_only_tools};
 
 /// Provider entry in the support matrix.
 ///
@@ -107,6 +107,7 @@ pub fn render(format: DocsFormat) -> String {
 pub fn render_markdown() -> String {
     let providers = known_providers();
     let tools = base_tool_definitions();
+    let context_tools = mcp_only_tools();
 
     // Categories that actually show up in the matrix: any category that
     // a tool uses or any provider claims (default or conditional).
@@ -128,10 +129,11 @@ pub fn render_markdown() -> String {
     out.push('\n');
     let _ = writeln!(
         out,
-        "DevBoy Tools v{} ships {} built-in tools across {} categories and {} providers.",
+        "DevBoy Tools v{} ships {} provider-backed tools across {} categories, {} always-on context tools, and {} providers.",
         env!("CARGO_PKG_VERSION"),
         tools.len(),
         categories.len(),
+        context_tools.len(),
         providers.len(),
     );
     out.push('\n');
@@ -139,6 +141,7 @@ pub fn render_markdown() -> String {
     render_provider_matrix(&mut out, &categories, &providers);
     out.push('\n');
     render_tool_sections(&mut out, &categories, &providers, &tools);
+    render_context_section(&mut out, &context_tools);
 
     out
 }
@@ -165,10 +168,14 @@ pub fn render_json() -> Value {
 
     let tools_json: Vec<Value> = sorted_tools(&tools).into_iter().map(tool_to_json).collect();
 
+    let context_tools_json: Vec<Value> =
+        mcp_only_tools().iter().map(mcp_only_tool_to_json).collect();
+
     json!({
         "version": env!("CARGO_PKG_VERSION"),
         "providers": providers_json,
         "tools": tools_json,
+        "contextTools": context_tools_json,
     })
 }
 
@@ -283,12 +290,37 @@ fn providers_for_category(cat: ToolCategory, providers: &[ProviderInfo]) -> Vec<
 }
 
 fn render_tool(out: &mut String, tool: &ToolDefinition) {
-    let _ = writeln!(out, "### `{}`", tool.name);
+    render_tool_entry(out, &tool.name, &tool.description, &tool.input_schema);
+}
+
+fn render_context_section(out: &mut String, tools: &[McpOnlyTool]) {
+    if tools.is_empty() {
+        return;
+    }
+    let _ = writeln!(out, "## Context Management Tools");
     out.push('\n');
-    let _ = writeln!(out, "{}", tool.description);
+    let _ = writeln!(
+        out,
+        "Always-on tools attached to every `tools/list` response, independent of which providers \
+         are configured. They let the agent inspect or switch the active context."
+    );
+    out.push('\n');
+    for tool in tools {
+        render_tool_entry(out, &tool.name, &tool.description, &tool.input_schema);
+    }
+}
+
+fn render_tool_entry(
+    out: &mut String,
+    name: &str,
+    description: &str,
+    schema: &devboy_core::ToolSchema,
+) {
+    let _ = writeln!(out, "### `{}`", name);
+    out.push('\n');
+    let _ = writeln!(out, "{}", description);
     out.push('\n');
 
-    let schema = &tool.input_schema;
     if schema.properties.is_empty() {
         out.push_str("_No parameters._\n\n");
         return;
@@ -400,15 +432,31 @@ fn sorted_tools(tools: &[ToolDefinition]) -> Vec<&ToolDefinition> {
 }
 
 fn tool_to_json(tool: &ToolDefinition) -> Value {
-    let schema = &tool.input_schema;
-    let mut params: Vec<&String> = schema.properties.keys().collect();
-    params.sort_by(|a, b| {
+    json!({
+        "name": tool.name,
+        "category": tool.category.key(),
+        "description": tool.description,
+        "parameters": parameters_to_json(&tool.input_schema),
+    })
+}
+
+fn mcp_only_tool_to_json(tool: &McpOnlyTool) -> Value {
+    json!({
+        "name": tool.name,
+        "description": tool.description,
+        "parameters": parameters_to_json(&tool.input_schema),
+    })
+}
+
+fn parameters_to_json(schema: &devboy_core::ToolSchema) -> Vec<Value> {
+    let mut names: Vec<&String> = schema.properties.keys().collect();
+    names.sort_by(|a, b| {
         let a_req = schema.required.contains(a);
         let b_req = schema.required.contains(b);
         b_req.cmp(&a_req).then_with(|| a.cmp(b))
     });
 
-    let parameters: Vec<Value> = params
+    names
         .into_iter()
         .map(|name| {
             let prop = &schema.properties[name];
@@ -437,14 +485,7 @@ fn tool_to_json(tool: &ToolDefinition) -> Value {
             }
             entry
         })
-        .collect();
-
-    json!({
-        "name": tool.name,
-        "category": tool.category.key(),
-        "description": tool.description,
-        "parameters": parameters,
-    })
+        .collect()
 }
 
 // =============================================================================
@@ -454,7 +495,11 @@ fn tool_to_json(tool: &ToolDefinition) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::{
+        ClickUpScope, GitHubScope, GitLabScope, JiraScope, ProviderConfig, SlackScope,
+    };
     use devboy_core::ToolEnricher;
+    use std::collections::HashMap;
 
     #[test]
     fn markdown_contains_header_and_matrix() {
@@ -545,6 +590,147 @@ mod tests {
         let original_len = keys.len();
         keys.dedup();
         assert_eq!(keys.len(), original_len, "provider keys must be unique");
+    }
+
+    #[test]
+    fn markdown_renders_context_management_section() {
+        let md = render_markdown();
+        assert!(md.contains("## Context Management Tools"));
+        for tool in mcp_only_tools() {
+            let heading = format!("### `{}`", tool.name);
+            assert!(
+                md.contains(&heading),
+                "context tool `{}` missing from rendered docs",
+                tool.name
+            );
+        }
+    }
+
+    #[test]
+    fn json_includes_context_tools_array() {
+        let value = render_json();
+        let context = value
+            .get("contextTools")
+            .and_then(|v| v.as_array())
+            .expect("contextTools must be present in JSON output");
+        assert_eq!(context.len(), mcp_only_tools().len());
+        let names: Vec<&str> = context
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
+            .collect();
+        assert!(names.contains(&"list_contexts"));
+        assert!(names.contains(&"use_context"));
+        assert!(names.contains(&"get_current_context"));
+    }
+
+    /// Compile-time guardrail: every variant of `ProviderConfig` (i.e. every
+    /// provider the factory dispatches on) must either be present in
+    /// `known_providers()` or be the explicit `Custom` escape hatch.
+    ///
+    /// The exhaustive `match` makes it impossible to add a new variant
+    /// without updating this mapping; the runtime assertion then forces
+    /// the catalog update too.
+    #[test]
+    fn every_factory_provider_is_in_catalog() {
+        use std::collections::HashSet;
+
+        // Sample config per variant. Only `provider_name()` is used —
+        // tokens, scopes and base URLs are placeholders.
+        let samples: Vec<ProviderConfig> = vec![
+            ProviderConfig::GitLab {
+                base_url: "https://gitlab.com".into(),
+                access_token: "x".into(),
+                scope: GitLabScope::Project { id: "1".into() },
+                extra: HashMap::new(),
+            },
+            ProviderConfig::GitHub {
+                base_url: "https://api.github.com".into(),
+                access_token: "x".into(),
+                scope: GitHubScope::Repository {
+                    owner: "o".into(),
+                    repo: "r".into(),
+                },
+                extra: HashMap::new(),
+            },
+            ProviderConfig::ClickUp {
+                access_token: "x".into(),
+                scope: ClickUpScope::List {
+                    id: "1".into(),
+                    team_id: None,
+                },
+                extra: HashMap::new(),
+            },
+            ProviderConfig::Jira {
+                base_url: "https://x.atlassian.net".into(),
+                access_token: "x".into(),
+                email: "x@x".into(),
+                scope: JiraScope::Project { key: "X".into() },
+                flavor: None,
+                extra: HashMap::new(),
+            },
+            ProviderConfig::Fireflies {
+                api_key: "x".into(),
+                extra: HashMap::new(),
+            },
+            ProviderConfig::Slack {
+                base_url: "https://slack.com/api".into(),
+                access_token: "x".into(),
+                scope: SlackScope::Workspace { team_id: None },
+                required_scopes: Vec::new(),
+                extra: HashMap::new(),
+            },
+            ProviderConfig::Custom {
+                name: "custom".into(),
+                config: HashMap::new(),
+            },
+        ];
+
+        // Compile-time exhaustive match — adding a new ProviderConfig
+        // variant breaks this and forces the maintainer to either map it
+        // to a catalog key or explicitly skip it (like Custom).
+        fn expected_catalog_key(config: &ProviderConfig) -> Option<&'static str> {
+            match config {
+                ProviderConfig::GitLab { .. } => Some("gitlab"),
+                ProviderConfig::GitHub { .. } => Some("github"),
+                ProviderConfig::ClickUp { .. } => Some("clickup"),
+                ProviderConfig::Jira { .. } => Some("jira"),
+                ProviderConfig::Fireflies { .. } => Some("fireflies"),
+                ProviderConfig::Slack { .. } => Some("slack"),
+                ProviderConfig::Custom { .. } => None,
+            }
+        }
+
+        let catalog_keys: HashSet<&str> = known_providers().iter().map(|p| p.key).collect();
+        let mut required_keys: HashSet<&str> = HashSet::new();
+        for cfg in &samples {
+            // Sanity: provider_name() and our expected key agree —
+            // catches accidental rename of the runtime identifier.
+            if let Some(expected) = expected_catalog_key(cfg) {
+                assert_eq!(
+                    cfg.provider_name(),
+                    expected,
+                    "ProviderConfig::{:?}.provider_name() drifted from the catalog key",
+                    expected
+                );
+                required_keys.insert(expected);
+            }
+        }
+
+        let missing: Vec<&&str> = required_keys.difference(&catalog_keys).collect();
+        assert!(
+            missing.is_empty(),
+            "factory dispatches on providers {:?} but tool_docs::known_providers() does not list them — \
+             update the catalog or remove the variant",
+            missing
+        );
+
+        let extras: Vec<&&str> = catalog_keys.difference(&required_keys).collect();
+        assert!(
+            extras.is_empty(),
+            "tool_docs::known_providers() advertises {:?} but factory has no matching variant — \
+             remove the catalog entry or add a factory dispatch arm",
+            extras
+        );
     }
 
     /// Catalog claims must remain a subset of what each enricher actually
