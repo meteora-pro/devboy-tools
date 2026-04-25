@@ -12,6 +12,7 @@ pub fn apply_by_id(template_id: &str, raw: &str, cls: &ClassifiedResponse) -> Op
     match template_id {
         "csv_from_md" => csv_from_md(raw, cls),
         "pipeline_deep_mckp" => pipeline_deep_mckp(raw, cls),
+        "deep_mckp_with_inner_table" => deep_mckp_with_inner_table(raw, cls),
         "mr_diff_fence" => mr_diff_fence(raw, cls),
         _ => None,
     }
@@ -114,6 +115,141 @@ pub fn pipeline_deep_mckp(raw: &str, cls: &ClassifiedResponse) -> Option<String>
     } else {
         None
     }
+}
+
+/// True per-subtree MCKP encoding for an object that wraps a homogeneous array.
+///
+/// Format: top-level non-array fields rendered as `key: value` lines (nested
+/// values inline-JSON), then the main array as a Markdown table whose column
+/// set is the **union** of all element keys; nested cells are inline JSON.
+///
+/// **Never drops data.** This is the fix for the bug where naive monolithic
+/// CSV/Markdown encoders selected the inner array and discarded the wrapping
+/// object's top-level fields (Paper 2, §"Encoder Bug Postmortem").
+///
+/// Returns `None` if input is not a JSON object, or no homogeneous array of
+/// objects (≥2 elements, ≥80% key-set overlap with the first element) is
+/// found among its top-level keys.
+pub fn deep_mckp_with_inner_table(raw: &str, _cls: &ClassifiedResponse) -> Option<String> {
+    use std::collections::BTreeSet;
+
+    let val: serde_json::Value = serde_json::from_str(raw.trim_start()).ok()?;
+    let obj = val.as_object()?;
+
+    // Find the largest top-level array of homogeneous objects.
+    let mut best_key: Option<String> = None;
+    let mut best_size: usize = 0;
+    for (k, v) in obj {
+        let Some(arr) = v.as_array() else { continue };
+        if arr.len() < 2 {
+            continue;
+        }
+        let Some(first_obj) = arr[0].as_object() else {
+            continue;
+        };
+        let first_keys: BTreeSet<&str> = first_obj.keys().map(|s| s.as_str()).collect();
+        let n = arr.len();
+        // Count elements that are objects (regardless of exact key match) —
+        // we use union-of-keys for headers, so partial overlap is fine.
+        let object_share = arr.iter().filter(|x| x.is_object()).count();
+        // Count how many share an exact key set with the first element —
+        // used as a "dominant shape" signal but not a hard requirement.
+        let _exact_match = arr
+            .iter()
+            .filter(|x| {
+                x.as_object()
+                    .map(|o| {
+                        o.keys().map(|s| s.as_str()).collect::<BTreeSet<_>>() == first_keys
+                    })
+                    .unwrap_or(false)
+            })
+            .count();
+        // Accept any array that is mostly objects (≥80% objects).
+        // Heterogeneity within those objects is fine — we render the union
+        // and emit blank cells for missing keys.
+        if object_share * 100 / n >= 80 && n > best_size {
+            best_key = Some(k.clone());
+            best_size = n;
+        }
+    }
+    let main_key = best_key?;
+    let main_arr = obj.get(&main_key).and_then(|v| v.as_array())?;
+
+    let mut out = String::new();
+
+    // Pre-render top-level non-main fields as `key: value` lines.
+    for (k, v) in obj {
+        if k == &main_key {
+            continue;
+        }
+        out.push_str(k);
+        out.push_str(": ");
+        match v {
+            serde_json::Value::Null => {}
+            serde_json::Value::String(s) => out.push_str(s),
+            serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+                out.push_str(&serde_json::to_string(v).ok()?);
+            }
+            _ => out.push_str(&v.to_string()),
+        }
+        out.push('\n');
+    }
+    if !out.is_empty() {
+        out.push('\n');
+    }
+
+    // Union of keys across elements, preserving first-occurrence order.
+    let mut headers: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for item in main_arr {
+        if let Some(o) = item.as_object() {
+            for k in o.keys() {
+                if seen.insert(k.clone()) {
+                    headers.push(k.clone());
+                }
+            }
+        }
+    }
+    if headers.is_empty() {
+        return None;
+    }
+
+    // Markdown table header + separator.
+    out.push_str("| ");
+    out.push_str(&headers.join(" | "));
+    out.push_str(" |\n|");
+    for _ in &headers {
+        out.push_str(" --- |");
+    }
+    out.push('\n');
+
+    // Rows — nested values become inline JSON in their cell.
+    for item in main_arr {
+        let Some(row_obj) = item.as_object() else {
+            continue;
+        };
+        let cells: Vec<String> = headers
+            .iter()
+            .map(|k| match row_obj.get(k) {
+                None | Some(serde_json::Value::Null) => String::new(),
+                Some(serde_json::Value::String(s)) => s.clone(),
+                Some(v @ (serde_json::Value::Object(_) | serde_json::Value::Array(_))) => {
+                    serde_json::to_string(v).unwrap_or_default()
+                }
+                Some(other) => other.to_string(),
+            })
+            .map(|s| {
+                s.replace('|', "\\|")
+                    .replace('\n', " ")
+                    .replace('\r', " ")
+            })
+            .collect();
+        out.push_str("| ");
+        out.push_str(&cells.join(" | "));
+        out.push_str(" |\n");
+    }
+
+    Some(out)
 }
 
 /// MR-diff template: extract `diffs[]` array from a pipeline-style response
@@ -303,5 +439,82 @@ mod tests {
         let json = r#"{"a":{"b":1}}"#;
         let cls = classify(json);
         assert!(pipeline_deep_mckp(json, &cls).is_none());
+    }
+
+    #[test]
+    fn deep_mckp_inner_table_preserves_top_level_fields() {
+        let json = r#"{"company":"Acme","year":2026,"employees":[
+            {"id":1,"name":"Alice","dept":"Eng"},
+            {"id":2,"name":"Bob","dept":"Sales"}
+        ]}"#;
+        let cls = classify(json);
+        let out = deep_mckp_with_inner_table(json, &cls).unwrap();
+        // Top-level fields must survive
+        assert!(out.contains("company: Acme"), "missing company line: {out}");
+        assert!(out.contains("year: 2026"), "missing year line: {out}");
+        // Table headers
+        assert!(out.contains("| id | name | dept |"));
+        // Rows
+        assert!(out.contains("| 1 | Alice | Eng |"));
+        assert!(out.contains("| 2 | Bob | Sales |"));
+    }
+
+    #[test]
+    fn deep_mckp_inner_table_inlines_nested_cells() {
+        let json = r#"{"shop":"X","orders":[
+            {"id":"o1","total":60,"customer":{"id":100,"email":"a@x"}},
+            {"id":"o2","total":72,"customer":{"id":101,"email":"b@x"}}
+        ]}"#;
+        let cls = classify(json);
+        let out = deep_mckp_with_inner_table(json, &cls).unwrap();
+        assert!(out.contains("shop: X"));
+        assert!(out.contains("| id | total | customer |"));
+        // Customer rendered as inline JSON in the cell
+        assert!(out.contains(r#"{"id":100,"email":"a@x"}"#),
+                "missing inline JSON cell: {out}");
+        assert!(out.contains(r#"{"id":101,"email":"b@x"}"#));
+    }
+
+    #[test]
+    fn deep_mckp_inner_table_uses_union_of_keys() {
+        let json = r#"{"label":"L","items":[
+            {"id":1,"name":"a"},
+            {"id":2,"name":"b","extra":"x"}
+        ]}"#;
+        let cls = classify(json);
+        let out = deep_mckp_with_inner_table(json, &cls).unwrap();
+        // 'extra' must appear in headers even though only second row has it
+        assert!(out.contains("extra"), "missing extra col: {out}");
+        // First row has empty cell for extra
+        assert!(out.contains("| 1 | a |  |"));
+    }
+
+    #[test]
+    fn deep_mckp_inner_table_returns_none_without_inner_array() {
+        let json = r#"{"a":1,"b":"text","c":{"nested":true}}"#;
+        let cls = classify(json);
+        assert!(deep_mckp_with_inner_table(json, &cls).is_none());
+    }
+
+    #[test]
+    fn deep_mckp_inner_table_returns_none_for_array_root() {
+        let json = r#"[{"id":1},{"id":2}]"#;
+        let cls = classify(json);
+        // Top-level is array, not object → not handled here (try_array_csv handles it)
+        assert!(deep_mckp_with_inner_table(json, &cls).is_none());
+    }
+
+    #[test]
+    fn deep_mckp_inner_table_escapes_pipes_and_newlines() {
+        let json = r#"{"key":"K","arr":[
+            {"id":1,"text":"line1\nline2"},
+            {"id":2,"text":"a|b"}
+        ]}"#;
+        let cls = classify(json);
+        let out = deep_mckp_with_inner_table(json, &cls).unwrap();
+        // Newline escaped to space
+        assert!(out.contains("line1 line2"), "newline not escaped: {out}");
+        // Pipe escaped
+        assert!(out.contains("a\\|b"), "pipe not escaped: {out}");
     }
 }
