@@ -29,12 +29,22 @@ Adapt the layered-pipeline (Paper 2 / `crates/plugins/format-pipeline`) to **thi
 
 ## What the user gets
 
-After running this skill the user has a `~/.config/devboy/pipeline_config.toml` with:
+After running this skill the user has a `~/.config/devboy/pipeline_config.toml` (or `~/.devboy/pipeline_config.toml` for the MCP-server hot path) with:
 
 - **`profiles.llm.active`** pinned to their dominant model (if ≥80% share);
 - **`profiles.agent.active`** pinned to one of `default` / `file_search_heavy` / `marathon_refactor` based on session length, read-share, and compaction count;
 - **`profiles.data.variants`** extended with placeholder entries for every observed `mcp__*` endpoint, ready for them to set `preferred_format`;
 - **`hints`** policy left at safe defaults: `schema_explainer` is **off** (confirmed 0 lift in the 2026-04-25 evaluation), `inline_format_hint` is on **only** for local Ollama models.
+
+Once telemetry is on (`[telemetry] enabled = true`), live `FormatMetadata` from the MCP path reports the **split savings**:
+
+- `dedup_savings_pct` — fraction of tokens reclaimed by L0 cross-turn hints;
+- `encoder_savings_pct` — fraction reclaimed by L1/L2 encoders, computed *only over the L0-miss share* of responses;
+- `combined_savings_pct` — multiplicative composition (`dedup + (1 − dedup) × encoder`);
+- `baseline` — the fixed baseline against which the percentages are taken (`json_pretty` for typed-domain transforms, `json_compact` for the offline `tune analyze` path);
+- `tokenizer` — the BPE family driving the count (`o200k_base` / `cl100k_base` / `heuristic`).
+
+Quote those four numbers (plus the baseline + tokenizer) — *not* a single "saved X%" — when reporting back to the user. Per Paper 2 §Savings Accounting, savings without a named baseline and tokenizer are not comparable across systems.
 
 ## Procedure
 
