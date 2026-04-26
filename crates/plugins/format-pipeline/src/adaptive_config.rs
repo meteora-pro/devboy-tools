@@ -489,9 +489,12 @@ pub struct TelemetryConfig {
     /// host falls back to `~/.devboy/telemetry/`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    /// Soft size cap per JSONL file (MiB). When the active sink crosses
-    /// this size, the host opens a new file with a numeric suffix
-    /// (`<session>.<n>.jsonl`). 0 disables rotation.
+    /// Soft size cap per JSONL file (MiB). **Reserved for future use —
+    /// the v1 sink does not rotate yet.** Persisted so a later
+    /// implementation can pick it up without a config migration; today
+    /// the value is read but not acted on. Operators with long-running
+    /// sessions should keep `enabled = false` or rotate externally
+    /// (logrotate / `find -mtime`).
     #[serde(default = "default_rotate_mib")]
     pub rotate_mib: u32,
     /// Fraction of events to record (1.0 = all).

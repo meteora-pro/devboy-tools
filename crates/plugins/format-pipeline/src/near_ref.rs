@@ -83,7 +83,6 @@ pub fn extract_delta(
     }
 
     let mut deltas = Vec::new();
-    let mut delta_bytes = 0usize;
     for (k, new_val) in new_obj {
         let old_val = match old_obj.get(k) {
             Some(v) => v,
@@ -98,19 +97,19 @@ pub fn extract_delta(
         if !is_scalar(old_val) || !is_scalar(new_val) {
             return None;
         }
-        let old_s = scalar_to_string(old_val);
-        let new_s = scalar_to_string(new_val);
-        // Approximate the on-wire size: `key: old→new, ` (plus separators
-        // amortised). The exact framing overhead is added by the caller.
-        delta_bytes += k.len() + old_s.len() + new_s.len() + 4; // ": ", "→"
-        if delta_bytes > config.max_delta_bytes {
-            return None;
-        }
         deltas.push(DeltaField {
             key: k.clone(),
-            old: old_s,
-            new: new_s,
+            old: scalar_to_string(old_val),
+            new: scalar_to_string(new_val),
         });
+    }
+
+    // Size the eligibility gate against the *actually rendered* delta
+    // payload — the previous +4 approximation under-counted the UTF-8
+    // arrow (`→` is 3 bytes) and the `", "`/`": "` separators, which
+    // could let near-ref hints exceed `max_delta_bytes`.
+    if rendered_delta_bytes(&deltas) > config.max_delta_bytes {
+        return None;
     }
 
     // No diff at all → caller should emit a full byte-identical hint
@@ -120,6 +119,23 @@ pub fn extract_delta(
         return None;
     }
     Some(deltas)
+}
+
+/// Size in bytes of the delta payload as it appears in the rendered hint
+/// (i.e. the part after `> [near-ref: <id>` and before the closing `]`).
+/// Mirrors [`render_near_ref_hint`] precisely so `max_delta_bytes` gates
+/// what actually goes on the wire, not an approximation.
+fn rendered_delta_bytes(deltas: &[DeltaField]) -> usize {
+    let mut frag = String::new();
+    for d in deltas {
+        frag.push_str(", ");
+        frag.push_str(&d.key);
+        frag.push_str(": ");
+        frag.push_str(&d.old);
+        frag.push('→');
+        frag.push_str(&d.new);
+    }
+    frag.len()
 }
 
 fn is_scalar(v: &serde_json::Value) -> bool {

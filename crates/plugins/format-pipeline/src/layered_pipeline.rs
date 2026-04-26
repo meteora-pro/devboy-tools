@@ -52,7 +52,6 @@ use crate::adaptive_config::AdaptiveConfig;
 use crate::dedup::{DedupCache, DedupDecision, ToolKind, content_hash, render_reference_hint_with};
 use crate::shape::{ClassifiedResponse, classify};
 use crate::telemetry::{Layer, PipelineEvent, Shape, TelemetrySink};
-use crate::token_counter::Tokenizer;
 
 /// Input to [`LayeredPipeline::process`].
 #[derive(Debug, Clone, Copy)]
@@ -87,16 +86,6 @@ pub struct ProcessedResponse {
     pub tokens_saved: i64,
     /// Token count of the `output` we're returning.
     pub tokens_final: u32,
-}
-
-/// Legacy `chars/4` token approximation matching the Python research
-/// extractor. Used as a hot-path fallback when the pipeline's adaptive
-/// config selects `Tokenizer::Heuristic` (i.e. has not been pointed at a
-/// real BPE table). Pipeline-internal callers go through
-/// [`LayeredPipeline::tokens`], which honours the config.
-#[inline]
-fn est_tokens(chars: usize) -> u32 {
-    (chars.max(4) / 4) as u32
 }
 
 /// Session-scoped layered pipeline.
@@ -160,17 +149,14 @@ impl LayeredPipeline {
 
     /// Token count for `text` under the active tokenizer profile.
     ///
-    /// Honours `profiles.tokenizer.active`: when the resolved profile uses
-    /// `Tokenizer::Heuristic`, falls back to the legacy `chars/4` approximation
-    /// (kept in sync with the Python extractor) so existing telemetry stays
-    /// stable. When a real BPE profile is selected, returns the exact count.
+    /// Always routed through [`TokenizerProfile::count_tokens`] so a
+    /// custom `chars_per_token` set in `[profiles.tokenizer.variants]`
+    /// actually takes effect — earlier versions hard-coded `chars/4`
+    /// for the heuristic branch and silently ignored the config knob.
+    /// For Python-extractor parity, the matching variant ships
+    /// `chars_per_token = 4.0`.
     fn tokens(&self, text: &str) -> u32 {
-        let profile = self.config.effective_tokenizer_profile();
-        if profile.bpe == Tokenizer::Heuristic {
-            est_tokens(text.len())
-        } else {
-            profile.count_tokens(text) as u32
-        }
+        self.config.effective_tokenizer_profile().count_tokens(text) as u32
     }
 
     /// Dispatch a tool response through the 4-layer pipeline.
@@ -826,15 +812,16 @@ mod tests {
     }
 
     #[test]
-    fn tokens_method_uses_heuristic_when_profile_is_heuristic() {
+    fn tokens_method_honours_profile_chars_per_token() {
         let mut cfg = AdaptiveConfig::default();
-        // Force the active tokenizer to ollama_bpe, which is configured with
-        // Tokenizer::Heuristic — that path must hit the legacy chars/4 fallback.
+        // Force the active tokenizer to `ollama_bpe`, which ships
+        // `chars_per_token = 3.8` and `bpe = Heuristic`. The pipeline
+        // must respect the configured ratio (8 / 3.8 ≈ 2.1 → 3 tokens
+        // after ceil); earlier versions silently hard-coded chars/4
+        // and produced 2 instead — Copilot review on PR #207.
         cfg.profiles.tokenizer.active = "ollama_bpe".into();
         let p = LayeredPipeline::new("s_h".into(), cfg);
         let body = "abcdefgh"; // 8 chars
-        // chars/4 → 2 tokens. Confirm the legacy formula is preserved so that
-        // existing telemetry/snapshot tests downstream don't shift.
-        assert_eq!(p.tokens(body), 2);
+        assert_eq!(p.tokens(body), 3);
     }
 }
