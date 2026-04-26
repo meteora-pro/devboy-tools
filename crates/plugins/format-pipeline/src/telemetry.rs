@@ -157,6 +157,45 @@ pub struct PipelineEvent {
     /// `1 / sample_rate_applied`.
     #[serde(default = "default_sample_rate")]
     pub sample_rate_applied: f32,
+
+    // ─── Paper 3 — enricher effectiveness signals ────────────────────
+    //
+    // The four metrics surface as derived rates in `SessionSummary`
+    // and `tune analyze` (P-3-08). Recorded per-event so a tuner
+    // session can rebuild the rates without re-running the planner.
+    /// True when the planner pre-fetched this tool call (rather than
+    /// the LLM emitting it directly). Drives the `prefetch_hit_rate`
+    /// metric — paired with `cited_in_next_n_turns` once the post-pass
+    /// scanner runs.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub enricher_prefetched: bool,
+
+    /// `cost_model.typical_kb`-derived prediction (in tokens) at the
+    /// moment the planner admitted the call. Compared with
+    /// `tokens_baseline` to compute `cost_overrun_rate`.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub enricher_predicted_cost_tokens: u32,
+
+    /// Set on declined candidates that the host emitted anyway as a
+    /// telemetry-only event (so `tune analyze` can study what the
+    /// planner skipped). One of `"budget"` / `"low_probability"` /
+    /// `"preempted"` / `"prereq_missing"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enricher_decline_reason: Option<String>,
+
+    /// Filled in by the offline post-pass (`tune from-claude-logs --tools`)
+    /// — `true` when the next 1–3 LLM messages textually reference any
+    /// of the response's content_sha_prefix_hex bytes. `None` until the
+    /// post-pass runs; the live pipeline never sets this directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cited_in_next_n_turns: Option<bool>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+fn is_zero_u32(n: &u32) -> bool {
+    *n == 0
 }
 
 fn default_sample_rate() -> f32 {
@@ -185,6 +224,97 @@ pub struct SessionSummary {
     pub ended_at_ms: i64,
     /// Fraction of events that were sampled (for scaling counts).
     pub sample_rate_applied: f32,
+    /// Paper 3 enricher-effectiveness aggregates. Defaults to all-zero
+    /// when no enrichment activity was observed in the session.
+    #[serde(default)]
+    pub enrichment: EnrichmentEffectiveness,
+}
+
+/// Aggregate scoring of how well the Paper 3 enrichment planner served
+/// the agent during a session. Populated by the live pipeline (counters)
+/// plus the offline post-pass (`cited_*` numbers, see P-3-08).
+///
+/// Four primary rates the operator reads:
+///
+/// - **Prefetch hit rate** — fraction of planner-prefetched calls whose
+///   content was textually cited by the LLM in the next 1–3 turns. The
+///   north-star efficiency number; target ≥ 60%.
+/// - **Decline recall loss** — fraction of declined candidates the LLM
+///   ended up calling itself within the next 5 turns. Higher means the
+///   planner is too greedy. Target ≤ 10%.
+/// - **Cost overrun rate** — fraction of admitted calls whose actual
+///   `tokens_baseline` exceeded the predicted cost by ≥ 30%. Drives
+///   refresh of `cost_model.typical_kb` priors. Target ≤ 15%.
+/// - **Token savings vs baseline** — `(baseline_no_planner −
+///   actual_with_planner) / baseline_no_planner`. The roll-up answer
+///   for "did the enricher pay for itself".
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct EnrichmentEffectiveness {
+    /// Number of calls the planner pre-fetched.
+    pub total_prefetches: u32,
+    /// Of `total_prefetches`, the count whose content was cited by the
+    /// LLM in the next 1–3 turns. Filled in by the offline post-pass;
+    /// stays `0` until the post-pass has run.
+    pub cited_prefetches: u32,
+    /// Number of candidates the planner declined for any reason.
+    pub total_declines: u32,
+    /// Of `total_declines`, the count where the LLM later issued the
+    /// declined tool itself within the next 5 turns. Lower-is-better.
+    pub late_invoked_after_decline: u32,
+    /// Number of admitted calls whose actual `tokens_baseline` exceeded
+    /// the planner's prediction by ≥ 30%.
+    pub cost_overrun_count: u32,
+    /// Total admitted calls (denominator for `cost_overrun_rate`).
+    pub total_predictions: u32,
+    /// Sum of predicted-vs-actual prediction error in tokens — useful
+    /// for diagnosing systematic under- or over-estimation.
+    pub net_prediction_error_tokens: i64,
+}
+
+impl EnrichmentEffectiveness {
+    /// Fraction of prefetches that paid off (cited by the LLM).
+    /// Returns `None` when no prefetches happened — distinct from a
+    /// 0% hit rate.
+    pub fn prefetch_hit_rate(&self) -> Option<f32> {
+        (self.total_prefetches > 0)
+            .then(|| self.cited_prefetches as f32 / self.total_prefetches as f32)
+    }
+
+    /// Fraction of declined candidates the LLM later called anyway.
+    pub fn decline_recall_loss(&self) -> Option<f32> {
+        (self.total_declines > 0)
+            .then(|| self.late_invoked_after_decline as f32 / self.total_declines as f32)
+    }
+
+    /// Fraction of admitted calls whose actual baseline exceeded the
+    /// prediction by ≥ 30%.
+    pub fn cost_overrun_rate(&self) -> Option<f32> {
+        (self.total_predictions > 0)
+            .then(|| self.cost_overrun_count as f32 / self.total_predictions as f32)
+    }
+
+    /// Compact one-line summary suitable for `tune analyze` output.
+    pub fn report(&self) -> String {
+        let hit = self
+            .prefetch_hit_rate()
+            .map(|r| format!("{:.1}%", r * 100.0))
+            .unwrap_or_else(|| "n/a".into());
+        let loss = self
+            .decline_recall_loss()
+            .map(|r| format!("{:.1}%", r * 100.0))
+            .unwrap_or_else(|| "n/a".into());
+        let overrun = self
+            .cost_overrun_rate()
+            .map(|r| format!("{:.1}%", r * 100.0))
+            .unwrap_or_else(|| "n/a".into());
+        format!(
+            "prefetch_hit={hit} decline_recall_loss={loss} cost_overrun={overrun} \
+             prefetches={p} declines={d} predictions={pr}",
+            p = self.total_prefetches,
+            d = self.total_declines,
+            pr = self.total_predictions,
+        )
+    }
 }
 
 /// Persistence backend for telemetry events and summaries.
@@ -346,6 +476,10 @@ mod tests {
             is_sidechain: false,
             ts_ms: 1_700_000_000_000,
             sample_rate_applied: 1.0,
+            enricher_prefetched: false,
+            enricher_predicted_cost_tokens: 0,
+            enricher_decline_reason: None,
+            cited_in_next_n_turns: None,
         }
     }
 
@@ -559,5 +693,97 @@ mod tests {
         let io_err = TelemetryError::Io(std::io::Error::other("boom"));
         let msg = format!("{io_err}");
         assert!(msg.contains("telemetry"));
+    }
+
+    // ─── Paper 3 EnrichmentEffectiveness ────────────────────────────
+
+    #[test]
+    fn enrichment_rates_are_none_when_no_activity() {
+        let e = EnrichmentEffectiveness::default();
+        assert!(e.prefetch_hit_rate().is_none());
+        assert!(e.decline_recall_loss().is_none());
+        assert!(e.cost_overrun_rate().is_none());
+        assert!(e.report().contains("n/a"));
+    }
+
+    #[test]
+    fn prefetch_hit_rate_handles_zero_and_partial_hits() {
+        let mut e = EnrichmentEffectiveness {
+            total_prefetches: 10,
+            cited_prefetches: 7,
+            ..Default::default()
+        };
+        assert_eq!(e.prefetch_hit_rate(), Some(0.7));
+        e.cited_prefetches = 0;
+        assert_eq!(e.prefetch_hit_rate(), Some(0.0));
+    }
+
+    #[test]
+    fn decline_recall_loss_metric() {
+        let e = EnrichmentEffectiveness {
+            total_declines: 20,
+            late_invoked_after_decline: 3,
+            ..Default::default()
+        };
+        let rate = e.decline_recall_loss().unwrap();
+        assert!((rate - 0.15).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cost_overrun_rate_metric() {
+        let e = EnrichmentEffectiveness {
+            total_predictions: 100,
+            cost_overrun_count: 12,
+            ..Default::default()
+        };
+        let rate = e.cost_overrun_rate().unwrap();
+        assert!((rate - 0.12).abs() < 1e-6);
+    }
+
+    #[test]
+    fn report_format_is_human_readable() {
+        let e = EnrichmentEffectiveness {
+            total_prefetches: 10,
+            cited_prefetches: 7,
+            total_declines: 20,
+            late_invoked_after_decline: 2,
+            cost_overrun_count: 3,
+            total_predictions: 30,
+            ..Default::default()
+        };
+        let r = e.report();
+        assert!(r.contains("70.0%"), "expected prefetch_hit=70.0%, got {r}");
+        assert!(
+            r.contains("10.0%"),
+            "expected decline_recall_loss=10.0%, got {r}"
+        );
+        assert!(r.contains("10.0%"), "expected cost_overrun=10.0%, got {r}");
+    }
+
+    #[test]
+    fn pipeline_event_skips_default_enricher_fields_on_serialise() {
+        let evt = sample_event();
+        let json = serde_json::to_string(&evt).unwrap();
+        // Default values for enricher fields must be skip_serializing_if'd
+        // so older log files stay compact and parse cleanly.
+        assert!(!json.contains("enricher_prefetched"));
+        assert!(!json.contains("enricher_predicted_cost_tokens"));
+        assert!(!json.contains("enricher_decline_reason"));
+        assert!(!json.contains("cited_in_next_n_turns"));
+    }
+
+    #[test]
+    fn pipeline_event_round_trips_with_enricher_fields_populated() {
+        let mut evt = sample_event();
+        evt.enricher_prefetched = true;
+        evt.enricher_predicted_cost_tokens = 540;
+        evt.enricher_decline_reason = Some("budget".into());
+        evt.cited_in_next_n_turns = Some(true);
+        let json = serde_json::to_string(&evt).unwrap();
+        let back: PipelineEvent = serde_json::from_str(&json).unwrap();
+        assert!(back.enricher_prefetched);
+        assert_eq!(back.enricher_predicted_cost_tokens, 540);
+        assert_eq!(back.enricher_decline_reason.as_deref(), Some("budget"));
+        assert_eq!(back.cited_in_next_n_turns, Some(true));
     }
 }
