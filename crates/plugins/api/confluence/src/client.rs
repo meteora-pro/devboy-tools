@@ -677,11 +677,9 @@ fn replace_inline_delimited(input: &str, delimiter: &str, open: &str, close: &st
     }
 
     out.push_str(&input[cursor..]);
-    if is_open {
-        if let Some(position) = out.rfind(open) {
-            out.replace_range(position..position + open.len(), delimiter);
-            out.push_str(delimiter);
-        }
+    if is_open && let Some(position) = out.rfind(open) {
+        out.replace_range(position..position + open.len(), delimiter);
+        out.push_str(delimiter);
     }
     out
 }

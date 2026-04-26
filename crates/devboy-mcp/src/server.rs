@@ -1339,9 +1339,7 @@ mod tests {
             "confluence"
         }
 
-        async fn get_spaces(
-            &self,
-        ) -> devboy_core::Result<devboy_core::ProviderResult<KbSpace>> {
+        async fn get_spaces(&self) -> devboy_core::Result<devboy_core::ProviderResult<KbSpace>> {
             Ok(vec![KbSpace {
                 id: "space-1".to_string(),
                 key: "ENG".to_string(),
@@ -2099,7 +2097,10 @@ mod tests {
     #[test]
     fn test_add_knowledge_base_provider_creates_context_for_activation() {
         let mut server = McpServer::new();
-        server.add_knowledge_base_provider_to_context("wiki-only", Arc::new(TestKnowledgeBaseProvider));
+        server.add_knowledge_base_provider_to_context(
+            "wiki-only",
+            Arc::new(TestKnowledgeBaseProvider),
+        );
 
         assert!(server.context_names().contains(&"wiki-only".to_string()));
         assert!(server.set_active_context("wiki-only").is_ok());

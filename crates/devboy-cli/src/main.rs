@@ -3883,10 +3883,8 @@ fn add_context_providers_from_env(
                 },
                 None => ConfluenceAuth::BearerToken(token),
             };
-            let client =
-                ConfluenceClient::new(&confluence.base_url, auth).with_api_version(
-                    confluence.api_version.as_deref(),
-                );
+            let client = ConfluenceClient::new(&confluence.base_url, auth)
+                .with_api_version(confluence.api_version.as_deref());
             server.add_knowledge_base_provider_to_context(context_name, Arc::new(client));
             tracing::info!(
                 "Added Confluence knowledge base provider to context '{}': {}",
@@ -4119,10 +4117,8 @@ fn add_context_providers(
                 },
                 None => ConfluenceAuth::BearerToken(token),
             };
-            let client =
-                ConfluenceClient::new(&confluence.base_url, auth).with_api_version(
-                    confluence.api_version.as_deref(),
-                );
+            let client = ConfluenceClient::new(&confluence.base_url, auth)
+                .with_api_version(confluence.api_version.as_deref());
             server.add_knowledge_base_provider_to_context(context_name, Arc::new(client));
             tracing::info!(
                 "Added Confluence knowledge base provider to context '{}': {}",
@@ -4909,10 +4905,10 @@ fn detect_data_type(value: &serde_json::Value) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
     use devboy_core::ConfluenceConfig;
     use devboy_storage::MemoryStore;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
     fn config_with_disabled(names: &[&str]) -> Config {
         let mut config = Config::default();
