@@ -6104,11 +6104,21 @@ args = ["old"]
         // P-203-style drift gate, but enforced at `cargo test --workspace`
         // time so contributors notice before they push. The CI step
         // `Check CLI reference is up to date` is the secondary safety net.
-        let path = std::path::Path::new("../../docs/guide/reference/cli.md");
-        let committed = std::fs::read_to_string(path).expect(
-            "docs/guide/reference/cli.md missing — run `devboy docs cli --output \
-             docs/guide/reference/cli.md` from the repo root",
-        );
+        //
+        // Anchor the path on `CARGO_MANIFEST_DIR` (cargo sets this to
+        // the crate root at compile time) so the test does not depend on
+        // the working directory — `cargo test --workspace` from the repo
+        // root and IDE runners on macOS / Windows both pass it through.
+        let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let path = crate_root.join("../../docs/guide/reference/cli.md");
+        let committed = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "docs/guide/reference/cli.md missing at {} — run \
+                 `cargo run -p devboy-cli -- docs cli --output \
+                 docs/guide/reference/cli.md` from the repo root: {e}",
+                path.display()
+            )
+        });
         let rendered = render_cli_markdown();
         if committed != rendered {
             panic!(
