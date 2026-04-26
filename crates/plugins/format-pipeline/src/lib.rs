@@ -26,6 +26,7 @@ pub mod adaptive_config;
 pub mod budget;
 pub mod dedup;
 pub(crate) mod dedup_util;
+pub mod enrichment;
 pub mod layered_pipeline;
 pub mod mckp_router;
 pub mod near_ref;
