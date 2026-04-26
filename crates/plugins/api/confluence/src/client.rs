@@ -39,6 +39,7 @@ impl fmt::Debug for ConfluenceAuth {
 pub struct ConfluenceClient {
     base_url: String,
     api_path: String,
+    page_api_path: String,
     space_api_path: String,
     auth: ConfluenceAuth,
     proxy_headers: Option<HashMap<String, String>>,
@@ -50,6 +51,7 @@ impl fmt::Debug for ConfluenceClient {
         f.debug_struct("ConfluenceClient")
             .field("base_url", &self.base_url)
             .field("api_path", &self.api_path)
+            .field("page_api_path", &self.page_api_path)
             .field("space_api_path", &self.space_api_path)
             .field("auth", &self.auth)
             .field("http", &self.http)
@@ -62,6 +64,7 @@ impl ConfluenceClient {
         Self {
             base_url: normalize_base_url(base_url.into()),
             api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
+            page_api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
             space_api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
             auth,
             proxy_headers: None,
@@ -83,6 +86,7 @@ impl ConfluenceClient {
     }
 
     pub fn with_api_version(mut self, api_version: Option<&str>) -> Self {
+        self.page_api_path = api_path_for_version(api_version);
         self.space_api_path = api_path_for_version(api_version);
         self
     }
@@ -127,6 +131,34 @@ impl ConfluenceClient {
             .http
             .get(self.api_url(api_path, path))
             .header(reqwest::header::ACCEPT, "application/json");
+        self.send_json(request).await
+    }
+
+    async fn post_json_to_api<T, B>(&self, api_path: &str, path: &str, body: &B) -> Result<T>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        let request = self
+            .http
+            .post(self.api_url(api_path, path))
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(body);
+        self.send_json(request).await
+    }
+
+    async fn put_json_to_api<T, B>(&self, api_path: &str, path: &str, body: &B) -> Result<T>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        let request = self
+            .http
+            .put(self.api_url(api_path, path))
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(body);
         self.send_json(request).await
     }
 
@@ -204,6 +236,10 @@ fn should_fallback_to_rest_api(error: &Error) -> bool {
                 ..
             }
     )
+}
+
+fn uses_v2_api(api_path: &str) -> bool {
+    api_path == "/api/v2"
 }
 
 fn proxy_headers_to_headermap(headers: &HashMap<String, String>) -> HeaderMap {
@@ -292,6 +328,10 @@ struct ConfluencePage {
     title: String,
     #[serde(default)]
     space: Option<ConfluenceSpaceRef>,
+    #[serde(default, rename = "spaceId")]
+    space_id: Option<String>,
+    #[serde(default, rename = "parentId")]
+    parent_id: Option<String>,
     #[serde(default)]
     version: Option<ConfluenceVersion>,
     #[serde(default)]
@@ -301,6 +341,8 @@ struct ConfluencePage {
     #[serde(default)]
     metadata: Option<ConfluenceMetadata>,
     #[serde(default)]
+    labels: Option<ConfluenceLabelList>,
+    #[serde(default)]
     ancestors: Vec<ConfluenceAncestor>,
     #[serde(default)]
     _links: ConfluenceLinks,
@@ -309,6 +351,8 @@ struct ConfluencePage {
 #[derive(Debug, Clone, Deserialize)]
 struct ConfluenceSpaceRef {
     #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
     key: Option<String>,
 }
 
@@ -316,6 +360,8 @@ struct ConfluenceSpaceRef {
 struct ConfluenceVersion {
     #[serde(default)]
     number: Option<u32>,
+    #[serde(default, rename = "createdAt")]
+    created_at: Option<String>,
     #[serde(default)]
     when: Option<String>,
     #[serde(default)]
@@ -336,6 +382,8 @@ struct ConfluenceUser {
     display_name: Option<String>,
     #[serde(default)]
     username: Option<String>,
+    #[serde(default, rename = "accountId")]
+    account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -344,6 +392,8 @@ struct ConfluenceBody {
     storage: Option<ConfluenceBodyValue>,
     #[serde(default)]
     view: Option<ConfluenceBodyValue>,
+    #[serde(default)]
+    value: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -368,11 +418,14 @@ struct ConfluenceLabelList {
 struct ConfluenceLabel {
     #[serde(default)]
     name: Option<String>,
+    #[serde(default)]
+    label: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct ConfluenceAncestor {
     id: String,
+    #[serde(default)]
     title: String,
     #[serde(default)]
     _links: ConfluenceLinks,
@@ -427,6 +480,30 @@ struct ConfluenceUpdateVersion {
     number: u32,
 }
 
+#[derive(Debug, Serialize)]
+struct ConfluenceV2PagePayload<'a> {
+    #[serde(rename = "spaceId")]
+    space_id: &'a str,
+    status: &'static str,
+    title: &'a str,
+    #[serde(rename = "parentId", skip_serializing_if = "Option::is_none")]
+    parent_id: Option<&'a str>,
+    body: ConfluenceContentBody<'a>,
+}
+
+#[derive(Debug, Serialize)]
+struct ConfluenceV2UpdatePayload<'a> {
+    id: &'a str,
+    status: &'static str,
+    title: &'a str,
+    #[serde(rename = "spaceId")]
+    space_id: &'a str,
+    #[serde(rename = "parentId", skip_serializing_if = "Option::is_none")]
+    parent_id: Option<&'a str>,
+    body: ConfluenceContentBody<'a>,
+    version: ConfluenceUpdateVersion,
+}
+
 fn join_link(base_url: &str, base_hint: Option<&str>, path: Option<&str>) -> Option<String> {
     let path = path?;
     if path.starts_with("http://") || path.starts_with("https://") {
@@ -441,14 +518,26 @@ fn join_link(base_url: &str, base_hint: Option<&str>, path: Option<&str>) -> Opt
 }
 
 fn display_name(user: Option<&ConfluenceUser>) -> Option<String> {
-    user.and_then(|u| u.display_name.clone().or_else(|| u.username.clone()))
+    user.and_then(|u| {
+        u.display_name
+            .clone()
+            .or_else(|| u.username.clone())
+            .or_else(|| u.account_id.clone())
+    })
+}
+
+fn body_value(body: &ConfluenceBody) -> Option<String> {
+    body.view
+        .as_ref()
+        .and_then(|value| value.value.clone())
+        .or_else(|| body.storage.as_ref().and_then(|value| value.value.clone()))
+        .or_else(|| body.value.clone())
 }
 
 fn page_excerpt(page: &ConfluencePage) -> Option<String> {
     page.body
         .as_ref()
-        .and_then(|body| body.view.as_ref().or(body.storage.as_ref()))
-        .and_then(|body| body.value.clone())
+        .and_then(body_value)
         .map(|value| truncate_string(strip_html_tags(&value), 280))
         .filter(|value| !value.is_empty())
 }
@@ -925,6 +1014,8 @@ fn map_page_summary(base_url: &str, raw: &ConfluencePage) -> KbPage {
         .as_ref()
         .and_then(|h| h.last_updated.as_ref())
         .or(raw.version.as_ref());
+    let version_number = version.and_then(|v| v.number);
+    let last_modified = version.and_then(|v| v.when.clone().or_else(|| v.created_at.clone()));
 
     KbPage {
         id: raw.id.clone(),
@@ -935,8 +1026,8 @@ fn map_page_summary(base_url: &str, raw: &ConfluencePage) -> KbPage {
             raw._links.base.as_deref(),
             raw._links.webui.as_deref(),
         ),
-        version: version.and_then(|v| v.number),
-        last_modified: version.and_then(|v| v.when.clone()),
+        version: version_number,
+        last_modified,
         author: display_name(version.and_then(|v| v.by.as_ref()))
             .or_else(|| display_name(raw.history.as_ref().and_then(|h| h.created_by.as_ref()))),
         excerpt: page_excerpt(raw),
@@ -1022,25 +1113,57 @@ fn path_from_cursor(cursor: &str, api_path: &str) -> String {
     }
 }
 
-#[async_trait]
-impl KnowledgeBaseProvider for ConfluenceClient {
-    fn provider_name(&self) -> &'static str {
-        "confluence"
+impl ConfluenceClient {
+    async fn resolve_space_by_key(&self, space_key: &str) -> Result<ConfluenceSpace> {
+        let spaces = self.get_spaces().await?;
+        spaces
+            .items
+            .into_iter()
+            .find(|space| space.key == space_key)
+            .map(|space| ConfluenceSpace {
+                id: space.id,
+                key: space.key,
+                name: space.name,
+                space_type: space.space_type,
+                status: space.status,
+                description: None,
+                _links: ConfluenceLinks::default(),
+            })
+            .ok_or_else(|| Error::NotFound(format!("confluence space '{space_key}' not found")))
     }
 
-    async fn get_spaces(&self) -> Result<ProviderResult<KbSpace>> {
-        let path = "space?limit=100&type=global,personal";
-        let response: ConfluenceListResponse<ConfluenceSpace> =
-            match self.get_json_from_api(&self.space_api_path, path).await {
-                Ok(response) => response,
-                Err(error)
-                    if self.space_api_path != DEFAULT_CONFLUENCE_API_PATH
-                        && should_fallback_to_rest_api(&error) =>
-                {
-                    self.get_json(path).await?
-                }
-                Err(error) => return Err(error),
-            };
+    async fn resolve_space_key_by_id(&self, space_id: &str) -> Result<Option<String>> {
+        let spaces = self.get_spaces().await?;
+        Ok(spaces
+            .items
+            .into_iter()
+            .find(|space| space.id == space_id)
+            .map(|space| space.key))
+    }
+
+    async fn get_page_ancestor_chain_v2(&self, page_id: &str) -> Result<Vec<KbPage>> {
+        let path = format!("pages/{page_id}/ancestors?limit=100");
+        let response: ConfluenceListResponse<ConfluenceAncestor> =
+            self.get_json_from_api(&self.page_api_path, &path).await?;
+        let mut ancestors = Vec::with_capacity(response.results.len());
+        for ancestor in response.results {
+            let detail_path = format!("pages/{}", ancestor.id);
+            let detail: ConfluencePage = self
+                .get_json_from_api(&self.page_api_path, &detail_path)
+                .await?;
+            let mut summary = map_page_summary(&self.base_url, &detail);
+            if summary.url.is_none() {
+                summary.url = Some(format!("{}/pages/{}", self.base_url, detail.id));
+            }
+            ancestors.push(summary);
+        }
+        Ok(ancestors)
+    }
+
+    async fn get_spaces_v1(&self) -> Result<ProviderResult<KbSpace>> {
+        let response: ConfluenceListResponse<ConfluenceSpace> = self
+            .get_json("space?limit=100&type=global,personal")
+            .await?;
         let pagination = map_pagination(&response, Some(100));
         let items = response
             .results
@@ -1051,7 +1174,7 @@ impl KnowledgeBaseProvider for ConfluenceClient {
         Ok(ProviderResult::new(items).with_pagination(pagination))
     }
 
-    async fn list_pages(&self, params: ListPagesParams) -> Result<ProviderResult<KbPage>> {
+    async fn list_pages_v1(&self, params: ListPagesParams) -> Result<ProviderResult<KbPage>> {
         let limit = params.limit.unwrap_or(25);
         let path = if let Some(cursor) = params.cursor.as_ref() {
             path_from_cursor(cursor, &self.api_path)
@@ -1102,7 +1225,7 @@ impl KnowledgeBaseProvider for ConfluenceClient {
         Ok(ProviderResult::new(items).with_pagination(pagination))
     }
 
-    async fn get_page(&self, page_id: &str) -> Result<KbPageContent> {
+    async fn get_page_v1(&self, page_id: &str) -> Result<KbPageContent> {
         let path = format!(
             "content/{page_id}?expand=space,version,history.lastUpdated,body.storage,metadata.labels,ancestors"
         );
@@ -1156,15 +1279,15 @@ impl KnowledgeBaseProvider for ConfluenceClient {
         })
     }
 
-    async fn create_page(&self, _params: CreatePageParams) -> Result<KbPage> {
+    async fn create_page_v1(&self, params: CreatePageParams) -> Result<KbPage> {
         let storage_content =
-            normalize_confluence_write_content(&_params.content, _params.content_type.as_deref())?;
+            normalize_confluence_write_content(&params.content, params.content_type.as_deref())?;
 
         let payload = ConfluenceContentPayload {
             content_type: "page",
-            title: &_params.title,
+            title: &params.title,
             space: ConfluenceCreateSpaceRef {
-                key: &_params.space_key,
+                key: &params.space_key,
             },
             body: ConfluenceCreateBodyPayload {
                 storage: ConfluenceContentBody {
@@ -1172,7 +1295,7 @@ impl KnowledgeBaseProvider for ConfluenceClient {
                     representation: "storage",
                 },
             },
-            ancestors: _params
+            ancestors: params
                 .parent_id
                 .as_deref()
                 .map(|id| vec![ConfluenceCreateAncestorRef { id }])
@@ -1183,10 +1306,10 @@ impl KnowledgeBaseProvider for ConfluenceClient {
         Ok(map_page_summary(&self.base_url, &page))
     }
 
-    async fn update_page(&self, _params: UpdatePageParams) -> Result<KbPage> {
+    async fn update_page_v1(&self, params: UpdatePageParams) -> Result<KbPage> {
         let current_path = format!(
             "content/{}?expand=space,version,body.storage,ancestors",
-            _params.page_id
+            params.page_id
         );
         let current: ConfluencePage = self.get_json(&current_path).await?;
 
@@ -1204,36 +1327,36 @@ impl KnowledgeBaseProvider for ConfluenceClient {
             .ok_or_else(|| {
                 Error::InvalidData(format!(
                     "confluence page {} is missing a version number",
-                    _params.page_id
+                    params.page_id
                 ))
             })?;
 
-        if let Some(expected_version) = _params.version
+        if let Some(expected_version) = params.version
             && expected_version != current_version
         {
             return Err(Error::Api {
                 status: 409,
                 message: format!(
                     "version conflict for page {}: expected current version {}, found {}",
-                    _params.page_id, expected_version, current_version
+                    params.page_id, expected_version, current_version
                 ),
             });
         }
 
-        let title = _params.title.as_deref().unwrap_or(&current_title);
-        let content = match _params.content.as_deref() {
+        let title = params.title.as_deref().unwrap_or(&current_title);
+        let content = match params.content.as_deref() {
             Some(updated) => {
-                normalize_confluence_write_content(updated, _params.content_type.as_deref())?
+                normalize_confluence_write_content(updated, params.content_type.as_deref())?
             }
             None => current_content,
         };
-        let ancestors = _params
+        let ancestors = params
             .parent_id
             .as_deref()
             .map(|id| vec![ConfluenceCreateAncestorRef { id }]);
 
         let payload = ConfluenceUpdatePayload {
-            id: &_params.page_id,
+            id: &params.page_id,
             content_type: "page",
             title,
             version: ConfluenceUpdateVersion {
@@ -1248,9 +1371,305 @@ impl KnowledgeBaseProvider for ConfluenceClient {
             ancestors,
         };
 
-        let path = format!("content/{}", _params.page_id);
+        let path = format!("content/{}", params.page_id);
         let page: ConfluencePage = self.put_json(&path, &payload).await?;
         Ok(map_page_summary(&self.base_url, &page))
+    }
+
+    async fn list_pages_v2(&self, params: ListPagesParams) -> Result<ProviderResult<KbPage>> {
+        let limit = params.limit.unwrap_or(25);
+        let path = if let Some(cursor) = params.cursor.as_ref() {
+            path_from_cursor(cursor, &self.page_api_path)
+        } else {
+            let space = self.resolve_space_by_key(&params.space_key).await?;
+            let mut query = vec![format!("limit={limit}")];
+            query.push("body-format=view".to_string());
+            if let Some(search) = params.search.as_ref() {
+                query.push(format!("title={}", encode_query_value(search)));
+            }
+            format!("spaces/{}/pages?{}", space.id, query.join("&"))
+        };
+
+        let response: ConfluenceListResponse<ConfluencePage> =
+            self.get_json_from_api(&self.page_api_path, &path).await?;
+        let pagination = map_pagination(&response, Some(limit));
+        let mut items = response
+            .results
+            .iter()
+            .filter(|page| {
+                params
+                    .parent_id
+                    .as_ref()
+                    .map(|parent_id| page.parent_id.as_ref().is_some_and(|id| id == parent_id))
+                    .unwrap_or(true)
+            })
+            .map(|page| {
+                let mut summary = map_page_summary(&self.base_url, page);
+                if summary.space_key.is_none() {
+                    summary.space_key = Some(params.space_key.clone());
+                }
+                if summary.url.is_none() {
+                    summary.url = Some(format!("{}/pages/{}", self.base_url, page.id));
+                }
+                summary
+            })
+            .collect::<Vec<_>>();
+
+        if let Some(search) = params.search.as_ref() {
+            let search = search.to_ascii_lowercase();
+            items.retain(|page| {
+                page.title.to_ascii_lowercase().contains(&search)
+                    || page
+                        .excerpt
+                        .as_ref()
+                        .map(|excerpt| excerpt.to_ascii_lowercase().contains(&search))
+                        .unwrap_or(false)
+            });
+        }
+
+        Ok(ProviderResult::new(items).with_pagination(pagination))
+    }
+
+    async fn get_page_v2(&self, page_id: &str) -> Result<KbPageContent> {
+        let path = format!("pages/{page_id}?body-format=storage&include-labels=true");
+        let page: ConfluencePage = self.get_json_from_api(&self.page_api_path, &path).await?;
+        let mut summary = map_page_summary(&self.base_url, &page);
+        if summary.space_key.is_none()
+            && let Some(space_id) = page.space_id.as_deref()
+        {
+            summary.space_key = self.resolve_space_key_by_id(space_id).await?;
+        }
+        if summary.url.is_none() {
+            summary.url = Some(format!("{}/pages/{}", self.base_url, page.id));
+        }
+
+        let storage_content = page.body.as_ref().and_then(body_value).unwrap_or_default();
+        let content = confluence_storage_to_markdown(&storage_content);
+        let content_type = "markdown".to_string();
+        let ancestors = self
+            .get_page_ancestor_chain_v2(page_id)
+            .await
+            .unwrap_or_default();
+        let labels = page
+            .labels
+            .as_ref()
+            .or_else(|| {
+                page.metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.labels.as_ref())
+            })
+            .map(|labels| {
+                labels
+                    .results
+                    .iter()
+                    .filter_map(|label| label.name.clone().or_else(|| label.label.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        Ok(KbPageContent {
+            page: summary,
+            content,
+            content_type,
+            ancestors,
+            labels,
+        })
+    }
+
+    async fn create_page_v2(&self, params: CreatePageParams) -> Result<KbPage> {
+        let storage_content =
+            normalize_confluence_write_content(&params.content, params.content_type.as_deref())?;
+        let space = self.resolve_space_by_key(&params.space_key).await?;
+        let payload = ConfluenceV2PagePayload {
+            space_id: &space.id,
+            status: "current",
+            title: &params.title,
+            parent_id: params.parent_id.as_deref(),
+            body: ConfluenceContentBody {
+                value: &storage_content,
+                representation: "storage",
+            },
+        };
+
+        let page: ConfluencePage = self
+            .post_json_to_api(&self.page_api_path, "pages", &payload)
+            .await?;
+        let mut summary = map_page_summary(&self.base_url, &page);
+        if summary.space_key.is_none() {
+            summary.space_key = Some(params.space_key);
+        }
+        if summary.url.is_none() {
+            summary.url = Some(format!("{}/pages/{}", self.base_url, page.id));
+        }
+        Ok(summary)
+    }
+
+    async fn update_page_v2(&self, params: UpdatePageParams) -> Result<KbPage> {
+        let current_path = format!("pages/{}?body-format=storage", params.page_id);
+        let current: ConfluencePage = self
+            .get_json_from_api(&self.page_api_path, &current_path)
+            .await?;
+        let current_title = current.title.clone();
+        let current_content = current
+            .body
+            .as_ref()
+            .and_then(body_value)
+            .unwrap_or_default();
+        let current_version = current
+            .version
+            .as_ref()
+            .and_then(|version| version.number)
+            .ok_or_else(|| {
+                Error::InvalidData(format!(
+                    "confluence page {} is missing a version number",
+                    params.page_id
+                ))
+            })?;
+
+        if let Some(expected_version) = params.version
+            && expected_version != current_version
+        {
+            return Err(Error::Api {
+                status: 409,
+                message: format!(
+                    "version conflict for page {}: expected current version {}, found {}",
+                    params.page_id, expected_version, current_version
+                ),
+            });
+        }
+
+        let title = params.title.as_deref().unwrap_or(&current_title);
+        let content = match params.content.as_deref() {
+            Some(updated) => {
+                normalize_confluence_write_content(updated, params.content_type.as_deref())?
+            }
+            None => current_content,
+        };
+        let space_id = current
+            .space_id
+            .as_deref()
+            .or_else(|| current.space.as_ref().and_then(|space| space.id.as_deref()))
+            .ok_or_else(|| {
+                Error::InvalidData(format!(
+                    "confluence page {} is missing a space id",
+                    params.page_id
+                ))
+            })?;
+        let parent_id = params.parent_id.as_deref().or(current.parent_id.as_deref());
+        let payload = ConfluenceV2UpdatePayload {
+            id: &params.page_id,
+            status: "current",
+            title,
+            space_id,
+            parent_id,
+            body: ConfluenceContentBody {
+                value: &content,
+                representation: "storage",
+            },
+            version: ConfluenceUpdateVersion {
+                number: current_version.saturating_add(1),
+            },
+        };
+
+        let path = format!("pages/{}", params.page_id);
+        let page: ConfluencePage = self
+            .put_json_to_api(&self.page_api_path, &path, &payload)
+            .await?;
+        let mut summary = map_page_summary(&self.base_url, &page);
+        if summary.space_key.is_none() {
+            summary.space_key = self.resolve_space_key_by_id(space_id).await?;
+        }
+        if summary.url.is_none() {
+            summary.url = Some(format!("{}/pages/{}", self.base_url, page.id));
+        }
+        Ok(summary)
+    }
+}
+
+#[async_trait]
+impl KnowledgeBaseProvider for ConfluenceClient {
+    fn provider_name(&self) -> &'static str {
+        "confluence"
+    }
+
+    async fn get_spaces(&self) -> Result<ProviderResult<KbSpace>> {
+        if uses_v2_api(&self.space_api_path) {
+            let path = "space?limit=100&type=global,personal";
+            let response: ConfluenceListResponse<ConfluenceSpace> =
+                match self.get_json_from_api(&self.space_api_path, path).await {
+                    Ok(response) => response,
+                    Err(error) if should_fallback_to_rest_api(&error) => {
+                        return self.get_spaces_v1().await;
+                    }
+                    Err(error) => return Err(error),
+                };
+            let pagination = map_pagination(&response, Some(100));
+            let items = response
+                .results
+                .into_iter()
+                .map(|space| map_space(&self.base_url, space))
+                .collect::<Vec<_>>();
+
+            Ok(ProviderResult::new(items).with_pagination(pagination))
+        } else {
+            self.get_spaces_v1().await
+        }
+    }
+
+    async fn list_pages(&self, params: ListPagesParams) -> Result<ProviderResult<KbPage>> {
+        if uses_v2_api(&self.page_api_path) {
+            match self.list_pages_v2(params.clone()).await {
+                Ok(result) => Ok(result),
+                Err(error) if should_fallback_to_rest_api(&error) => {
+                    self.list_pages_v1(params).await
+                }
+                Err(error) => Err(error),
+            }
+        } else {
+            self.list_pages_v1(params).await
+        }
+    }
+
+    async fn get_page(&self, page_id: &str) -> Result<KbPageContent> {
+        if uses_v2_api(&self.page_api_path) {
+            match self.get_page_v2(page_id).await {
+                Ok(result) => Ok(result),
+                Err(error) if should_fallback_to_rest_api(&error) => {
+                    self.get_page_v1(page_id).await
+                }
+                Err(error) => Err(error),
+            }
+        } else {
+            self.get_page_v1(page_id).await
+        }
+    }
+
+    async fn create_page(&self, params: CreatePageParams) -> Result<KbPage> {
+        if uses_v2_api(&self.page_api_path) {
+            match self.create_page_v2(params.clone()).await {
+                Ok(result) => Ok(result),
+                Err(error) if should_fallback_to_rest_api(&error) => {
+                    self.create_page_v1(params).await
+                }
+                Err(error) => Err(error),
+            }
+        } else {
+            self.create_page_v1(params).await
+        }
+    }
+
+    async fn update_page(&self, params: UpdatePageParams) -> Result<KbPage> {
+        if uses_v2_api(&self.page_api_path) {
+            match self.update_page_v2(params.clone()).await {
+                Ok(result) => Ok(result),
+                Err(error) if should_fallback_to_rest_api(&error) => {
+                    self.update_page_v1(params).await
+                }
+                Err(error) => Err(error),
+            }
+        } else {
+            self.update_page_v1(params).await
+        }
     }
 
     async fn search(&self, params: SearchKbParams) -> Result<ProviderResult<KbPage>> {
@@ -1493,8 +1912,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_pages_uses_rest_content_api_even_when_v2_is_preferred() {
+    async fn list_pages_falls_back_to_rest_content_api_when_v2_pages_are_unavailable() {
         let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v2/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "results": [
+                            { "id": "123", "key": "ENG", "name": "Engineering" }
+                        ],
+                        "_links": {}
+                    }"#,
+                );
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v2/spaces/123/pages")
+                .query_param("limit", "25")
+                .query_param("body-format", "view");
+            then.status(404);
+        });
         let mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/rest/api/content")
@@ -1530,6 +1972,83 @@ mod tests {
 
         mock.assert();
         assert!(result.items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_pages_uses_v2_pages_when_preferred() {
+        let server = MockServer::start();
+        let spaces_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v2/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "results": [
+                            { "id": "123", "key": "ENG", "name": "Engineering" }
+                        ],
+                        "_links": {}
+                    }"#,
+                );
+        });
+        let pages_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v2/spaces/123/pages")
+                .query_param("limit", "25")
+                .query_param("body-format", "view");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "results": [
+                            {
+                                "id": "42",
+                                "title": "ADR-001",
+                                "spaceId": "123",
+                                "parentId": "10",
+                                "version": { "number": 7, "createdAt": "2026-04-26T10:00:00.000Z" },
+                                "body": { "value": "<p>Architecture decision record</p>" },
+                                "_links": { "next": "/api/v2/spaces/123/pages?cursor=abc" }
+                            }
+                        ],
+                        "limit": 25,
+                        "size": 1,
+                        "_links": { "next": "/api/v2/spaces/123/pages?cursor=abc" }
+                    }"#,
+                );
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        )
+        .with_api_version(Some("v2"));
+        let result = client
+            .list_pages(ListPagesParams {
+                space_key: "ENG".into(),
+                limit: Some(25),
+                offset: Some(0),
+                cursor: None,
+                search: None,
+                parent_id: Some("10".into()),
+            })
+            .await
+            .unwrap();
+
+        spaces_mock.assert();
+        pages_mock.assert();
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].id, "42");
+        assert_eq!(result.items[0].space_key.as_deref(), Some("ENG"));
+        assert_eq!(result.items[0].version, Some(7));
+        assert_eq!(
+            result
+                .pagination
+                .and_then(|pagination| pagination.next_cursor),
+            Some("/api/v2/spaces/123/pages?cursor=abc".into())
+        );
     }
 
     #[tokio::test]
@@ -1725,6 +2244,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_page_uses_v2_page_and_ancestors_when_preferred() {
+        let server = MockServer::start();
+        let space_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v2/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "results": [
+                            { "id": "123", "key": "ENG", "name": "Engineering" }
+                        ],
+                        "_links": {}
+                    }"#,
+                );
+        });
+        let page_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v2/pages/42")
+                .query_param("body-format", "storage")
+                .query_param("include-labels", "true");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "id": "42",
+                        "title": "ADR-001",
+                        "spaceId": "123",
+                        "parentId": "10",
+                        "version": {
+                            "number": 7,
+                            "createdAt": "2026-04-26T10:00:00.000Z"
+                        },
+                        "body": {
+                            "representation": "storage",
+                            "value": "<p>Hello <strong>world</strong></p>"
+                        },
+                        "labels": {
+                            "results": [
+                                { "label": "adr" },
+                                { "label": "architecture" }
+                            ]
+                        }
+                    }"#,
+                );
+        });
+        let ancestors_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v2/pages/42/ancestors")
+                .query_param("limit", "100");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{ "results": [ { "id": "10", "type": "page" } ], "_links": {} }"#);
+        });
+        let ancestor_page_mock = server.mock(|when, then| {
+            when.method(GET).path("/api/v2/pages/10");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "id": "10",
+                        "title": "Architecture Decisions",
+                        "spaceId": "123"
+                    }"#,
+                );
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        )
+        .with_api_version(Some("v2"));
+        let page = client.get_page("42").await.unwrap();
+
+        space_mock.assert();
+        page_mock.assert();
+        ancestors_mock.assert();
+        ancestor_page_mock.assert();
+        assert_eq!(page.page.id, "42");
+        assert_eq!(page.page.space_key.as_deref(), Some("ENG"));
+        assert_eq!(page.page.version, Some(7));
+        assert_eq!(page.content, "Hello **world**");
+        assert_eq!(page.labels, vec!["adr", "architecture"]);
+        assert_eq!(page.ancestors.len(), 1);
+        assert_eq!(page.ancestors[0].title, "Architecture Decisions");
+    }
+
+    #[tokio::test]
     async fn create_page_accepts_markdown_and_posts_storage_payload() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
@@ -1780,6 +2389,76 @@ mod tests {
         mock.assert();
         assert_eq!(page.id, "43");
         assert_eq!(page.title, "ADR-002");
+        assert_eq!(page.space_key.as_deref(), Some("ENG"));
+        assert_eq!(page.version, Some(1));
+    }
+
+    #[tokio::test]
+    async fn create_page_uses_v2_pages_when_preferred() {
+        let server = MockServer::start();
+        let space_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v2/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "results": [
+                            { "id": "123", "key": "ENG", "name": "Engineering" }
+                        ],
+                        "_links": {}
+                    }"#,
+                );
+        });
+        let create_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/api/v2/pages")
+                .header("authorization", "Bearer secret-token")
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "spaceId": "123",
+                    "status": "current",
+                    "title": "ADR-002",
+                    "parentId": "10",
+                    "body": {
+                        "value": "<h1>Decision</h1><p>Hello <strong>world</strong></p>",
+                        "representation": "storage"
+                    }
+                }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "id": "43",
+                        "title": "ADR-002",
+                        "spaceId": "123",
+                        "version": { "number": 1 }
+                    }"#,
+                );
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        )
+        .with_api_version(Some("v2"));
+        let page = client
+            .create_page(CreatePageParams {
+                space_key: "ENG".into(),
+                title: "ADR-002".into(),
+                content: "# Decision\n\nHello **world**".into(),
+                content_type: Some("markdown".into()),
+                parent_id: Some("10".into()),
+                labels: vec![],
+            })
+            .await
+            .unwrap();
+
+        space_mock.assert();
+        create_mock.assert();
+        assert_eq!(page.id, "43");
         assert_eq!(page.space_key.as_deref(), Some("ENG"));
         assert_eq!(page.version, Some(1));
     }
@@ -1870,6 +2549,101 @@ mod tests {
         assert_eq!(page.title, "ADR-001 Revised");
         assert_eq!(page.version, Some(8));
         assert_eq!(page.author.as_deref(), Some("Bob"));
+    }
+
+    #[tokio::test]
+    async fn update_page_uses_v2_pages_when_preferred() {
+        let server = MockServer::start();
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v2/pages/42")
+                .query_param("body-format", "storage");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "id": "42",
+                        "title": "ADR-001",
+                        "spaceId": "123",
+                        "parentId": "10",
+                        "version": { "number": 7 },
+                        "body": {
+                            "representation": "storage",
+                            "value": "<p>Old</p>"
+                        }
+                    }"#,
+                );
+        });
+        let put_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/api/v2/pages/42")
+                .header("authorization", "Bearer secret-token")
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "id": "42",
+                    "status": "current",
+                    "title": "ADR-001 Revised",
+                    "spaceId": "123",
+                    "parentId": "11",
+                    "body": {
+                        "value": "<p>New <strong>decision</strong></p>",
+                        "representation": "storage"
+                    },
+                    "version": { "number": 8 }
+                }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "id": "42",
+                        "title": "ADR-001 Revised",
+                        "spaceId": "123",
+                        "version": { "number": 8, "createdAt": "2026-04-26T11:00:00.000Z" }
+                    }"#,
+                );
+        });
+        let space_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v2/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "results": [
+                            { "id": "123", "key": "ENG", "name": "Engineering" }
+                        ],
+                        "_links": {}
+                    }"#,
+                );
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        )
+        .with_api_version(Some("v2"));
+        let page = client
+            .update_page(UpdatePageParams {
+                page_id: "42".into(),
+                title: Some("ADR-001 Revised".into()),
+                content: Some("New **decision**".into()),
+                content_type: Some("markdown".into()),
+                version: Some(7),
+                labels: None,
+                parent_id: Some("11".into()),
+            })
+            .await
+            .unwrap();
+
+        get_mock.assert();
+        put_mock.assert();
+        space_mock.assert();
+        assert_eq!(page.id, "42");
+        assert_eq!(page.title, "ADR-001 Revised");
+        assert_eq!(page.space_key.as_deref(), Some("ENG"));
+        assert_eq!(page.version, Some(8));
     }
 
     #[tokio::test]
