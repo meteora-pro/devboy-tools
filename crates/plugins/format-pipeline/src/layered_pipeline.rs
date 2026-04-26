@@ -439,6 +439,14 @@ impl LayeredPipeline {
             is_sidechain: input.is_sidechain,
             ts_ms: input.ts_ms,
             sample_rate_applied: self.config.telemetry.sample_rate,
+            // Paper 3 enricher fields — populated by the planner when
+            // the call was prefetched. The live pipeline emits the
+            // call as if it came from the LLM directly; the planner
+            // overlays its bookkeeping onto the same PipelineEvent.
+            enricher_prefetched: false,
+            enricher_predicted_cost_tokens: 0,
+            enricher_decline_reason: None,
+            cited_in_next_n_turns: None,
         };
         if sink.record(&evt).is_err() {
             return; // Best-effort; do not fail the pipeline.
