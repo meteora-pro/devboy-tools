@@ -331,6 +331,19 @@ pub fn format_output(
             None,
             None,
         )),
+        ToolOutput::KnowledgeBaseSpaces(spaces, _) => Ok(text_result(
+            format_knowledge_base_spaces(&spaces),
+            provider_pagination,
+            provider_sort,
+        )),
+        ToolOutput::KnowledgeBasePages(pages, _) => Ok(text_result(
+            format_knowledge_base_pages(&pages),
+            provider_pagination,
+            provider_sort,
+        )),
+        ToolOutput::KnowledgeBasePage(page) => {
+            Ok(text_result(format_knowledge_base_page(&page), None, None))
+        }
         ToolOutput::Relations(relations) => {
             let json = serde_json::to_string_pretty(&*relations).map_err(|e| {
                 devboy_core::Error::InvalidData(format!("failed to serialize relations: {e}"))
@@ -629,6 +642,78 @@ fn format_meeting_transcript(transcript: &devboy_core::MeetingTranscript) -> Str
         output.push_str(&format!("[{time}] {speaker}: {}\n", s.text));
     }
 
+    output
+}
+
+fn format_knowledge_base_spaces(spaces: &[devboy_core::KbSpace]) -> String {
+    if spaces.is_empty() {
+        return "No knowledge base spaces found.".to_string();
+    }
+
+    let mut output = format!("# Knowledge Base Spaces ({})\n\n", spaces.len());
+    for space in spaces {
+        output.push_str(&format!("- {} (`{}`)\n", space.name, space.key));
+        if let Some(description) = &space.description {
+            output.push_str(&format!("  {description}\n"));
+        }
+        if let Some(url) = &space.url {
+            output.push_str(&format!("  {url}\n"));
+        }
+    }
+    output
+}
+
+fn format_knowledge_base_pages(pages: &[devboy_core::KbPage]) -> String {
+    if pages.is_empty() {
+        return "No knowledge base pages found.".to_string();
+    }
+
+    let mut output = format!("# Knowledge Base Pages ({})\n\n", pages.len());
+    for page in pages {
+        output.push_str(&format!("- {} (`{}`)\n", page.title, page.id));
+        if let Some(space_key) = &page.space_key {
+            output.push_str(&format!("  space: {space_key}\n"));
+        }
+        if let Some(author) = &page.author {
+            output.push_str(&format!("  author: {author}\n"));
+        }
+        if let Some(last_modified) = &page.last_modified {
+            output.push_str(&format!("  updated: {last_modified}\n"));
+        }
+        if let Some(excerpt) = &page.excerpt {
+            output.push_str(&format!("  excerpt: {excerpt}\n"));
+        }
+        if let Some(url) = &page.url {
+            output.push_str(&format!("  {url}\n"));
+        }
+    }
+    output
+}
+
+fn format_knowledge_base_page(page: &devboy_core::KbPageContent) -> String {
+    let mut output = format!("# {}\n\n", page.page.title);
+    output.push_str(&format!("id: `{}`\n", page.page.id));
+    if let Some(space_key) = &page.page.space_key {
+        output.push_str(&format!("space: `{space_key}`\n"));
+    }
+    output.push_str(&format!("content_type: `{}`\n", page.content_type));
+    if !page.labels.is_empty() {
+        output.push_str(&format!("labels: {}\n", page.labels.join(", ")));
+    }
+    if !page.ancestors.is_empty() {
+        let chain = page
+            .ancestors
+            .iter()
+            .map(|ancestor| ancestor.title.as_str())
+            .collect::<Vec<_>>()
+            .join(" > ");
+        output.push_str(&format!("ancestors: {chain}\n"));
+    }
+    if let Some(url) = &page.page.url {
+        output.push_str(&format!("url: {url}\n"));
+    }
+    output.push('\n');
+    output.push_str(&page.content);
     output
 }
 
