@@ -39,6 +39,7 @@ impl fmt::Debug for ConfluenceAuth {
 pub struct ConfluenceClient {
     base_url: String,
     api_path: String,
+    space_api_path: String,
     auth: ConfluenceAuth,
     proxy_headers: Option<HashMap<String, String>>,
     http: reqwest::Client,
@@ -49,6 +50,7 @@ impl fmt::Debug for ConfluenceClient {
         f.debug_struct("ConfluenceClient")
             .field("base_url", &self.base_url)
             .field("api_path", &self.api_path)
+            .field("space_api_path", &self.space_api_path)
             .field("auth", &self.auth)
             .field("http", &self.http)
             .finish()
@@ -60,6 +62,7 @@ impl ConfluenceClient {
         Self {
             base_url: normalize_base_url(base_url.into()),
             api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
+            space_api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
             auth,
             proxy_headers: None,
             http: reqwest::Client::new(),
@@ -80,7 +83,7 @@ impl ConfluenceClient {
     }
 
     pub fn with_api_version(mut self, api_version: Option<&str>) -> Self {
-        self.api_path = api_path_for_version(api_version);
+        self.space_api_path = api_path_for_version(api_version);
         self
     }
 
@@ -92,8 +95,17 @@ impl ConfluenceClient {
     }
 
     pub fn rest_api_url(&self, path: &str) -> String {
+        self.api_url(&self.api_path, path)
+    }
+
+    fn api_url(&self, api_path: &str, path: &str) -> String {
         let path = path.trim_start_matches('/');
-        format!("{}{}/{}", self.base_url, self.api_path, path)
+        format!("{}{}/{}", self.base_url, api_path, path)
+    }
+
+    #[cfg(test)]
+    fn space_api_url(&self, path: &str) -> String {
+        self.api_url(&self.space_api_path, path)
     }
 
     pub async fn get_json<T>(&self, path: &str) -> Result<T>
@@ -103,6 +115,17 @@ impl ConfluenceClient {
         let request = self
             .http
             .get(self.rest_api_url(path))
+            .header(reqwest::header::ACCEPT, "application/json");
+        self.send_json(request).await
+    }
+
+    async fn get_json_from_api<T>(&self, api_path: &str, path: &str) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        let request = self
+            .http
+            .get(self.api_url(api_path, path))
             .header(reqwest::header::ACCEPT, "application/json");
         self.send_json(request).await
     }
@@ -170,6 +193,17 @@ impl ConfluenceClient {
             }
         }
     }
+}
+
+fn should_fallback_to_rest_api(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::NotFound(_)
+            | Error::Api {
+                status: 400 | 404 | 405,
+                ..
+            }
+    )
 }
 
 fn proxy_headers_to_headermap(headers: &HashMap<String, String>) -> HeaderMap {
@@ -995,9 +1029,18 @@ impl KnowledgeBaseProvider for ConfluenceClient {
     }
 
     async fn get_spaces(&self) -> Result<ProviderResult<KbSpace>> {
-        let response: ConfluenceListResponse<ConfluenceSpace> = self
-            .get_json("space?limit=100&type=global,personal")
-            .await?;
+        let path = "space?limit=100&type=global,personal";
+        let response: ConfluenceListResponse<ConfluenceSpace> =
+            match self.get_json_from_api(&self.space_api_path, path).await {
+                Ok(response) => response,
+                Err(error)
+                    if self.space_api_path != DEFAULT_CONFLUENCE_API_PATH
+                        && should_fallback_to_rest_api(&error) =>
+                {
+                    self.get_json(path).await?
+                }
+                Err(error) => return Err(error),
+            };
         let pagination = map_pagination(&response, Some(100));
         let items = response
             .results
@@ -1275,9 +1318,42 @@ mod tests {
         .with_api_version(Some("v2"));
 
         assert_eq!(
-            client.rest_api_url("pages"),
-            "https://wiki.example.com/api/v2/pages"
+            client.space_api_url("space"),
+            "https://wiki.example.com/api/v2/space"
         );
+    }
+
+    #[tokio::test]
+    async fn get_spaces_falls_back_to_rest_api_when_v2_is_unavailable() {
+        let server = MockServer::start();
+        let v2_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v2/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(404);
+        });
+        let v1_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"results":[],"start":0,"limit":100,"size":0,"_links":{}}"#);
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        )
+        .with_api_version(Some("v2"));
+
+        let response = client.get_spaces().await.unwrap();
+
+        assert!(response.items.is_empty());
+        v2_mock.assert();
+        v1_mock.assert();
     }
 
     #[tokio::test]
@@ -1414,6 +1490,46 @@ mod tests {
             Some("https://wiki.example.com/spaces/ENG/overview")
         );
         assert_eq!(result.pagination.unwrap().total, Some(1));
+    }
+
+    #[tokio::test]
+    async fn list_pages_uses_rest_content_api_even_when_v2_is_preferred() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/content")
+                .query_param("spaceKey", "ENG")
+                .query_param("type", "page")
+                .query_param("limit", "25")
+                .query_param("start", "0")
+                .query_param(
+                    "expand",
+                    "space,version,history.lastUpdated,body.view,ancestors",
+                );
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"results":[],"start":0,"limit":25,"size":0,"_links":{}}"#);
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        )
+        .with_api_version(Some("v2"));
+        let result = client
+            .list_pages(ListPagesParams {
+                space_key: "ENG".into(),
+                limit: Some(25),
+                offset: Some(0),
+                cursor: None,
+                search: None,
+                parent_id: None,
+            })
+            .await
+            .unwrap();
+
+        mock.assert();
+        assert!(result.items.is_empty());
     }
 
     #[tokio::test]
