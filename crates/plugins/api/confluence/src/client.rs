@@ -346,6 +346,55 @@ struct ConfluenceAncestor {
     _links: ConfluenceLinks,
 }
 
+#[derive(Debug, Serialize)]
+struct ConfluenceContentBody<'a> {
+    value: &'a str,
+    representation: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct ConfluenceContentPayload<'a> {
+    #[serde(rename = "type")]
+    content_type: &'static str,
+    title: &'a str,
+    space: ConfluenceCreateSpaceRef<'a>,
+    body: ConfluenceCreateBodyPayload<'a>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    ancestors: Vec<ConfluenceCreateAncestorRef<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+struct ConfluenceCreateSpaceRef<'a> {
+    key: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct ConfluenceCreateBodyPayload<'a> {
+    storage: ConfluenceContentBody<'a>,
+}
+
+#[derive(Debug, Serialize)]
+struct ConfluenceCreateAncestorRef<'a> {
+    id: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct ConfluenceUpdatePayload<'a> {
+    id: &'a str,
+    #[serde(rename = "type")]
+    content_type: &'static str,
+    title: &'a str,
+    version: ConfluenceUpdateVersion,
+    body: ConfluenceCreateBodyPayload<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ancestors: Option<Vec<ConfluenceCreateAncestorRef<'a>>>,
+}
+
+#[derive(Debug, Serialize)]
+struct ConfluenceUpdateVersion {
+    number: u32,
+}
+
 fn join_link(base_url: &str, base_hint: Option<&str>, path: Option<&str>) -> Option<String> {
     let path = path?;
     if path.starts_with("http://") || path.starts_with("https://") {
@@ -391,6 +440,19 @@ fn truncate_string(input: String, max_chars: usize) -> String {
         return input;
     }
     input.chars().take(max_chars).collect::<String>()
+}
+
+fn require_storage_content_type(content_type: Option<&str>) -> Result<()> {
+    match content_type
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("storage")
+    {
+        "storage" => Ok(()),
+        other => Err(Error::InvalidData(format!(
+            "confluence create/update currently only supports content_type=storage, got '{other}'"
+        ))),
+    }
 }
 
 fn map_space(base_url: &str, raw: ConfluenceSpace) -> KbSpace {
@@ -652,17 +714,95 @@ impl KnowledgeBaseProvider for ConfluenceClient {
     }
 
     async fn create_page(&self, _params: CreatePageParams) -> Result<KbPage> {
-        Err(Error::ProviderUnsupported {
-            provider: "confluence".into(),
-            operation: "create_page not yet implemented".into(),
-        })
+        require_storage_content_type(_params.content_type.as_deref())?;
+
+        let payload = ConfluenceContentPayload {
+            content_type: "page",
+            title: &_params.title,
+            space: ConfluenceCreateSpaceRef {
+                key: &_params.space_key,
+            },
+            body: ConfluenceCreateBodyPayload {
+                storage: ConfluenceContentBody {
+                    value: &_params.content,
+                    representation: "storage",
+                },
+            },
+            ancestors: _params
+                .parent_id
+                .as_deref()
+                .map(|id| vec![ConfluenceCreateAncestorRef { id }])
+                .unwrap_or_default(),
+        };
+
+        let page: ConfluencePage = self.post_json("content", &payload).await?;
+        Ok(map_page_summary(&self.base_url, &page))
     }
 
     async fn update_page(&self, _params: UpdatePageParams) -> Result<KbPage> {
-        Err(Error::ProviderUnsupported {
-            provider: "confluence".into(),
-            operation: "update_page not yet implemented".into(),
-        })
+        require_storage_content_type(_params.content_type.as_deref())?;
+
+        let current_path = format!(
+            "content/{}?expand=space,version,body.storage,ancestors",
+            _params.page_id
+        );
+        let current: ConfluencePage = self.get_json(&current_path).await?;
+
+        let current_title = current.title.clone();
+        let current_content = current
+            .body
+            .as_ref()
+            .and_then(|body| body.storage.as_ref())
+            .and_then(|storage| storage.value.clone())
+            .unwrap_or_default();
+        let current_version = current
+            .version
+            .as_ref()
+            .and_then(|version| version.number)
+            .ok_or_else(|| {
+                Error::InvalidData(format!(
+                    "confluence page {} is missing a version number",
+                    _params.page_id
+                ))
+            })?;
+
+        if let Some(expected_version) = _params.version
+            && expected_version != current_version
+        {
+            return Err(Error::Api {
+                status: 409,
+                message: format!(
+                    "version conflict for page {}: expected current version {}, found {}",
+                    _params.page_id, expected_version, current_version
+                ),
+            });
+        }
+
+        let title = _params.title.as_deref().unwrap_or(&current_title);
+        let content = _params.content.as_deref().unwrap_or(&current_content);
+        let ancestors = _params.parent_id.as_deref().map(|id| {
+            vec![ConfluenceCreateAncestorRef { id }]
+        });
+
+        let payload = ConfluenceUpdatePayload {
+            id: &_params.page_id,
+            content_type: "page",
+            title,
+            version: ConfluenceUpdateVersion {
+                number: current_version.saturating_add(1),
+            },
+            body: ConfluenceCreateBodyPayload {
+                storage: ConfluenceContentBody {
+                    value: content,
+                    representation: "storage",
+                },
+            },
+            ancestors,
+        };
+
+        let path = format!("content/{}", _params.page_id);
+        let page: ConfluencePage = self.put_json(&path, &payload).await?;
+        Ok(map_page_summary(&self.base_url, &page))
     }
 
     async fn search(&self, params: SearchKbParams) -> Result<ProviderResult<KbPage>> {
@@ -692,7 +832,7 @@ impl KnowledgeBaseProvider for ConfluenceClient {
 
 #[cfg(test)]
 mod tests {
-    use httpmock::Method::{GET, POST};
+    use httpmock::Method::{GET, POST, PUT};
     use httpmock::MockServer;
     use serde::{Deserialize, Serialize};
 
@@ -1061,6 +1201,209 @@ mod tests {
         assert_eq!(page.ancestors.len(), 1);
         assert_eq!(page.ancestors[0].id, "10");
         assert_eq!(page.ancestors[0].title, "Architecture Decisions");
+    }
+
+    #[tokio::test]
+    async fn create_page_posts_storage_payload_and_maps_response() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/rest/api/content")
+                .header("authorization", "Bearer secret-token")
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "type": "page",
+                    "title": "ADR-002",
+                    "space": { "key": "ENG" },
+                    "body": {
+                        "storage": {
+                            "value": "<p>Decision</p>",
+                            "representation": "storage"
+                        }
+                    },
+                    "ancestors": [{ "id": "10" }]
+                }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "id": "43",
+                        "title": "ADR-002",
+                        "space": { "key": "ENG" },
+                        "version": {
+                            "number": 1,
+                            "when": "2026-04-26T10:00:00.000Z",
+                            "by": { "displayName": "Alice" }
+                        },
+                        "_links": { "base": "https://wiki.example.com", "webui": "/pages/viewpage.action?pageId=43" }
+                    }"#,
+                );
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        );
+        let page = client
+            .create_page(CreatePageParams {
+                space_key: "ENG".into(),
+                title: "ADR-002".into(),
+                content: "<p>Decision</p>".into(),
+                content_type: Some("storage".into()),
+                parent_id: Some("10".into()),
+                labels: vec![],
+            })
+            .await
+            .unwrap();
+
+        mock.assert();
+        assert_eq!(page.id, "43");
+        assert_eq!(page.title, "ADR-002");
+        assert_eq!(page.space_key.as_deref(), Some("ENG"));
+        assert_eq!(page.version, Some(1));
+    }
+
+    #[tokio::test]
+    async fn update_page_fetches_current_page_and_puts_incremented_version() {
+        let server = MockServer::start();
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/content/42")
+                .query_param("expand", "space,version,body.storage,ancestors");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "id": "42",
+                        "title": "ADR-001",
+                        "space": { "key": "ENG" },
+                        "version": { "number": 7 },
+                        "body": {
+                            "storage": {
+                                "value": "<p>Old</p>",
+                                "representation": "storage"
+                            }
+                        },
+                        "ancestors": [
+                            { "id": "10", "title": "Architecture", "_links": {} }
+                        ],
+                        "_links": { "base": "https://wiki.example.com", "webui": "/pages/viewpage.action?pageId=42" }
+                    }"#,
+                );
+        });
+        let put_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/rest/api/content/42")
+                .header("authorization", "Bearer secret-token")
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "id": "42",
+                    "type": "page",
+                    "title": "ADR-001 Revised",
+                    "version": { "number": 8 },
+                    "body": {
+                        "storage": {
+                            "value": "<p>New</p>",
+                            "representation": "storage"
+                        }
+                    },
+                    "ancestors": [{ "id": "11" }]
+                }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "id": "42",
+                        "title": "ADR-001 Revised",
+                        "space": { "key": "ENG" },
+                        "version": {
+                            "number": 8,
+                            "when": "2026-04-26T11:00:00.000Z",
+                            "by": { "displayName": "Bob" }
+                        },
+                        "_links": { "base": "https://wiki.example.com", "webui": "/pages/viewpage.action?pageId=42" }
+                    }"#,
+                );
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        );
+        let page = client
+            .update_page(UpdatePageParams {
+                page_id: "42".into(),
+                title: Some("ADR-001 Revised".into()),
+                content: Some("<p>New</p>".into()),
+                content_type: Some("storage".into()),
+                version: Some(7),
+                labels: None,
+                parent_id: Some("11".into()),
+            })
+            .await
+            .unwrap();
+
+        get_mock.assert();
+        put_mock.assert();
+        assert_eq!(page.id, "42");
+        assert_eq!(page.title, "ADR-001 Revised");
+        assert_eq!(page.version, Some(8));
+        assert_eq!(page.author.as_deref(), Some("Bob"));
+    }
+
+    #[tokio::test]
+    async fn update_page_returns_conflict_when_expected_version_is_stale() {
+        let server = MockServer::start();
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/content/42")
+                .query_param("expand", "space,version,body.storage,ancestors");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "id": "42",
+                        "title": "ADR-001",
+                        "space": { "key": "ENG" },
+                        "version": { "number": 7 },
+                        "body": {
+                            "storage": {
+                                "value": "<p>Old</p>",
+                                "representation": "storage"
+                            }
+                        },
+                        "ancestors": [],
+                        "_links": {}
+                    }"#,
+                );
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        );
+        let error = client
+            .update_page(UpdatePageParams {
+                page_id: "42".into(),
+                title: Some("ADR-001 Revised".into()),
+                content: Some("<p>New</p>".into()),
+                content_type: Some("storage".into()),
+                version: Some(6),
+                labels: None,
+                parent_id: None,
+            })
+            .await
+            .unwrap_err();
+
+        get_mock.assert();
+        match error {
+            Error::Api { status, message } => {
+                assert_eq!(status, 409);
+                assert!(message.contains("expected current version 6"));
+                assert!(message.contains("found 7"));
+            }
+            other => panic!("expected conflict error, got {other:?}"),
+        }
     }
 
     #[tokio::test]
