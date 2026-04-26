@@ -262,7 +262,13 @@ devboy tools disable <names...>         # Disable specific built-in tools
 devboy tools enable <names...>          # Re-enable specific tools
 devboy tools reset                      # Reset all filtering
 devboy tools call <name> [args]         # Call a built-in tool directly
+devboy tools docs --output FILE         # Auto-generate the tool reference (Markdown / JSON)
+devboy docs cli   --output FILE         # Auto-generate this CLI reference from the live `clap` definition
 ```
+
+The full, always-up-to-date listing lives in
+[`docs/guide/reference/cli.md`](docs/guide/reference/cli.md) — refreshed
+automatically by `devboy docs cli` and gated in CI.
 
 ### Doctor command
 
