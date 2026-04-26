@@ -44,6 +44,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+use devboy_core::ToolValueModel;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -63,7 +64,7 @@ pub enum ConfigError {
 
 pub type Result<T> = std::result::Result<T, ConfigError>;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 /// Lowest schema version we still accept on load (auto-upgraded in memory).
 pub const MIN_SUPPORTED_SCHEMA_VERSION: u32 = 1;
@@ -90,6 +91,13 @@ pub struct AdaptiveConfig {
     /// Schema-v2: horizontal hint policy.
     #[serde(default)]
     pub hints: HintsConfig,
+    /// Schema-v3: per-tool value models for the Paper 3 enrichment
+    /// planner. Keyed by anonymized tool name (e.g. `"Read"`,
+    /// `"mcp__pXXXXXX__get_branch_pipeline"`). User overrides land
+    /// here from `[tools.<name>]` blocks; provider-shipped defaults
+    /// are merged in at startup time.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tools: BTreeMap<String, ToolValueModel>,
 }
 
 fn default_schema_version() -> u32 {
@@ -107,6 +115,7 @@ impl Default for AdaptiveConfig {
             endpoint_overrides: BTreeMap::new(),
             profiles: ProfilesConfig::default(),
             hints: HintsConfig::default(),
+            tools: BTreeMap::new(),
         }
     }
 }
@@ -136,8 +145,11 @@ impl AdaptiveConfig {
     /// Migrate a config in place to `CURRENT_SCHEMA_VERSION`.
     ///
     /// v1 → v2: the on-disk file lacks `[profiles.*]` and `[hints]` sections;
-    /// `serde(default)` already populates them with the v2 defaults, so the
-    /// only work here is bumping `schema_version`.
+    /// `serde(default)` already populates them with the v2 defaults.
+    /// v2 → v3: the on-disk file lacks the `[tools.*]` table;
+    /// `serde(default)` populates an empty BTreeMap, then the runtime
+    /// merges provider-shipped defaults on top at startup time.
+    /// In both cases the only work here is bumping `schema_version`.
     fn upgrade_in_place(&mut self) -> Result<()> {
         if self.schema_version > CURRENT_SCHEMA_VERSION {
             return Err(ConfigError::UnsupportedSchemaVersion(self.schema_version));
@@ -145,7 +157,7 @@ impl AdaptiveConfig {
         if self.schema_version < MIN_SUPPORTED_SCHEMA_VERSION {
             return Err(ConfigError::UnsupportedSchemaVersion(self.schema_version));
         }
-        // v1 → v2: defaults already injected; just stamp the version.
+        // v1 → v3: defaults already injected; just stamp the version.
         if self.schema_version < CURRENT_SCHEMA_VERSION {
             self.schema_version = CURRENT_SCHEMA_VERSION;
         }
@@ -260,6 +272,20 @@ impl AdaptiveConfig {
         self.templates.template_for(endpoint)
     }
 
+    /// Effective `ToolValueModel` for `tool_name` for the Paper 3
+    /// enrichment planner. Resolution order:
+    ///
+    /// 1. exact match in `[tools.<name>]` (user override or merged provider default);
+    /// 2. wildcard `*` block (catch-all overrides — useful for blanket
+    ///    `value_class = "supporting"` policies);
+    /// 3. `None` — caller substitutes the global default.
+    pub fn effective_tool_value_model(&self, tool_name: &str) -> Option<&ToolValueModel> {
+        if let Some(m) = self.tools.get(tool_name) {
+            return Some(m);
+        }
+        self.tools.get("*")
+    }
+
     /// Merge another config into self. Fields present in `other` override `self`.
     /// Endpoint overrides are unioned (right-wins on collisions).
     pub fn merge_right_wins(&mut self, other: AdaptiveConfig) {
@@ -271,6 +297,12 @@ impl AdaptiveConfig {
         self.hints = other.hints;
         for (k, v) in other.endpoint_overrides {
             self.endpoint_overrides.insert(k, v);
+        }
+        // Provider defaults are typically loaded into `self.tools` first
+        // and then user overrides come in via `other.tools`. Right-wins
+        // matches the documented `[tools.<name>]` semantics.
+        for (k, v) in other.tools {
+            self.tools.insert(k, v);
         }
     }
 }
@@ -1791,5 +1823,117 @@ recursion_depth = 6
             variants.get("ollama_bpe").unwrap().bpe,
             Tokenizer::Heuristic
         );
+    }
+
+    // ─── Paper 3 [tools.*] section ───────────────────────────────────
+
+    #[test]
+    fn schema_v3_default_carries_empty_tools_map() {
+        let cfg = AdaptiveConfig::default();
+        assert_eq!(cfg.schema_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 3);
+        assert!(cfg.tools.is_empty());
+    }
+
+    #[test]
+    fn schema_v1_or_v2_files_upgrade_to_v3_with_empty_tools() {
+        // Older configs simply lack the [tools.*] section; serde(default)
+        // injects the empty BTreeMap and `upgrade_in_place` stamps v3.
+        for raw in [
+            "schema_version = 1\n",
+            "schema_version = 2\n[profiles.tokenizer]\nactive = \"auto\"\n",
+        ] {
+            let mut cfg: AdaptiveConfig = toml::from_str(raw).unwrap();
+            cfg.upgrade_in_place().unwrap();
+            assert_eq!(cfg.schema_version, CURRENT_SCHEMA_VERSION);
+            assert!(cfg.tools.is_empty());
+        }
+    }
+
+    #[test]
+    fn effective_tool_value_model_exact_match_wins() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.tools.insert(
+            "Read".into(),
+            devboy_core::ToolValueModel::critical_with_size(2.5),
+        );
+        let m = cfg.effective_tool_value_model("Read").unwrap();
+        assert_eq!(m.cost_model.typical_kb, 2.5);
+        assert_eq!(m.value_class, devboy_core::ValueClass::Critical);
+    }
+
+    #[test]
+    fn effective_tool_value_model_falls_back_to_wildcard() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.tools
+            .insert("*".into(), devboy_core::ToolValueModel::audit_only());
+        let m = cfg.effective_tool_value_model("UnknownTool").unwrap();
+        assert_eq!(m.value_class, devboy_core::ValueClass::AuditOnly);
+    }
+
+    #[test]
+    fn effective_tool_value_model_none_when_unconfigured() {
+        let cfg = AdaptiveConfig::default();
+        assert!(cfg.effective_tool_value_model("Read").is_none());
+    }
+
+    #[test]
+    fn round_trip_via_toml_with_tools_block() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.tools.insert(
+            "Read".into(),
+            devboy_core::ToolValueModel::critical_with_size(2.5),
+        );
+        cfg.tools.insert(
+            "TaskUpdate".into(),
+            devboy_core::ToolValueModel::audit_only(),
+        );
+        let s = toml::to_string_pretty(&cfg).unwrap();
+        assert!(s.contains("[tools.Read]"));
+        assert!(s.contains("[tools.TaskUpdate]"));
+        let back: AdaptiveConfig = toml::from_str(&s).unwrap();
+        assert_eq!(back.tools.len(), 2);
+        assert_eq!(
+            back.effective_tool_value_model("Read")
+                .unwrap()
+                .cost_model
+                .typical_kb,
+            2.5
+        );
+    }
+
+    #[test]
+    fn merge_right_wins_unions_tools_blocks() {
+        let mut left = AdaptiveConfig::default();
+        left.tools.insert(
+            "Read".into(),
+            devboy_core::ToolValueModel::critical_with_size(2.5),
+        );
+        left.tools
+            .insert("Bash".into(), devboy_core::ToolValueModel::default());
+
+        let mut right = AdaptiveConfig::default();
+        right.tools.insert(
+            "Read".into(),
+            devboy_core::ToolValueModel::critical_with_size(99.0),
+        );
+        right.tools.insert(
+            "WebFetch".into(),
+            devboy_core::ToolValueModel::critical_with_size(1.2),
+        );
+
+        left.merge_right_wins(right);
+        // Right wins on collision (`Read`).
+        assert_eq!(
+            left.effective_tool_value_model("Read")
+                .unwrap()
+                .cost_model
+                .typical_kb,
+            99.0
+        );
+        // Left-only entry (`Bash`) survives.
+        assert!(left.effective_tool_value_model("Bash").is_some());
+        // Right-only entry (`WebFetch`) is added.
+        assert!(left.effective_tool_value_model("WebFetch").is_some());
     }
 }
