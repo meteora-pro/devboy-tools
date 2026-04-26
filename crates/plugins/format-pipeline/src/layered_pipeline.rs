@@ -262,6 +262,7 @@ impl LayeredPipeline {
                     tool_kind,
                     file_path_hash.clone(),
                     std::sync::Arc::new(input.content.to_string()),
+                    input.tool_name,
                 );
                 return out;
             }
@@ -270,6 +271,9 @@ impl LayeredPipeline {
         // Not a duplicate — insert into cache for future reference. When
         // near-ref is enabled, also retain the body so future turns can
         // diff against it; otherwise stick to the cheaper hash-only entry.
+        // `tool_name` is recorded so `DedupCache::invalidate_by_tool`
+        // (Paper 3 §Cross-tool invalidation) can later drop entries for
+        // tools that this writer's `ToolValueModel.invalidates` lists.
         let tc_hash = short_hash(input.tool_call_id);
         if self.config.dedup.near_ref_enabled {
             self.dedup.insert_with_body(
@@ -278,6 +282,7 @@ impl LayeredPipeline {
                 tool_kind,
                 file_path_hash.clone(),
                 std::sync::Arc::new(input.content.to_string()),
+                input.tool_name,
             );
         } else {
             self.dedup.insert(
@@ -285,7 +290,17 @@ impl LayeredPipeline {
                 tc_hash.clone(),
                 tool_kind,
                 file_path_hash.clone(),
+                input.tool_name,
             );
+        }
+
+        // Paper 3 cross-tool invalidation: if the tool that just ran
+        // declares an `invalidates` list in its value model, drop every
+        // matching cached entry now so the next call returns fresh.
+        if let Some(model) = self.config.effective_tool_value_model(input.tool_name)
+            && !model.invalidates.is_empty()
+        {
+            self.dedup.invalidate_by_tool(&model.invalidates);
         }
 
         // === Shape classification (used by L1/L2) ===
@@ -823,5 +838,46 @@ mod tests {
         let p = LayeredPipeline::new("s_h".into(), cfg);
         let body = "abcdefgh"; // 8 chars
         assert_eq!(p.tokens(body), 3);
+    }
+
+    #[test]
+    fn cross_tool_invalidation_drops_cached_response() {
+        // Paper 3 P-3-07 — `update_issue` declares
+        // `invalidates = ["get_issue"]`. After `get_issue` is cached
+        // and `update_issue` runs, a re-read of the same `get_issue`
+        // body must come back fresh (not as a hint).
+        use devboy_core::ToolValueModel;
+        let mut cfg = AdaptiveConfig::default();
+        cfg.tools.insert(
+            "update_issue".into(),
+            ToolValueModel {
+                invalidates: vec!["get_issue".into()],
+                ..ToolValueModel::default()
+            },
+        );
+        let mut p = LayeredPipeline::new("s_invl".into(), cfg);
+        let body = "x".repeat(400);
+
+        // Turn 1 — get_issue caches.
+        let r1 = p.process(input("tc_1", "get_issue", None, &body));
+        assert_eq!(r1.layer, Layer::L3);
+
+        // Turn 2 — same body, would dedup ...
+        let r2 = p.process(input("tc_2", "get_issue", None, &body));
+        assert_eq!(r2.layer, Layer::L0, "second call should dedup");
+
+        // Turn 3 — `update_issue` runs (different body!), declares
+        // `invalidates = ["get_issue"]`. Its run drops the cached
+        // get_issue entry.
+        let _ = p.process(input("tc_3", "update_issue", None, &"u".repeat(400)));
+
+        // Turn 4 — re-issuing get_issue with the *same* body must now
+        // come back fresh; the cache was busted by update_issue.
+        let r4 = p.process(input("tc_4", "get_issue", None, &body));
+        assert_eq!(
+            r4.layer,
+            Layer::L3,
+            "get_issue cache must be invalidated by update_issue"
+        );
     }
 }

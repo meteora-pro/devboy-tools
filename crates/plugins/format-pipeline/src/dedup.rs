@@ -38,7 +38,7 @@
 //!     }
 //!     DedupDecision::Fresh => {
 //!         // emit `body` normally and cache it
-//!         cache.insert(fp, "tc_42", ToolKind::Other, None);
+//!         cache.insert(fp, "tc_42", ToolKind::Other, None, "Bash");
 //!     }
 //! }
 //! ```
@@ -111,6 +111,11 @@ struct CacheEntry {
     /// `dedup.near_ref_enabled` is on). `Arc<String>` keeps cloning
     /// cheap when the cache holds multiple references to the same body.
     body_snapshot: Option<Arc<String>>,
+    /// Tool name (anonymized) — drives Paper 3 cross-tool invalidation:
+    /// e.g. `update_issue` declares `invalidates = ["get_issue"]` in
+    /// its `ToolValueModel`, and [`DedupCache::invalidate_by_tool`]
+    /// reads this field to drop matching entries.
+    tool_name: String,
 }
 
 /// Session-scoped deduplication cache.
@@ -178,14 +183,27 @@ impl DedupCache {
 
     /// Insert a fresh response. Evicts the oldest entry if the cache is at
     /// capacity.
+    ///
+    /// `tool_name` is the anonymized tool that produced the response —
+    /// used by [`Self::invalidate_by_tool`] for Paper 3 cross-tool
+    /// invalidation. Pass an empty string when the tool is unknown
+    /// (cross-tool invalidation will simply never match it).
     pub fn insert(
         &mut self,
         hash: ContentHash,
         tool_call_id: impl Into<String>,
         tool_kind: ToolKind,
         file_path_hash: Option<String>,
+        tool_name: impl Into<String>,
     ) {
-        self.insert_inner(hash, tool_call_id.into(), tool_kind, file_path_hash, None);
+        self.insert_inner(
+            hash,
+            tool_call_id.into(),
+            tool_kind,
+            file_path_hash,
+            None,
+            tool_name.into(),
+        );
     }
 
     /// Insert a fresh response and retain its body for Type-2
@@ -199,6 +217,7 @@ impl DedupCache {
         tool_kind: ToolKind,
         file_path_hash: Option<String>,
         body: Arc<String>,
+        tool_name: impl Into<String>,
     ) {
         self.insert_inner(
             hash,
@@ -206,6 +225,7 @@ impl DedupCache {
             tool_kind,
             file_path_hash,
             Some(body),
+            tool_name.into(),
         );
     }
 
@@ -216,6 +236,7 @@ impl DedupCache {
         tool_kind: ToolKind,
         file_path_hash: Option<String>,
         body_snapshot: Option<Arc<String>>,
+        tool_name: String,
     ) {
         if self.entries.len() >= self.capacity {
             self.entries.pop_front();
@@ -226,6 +247,7 @@ impl DedupCache {
             tool_kind,
             file_path_hash,
             body_snapshot,
+            tool_name,
         });
     }
 
@@ -266,6 +288,24 @@ impl DedupCache {
             !(e.tool_kind == ToolKind::FileRead
                 && e.file_path_hash.as_deref() == Some(file_path_hash))
         });
+        before - self.entries.len()
+    }
+
+    /// Invalidate every entry whose `tool_name` appears in
+    /// `invalidates`. Drives Paper 3 cross-tool invalidation: a writer
+    /// (`update_issue`, `Edit`, `Write`, …) declares which read tools
+    /// its `ToolValueModel.invalidates` list, and the runtime calls this
+    /// method right after the writer's response is processed.
+    ///
+    /// Returns the number of entries dropped. Empty `invalidates` is a
+    /// no-op (returns 0) — used by tools that do not affect any cache.
+    pub fn invalidate_by_tool(&mut self, invalidates: &[String]) -> usize {
+        if invalidates.is_empty() {
+            return 0;
+        }
+        let before = self.entries.len();
+        self.entries
+            .retain(|e| !invalidates.iter().any(|t| t == &e.tool_name));
         before - self.entries.len()
     }
 
@@ -364,7 +404,7 @@ mod tests {
         let mut c = DedupCache::with_capacity(5);
         let fp = h("pipeline 12345 status=success");
         assert_eq!(c.check(&fp), DedupDecision::Fresh);
-        c.insert(fp, "tc_1", ToolKind::Other, None);
+        c.insert(fp, "tc_1", ToolKind::Other, None, "");
         match c.check(&fp) {
             DedupDecision::Hint {
                 reference_tool_call_id,
@@ -376,16 +416,16 @@ mod tests {
     #[test]
     fn distinct_content_is_fresh() {
         let mut c = DedupCache::with_capacity(5);
-        c.insert(h("A"), "tc_1", ToolKind::Other, None);
+        c.insert(h("A"), "tc_1", ToolKind::Other, None, "");
         assert_eq!(c.check(&h("B")), DedupDecision::Fresh);
     }
 
     #[test]
     fn lru_evicts_oldest_when_full() {
         let mut c = DedupCache::with_capacity(2);
-        c.insert(h("one"), "tc_1", ToolKind::Other, None);
-        c.insert(h("two"), "tc_2", ToolKind::Other, None);
-        c.insert(h("three"), "tc_3", ToolKind::Other, None);
+        c.insert(h("one"), "tc_1", ToolKind::Other, None, "");
+        c.insert(h("two"), "tc_2", ToolKind::Other, None, "");
+        c.insert(h("three"), "tc_3", ToolKind::Other, None, "");
         assert_eq!(c.check(&h("one")), DedupDecision::Fresh);
         assert!(matches!(c.check(&h("two")), DedupDecision::Hint { .. }));
         assert!(matches!(c.check(&h("three")), DedupDecision::Hint { .. }));
@@ -396,7 +436,13 @@ mod tests {
         let mut c = DedupCache::with_capacity(5);
         let file = "abc12345".to_string();
         let content = h("line1\nline2");
-        c.insert(content, "tc_1", ToolKind::FileRead, Some(file.clone()));
+        c.insert(
+            content,
+            "tc_1",
+            ToolKind::FileRead,
+            Some(file.clone()),
+            "Read",
+        );
         assert_eq!(c.invalidate_file(&file), 1);
         assert_eq!(c.check(&content), DedupDecision::Fresh);
     }
@@ -405,7 +451,13 @@ mod tests {
     fn mutation_on_different_file_preserves_entry() {
         let mut c = DedupCache::with_capacity(5);
         let content = h("irrelevant file body");
-        c.insert(content, "tc_1", ToolKind::FileRead, Some("hash_a".into()));
+        c.insert(
+            content,
+            "tc_1",
+            ToolKind::FileRead,
+            Some("hash_a".into()),
+            "Read",
+        );
         assert_eq!(c.invalidate_file("hash_b"), 0);
         assert!(matches!(c.check(&content), DedupDecision::Hint { .. }));
     }
@@ -414,12 +466,39 @@ mod tests {
     fn compaction_boundary_clears_and_advances_partition() {
         let mut c = DedupCache::with_capacity(5);
         let x = h("x");
-        c.insert(x, "tc_1", ToolKind::Other, None);
+        c.insert(x, "tc_1", ToolKind::Other, None, "");
         assert_eq!(c.partition(), 0);
         c.on_compaction_boundary();
         assert_eq!(c.partition(), 1);
         assert_eq!(c.check(&x), DedupDecision::Fresh);
         assert!(c.is_empty());
+    }
+
+    #[test]
+    fn invalidate_by_tool_drops_matching_entries() {
+        // Paper 3 cross-tool invalidation: `update_issue` declares
+        // `invalidates = ["get_issue", "get_issues"]`. After it runs,
+        // any cached responses for those tools must be dropped.
+        let mut c = DedupCache::with_capacity(5);
+        c.insert(h("body_a"), "tc_a", ToolKind::Other, None, "get_issue");
+        c.insert(h("body_b"), "tc_b", ToolKind::Other, None, "get_issues");
+        c.insert(h("body_c"), "tc_c", ToolKind::Other, None, "get_pipeline");
+        assert_eq!(c.len(), 3);
+        let dropped = c.invalidate_by_tool(&["get_issue".to_string(), "get_issues".to_string()]);
+        assert_eq!(dropped, 2);
+        assert_eq!(c.len(), 1);
+        // get_pipeline survives.
+        assert!(matches!(c.check(&h("body_c")), DedupDecision::Hint { .. }));
+        assert_eq!(c.check(&h("body_a")), DedupDecision::Fresh);
+        assert_eq!(c.check(&h("body_b")), DedupDecision::Fresh);
+    }
+
+    #[test]
+    fn invalidate_by_tool_empty_list_is_noop() {
+        let mut c = DedupCache::with_capacity(5);
+        c.insert(h("a"), "tc_a", ToolKind::Other, None, "Bash");
+        assert_eq!(c.invalidate_by_tool(&[]), 0);
+        assert_eq!(c.len(), 1);
     }
 
     #[test]
@@ -477,7 +556,13 @@ mod tests {
         let mut c = DedupCache::with_capacity(5);
         let file = "foo_hash".to_string();
         let content_a = h("original body");
-        c.insert(content_a, "tc_1", ToolKind::FileRead, Some(file.clone()));
+        c.insert(
+            content_a,
+            "tc_1",
+            ToolKind::FileRead,
+            Some(file.clone()),
+            "Read",
+        );
         // Edit invalidates
         assert_eq!(c.invalidate_file(&file), 1);
         // Even if the re-read content coincidentally matches, we must not hint
