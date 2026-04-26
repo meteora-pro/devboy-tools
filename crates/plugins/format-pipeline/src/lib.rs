@@ -37,6 +37,7 @@ pub mod strategy;
 pub mod telemetry;
 pub mod templates;
 pub mod token_counter;
+pub mod tool_defaults;
 pub mod toon;
 pub mod tree;
 pub mod trim;
