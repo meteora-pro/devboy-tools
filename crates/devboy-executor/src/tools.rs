@@ -431,6 +431,41 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
             },
         },
         ToolDefinition {
+            name: "create_knowledge_base_page".into(),
+            description: "Create a knowledge base page in a space.".into(),
+            category: ToolCategory::KnowledgeBase,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("spaceKey", PropertySchema::string("Target space key"));
+                s.add_property("title", PropertySchema::string("Page title"));
+                s.add_property("content", PropertySchema::string("Page body content"));
+                s.add_property("contentType", PropertySchema::string_enum(&["markdown", "html", "storage"], "Content representation supplied by the caller"));
+                s.add_property("parentId", PropertySchema::string("Optional parent page ID"));
+                s.add_property("labels", PropertySchema::array(PropertySchema::string("label"), "Labels to set on the page"));
+                s.set_required("spaceKey", true);
+                s.set_required("title", true);
+                s.set_required("content", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "update_knowledge_base_page".into(),
+            description: "Update a knowledge base page title, content, metadata, or labels.".into(),
+            category: ToolCategory::KnowledgeBase,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("pageId", PropertySchema::string("Knowledge base page ID"));
+                s.add_property("title", PropertySchema::string("New page title"));
+                s.add_property("content", PropertySchema::string("New page body content"));
+                s.add_property("contentType", PropertySchema::string_enum(&["markdown", "html", "storage"], "Content representation supplied by the caller"));
+                s.add_property("version", PropertySchema::integer("Expected current version for optimistic locking", Some(1.0), None));
+                s.add_property("parentId", PropertySchema::string("Optional new parent page ID"));
+                s.add_property("labels", PropertySchema::array(PropertySchema::string("label"), "Labels to replace on the page"));
+                s.set_required("pageId", true);
+                s
+            },
+        },
+        ToolDefinition {
             name: "search_knowledge_base".into(),
             description: "Search knowledge base pages across spaces using free text or provider-native syntax such as CQL.".into(),
             category: ToolCategory::KnowledgeBase,

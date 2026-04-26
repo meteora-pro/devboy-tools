@@ -1,13 +1,13 @@
 use devboy_core::types::ChatType;
 use devboy_core::{
     AddStructureRowsInput, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
-    CreateStructureInput, Error, GetChatsParams, GetForestOptions, GetMessagesParams,
-    GetPipelineInput, GetStructureValuesInput, GetUsersOptions, IssueFilter, IssueProvider,
-    JobLogMode, JobLogOptions, KnowledgeBaseProvider, ListPagesParams, MeetingFilter,
-    MeetingNotesProvider, MergeRequestProvider, MessengerProvider, MoveStructureRowsInput,
-    MrFilter, PipelineProvider, Result, SaveStructureViewInput, SearchKbParams,
-    SearchMessagesParams, SendMessageParams, StructureRowItem, StructureViewColumn, ToolCategory,
-    UpdateIssueInput,
+    CreatePageParams, CreateStructureInput, Error, GetChatsParams, GetForestOptions,
+    GetMessagesParams, GetPipelineInput, GetStructureValuesInput, GetUsersOptions, IssueFilter,
+    IssueProvider, JobLogMode, JobLogOptions, KnowledgeBaseProvider, ListPagesParams,
+    MeetingFilter, MeetingNotesProvider, MergeRequestProvider, MessengerProvider,
+    MoveStructureRowsInput, MrFilter, PipelineProvider, Result, SaveStructureViewInput,
+    SearchKbParams, SearchMessagesParams, SendMessageParams, StructureRowItem, StructureViewColumn,
+    ToolCategory, UpdateIssueInput, UpdatePageParams,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -277,6 +277,8 @@ async fn dispatch_knowledge_base_tool(
         "get_knowledge_base_spaces" => execute_get_knowledge_base_spaces(provider).await,
         "list_knowledge_base_pages" => execute_list_knowledge_base_pages(provider, args).await,
         "get_knowledge_base_page" => execute_get_knowledge_base_page(provider, args).await,
+        "create_knowledge_base_page" => execute_create_knowledge_base_page(provider, args).await,
+        "update_knowledge_base_page" => execute_update_knowledge_base_page(provider, args).await,
         "search_knowledge_base" => execute_search_knowledge_base(provider, args).await,
         _ => Err(Error::NotFound(format!(
             "unknown knowledge base tool: {tool}"
@@ -347,6 +349,78 @@ async fn execute_get_knowledge_base_page(
         .map_err(|e| Error::InvalidData(format!("missing 'pageId' parameter: {e}")))?;
     let page = provider.get_page(&params.page_id).await?;
     Ok(ToolOutput::KnowledgeBasePage(Box::new(page)))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateKnowledgeBasePageParams {
+    space_key: String,
+    title: String,
+    content: String,
+    #[serde(default)]
+    content_type: Option<String>,
+    parent_id: Option<String>,
+    #[serde(default)]
+    labels: Vec<String>,
+}
+
+async fn execute_create_knowledge_base_page(
+    provider: &dyn KnowledgeBaseProvider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: CreateKnowledgeBasePageParams =
+        serde_json::from_value(args.clone()).map_err(|e| {
+            Error::InvalidData(format!("invalid create_knowledge_base_page params: {e}"))
+        })?;
+    let page = provider
+        .create_page(CreatePageParams {
+            space_key: params.space_key,
+            title: params.title,
+            content: params.content,
+            content_type: params.content_type,
+            parent_id: params.parent_id,
+            labels: params.labels,
+        })
+        .await?;
+    Ok(ToolOutput::KnowledgeBasePages(vec![page], None))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateKnowledgeBasePageParams {
+    page_id: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    content_type: Option<String>,
+    version: Option<u32>,
+    #[serde(default)]
+    labels: Option<Vec<String>>,
+    parent_id: Option<String>,
+}
+
+async fn execute_update_knowledge_base_page(
+    provider: &dyn KnowledgeBaseProvider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: UpdateKnowledgeBasePageParams =
+        serde_json::from_value(args.clone()).map_err(|e| {
+            Error::InvalidData(format!("invalid update_knowledge_base_page params: {e}"))
+        })?;
+    let page = provider
+        .update_page(UpdatePageParams {
+            page_id: params.page_id,
+            title: params.title,
+            content: params.content,
+            content_type: params.content_type,
+            version: params.version,
+            labels: params.labels,
+            parent_id: params.parent_id,
+        })
+        .await?;
+    Ok(ToolOutput::KnowledgeBasePages(vec![page], None))
 }
 
 #[derive(Deserialize)]
@@ -1625,6 +1699,8 @@ pub const SUPPORTED_TOOLS: &[&str] = &[
     "get_knowledge_base_spaces",
     "list_knowledge_base_pages",
     "get_knowledge_base_page",
+    "create_knowledge_base_page",
+    "update_knowledge_base_page",
     "search_knowledge_base",
     // Messenger tools
     "get_messenger_chats",
@@ -2540,20 +2616,14 @@ mod tests {
             &self,
             _params: devboy_core::CreatePageParams,
         ) -> devboy_core::Result<KbPage> {
-            Err(devboy_core::Error::ProviderUnsupported {
-                provider: "mock".into(),
-                operation: "create_page".into(),
-            })
+            Ok(sample_kb_page())
         }
 
         async fn update_page(
             &self,
             _params: devboy_core::UpdatePageParams,
         ) -> devboy_core::Result<KbPage> {
-            Err(devboy_core::Error::ProviderUnsupported {
-                provider: "mock".into(),
-                operation: "update_page".into(),
-            })
+            Ok(sample_kb_page())
         }
 
         async fn search(
@@ -2596,12 +2666,14 @@ mod tests {
         assert!(SUPPORTED_TOOLS.contains(&"get_knowledge_base_spaces"));
         assert!(SUPPORTED_TOOLS.contains(&"list_knowledge_base_pages"));
         assert!(SUPPORTED_TOOLS.contains(&"get_knowledge_base_page"));
+        assert!(SUPPORTED_TOOLS.contains(&"create_knowledge_base_page"));
+        assert!(SUPPORTED_TOOLS.contains(&"update_knowledge_base_page"));
         assert!(SUPPORTED_TOOLS.contains(&"search_knowledge_base"));
         assert!(SUPPORTED_TOOLS.contains(&"get_messenger_chats"));
         assert!(SUPPORTED_TOOLS.contains(&"get_chat_messages"));
         assert!(SUPPORTED_TOOLS.contains(&"search_chat_messages"));
         assert!(SUPPORTED_TOOLS.contains(&"send_message"));
-        assert_eq!(SUPPORTED_TOOLS.len(), 38);
+        assert_eq!(SUPPORTED_TOOLS.len(), 40);
     }
 
     #[tokio::test]
@@ -2632,6 +2704,37 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::KnowledgeBasePage(_)));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_create_knowledge_base_page() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "spaceKey": "ENG",
+            "title": "New Page",
+            "content": "<p>body</p>",
+            "contentType": "storage",
+            "labels": ["docs"]
+        });
+        let result = dispatch_knowledge_base_tool("create_knowledge_base_page", &args, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::KnowledgeBasePages(v, _) if v.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_update_knowledge_base_page() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "pageId": "page-1",
+            "title": "Updated",
+            "content": "<p>new body</p>",
+            "version": 2
+        });
+        let result = dispatch_knowledge_base_tool("update_knowledge_base_page", &args, &provider)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::KnowledgeBasePages(v, _) if v.len() == 1));
     }
 
     #[tokio::test]
