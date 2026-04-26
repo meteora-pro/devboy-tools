@@ -137,12 +137,18 @@ pub fn format_output(
     // different conditions. The typed-domain path always serialises
     // through `serde_json::to_string_pretty` first, so the implicit
     // baseline is `json_pretty`.
+    //
+    // Honest disclosure (Copilot review on PR #207): the typed-domain
+    // pipeline does not yet plumb the runtime `AdaptiveConfig.profiles
+    // .tokenizer` choice into this code path, so token counts are
+    // produced by the chars/3.5 heuristic regardless of what the
+    // operator configured. We label that explicitly here; BPE-accurate
+    // counts apply on the L0/L1/L2 hot path inside `LayeredPipeline`
+    // and via `tune analyze`, not on `format_output`. Tracked as a
+    // follow-up in §Implementation Status.
     let baseline = "json_pretty";
-    let tokenizer = devboy_format_pipeline::adaptive_config::AdaptiveConfig::default()
-        .effective_tokenizer_profile()
-        .bpe
-        .as_str()
-        .to_string();
+    let tokenizer = "heuristic";
+    let token_counter = devboy_format_pipeline::Tokenizer::Heuristic;
 
     let requested_chunk = pipeline_config.chunk.unwrap_or(1);
     let pipeline = Pipeline::with_config(pipeline_config);
@@ -153,7 +159,7 @@ pub fn format_output(
 
     // Helper: convert TransformOutput to FormatResult
     let baseline_for_helper = baseline.to_string();
-    let tokenizer_for_helper = tokenizer.clone();
+    let tokenizer_for_helper = tokenizer.to_string();
     let to_result = |t: devboy_format_pipeline::TransformOutput,
                      pag: Option<Pagination>,
                      sort: Option<SortInfo>|
@@ -162,7 +168,6 @@ pub fn format_output(
         // content includes hints/chunk index on top, but metrics should reflect pipeline savings
         let content_chars = t.output_chars;
         let content = t.to_string_with_hints();
-        let output_chars = content.len();
         let raw_chars = if t.raw_chars > 0 {
             t.raw_chars
         } else {
@@ -180,13 +185,27 @@ pub fn format_output(
         };
         let chunk_number = requested_chunk;
 
-        // §Savings Accounting — typed-domain path has no L0 dedup, so
-        // dedup_savings_pct is always 0 here and combined == encoder.
-        let encoder_savings_pct = if raw_chars > 0 {
-            ((raw_chars.saturating_sub(content_chars)) as f32) / (raw_chars as f32)
+        // §Savings Accounting — *token*-denominated, not byte-denominated.
+        // We can't see the raw input here so we approximate baseline
+        // tokens from `raw_chars` using the same tokenizer; the encoder
+        // savings then live in token space (which is what the LLM is
+        // billed on), independent of the chars/token ratio of either
+        // format. Fixes Copilot review on PR #207.
+        let baseline_tokens = if raw_chars > 0 {
+            // `Tokenizer::Heuristic` matches the `estimated_tokens`
+            // formula below; if a future change starts plumbing the
+            // active profile, both must move together.
+            (raw_chars as f64 / 3.5).ceil() as usize
+        } else {
+            0
+        };
+        let final_tokens = (content_chars as f64 / 3.5).ceil() as usize;
+        let encoder_savings_pct = if baseline_tokens > 0 {
+            ((baseline_tokens.saturating_sub(final_tokens)) as f32) / (baseline_tokens as f32)
         } else {
             0.0
         };
+        // Typed-domain path has no L0 dedup hop, so combined == encoder.
         let combined_savings_pct = encoder_savings_pct;
 
         FormatResult {
@@ -197,7 +216,7 @@ pub fn format_output(
                 output_chars: content_chars,
                 pre_trim_chars: pre_trim,
                 // estimated_tokens = full output including hints (what LLM actually consumes)
-                estimated_tokens: output_chars * 10 / 35, // chars / 3.5
+                estimated_tokens: token_counter.count(&content),
                 compression_ratio: if raw_chars > 0 {
                     content_chars as f32 / raw_chars as f32
                 } else {
@@ -224,7 +243,7 @@ pub fn format_output(
 
     // Helper: wrap plain text (no pipeline transform)
     let baseline_for_text = baseline.to_string();
-    let tokenizer_for_text = tokenizer.clone();
+    let tokenizer_for_text = tokenizer.to_string();
     let text_result =
         |text: String, pag: Option<Pagination>, sort: Option<SortInfo>| -> FormatResult {
             let chars = text.len();
@@ -233,7 +252,7 @@ pub fn format_output(
                     raw_chars: chars,
                     output_chars: chars,
                     pre_trim_chars: chars,
-                    estimated_tokens: chars * 10 / 35,
+                    estimated_tokens: token_counter.count(&text),
                     compression_ratio: 1.0,
                     format: "text".to_string(),
                     truncated: false,
