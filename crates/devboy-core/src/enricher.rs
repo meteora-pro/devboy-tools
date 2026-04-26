@@ -9,6 +9,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::tool_category::ToolCategory;
+use crate::tool_value_model::ToolValueModel;
 
 /// Trait for plugins that dynamically modify tool schemas and transform arguments.
 ///
@@ -25,6 +26,17 @@ pub trait ToolEnricher: Send + Sync {
 
     /// Transform arguments before tool execution.
     fn transform_args(&self, tool_name: &str, args: &mut Value);
+
+    /// Optional: provider-shipped value model for `tool_name`. Returned
+    /// models are merged into `AdaptiveConfig.tools` at startup so the
+    /// Paper 3 enrichment planner can read them via
+    /// `effective_tool_value_model`.
+    ///
+    /// Default impl returns `None` — built-in enrichers that do not
+    /// participate in the planner can ignore the method entirely.
+    fn value_model(&self, _tool_name: &str) -> Option<ToolValueModel> {
+        None
+    }
 }
 
 /// JSON Schema property definition for a tool parameter.
