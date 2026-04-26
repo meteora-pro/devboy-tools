@@ -76,11 +76,15 @@ Usage:
         Aggregate pipeline telemetry and emit a tuned pipeline_config.toml.
 
     devboy-tune from-claude-logs [--input-dir <PATH>] [--project <NAME>]
-                                 [--output <PATH>] [--dry-run]
+                                 [--output <PATH>] [--dry-run] [--tools]
         Mine Claude Code JSONL logs (~/.claude/projects/...), classify the
         user's tool/data/agent profile, and emit a tuned pipeline_config.toml.
         Use this when no telemetry has been collected yet — the logs already
         capture model_id, tool usage, and endpoint distribution.
+
+        --tools also seeds the Paper 3 [tools.<name>] section with built-in
+        defaults for every tool that appeared in the user's logs (skipping
+        tools the user has already annotated by hand).
 
     devboy-tune show [--config <PATH>]
         Pretty-print the current config.
@@ -718,6 +722,10 @@ fn cmd_from_claude_logs(args: &[String]) -> Result<(), String> {
         .unwrap_or_else(default_output);
     let project = parse_flag(args, "--project").map(String::from);
     let dry_run = args.iter().any(|a| a == "--dry-run");
+    // Paper 3 — when set, also populates the [tools.*] section with the
+    // built-in defaults from `tool_defaults` plus per-user overlays
+    // mined from the observed tool mix.
+    let with_tools = args.iter().any(|a| a == "--tools");
 
     eprintln!("# input:   {}", input_dir.display());
     if let Some(p) = &project {
@@ -774,6 +782,16 @@ fn cmd_from_claude_logs(args: &[String]) -> Result<(), String> {
         new_data
     );
 
+    if with_tools {
+        let added = apply_tool_value_model_defaults(&mut cfg, &stats);
+        eprintln!();
+        eprintln!(
+            "#   [tools.*] entries seeded: {} (overlay built-in defaults onto your config)",
+            added
+        );
+        eprintln!("#   override any of them with `[tools.<name>] …` blocks.");
+    }
+
     if dry_run {
         eprintln!();
         eprintln!("# dry-run: not writing config. Re-run without --dry-run to apply.");
@@ -784,6 +802,27 @@ fn cmd_from_claude_logs(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("write config: {e}"))?;
     eprintln!("# wrote → {}", output.display());
     Ok(())
+}
+
+/// Paper 3 P-3-08 — overlay the corpus-anchored
+/// `tool_defaults::default_tool_value_models()` onto `cfg.tools`.
+///
+/// User-set entries always win (we *do not* overwrite an existing
+/// `cfg.tools[name]`). Returns the number of tools newly seeded.
+/// Only tools that actually appear in the user's `stats.tool_counts`
+/// are merged, so unused defaults do not pollute the config.
+fn apply_tool_value_model_defaults(cfg: &mut AdaptiveConfig, stats: &ClaudeLogStats) -> usize {
+    let defaults = devboy_format_pipeline::tool_defaults::default_tool_value_models();
+    let mut added = 0;
+    for (name, model) in defaults {
+        // Only seed defaults for tools the user actually called — keeps
+        // the resulting config focused.
+        if stats.tool_counts.contains_key(&name) && !cfg.tools.contains_key(&name) {
+            cfg.tools.insert(name, model);
+            added += 1;
+        }
+    }
+    added
 }
 
 fn cmd_show(args: &[String]) -> Result<(), String> {
@@ -1345,5 +1384,41 @@ mod tests {
         let mut corpus = CorpusStats::default();
         let n = scan_jsonl_dir(dir.path(), &mut corpus).unwrap();
         assert_eq!(n, 1);
+    }
+
+    // ─── Paper 3 — apply_tool_value_model_defaults (P-3-08) ──────────
+
+    #[test]
+    fn apply_tool_defaults_seeds_only_observed_tools() {
+        let mut cfg = AdaptiveConfig::default();
+        let mut stats = ClaudeLogStats::default();
+        // The user only ever called `Read` and `Bash` — defaults for
+        // `Glob`, `Grep`, `WebSearch`, etc. must NOT appear.
+        stats.tool_counts.insert("Read".into(), 100);
+        stats.tool_counts.insert("Bash".into(), 50);
+
+        let added = apply_tool_value_model_defaults(&mut cfg, &stats);
+        assert_eq!(added, 2, "should seed exactly the two observed tools");
+        assert!(cfg.tools.contains_key("Read"));
+        assert!(cfg.tools.contains_key("Bash"));
+        assert!(!cfg.tools.contains_key("Glob"));
+        assert!(!cfg.tools.contains_key("WebSearch"));
+    }
+
+    #[test]
+    fn apply_tool_defaults_does_not_overwrite_user_overrides() {
+        let mut cfg = AdaptiveConfig::default();
+        // User has hand-tuned Read with a tiny typical_kb; defaults
+        // must not clobber it.
+        cfg.tools.insert(
+            "Read".into(),
+            devboy_core::ToolValueModel::critical_with_size(0.05),
+        );
+        let mut stats = ClaudeLogStats::default();
+        stats.tool_counts.insert("Read".into(), 100);
+
+        let added = apply_tool_value_model_defaults(&mut cfg, &stats);
+        assert_eq!(added, 0, "user Read override must survive");
+        assert_eq!(cfg.tools["Read"].cost_model.typical_kb, 0.05);
     }
 }
