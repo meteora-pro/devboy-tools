@@ -459,6 +459,39 @@ fn encode_query_value(value: &str) -> String {
     value.replace(' ', "%20")
 }
 
+fn escape_cql_string(value: &str) -> String {
+    value.replace('\\', r"\\").replace('"', r#"\""#)
+}
+
+fn build_search_cql(params: &SearchKbParams) -> String {
+    if params.raw_query {
+        return params.query.clone();
+    }
+
+    let mut parts = vec!["type = page".to_string()];
+    if let Some(space_key) = params.space_key.as_ref() {
+        parts.push(format!("space = \"{}\"", escape_cql_string(space_key)));
+    }
+    parts.push(format!("text ~ \"{}\"", escape_cql_string(&params.query)));
+    parts.join(" AND ")
+}
+
+fn search_path_from_cursor(cursor: &str) -> String {
+    if let Some(path) = cursor.strip_prefix("/rest/api/") {
+        path.to_string()
+    } else if let Some(path) = cursor.strip_prefix(DEFAULT_CONFLUENCE_API_PATH) {
+        path.trim_start_matches('/').to_string()
+    } else if let Some(path) = cursor.strip_prefix("http://") {
+        let path = path.split_once("/rest/api/").map(|(_, rhs)| rhs);
+        path.unwrap_or(cursor).to_string()
+    } else if let Some(path) = cursor.strip_prefix("https://") {
+        let path = path.split_once("/rest/api/").map(|(_, rhs)| rhs);
+        path.unwrap_or(cursor).to_string()
+    } else {
+        cursor.trim_start_matches('/').to_string()
+    }
+}
+
 #[async_trait]
 impl KnowledgeBaseProvider for ConfluenceClient {
     fn provider_name(&self) -> &'static str {
@@ -599,11 +632,28 @@ impl KnowledgeBaseProvider for ConfluenceClient {
         })
     }
 
-    async fn search(&self, _params: SearchKbParams) -> Result<ProviderResult<KbPage>> {
-        Err(Error::ProviderUnsupported {
-            provider: "confluence".into(),
-            operation: "search not yet implemented".into(),
-        })
+    async fn search(&self, params: SearchKbParams) -> Result<ProviderResult<KbPage>> {
+        let limit = params.limit.unwrap_or(25);
+
+        let path = if let Some(cursor) = params.cursor.as_ref() {
+            search_path_from_cursor(cursor)
+        } else {
+            let cql = build_search_cql(&params);
+            format!(
+                "content/search?cql={}&limit={limit}&expand=space,version,history.lastUpdated,body.view",
+                encode_query_value(&cql)
+            )
+        };
+
+        let response: ConfluenceListResponse<ConfluencePage> = self.get_json(&path).await?;
+        let pagination = map_pagination(&response, Some(limit));
+        let items = response
+            .results
+            .iter()
+            .map(|page| map_page_summary(&self.base_url, page))
+            .collect::<Vec<_>>();
+
+        Ok(ProviderResult::new(items).with_pagination(pagination))
     }
 }
 
@@ -914,5 +964,154 @@ mod tests {
         assert_eq!(page.ancestors.len(), 1);
         assert_eq!(page.ancestors[0].id, "10");
         assert_eq!(page.ancestors[0].title, "Architecture Decisions");
+    }
+
+    #[tokio::test]
+    async fn search_builds_free_text_cql_and_maps_results() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/content/search")
+                .query_param("cql", "type = page AND space = \"ENG\" AND text ~ \"architecture\"")
+                .query_param("limit", "10")
+                .query_param("expand", "space,version,history.lastUpdated,body.view");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "results": [
+                            {
+                                "id": "99",
+                                "title": "Architecture Overview",
+                                "space": { "key": "ENG" },
+                                "version": {
+                                    "number": 3,
+                                    "when": "2026-04-26T10:00:00.000Z",
+                                    "by": { "displayName": "Alice" }
+                                },
+                                "body": {
+                                    "view": { "value": "<p>System architecture</p>", "representation": "view" }
+                                },
+                                "_links": { "base": "https://wiki.example.com", "webui": "/pages/viewpage.action?pageId=99" }
+                            }
+                        ],
+                        "start": 0,
+                        "limit": 10,
+                        "size": 1,
+                        "totalSize": 1,
+                        "_links": {}
+                    }"#,
+                );
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        );
+        let result = client
+            .search(SearchKbParams {
+                query: "architecture".into(),
+                space_key: Some("ENG".into()),
+                cursor: None,
+                limit: Some(10),
+                raw_query: false,
+            })
+            .await
+            .unwrap();
+
+        mock.assert();
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].id, "99");
+        assert_eq!(result.items[0].title, "Architecture Overview");
+        assert_eq!(result.items[0].space_key.as_deref(), Some("ENG"));
+    }
+
+    #[tokio::test]
+    async fn search_uses_raw_cql_and_cursor_path() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/content/search")
+                .query_param("cql", "label = \"adr\"")
+                .query_param("limit", "5")
+                .query_param("expand", "space,version,history.lastUpdated,body.view");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "results": [],
+                        "start": 0,
+                        "limit": 5,
+                        "size": 0,
+                        "totalSize": 6,
+                        "_links": { "next": "/rest/api/content/search?cql=label%20%3D%20%22adr%22&limit=5&start=5" }
+                    }"#,
+                );
+        });
+        let next_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/content/search")
+                .query_param("cql", "label = \"adr\"")
+                .query_param("limit", "5")
+                .query_param("start", "5");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "results": [
+                            {
+                                "id": "123",
+                                "title": "ADR-123",
+                                "space": { "key": "ENG" },
+                                "_links": { "base": "https://wiki.example.com", "webui": "/pages/viewpage.action?pageId=123" }
+                            }
+                        ],
+                        "start": 5,
+                        "limit": 5,
+                        "size": 1,
+                        "totalSize": 6,
+                        "_links": {}
+                    }"#,
+                );
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        );
+        let first = client
+            .search(SearchKbParams {
+                query: r#"label = "adr""#.into(),
+                space_key: None,
+                cursor: None,
+                limit: Some(5),
+                raw_query: true,
+            })
+            .await
+            .unwrap();
+        let next_cursor = first.pagination.as_ref().and_then(|p| p.next_cursor.clone());
+
+        mock.assert();
+        assert!(first.items.is_empty());
+        assert_eq!(
+            next_cursor.as_deref(),
+            Some("/rest/api/content/search?cql=label%20%3D%20%22adr%22&limit=5&start=5")
+        );
+
+        let second = client
+            .search(SearchKbParams {
+                query: String::new(),
+                space_key: None,
+                cursor: next_cursor,
+                limit: Some(5),
+                raw_query: true,
+            })
+            .await
+            .unwrap();
+
+        next_mock.assert();
+        assert_eq!(second.items.len(), 1);
+        assert_eq!(second.items[0].id, "123");
+        assert_eq!(second.items[0].title, "ADR-123");
     }
 }
