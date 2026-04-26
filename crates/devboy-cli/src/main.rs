@@ -1785,6 +1785,7 @@ fn build_config(options: &InitOptions) -> Config {
             clickup: options.clickup.clone(),
             jira: options.jira.clone(),
             fireflies: None,
+            confluence: None,
             slack: options.slack.clone(),
         };
         config.contexts.insert(context_name, context);
@@ -3754,6 +3755,7 @@ impl EnvContextBuilder {
             clickup,
             jira,
             fireflies: None,
+            confluence: None,
             slack: if self.slack_team_id.is_some()
                 || self.slack_workspace.is_some()
                 || self.slack_base_url.is_some()

@@ -477,6 +477,7 @@ impl McpServer {
                     devboy_core::ToolCategory::Epics => has_issue_providers,
                     devboy_core::ToolCategory::GitRepository => has_mr_providers,
                     devboy_core::ToolCategory::MeetingNotes => has_meeting_providers,
+                    devboy_core::ToolCategory::KnowledgeBase => false,
                     devboy_core::ToolCategory::Messenger => has_messenger_providers,
                     devboy_core::ToolCategory::Releases => has_mr_providers,
                     devboy_core::ToolCategory::JiraStructure => has_jira_provider,
@@ -961,6 +962,9 @@ impl McpServer {
                     }
                 }
                 ToolCallResult::error(format!("No messenger provider supports '{}'", name))
+            }
+            Some(devboy_core::ToolCategory::KnowledgeBase) => {
+                ToolCallResult::error(format!("No knowledge base provider supports '{}'", name))
             }
             _ => {
                 // Issues, MRs, Pipelines, Assets, Epics, etc.

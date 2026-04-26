@@ -11,15 +11,16 @@ use crate::error::{Error, Result};
 use crate::types::JobLogMode;
 use crate::types::{
     AddStructureGeneratorInput, AddStructureRowsInput, AssignToSprintInput, Comment,
-    CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, CreateStructureInput,
-    Discussion, FileDiff, ForestModifyResult, GetChatsParams, GetForestOptions, GetMessagesParams,
-    GetPipelineInput, GetStructureValuesInput, GetUsersOptions, Issue, IssueFilter, IssueRelations,
-    IssueStatus, JobLogOptions, JobLogOutput, MeetingFilter, MeetingNote, MeetingTranscript,
+    CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, CreatePageParams,
+    CreateStructureInput, Discussion, FileDiff, ForestModifyResult, GetChatsParams,
+    GetForestOptions, GetMessagesParams, GetPipelineInput, GetStructureValuesInput,
+    GetUsersOptions, Issue, IssueFilter, IssueRelations, IssueStatus, JobLogOptions, JobLogOutput,
+    KbPage, KbPageContent, KbSpace, ListPagesParams, MeetingFilter, MeetingNote, MeetingTranscript,
     MergeRequest, MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, PipelineInfo,
-    ProviderResult, Release, SaveStructureViewInput, SearchMessagesParams, SendMessageParams,
-    Sprint, SprintState, Structure, StructureForest, StructureGenerator, StructureValues,
-    StructureView, SyncStructureGeneratorInput, UpdateIssueInput, UpdateMergeRequestInput,
-    UpdateStructureAutomationInput, User,
+    ProviderResult, Release, SaveStructureViewInput, SearchKbParams, SearchMessagesParams,
+    SendMessageParams, Sprint, SprintState, Structure, StructureForest, StructureGenerator,
+    StructureValues, StructureView, SyncStructureGeneratorInput, UpdateIssueInput,
+    UpdateMergeRequestInput, UpdatePageParams, UpdateStructureAutomationInput, User,
 };
 
 /// Provider for working with issues.
@@ -541,6 +542,33 @@ pub trait MeetingNotesProvider: Send + Sync {
         query: &str,
         filter: MeetingFilter,
     ) -> Result<ProviderResult<MeetingNote>>;
+}
+
+/// Provider for knowledge bases and internal wiki/documentation systems.
+///
+/// Implementations include Confluence Server / Data Center.
+#[async_trait]
+pub trait KnowledgeBaseProvider: Send + Sync {
+    /// Get the provider name for logging (e.g. "confluence").
+    fn provider_name(&self) -> &'static str;
+
+    /// List available spaces / knowledge base containers.
+    async fn get_spaces(&self) -> Result<ProviderResult<KbSpace>>;
+
+    /// List pages in a space with pagination.
+    async fn list_pages(&self, params: ListPagesParams) -> Result<ProviderResult<KbPage>>;
+
+    /// Fetch a single page with full body content and metadata.
+    async fn get_page(&self, page_id: &str) -> Result<KbPageContent>;
+
+    /// Create a new page.
+    async fn create_page(&self, params: CreatePageParams) -> Result<KbPage>;
+
+    /// Update an existing page.
+    async fn update_page(&self, params: UpdatePageParams) -> Result<KbPage>;
+
+    /// Search pages across spaces or within a specific space.
+    async fn search(&self, params: SearchKbParams) -> Result<ProviderResult<KbPage>>;
 }
 
 /// Provider for team messenger systems.

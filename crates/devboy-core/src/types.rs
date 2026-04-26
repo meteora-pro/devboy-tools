@@ -1000,6 +1000,151 @@ pub struct MeetingFilter {
 }
 
 // =============================================================================
+// Knowledge Base
+// =============================================================================
+
+/// A knowledge base space / wiki container.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct KbSpace {
+    /// Provider-specific space ID.
+    pub id: String,
+    /// Stable human-facing space key.
+    pub key: String,
+    /// Space display name.
+    pub name: String,
+    /// Provider-specific space type.
+    pub space_type: Option<String>,
+    /// Current status, if exposed.
+    pub status: Option<String>,
+    /// Optional description / summary.
+    pub description: Option<String>,
+    /// Canonical web URL.
+    pub url: Option<String>,
+}
+
+/// A knowledge base page summary.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct KbPage {
+    /// Provider-specific page ID.
+    pub id: String,
+    /// Page title.
+    pub title: String,
+    /// Owning space key when available.
+    pub space_key: Option<String>,
+    /// Canonical web URL.
+    pub url: Option<String>,
+    /// Current page version.
+    pub version: Option<u32>,
+    /// Last modification timestamp.
+    pub last_modified: Option<String>,
+    /// Human-readable author name.
+    pub author: Option<String>,
+    /// Short excerpt / snippet.
+    pub excerpt: Option<String>,
+}
+
+/// Full page content plus metadata.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct KbPageContent {
+    /// Summary page metadata.
+    pub page: KbPage,
+    /// Page body content.
+    pub content: String,
+    /// Content representation: e.g. "markdown", "html", "storage".
+    pub content_type: String,
+    /// Ancestor page chain from root to parent.
+    pub ancestors: Vec<KbPage>,
+    /// Page labels/tags.
+    pub labels: Vec<String>,
+}
+
+/// A comment on a knowledge base page.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct KbComment {
+    /// Provider-specific comment ID.
+    pub id: String,
+    /// Page ID this comment belongs to.
+    pub page_id: String,
+    /// Comment body.
+    pub content: String,
+    /// Human-readable author name.
+    pub author: Option<String>,
+    /// Comment creation timestamp.
+    pub created_at: Option<String>,
+    /// Comment version/revision when available.
+    pub version: Option<u32>,
+}
+
+/// Parameters for listing pages within a space.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ListPagesParams {
+    /// Space key to list within.
+    pub space_key: String,
+    /// Maximum number of pages to return.
+    pub limit: Option<u32>,
+    /// Number of results to skip when offset pagination is supported.
+    pub offset: Option<u32>,
+    /// Provider pagination cursor/token.
+    pub cursor: Option<String>,
+    /// Optional free-text title/content filter.
+    pub search: Option<String>,
+    /// Optional ancestor/parent page ID to scope the listing.
+    pub parent_id: Option<String>,
+}
+
+/// Parameters for creating a new page.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CreatePageParams {
+    /// Target space key.
+    pub space_key: String,
+    /// Page title.
+    pub title: String,
+    /// Page body content.
+    pub content: String,
+    /// Content representation supplied by the caller.
+    pub content_type: Option<String>,
+    /// Optional parent page ID.
+    pub parent_id: Option<String>,
+    /// Labels to set on the page.
+    pub labels: Vec<String>,
+}
+
+/// Parameters for updating an existing page.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdatePageParams {
+    /// Page ID to update.
+    pub page_id: String,
+    /// New title, if changing.
+    pub title: Option<String>,
+    /// New body content, if changing.
+    pub content: Option<String>,
+    /// Content representation supplied by the caller.
+    pub content_type: Option<String>,
+    /// Expected current version for optimistic locking.
+    pub version: Option<u32>,
+    /// New labels when replacing labels explicitly.
+    pub labels: Option<Vec<String>>,
+    /// Optional new parent page ID.
+    pub parent_id: Option<String>,
+}
+
+/// Parameters for searching a knowledge base.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SearchKbParams {
+    /// Free-text query or provider-native search expression.
+    pub query: String,
+    /// Restrict search to a specific space key.
+    pub space_key: Option<String>,
+    /// Provider pagination cursor/token.
+    pub cursor: Option<String>,
+    /// Maximum number of matches to return.
+    pub limit: Option<u32>,
+    /// Whether `query` should be treated as raw provider-native syntax.
+    #[serde(default)]
+    pub raw_query: bool,
+}
+
+// =============================================================================
 // Messenger
 // =============================================================================
 

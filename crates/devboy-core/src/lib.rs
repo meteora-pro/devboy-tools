@@ -2,8 +2,8 @@
 //!
 //! This crate provides the foundational abstractions used across all devboy components:
 //!
-//! - **Provider traits**: [`IssueProvider`], [`MergeRequestProvider`], [`MessengerProvider`], [`Provider`]
-//! - **Unified types**: [`Issue`], [`MergeRequest`], [`MessengerChat`], [`MessengerMessage`], [`Discussion`], [`Comment`], [`FileDiff`]
+//! - **Provider traits**: [`IssueProvider`], [`MergeRequestProvider`], [`KnowledgeBaseProvider`], [`MessengerProvider`], [`Provider`]
+//! - **Unified types**: [`Issue`], [`MergeRequest`], [`KbSpace`], [`KbPage`], [`MessengerChat`], [`MessengerMessage`], [`Discussion`], [`Comment`], [`FileDiff`]
 //! - **Configuration**: [`Config`], [`GitHubConfig`], [`GitLabConfig`]
 //! - **Error handling**: [`Error`], [`Result`]
 //!
@@ -40,25 +40,27 @@ pub use error::{Error, Result};
 
 // Re-export provider traits
 pub use provider::{
-    IssueProvider, MeetingNotesProvider, MergeRequestProvider, MessengerProvider, PipelineProvider,
-    Provider, UserProvider,
+    IssueProvider, KnowledgeBaseProvider, MeetingNotesProvider, MergeRequestProvider,
+    MessengerProvider, PipelineProvider, Provider, UserProvider,
 };
 
 // Re-export all types
 pub use types::{
     AddStructureGeneratorInput, AddStructureRowsInput, AssignToSprintInput, CodePosition, Comment,
-    CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, CreateStructureInput,
-    Discussion, FailedJob, FileDiff, ForestModifyResult, GetChatsParams, GetForestOptions,
-    GetMessagesParams, GetPipelineInput, GetStructureValuesInput, GetUsersOptions, Issue,
-    IssueFilter, IssueLink, IssueRelations, IssueStatus, JobLogMode, JobLogOptions, JobLogOutput,
+    CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, CreatePageParams,
+    CreateStructureInput, Discussion, FailedJob, FileDiff, ForestModifyResult, GetChatsParams,
+    GetForestOptions, GetMessagesParams, GetPipelineInput, GetStructureValuesInput,
+    GetUsersOptions, Issue, IssueFilter, IssueLink, IssueRelations, IssueStatus, JobLogMode,
+    JobLogOptions, JobLogOutput, KbComment, KbPage, KbPageContent, KbSpace, ListPagesParams,
     MeetingFilter, MeetingNote, MeetingSpeaker, MeetingTranscript, MergeRequest, MessageAttachment,
     MessageAuthor, MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, Pagination,
     PipelineInfo, PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, ProviderResult,
-    Release, ReleaseAsset, SaveStructureViewInput, SearchMessagesParams, SendMessageParams,
-    SortInfo, SortOrder, Sprint, SprintState, Structure, StructureColumnValue, StructureForest,
-    StructureGenerator, StructureNode, StructureRowItem, StructureRowValues, StructureValues,
-    StructureView, StructureViewColumn, SyncStructureGeneratorInput, TranscriptSentence,
-    UpdateIssueInput, UpdateMergeRequestInput, UpdateStructureAutomationInput, User,
+    Release, ReleaseAsset, SaveStructureViewInput, SearchKbParams, SearchMessagesParams,
+    SendMessageParams, SortInfo, SortOrder, Sprint, SprintState, Structure, StructureColumnValue,
+    StructureForest, StructureGenerator, StructureNode, StructureRowItem, StructureRowValues,
+    StructureValues, StructureView, StructureViewColumn, SyncStructureGeneratorInput,
+    TranscriptSentence, UpdateIssueInput, UpdateMergeRequestInput, UpdatePageParams,
+    UpdateStructureAutomationInput, User,
 };
 
 // Re-export enricher traits and utilities
@@ -80,7 +82,7 @@ pub use asset::{
 
 // Re-export config types
 pub use config::{
-    BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, FirefliesConfig,
+    BuiltinToolsConfig, ClickUpConfig, Config, ConfluenceConfig, ContextConfig, FirefliesConfig,
     FormatPipelineConfig, GitHubConfig, GitLabConfig, JiraConfig, ProxyConfig, ProxyMatchingConfig,
     ProxyMcpServerConfig, ProxyRoutingConfig, ProxyRoutingOverride, ProxySecretsConfig,
     ProxyTelemetryConfig, ProxyToolRule, RemoteConfigSettings, RoutingStrategy, SentryConfig,
