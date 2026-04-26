@@ -316,8 +316,6 @@ struct ConfluenceBody {
 struct ConfluenceBodyValue {
     #[serde(default)]
     value: Option<String>,
-    #[serde(default)]
-    representation: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -435,6 +433,20 @@ fn strip_html_tags(input: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn strip_html_tags_preserve_layout(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_tag = false;
+    for ch in input.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out
+}
+
 fn truncate_string(input: String, max_chars: usize) -> String {
     if input.chars().count() <= max_chars {
         return input;
@@ -442,17 +454,411 @@ fn truncate_string(input: String, max_chars: usize) -> String {
     input.chars().take(max_chars).collect::<String>()
 }
 
-fn require_storage_content_type(content_type: Option<&str>) -> Result<()> {
+fn normalize_confluence_write_content(content: &str, content_type: Option<&str>) -> Result<String> {
     match content_type
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("storage")
+        .unwrap_or("markdown")
     {
-        "storage" => Ok(()),
+        "markdown" => Ok(markdown_to_confluence_storage(content)),
+        "html" => Ok(html_to_confluence_storage(content)),
+        "storage" => Ok(content.to_string()),
         other => Err(Error::InvalidData(format!(
-            "confluence create/update currently only supports content_type=storage, got '{other}'"
+            "unsupported confluence content_type '{other}', expected markdown, html, or storage"
         ))),
     }
+}
+
+fn html_to_confluence_storage(content: &str) -> String {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if trimmed.contains('<') && trimmed.contains('>') {
+        trimmed.to_string()
+    } else {
+        format!("<p>{}</p>", escape_html(trimmed))
+    }
+}
+
+fn markdown_to_confluence_storage(markdown: &str) -> String {
+    let markdown = markdown.replace("\r\n", "\n");
+    let mut out = String::new();
+    let mut paragraph: Vec<String> = Vec::new();
+    let mut in_ul = false;
+    let mut in_ol = false;
+    let mut lines = markdown.lines().peekable();
+
+    let flush_paragraph = |out: &mut String, paragraph: &mut Vec<String>| {
+        if paragraph.is_empty() {
+            return;
+        }
+        let text = paragraph.join(" ");
+        out.push_str("<p>");
+        out.push_str(&markdown_inline_to_html(&text));
+        out.push_str("</p>");
+        paragraph.clear();
+    };
+
+    let close_lists = |out: &mut String, in_ul: &mut bool, in_ol: &mut bool| {
+        if *in_ul {
+            out.push_str("</ul>");
+            *in_ul = false;
+        }
+        if *in_ol {
+            out.push_str("</ol>");
+            *in_ol = false;
+        }
+    };
+
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("```") {
+            flush_paragraph(&mut out, &mut paragraph);
+            close_lists(&mut out, &mut in_ul, &mut in_ol);
+
+            let mut code_lines = Vec::new();
+            for code_line in lines.by_ref() {
+                if code_line.trim_start().starts_with("```") {
+                    break;
+                }
+                code_lines.push(code_line);
+            }
+
+            out.push_str(r#"<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA["#);
+            out.push_str(&code_lines.join("\n"));
+            out.push_str("]]></ac:plain-text-body></ac:structured-macro>");
+            continue;
+        }
+
+        if trimmed.is_empty() {
+            flush_paragraph(&mut out, &mut paragraph);
+            close_lists(&mut out, &mut in_ul, &mut in_ol);
+            continue;
+        }
+
+        if let Some((level, title)) = parse_markdown_heading(trimmed) {
+            flush_paragraph(&mut out, &mut paragraph);
+            close_lists(&mut out, &mut in_ul, &mut in_ol);
+            out.push_str(&format!(
+                "<h{level}>{}</h{level}>",
+                markdown_inline_to_html(title)
+            ));
+            continue;
+        }
+
+        if let Some(item) = parse_unordered_list_item(trimmed) {
+            flush_paragraph(&mut out, &mut paragraph);
+            if in_ol {
+                out.push_str("</ol>");
+                in_ol = false;
+            }
+            if !in_ul {
+                out.push_str("<ul>");
+                in_ul = true;
+            }
+            out.push_str("<li>");
+            out.push_str(&markdown_inline_to_html(item));
+            out.push_str("</li>");
+            continue;
+        }
+
+        if let Some(item) = parse_ordered_list_item(trimmed) {
+            flush_paragraph(&mut out, &mut paragraph);
+            if in_ul {
+                out.push_str("</ul>");
+                in_ul = false;
+            }
+            if !in_ol {
+                out.push_str("<ol>");
+                in_ol = true;
+            }
+            out.push_str("<li>");
+            out.push_str(&markdown_inline_to_html(item));
+            out.push_str("</li>");
+            continue;
+        }
+
+        close_lists(&mut out, &mut in_ul, &mut in_ol);
+        paragraph.push(trimmed.to_string());
+    }
+
+    flush_paragraph(&mut out, &mut paragraph);
+    close_lists(&mut out, &mut in_ul, &mut in_ol);
+    out
+}
+
+fn parse_markdown_heading(line: &str) -> Option<(usize, &str)> {
+    let hashes = line.chars().take_while(|&ch| ch == '#').count();
+    if !(1..=6).contains(&hashes) {
+        return None;
+    }
+    let rest = line.get(hashes..)?.trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+    Some((hashes, rest))
+}
+
+fn parse_unordered_list_item(line: &str) -> Option<&str> {
+    line.strip_prefix("- ")
+        .or_else(|| line.strip_prefix("* "))
+        .map(str::trim)
+}
+
+fn parse_ordered_list_item(line: &str) -> Option<&str> {
+    let digits = line.chars().take_while(|ch| ch.is_ascii_digit()).count();
+    if digits == 0 {
+        return None;
+    }
+    let rest = line.get(digits..)?;
+    rest.strip_prefix(". ").map(str::trim)
+}
+
+fn markdown_inline_to_html(input: &str) -> String {
+    let escaped = escape_html(input);
+    let linked = replace_markdown_links(&escaped);
+    let code = replace_inline_delimited(&linked, "`", "<code>", "</code>");
+    let bold = replace_inline_delimited(&code, "**", "<strong>", "</strong>");
+    replace_inline_delimited(&bold, "*", "<em>", "</em>")
+}
+
+fn replace_markdown_links(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut cursor = 0usize;
+
+    while let Some(start_rel) = input[cursor..].find('[') {
+        let start = cursor + start_rel;
+        out.push_str(&input[cursor..start]);
+
+        let Some(text_end_rel) = input[start + 1..].find(']') else {
+            out.push_str(&input[start..]);
+            return out;
+        };
+        let text_end = start + 1 + text_end_rel;
+        let after_bracket = text_end + 1;
+        if !input[after_bracket..].starts_with('(') {
+            out.push('[');
+            cursor = start + 1;
+            continue;
+        }
+
+        let Some(url_end_rel) = input[after_bracket + 1..].find(')') else {
+            out.push_str(&input[start..]);
+            return out;
+        };
+        let url_end = after_bracket + 1 + url_end_rel;
+        let text = &input[start + 1..text_end];
+        let url = &input[after_bracket + 1..url_end];
+        out.push_str(&format!(r#"<a href="{url}">{text}</a>"#));
+        cursor = url_end + 1;
+    }
+
+    out.push_str(&input[cursor..]);
+    out
+}
+
+fn replace_inline_delimited(input: &str, delimiter: &str, open: &str, close: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut cursor = 0usize;
+    let mut is_open = false;
+
+    while let Some(found_rel) = input[cursor..].find(delimiter) {
+        let found = cursor + found_rel;
+        out.push_str(&input[cursor..found]);
+        if is_open {
+            out.push_str(close);
+        } else {
+            out.push_str(open);
+        }
+        is_open = !is_open;
+        cursor = found + delimiter.len();
+    }
+
+    out.push_str(&input[cursor..]);
+    if is_open {
+        if let Some(position) = out.rfind(open) {
+            out.replace_range(position..position + open.len(), delimiter);
+            out.push_str(delimiter);
+        }
+    }
+    out
+}
+
+fn confluence_storage_to_markdown(storage: &str) -> String {
+    let with_code_blocks = replace_confluence_code_macros(storage);
+    let with_links = replace_anchor_tags(&with_code_blocks);
+    let with_formatting = replace_paired_tag(
+        &replace_paired_tag(
+            &replace_paired_tag(
+                &replace_paired_tag(&with_links, "strong", "**", "**"),
+                "b",
+                "**",
+                "**",
+            ),
+            "em",
+            "*",
+            "*",
+        ),
+        "i",
+        "*",
+        "*",
+    );
+    let with_inline_code = replace_paired_tag(&with_formatting, "code", "`", "`");
+    let markdownish = with_inline_code
+        .replace("<br />", "\n")
+        .replace("<br/>", "\n")
+        .replace("<br>", "\n")
+        .replace("<p>", "")
+        .replace("</p>", "\n\n")
+        .replace("<div>", "")
+        .replace("</div>", "\n\n")
+        .replace("<ul>", "")
+        .replace("</ul>", "\n")
+        .replace("<ol>", "")
+        .replace("</ol>", "\n")
+        .replace("<li>", "- ")
+        .replace("</li>", "\n")
+        .replace("<h1>", "# ")
+        .replace("</h1>", "\n\n")
+        .replace("<h2>", "## ")
+        .replace("</h2>", "\n\n")
+        .replace("<h3>", "### ")
+        .replace("</h3>", "\n\n")
+        .replace("<h4>", "#### ")
+        .replace("</h4>", "\n\n")
+        .replace("<h5>", "##### ")
+        .replace("</h5>", "\n\n")
+        .replace("<h6>", "###### ")
+        .replace("</h6>", "\n\n");
+
+    let text = strip_html_tags_preserve_layout(&markdownish);
+    collapse_markdown_whitespace(&decode_html_entities(&text))
+}
+
+fn replace_confluence_code_macros(input: &str) -> String {
+    let mut out = String::new();
+    let mut cursor = 0usize;
+    let macro_start = r#"<ac:structured-macro ac:name="code">"#;
+    let body_start = "<ac:plain-text-body><![CDATA[";
+    let body_end = "]]></ac:plain-text-body>";
+    let macro_end = "</ac:structured-macro>";
+
+    while let Some(start_rel) = input[cursor..].find(macro_start) {
+        let start = cursor + start_rel;
+        out.push_str(&input[cursor..start]);
+        let Some(code_start_rel) = input[start..].find(body_start) else {
+            out.push_str(&input[start..]);
+            return out;
+        };
+        let code_start = start + code_start_rel + body_start.len();
+        let Some(code_end_rel) = input[code_start..].find(body_end) else {
+            out.push_str(&input[start..]);
+            return out;
+        };
+        let code_end = code_start + code_end_rel;
+        let Some(macro_end_rel) = input[code_end..].find(macro_end) else {
+            out.push_str(&input[start..]);
+            return out;
+        };
+        let end = code_end + macro_end_rel + macro_end.len();
+        let code = &input[code_start..code_end];
+        out.push_str("```");
+        out.push('\n');
+        out.push_str(code);
+        out.push('\n');
+        out.push_str("```");
+        cursor = end;
+    }
+
+    out.push_str(&input[cursor..]);
+    out
+}
+
+fn replace_anchor_tags(input: &str) -> String {
+    let mut out = String::new();
+    let mut cursor = 0usize;
+
+    while let Some(start_rel) = input[cursor..].find("<a ") {
+        let start = cursor + start_rel;
+        out.push_str(&input[cursor..start]);
+        let Some(tag_end_rel) = input[start..].find('>') else {
+            out.push_str(&input[start..]);
+            return out;
+        };
+        let tag_end = start + tag_end_rel;
+        let tag = &input[start..=tag_end];
+        let Some(close_rel) = input[tag_end + 1..].find("</a>") else {
+            out.push_str(&input[start..]);
+            return out;
+        };
+        let close = tag_end + 1 + close_rel;
+        let label = &input[tag_end + 1..close];
+        let href = extract_attribute(tag, "href").unwrap_or_default();
+        out.push('[');
+        out.push_str(label);
+        out.push_str("](");
+        out.push_str(&href);
+        out.push(')');
+        cursor = close + "</a>".len();
+    }
+
+    out.push_str(&input[cursor..]);
+    out
+}
+
+fn replace_paired_tag(input: &str, tag: &str, open: &str, close: &str) -> String {
+    input
+        .replace(&format!("<{tag}>"), open)
+        .replace(&format!("</{tag}>"), close)
+}
+
+fn extract_attribute(tag: &str, attr: &str) -> Option<String> {
+    let needle = format!(r#"{attr}=""#);
+    let start = tag.find(&needle)? + needle.len();
+    let rest = tag.get(start..)?;
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+fn collapse_markdown_whitespace(input: &str) -> String {
+    let mut normalized = Vec::new();
+    let mut previous_blank = false;
+
+    for line in input.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if !normalized.is_empty() && !previous_blank {
+                normalized.push(String::new());
+                previous_blank = true;
+            }
+            continue;
+        }
+
+        normalized.push(trimmed.to_string());
+        previous_blank = false;
+    }
+
+    normalized.join("\n").trim().to_string()
+}
+
+fn decode_html_entities(input: &str) -> String {
+    input
+        .replace("&nbsp;", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+}
+
+fn escape_html(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn map_space(base_url: &str, raw: ConfluenceSpace) -> KbSpace {
@@ -661,18 +1067,14 @@ impl KnowledgeBaseProvider for ConfluenceClient {
         );
         let page: ConfluencePage = self.get_json(&path).await?;
         let summary = map_page_summary(&self.base_url, &page);
-        let content = page
+        let storage_content = page
             .body
             .as_ref()
             .and_then(|body| body.storage.as_ref())
             .and_then(|storage| storage.value.clone())
             .unwrap_or_default();
-        let content_type = page
-            .body
-            .as_ref()
-            .and_then(|body| body.storage.as_ref())
-            .and_then(|storage| storage.representation.clone())
-            .unwrap_or_else(|| "storage".to_string());
+        let content = confluence_storage_to_markdown(&storage_content);
+        let content_type = "markdown".to_string();
         let ancestors = page
             .ancestors
             .iter()
@@ -714,7 +1116,8 @@ impl KnowledgeBaseProvider for ConfluenceClient {
     }
 
     async fn create_page(&self, _params: CreatePageParams) -> Result<KbPage> {
-        require_storage_content_type(_params.content_type.as_deref())?;
+        let storage_content =
+            normalize_confluence_write_content(&_params.content, _params.content_type.as_deref())?;
 
         let payload = ConfluenceContentPayload {
             content_type: "page",
@@ -724,7 +1127,7 @@ impl KnowledgeBaseProvider for ConfluenceClient {
             },
             body: ConfluenceCreateBodyPayload {
                 storage: ConfluenceContentBody {
-                    value: &_params.content,
+                    value: &storage_content,
                     representation: "storage",
                 },
             },
@@ -740,8 +1143,6 @@ impl KnowledgeBaseProvider for ConfluenceClient {
     }
 
     async fn update_page(&self, _params: UpdatePageParams) -> Result<KbPage> {
-        require_storage_content_type(_params.content_type.as_deref())?;
-
         let current_path = format!(
             "content/{}?expand=space,version,body.storage,ancestors",
             _params.page_id
@@ -779,7 +1180,12 @@ impl KnowledgeBaseProvider for ConfluenceClient {
         }
 
         let title = _params.title.as_deref().unwrap_or(&current_title);
-        let content = _params.content.as_deref().unwrap_or(&current_content);
+        let content = match _params.content.as_deref() {
+            Some(updated) => {
+                normalize_confluence_write_content(updated, _params.content_type.as_deref())?
+            }
+            None => current_content,
+        };
         let ancestors = _params
             .parent_id
             .as_deref()
@@ -794,7 +1200,7 @@ impl KnowledgeBaseProvider for ConfluenceClient {
             },
             body: ConfluenceCreateBodyPayload {
                 storage: ConfluenceContentBody {
-                    value: content,
+                    value: &content,
                     representation: "storage",
                 },
             },
@@ -1196,8 +1602,8 @@ mod tests {
         assert_eq!(page.page.id, "42");
         assert_eq!(page.page.title, "ADR-001");
         assert_eq!(page.page.version, Some(7));
-        assert_eq!(page.content_type, "storage");
-        assert_eq!(page.content, "<p>Hello <strong>world</strong></p>");
+        assert_eq!(page.content_type, "markdown");
+        assert_eq!(page.content, "Hello **world**");
         assert_eq!(page.labels, vec!["adr", "architecture"]);
         assert_eq!(page.ancestors.len(), 1);
         assert_eq!(page.ancestors[0].id, "10");
@@ -1205,7 +1611,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_page_posts_storage_payload_and_maps_response() {
+    async fn create_page_accepts_markdown_and_posts_storage_payload() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
             when.method(POST)
@@ -1218,7 +1624,7 @@ mod tests {
                     "space": { "key": "ENG" },
                     "body": {
                         "storage": {
-                            "value": "<p>Decision</p>",
+                            "value": "<h1>Decision</h1><p>Hello <strong>world</strong></p>",
                             "representation": "storage"
                         }
                     },
@@ -1249,8 +1655,8 @@ mod tests {
             .create_page(CreatePageParams {
                 space_key: "ENG".into(),
                 title: "ADR-002".into(),
-                content: "<p>Decision</p>".into(),
-                content_type: Some("storage".into()),
+                content: "# Decision\n\nHello **world**".into(),
+                content_type: Some("markdown".into()),
                 parent_id: Some("10".into()),
                 labels: vec![],
             })
@@ -1265,7 +1671,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_page_fetches_current_page_and_puts_incremented_version() {
+    async fn update_page_accepts_markdown_and_puts_incremented_version() {
         let server = MockServer::start();
         let get_mock = server.mock(|when, then| {
             when.method(GET)
@@ -1304,7 +1710,7 @@ mod tests {
                     "version": { "number": 8 },
                     "body": {
                         "storage": {
-                            "value": "<p>New</p>",
+                            "value": "<p>New <strong>decision</strong></p>",
                             "representation": "storage"
                         }
                     },
@@ -1335,8 +1741,8 @@ mod tests {
             .update_page(UpdatePageParams {
                 page_id: "42".into(),
                 title: Some("ADR-001 Revised".into()),
-                content: Some("<p>New</p>".into()),
-                content_type: Some("storage".into()),
+                content: Some("New **decision**".into()),
+                content_type: Some("markdown".into()),
                 version: Some(7),
                 labels: None,
                 parent_id: Some("11".into()),
@@ -1405,6 +1811,25 @@ mod tests {
             }
             other => panic!("expected conflict error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn storage_and_markdown_converters_cover_basic_formatting() {
+        let markdown = confluence_storage_to_markdown(
+            r#"<h2>ADR</h2><p>Hello <strong>world</strong> and <a href="https://example.com">link</a></p><ul><li>One</li><li>Two</li></ul>"#,
+        );
+        assert_eq!(
+            markdown,
+            "## ADR\n\nHello **world** and [link](https://example.com)\n\n- One\n- Two"
+        );
+
+        let storage = markdown_to_confluence_storage(
+            "## ADR\n\nHello **world** and [link](https://example.com)\n\n- One\n- Two",
+        );
+        assert_eq!(
+            storage,
+            "<h2>ADR</h2><p>Hello <strong>world</strong> and <a href=\"https://example.com\">link</a></p><ul><li>One</li><li>Two</li></ul>"
+        );
     }
 
     #[tokio::test]
