@@ -780,9 +780,10 @@ impl KnowledgeBaseProvider for ConfluenceClient {
 
         let title = _params.title.as_deref().unwrap_or(&current_title);
         let content = _params.content.as_deref().unwrap_or(&current_content);
-        let ancestors = _params.parent_id.as_deref().map(|id| {
-            vec![ConfluenceCreateAncestorRef { id }]
-        });
+        let ancestors = _params
+            .parent_id
+            .as_deref()
+            .map(|id| vec![ConfluenceCreateAncestorRef { id }]);
 
         let payload = ConfluenceUpdatePayload {
             id: &_params.page_id,

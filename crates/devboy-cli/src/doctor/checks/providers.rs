@@ -2,7 +2,8 @@ use crate::doctor::checks::{resolve_active_provider_context, resolve_secret};
 use crate::doctor::{CheckResult, CheckStatus, DiagnosticCheck, DiagnosticContext};
 use async_trait::async_trait;
 use devboy_core::{
-    ClickUpConfig, ContextConfig, GitHubConfig, GitLabConfig, JiraConfig, SlackConfig,
+    ClickUpConfig, ConfluenceConfig, ContextConfig, GitHubConfig, GitLabConfig, JiraConfig,
+    SlackConfig,
 };
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, USER_AGENT};
 use reqwest::{Client, Method};
@@ -14,6 +15,7 @@ pub struct GitHubApiCheck;
 pub struct GitLabApiCheck;
 pub struct ClickUpApiCheck;
 pub struct JiraApiCheck;
+pub struct ConfluenceApiCheck;
 pub struct SlackApiCheck;
 
 #[derive(Debug, Clone)]
@@ -99,6 +101,18 @@ struct JiraUserResponse {
 #[derive(Deserialize)]
 struct ClickUpTasksResponse {
     tasks: Vec<Value>,
+}
+
+#[derive(Deserialize)]
+struct ConfluenceSpaceResponse {
+    results: Vec<ConfluenceSpaceResponseItem>,
+}
+
+#[derive(Deserialize)]
+struct ConfluenceSpaceResponseItem {
+    id: String,
+    key: String,
+    name: String,
 }
 
 fn http_client() -> Result<Client, String> {
@@ -447,6 +461,69 @@ async fn slack_connectivity(
     })
 }
 
+async fn confluence_connectivity(
+    config: &ConfluenceConfig,
+    token: &str,
+) -> Result<ConnectivityOutcome, String> {
+    let client = http_client()?;
+    let base_url = config.base_url.trim_end_matches('/');
+    let url = format!("{base_url}/rest/api/space?limit=1");
+    let auth_modes = if config.username.is_some() {
+        ["bearer", "basic"].as_slice()
+    } else {
+        ["bearer"].as_slice()
+    };
+
+    let mut last_error = None;
+    for auth_mode in auth_modes {
+        let mut request = client
+            .request(Method::GET, &url)
+            .header(USER_AGENT, "devboy-tools")
+            .header(ACCEPT, "application/json");
+
+        request = match *auth_mode {
+            "basic" => {
+                let username = config.username.as_deref().unwrap_or_default();
+                request.basic_auth(username, Some(token))
+            }
+            _ => request.bearer_auth(token),
+        };
+
+        let response = request
+            .send()
+            .await
+            .map_err(|error| format!("Network error: {error}"))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            last_error = Some(parse_error(status, body).1);
+            continue;
+        }
+
+        let payload: ConfluenceSpaceResponse = response
+            .json()
+            .await
+            .map_err(|error| format!("Invalid Confluence response: {error}"))?;
+
+        let message = match payload.results.into_iter().next() {
+            Some(space) => format!(
+                "Confluence API reachable for space {} ({}) [id: {}]",
+                space.key, space.name, space.id
+            ),
+            None => "Confluence API reachable".to_string(),
+        };
+
+        return Ok(ConnectivityOutcome {
+            message,
+            user: None,
+            rate_limit: None,
+        });
+    }
+
+    Err(last_error.unwrap_or_else(|| "request failed".to_string()))
+}
+
 use std::pin::Pin;
 
 type ConnectFuture<'a> =
@@ -675,12 +752,39 @@ impl DiagnosticCheck for SlackApiCheck {
     }
 }
 
+#[async_trait]
+impl DiagnosticCheck for ConfluenceApiCheck {
+    fn id(&self) -> &'static str {
+        "providers.confluence"
+    }
+
+    fn name(&self) -> &'static str {
+        "Confluence API connectivity"
+    }
+
+    fn category(&self) -> &'static str {
+        "Provider Connectivity"
+    }
+
+    async fn run(&self, ctx: &DiagnosticContext) -> CheckResult {
+        run_provider_check(
+            self,
+            ctx,
+            "confluence",
+            |c| c.confluence.clone(),
+            |cfg, token| Box::pin(confluence_connectivity(cfg, token)),
+        )
+        .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::doctor::DiagnosticContext;
     use devboy_core::{
-        ClickUpConfig, Config, ContextConfig, Error, GitHubConfig, GitLabConfig, JiraConfig,
+        ClickUpConfig, Config, ConfluenceConfig, ContextConfig, Error, GitHubConfig, GitLabConfig,
+        JiraConfig,
     };
     use devboy_storage::{CredentialStore, MemoryStore};
     use httpmock::Method::GET;
@@ -891,6 +995,79 @@ mod tests {
         .unwrap();
 
         assert_eq!(outcome.user.unwrap().username, "acct-123");
+    }
+
+    #[tokio::test]
+    async fn confluence_connectivity_reaches_space_endpoint() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/space")
+                .query_param("limit", "1");
+            then.status(200).json_body(json!({
+                "results": [
+                    {
+                        "id": "1",
+                        "key": "ENG",
+                        "name": "Engineering"
+                    }
+                ]
+            }));
+        });
+
+        let outcome = confluence_connectivity(
+            &ConfluenceConfig {
+                base_url: server.base_url(),
+                api_version: Some("v1".to_string()),
+                username: Some("dev@example.com".to_string()),
+                space_key: Some("ENG".to_string()),
+            },
+            "secret-token",
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.message.contains("Confluence API reachable"));
+    }
+
+    #[tokio::test]
+    async fn confluence_api_check_passes_when_connected() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/space")
+                .query_param("limit", "1");
+            then.status(200).json_body(json!({
+                "results": [
+                    {
+                        "id": "1",
+                        "key": "ENG",
+                        "name": "Engineering"
+                    }
+                ]
+            }));
+        });
+
+        let ctx = context_with_provider(
+            Arc::new(MemoryStore::with_credentials([(
+                "contexts.workspace.confluence.token".to_string(),
+                "secret-token".to_string(),
+            )])),
+            ContextConfig {
+                confluence: Some(ConfluenceConfig {
+                    base_url: server.base_url(),
+                    api_version: Some("v1".to_string()),
+                    username: Some("dev@example.com".to_string()),
+                    space_key: Some("ENG".to_string()),
+                }),
+                ..Default::default()
+            },
+        );
+
+        let result = ConfluenceApiCheck.run(&ctx).await;
+
+        assert_eq!(result.status, CheckStatus::Pass);
+        assert!(result.message.contains("Confluence API reachable"));
     }
 
     fn github_extractor(c: &ContextConfig) -> Option<GitHubConfig> {
