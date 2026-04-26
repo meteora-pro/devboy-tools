@@ -1,8 +1,11 @@
-use devboy_core::{Error, MeetingNotesProvider, MessengerProvider, Provider, Result, ToolEnricher};
+use devboy_core::{
+    Error, KnowledgeBaseProvider, MeetingNotesProvider, MessengerProvider, Provider, Result,
+    ToolEnricher,
+};
 
 use crate::context::{
-    ClickUpScope, GitHubScope, GitLabScope, JiraScope, ProviderConfig, ProviderMetadata,
-    ProxyConfig, SlackScope,
+    ClickUpScope, ConfluenceAuthConfig, ConfluenceScope, GitHubScope, GitLabScope, JiraScope,
+    ProviderConfig, ProviderMetadata, ProxyConfig, SlackScope,
 };
 
 /// Create a provider instance from a typed `ProviderConfig`.
@@ -107,6 +110,11 @@ pub fn create_provider(
             }),
         },
 
+        ProviderConfig::Confluence { .. } => Err(Error::ProviderUnsupported {
+            provider: "confluence".into(),
+            operation: "Confluence is a KnowledgeBaseProvider, not a Provider. Use create_knowledge_base_provider() instead.".into(),
+        }),
+
         ProviderConfig::Fireflies { .. } => Err(Error::ProviderUnsupported {
             provider: "fireflies".into(),
             operation: "Fireflies is a MeetingNotesProvider, not a Provider. Use create_meeting_notes_provider() instead.".into(),
@@ -120,6 +128,36 @@ pub fn create_provider(
         ProviderConfig::Custom { name, .. } => Err(Error::ProviderNotFound(format!(
             "custom provider '{name}' not yet supported"
         ))),
+    }
+}
+
+/// Create a knowledge base provider from config.
+pub fn create_knowledge_base_provider(
+    config: &ProviderConfig,
+    proxy: Option<&ProxyConfig>,
+) -> Result<Box<dyn KnowledgeBaseProvider>> {
+    match config {
+        ProviderConfig::Confluence {
+            base_url,
+            auth,
+            scope: ConfluenceScope::Space { .. },
+            ..
+        } => {
+            let client = if let Some(proxy) = proxy {
+                devboy_confluence::ConfluenceClient::new(
+                    &proxy.url,
+                    devboy_confluence::ConfluenceAuth::None,
+                )
+                .with_proxy(proxy.headers.clone())
+            } else {
+                devboy_confluence::ConfluenceClient::new(base_url, confluence_auth(auth))
+            };
+            Ok(Box::new(client))
+        }
+        other => Err(Error::ProviderUnsupported {
+            provider: other.provider_name().into(),
+            operation: "not a knowledge base provider".into(),
+        }),
     }
 }
 
@@ -189,6 +227,7 @@ pub fn create_enricher(
                 serde_json::from_value(meta.data.clone()).ok()?;
             Some(Box::new(devboy_jira::JiraSchemaEnricher::new(jira_meta)))
         }
+        ProviderConfig::Confluence { .. } => None,
         ProviderConfig::Fireflies { .. } => {
             Some(Box::new(devboy_fireflies::FirefliesSchemaEnricher))
         }
@@ -197,11 +236,25 @@ pub fn create_enricher(
     }
 }
 
+fn confluence_auth(auth: &ConfluenceAuthConfig) -> devboy_confluence::ConfluenceAuth {
+    match auth {
+        ConfluenceAuthConfig::BearerToken { token } => {
+            devboy_confluence::ConfluenceAuth::BearerToken(token.clone())
+        }
+        ConfluenceAuthConfig::Basic { username, password } => {
+            devboy_confluence::ConfluenceAuth::Basic {
+                username: username.clone(),
+                password: password.clone(),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::context::*;
-    use devboy_core::IssueProvider;
+    use devboy_core::{IssueProvider, KnowledgeBaseProvider};
     use std::collections::HashMap;
 
     #[test]
@@ -273,6 +326,46 @@ mod tests {
             IssueProvider::provider_name(provider.unwrap().as_ref()),
             "jira"
         );
+    }
+
+    #[test]
+    fn test_create_confluence_knowledge_base_provider() {
+        let config = ProviderConfig::Confluence {
+            base_url: "https://wiki.example.com".into(),
+            auth: ConfluenceAuthConfig::BearerToken {
+                token: "test-token".into(),
+            },
+            scope: ConfluenceScope::Space {
+                key: Some("ENG".into()),
+            },
+            api_version: Some("v1".into()),
+            extra: HashMap::new(),
+        };
+        let provider = create_knowledge_base_provider(&config, None);
+        assert!(provider.is_ok());
+        assert_eq!(
+            KnowledgeBaseProvider::provider_name(provider.unwrap().as_ref()),
+            "confluence"
+        );
+    }
+
+    #[test]
+    fn test_confluence_is_not_regular_provider() {
+        let config = ProviderConfig::Confluence {
+            base_url: "https://wiki.example.com".into(),
+            auth: ConfluenceAuthConfig::BearerToken {
+                token: "test-token".into(),
+            },
+            scope: ConfluenceScope::Space { key: None },
+            api_version: None,
+            extra: HashMap::new(),
+        };
+
+        let result = create_provider(&config, None);
+        assert!(matches!(
+            result,
+            Err(Error::ProviderUnsupported { provider, .. }) if provider == "confluence"
+        ));
     }
 
     #[test]
