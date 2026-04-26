@@ -29,6 +29,7 @@ base64 = "0.22"
 [dev-dependencies]
 mockall.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
+httpmock.workspace = true
 
 [lints]
 workspace = true

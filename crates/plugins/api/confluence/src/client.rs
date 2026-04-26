@@ -38,6 +38,7 @@ impl fmt::Debug for ConfluenceAuth {
 #[derive(Clone)]
 pub struct ConfluenceClient {
     base_url: String,
+    api_path: String,
     auth: ConfluenceAuth,
     proxy_headers: Option<HashMap<String, String>>,
     http: reqwest::Client,
@@ -47,6 +48,7 @@ impl fmt::Debug for ConfluenceClient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ConfluenceClient")
             .field("base_url", &self.base_url)
+            .field("api_path", &self.api_path)
             .field("auth", &self.auth)
             .field("http", &self.http)
             .finish()
@@ -57,6 +59,7 @@ impl ConfluenceClient {
     pub fn new(base_url: impl Into<String>, auth: ConfluenceAuth) -> Self {
         Self {
             base_url: normalize_base_url(base_url.into()),
+            api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
             auth,
             proxy_headers: None,
             http: reqwest::Client::new(),
@@ -76,6 +79,11 @@ impl ConfluenceClient {
         &self.auth
     }
 
+    pub fn with_api_version(mut self, api_version: Option<&str>) -> Self {
+        self.api_path = api_path_for_version(api_version);
+        self
+    }
+
     /// Configure proxy mode with headers added to every request.
     /// When proxy is active, provider auth headers are suppressed.
     pub fn with_proxy(mut self, headers: HashMap<String, String>) -> Self {
@@ -85,7 +93,7 @@ impl ConfluenceClient {
 
     pub fn rest_api_url(&self, path: &str) -> String {
         let path = path.trim_start_matches('/');
-        format!("{}{DEFAULT_CONFLUENCE_API_PATH}/{}", self.base_url, path)
+        format!("{}{}/{}", self.base_url, self.api_path, path)
     }
 
     pub async fn get_json<T>(&self, path: &str) -> Result<T>
@@ -179,6 +187,13 @@ fn proxy_headers_to_headermap(headers: &HashMap<String, String>) -> HeaderMap {
 
 fn normalize_base_url(base_url: String) -> String {
     base_url.trim_end_matches('/').to_string()
+}
+
+fn api_path_for_version(api_version: Option<&str>) -> String {
+    match api_version.map(str::trim).filter(|v| !v.is_empty()) {
+        Some("v2") => "/api/v2".to_string(),
+        _ => DEFAULT_CONFLUENCE_API_PATH.to_string(),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -456,7 +471,21 @@ fn map_pagination<T>(
 }
 
 fn encode_query_value(value: &str) -> String {
-    value.replace(' ', "%20")
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => {
+                const HEX: &[u8; 16] = b"0123456789ABCDEF";
+                encoded.push('%');
+                encoded.push(HEX[(byte >> 4) as usize] as char);
+                encoded.push(HEX[(byte & 0x0F) as usize] as char);
+            }
+        }
+    }
+    encoded
 }
 
 fn escape_cql_string(value: &str) -> String {
@@ -476,16 +505,17 @@ fn build_search_cql(params: &SearchKbParams) -> String {
     parts.join(" AND ")
 }
 
-fn search_path_from_cursor(cursor: &str) -> String {
-    if let Some(path) = cursor.strip_prefix("/rest/api/") {
+fn path_from_cursor(cursor: &str, api_path: &str) -> String {
+    let api_prefix = format!("{}/", api_path.trim_end_matches('/'));
+    if let Some(path) = cursor.strip_prefix(&api_prefix) {
         path.to_string()
-    } else if let Some(path) = cursor.strip_prefix(DEFAULT_CONFLUENCE_API_PATH) {
+    } else if let Some(path) = cursor.strip_prefix(api_path) {
         path.trim_start_matches('/').to_string()
     } else if let Some(path) = cursor.strip_prefix("http://") {
-        let path = path.split_once("/rest/api/").map(|(_, rhs)| rhs);
+        let path = path.split_once(&api_prefix).map(|(_, rhs)| rhs);
         path.unwrap_or(cursor).to_string()
     } else if let Some(path) = cursor.strip_prefix("https://") {
-        let path = path.split_once("/rest/api/").map(|(_, rhs)| rhs);
+        let path = path.split_once(&api_prefix).map(|(_, rhs)| rhs);
         path.unwrap_or(cursor).to_string()
     } else {
         cursor.trim_start_matches('/').to_string()
@@ -514,17 +544,20 @@ impl KnowledgeBaseProvider for ConfluenceClient {
 
     async fn list_pages(&self, params: ListPagesParams) -> Result<ProviderResult<KbPage>> {
         let limit = params.limit.unwrap_or(25);
-        let offset = params.offset.unwrap_or(0);
+        let path = if let Some(cursor) = params.cursor.as_ref() {
+            path_from_cursor(cursor, &self.api_path)
+        } else {
+            let offset = params.offset.unwrap_or(0);
+            let query = [
+                format!("spaceKey={}", encode_query_value(&params.space_key)),
+                "type=page".to_string(),
+                format!("limit={limit}"),
+                format!("start={offset}"),
+                "expand=space,version,history.lastUpdated,body.view,ancestors".to_string(),
+            ];
+            format!("content?{}", query.join("&"))
+        };
 
-        let query = [
-            format!("spaceKey={}", encode_query_value(&params.space_key)),
-            "type=page".to_string(),
-            format!("limit={limit}"),
-            format!("start={offset}"),
-            "expand=space,version,history.lastUpdated,body.view,ancestors".to_string(),
-        ];
-
-        let path = format!("content?{}", query.join("&"));
         let response: ConfluenceListResponse<ConfluencePage> = self.get_json(&path).await?;
         let pagination = map_pagination(&response, Some(limit));
         let mut items = response
@@ -636,7 +669,7 @@ impl KnowledgeBaseProvider for ConfluenceClient {
         let limit = params.limit.unwrap_or(25);
 
         let path = if let Some(cursor) = params.cursor.as_ref() {
-            search_path_from_cursor(cursor)
+            path_from_cursor(cursor, &self.api_path)
         } else {
             let cql = build_search_cql(&params);
             format!(
@@ -685,6 +718,20 @@ mod tests {
         assert_eq!(
             client.rest_api_url("content"),
             "https://wiki.example.com/rest/api/content"
+        );
+    }
+
+    #[tokio::test]
+    async fn rest_api_url_honors_v2_api_version() {
+        let client = ConfluenceClient::new(
+            "https://wiki.example.com/",
+            ConfluenceAuth::BearerToken("token".into()),
+        )
+        .with_api_version(Some("v2"));
+
+        assert_eq!(
+            client.rest_api_url("pages"),
+            "https://wiki.example.com/api/v2/pages"
         );
     }
 
@@ -901,6 +948,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_pages_uses_cursor_path_for_followup_requests() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/content")
+                .query_param("limit", "25")
+                .query_param("start", "25");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "results": [
+                            {
+                                "id": "77",
+                                "title": "Next Page",
+                                "space": { "key": "ENG" },
+                                "_links": { "base": "https://wiki.example.com", "webui": "/pages/viewpage.action?pageId=77" }
+                            }
+                        ],
+                        "start": 25,
+                        "limit": 25,
+                        "size": 1,
+                        "totalSize": 26,
+                        "_links": {}
+                    }"#,
+                );
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        );
+        let result = client
+            .list_pages(ListPagesParams {
+                space_key: "ENG".into(),
+                limit: Some(25),
+                offset: Some(0),
+                cursor: Some("/rest/api/content?limit=25&start=25".into()),
+                search: None,
+                parent_id: None,
+            })
+            .await
+            .unwrap();
+
+        mock.assert();
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].id, "77");
+    }
+
+    #[tokio::test]
     async fn get_page_maps_storage_content_labels_and_ancestors() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
@@ -1089,7 +1186,10 @@ mod tests {
             })
             .await
             .unwrap();
-        let next_cursor = first.pagination.as_ref().and_then(|p| p.next_cursor.clone());
+        let next_cursor = first
+            .pagination
+            .as_ref()
+            .and_then(|p| p.next_cursor.clone());
 
         mock.assert();
         assert!(first.items.is_empty());
@@ -1113,5 +1213,38 @@ mod tests {
         assert_eq!(second.items.len(), 1);
         assert_eq!(second.items[0].id, "123");
         assert_eq!(second.items[0].title, "ADR-123");
+    }
+
+    #[tokio::test]
+    async fn search_percent_encodes_reserved_query_characters() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/content/search")
+                .query_param("cql", "type = page AND text ~ \"R&D?x=y+z\"")
+                .query_param("limit", "5")
+                .query_param("expand", "space,version,history.lastUpdated,body.view");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"results":[],"start":0,"limit":5,"size":0,"_links":{}}"#);
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        );
+        let result = client
+            .search(SearchKbParams {
+                query: "R&D?x=y+z".into(),
+                space_key: None,
+                cursor: None,
+                limit: Some(5),
+                raw_query: false,
+            })
+            .await
+            .unwrap();
+
+        mock.assert();
+        assert!(result.items.is_empty());
     }
 }
