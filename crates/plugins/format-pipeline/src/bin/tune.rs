@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use devboy_format_pipeline::adaptive_config::{AdaptiveConfig, DataProfile, SessionStats};
-use devboy_format_pipeline::telemetry::PipelineEvent;
+use devboy_format_pipeline::telemetry::{EnrichmentEffectiveness, PipelineEvent};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
@@ -205,6 +205,9 @@ struct CorpusStats {
     compaction_events: u64,
     per_endpoint: BTreeMap<String, EndpointStats>,
     sessions_seen: BTreeMap<String, u64>,
+    /// Paper 3 enricher-effectiveness aggregate over every event the
+    /// scanner ingests. Populated via [`EnrichmentEffectiveness::accumulate`].
+    enrichment: EnrichmentEffectiveness,
 }
 
 impl CorpusStats {
@@ -223,6 +226,7 @@ impl CorpusStats {
             .entry(ev.endpoint_class.clone())
             .or_default()
             .update(ev);
+        self.enrichment.accumulate(ev);
     }
 
     fn finalize(&mut self) {
@@ -701,6 +705,13 @@ fn cmd_analyze(args: &[String]) -> Result<(), String> {
         encoder_pct,
         corpus.savings_pct() * 100.0,
     );
+
+    // Paper 3 — show the planner ROI line whenever any saving was
+    // recorded. Stays silent on a stock corpus that never ran the
+    // enricher so as not to confuse the operator with all-zero numbers.
+    if corpus.enrichment.total_calls_saved() > 0 || corpus.enrichment.total_prefetches > 0 {
+        eprintln!("# enrichment: {}", corpus.enrichment.report());
+    }
 
     let mut cfg = AdaptiveConfig::load_or_default(&output)
         .map_err(|e| format!("load existing config: {e}"))?;
