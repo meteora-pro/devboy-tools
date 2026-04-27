@@ -201,6 +201,9 @@ fn is_false(b: &bool) -> bool {
 fn is_zero_u32(n: &u32) -> bool {
     *n == 0
 }
+fn is_zero_u64(n: &u64) -> bool {
+    *n == 0
+}
 
 fn default_sample_rate() -> f32 {
     1.0
@@ -250,6 +253,19 @@ pub struct SessionSummary {
 ///   `tokens_baseline` exceeded the predicted cost by ≥ 30%. Drives
 ///   refresh of `cost_model.typical_kb` priors. Target ≤ 15%.
 ///
+/// And the operator-facing ROI counters:
+///
+/// - **`inference_calls_saved_*`** — number of LLM round-trips the
+///   planner short-circuited, broken into three buckets so the
+///   contribution of each mechanism stays visible:
+///   `prefetch` (cited speculative calls), `dedup` (Paper 2 L0 hits —
+///   tool body replaced with a near-ref hint so the LLM never sees the
+///   full payload), and `fail_fast` (e.g. ToolSearch self-loop blocked
+///   after `fail_fast_after_n`).
+/// - **`inference_tokens_saved`** — sum of `tokens_baseline` from those
+///   short-circuited calls. The headline "we saved this much context"
+///   number for `tune analyze`.
+///
 /// Token savings vs a no-planner baseline is the roll-up "did the
 /// enricher pay for itself" answer; it lives in the corpus-replay
 /// validation harness (Paper 3 §Validation strategy), not on this
@@ -277,6 +293,28 @@ pub struct EnrichmentEffectiveness {
     /// Sum of predicted-vs-actual prediction error in tokens — useful
     /// for diagnosing systematic under- or over-estimation.
     pub net_prediction_error_tokens: i64,
+
+    // ─── Inference round-trip savings ────────────────────────────────
+    /// LLM tool-uses avoided because the planner pre-fetched the
+    /// content and the model cited it in the next 1–3 turns. Counted
+    /// only when [`PipelineEvent::cited_in_next_n_turns`] is `Some(true)`.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub inference_calls_saved_prefetch: u32,
+    /// LLM tool-uses avoided because L0 dedup replaced the response
+    /// with a near-ref hint. Counted on every event with
+    /// `is_dedup_hit = true`.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub inference_calls_saved_dedup: u32,
+    /// LLM tool-uses avoided because [`crate::enrichment`] short-
+    /// circuited a `fail_fast_after_n` loop (e.g. ToolSearch returning
+    /// 0 bytes twice in a row). Incremented from the planner side via
+    /// [`Self::record_fail_fast_skip`].
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub inference_calls_saved_fail_fast: u32,
+    /// Sum of baseline tokens from all three saved-call buckets. The
+    /// "we saved this much context" headline for `tune analyze`.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub inference_tokens_saved: u64,
 }
 
 impl EnrichmentEffectiveness {
@@ -301,6 +339,83 @@ impl EnrichmentEffectiveness {
             .then(|| self.cost_overrun_count as f32 / self.total_predictions as f32)
     }
 
+    /// Total LLM tool-uses the planner short-circuited across all three
+    /// buckets. The headline "round-trips avoided" number.
+    pub fn total_calls_saved(&self) -> u32 {
+        self.inference_calls_saved_prefetch
+            .saturating_add(self.inference_calls_saved_dedup)
+            .saturating_add(self.inference_calls_saved_fail_fast)
+    }
+
+    /// Fold one [`PipelineEvent`] into the per-session counters.
+    ///
+    /// Inspects the four enricher-specific fields plus `is_dedup_hit`
+    /// and `tokens_baseline`/`tokens_final` to maintain:
+    ///
+    /// 1. `total_prefetches` / `total_predictions` / `cost_overrun_*`
+    ///    when `enricher_prefetched = true`.
+    /// 2. `cited_prefetches` and `inference_calls_saved_prefetch` when
+    ///    the offline post-pass has set `cited_in_next_n_turns = Some(true)`.
+    /// 3. `total_declines` when `enricher_decline_reason` is set.
+    /// 4. `inference_calls_saved_dedup` (and the corresponding
+    ///    `inference_tokens_saved`) on every L0 dedup hit.
+    ///
+    /// Use it to drive `SessionSummary.enrichment` from the live
+    /// pipeline or from a JSONL post-pass — same accumulator either way.
+    pub fn accumulate(&mut self, ev: &PipelineEvent) {
+        if ev.enricher_prefetched {
+            self.total_prefetches = self.total_prefetches.saturating_add(1);
+            self.total_predictions = self.total_predictions.saturating_add(1);
+            let predicted = ev.enricher_predicted_cost_tokens as i64;
+            let actual = ev.tokens_baseline as i64;
+            self.net_prediction_error_tokens = self
+                .net_prediction_error_tokens
+                .saturating_add(actual - predicted);
+            // Overrun threshold: actual ≥ 130% of predicted, with a
+            // non-zero predicted to avoid trivial true on tiny calls.
+            if predicted > 0 && actual * 10 >= predicted * 13 {
+                self.cost_overrun_count = self.cost_overrun_count.saturating_add(1);
+            }
+            if matches!(ev.cited_in_next_n_turns, Some(true)) {
+                self.cited_prefetches = self.cited_prefetches.saturating_add(1);
+                self.inference_calls_saved_prefetch =
+                    self.inference_calls_saved_prefetch.saturating_add(1);
+                self.inference_tokens_saved = self
+                    .inference_tokens_saved
+                    .saturating_add(ev.tokens_baseline as u64);
+            }
+        }
+        if ev.is_dedup_hit {
+            self.inference_calls_saved_dedup = self.inference_calls_saved_dedup.saturating_add(1);
+            // Save the body's *baseline* tokens — the L0 hint replaces
+            // the full payload, so the LLM never gets billed for it.
+            // `tokens_final` is the hint itself (~9 tokens) and is
+            // trivial; the meaningful saving is `tokens_baseline`.
+            self.inference_tokens_saved = self
+                .inference_tokens_saved
+                .saturating_add(ev.tokens_baseline as u64);
+        }
+        if ev.enricher_decline_reason.is_some() {
+            self.total_declines = self.total_declines.saturating_add(1);
+        }
+    }
+
+    /// Record a `fail_fast_after_n` short-circuit — the planner refused
+    /// to issue a tool call (e.g. a third empty `ToolSearch`), so no
+    /// `PipelineEvent` is ever emitted for it. Call this from the
+    /// planner side to keep `inference_calls_saved_fail_fast` honest.
+    ///
+    /// `predicted_cost_tokens` is the per-call estimate from the
+    /// tool's `cost_model` — added to `inference_tokens_saved` so the
+    /// fail-fast contribution shows up in the headline number.
+    pub fn record_fail_fast_skip(&mut self, predicted_cost_tokens: u32) {
+        self.inference_calls_saved_fail_fast =
+            self.inference_calls_saved_fail_fast.saturating_add(1);
+        self.inference_tokens_saved = self
+            .inference_tokens_saved
+            .saturating_add(predicted_cost_tokens as u64);
+    }
+
     /// Compact one-line summary suitable for `tune analyze` output.
     pub fn report(&self) -> String {
         let hit = self
@@ -316,7 +431,14 @@ impl EnrichmentEffectiveness {
             .map(|r| format!("{:.1}%", r * 100.0))
             .unwrap_or_else(|| "n/a".into());
         format!(
-            "prefetch_hit={hit} decline_recall_loss={loss} cost_overrun={overrun} prefetches={p} declines={d} predictions={pr}",
+            "prefetch_hit={hit} decline_recall_loss={loss} cost_overrun={overrun} \
+             calls_saved={saved} (prefetch={pf}, dedup={dd}, fail_fast={ff}) \
+             tokens_saved={ts} prefetches={p} declines={d} predictions={pr}",
+            saved = self.total_calls_saved(),
+            pf = self.inference_calls_saved_prefetch,
+            dd = self.inference_calls_saved_dedup,
+            ff = self.inference_calls_saved_fail_fast,
+            ts = self.inference_tokens_saved,
             p = self.total_prefetches,
             d = self.total_declines,
             pr = self.total_predictions,
@@ -792,5 +914,142 @@ mod tests {
         assert_eq!(back.enricher_predicted_cost_tokens, 540);
         assert_eq!(back.enricher_decline_reason.as_deref(), Some("budget"));
         assert_eq!(back.cited_in_next_n_turns, Some(true));
+    }
+
+    // ─── Inference tool-call savings ─────────────────────────────────
+
+    #[test]
+    fn total_calls_saved_sums_three_buckets() {
+        let e = EnrichmentEffectiveness {
+            inference_calls_saved_prefetch: 7,
+            inference_calls_saved_dedup: 12,
+            inference_calls_saved_fail_fast: 3,
+            ..Default::default()
+        };
+        assert_eq!(e.total_calls_saved(), 22);
+    }
+
+    #[test]
+    fn accumulate_dedup_hit_increments_dedup_bucket_and_tokens() {
+        let mut e = EnrichmentEffectiveness::default();
+        let mut ev = sample_event();
+        ev.is_dedup_hit = true;
+        ev.tokens_baseline = 800;
+        ev.tokens_final = 9;
+        e.accumulate(&ev);
+        assert_eq!(e.inference_calls_saved_dedup, 1);
+        assert_eq!(e.inference_tokens_saved, 800);
+        assert_eq!(e.total_calls_saved(), 1);
+        // dedup-only path must not move prefetch counters.
+        assert_eq!(e.total_prefetches, 0);
+        assert_eq!(e.total_predictions, 0);
+    }
+
+    #[test]
+    fn accumulate_cited_prefetch_increments_prefetch_bucket() {
+        let mut e = EnrichmentEffectiveness::default();
+        let mut ev = sample_event();
+        ev.enricher_prefetched = true;
+        ev.enricher_predicted_cost_tokens = 500;
+        ev.tokens_baseline = 540;
+        ev.cited_in_next_n_turns = Some(true);
+        e.accumulate(&ev);
+        assert_eq!(e.total_prefetches, 1);
+        assert_eq!(e.cited_prefetches, 1);
+        assert_eq!(e.inference_calls_saved_prefetch, 1);
+        assert_eq!(e.inference_tokens_saved, 540);
+        assert_eq!(e.cost_overrun_count, 0); // 540 < 500 * 1.3
+    }
+
+    #[test]
+    fn accumulate_uncited_prefetch_does_not_count_as_saved() {
+        let mut e = EnrichmentEffectiveness::default();
+        let mut ev = sample_event();
+        ev.enricher_prefetched = true;
+        ev.cited_in_next_n_turns = Some(false);
+        ev.tokens_baseline = 200;
+        e.accumulate(&ev);
+        assert_eq!(e.total_prefetches, 1);
+        assert_eq!(e.cited_prefetches, 0);
+        assert_eq!(e.inference_calls_saved_prefetch, 0);
+        assert_eq!(e.inference_tokens_saved, 0);
+    }
+
+    #[test]
+    fn accumulate_overrun_counts_when_actual_exceeds_130_percent() {
+        let mut e = EnrichmentEffectiveness::default();
+        let mut ev = sample_event();
+        ev.enricher_prefetched = true;
+        ev.enricher_predicted_cost_tokens = 100;
+        ev.tokens_baseline = 200; // 200 ≥ 100 * 1.3 → overrun
+        e.accumulate(&ev);
+        assert_eq!(e.cost_overrun_count, 1);
+        assert_eq!(e.net_prediction_error_tokens, 100);
+    }
+
+    #[test]
+    fn accumulate_decline_reason_increments_declines() {
+        let mut e = EnrichmentEffectiveness::default();
+        let mut ev = sample_event();
+        ev.enricher_decline_reason = Some("budget".into());
+        e.accumulate(&ev);
+        assert_eq!(e.total_declines, 1);
+    }
+
+    #[test]
+    fn record_fail_fast_skip_increments_counter_and_tokens() {
+        let mut e = EnrichmentEffectiveness::default();
+        e.record_fail_fast_skip(75);
+        e.record_fail_fast_skip(75);
+        assert_eq!(e.inference_calls_saved_fail_fast, 2);
+        assert_eq!(e.inference_tokens_saved, 150);
+        assert_eq!(e.total_calls_saved(), 2);
+    }
+
+    #[test]
+    fn report_includes_calls_saved_and_tokens_saved() {
+        let e = EnrichmentEffectiveness {
+            total_prefetches: 10,
+            cited_prefetches: 7,
+            inference_calls_saved_prefetch: 7,
+            inference_calls_saved_dedup: 12,
+            inference_calls_saved_fail_fast: 3,
+            inference_tokens_saved: 12_345,
+            ..Default::default()
+        };
+        let r = e.report();
+        assert!(r.contains("calls_saved=22"), "report missing total: {r}");
+        assert!(
+            r.contains("prefetch=7") && r.contains("dedup=12") && r.contains("fail_fast=3"),
+            "report missing per-bucket breakdown: {r}"
+        );
+        assert!(
+            r.contains("tokens_saved=12345"),
+            "report missing tokens_saved: {r}"
+        );
+    }
+
+    #[test]
+    fn enrichment_skips_zero_savings_fields_on_serialise() {
+        let e = EnrichmentEffectiveness::default();
+        let json = serde_json::to_string(&e).unwrap();
+        assert!(!json.contains("inference_calls_saved_prefetch"));
+        assert!(!json.contains("inference_calls_saved_dedup"));
+        assert!(!json.contains("inference_calls_saved_fail_fast"));
+        assert!(!json.contains("inference_tokens_saved"));
+    }
+
+    #[test]
+    fn enrichment_round_trips_with_savings_populated() {
+        let e = EnrichmentEffectiveness {
+            inference_calls_saved_prefetch: 4,
+            inference_calls_saved_dedup: 9,
+            inference_calls_saved_fail_fast: 2,
+            inference_tokens_saved: 8_400,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: EnrichmentEffectiveness = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, e);
     }
 }

@@ -175,15 +175,31 @@ pre-fetching what the agent just used).
 ## Adaptive tuning + effectiveness metric
 
 Same idiom as Paper 2: telemetry → offline analyser → annotation
-refresh. Four rates the operator reads
-([`EnrichmentEffectiveness`][effectiveness]):
+refresh. Three diagnostic rates plus a ROI counter, all on
+[`EnrichmentEffectiveness`][effectiveness]:
 
 | Metric | Computation | Target | What it tells the operator |
 |---|---|---|---|
 | **prefetch hit rate** | `cited / total_prefetches` | ≥ 60% | Was the planner's speculation worth it? Below means too greedy. |
 | **decline recall loss** | `late_invoked / total_declines` | ≤ 10% | Did the planner skip something the LLM ended up needing? |
 | **cost overrun rate** | `overruns / total_predictions` (overrun = actual ≥ 130% of predicted) | ≤ 15% | Are `cost_model.typical_kb` priors still valid? |
-| **net token savings** | `(baseline_no_planner − actual_with_planner) / baseline_no_planner` | > 0 | The headline ROI number — did the planner pay for itself? |
+| **inference calls saved** | `prefetch + dedup + fail_fast` buckets | as high as possible | Headline ROI: how many LLM tool-use round-trips the planner short-circuited. |
+
+### Inference calls saved
+
+Three independent mechanisms by which the planner removes a tool
+round-trip from the LLM's loop:
+
+| Bucket | When it increments | Where it's wired |
+|---|---|---|
+| `inference_calls_saved_prefetch` | `enricher_prefetched && cited_in_next_n_turns == Some(true)` — the planner pre-fetched a result and the LLM textually cited it | `EnrichmentEffectiveness::accumulate` reads `PipelineEvent` |
+| `inference_calls_saved_dedup` | `is_dedup_hit == true` — Paper 2 L0 replaced the body with a near-ref hint, so the LLM never gets the full payload | same accumulator |
+| `inference_calls_saved_fail_fast` | the planner refused to issue a `fail_fast_after_n` repeat (e.g. third empty `ToolSearch`) — no `PipelineEvent` is emitted | `EnrichmentEffectiveness::record_fail_fast_skip(predicted_tokens)` from the planner side |
+
+`inference_tokens_saved` is the sum of `tokens_baseline` (or
+`predicted_cost_tokens` for the fail-fast bucket) across all three
+buckets — the "we kept this much context out of the LLM's window"
+number.
 
 `PipelineEvent` carries four enricher fields per call:
 
@@ -192,13 +208,20 @@ refresh. Four rates the operator reads
 - `enricher_decline_reason: Option<String>`
 - `cited_in_next_n_turns: Option<bool>` (filled by offline post-pass)
 
-`SessionSummary.enrichment` aggregates them. `tune analyze` reads
-JSONL, computes the four rates, and prints a one-line report:
+`SessionSummary.enrichment` aggregates them via
+`EnrichmentEffectiveness::accumulate`, the same accumulator that
+`tune analyze` runs over historical JSONL. One-line report:
 
 ```
-prefetch_hit=72.1%  decline_recall_loss=8.4%  cost_overrun=11.0%
-prefetches=412  declines=187  predictions=599
+prefetch_hit=72.1% decline_recall_loss=8.4% cost_overrun=11.0%
+calls_saved=89 (prefetch=42, dedup=39, fail_fast=8) tokens_saved=128400
+prefetches=412 declines=187 predictions=599
 ```
+
+`tune analyze` prints this line under `# enrichment:` whenever any
+bucket is non-zero, alongside the existing dedup / encoder split. On
+a corpus with no enrichment activity the line is omitted to keep the
+default output unchanged.
 
 When `prefetch_hit_rate` drops below 50% on a specific tool, the
 analyser flags the corresponding `cost_model` and `follow_up`
@@ -272,8 +295,12 @@ prefetch for textual references to the prefetched body's
   +2 dedup tests + 1 layered_pipeline integration test.
 - Telemetry: 4 new `PipelineEvent` fields +
   `EnrichmentEffectiveness` summary with `prefetch_hit_rate`,
-  `decline_recall_loss`, `cost_overrun_rate`, and `report()`. +6
-  tests.
+  `decline_recall_loss`, `cost_overrun_rate`, three
+  `inference_calls_saved_*` buckets + `inference_tokens_saved`,
+  `accumulate(&PipelineEvent)`, `record_fail_fast_skip`, and
+  `report()`. +15 tests.
+- `tune analyze` reports the planner ROI line (`# enrichment: …`)
+  whenever any saving was recorded in the scanned JSONL.
 - `devboy tune from-claude-logs --tools` seeds `[tools.*]` from the
   user's observed tool mix without overwriting hand overrides. +2
   tests.
