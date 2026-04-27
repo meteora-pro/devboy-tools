@@ -33,6 +33,7 @@ tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 clap.workspace = true
+clap-markdown = "0.1"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true

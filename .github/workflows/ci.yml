@@ -50,6 +50,10 @@ jobs:
         run: |
           cargo run -p devboy-cli --quiet -- tools docs \
             --output docs/guide/reference/tools.md --check
+      - name: Check CLI reference is up to date
+        run: |
+          cargo run -p devboy-cli --quiet -- docs cli \
+            --output docs/guide/reference/cli.md --check
       - name: Build docs
         run: pnpm build
         working-directory: docs

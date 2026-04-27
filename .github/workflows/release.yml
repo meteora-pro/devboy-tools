@@ -152,6 +152,38 @@ jobs:
           mkdir -p release
           find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.sha256" \) -exec mv {} release/ \;
 
+      # Reference docs as release assets — second safety net on top of
+      # the PR-time drift gate. Build a fresh CLI binary, run both
+      # `--check` modes against the committed snapshots, and (if green)
+      # attach the snapshots to the GitHub Release so a user pulling
+      # the tagged version can read the matching reference offline
+      # without cloning the repo. We deliberately do NOT regenerate +
+      # commit — that would require write access to main from the
+      # release pipeline, which we do not want.
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-docs
+
+      - name: Build CLI for docs verification
+        run: cargo build --release -p devboy-cli
+
+      - name: Verify reference docs match the tagged binary
+        run: |
+          ./target/release/devboy docs cli \
+            --output docs/guide/reference/cli.md --check
+          ./target/release/devboy tools docs \
+            --output docs/guide/reference/tools.md --check
+
+      - name: Stage reference docs as release assets
+        run: |
+          cp docs/guide/reference/cli.md   release/devboy-cli-reference.md
+          cp docs/guide/reference/tools.md release/devboy-tools-reference.md
+
       - name: Generate changelog
         id: changelog
         run: |
