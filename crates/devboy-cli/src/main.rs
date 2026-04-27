@@ -4112,7 +4112,10 @@ fn handle_tools_docs(
                 path.display()
             )
         })?;
-        if existing != rendered {
+        // Normalise CRLF → LF before equality so Windows checkouts with
+        // `core.autocrlf=true` do not trip the gate. `.gitattributes`
+        // also forces LF on this file in the index.
+        if existing.replace("\r\n", "\n") != rendered.replace("\r\n", "\n") {
             anyhow::bail!(
                 "{} is out of date — re-run `devboy tools docs --output {}`",
                 path.display(),
@@ -4189,7 +4192,11 @@ fn handle_docs_cli(output: Option<&std::path::Path>, check: bool) -> Result<()> 
                 path.display()
             )
         })?;
-        if existing != rendered {
+        // Normalise CRLF → LF before the equality check. `.gitattributes`
+        // forces LF on this file in the index, but Windows checkouts with
+        // `core.autocrlf=true` rewrite to CRLF locally and would trip
+        // the gate spuriously.
+        if existing.replace("\r\n", "\n") != rendered.replace("\r\n", "\n") {
             anyhow::bail!(
                 "{} is out of date — re-run `devboy docs cli --output {}`",
                 path.display(),
@@ -6120,7 +6127,14 @@ args = ["old"]
             )
         });
         let rendered = render_cli_markdown();
-        if committed != rendered {
+        // Normalise line endings before comparing — `.gitattributes` already
+        // forces LF on this file, but Windows checkouts with
+        // `core.autocrlf=true` rewrite to CRLF locally and would trip the
+        // gate. Compare in a CRLF-tolerant way so the test is platform-
+        // independent.
+        let committed_n = committed.replace("\r\n", "\n");
+        let rendered_n = rendered.replace("\r\n", "\n");
+        if committed_n != rendered_n {
             panic!(
                 "docs/guide/reference/cli.md is out of date — re-run \
                  `cargo run -p devboy-cli -- docs cli --output \
