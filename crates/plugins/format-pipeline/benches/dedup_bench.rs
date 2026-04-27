@@ -52,7 +52,7 @@ fn bench_check(c: &mut Criterion) {
         let mut cache = DedupCache::with_capacity(cap);
         for i in 0..cap {
             let h = content_hash(format!("response_{i}").as_bytes());
-            cache.insert(h, format!("tc_{i}"), ToolKind::Other, None);
+            cache.insert(h, format!("tc_{i}"), ToolKind::Other, None, "");
         }
         let miss_hash = content_hash(b"miss_payload_never_inserted");
         group.bench_with_input(BenchmarkId::new("miss", cap), &cap, |b, _| {
@@ -87,6 +87,7 @@ fn bench_insert(c: &mut Criterion) {
                             format!("tc_{i}"),
                             ToolKind::Other,
                             None,
+                            "",
                         );
                     }
                     cache
@@ -97,6 +98,7 @@ fn bench_insert(c: &mut Criterion) {
                         black_box("tc_new"),
                         black_box(ToolKind::Other),
                         black_box(None),
+                        black_box(""),
                     );
                     black_box(cache);
                 },
@@ -122,6 +124,7 @@ fn bench_invalidate_file(c: &mut Criterion) {
                             format!("tc_{i}"),
                             ToolKind::FileRead,
                             Some(format!("path_{i}")),
+                            "Read",
                         );
                     }
                     cache
@@ -144,6 +147,7 @@ fn bench_invalidate_file(c: &mut Criterion) {
                             format!("tc_{i}"),
                             ToolKind::FileRead,
                             Some(format!("path_{i}")),
+                            "Read",
                         );
                     }
                     cache
@@ -178,6 +182,7 @@ fn bench_end_to_end(c: &mut Criterion) {
                             format!("tc_{i}"),
                             ToolKind::Other,
                             None,
+                            "",
                         );
                     }
                     cache
@@ -196,7 +201,7 @@ fn bench_end_to_end(c: &mut Criterion) {
                             black_box(out);
                         }
                         DedupDecision::Fresh => {
-                            cache.insert(h, "tc_new", ToolKind::Other, None);
+                            cache.insert(h, "tc_new", ToolKind::Other, None, "");
                         }
                     }
                     black_box(cache);

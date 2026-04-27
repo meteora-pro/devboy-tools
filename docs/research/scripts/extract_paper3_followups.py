@@ -19,7 +19,9 @@ Walks ~/.claude/projects/*.jsonl and emits two anonymized parquet files:
     in Paper 3.
 
 Anonymisation contract (matches `extract_paper2_format_events.py`):
-  - No raw response content is stored; only its length in bytes.
+  - No raw response content is stored; only its length in characters
+    (string code-point count via `len(text)`, not UTF-8 bytes — KB
+    priors derived downstream carry the same semantics).
   - tool_use_id is hashed; session id is hashed.
   - MCP `mcp__<slug>__<verb>` tools have `<slug>` replaced with a hash
     so private project names do not leak.

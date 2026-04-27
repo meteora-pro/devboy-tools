@@ -17,8 +17,13 @@ Anonymity contract for the committed artifacts:
     sessions or follow-up occurrences (default K = 5).
   - Tool names already pre-anonymised by the extractor
     (`mcp__<slug>__<verb>` → `mcp__p<hash6>__<verb>`).
-  - Response sizes reported as median / p90 / p99 only — never as a
-    raw distribution that could be matched to a public activity stream.
+  - Response sizes reported only as aggregate percentiles
+    (median / p90 / p99) — never as a raw distribution or as `max`,
+    which could be matched to a single high-watermark response.
+  - "chars" everywhere = string code-point length (`len(text)`),
+    not UTF-8 bytes. The KB priors derived from these aggregates
+    carry the same semantics; see Paper 2 §Tokenizer-aware metering
+    for the cl100k/o200k correction factor.
 """
 from __future__ import annotations
 
@@ -65,7 +70,9 @@ def main() -> int:
             response_chars_median=("response_chars", "median"),
             response_chars_p90=("response_chars", lambda s: int(s.quantile(0.9))),
             response_chars_p99=("response_chars", lambda s: int(s.quantile(0.99))),
-            response_chars_max=("response_chars", "max"),
+            # `max` intentionally absent — it is a per-session
+            # high-watermark and the easiest fingerprinting target;
+            # see the anonymity contract in this module's docstring.
         )
         .reset_index()
         .sort_values("calls", ascending=False)

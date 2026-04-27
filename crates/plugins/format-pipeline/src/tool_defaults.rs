@@ -1,10 +1,14 @@
-//! Paper 3 — built-in default `ToolValueModel`s for the top tools by
-//! corpus volume.
+//! Paper 3 — built-in default `ToolValueModel`s for selected common
+//! tools by corpus volume.
 //!
 //! Anchored on `docs/research/paper3_corpus_findings.md` (P-3-01).
-//! For every tool that fired in ≥ 100 sessions we ship a default
-//! annotation; users can override any of them through `[tools.<name>]`
-//! in `pipeline_config.toml` (Paper 3 §Provider extensibility).
+//! We ship defaults for a curated subset of the highest-volume tools
+//! (the canonical patterns from §Real-world patterns); the corpus has
+//! more tools above the 100-session threshold, but the long tail
+//! either reuses one of the shipped defaults via `[tools."*"]` or is
+//! overridden per-installation. Users can override any seeded
+//! annotation through `[tools.<name>]` in `pipeline_config.toml`
+//! (Paper 3 §Provider extensibility).
 //!
 //! The numbers below are *priors* — `tune analyze` will refine them
 //! against real telemetry, the same way Paper 2's adaptive tuner
