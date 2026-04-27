@@ -1,0 +1,7 @@
+# Force LF line endings on auto-generated reference docs so the
+# drift-gate tests (`devboy tools docs --check`, `devboy docs cli --check`,
+# `committed_cli_md_matches_renderer`) compare byte-equal across
+# platforms — Windows checkouts with `core.autocrlf=true` would otherwise
+# rewrite the committed file to CRLF and trip the gate.
+docs/guide/reference/cli.md   text eol=lf
+docs/guide/reference/tools.md text eol=lf
