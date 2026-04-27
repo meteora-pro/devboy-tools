@@ -93,16 +93,15 @@ pub struct DeclineReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DeclineKind {
     /// Adding this candidate would have crossed `budget_tokens`.
+    /// Currently the only variant the v1 solver emits — low-probability
+    /// candidates are filtered before they reach the candidate list,
+    /// and prereq / preemption tracking is not implemented yet.
+    /// `#[non_exhaustive]` lets us add the missing reasons later
+    /// without breaking downstream pattern matches.
     BudgetExceeded,
-    /// The probability fell below the prefetch threshold.
-    LowProbability,
-    /// The tool's `value_class` is `Optional` and the budget already
-    /// holds a `Critical` candidate that consumes the remainder.
-    PreemptedByCritical,
-    /// The triggering tool registered a prereq that is not satisfied.
-    PrereqMissing,
 }
 
 /// Hard knobs the solver does not (yet) read from `AdaptiveConfig`.
@@ -169,8 +168,10 @@ pub fn build_plan(
     // enumeration order (recent_tools order → follow_up order).
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut plan = EnrichmentPlan::default();
-    plan.remaining_budget_tokens = context.budget_tokens;
+    let mut plan = EnrichmentPlan {
+        remaining_budget_tokens: context.budget_tokens,
+        ..EnrichmentPlan::default()
+    };
 
     for (_, c) in scored {
         let cost_tokens = cost_tokens_for(&c.model, options.bytes_per_token);
@@ -250,14 +251,22 @@ fn enumerate_candidates(
 
     by_tool
         .into_iter()
-        .filter_map(|(tool, (projection, probability))| {
-            let model = config.effective_tool_value_model(&tool)?.clone();
-            Some(Candidate {
+        .map(|(tool, (projection, probability))| {
+            // Honour the docstring promise: missing annotations fall back
+            // to a permissive default so the unannotated tool still
+            // participates in the knapsack instead of being silently
+            // dropped. Earlier versions used `?` and quietly cut these
+            // candidates.
+            let model = config
+                .effective_tool_value_model(&tool)
+                .cloned()
+                .unwrap_or_default();
+            Candidate {
                 tool,
                 projection,
                 probability,
                 model,
-            })
+            }
         })
         .collect()
 }
@@ -282,9 +291,10 @@ mod tests {
     use crate::tool_defaults::default_tool_value_models;
 
     fn config_with_defaults() -> AdaptiveConfig {
-        let mut cfg = AdaptiveConfig::default();
-        cfg.tools = default_tool_value_models();
-        cfg
+        AdaptiveConfig {
+            tools: default_tool_value_models(),
+            ..AdaptiveConfig::default()
+        }
     }
 
     #[test]
@@ -358,8 +368,10 @@ mod tests {
 
     #[test]
     fn audit_only_tools_do_not_consume_budget() {
-        let mut cfg = AdaptiveConfig::default();
-        cfg.tools = default_tool_value_models();
+        let mut cfg = AdaptiveConfig {
+            tools: default_tool_value_models(),
+            ..AdaptiveConfig::default()
+        };
         // Synthetic trigger that points to TaskUpdate — exercise the
         // audit_only "free" path.
         let mut grep = cfg.tools.get("Grep").unwrap().clone();
@@ -433,18 +445,22 @@ mod tests {
     #[test]
     fn high_probability_link_wins_over_low_probability_for_same_tool() {
         let mut cfg = AdaptiveConfig::default();
-        let mut a = ToolValueModel::default();
-        a.follow_up = vec![devboy_core::FollowUpLink {
-            tool: "Target".into(),
-            probability: 0.55,
-            projection: Some("low".into()),
-        }];
-        let mut b = ToolValueModel::default();
-        b.follow_up = vec![devboy_core::FollowUpLink {
-            tool: "Target".into(),
-            probability: 0.85,
-            projection: Some("high".into()),
-        }];
+        let a = ToolValueModel {
+            follow_up: vec![devboy_core::FollowUpLink {
+                tool: "Target".into(),
+                probability: 0.55,
+                projection: Some("low".into()),
+            }],
+            ..ToolValueModel::default()
+        };
+        let b = ToolValueModel {
+            follow_up: vec![devboy_core::FollowUpLink {
+                tool: "Target".into(),
+                probability: 0.85,
+                projection: Some("high".into()),
+            }],
+            ..ToolValueModel::default()
+        };
         cfg.tools.insert("A".into(), a);
         cfg.tools.insert("B".into(), b);
         cfg.tools

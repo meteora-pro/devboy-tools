@@ -183,10 +183,14 @@ pub struct PipelineEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enricher_decline_reason: Option<String>,
 
-    /// Filled in by the offline post-pass (`tune from-claude-logs --tools`)
-    /// — `true` when the next 1–3 LLM messages textually reference any
-    /// of the response's content_sha_prefix_hex bytes. `None` until the
-    /// post-pass runs; the live pipeline never sets this directly.
+    /// Reserved for an offline citation-enrichment post-pass that
+    /// re-reads the JSONL log and sets this to `true` when the next
+    /// 1–3 LLM messages textually reference any of the response's
+    /// `content_sha_prefix_hex` bytes. The live pipeline never sets
+    /// this; the post-pass is **not** shipped yet (the existing
+    /// `tune from-claude-logs --tools` only seeds `[tools.*]`
+    /// defaults, it does not populate citation fields). Stays `None`
+    /// until that pass lands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cited_in_next_n_turns: Option<bool>,
 }
@@ -234,7 +238,7 @@ pub struct SessionSummary {
 /// the agent during a session. Populated by the live pipeline (counters)
 /// plus the offline post-pass (`cited_*` numbers, see P-3-08).
 ///
-/// Four primary rates the operator reads:
+/// Three primary rates the operator reads:
 ///
 /// - **Prefetch hit rate** — fraction of planner-prefetched calls whose
 ///   content was textually cited by the LLM in the next 1–3 turns. The
@@ -245,9 +249,13 @@ pub struct SessionSummary {
 /// - **Cost overrun rate** — fraction of admitted calls whose actual
 ///   `tokens_baseline` exceeded the predicted cost by ≥ 30%. Drives
 ///   refresh of `cost_model.typical_kb` priors. Target ≤ 15%.
-/// - **Token savings vs baseline** — `(baseline_no_planner −
-///   actual_with_planner) / baseline_no_planner`. The roll-up answer
-///   for "did the enricher pay for itself".
+///
+/// Token savings vs a no-planner baseline is the roll-up "did the
+/// enricher pay for itself" answer; it lives in the corpus-replay
+/// validation harness (Paper 3 §Validation strategy), not on this
+/// summary, because it requires running the same session both with
+/// and without the planner. This struct carries only the per-session
+/// counters that drive the three rates above.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct EnrichmentEffectiveness {
     /// Number of calls the planner pre-fetched.
@@ -308,8 +316,7 @@ impl EnrichmentEffectiveness {
             .map(|r| format!("{:.1}%", r * 100.0))
             .unwrap_or_else(|| "n/a".into());
         format!(
-            "prefetch_hit={hit} decline_recall_loss={loss} cost_overrun={overrun} \
-             prefetches={p} declines={d} predictions={pr}",
+            "prefetch_hit={hit} decline_recall_loss={loss} cost_overrun={overrun} prefetches={p} declines={d} predictions={pr}",
             p = self.total_prefetches,
             d = self.total_declines,
             pr = self.total_predictions,

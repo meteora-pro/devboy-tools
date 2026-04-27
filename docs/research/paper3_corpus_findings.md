@@ -188,7 +188,7 @@ The annotations themselves come from three layers:
 
 ## Numbers used elsewhere
 
-| Tool | Calls | Median bytes | p90 bytes | Used as default for |
+| Tool | Calls | Median chars | p90 chars | Used as default for |
 |---|---:|---:|---:|---|
 | Bash | 110 930 | 223 | 1 772 | `cost_model.typical_kb = 0.2` |
 | Read | 50 675 | 2 473 | 12 745 | `cost_model.typical_kb = 2.5`, `value_class = critical` |
