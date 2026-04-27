@@ -11,6 +11,7 @@ authors.workspace = true
 devboy-core = { path = "../devboy-core" }
 devboy-assets = { path = "../devboy-assets" }
 devboy-executor = { path = "../devboy-executor" }
+devboy-format-pipeline = { path = "../plugins/format-pipeline" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -24,6 +25,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 mockall.workspace = true
 async-trait.workspace = true
 httpmock.workspace = true
+tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [lints]

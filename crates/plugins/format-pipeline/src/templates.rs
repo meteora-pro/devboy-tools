@@ -196,6 +196,13 @@ pub fn deep_mckp_with_inner_table(raw: &str, _cls: &ClassifiedResponse) -> Optio
         out.push('\n');
     }
 
+    // Section heading carrying the wrapping object's array key — preserves
+    // round-trip key parity (the inner-table form would otherwise drop it)
+    // and gives the LLM the contextual signal "this table is `<name>`".
+    out.push_str("## ");
+    out.push_str(&main_key);
+    out.push_str("\n\n");
+
     // Union of keys across elements, preserving first-occurrence order.
     let mut headers: Vec<String> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();

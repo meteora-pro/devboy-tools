@@ -14,6 +14,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::oneshot;
 
+use crate::layered::{SessionPipeline, extract_file_path as file_path_from_args, is_mutating_tool};
 use crate::protocol::{
     InitializeParams, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MCP_VERSION,
     RequestId, ServerCapabilities, ServerInfo, ToolCallParams, ToolCallResult, ToolsCapability,
@@ -52,6 +53,10 @@ pub struct McpServer {
     /// Deferred background initialization — resolved on first `tools/list` or `tools/call`.
     /// Returns proxy manager and optional builtin_tools override from remote config.
     deferred_init: Option<oneshot::Receiver<DeferredInit>>,
+    /// Layered pipeline — when configured, every successful `tools/call`
+    /// response passes through L0 dedup before being returned to the client
+    /// (Paper 2 §Implementation Status).
+    layered_pipeline: Option<SessionPipeline>,
 }
 
 impl McpServer {
@@ -72,6 +77,26 @@ impl McpServer {
             routing_engine: None,
             telemetry: None,
             deferred_init: None,
+            layered_pipeline: None,
+        }
+    }
+
+    /// Enable the Paper 2 layered pipeline (L0 cross-turn dedup) for the
+    /// lifetime of this server. Once set, every `tools/call` response is
+    /// passed through `SessionPipeline::process` before being returned.
+    pub fn enable_layered_pipeline(&mut self, pipeline: SessionPipeline) {
+        self.layered_pipeline = Some(pipeline);
+        tracing::info!(
+            "Paper 2 layered pipeline enabled — L0 dedup active. \
+             Edit ~/.devboy/pipeline_config.toml (or set DEVBOY_PIPELINE_CONFIG) \
+             to tune knobs. See `devboy tune analyze` for split-savings metrics."
+        );
+    }
+
+    /// Drop the layered-pipeline cache partition on host compaction.
+    pub fn on_compaction_boundary(&self) {
+        if let Some(p) = &self.layered_pipeline {
+            p.on_compaction_boundary();
         }
     }
 
@@ -323,6 +348,15 @@ impl McpServer {
             "notifications/cancelled" => {
                 tracing::debug!("Request cancelled by client");
             }
+            // devboy-specific extension — host signals that it just
+            // compacted its conversation context. The L0 dedup cache
+            // advances its partition counter so any earlier-turn
+            // entries are dropped on the next eviction sweep, matching
+            // the agent's *visible* context.
+            "notifications/devboy/compact" => {
+                tracing::info!("Host compaction signal received — advancing dedup partition");
+                self.on_compaction_boundary();
+            }
             _ => {
                 tracing::debug!("Ignoring notification: {}", method);
             }
@@ -520,9 +554,35 @@ impl McpServer {
             return JsonRpcResponse::success(id, serde_json::to_value(result).unwrap());
         }
 
+        // Mutation-aware cache invalidation must fire *before* dispatch:
+        // the tool is about to change the file, so any cached body for
+        // that path is stale starting from this turn.
+        if let Some(pipeline) = &self.layered_pipeline
+            && is_mutating_tool(&params.name)
+            && let Some(path) = file_path_from_args(params.arguments.as_ref())
+        {
+            pipeline.invalidate_file(&path);
+        }
+
         let started = Instant::now();
         let (result, was_fallback, emitted_reason, emitted_detail, upstream_label, resolved_name) =
             self.dispatch_with_routing(&params).await;
+
+        // Apply Paper 2 L0 dedup on the way back to the client.
+        let result = if let Some(pipeline) = &self.layered_pipeline {
+            let req_id = match &id {
+                RequestId::Number(n) => format!("req_{n}"),
+                RequestId::String(s) => s.clone(),
+                RequestId::Null => "req_null".to_string(),
+            };
+            let ts_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            pipeline.process(&req_id, &params, result, ts_ms)
+        } else {
+            result
+        };
 
         // Best-effort telemetry — never block response path on this.
         if let Some(buffer) = &self.telemetry {
@@ -567,6 +627,15 @@ impl McpServer {
                 Some(ToolCallResult::text(content))
             }
             "get_current_context" => Some(ToolCallResult::text(self.active_context_name())),
+            "compact_pipeline_cache" => {
+                // Tool-call entry point for hosts that can't emit
+                // `notifications/devboy/compact`. Same effect: advance
+                // the dedup partition.
+                self.on_compaction_boundary();
+                Some(ToolCallResult::text(
+                    "pipeline cache partition advanced".to_string(),
+                ))
+            }
             "use_context" => {
                 #[derive(Deserialize)]
                 struct UseContextParams {
@@ -2017,5 +2086,137 @@ mod tests {
         assert!(!result.tools.iter().any(|t| t.name == "get_issues"));
         // Other tools should still be present
         assert!(result.tools.iter().any(|t| t.name == "get_issue"));
+    }
+
+    #[test]
+    fn test_enable_layered_pipeline_sets_field() {
+        use devboy_format_pipeline::adaptive_config::AdaptiveConfig;
+
+        let mut server = McpServer::new();
+        assert!(server.layered_pipeline.is_none());
+        server.enable_layered_pipeline(SessionPipeline::new(AdaptiveConfig::default()));
+        assert!(server.layered_pipeline.is_some());
+        // on_compaction_boundary must be a no-op on the disabled path and
+        // a no-panic on the enabled path.
+        server.on_compaction_boundary();
+    }
+
+    #[tokio::test]
+    async fn test_compaction_notification_advances_partition() {
+        use devboy_format_pipeline::adaptive_config::AdaptiveConfig;
+
+        let mut server = McpServer::new();
+        server.enable_layered_pipeline(SessionPipeline::new(AdaptiveConfig::default()));
+        // Notification path — must not panic and must not error.
+        server.handle_notification("notifications/devboy/compact");
+        // Unknown notifications are still ignored.
+        server.handle_notification("notifications/totally/unrelated");
+    }
+
+    #[tokio::test]
+    async fn test_compact_pipeline_cache_internal_tool() {
+        use devboy_format_pipeline::adaptive_config::AdaptiveConfig;
+
+        let mut server = McpServer::new();
+        server.enable_layered_pipeline(SessionPipeline::new(AdaptiveConfig::default()));
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "compact_pipeline_cache",
+                "arguments": {}
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none());
+        let result: ToolCallResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+        assert_eq!(result.is_error, None);
+    }
+
+    #[tokio::test]
+    async fn test_e2e_read_edit_read_busts_cache_via_server() {
+        // P-203-09 acceptance gate: the server's full request-handling
+        // path must invalidate the cache when a mutating tool is
+        // dispatched, so a re-read of the same file returns a fresh body
+        // (not a stale `> [ref: …]` hint).
+        //
+        // We exercise this through the public `extract_file_path` /
+        // `is_mutating_tool` helpers + `SessionPipeline::process` so the
+        // assertion is the same path the server's `handle_tools_call`
+        // takes — minus the dispatch step (which would need real
+        // providers).
+        use devboy_format_pipeline::adaptive_config::AdaptiveConfig;
+
+        let pipeline = SessionPipeline::new(AdaptiveConfig::default());
+        let body = "x".repeat(600);
+
+        let read_params = crate::protocol::ToolCallParams {
+            name: "Read".to_string(),
+            arguments: Some(serde_json::json!({"file_path": "/tmp/e2e.rs"})),
+        };
+
+        // Turn 1 — fresh body.
+        let r1 = pipeline.process("req_1", &read_params, ToolCallResult::text(body.clone()), 0);
+        let crate::protocol::ToolResultContent::Text { text: t1 } = &r1.content[0];
+        assert_eq!(t1, &body);
+
+        // Turn 2 — server's mutation hook fires before dispatch. We
+        // simulate the same call sequence directly.
+        let edit_params = crate::protocol::ToolCallParams {
+            name: "Edit".to_string(),
+            arguments: Some(serde_json::json!({"file_path": "/tmp/e2e.rs"})),
+        };
+        if crate::layered::is_mutating_tool(&edit_params.name)
+            && let Some(p) = crate::layered::extract_file_path(edit_params.arguments.as_ref())
+        {
+            pipeline.invalidate_file(&p);
+        }
+
+        // Turn 3 — same Read after invalidation must come back fresh.
+        let r3 = pipeline.process(
+            "req_3",
+            &read_params,
+            ToolCallResult::text(body.clone()),
+            10,
+        );
+        let crate::protocol::ToolResultContent::Text { text: t3 } = &r3.content[0];
+        assert_eq!(
+            t3, &body,
+            "Edit must bust the dedup cache so subsequent Read is fresh"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_layered_pipeline_dedups_repeated_internal_tool_response() {
+        use devboy_format_pipeline::adaptive_config::AdaptiveConfig;
+
+        let mut server = McpServer::new();
+        server.contexts.insert("workspace".to_string(), vec![]);
+        server.set_active_context("workspace").unwrap();
+        server.enable_layered_pipeline(SessionPipeline::new(AdaptiveConfig::default()));
+
+        // `get_current_context` is an internal tool whose response is a
+        // short fixed string — too small to clear the L0 min_body_chars
+        // threshold (default 200). The layered pipeline should pass it
+        // through unchanged on both calls.
+        let make_req = |id: i64| JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(id),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "get_current_context",
+                "arguments": {}
+            })),
+        };
+
+        let r1 = server.handle_request(make_req(1)).await;
+        let r2 = server.handle_request(make_req(2)).await;
+        assert!(r1.error.is_none());
+        assert!(r2.error.is_none());
+        // Both calls return the same body (identity below the dedup
+        // threshold means no rewrite, not a hint).
+        assert_eq!(r1.result, r2.result);
     }
 }

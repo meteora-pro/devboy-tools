@@ -10,6 +10,18 @@ use serde::Serialize;
 use crate::output::ToolOutput;
 
 /// Metadata about formatting result — compression stats, token estimates.
+///
+/// Per Paper 2 §Savings Accounting, every quoted savings number must
+/// distinguish three orthogonal sources and name the baseline/tokenizer
+/// against which the percentages are taken. The split fields below
+/// (`dedup_savings_pct`, `encoder_savings_pct`, `combined_savings_pct`,
+/// `baseline`, `tokenizer`) encode that contract on the live response.
+///
+/// For typed-domain transforms (issues / merge_requests / …), the
+/// encoder runs without an L0 dedup hop, so `dedup_savings_pct == 0.0`
+/// and `combined == encoder`. The cross-turn dedup contribution is
+/// reported separately by `devboy-mcp::layered::SessionPipeline` via the
+/// telemetry sink.
 #[derive(Debug, Clone, Serialize)]
 pub struct FormatMetadata {
     /// Size of raw JSON input (UTF-8 bytes)
@@ -21,7 +33,7 @@ pub struct FormatMetadata {
     /// toon_saved = raw_chars - pre_trim_chars
     /// trimmed_chars = pre_trim_chars - output_chars
     pub pre_trim_chars: usize,
-    /// Estimated token count (output_chars / 3.5)
+    /// Estimated token count under the active tokenizer.
     pub estimated_tokens: usize,
     /// Compression ratio: output_chars / raw_chars (< 1.0 = savings)
     pub compression_ratio: f32,
@@ -43,6 +55,34 @@ pub struct FormatMetadata {
     pub provider_pagination: Option<Pagination>,
     /// Sort metadata from the provider (current sort, available sorts)
     pub provider_sort: Option<SortInfo>,
+    /// L0 dedup savings as a fraction of baseline tokens (0.0 = no
+    /// dedup hit on this response). Always `0.0` on the typed-domain
+    /// path; populated by the MCP-server's layered pipeline when a
+    /// hint is emitted.
+    #[serde(default)]
+    pub dedup_savings_pct: f32,
+    /// L1/L2 encoder savings as a fraction of baseline tokens, computed
+    /// over the *L0-miss* portion of the response. Equals
+    /// `1.0 - encoded_tokens / baseline_tokens` for the typed-domain
+    /// path.
+    #[serde(default)]
+    pub encoder_savings_pct: f32,
+    /// Multiplicative combination of dedup and encoder savings, per
+    /// the §Savings Accounting reporting rule: `combined = dedup +
+    /// (1 - dedup) * encoder`.
+    #[serde(default)]
+    pub combined_savings_pct: f32,
+    /// Baseline against which the percentages are taken
+    /// (e.g. `"json_pretty"`, `"json_compact"`, `"toon"`). Required by
+    /// the reporting rule — savings without a named baseline are not
+    /// comparable across systems.
+    #[serde(default)]
+    pub baseline: String,
+    /// Tokenizer used to compute `estimated_tokens` and the savings
+    /// percentages above (e.g. `"o200k_base"`, `"cl100k_base"`,
+    /// `"heuristic"`).
+    #[serde(default)]
+    pub tokenizer: String,
 }
 
 /// Result of formatting a tool output — content + metadata.
@@ -71,6 +111,7 @@ pub fn format_output(
 ) -> Result<FormatResult> {
     let output_format = match format {
         Some("json") => OutputFormat::Json,
+        Some("mckp") => OutputFormat::Mckp,
         _ => OutputFormat::Toon,
     };
 
@@ -88,7 +129,26 @@ pub fn format_output(
     let format_name = match output_format {
         OutputFormat::Json => "json",
         OutputFormat::Toon => "toon",
+        OutputFormat::Mckp => "mckp",
     };
+
+    // Active tokenizer + baseline are reported alongside savings numbers
+    // so downstream consumers can compare measurements taken under
+    // different conditions. The typed-domain path always serialises
+    // through `serde_json::to_string_pretty` first, so the implicit
+    // baseline is `json_pretty`.
+    //
+    // Honest disclosure (Copilot review on PR #207): the typed-domain
+    // pipeline does not yet plumb the runtime `AdaptiveConfig.profiles
+    // .tokenizer` choice into this code path, so token counts are
+    // produced by the chars/3.5 heuristic regardless of what the
+    // operator configured. We label that explicitly here; BPE-accurate
+    // counts apply on the L0/L1/L2 hot path inside `LayeredPipeline`
+    // and via `tune analyze`, not on `format_output`. Tracked as a
+    // follow-up in §Implementation Status.
+    let baseline = "json_pretty";
+    let tokenizer = "heuristic";
+    let token_counter = devboy_format_pipeline::Tokenizer::Heuristic;
 
     let requested_chunk = pipeline_config.chunk.unwrap_or(1);
     let pipeline = Pipeline::with_config(pipeline_config);
@@ -98,6 +158,8 @@ pub fn format_output(
     let provider_sort = output.result_meta().and_then(|m| m.sort_info.clone());
 
     // Helper: convert TransformOutput to FormatResult
+    let baseline_for_helper = baseline.to_string();
+    let tokenizer_for_helper = tokenizer.to_string();
     let to_result = |t: devboy_format_pipeline::TransformOutput,
                      pag: Option<Pagination>,
                      sort: Option<SortInfo>|
@@ -106,7 +168,6 @@ pub fn format_output(
         // content includes hints/chunk index on top, but metrics should reflect pipeline savings
         let content_chars = t.output_chars;
         let content = t.to_string_with_hints();
-        let output_chars = content.len();
         let raw_chars = if t.raw_chars > 0 {
             t.raw_chars
         } else {
@@ -124,6 +185,29 @@ pub fn format_output(
         };
         let chunk_number = requested_chunk;
 
+        // §Savings Accounting — *token*-denominated, not byte-denominated.
+        // We can't see the raw input here so we approximate baseline
+        // tokens from `raw_chars` using the same tokenizer; the encoder
+        // savings then live in token space (which is what the LLM is
+        // billed on), independent of the chars/token ratio of either
+        // format. Fixes Copilot review on PR #207.
+        let baseline_tokens = if raw_chars > 0 {
+            // `Tokenizer::Heuristic` matches the `estimated_tokens`
+            // formula below; if a future change starts plumbing the
+            // active profile, both must move together.
+            (raw_chars as f64 / 3.5).ceil() as usize
+        } else {
+            0
+        };
+        let final_tokens = (content_chars as f64 / 3.5).ceil() as usize;
+        let encoder_savings_pct = if baseline_tokens > 0 {
+            ((baseline_tokens.saturating_sub(final_tokens)) as f32) / (baseline_tokens as f32)
+        } else {
+            0.0
+        };
+        // Typed-domain path has no L0 dedup hop, so combined == encoder.
+        let combined_savings_pct = encoder_savings_pct;
+
         FormatResult {
             metadata: FormatMetadata {
                 raw_chars,
@@ -132,7 +216,7 @@ pub fn format_output(
                 output_chars: content_chars,
                 pre_trim_chars: pre_trim,
                 // estimated_tokens = full output including hints (what LLM actually consumes)
-                estimated_tokens: output_chars * 10 / 35, // chars / 3.5
+                estimated_tokens: token_counter.count(&content),
                 compression_ratio: if raw_chars > 0 {
                     content_chars as f32 / raw_chars as f32
                 } else {
@@ -147,12 +231,19 @@ pub fn format_output(
                 chunk_number,
                 provider_pagination: pag,
                 provider_sort: sort,
+                dedup_savings_pct: 0.0,
+                encoder_savings_pct,
+                combined_savings_pct,
+                baseline: baseline_for_helper.clone(),
+                tokenizer: tokenizer_for_helper.clone(),
             },
             content,
         }
     };
 
     // Helper: wrap plain text (no pipeline transform)
+    let baseline_for_text = baseline.to_string();
+    let tokenizer_for_text = tokenizer.to_string();
     let text_result =
         |text: String, pag: Option<Pagination>, sort: Option<SortInfo>| -> FormatResult {
             let chars = text.len();
@@ -161,7 +252,7 @@ pub fn format_output(
                     raw_chars: chars,
                     output_chars: chars,
                     pre_trim_chars: chars,
-                    estimated_tokens: chars * 10 / 35,
+                    estimated_tokens: token_counter.count(&text),
                     compression_ratio: 1.0,
                     format: "text".to_string(),
                     truncated: false,
@@ -172,6 +263,11 @@ pub fn format_output(
                     chunk_number: 1,
                     provider_pagination: pag,
                     provider_sort: sort,
+                    dedup_savings_pct: 0.0,
+                    encoder_savings_pct: 0.0,
+                    combined_savings_pct: 0.0,
+                    baseline: baseline_for_text.clone(),
+                    tokenizer: tokenizer_for_text.clone(),
                 },
                 content: text,
             }
@@ -734,6 +830,48 @@ mod tests {
         assert_eq!(result.metadata.compression_ratio, 1.0);
         assert_eq!(result.metadata.format, "text");
         assert!(!result.metadata.truncated);
+    }
+
+    #[test]
+    fn test_format_metadata_savings_split() {
+        // Multi-issue payload so the encoder actually compresses below
+        // the JSON pretty baseline.
+        let issues: Vec<_> = (0..20).map(|_| sample_issue()).collect();
+        let output = ToolOutput::Issues(issues, None);
+        let result = format_output(output, Some("toon"), None, None).unwrap();
+
+        // Typed-domain path: dedup contributes nothing here.
+        assert_eq!(result.metadata.dedup_savings_pct, 0.0);
+        // Encoder savings must be in [0, 1).
+        assert!(
+            (0.0..1.0).contains(&result.metadata.encoder_savings_pct),
+            "encoder savings out of range: {}",
+            result.metadata.encoder_savings_pct
+        );
+        // Combined == encoder when dedup is zero.
+        assert_eq!(
+            result.metadata.combined_savings_pct,
+            result.metadata.encoder_savings_pct
+        );
+        // §Savings Accounting demands a named baseline + tokenizer.
+        assert_eq!(result.metadata.baseline, "json_pretty");
+        assert!(
+            !result.metadata.tokenizer.is_empty(),
+            "tokenizer must be set"
+        );
+    }
+
+    #[test]
+    fn test_format_metadata_passthrough_savings_zero() {
+        // Plain-text passthrough has no encoder hop, so all three savings
+        // must be zero — but baseline / tokenizer still populate.
+        let output = ToolOutput::Text("nothing to compress".into());
+        let result = format_output(output, None, None, None).unwrap();
+        assert_eq!(result.metadata.dedup_savings_pct, 0.0);
+        assert_eq!(result.metadata.encoder_savings_pct, 0.0);
+        assert_eq!(result.metadata.combined_savings_pct, 0.0);
+        assert_eq!(result.metadata.baseline, "json_pretty");
+        assert!(!result.metadata.tokenizer.is_empty());
     }
 
     #[test]

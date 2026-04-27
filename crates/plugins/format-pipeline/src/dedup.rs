@@ -44,8 +44,11 @@
 //! ```
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
+
+use crate::near_ref::{DeltaField, NearRefConfig, extract_delta};
 
 /// 128-bit content fingerprint (first 16 bytes of SHA-256).
 pub type ContentHash = [u8; 16];
@@ -103,6 +106,11 @@ struct CacheEntry {
     /// Anonymized hash of the primary file-path argument (None for non-file
     /// tools). Used as the invalidation key.
     file_path_hash: Option<String>,
+    /// Optional cached body for Type-2 (near-duplicate) reference hints.
+    /// Populated only when the caller used `insert_with_body` (i.e. when
+    /// `dedup.near_ref_enabled` is on). `Arc<String>` keeps cloning
+    /// cheap when the cache holds multiple references to the same body.
+    body_snapshot: Option<Arc<String>>,
 }
 
 /// Session-scoped deduplication cache.
@@ -177,15 +185,74 @@ impl DedupCache {
         tool_kind: ToolKind,
         file_path_hash: Option<String>,
     ) {
+        self.insert_inner(hash, tool_call_id.into(), tool_kind, file_path_hash, None);
+    }
+
+    /// Insert a fresh response and retain its body for Type-2
+    /// (near-duplicate) hint extraction. Used when
+    /// `dedup.near_ref_enabled` is on; otherwise prefer [`Self::insert`]
+    /// to avoid the extra allocation.
+    pub fn insert_with_body(
+        &mut self,
+        hash: ContentHash,
+        tool_call_id: impl Into<String>,
+        tool_kind: ToolKind,
+        file_path_hash: Option<String>,
+        body: Arc<String>,
+    ) {
+        self.insert_inner(
+            hash,
+            tool_call_id.into(),
+            tool_kind,
+            file_path_hash,
+            Some(body),
+        );
+    }
+
+    fn insert_inner(
+        &mut self,
+        hash: ContentHash,
+        tool_call_id: String,
+        tool_kind: ToolKind,
+        file_path_hash: Option<String>,
+        body_snapshot: Option<Arc<String>>,
+    ) {
         if self.entries.len() >= self.capacity {
             self.entries.pop_front();
         }
         self.entries.push_back(CacheEntry {
             hash,
-            tool_call_id: tool_call_id.into(),
+            tool_call_id,
             tool_kind,
             file_path_hash,
+            body_snapshot,
         });
+    }
+
+    /// Look for a Type-2 near-duplicate match in the cache. Walks entries
+    /// from newest to oldest; the first one whose retained body produces
+    /// a valid delta against `new_body` (per [`extract_delta`]) wins.
+    /// Returns the matched `tool_call_id` plus the field-level deltas.
+    ///
+    /// Returns `None` when:
+    /// - no entry has a body snapshot,
+    /// - no entry's delta against `new_body` clears the eligibility
+    ///   gate (size, scalar-only, key-set match),
+    /// - or `new_body` itself is too short to bother.
+    pub fn find_near_ref(
+        &self,
+        new_body: &str,
+        config: &NearRefConfig,
+    ) -> Option<(String, Vec<DeltaField>)> {
+        for entry in self.entries.iter().rev() {
+            let Some(body) = entry.body_snapshot.as_ref() else {
+                continue;
+            };
+            if let Some(deltas) = extract_delta(body.as_str(), new_body, config) {
+                return Some((entry.tool_call_id.clone(), deltas));
+            }
+        }
+        None
     }
 
     /// Invalidate all cached `FileRead` entries whose path hash matches.

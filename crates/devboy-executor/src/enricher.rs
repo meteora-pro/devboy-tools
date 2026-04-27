@@ -78,7 +78,14 @@ impl ToolEnricher for FormatPipelineEnricher {
         safe_insert(
             schema,
             "format",
-            PropertySchema::string_enum(&["toon", "json"], "Output format (default: toon)"),
+            PropertySchema::string_enum(
+                &["toon", "json", "mckp"],
+                "Output format. \
+                 `toon` (default) is the legacy token-optimised custom format; \
+                 `json` is the pretty-printed baseline; \
+                 `mckp` is the format-adaptive encoder from Paper 2 — best for \
+                 array/object payloads on `o200k_base` tokenizers, key-lossless.",
+            ),
         );
 
         // Token budget — LLM controls response size
@@ -146,9 +153,14 @@ mod tests {
         let mut schema = ToolSchema::new();
         enricher.enrich_schema("get_issues", &mut schema);
 
-        // format
+        // format — `mckp` was added in PR for issue #203 follow-up so the
+        // LLM can pick the Paper 2 encoder explicitly when its tokenizer
+        // family makes it preferable to TOON.
         let format = schema.properties.get("format").unwrap();
-        assert_eq!(format.enum_values, Some(vec!["toon".into(), "json".into()]));
+        assert_eq!(
+            format.enum_values,
+            Some(vec!["toon".into(), "json".into(), "mckp".into()])
+        );
 
         // budget
         let budget = schema.properties.get("budget").unwrap();
