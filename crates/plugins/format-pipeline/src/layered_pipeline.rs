@@ -88,13 +88,6 @@ pub struct ProcessedResponse {
     pub tokens_final: u32,
 }
 
-/// Convert char count to a token estimate.
-/// Matches the Python extractor's `chars/4` approximation — keep in sync.
-#[inline]
-fn est_tokens(chars: usize) -> u32 {
-    (chars.max(4) / 4) as u32
-}
-
 /// Session-scoped layered pipeline.
 ///
 /// Holds mutable dedup state plus the full configuration. Each
@@ -146,10 +139,30 @@ impl LayeredPipeline {
         self.dedup.partition()
     }
 
+    /// Drop every cache entry tagged with `file_path`. Called by the host
+    /// after a mutating tool (`Edit` / `Write` / `MultiEdit` / …) so the
+    /// next `Read` of the same file returns the fresh body, not a hint.
+    pub fn invalidate_file(&mut self, file_path: &str) -> usize {
+        let hash = crate::dedup_util::file_path_hash(file_path);
+        self.dedup.invalidate_file(&hash)
+    }
+
+    /// Token count for `text` under the active tokenizer profile.
+    ///
+    /// Always routed through [`TokenizerProfile::count_tokens`] so a
+    /// custom `chars_per_token` set in `[profiles.tokenizer.variants]`
+    /// actually takes effect — earlier versions hard-coded `chars/4`
+    /// for the heuristic branch and silently ignored the config knob.
+    /// For Python-extractor parity, the matching variant ships
+    /// `chars_per_token = 4.0`.
+    fn tokens(&self, text: &str) -> u32 {
+        self.config.effective_tokenizer_profile().count_tokens(text) as u32
+    }
+
     /// Dispatch a tool response through the 4-layer pipeline.
     pub fn process(&mut self, input: ToolResponseInput<'_>) -> ProcessedResponse {
         self.event_counter += 1;
-        let baseline_tokens = est_tokens(input.content.len());
+        let baseline_tokens = self.tokens(input.content);
 
         // Mutation-aware invalidation must fire even for tiny Edit responses —
         // the invalidation itself is correctness-critical, not an optimization.
@@ -194,7 +207,7 @@ impl LayeredPipeline {
                 self.config.dedup.hint_verbosity.to_runtime(),
                 Some(tool_kind),
             );
-            let tokens_final = est_tokens(hint.len());
+            let tokens_final = self.tokens(&hint);
             let out = ProcessedResponse {
                 output: hint,
                 layer: Layer::L0,
@@ -213,14 +226,67 @@ impl LayeredPipeline {
             return out;
         }
 
-        // Not a duplicate — insert into cache for future reference.
+        // Not byte-identical — try Type-2 (near-duplicate) hint when
+        // enabled. The cache must hold a body snapshot for at least one
+        // matching prior entry; otherwise this is a no-op fall-through
+        // to L1.
+        if endpoint_ok && self.config.dedup.near_ref_enabled {
+            let near_cfg = crate::near_ref::NearRefConfig::default();
+            if let Some((reference_tool_call_id, deltas)) =
+                self.dedup.find_near_ref(input.content, &near_cfg)
+            {
+                let hint = crate::near_ref::render_near_ref_hint(&reference_tool_call_id, &deltas);
+                let tokens_final = self.tokens(&hint);
+                let out = ProcessedResponse {
+                    output: hint,
+                    layer: Layer::L0,
+                    format_or_template: Some("hint_near".into()),
+                    tokens_saved: baseline_tokens as i64 - tokens_final as i64,
+                    tokens_final,
+                };
+                self.emit_event(
+                    &input,
+                    &out,
+                    None,
+                    Some(&content_sha_hex),
+                    file_path_hash.as_deref(),
+                    None,
+                );
+                // Even on a near-ref hit, still cache the *new* body so
+                // a later turn that drifts further can build a delta off
+                // the most recent state.
+                let tc_hash = short_hash(input.tool_call_id);
+                self.dedup.insert_with_body(
+                    content_hash_value,
+                    tc_hash,
+                    tool_kind,
+                    file_path_hash.clone(),
+                    std::sync::Arc::new(input.content.to_string()),
+                );
+                return out;
+            }
+        }
+
+        // Not a duplicate — insert into cache for future reference. When
+        // near-ref is enabled, also retain the body so future turns can
+        // diff against it; otherwise stick to the cheaper hash-only entry.
         let tc_hash = short_hash(input.tool_call_id);
-        self.dedup.insert(
-            content_hash_value,
-            tc_hash.clone(),
-            tool_kind,
-            file_path_hash.clone(),
-        );
+        if self.config.dedup.near_ref_enabled {
+            self.dedup.insert_with_body(
+                content_hash_value,
+                tc_hash.clone(),
+                tool_kind,
+                file_path_hash.clone(),
+                std::sync::Arc::new(input.content.to_string()),
+            );
+        } else {
+            self.dedup.insert(
+                content_hash_value,
+                tc_hash.clone(),
+                tool_kind,
+                file_path_hash.clone(),
+            );
+        }
 
         // === Shape classification (used by L1/L2) ===
         let classified = classify(input.content);
@@ -233,7 +299,7 @@ impl LayeredPipeline {
             && self.config.templates.is_template_active(&t_id)
             && let Some(body) = crate::templates::apply_by_id(&t_id, input.content, &classified)
         {
-            let tokens_final = est_tokens(body.len());
+            let tokens_final = self.tokens(&body);
             if tokens_final < baseline_tokens {
                 let out = ProcessedResponse {
                     output: body,
@@ -258,7 +324,7 @@ impl LayeredPipeline {
         if let Some((fmt_id, body)) =
             crate::mckp_router::route(&self.config.mckp, input.content, &classified)
         {
-            let tokens_final = est_tokens(body.len());
+            let tokens_final = self.tokens(&body);
             if tokens_final < baseline_tokens {
                 let out = ProcessedResponse {
                     output: body,
@@ -352,7 +418,7 @@ impl LayeredPipeline {
             is_dedup_hit: matches!(out.layer, Layer::L0),
             layer_used: out.layer,
             template_id: template_id.map(String::from),
-            tokens_baseline: est_tokens(input.content.len()),
+            tokens_baseline: self.tokens(input.content),
             tokens_final: out.tokens_final,
             context_partition: self.dedup.partition() as u32,
             is_sidechain: input.is_sidechain,
@@ -665,5 +731,97 @@ mod tests {
         // First entry now evicted (capacity 12), so recalling it should be Fresh.
         let o = p.process(input("tc_recheck", "Bash", None, &distinct[0]));
         assert_eq!(o.layer, Layer::L3);
+    }
+
+    #[test]
+    fn tokens_method_falls_back_to_heuristic_by_default() {
+        let cfg = AdaptiveConfig::default();
+        // Default profile is "auto" → resolves to anthropic_class which now
+        // selects O200kBase BPE. Pipeline.tokens should therefore *not* match
+        // the legacy chars/4 estimate on a sufficiently long body.
+        let p = LayeredPipeline::new("s_tk".into(), cfg);
+        let body = "a".repeat(2_000);
+        let bpe_count = p.tokens(&body);
+        let heuristic = (body.len() / 4) as u32;
+        // BPE on a long run of a single character compresses much better than
+        // chars/4 — assert they differ (and BPE is smaller, the whole point of
+        // bringing in tiktoken-rs).
+        assert!(
+            bpe_count < heuristic,
+            "expected BPE count {bpe_count} < heuristic {heuristic} on a degenerate input"
+        );
+    }
+
+    #[test]
+    fn near_ref_enabled_emits_delta_hint_for_pipeline_polling() {
+        // Two responses to the same MCP endpoint differing only in
+        // `status` and `duration` — the canonical Type-2 case.
+        let body_a = format!(
+            r#"{{"id":42,"name":"deploy","status":"pending","duration":10,"url":"https://example.com/p/42","commit_sha":"abcd","triggered_by":"webhook","preview":"{}"}}"#,
+            "x".repeat(500)
+        );
+        let body_b = format!(
+            r#"{{"id":42,"name":"deploy","status":"success","duration":42,"url":"https://example.com/p/42","commit_sha":"abcd","triggered_by":"webhook","preview":"{}"}}"#,
+            "x".repeat(500)
+        );
+
+        let mut cfg = AdaptiveConfig::default();
+        cfg.dedup.near_ref_enabled = true;
+        let mut p = LayeredPipeline::new("s_near".into(), cfg);
+
+        let r1 = p.process(input("tc_pipeline_1", "Bash", None, &body_a));
+        assert_eq!(r1.layer, Layer::L3, "first call must be fresh");
+
+        let r2 = p.process(input("tc_pipeline_2", "Bash", None, &body_b));
+        assert_eq!(r2.layer, Layer::L0, "second call must hit L0 via near-ref");
+        assert_eq!(r2.format_or_template.as_deref(), Some("hint_near"));
+        assert!(
+            r2.output.contains("near-ref"),
+            "expected near-ref hint, got `{}`",
+            r2.output
+        );
+        // Both differing scalar fields must show in the hint.
+        assert!(r2.output.contains("status"));
+        assert!(r2.output.contains("duration"));
+        // Compaction-friendly bound — the rendered hint must be tiny.
+        assert!(
+            r2.output.len() < body_b.len() / 5,
+            "near-ref hint should be far smaller than the body"
+        );
+    }
+
+    #[test]
+    fn near_ref_disabled_falls_through_when_bodies_drift() {
+        let body_a = format!(
+            r#"{{"id":42,"status":"pending","preview":"{}"}}"#,
+            "x".repeat(500)
+        );
+        let body_b = format!(
+            r#"{{"id":42,"status":"success","preview":"{}"}}"#,
+            "x".repeat(500)
+        );
+
+        let mut cfg = AdaptiveConfig::default();
+        cfg.dedup.near_ref_enabled = false; // explicit
+        let mut p = LayeredPipeline::new("s_no_near".into(), cfg);
+        let _ = p.process(input("tc_a", "Bash", None, &body_a));
+        let r2 = p.process(input("tc_b", "Bash", None, &body_b));
+        // Without near-ref, the second call goes to L3 (or L2 if shape
+        // happens to match) — but never to L0/hint_near.
+        assert_ne!(r2.format_or_template.as_deref(), Some("hint_near"));
+    }
+
+    #[test]
+    fn tokens_method_honours_profile_chars_per_token() {
+        let mut cfg = AdaptiveConfig::default();
+        // Force the active tokenizer to `ollama_bpe`, which ships
+        // `chars_per_token = 3.8` and `bpe = Heuristic`. The pipeline
+        // must respect the configured ratio (8 / 3.8 ≈ 2.1 → 3 tokens
+        // after ceil); earlier versions silently hard-coded chars/4
+        // and produced 2 instead — Copilot review on PR #207.
+        cfg.profiles.tokenizer.active = "ollama_bpe".into();
+        let p = LayeredPipeline::new("s_h".into(), cfg);
+        let body = "abcdefgh"; // 8 chars
+        assert_eq!(p.tokens(body), 3);
     }
 }

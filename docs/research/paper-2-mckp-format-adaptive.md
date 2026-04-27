@@ -913,11 +913,12 @@ Total: **242 tests** (233 lib + 6 bin + 3 doctests) passing; `cargo clippy --all
 
 ### Deferred to follow-up work
 
-- [ ] **MCP middleware integration** — wire `LayeredPipeline` + `DedupCache` per-session state into `devboy-mcp` request path (hook after tool call returns, before response streams to client).
-- [ ] **LLM comprehension eval** — run 100 real conversations × {Sonnet 4.6 / Haiku 4.5 / GLM-4.6 / gpt-oss:20b / gemma4:26b} on the GPU server, measure accuracy delta vs full-response baseline (tracked separately — GPU-bound).
-- [ ] **Near-dup (Type-2) hints** — `> [near-ref: tc_42, status: pending→success]`. Requires delta extraction and `delta_match` primitive. Projected extra yield: +3-5 pp on pipeline-polling endpoints.
+- [x] **MCP middleware integration** — `crates/devboy-mcp/src/layered.rs` (`SessionPipeline`) wraps `LayeredPipeline` per-session state and is consulted from `handle_tools_call` for every successful response. Mutating tools (`Edit` / `Write` / `MultiEdit` / `NotebookEdit`) fire `invalidate_file` before dispatch; the host advances the partition counter on `notifications/devboy/compact` or the `compact_pipeline_cache` internal tool. Wired in PR for issue #203 follow-up (2026-04-25).
+- [x] **Near-dup (Type-2) hints** — `crates/plugins/format-pipeline/src/near_ref.rs` plus `DedupCache::insert_with_body` / `find_near_ref`. Emits `> [near-ref: tc_X, status: a→b, …]` for pipeline-polling endpoints when `dedup.near_ref_enabled = true`. Eligibility: scalar-only diffs, matched key sets, ≤ 50 bytes of delta payload, ≥ 500 bytes body.
+- [x] **Format round-trip correctness tests** — `crates/plugins/format-pipeline/src/round_trip.rs` declares a `DataLoss` profile per encoder and asserts every input key reappears in the encoded output (textually). `mckp_v2` and `json_compact` are gated at `DataLoss::None`; naive `csv` / `csv_from_md` are documented `DataLoss::TopLevel` and therefore cannot be made the production default.
+- [ ] **LLM comprehension eval (5-model batch)** — partial: 109-question evaluation across {`glm-5.1`, `gpt-oss:20b`, `gemma4:26b`} shipped in §Encoder Bug Postmortem. Outstanding: same fixtures × {`claude-sonnet-4-6`, `claude-haiku-4-5`} on the GPU server.
 - [ ] **Team- and provider-shared fingerprints** (§Deployment Patterns B/C). Requires shared-bucket protocol and k-anonymity enforcement.
-- [ ] **Format round-trip correctness tests** — sample 50 L1/L2-encoded responses, verify that a downstream decoder recovers full information vs the raw baseline.
+- [ ] **TOON → MCKP default switch** — `OutputFormat::Mckp` exists and is wired into all typed-domain transforms; switching the default needs a major-version bump and a one-shot migration warning surfaced in `format_output`.
 
 ## Savings Accounting
 
