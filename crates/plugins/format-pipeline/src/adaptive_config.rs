@@ -613,7 +613,7 @@ pub struct EnrichmentConfig {
     #[serde(default = "default_prefetch_timeout_ms")]
     pub prefetch_timeout_ms: u32,
 
-    /// Honour `[tools.<name>].rate_limit_class` when scheduling
+    /// Honour `[tools.<name>].rate_limit_host` when scheduling
     /// prefetches. When `true`, the host counts how many prefetches
     /// per class are inflight this turn and skips new ones once the
     /// cap is hit. Default: `true` — the only reason to disable is
