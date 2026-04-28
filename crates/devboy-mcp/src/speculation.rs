@@ -621,6 +621,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stress_50_requests_3_hosts_cap_2_per_host() {
+        // QA: realistic load — 50 prefetches fan out across 3 hosts
+        // (api.github.com, api.openai.com, gitlab.com), per-host cap 2
+        // and max_parallel 6. Expect:
+        //   - settled count ≤ max_parallel × ceil(host_groups / cap)
+        //   - skip count = 50 − settled
+        //   - no panics, no orphan tasks at the end.
+        let count = Arc::new(AtomicU32::new(0));
+        let mut engine = SpeculationEngine::new(
+            cfg(2_000, 6),
+            Arc::new(MockDispatcher {
+                delay_ms: 5,
+                call_count: count.clone(),
+                fail_for: None,
+            }),
+        )
+        .with_per_host_cap(2);
+        let hosts = ["api.github.com", "api.openai.com", "gitlab.com"];
+        let mut requests = Vec::new();
+        for i in 0..50 {
+            requests.push(req("ToolX", Some(hosts[i % hosts.len()])));
+        }
+        let skips = engine.dispatch(requests).await;
+        // First batch: only 6 fit (max_parallel), rest skip on max_parallel
+        // — host saturation kicks in only after some have completed.
+        assert!(
+            skips.len() >= 44,
+            "expected ≥ 44 skipped (cap 6 + per-host limits), got {}",
+            skips.len()
+        );
+        // Settled count = up to 6 (max_parallel cap)
+        let settled = engine.wait_within().await;
+        let settled_ok = settled
+            .iter()
+            .filter(|o| matches!(o, PrefetchOutcome::Settled { .. }))
+            .count();
+        assert!(
+            settled_ok <= 6,
+            "settled must respect max_parallel=6, got {settled_ok}"
+        );
+        engine.shutdown().await;
+        // No orphans.
+        assert_eq!(engine.pending(), 0);
+    }
+
+    #[tokio::test]
     async fn rate_limit_disabled_in_config_lets_everything_through() {
         let count = Arc::new(AtomicU32::new(0));
         let mut cfg_no_rl = cfg(500, 10);
