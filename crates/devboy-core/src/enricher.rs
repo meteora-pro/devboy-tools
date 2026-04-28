@@ -37,6 +37,34 @@ pub trait ToolEnricher: Send + Sync {
     fn value_model(&self, _tool_name: &str) -> Option<ToolValueModel> {
         None
     }
+
+    /// Build the JSON arguments for a *speculatively pre-fetched*
+    /// follow-up call.
+    ///
+    /// Given the tool that just produced `prev_result` (`prev_tool`),
+    /// the follow-up tool's `FollowUpLink` (with `projection` /
+    /// `projection_arg` set), the host asks the enricher: "what `args`
+    /// should I pass to `<follow-up tool>`?"
+    ///
+    /// Returns:
+    ///
+    /// - `Some(json)` — emit one prefetch request per object in the
+    ///   returned array (planner caps at `max_parallel_prefetches`).
+    ///   Top-level shape is `[{ <args1> }, { <args2> }, …]`.
+    /// - `None` (default) — provider has no opinion; the host falls
+    ///   back to the generic projection in `link.projection_arg`.
+    ///
+    /// Built-in enrichers should override this for the high-volume
+    /// follow-up chains identified in `paper3_corpus_findings.md`
+    /// (Glob → Read, Grep → Read, WebSearch → WebFetch, …).
+    fn project_args(
+        &self,
+        _prev_tool: &str,
+        _prev_result: &Value,
+        _link: &crate::tool_value_model::FollowUpLink,
+    ) -> Option<Value> {
+        None
+    }
 }
 
 /// JSON Schema property definition for a tool parameter.
