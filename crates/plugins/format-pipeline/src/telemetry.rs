@@ -315,6 +315,26 @@ pub struct EnrichmentEffectiveness {
     /// "we saved this much context" headline for `tune analyze`.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub inference_tokens_saved: u64,
+
+    // ─── Speculative-execution race instrumentation ─────────────────
+    /// Number of speculative tool-calls the host actually dispatched
+    /// out-of-band (a subset of `total_prefetches`: the fraction the
+    /// host *successfully scheduled*, not just plans the planner
+    /// produced).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub prefetch_dispatched: u32,
+    /// Of `prefetch_dispatched`, the count where the prefetch result
+    /// landed in the dedup cache *before* the LLM asked for the same
+    /// tool, so the LLM's call collapsed to an L0 hit. The other axis
+    /// of "did the speculation pay off" — independent of textual
+    /// citation.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub prefetch_won_race: u32,
+    /// Prefetches the LLM never asked for in the same session. Wasted
+    /// API quota / dollars; high values trigger R7's per-tool
+    /// auto-disable in `tune analyze`.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub prefetch_wasted: u32,
 }
 
 impl EnrichmentEffectiveness {
@@ -416,6 +436,48 @@ impl EnrichmentEffectiveness {
             .saturating_add(predicted_cost_tokens as u64);
     }
 
+    /// Record that the host actually dispatched a speculative tool
+    /// call (a subset of `total_prefetches`: planner produced a plan
+    /// *and* the dispatcher succeeded in scheduling it). Increment
+    /// alongside `total_prefetches` from the host side; mismatches
+    /// between the two surface as "planner produced more than
+    /// dispatcher could schedule" — concurrency cap saturated.
+    pub fn record_prefetch_dispatched(&mut self) {
+        self.prefetch_dispatched = self.prefetch_dispatched.saturating_add(1);
+    }
+
+    /// Record that a dispatched prefetch landed in the dedup cache
+    /// before the LLM asked for the same tool, so the LLM's call
+    /// collapsed to an L0 hit. Independent of textual citation — the
+    /// LLM still issued the tool, but our prefetched body served the
+    /// answer at zero added latency.
+    pub fn record_prefetch_won_race(&mut self) {
+        self.prefetch_won_race = self.prefetch_won_race.saturating_add(1);
+    }
+
+    /// Record that a dispatched prefetch was never claimed by the
+    /// LLM during the rest of the session (offline post-pass tally).
+    /// High `prefetch_wasted / prefetch_dispatched` ratio is the
+    /// signal `tune analyze` watches for R7's per-tool auto-disable.
+    pub fn record_prefetch_wasted(&mut self) {
+        self.prefetch_wasted = self.prefetch_wasted.saturating_add(1);
+    }
+
+    /// Fraction of dispatched prefetches that beat the LLM to the
+    /// dedup cache. `None` when nothing was dispatched.
+    pub fn prefetch_race_win_rate(&self) -> Option<f32> {
+        (self.prefetch_dispatched > 0)
+            .then(|| self.prefetch_won_race as f32 / self.prefetch_dispatched as f32)
+    }
+
+    /// Fraction of dispatched prefetches that were never claimed by
+    /// the LLM. `None` when nothing was dispatched. Higher means the
+    /// planner's speculation was wasted — drive R7's auto-disable.
+    pub fn prefetch_waste_rate(&self) -> Option<f32> {
+        (self.prefetch_dispatched > 0)
+            .then(|| self.prefetch_wasted as f32 / self.prefetch_dispatched as f32)
+    }
+
     /// Compact one-line summary suitable for `tune analyze` output.
     pub fn report(&self) -> String {
         let hit = self
@@ -430,16 +492,27 @@ impl EnrichmentEffectiveness {
             .cost_overrun_rate()
             .map(|r| format!("{:.1}%", r * 100.0))
             .unwrap_or_else(|| "n/a".into());
+        let race = self
+            .prefetch_race_win_rate()
+            .map(|r| format!("{:.1}%", r * 100.0))
+            .unwrap_or_else(|| "n/a".into());
+        let waste = self
+            .prefetch_waste_rate()
+            .map(|r| format!("{:.1}%", r * 100.0))
+            .unwrap_or_else(|| "n/a".into());
         format!(
             "prefetch_hit={hit} decline_recall_loss={loss} cost_overrun={overrun} \
+             race_win={race} waste={waste} \
              calls_saved={saved} (prefetch={pf}, dedup={dd}, fail_fast={ff}) \
-             tokens_saved={ts} prefetches={p} declines={d} predictions={pr}",
+             tokens_saved={ts} prefetches={p} dispatched={dp} \
+             declines={d} predictions={pr}",
             saved = self.total_calls_saved(),
             pf = self.inference_calls_saved_prefetch,
             dd = self.inference_calls_saved_dedup,
             ff = self.inference_calls_saved_fail_fast,
             ts = self.inference_tokens_saved,
             p = self.total_prefetches,
+            dp = self.prefetch_dispatched,
             d = self.total_declines,
             pr = self.total_predictions,
         )
@@ -1046,6 +1119,86 @@ mod tests {
             inference_calls_saved_dedup: 9,
             inference_calls_saved_fail_fast: 2,
             inference_tokens_saved: 8_400,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: EnrichmentEffectiveness = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, e);
+    }
+
+    // ─── Speculative-execution race instrumentation ─────────────────
+
+    #[test]
+    fn record_prefetch_dispatched_increments_counter() {
+        let mut e = EnrichmentEffectiveness::default();
+        e.record_prefetch_dispatched();
+        e.record_prefetch_dispatched();
+        e.record_prefetch_dispatched();
+        assert_eq!(e.prefetch_dispatched, 3);
+    }
+
+    #[test]
+    fn race_win_rate_returns_some_only_when_dispatched() {
+        let e0 = EnrichmentEffectiveness::default();
+        assert!(e0.prefetch_race_win_rate().is_none());
+        let e = EnrichmentEffectiveness {
+            prefetch_dispatched: 10,
+            prefetch_won_race: 7,
+            ..Default::default()
+        };
+        let rate = e.prefetch_race_win_rate().unwrap();
+        assert!((rate - 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn waste_rate_separates_dispatched_from_total_prefetches() {
+        // Distinct from `prefetch_hit_rate`: hit_rate is "did the LLM
+        // text-cite the prefetched body", waste_rate is "did the LLM
+        // never call the same tool at all". Different denominators.
+        let e = EnrichmentEffectiveness {
+            total_prefetches: 12,
+            prefetch_dispatched: 10, // 2 plans the dispatcher dropped
+            prefetch_wasted: 4,      // 4 of 10 dispatched never claimed
+            ..Default::default()
+        };
+        let rate = e.prefetch_waste_rate().unwrap();
+        assert!((rate - 0.4).abs() < 1e-6);
+        assert!(e.prefetch_race_win_rate().unwrap().abs() < 1e-6); // 0/10 = 0
+    }
+
+    #[test]
+    fn report_includes_race_and_waste_when_dispatched() {
+        let e = EnrichmentEffectiveness {
+            total_prefetches: 10,
+            prefetch_dispatched: 10,
+            prefetch_won_race: 6,
+            prefetch_wasted: 2,
+            ..Default::default()
+        };
+        let r = e.report();
+        assert!(r.contains("race_win=60.0%"), "report missing race_win: {r}");
+        assert!(r.contains("waste=20.0%"), "report missing waste: {r}");
+        assert!(
+            r.contains("dispatched=10"),
+            "report missing dispatched: {r}"
+        );
+    }
+
+    #[test]
+    fn race_fields_skip_serialise_when_zero() {
+        let e = EnrichmentEffectiveness::default();
+        let json = serde_json::to_string(&e).unwrap();
+        assert!(!json.contains("prefetch_dispatched"));
+        assert!(!json.contains("prefetch_won_race"));
+        assert!(!json.contains("prefetch_wasted"));
+    }
+
+    #[test]
+    fn race_fields_round_trip_when_populated() {
+        let e = EnrichmentEffectiveness {
+            prefetch_dispatched: 12,
+            prefetch_won_race: 8,
+            prefetch_wasted: 3,
             ..Default::default()
         };
         let json = serde_json::to_string(&e).unwrap();
