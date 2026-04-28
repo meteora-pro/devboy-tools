@@ -190,6 +190,27 @@ impl ConfluenceClient {
         self.send_json(request).await
     }
 
+    pub async fn post_empty_json<B>(&self, path: &str, body: &B) -> Result<()>
+    where
+        B: Serialize + ?Sized,
+    {
+        let request = self
+            .http
+            .post(self.rest_api_url(path))
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(body);
+        self.send_empty(request).await
+    }
+
+    pub async fn delete_empty(&self, path: &str) -> Result<()> {
+        let request = self
+            .http
+            .delete(self.rest_api_url(path))
+            .header(reqwest::header::ACCEPT, "application/json");
+        self.send_empty(request).await
+    }
+
     async fn send_json<T>(&self, request: RequestBuilder) -> Result<T>
     where
         T: DeserializeOwned,
@@ -210,6 +231,22 @@ impl ConfluenceClient {
             .json()
             .await
             .map_err(|e| Error::InvalidData(e.to_string()))
+    }
+
+    async fn send_empty(&self, request: RequestBuilder) -> Result<()> {
+        let response = self
+            .apply_auth(request)
+            .send()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_default();
+            return Err(Error::from_status(status.as_u16(), message));
+        }
+
+        Ok(())
     }
 
     fn apply_auth(&self, request: RequestBuilder) -> RequestBuilder {
@@ -422,6 +459,12 @@ struct ConfluenceLabel {
     label: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct ConfluenceWriteLabel<'a> {
+    prefix: &'static str,
+    name: &'a str,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct ConfluenceAncestor {
     id: String,
@@ -532,6 +575,38 @@ fn body_value(body: &ConfluenceBody) -> Option<String> {
         .and_then(|value| value.value.clone())
         .or_else(|| body.storage.as_ref().and_then(|value| value.value.clone()))
         .or_else(|| body.value.clone())
+}
+
+fn extract_labels(page: &ConfluencePage) -> Vec<String> {
+    page.labels
+        .as_ref()
+        .or_else(|| {
+            page.metadata
+                .as_ref()
+                .and_then(|metadata| metadata.labels.as_ref())
+        })
+        .map(|labels| {
+            labels
+                .results
+                .iter()
+                .filter_map(|label| label.name.clone().or_else(|| label.label.clone()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn normalize_labels(labels: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for label in labels {
+        let trimmed = label.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !out.iter().any(|existing| existing == trimmed) {
+            out.push(trimmed.to_string());
+        }
+    }
+    out
 }
 
 fn page_excerpt(page: &ConfluencePage) -> Option<String> {
@@ -1160,6 +1235,43 @@ impl ConfluenceClient {
         Ok(ancestors)
     }
 
+    async fn add_labels(&self, page_id: &str, labels: &[String]) -> Result<()> {
+        let labels = normalize_labels(labels);
+        if labels.is_empty() {
+            return Ok(());
+        }
+
+        let payload = labels
+            .iter()
+            .map(|label| ConfluenceWriteLabel {
+                prefix: "global",
+                name: label.as_str(),
+            })
+            .collect::<Vec<_>>();
+        self.post_empty_json(&format!("content/{page_id}/label"), &payload)
+            .await
+    }
+
+    async fn sync_labels(&self, page_id: &str, desired: &[String], current: &[String]) -> Result<()> {
+        let desired = normalize_labels(desired);
+        let current = normalize_labels(current);
+
+        for label in current.iter().filter(|label| !desired.contains(*label)) {
+            let path = format!(
+                "content/{page_id}/label?name={}",
+                encode_query_value(label)
+            );
+            self.delete_empty(&path).await?;
+        }
+
+        let to_add = desired
+            .iter()
+            .filter(|label| !current.contains(*label))
+            .cloned()
+            .collect::<Vec<_>>();
+        self.add_labels(page_id, &to_add).await
+    }
+
     async fn get_spaces_v1(&self) -> Result<ProviderResult<KbSpace>> {
         let response: ConfluenceListResponse<ConfluenceSpace> = self
             .get_json("space?limit=100&type=global,personal")
@@ -1257,18 +1369,7 @@ impl ConfluenceClient {
                 excerpt: None,
             })
             .collect();
-        let labels = page
-            .metadata
-            .as_ref()
-            .and_then(|metadata| metadata.labels.as_ref())
-            .map(|labels| {
-                labels
-                    .results
-                    .iter()
-                    .filter_map(|label| label.name.clone())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let labels = extract_labels(&page);
 
         Ok(KbPageContent {
             page: summary,
@@ -1303,14 +1404,17 @@ impl ConfluenceClient {
         };
 
         let page: ConfluencePage = self.post_json("content", &payload).await?;
+        self.add_labels(&page.id, &params.labels).await?;
         Ok(map_page_summary(&self.base_url, &page))
     }
 
     async fn update_page_v1(&self, params: UpdatePageParams) -> Result<KbPage> {
-        let current_path = format!(
-            "content/{}?expand=space,version,body.storage,ancestors",
-            params.page_id
-        );
+        let current_expand = if params.labels.is_some() {
+            "space,version,body.storage,ancestors,metadata.labels"
+        } else {
+            "space,version,body.storage,ancestors"
+        };
+        let current_path = format!("content/{}?expand={current_expand}", params.page_id);
         let current: ConfluencePage = self.get_json(&current_path).await?;
 
         let current_title = current.title.clone();
@@ -1373,6 +1477,10 @@ impl ConfluenceClient {
 
         let path = format!("content/{}", params.page_id);
         let page: ConfluencePage = self.put_json(&path, &payload).await?;
+        if let Some(labels) = params.labels.as_ref() {
+            let current_labels = extract_labels(&current);
+            self.sync_labels(&params.page_id, labels, &current_labels).await?;
+        }
         Ok(map_page_summary(&self.base_url, &page))
     }
 
@@ -1450,22 +1558,7 @@ impl ConfluenceClient {
             .get_page_ancestor_chain_v2(page_id)
             .await
             .unwrap_or_default();
-        let labels = page
-            .labels
-            .as_ref()
-            .or_else(|| {
-                page.metadata
-                    .as_ref()
-                    .and_then(|metadata| metadata.labels.as_ref())
-            })
-            .map(|labels| {
-                labels
-                    .results
-                    .iter()
-                    .filter_map(|label| label.name.clone().or_else(|| label.label.clone()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let labels = extract_labels(&page);
 
         Ok(KbPageContent {
             page: summary,
@@ -1494,6 +1587,7 @@ impl ConfluenceClient {
         let page: ConfluencePage = self
             .post_json_to_api(&self.page_api_path, "pages", &payload)
             .await?;
+        self.add_labels(&page.id, &params.labels).await?;
         let mut summary = map_page_summary(&self.base_url, &page);
         if summary.space_key.is_none() {
             summary.space_key = Some(params.space_key);
@@ -1505,7 +1599,11 @@ impl ConfluenceClient {
     }
 
     async fn update_page_v2(&self, params: UpdatePageParams) -> Result<KbPage> {
-        let current_path = format!("pages/{}?body-format=storage", params.page_id);
+        let current_path = if params.labels.is_some() {
+            format!("pages/{}?body-format=storage&include-labels=true", params.page_id)
+        } else {
+            format!("pages/{}?body-format=storage", params.page_id)
+        };
         let current: ConfluencePage = self
             .get_json_from_api(&self.page_api_path, &current_path)
             .await?;
@@ -1575,6 +1673,10 @@ impl ConfluenceClient {
         let page: ConfluencePage = self
             .put_json_to_api(&self.page_api_path, &path, &payload)
             .await?;
+        if let Some(labels) = params.labels.as_ref() {
+            let current_labels = extract_labels(&current);
+            self.sync_labels(&params.page_id, labels, &current_labels).await?;
+        }
         let mut summary = map_page_summary(&self.base_url, &page);
         if summary.space_key.is_none() {
             summary.space_key = self.resolve_space_key_by_id(space_id).await?;
@@ -2394,6 +2496,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_page_posts_labels_after_create() {
+        let server = MockServer::start();
+        let create_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/rest/api/content")
+                .header("authorization", "Bearer secret-token")
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "type": "page",
+                    "title": "ADR-002",
+                    "space": { "key": "ENG" },
+                    "body": {
+                        "storage": {
+                            "value": "<p>Hello</p>",
+                            "representation": "storage"
+                        }
+                    }
+                }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "id": "43",
+                        "title": "ADR-002",
+                        "space": { "key": "ENG" },
+                        "version": { "number": 1 }
+                    }"#,
+                );
+        });
+        let labels_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/rest/api/content/43/label")
+                .header("authorization", "Bearer secret-token")
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!([
+                    { "prefix": "global", "name": "adr" },
+                    { "prefix": "global", "name": "architecture" }
+                ]));
+            then.status(200).header("content-type", "application/json").body("[]");
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        );
+        let page = client
+            .create_page(CreatePageParams {
+                space_key: "ENG".into(),
+                title: "ADR-002".into(),
+                content: "<p>Hello</p>".into(),
+                content_type: Some("storage".into()),
+                parent_id: None,
+                labels: vec!["adr".into(), "architecture".into()],
+            })
+            .await
+            .unwrap();
+
+        create_mock.assert();
+        labels_mock.assert();
+        assert_eq!(page.id, "43");
+    }
+
+    #[tokio::test]
     async fn create_page_uses_v2_pages_when_preferred() {
         let server = MockServer::start();
         let space_mock = server.mock(|when, then| {
@@ -2699,6 +2864,98 @@ mod tests {
             }
             other => panic!("expected conflict error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn update_page_replaces_labels() {
+        let server = MockServer::start();
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/content/42")
+                .query_param("expand", "space,version,body.storage,ancestors,metadata.labels");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "id": "42",
+                        "title": "ADR-001",
+                        "space": { "key": "ENG" },
+                        "version": { "number": 7 },
+                        "body": {
+                            "storage": {
+                                "value": "<p>Old</p>",
+                                "representation": "storage"
+                            }
+                        },
+                        "metadata": {
+                            "labels": {
+                                "results": [
+                                    { "name": "adr" },
+                                    { "name": "obsolete" }
+                                ]
+                            }
+                        },
+                        "ancestors": [],
+                        "_links": {}
+                    }"#,
+                );
+        });
+        let put_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/rest/api/content/42")
+                .header("authorization", "Bearer secret-token")
+                .header("content-type", "application/json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "id": "42",
+                        "title": "ADR-001 Revised",
+                        "space": { "key": "ENG" },
+                        "version": { "number": 8 }
+                    }"#,
+                );
+        });
+        let delete_mock = server.mock(|when, then| {
+            when.method(httpmock::Method::DELETE)
+                .path("/rest/api/content/42/label")
+                .query_param("name", "obsolete")
+                .header("authorization", "Bearer secret-token");
+            then.status(204);
+        });
+        let add_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/rest/api/content/42/label")
+                .header("authorization", "Bearer secret-token")
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!([
+                    { "prefix": "global", "name": "architecture" }
+                ]));
+            then.status(200).header("content-type", "application/json").body("[]");
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        );
+        let page = client
+            .update_page(UpdatePageParams {
+                page_id: "42".into(),
+                title: Some("ADR-001 Revised".into()),
+                content: Some("<p>New</p>".into()),
+                content_type: Some("storage".into()),
+                version: Some(7),
+                labels: Some(vec!["adr".into(), "architecture".into()]),
+                parent_id: None,
+            })
+            .await
+            .unwrap();
+
+        get_mock.assert();
+        put_mock.assert();
+        delete_mock.assert();
+        add_mock.assert();
+        assert_eq!(page.version, Some(8));
     }
 
     #[test]
