@@ -33,6 +33,8 @@
 //!     content: &body,
 //!     is_sidechain: false,
 //!     ts_ms: 0,
+//!     enricher_prefetched: false,
+//!     enricher_predicted_cost_tokens: 0,
 //! });
 //! // Second call with identical content emits a hint.
 //! let out2 = p.process(ToolResponseInput {
@@ -42,6 +44,8 @@
 //!     content: &body,
 //!     is_sidechain: false,
 //!     ts_ms: 10,
+//!     enricher_prefetched: false,
+//!     enricher_predicted_cost_tokens: 0,
 //! });
 //! assert!(matches!(out2.layer, devboy_format_pipeline::telemetry::Layer::L0));
 //! ```
@@ -70,6 +74,18 @@ pub struct ToolResponseInput<'a> {
     pub is_sidechain: bool,
     /// Unix milliseconds when the response was produced.
     pub ts_ms: i64,
+    /// Paper 3 — `true` when this response landed via the speculative
+    /// pre-fetch dispatcher (host called the tool ahead of the LLM
+    /// asking). Sets `PipelineEvent.enricher_prefetched` so the
+    /// offline post-pass can attribute citations.
+    /// Default `false` — the LLM emitted the call directly.
+    pub enricher_prefetched: bool,
+    /// Paper 3 — `cost_model.typical_kb`-derived prediction (in
+    /// tokens) that the planner committed to when admitting this
+    /// call. `0` when not a prefetch (LLM-emitted) — the cost-overrun
+    /// rate denominator skips events with `enricher_predicted_cost_tokens
+    /// = 0`.
+    pub enricher_predicted_cost_tokens: u32,
 }
 
 /// Output from [`LayeredPipeline::process`].
@@ -449,12 +465,11 @@ impl LayeredPipeline {
             is_sidechain: input.is_sidechain,
             ts_ms: input.ts_ms,
             sample_rate_applied: self.config.telemetry.sample_rate,
-            // Paper 3 enricher fields — populated by the planner when
-            // the call was prefetched. The live pipeline emits the
-            // call as if it came from the LLM directly; the planner
-            // overlays its bookkeeping onto the same PipelineEvent.
-            enricher_prefetched: false,
-            enricher_predicted_cost_tokens: 0,
+            // Paper 3 enricher fields — set on the input by the host
+            // when the call was issued by the speculative dispatcher.
+            // LLM-emitted calls leave both fields default (false / 0).
+            enricher_prefetched: input.enricher_prefetched,
+            enricher_predicted_cost_tokens: input.enricher_predicted_cost_tokens,
             enricher_decline_reason: None,
             cited_in_next_n_turns: None,
         };
@@ -529,6 +544,8 @@ mod tests {
             content,
             is_sidechain: false,
             ts_ms: 0,
+            enricher_prefetched: false,
+            enricher_predicted_cost_tokens: 0,
         }
     }
 

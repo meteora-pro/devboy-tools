@@ -330,8 +330,13 @@ impl SessionPipeline {
         let mut hint_parts: Vec<String> = Vec::new();
         for o in outcomes {
             match o {
-                PrefetchOutcome::Settled { tool, args, body } => {
-                    self.write_prefetch_to_cache(&tool, &args, &body);
+                PrefetchOutcome::Settled {
+                    tool,
+                    args,
+                    body,
+                    predicted_cost_tokens,
+                } => {
+                    self.write_prefetch_to_cache(&tool, &args, &body, predicted_cost_tokens);
                     hint_parts.push(format!("{tool}({})", short_args(&args)));
                 }
                 PrefetchOutcome::Failed { tool, error } => {
@@ -360,7 +365,16 @@ impl SessionPipeline {
     /// Push a settled prefetch body into the dedup cache so the LLM's
     /// future `tools/call` for the same content collapses to an L0
     /// hint. Best-effort: cache failures are logged and discarded.
-    fn write_prefetch_to_cache(&self, tool: &str, args: &serde_json::Value, body: &str) {
+    ///
+    /// `predicted_cost_tokens` is the planner's estimate at admit
+    /// time — feeds the `cost_overrun_rate` metric.
+    fn write_prefetch_to_cache(
+        &self,
+        tool: &str,
+        args: &serde_json::Value,
+        body: &str,
+        predicted_cost_tokens: u32,
+    ) {
         let Ok(mut p) = self.inner.lock() else {
             return;
         };
@@ -378,7 +392,15 @@ impl SessionPipeline {
             file_path: path,
             content: body,
             is_sidechain: false,
-            ts_ms: 0, // synthetic timestamp; planner will overwrite on real call
+            ts_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0),
+            // Tag the synthesised event so the JSONL post-pass and
+            // EnrichmentEffectiveness::accumulate can attribute
+            // citations correctly.
+            enricher_prefetched: true,
+            enricher_predicted_cost_tokens: predicted_cost_tokens,
         };
         // Reuse the regular path so the dedup cache state stays
         // consistent with main-flow inserts.
@@ -496,6 +518,9 @@ impl SessionPipeline {
                         content: &text,
                         is_sidechain: false,
                         ts_ms,
+                        // Main-flow call (LLM-emitted) — defaults stay 0/false.
+                        enricher_prefetched: false,
+                        enricher_predicted_cost_tokens: 0,
                     };
                     let out = p.process(input);
                     if matches!(out.layer, Layer::L0) {
@@ -1000,6 +1025,74 @@ mod tests {
         let snap = pipeline.enrichment_snapshot();
         assert_eq!(snap.total_prefetches, 0);
         assert_eq!(snap.prefetch_dispatched, 0);
+    }
+
+    #[tokio::test]
+    async fn prefetched_call_emits_telemetry_event_tagged_correctly() {
+        // S5: ensure the JSONL sink captures the synthetic event with
+        // enricher_prefetched=true and enricher_predicted_cost_tokens>0
+        // so the offline post-pass can attribute citations.
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = enrichment_on_config();
+        cfg.telemetry.enabled = true;
+        cfg.telemetry.path = Some(tmp.path().to_string_lossy().into_owned());
+        cfg.telemetry.flush_every_n = 1;
+
+        let mut bodies = std::collections::HashMap::new();
+        // Body must clear min_body_chars (200) for the dedup cache to
+        // touch it; otherwise the L0 path skips telemetry too.
+        bodies.insert("Read".into(), "fn main() {}\n".repeat(40));
+        let dispatcher = Arc::new(MapDispatcher {
+            bodies,
+            delay_ms: 5,
+        });
+        let pipeline = SessionPipeline::new(cfg).with_speculation(dispatcher).await;
+
+        // Glob result → triggers Read prefetch
+        let glob_body = "src/main.rs\n";
+        let _ = pipeline.process(
+            "req_1",
+            &ToolCallParams {
+                name: "Glob".to_string(),
+                arguments: Some(json!({"pattern": "src/**/*.rs"})),
+            },
+            ToolCallResult::text(glob_body.into()),
+            0,
+        );
+        let _hint = pipeline
+            .speculate_after("Glob", &Value::String(glob_body.into()))
+            .await;
+        pipeline.shutdown().await;
+
+        // Drop the pipeline to flush the JsonlSink BufWriter.
+        drop(pipeline);
+
+        // Find the JSONL file and confirm one of the events carries
+        // the prefetched flag.
+        let mut prefetched_event_lines: Vec<String> = Vec::new();
+        for entry in std::fs::read_dir(tmp.path()).unwrap() {
+            let entry = entry.unwrap();
+            if entry.path().extension().and_then(|s| s.to_str()) != Some("jsonl") {
+                continue;
+            }
+            for line in std::fs::read_to_string(entry.path()).unwrap().lines() {
+                if line.contains("\"enricher_prefetched\":true") {
+                    prefetched_event_lines.push(line.into());
+                }
+            }
+        }
+
+        assert!(
+            !prefetched_event_lines.is_empty(),
+            "expected at least one event tagged enricher_prefetched=true"
+        );
+        // The captured event must also carry a non-zero predicted cost.
+        assert!(
+            prefetched_event_lines
+                .iter()
+                .any(|l| l.contains("\"enricher_predicted_cost_tokens\":")),
+            "expected enricher_predicted_cost_tokens to be set in the event JSON"
+        );
     }
 
     #[tokio::test]
