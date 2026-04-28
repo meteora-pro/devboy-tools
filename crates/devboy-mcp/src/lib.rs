@@ -28,6 +28,7 @@ pub mod proxy;
 pub mod routing;
 pub mod server;
 pub mod signature_match;
+pub mod speculation;
 pub mod telemetry;
 pub mod tools;
 pub mod transport;
