@@ -66,7 +66,9 @@ pub use tool_category::ToolCategory;
 
 // Re-export Paper 3 tool value model — provider-shipped per-tool
 // metadata for the enrichment knapsack planner.
-pub use tool_value_model::{CostModel, FieldGroup, FollowUpLink, ToolValueModel, ValueClass};
+pub use tool_value_model::{
+    CostModel, FieldGroup, FollowUpLink, SideEffectClass, ToolValueModel, ValueClass,
+};
 
 // Re-export asset management types
 pub use asset::{

@@ -43,6 +43,58 @@ pub enum ValueClass {
     AuditOnly,
 }
 
+/// Side-effect classification — controls whether a tool is safe to
+/// run *speculatively* (i.e. before the LLM asks for it).
+///
+/// Speculative pre-fetch is the killer feature of Paper 3, but it is
+/// only safe when re-issuing the call has **no observable consequence
+/// beyond what the LLM was going to do anyway**. Anything that mutates
+/// state (local files, remote APIs, user-visible objects) must never
+/// be speculated — otherwise we double-execute writes.
+///
+/// The default is the most conservative reading: `Indeterminate`. New
+/// tools are non-speculatable until a provider explicitly opts in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SideEffectClass {
+    /// Deterministic + idempotent: same input → same output, no
+    /// state. Safe to speculate freely. Examples: `Read` of an
+    /// unchanged file, hash computations, pure functions over args.
+    Pure,
+    /// No external mutation, but the result *can* change between
+    /// calls (TTL applies). Safe to speculate when `freshness_ttl_s`
+    /// has not expired. Examples: `get_issues`, `WebFetch`, `Glob`,
+    /// `Grep`, list-style endpoints. The bulk of the planner's wins.
+    ReadOnly,
+    /// Mutates host-local state (files, in-memory caches). Never
+    /// speculate — re-running would duplicate the edit. Examples:
+    /// `Edit`, `Write`, `MultiEdit`, `NotebookEdit`.
+    MutatesLocal,
+    /// Mutates remote state (creates issues, sends messages, runs
+    /// pipelines, `git push`). Never speculate — the consequence is
+    /// visible to other actors. Examples: `create_issue`,
+    /// `create_merge_request`, `add_issue_comment`, `Bash` for
+    /// destructive commands.
+    MutatesExternal,
+    /// Outcome cannot be classified statically (most prominently
+    /// `Bash` — its effect depends on the command string). Default
+    /// for any tool that has not been annotated. Treated as
+    /// non-speculatable; the planner only emits a hint to the LLM.
+    #[default]
+    Indeterminate,
+}
+
+impl SideEffectClass {
+    /// `true` iff the planner is allowed to issue this tool ahead of
+    /// the LLM asking for it. Currently `Pure` and `ReadOnly` only;
+    /// the other variants are bypassed even if `enrichment.enabled`
+    /// is on.
+    pub fn is_speculatable(&self) -> bool {
+        matches!(self, Self::Pure | Self::ReadOnly)
+    }
+}
+
 /// One named subset of fields from a tool's response. Providers carve
 /// the full result into groups so the planner can drop low-value
 /// fields without dropping the call entirely.
@@ -146,6 +198,12 @@ impl Default for CostModel {
 /// Edge in the empirically observed follow-up graph. After tool A
 /// fires, the planner consults A's `follow_up` list to decide which
 /// tools to *speculatively* prefetch.
+///
+/// `Default` returns an empty link (`tool = ""`,
+/// `probability = default_followup_probability`). The implementation
+/// is mostly there so call sites can use struct-update syntax
+/// (`FollowUpLink { tool: …, probability: …, ..Default::default() }`)
+/// — the empty `tool` would never resolve in `enumerate_candidates`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FollowUpLink {
     /// Name of the tool that typically fires next.
@@ -157,15 +215,45 @@ pub struct FollowUpLink {
     pub probability: f32,
 
     /// Optional argument projection — name of the field from the
-    /// previous response to forward as an argument to `tool`. For
-    /// example, `Glob.follow_up = [{tool: "Read", projection: "match_path"}]`
-    /// tells the planner to feed each glob result's path to a `Read`.
+    /// previous response to read. For example,
+    /// `Glob.follow_up = [{tool: "Read", projection: "match_path",
+    /// projection_arg: "file_path"}]` tells the planner to take each
+    /// glob result's `match_path` and feed it as the `file_path`
+    /// argument to `Read`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projection: Option<String>,
+
+    /// Optional argument *name* on the follow-up tool that the
+    /// extracted `projection` value should populate. When `None`, the
+    /// provider's `ToolEnricher::project_args` is asked to build the
+    /// arguments instead — that's the right path for built-in tools
+    /// where mapping is hard-coded. Custom MCP tools that the user
+    /// annotates by hand in `pipeline_config.toml` should set both
+    /// `projection` and `projection_arg` so the planner can build the
+    /// follow-up args without provider code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection_arg: Option<String>,
 }
 
 fn default_followup_probability() -> f32 {
     0.5
+}
+
+impl Default for FollowUpLink {
+    /// Empty link with the default probability — wouldn't resolve in
+    /// the planner. Provided so callers can use struct-update syntax:
+    /// `FollowUpLink { tool: …, probability: …, ..Default::default() }`
+    /// without spelling every optional field. `f32` has no useful
+    /// `Default::default()` here (would be `0.0`), so we hand-write
+    /// the impl rather than `derive`.
+    fn default() -> Self {
+        Self {
+            tool: String::new(),
+            probability: default_followup_probability(),
+            projection: None,
+            projection_arg: None,
+        }
+    }
 }
 
 /// Provider-shipped, user-overridable description of how a tool fits
@@ -211,6 +299,34 @@ pub struct ToolValueModel {
     /// 50%+ of repeated `ToolSearch` calls return zero results.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fail_fast_after_n: Option<u32>,
+
+    /// Side-effect classification — gates speculative pre-fetch.
+    /// Default `Indeterminate` keeps unannotated tools off the
+    /// speculation path; only `Pure` / `ReadOnly` are eligible.
+    #[serde(default, skip_serializing_if = "is_default_side_effect")]
+    pub side_effect_class: SideEffectClass,
+
+    /// Optional opaque label used to group calls that compete for the
+    /// same external rate budget (e.g. `"github_api"`,
+    /// `"gitlab_api"`, `"openai_api"`). The host's speculative
+    /// dispatcher refuses to schedule a prefetch when the named class
+    /// is already saturated this turn. `None` = no rate-limit class
+    /// (default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit_class: Option<String>,
+
+    /// Per-tool speculation override. When `Some(false)`, the planner
+    /// is forbidden from speculating this tool even if
+    /// `side_effect_class.is_speculatable()`. Set automatically by
+    /// `tune analyze`'s R7 rule when the observed `prefetch_hit_rate`
+    /// for this tool falls below the floor — i.e. the planner was
+    /// guessing wrong too often. `None` = honour `side_effect_class`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speculate: Option<bool>,
+}
+
+fn is_default_side_effect(s: &SideEffectClass) -> bool {
+    matches!(s, SideEffectClass::Indeterminate)
 }
 
 impl ToolValueModel {
@@ -240,6 +356,21 @@ impl ToolValueModel {
     /// per-turn budget. Used by the planner's first-pass filter.
     pub fn excluded_from_budget(&self) -> bool {
         matches!(self.value_class, ValueClass::AuditOnly)
+    }
+
+    /// True iff the planner is allowed to issue this tool ahead of
+    /// the LLM's next message. Combines `side_effect_class` with the
+    /// per-tool `speculate` override — `Some(false)` always wins, so
+    /// `tune analyze`'s auto-disable rule cannot be bypassed by a
+    /// stale `Pure` annotation.
+    pub fn is_speculatable(&self) -> bool {
+        if matches!(self.speculate, Some(false)) {
+            return false;
+        }
+        if matches!(self.speculate, Some(true)) {
+            return true;
+        }
+        self.side_effect_class.is_speculatable()
     }
 }
 
@@ -314,9 +445,13 @@ mod tests {
                 tool: "WebFetch".into(),
                 probability: 0.65,
                 projection: Some("url".into()),
+                projection_arg: Some("url".into()),
             }],
             invalidates: vec![],
             fail_fast_after_n: Some(2),
+            side_effect_class: SideEffectClass::ReadOnly,
+            rate_limit_class: Some("web_api".into()),
+            speculate: None,
         };
         let s = toml::to_string_pretty(&m).unwrap();
         let back: ToolValueModel = toml::from_str(&s).unwrap();
@@ -330,7 +465,125 @@ mod tests {
         assert_eq!(back.cost_model.max_kb, Some(8.0));
         assert_eq!(back.follow_up[0].tool, "WebFetch");
         assert_eq!(back.follow_up[0].projection.as_deref(), Some("url"));
+        assert_eq!(back.follow_up[0].projection_arg.as_deref(), Some("url"));
         assert_eq!(back.fail_fast_after_n, Some(2));
+        assert_eq!(back.side_effect_class, SideEffectClass::ReadOnly);
+        assert_eq!(back.rate_limit_class.as_deref(), Some("web_api"));
+        assert!(back.is_speculatable());
+    }
+
+    // ─── Side-effect classification ──────────────────────────────────
+
+    #[test]
+    fn default_side_effect_class_is_indeterminate_and_blocks_speculation() {
+        let m = ToolValueModel::default();
+        assert_eq!(m.side_effect_class, SideEffectClass::Indeterminate);
+        assert!(
+            !m.is_speculatable(),
+            "Indeterminate must never be speculated"
+        );
+    }
+
+    #[test]
+    fn pure_and_read_only_are_speculatable() {
+        let pure = ToolValueModel {
+            side_effect_class: SideEffectClass::Pure,
+            ..Default::default()
+        };
+        let ro = ToolValueModel {
+            side_effect_class: SideEffectClass::ReadOnly,
+            ..Default::default()
+        };
+        assert!(pure.is_speculatable());
+        assert!(ro.is_speculatable());
+    }
+
+    #[test]
+    fn mutating_classes_block_speculation() {
+        for class in [
+            SideEffectClass::MutatesLocal,
+            SideEffectClass::MutatesExternal,
+        ] {
+            let m = ToolValueModel {
+                side_effect_class: class,
+                ..Default::default()
+            };
+            assert!(
+                !m.is_speculatable(),
+                "{class:?} must never be speculated — would duplicate writes"
+            );
+        }
+    }
+
+    #[test]
+    fn speculate_override_wins_over_side_effect_class() {
+        // `tune analyze`'s R7 disables a Pure tool whose hit rate
+        // dropped: must trump the static class.
+        let pure_but_disabled = ToolValueModel {
+            side_effect_class: SideEffectClass::Pure,
+            speculate: Some(false),
+            ..Default::default()
+        };
+        assert!(!pure_but_disabled.is_speculatable());
+
+        // Manual override forcing speculation on an Indeterminate tool
+        // (e.g. user knows their custom MCP shell wrapper is safe).
+        let forced_on = ToolValueModel {
+            side_effect_class: SideEffectClass::Indeterminate,
+            speculate: Some(true),
+            ..Default::default()
+        };
+        assert!(forced_on.is_speculatable());
+    }
+
+    #[test]
+    fn side_effect_class_serialises_snake_case() {
+        // Indeterminate is the default and is intentionally
+        // skip_serializing_if'd — covered by `default_indeterminate_skipped_on_serialise`.
+        for (class, expected) in [
+            (SideEffectClass::Pure, "pure"),
+            (SideEffectClass::ReadOnly, "read_only"),
+            (SideEffectClass::MutatesLocal, "mutates_local"),
+            (SideEffectClass::MutatesExternal, "mutates_external"),
+        ] {
+            let m = ToolValueModel {
+                side_effect_class: class,
+                ..Default::default()
+            };
+            let s = toml::to_string_pretty(&m).unwrap();
+            assert!(
+                s.contains(&format!("side_effect_class = \"{expected}\"")),
+                "expected `{expected}`, got: {s}"
+            );
+            // Round-trip must preserve the class.
+            let back: ToolValueModel = toml::from_str(&s).unwrap();
+            assert_eq!(back.side_effect_class, class);
+        }
+    }
+
+    #[test]
+    fn default_indeterminate_skipped_on_serialise() {
+        let m = ToolValueModel::default();
+        let s = toml::to_string_pretty(&m).unwrap();
+        assert!(
+            !s.contains("side_effect_class"),
+            "Indeterminate is the default and must be skip_serializing_if'd, got: {s}"
+        );
+        assert!(!s.contains("rate_limit_class"));
+        assert!(!s.contains("speculate"));
+    }
+
+    #[test]
+    fn followup_link_projection_arg_round_trips() {
+        let l = FollowUpLink {
+            tool: "Read".into(),
+            probability: 0.8,
+            projection: Some("path".into()),
+            projection_arg: Some("file_path".into()),
+        };
+        let s = toml::to_string_pretty(&l).unwrap();
+        let back: FollowUpLink = toml::from_str(&s).unwrap();
+        assert_eq!(back.projection_arg.as_deref(), Some("file_path"));
     }
 
     #[test]
@@ -368,7 +621,7 @@ mod tests {
         let l = FollowUpLink {
             tool: "Bash".into(),
             probability: 0.8,
-            projection: None,
+            ..FollowUpLink::default()
         };
         let s = toml::to_string_pretty(&l).unwrap();
         assert!(
@@ -379,5 +632,6 @@ mod tests {
         assert_eq!(back.tool, "Bash");
         assert!((back.probability - 0.8).abs() < 1e-6);
         assert!(back.projection.is_none());
+        assert!(back.projection_arg.is_none());
     }
 }
