@@ -84,7 +84,16 @@ impl SessionPipeline {
     /// and attached to the pipeline. Failures to open the sink (missing
     /// permissions, etc.) are logged at WARN level and degrade to a
     /// no-op telemetry — they never fail the server start-up.
-    pub fn new(config: AdaptiveConfig) -> Self {
+    pub fn new(mut config: AdaptiveConfig) -> Self {
+        // Paper 3 — seed shipped ToolValueModel defaults so every
+        // session starts with calibrated cost/value priors for the
+        // top-15 corpus tools. User-set entries (loaded from TOML)
+        // win — `or_insert` skips keys already populated.
+        let defaults = devboy_format_pipeline::tool_defaults::default_tool_value_models();
+        for (name, model) in defaults {
+            config.tools.entry(name).or_insert(model);
+        }
+
         let session_id = format!("mcp_{}", std::process::id());
         let mut pipeline = LayeredPipeline::new(session_id.clone(), config.clone());
 
@@ -235,6 +244,22 @@ impl SessionPipeline {
         };
         if !engine.is_enabled() {
             return String::new();
+        }
+
+        // First, sweep up any prefetches that finished AFTER the
+        // previous turn's `wait_within` timed out. Without this drain
+        // the cache loses every late-arrival result and the
+        // `prefetch_won_race` metric is permanently zero.
+        for outcome in engine.drain_pending().await {
+            if let PrefetchOutcome::Settled {
+                tool,
+                args,
+                body,
+                predicted_cost_tokens,
+            } = outcome
+            {
+                self.write_prefetch_to_cache(&tool, &args, &body, predicted_cost_tokens);
+            }
         }
 
         // Build the planner's TurnContext from the recent-tools window.

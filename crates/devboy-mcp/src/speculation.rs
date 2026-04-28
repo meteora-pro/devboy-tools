@@ -285,19 +285,32 @@ impl SpeculationEngine {
     /// JoinSet — their results arrive on the next `wait_within` (or
     /// get cancelled by `shutdown`).
     ///
+    /// The timeout is a **global deadline** for the whole call, not
+    /// a per-task budget — N slow prefetches finishing one-by-one
+    /// just under the threshold can no longer stall the response
+    /// for `N × prefetch_timeout_ms`.
+    ///
     /// Returns `Settled` for every task that returned `Ok(body)`,
     /// `Failed` for every `Err(...)`. Skipped outcomes from the most
     /// recent `dispatch` call are not echoed here — the host already
     /// has them.
     pub async fn wait_within(&mut self) -> Vec<PrefetchOutcome> {
         let mut out = Vec::new();
-        let deadline = self.timeout();
+        let deadline = tokio::time::Instant::now() + self.timeout();
         loop {
-            // No more pending work — we're done before the timeout.
             if self.join_set.is_empty() {
                 break;
             }
-            match timeout(deadline, self.join_set.join_next()).await {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                tracing::debug!(
+                    target: "devboy_mcp::speculation",
+                    "prefetch_timeout_ms reached with {} tasks still pending",
+                    self.join_set.len()
+                );
+                break;
+            }
+            match tokio::time::timeout_at(deadline, self.join_set.join_next()).await {
                 Ok(Some(Ok(task_result))) => {
                     let predicted = task_result.predicted_cost_tokens;
                     out.push(match task_result.body {
@@ -314,12 +327,6 @@ impl SpeculationEngine {
                     });
                 }
                 Ok(Some(Err(join_err))) => {
-                    // JoinError = panic in the task or cancellation.
-                    // Surface it as a Failed outcome so the caller
-                    // can record `prefetch_wasted`. Tool name is lost
-                    // (JoinError carries no payload), so we use a
-                    // generic placeholder — telemetry is per-tool
-                    // anyway via the dispatch path above.
                     tracing::warn!(
                         target: "devboy_mcp::speculation",
                         "prefetch task panicked or was cancelled: {join_err}"
@@ -330,10 +337,11 @@ impl SpeculationEngine {
                     });
                 }
                 Ok(None) => break, // empty join_set
-                // Wall-clock budget exceeded — leave remaining tasks
-                // running in background. They will land in the dedup
-                // cache when they finish (or be aborted on shutdown).
                 Err(_elapsed) => {
+                    // Global deadline expired. Remaining tasks stay in
+                    // the JoinSet so a future `drain_pending()` (or
+                    // another `wait_within` cycle) can still collect
+                    // their results into the dedup cache.
                     tracing::debug!(
                         target: "devboy_mcp::speculation",
                         "prefetch_timeout_ms reached with {} tasks still pending",
@@ -341,6 +349,49 @@ impl SpeculationEngine {
                     );
                     break;
                 }
+            }
+        }
+        out
+    }
+
+    /// Best-effort drain of completed tasks **without blocking**.
+    ///
+    /// Returns outcomes for every task that has already finished,
+    /// leaves still-pending tasks alone. Lets the host call this on
+    /// the next turn (or before each `dispatch`) to recover bodies
+    /// that landed after the previous `wait_within` timed out, so
+    /// they can still be written into the dedup cache instead of
+    /// being silently lost on the next `shutdown`.
+    pub async fn drain_pending(&mut self) -> Vec<PrefetchOutcome> {
+        let mut out = Vec::new();
+        loop {
+            if self.join_set.is_empty() {
+                break;
+            }
+            // 0-duration timeout = "non-blocking poll".
+            match timeout(Duration::from_millis(0), self.join_set.join_next()).await {
+                Ok(Some(Ok(task_result))) => {
+                    let predicted = task_result.predicted_cost_tokens;
+                    out.push(match task_result.body {
+                        Ok(body) => PrefetchOutcome::Settled {
+                            tool: task_result.tool,
+                            args: task_result.args,
+                            body,
+                            predicted_cost_tokens: predicted,
+                        },
+                        Err(error) => PrefetchOutcome::Failed {
+                            tool: task_result.tool,
+                            error,
+                        },
+                    });
+                }
+                Ok(Some(Err(join_err))) => {
+                    out.push(PrefetchOutcome::Failed {
+                        tool: "<unknown>".into(),
+                        error: PrefetchError::Io(join_err.to_string()),
+                    });
+                }
+                Ok(None) | Err(_) => break,
             }
         }
         out

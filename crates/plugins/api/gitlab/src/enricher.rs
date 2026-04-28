@@ -91,13 +91,13 @@ impl ToolEnricher for GitLabSchemaEnricher {
                         tool: "get_merge_request_discussions".into(),
                         probability: 0.62,
                         projection: Some("iid".into()),
-                        projection_arg: Some("merge_request_id".into()),
+                        projection_arg: Some("key".into()),
                     },
                     FollowUpLink {
                         tool: "get_merge_request_diffs".into(),
                         probability: 0.41,
                         projection: Some("iid".into()),
-                        projection_arg: Some("merge_request_id".into()),
+                        projection_arg: Some("key".into()),
                     },
                 ],
                 side_effect_class: SideEffectClass::ReadOnly,
@@ -115,7 +115,7 @@ impl ToolEnricher for GitLabSchemaEnricher {
                     tool: "get_merge_request_discussions".into(),
                     probability: 0.55,
                     projection: Some("iid".into()),
-                    projection_arg: Some("merge_request_id".into()),
+                    projection_arg: Some("key".into()),
                 }],
                 side_effect_class: SideEffectClass::ReadOnly,
                 ..ToolValueModel::default()
@@ -145,7 +145,7 @@ impl ToolEnricher for GitLabSchemaEnricher {
                     tool: "get_issue_comments".into(),
                     probability: 0.48,
                     projection: Some("iid".into()),
-                    projection_arg: Some("issue_id".into()),
+                    projection_arg: Some("key".into()),
                 }],
                 side_effect_class: SideEffectClass::ReadOnly,
                 ..ToolValueModel::default()
@@ -162,7 +162,7 @@ impl ToolEnricher for GitLabSchemaEnricher {
                     tool: "get_issue_comments".into(),
                     probability: 0.50,
                     projection: Some("iid".into()),
-                    projection_arg: Some("issue_id".into()),
+                    projection_arg: Some("key".into()),
                 }],
                 side_effect_class: SideEffectClass::ReadOnly,
                 ..ToolValueModel::default()
@@ -304,7 +304,7 @@ mod tests {
             .find(|l| l.tool == "get_merge_request_discussions")
             .expect("discussions follow-up missing");
         assert_eq!(link.projection.as_deref(), Some("iid"));
-        assert_eq!(link.projection_arg.as_deref(), Some("merge_request_id"));
+        assert_eq!(link.projection_arg.as_deref(), Some("key"));
         assert!(link.probability >= 0.5);
     }
 
@@ -317,7 +317,7 @@ mod tests {
             .iter()
             .find(|l| l.tool == "get_issue_comments")
             .expect("comments follow-up missing");
-        assert_eq!(link.projection_arg.as_deref(), Some("issue_id"));
+        assert_eq!(link.projection_arg.as_deref(), Some("key"));
     }
 
     #[test]
