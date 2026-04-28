@@ -253,26 +253,86 @@ audit-only filter. Patterns 3, 4, 5 are the Paper 3 wins — the
 planner pre-fetches before the LLM has to ask. Patterns 8, 9 are
 small but free: annotations alone, no new code.
 
+## Race strategy
+
+A speculative pre-fetch is **only safe when re-issuing the call has
+no observable consequence beyond what the LLM was going to do anyway**.
+The pipeline encodes this as `SideEffectClass` on every annotated
+tool — `Pure` (deterministic + idempotent) and `ReadOnly` (mutates
+nothing remote, freshness via TTL) are eligible; `MutatesLocal`,
+`MutatesExternal`, and `Indeterminate` are blocked even when
+`enrichment.enabled = true`. A per-tool `speculate: Some(false)`
+override (set by `tune analyze`'s R7 rule) trumps the static class.
+
+The host runs a "**bounded synchronous wait + LLM hint**" race:
+
+```
+T=0    LLM → tools/call(Glob "src/**/*.rs")
+T=10   server post-processes the response, runs build_plan,
+       speculation engine spawns 2 Read prefetches in parallel
+T=10   wait_within(prefetch_timeout_ms = 1000ms)
+T=15   both prefetches landed → write bodies into DedupCache,
+       append a hint to the response:
+       > [enrichment: pre-fetched Read(src/main.rs), Read(src/lib.rs)
+       >              in background — call as usual, results served
+       >              from cache]
+       LLM sees the hint AND the dedup cache is already warm — its
+       follow-up Read calls collapse to L0 hits.
+
+       (timeout path)
+T=10.5 budget exhausted → response goes back without bodies; tasks
+       keep running in background and land in the cache by the time
+       the LLM actually issues the call.
+```
+
+This is "best-of-both": no extra latency on the main response when
+the prefetch is fast, fallback to cached-replay when it's slow, and
+the LLM gets a textual heads-up either way. Cancellation cascades
+on session shutdown — `JoinSet::abort_all()` plus a drained
+`join_next` loop guarantees no orphan IO outlives the connection.
+
+Per-host concurrency is capped through `rate_limit_host` —
+`api.github.com`, `api.clickup.com`, `api.fireflies.ai`, host
+extracted from the URL for `WebFetch`. Two providers hitting the
+same domain correctly share the budget; self-hosted GitLab / Jira
+deployments set `[tools.<name>].rate_limit_host` per-tool in TOML.
+
 ## Validation strategy
 
-The planner is implemented and unit-tested
-([`enrichment.rs::tests`][enrichment-tests]); the corpus-replay
-validation that produces the headline numbers is the next milestone:
+The replay harness `replay_paper3_pipeline.py` reads JSONL telemetry
+emitted by the live pipeline (or by `annotate_cited_prefetches.py`)
+and computes the four headline metrics per session:
 
-1. Replay every session in the 144 658-event corpus twice — once with
-   the planner active, once without.
-2. Compute the four metrics above for each session.
-3. Aggregate across the corpus. Targets:
-   - prefetch hit rate ≥ 0.60
-   - decline recall loss ≤ 0.10
-   - cost overrun rate ≤ 0.15
-   - net token savings > 10% over the no-planner baseline
+| Metric | Computation | Target |
+|---|---|---|
+| prefetch hit rate | `cited / total_prefetches` | ≥ 0.60 |
+| decline recall loss | `late_invoked / total_declines` | ≤ 0.10 |
+| cost overrun rate | `overruns(≥ 130%) / total_predictions` | ≤ 0.15 |
+| inference calls saved | `prefetch + dedup + fail_fast` buckets | as high as possible |
 
-The replay harness lives next to Paper 2's
-`simulate_paper2_pipeline.py`; the post-pass that fills in
-`cited_in_next_n_turns` scans the assistant text following each
-prefetch for textual references to the prefetched body's
-`content_sha_prefix_hex`.
+The harness is **strictly an aggregator** — it doesn't re-spawn the
+planner. Numbers come straight from `enricher_prefetched`,
+`cited_in_next_n_turns`, `enricher_decline_reason`,
+`enricher_predicted_cost_tokens`, `is_dedup_hit` and
+`tokens_baseline` — fields the live pipeline already wrote. So
+results are reproducible across runs.
+
+The "did the planner pay for itself" answer is the headline
+`tokens_saved` number from the harness output, plus the `# enrichment:`
+line `tune analyze` prints whenever any saving was recorded:
+
+```
+# enrichment: prefetch_hit=72.1% decline_recall_loss=8.4% cost_overrun=11.0%
+              race_win=58.0% waste=12.0%
+              calls_saved=89 (prefetch=42, dedup=39, fail_fast=8)
+              tokens_saved=128400  prefetches=412 dispatched=398
+              declines=187  predictions=599
+```
+
+Real numbers are pending the first production deployment with
+`enrichment.enabled = true`; on the synthetic 12-event smoke corpus
+the harness reports `prefetch_hit=0.0% calls_saved=0` (nothing was
+cited, as designed for that fixture).
 
 [enrichment-tests]: ../../crates/plugins/format-pipeline/src/enrichment.rs
 
@@ -280,69 +340,93 @@ prefetch for textual references to the prefetched body's
 
 ### Shipped
 
-- `ToolValueModel` schema + constructors + serde
-  ([`tool_value_model.rs`][model]). +9 unit tests.
-- `[tools.*]` section + `effective_tool_value_model` resolution
-  + schema v3 migration on `AdaptiveConfig`. +6 tests.
-- `ToolEnricher::value_model` trait extension (default-impl `None`).
-- Built-in defaults for the top 15 tools by corpus volume
-  ([`tool_defaults.rs`][defaults]). +7 tests.
-- `EnrichmentPlanner` greedy solver with prereq closure, audit-only
-  free admission, self-loop / already-used filtering, declined-with-
-  reason output ([`enrichment.rs`][enrichment]). +8 tests.
-- Cross-tool invalidation: `DedupCache::invalidate_by_tool` +
-  `LayeredPipeline.process` hook reading `value_model.invalidates`.
-  +2 dedup tests + 1 layered_pipeline integration test.
-- Telemetry: 4 new `PipelineEvent` fields +
-  `EnrichmentEffectiveness` summary with `prefetch_hit_rate`,
-  `decline_recall_loss`, `cost_overrun_rate`, three
-  `inference_calls_saved_*` buckets + `inference_tokens_saved`,
-  `accumulate(&PipelineEvent)`, `record_fail_fast_skip`, and
-  `report()`. +15 tests.
-- `tune analyze` reports the planner ROI line (`# enrichment: …`)
-  whenever any saving was recorded in the scanned JSONL.
-- **Host wiring (devboy-mcp)** — `SessionPipeline` now keeps the
-  `recent_tools` window, the `EnrichmentEffectiveness` aggregator and
-  the per-tool fail-fast streak alongside the `LayeredPipeline`. New
-  public methods: `enrichment_snapshot`, `recent_tools_snapshot`,
-  `should_skip(tool_name)` (read-only check the host calls before
-  dispatch) and `record_fail_fast_skip(predicted_tokens)`. Every L0
-  dedup hit now increments `inference_calls_saved_dedup` /
-  `inference_tokens_saved` automatically. +5 integration tests.
-- **`annotate_cited_prefetches.py`** — offline post-pass that walks a
-  devboy telemetry JSONL, sets `cited_in_next_n_turns` on every event
-  with `enricher_prefetched=true` based on whether the same tool was
-  organically called in the next 1-3 events of the session, and writes
-  `<input>.annotated.jsonl`. Output also prints a per-file and grand
-  total `prefetches=… cited=… hit_rate=…` summary, ready to feed back
-  into `tune analyze`.
-- `devboy tune from-claude-logs --tools` seeds `[tools.*]` from the
-  user's observed tool mix without overwriting hand overrides. +2
+- **Schema** — `ToolValueModel` + `SideEffectClass` (Pure / ReadOnly /
+  MutatesLocal / MutatesExternal / Indeterminate) + per-tool
+  `speculate` override + `rate_limit_host` (per-domain). `FollowUpLink`
+  carries `projection` + `projection_arg` so user-annotated MCP
+  follow-ups work entirely in TOML. `AdaptiveConfig` schema v3 → v4
+  migration with `[enrichment]` section (off by default,
+  `prefetch_timeout_ms = 1000`, `max_parallel_prefetches = 3`,
+  `prefetch_budget_tokens = 8000`, `respect_rate_limits = true`).
+  ([`tool_value_model.rs`][model], [`adaptive_config.rs`][adaptive]).
+  +18 unit tests.
+- **Built-in defaults** — `tool_defaults.rs` annotates the top 15
+  tools with `side_effect_class` (Read/Grep `Pure`, Glob/WebSearch/
+  WebFetch/ToolSearch `ReadOnly`, Edit/Write/MultiEdit/NotebookEdit
+  `MutatesLocal`, Bash/Agent `Indeterminate`). +7 tests.
+- **Provider extensions** — `ToolEnricher::value_model` +
+  `project_args` + `rate_limit_host` for **5 providers**: gitlab,
+  github, jira, clickup, fireflies. Each ships read-only chains
+  (e.g. GitLab `get_merge_requests → get_merge_request_discussions`
+  with `iid → merge_request_id`). All mutating endpoints flagged
+  `MutatesExternal`. +10 tests.
+- **Projection extractors** — `format-pipeline/src/projection.rs`:
+  built-in extractors for Glob/Grep/WebSearch chains, generic JSON-
+  tree fallback driven by `(projection, projection_arg)`,
+  `extract_host` URL parser (no `url` crate dependency), capped at
+  `MAX_PROJECTIONS_PER_LINK = 3`. +15 tests.
+- **`EnrichmentPlanner`** — greedy 1/2-optimal solver, audit-only
+  free admission, cost-token clamp (≥ 1 for non-AuditOnly),
+  self-loop / already-used filtering, declined-with-reason output.
+  +9 tests.
+- **`SpeculationEngine`** (`devboy-mcp/src/speculation.rs`) —
+  `PrefetchDispatcher` trait, JoinSet-based dispatch, per-host
+  `HostBudget` cap, `wait_within(prefetch_timeout_ms)` race with
+  abort-on-shutdown cascade. +9 tests.
+- **Wiring in `SessionPipeline`** — async `with_speculation`,
+  `speculate_after(tool, prev_response)`, `should_skip`,
+  `record_fail_fast_skip`, `enrichment_snapshot`,
+  `recent_tools_snapshot`, async `shutdown` (also via Drop). Every
+  L0 dedup hit auto-increments
+  `inference_calls_saved_dedup`/`inference_tokens_saved`. +5
+  integration tests including end-to-end Glob → Read race-win.
+- **Cross-tool invalidation** — `DedupCache::invalidate_by_tool` +
+  `LayeredPipeline.process` reading `value_model.invalidates`. +3
   tests.
+- **Telemetry** — 4 enricher fields on `PipelineEvent`
+  (`enricher_prefetched`, `enricher_predicted_cost_tokens`,
+  `enricher_decline_reason`, `cited_in_next_n_turns`).
+  `EnrichmentEffectiveness` aggregate with `prefetch_hit_rate`,
+  `decline_recall_loss`, `cost_overrun_rate`, race instrumentation
+  (`prefetch_dispatched`, `prefetch_won_race`, `prefetch_wasted`),
+  three `inference_calls_saved_*` buckets + `inference_tokens_saved`,
+  `accumulate(&PipelineEvent)`, `record_fail_fast_skip`,
+  `record_prefetch_*` helpers, and `report()`. +21 tests.
+- **`tune analyze`** prints the planner ROI line whenever any saving
+  was recorded; `--auto-enrichment` flag runs **R7** — per-tool
+  `speculate = false` for hit rate < 50% (≥ 10 prefetches) and
+  global `enrichment.enabled = true` flip when corpus-wide hit rate
+  ≥ 60% with no per-tool disables. +4 tests + CLI smoke.
+- **`devboy tune from-claude-logs --tools`** seeds `[tools.*]` from
+  observed tool mix without overwriting hand overrides. +2 tests.
+- **`annotate_cited_prefetches.py`** — offline post-pass that walks
+  JSONL and sets `cited_in_next_n_turns` based on whether the same
+  tool was organically called in the next 1-3 events.
+- **`replay_paper3_pipeline.py`** — replay validation harness; CSV
+  per-session + grand-total + headline summary on stderr.
 
 ### Deferred
 
-- **Speculative pre-fetch execution in the MCP server** — the host
-  now exposes `should_skip` / `record_fail_fast_skip` and accumulates
-  L0 dedup savings, but does not yet *call* `EnrichmentPlanner::build_plan`
-  to actually issue extra `tools/call` requests out-of-band. That is
-  a non-trivial server API change (parallel dispatch + ordering with
-  the LLM stream) and lands as its own PR. The plumbing it depends on
-  — `recent_tools_snapshot`, the fail-fast circuit, the per-session
-  aggregator — is already in place.
-- **Corpus replay validation** — gated on the speculative-execution
-  PR landing first, since meaningful prefetch hit rates require real
-  `enricher_prefetched=true` events. The post-pass scanner
-  (`annotate_cited_prefetches.py`) is shipped and works on whatever
-  telemetry the host produces.
+- **Real speculative-prefetch dispatcher in the MCP server** — the
+  `SpeculationEngine` and all wiring are in place, but the
+  `PrefetchDispatcher` trait still needs a production impl that
+  bridges to the actual `tools/call` handler. The current end-to-end
+  test plugs in `MapDispatcher` (canned bodies); the production
+  bridge is a 50-LOC adapter that lives in `server.rs` and lands
+  with the first deployment that flips `enrichment.enabled = true`.
+- **Production replay numbers** — gated on the dispatcher above
+  shipping. The harness, post-pass, and target table are ready;
+  numbers come from the first session with prefetches enabled.
 - **Intent-aware boost** — `TurnContext.intent_keywords` is reserved
   but the v1 solver ignores it. Picking up intent (e.g. flipping
   `default_include = false` field groups to opt-in on keyword match)
   is additive — no schema change required.
 - **Latency / dollar awareness** — `cost_model.latency_ms_p50` and
   `cost_model.dollars` are stored but the planner does not currently
-  consult them. Trivial to plug into `value_score` once we have a
-  validation harness to measure the trade-off.
+  consult them. Trivial to plug into `value_score` once we have
+  validation numbers to measure the trade-off.
+
+[adaptive]: ../../crates/plugins/format-pipeline/src/adaptive_config.rs
 
 ## Related work
 
