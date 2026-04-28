@@ -35,8 +35,10 @@ pub struct TurnContext<'a> {
     /// total reaches this number.
     pub budget_tokens: u32,
     /// Optional free-form intent hints (e.g. extracted from the user
-    /// message). Reserved for future intent-aware boosts; the v1
-    /// solver ignores them.
+    /// message). When non-empty, the planner promotes any tool's
+    /// `default_include = false` field group whose member fields
+    /// match a keyword (case-insensitive substring), boosting that
+    /// tool's value-score for this turn. See [`intent_boost`].
     pub intent_keywords: Vec<String>,
 }
 
@@ -116,6 +118,15 @@ pub struct PlannerOptions {
     /// match the existing pipeline heuristic; once Paper 2's accurate
     /// tokenizer ships in this branch we switch to that.
     pub bytes_per_token: u32,
+    /// Latency penalty knee — calls with `cost_model.latency_ms_p50 ≥
+    /// this` get their value-score halved. Picked at 5000 ms because
+    /// any prefetch slower than that is unlikely to land before the
+    /// LLM organically asks for it. `None` = latency-unaware (default).
+    pub latency_penalty_ms: Option<u32>,
+    /// Dollar penalty knee — calls with `cost_model.dollars ≥ this`
+    /// get their value-score halved. Picked at $0.10 / call. `None`
+    /// = dollar-unaware (default).
+    pub dollar_penalty: Option<f32>,
 }
 
 impl Default for PlannerOptions {
@@ -123,6 +134,21 @@ impl Default for PlannerOptions {
         Self {
             min_followup_probability: 0.5,
             bytes_per_token: 4,
+            latency_penalty_ms: None,
+            dollar_penalty: None,
+        }
+    }
+}
+
+impl PlannerOptions {
+    /// Enable both latency and dollar awareness with sensible defaults
+    /// (5 s knee, $0.10 knee). Useful in deployments where prefetch
+    /// fan-out hits a paid API rate-limit or a slow upstream.
+    pub fn cost_aware() -> Self {
+        Self {
+            latency_penalty_ms: Some(5_000),
+            dollar_penalty: Some(0.10),
+            ..Self::default()
         }
     }
 }
@@ -159,7 +185,9 @@ pub fn build_plan(
                 f32::INFINITY
             } else {
                 let cost_tokens = cost_tokens_for(&c.model, options.bytes_per_token).max(1) as f32;
-                value_score(&c.model) / cost_tokens
+                let boost = intent_boost(&c.model, &context.intent_keywords);
+                let penalty = cost_penalty(&c.model, &options);
+                value_score(&c.model) * boost * penalty / cost_tokens
             };
             (density, c)
         })
@@ -295,6 +323,67 @@ fn value_score(model: &ToolValueModel) -> f32 {
         ValueClass::Optional => 0.2,
         ValueClass::AuditOnly => 0.0,
     }
+}
+
+/// Multiplicative penalty applied to a tool's `value_score` when its
+/// `cost_model.latency_ms_p50` or `.dollars` exceeds the configured
+/// knee. Each axis halves the score independently: a tool that's both
+/// slow and expensive gets `0.5 * 0.5 = 0.25× value`. Returns 1.0
+/// (no penalty) when the relevant `PlannerOptions` field is `None`,
+/// or when the tool's cost is below the knee.
+fn cost_penalty(model: &ToolValueModel, options: &PlannerOptions) -> f32 {
+    let mut penalty = 1.0_f32;
+    if let (Some(knee), Some(latency)) =
+        (options.latency_penalty_ms, model.cost_model.latency_ms_p50)
+        && latency >= knee
+    {
+        penalty *= 0.5;
+    }
+    if let (Some(knee), Some(dollars)) = (options.dollar_penalty, model.cost_model.dollars)
+        && dollars >= knee
+    {
+        penalty *= 0.5;
+    }
+    penalty
+}
+
+/// Multiplicative boost applied to a tool's `value_score` when the
+/// caller's `intent_keywords` overlap with one of the tool's
+/// `default_include = false` field groups. A group at +0.3
+/// `estimated_value` becomes "worth admitting" when its keywords are
+/// in scope; without this boost the planner would never escalate
+/// opt-in groups for the current turn.
+///
+/// Returns 1.0 (no boost) when:
+///   - `intent_keywords` is empty;
+///   - the tool has no `default_include = false` groups;
+///   - none of the keywords case-insensitively match a field name
+///     of an opt-in group.
+///
+/// Returns `1.0 + Σ group.estimated_value` for every matching opt-in
+/// group, capped at 2.5× to keep the planner from running away.
+fn intent_boost(model: &ToolValueModel, intent_keywords: &[String]) -> f32 {
+    if intent_keywords.is_empty() || model.field_groups.is_empty() {
+        return 1.0;
+    }
+    let lowered: Vec<String> = intent_keywords
+        .iter()
+        .map(|k| k.to_ascii_lowercase())
+        .collect();
+    let mut boost: f32 = 1.0;
+    for (_name, group) in model.field_groups.iter() {
+        if group.default_include {
+            continue; // already counted in the base value
+        }
+        let any_match = group
+            .fields
+            .iter()
+            .any(|f| lowered.iter().any(|kw| f.to_ascii_lowercase().contains(kw)));
+        if any_match {
+            boost += group.estimated_value;
+        }
+    }
+    boost.min(2.5)
 }
 
 #[cfg(test)]
@@ -511,6 +600,194 @@ mod tests {
             plan0.declined.iter().any(|d| d.tool == "Cheap"),
             "decline reason must be recorded"
         );
+    }
+
+    // ─── Intent-aware boost (S12) ─────────────────────────────────
+
+    fn model_with_optin_group(field: &str, est: f32) -> ToolValueModel {
+        let mut groups = std::collections::BTreeMap::new();
+        groups.insert(
+            "must_have".into(),
+            devboy_core::FieldGroup {
+                fields: vec!["title".into(), "url".into()],
+                estimated_value: 1.0,
+                default_include: true,
+            },
+        );
+        groups.insert(
+            "nice_to_have".into(),
+            devboy_core::FieldGroup {
+                fields: vec![field.into()],
+                estimated_value: est,
+                default_include: false,
+            },
+        );
+        ToolValueModel {
+            value_class: ValueClass::Supporting,
+            field_groups: groups,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn intent_boost_neutral_with_no_keywords() {
+        let m = model_with_optin_group("snippet", 0.3);
+        assert!((intent_boost(&m, &[]) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn intent_boost_neutral_when_keyword_misses_optin_groups() {
+        let m = model_with_optin_group("snippet", 0.3);
+        let kw = vec!["totally_unrelated".to_string()];
+        assert!((intent_boost(&m, &kw) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn intent_boost_lifts_score_when_keyword_hits_optin_field() {
+        let m = model_with_optin_group("snippet", 0.3);
+        let kw = vec!["SNIPPET".to_string()]; // case-insensitive
+        let b = intent_boost(&m, &kw);
+        assert!((b - 1.3).abs() < 1e-6, "expected 1.3, got {b}");
+    }
+
+    #[test]
+    fn intent_boost_caps_at_2_5x() {
+        // Multiple opt-in groups, keyword matches all of them — boost
+        // would explode without the cap.
+        let mut groups = std::collections::BTreeMap::new();
+        for i in 0..5 {
+            groups.insert(
+                format!("g{i}"),
+                devboy_core::FieldGroup {
+                    fields: vec!["foo".into()],
+                    estimated_value: 1.0,
+                    default_include: false,
+                },
+            );
+        }
+        let m = ToolValueModel {
+            field_groups: groups,
+            ..Default::default()
+        };
+        let kw = vec!["foo".to_string()];
+        let b = intent_boost(&m, &kw);
+        assert!((b - 2.5).abs() < 1e-6, "boost must clamp at 2.5, got {b}");
+    }
+
+    #[test]
+    fn intent_boost_changes_admit_order() {
+        // Two candidates with identical base scores; one has an
+        // opt-in group whose keyword fires this turn. With intent
+        // active, that one should outrank the plain one.
+        let plain = ToolValueModel {
+            value_class: ValueClass::Supporting,
+            ..Default::default()
+        };
+        let intent_match = model_with_optin_group("snippet", 0.4);
+        let kw = vec!["snippet".to_string()];
+
+        let p_score = value_score(&plain) * intent_boost(&plain, &kw);
+        let i_score = value_score(&intent_match) * intent_boost(&intent_match, &kw);
+        assert!(
+            i_score > p_score,
+            "intent-matching tool must outrank the plain one: {i_score} vs {p_score}"
+        );
+    }
+
+    // ─── Latency / dollar awareness (S13) ─────────────────────────
+
+    fn model_with_costs(latency_ms: Option<u32>, dollars: Option<f32>) -> ToolValueModel {
+        ToolValueModel {
+            value_class: ValueClass::Supporting,
+            cost_model: devboy_core::CostModel {
+                typical_kb: 1.0,
+                latency_ms_p50: latency_ms,
+                dollars,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn cost_penalty_neutral_when_options_are_none() {
+        let m = model_with_costs(Some(60_000), Some(1.0));
+        let opts = PlannerOptions::default();
+        assert!((cost_penalty(&m, &opts) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cost_penalty_halves_for_slow_tool_when_latency_aware() {
+        let m = model_with_costs(Some(7_000), None);
+        let opts = PlannerOptions::cost_aware();
+        assert!((cost_penalty(&m, &opts) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cost_penalty_halves_for_expensive_tool_when_dollar_aware() {
+        let m = model_with_costs(None, Some(0.50));
+        let opts = PlannerOptions::cost_aware();
+        assert!((cost_penalty(&m, &opts) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cost_penalty_compounds_for_slow_and_expensive() {
+        let m = model_with_costs(Some(7_000), Some(0.50));
+        let opts = PlannerOptions::cost_aware();
+        // 0.5 (slow) * 0.5 (expensive) = 0.25
+        assert!((cost_penalty(&m, &opts) - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cost_penalty_no_penalty_below_knee() {
+        let m = model_with_costs(Some(800), Some(0.01));
+        let opts = PlannerOptions::cost_aware();
+        assert!((cost_penalty(&m, &opts) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cost_aware_planner_demotes_slow_tool_below_fast_one() {
+        let mut cfg = AdaptiveConfig::default();
+        let trigger = ToolValueModel {
+            follow_up: vec![
+                devboy_core::FollowUpLink {
+                    tool: "FastTool".into(),
+                    probability: 0.9,
+                    ..Default::default()
+                },
+                devboy_core::FollowUpLink {
+                    tool: "SlowTool".into(),
+                    probability: 0.9,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        cfg.tools.insert("Trigger".into(), trigger);
+        cfg.tools
+            .insert("FastTool".into(), model_with_costs(Some(200), None));
+        cfg.tools
+            .insert("SlowTool".into(), model_with_costs(Some(20_000), None));
+
+        let recent = vec!["Trigger".to_string()];
+        // Budget large enough to admit both — verify ordering, not
+        // budget exclusion. Each tool ~256 tokens; 1024 fits both.
+        let ctx = TurnContext::new(&recent, 1024);
+        // Latency-unaware planner: both admitted in arbitrary order
+        // because density ties (same value_class, same typical_kb).
+        let plan_blind = build_plan(&cfg, &ctx, PlannerOptions::default());
+        // Cost-aware: FastTool wins density and gets admitted first.
+        let plan_aware = build_plan(&cfg, &ctx, PlannerOptions::cost_aware());
+
+        let fast_first = plan_aware.calls.first().map(|c| c.tool.as_str());
+        assert_eq!(
+            fast_first,
+            Some("FastTool"),
+            "cost-aware planner must admit FastTool first; got {:?}",
+            plan_aware.calls.iter().map(|c| &c.tool).collect::<Vec<_>>()
+        );
+        assert_eq!(plan_aware.calls.len(), 2);
+        assert_eq!(plan_blind.calls.len(), 2);
     }
 
     #[test]
