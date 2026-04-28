@@ -67,11 +67,14 @@ pub enum PrefetchError {
 #[derive(Debug)]
 pub enum PrefetchOutcome {
     /// Prefetch landed within the timeout. The body is ready to write
-    /// into the dedup cache.
+    /// into the dedup cache. `predicted_cost_tokens` carries the
+    /// planner's admit-time estimate so callers can pass it through
+    /// to telemetry (`PipelineEvent.enricher_predicted_cost_tokens`).
     Settled {
         tool: String,
         args: Value,
         body: String,
+        predicted_cost_tokens: u32,
     },
     /// Prefetch returned an error. Counted as wasted; logged at WARN.
     Failed { tool: String, error: PrefetchError },
@@ -171,6 +174,7 @@ struct TaskResult {
     tool: String,
     args: Value,
     body: Result<String, PrefetchError>,
+    predicted_cost_tokens: u32,
     /// Carried through for future per-host telemetry on the result
     /// path. Today, the budget is released inside the spawned task
     /// before this value is read by `wait_within` — so this field
@@ -253,6 +257,7 @@ impl SpeculationEngine {
             let tool = req.call.tool.clone();
             let args = req.args.clone();
             let host = req.rate_limit_host.clone();
+            let predicted_cost_tokens = req.call.estimated_cost_tokens;
             let budget = self.budget.clone();
             let respects = self.config.respect_rate_limits;
             self.join_set.spawn(async move {
@@ -266,6 +271,7 @@ impl SpeculationEngine {
                     tool,
                     args,
                     body,
+                    predicted_cost_tokens,
                     rate_limit_host: host,
                 }
             });
@@ -293,11 +299,13 @@ impl SpeculationEngine {
             }
             match timeout(deadline, self.join_set.join_next()).await {
                 Ok(Some(Ok(task_result))) => {
+                    let predicted = task_result.predicted_cost_tokens;
                     out.push(match task_result.body {
                         Ok(body) => PrefetchOutcome::Settled {
                             tool: task_result.tool,
                             args: task_result.args,
                             body,
+                            predicted_cost_tokens: predicted,
                         },
                         Err(error) => PrefetchOutcome::Failed {
                             tool: task_result.tool,
