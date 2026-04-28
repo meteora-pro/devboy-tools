@@ -174,10 +174,22 @@ pub fn build_plan(
     };
 
     for (_, c) in scored {
-        let cost_tokens = cost_tokens_for(&c.model, options.bytes_per_token);
+        let raw_cost_tokens = cost_tokens_for(&c.model, options.bytes_per_token);
         let cost_bytes = (c.model.cost_model.typical_kb * 1024.0) as u32;
 
         let is_free = c.model.excluded_from_budget();
+        // Clamp non-AuditOnly cost to ≥ 1 token. A tool with
+        // `cost_model.typical_kb = 0.0` (e.g. `ToolSearch`) must still
+        // count *something* against the budget — otherwise it would
+        // admit unconditionally and `enricher_predicted_cost_tokens`
+        // would always log 0 for that tool, distorting telemetry.
+        // AuditOnly tools stay genuinely free; that is their whole
+        // contract.
+        let cost_tokens = if is_free {
+            raw_cost_tokens
+        } else {
+            raw_cost_tokens.max(1)
+        };
         if !is_free && cost_tokens > plan.remaining_budget_tokens {
             plan.declined.push(DeclineReason {
                 tool: c.tool.clone(),
@@ -439,6 +451,65 @@ mod tests {
         assert!(
             !plan.calls.iter().any(|c| c.tool == "Read"),
             "Read already used in this turn should not be re-admitted"
+        );
+    }
+
+    #[test]
+    fn zero_typical_kb_supporting_tool_costs_at_least_one_token() {
+        // Reproduces the edge case Copilot flagged: a Supporting tool
+        // with `cost_model.typical_kb = 0.0` (e.g. `ToolSearch`) must
+        // still count ≥ 1 token against the budget — otherwise it
+        // would admit for free and break the cost ≤ budget guarantee.
+        let mut cfg = AdaptiveConfig::default();
+        let trigger = ToolValueModel {
+            follow_up: vec![devboy_core::FollowUpLink {
+                tool: "Cheap".into(),
+                probability: 1.0,
+                projection: None,
+            }],
+            ..ToolValueModel::default()
+        };
+        let cheap = ToolValueModel {
+            value_class: ValueClass::Supporting,
+            cost_model: devboy_core::CostModel {
+                typical_kb: 0.0,
+                ..Default::default()
+            },
+            ..ToolValueModel::default()
+        };
+        cfg.tools.insert("Trigger".into(), trigger);
+        cfg.tools.insert("Cheap".into(), cheap);
+
+        let recent = vec!["Trigger".to_string()];
+        let ctx = TurnContext::new(&recent, 1);
+        let plan = build_plan(&cfg, &ctx, PlannerOptions::default());
+
+        let cheap_call = plan
+            .calls
+            .iter()
+            .find(|c| c.tool == "Cheap")
+            .expect("Cheap must still be admitted at budget=1");
+        assert_eq!(
+            cheap_call.estimated_cost_tokens, 1,
+            "zero-typical-kb non-AuditOnly tool must clamp to 1 token"
+        );
+        assert_eq!(
+            plan.remaining_budget_tokens, 0,
+            "budget must be drained by 1, not left at 1"
+        );
+
+        // Same setup with budget=0 must decline — proves the clamp
+        // actually participates in the budget gate, not just in
+        // accounting.
+        let ctx0 = TurnContext::new(&recent, 0);
+        let plan0 = build_plan(&cfg, &ctx0, PlannerOptions::default());
+        assert!(
+            plan0.calls.iter().all(|c| c.tool != "Cheap"),
+            "Cheap must be declined at budget=0 (clamp ≥ 1)"
+        );
+        assert!(
+            plan0.declined.iter().any(|d| d.tool == "Cheap"),
+            "decline reason must be recorded"
         );
     }
 

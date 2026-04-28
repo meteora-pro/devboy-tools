@@ -271,9 +271,19 @@ impl LayeredPipeline {
         // Not a duplicate — insert into cache for future reference. When
         // near-ref is enabled, also retain the body so future turns can
         // diff against it; otherwise stick to the cheaper hash-only entry.
+        //
         // `tool_name` is recorded so `DedupCache::invalidate_by_tool`
         // (Paper 3 §Cross-tool invalidation) can later drop entries for
         // tools that this writer's `ToolValueModel.invalidates` lists.
+        //
+        // We pass `input.tool_name` *as-is* (e.g. `mcp__gitlab__get_issue`).
+        // Anonymization (`mcp__p<hash6>__verb`) only applies to the
+        // public corpus aggregates in `docs/research/data/paper3_*.csv`;
+        // `[tools.<name>]` keys, `effective_tool_value_model` lookups,
+        // and the dedup cache all use the live runtime name. Otherwise
+        // a user override `[tools."mcp__gitlab__update_issue"]` would
+        // never be found, and `invalidates = ["mcp__gitlab__get_issue"]`
+        // would never match a cached entry.
         let tc_hash = short_hash(input.tool_call_id);
         if self.config.dedup.near_ref_enabled {
             self.dedup.insert_with_body(
