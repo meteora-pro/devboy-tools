@@ -28,10 +28,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use devboy_format_pipeline::adaptive_config::AdaptiveConfig;
+use devboy_format_pipeline::enrichment::{PlannerOptions, TurnContext, build_plan};
 use devboy_format_pipeline::layered_pipeline::{LayeredPipeline, ToolResponseInput};
+use devboy_format_pipeline::projection::{extract_args, extract_host};
 use devboy_format_pipeline::telemetry::{EnrichmentEffectiveness, JsonlSink, Layer, TelemetrySink};
 
 use crate::protocol::{ToolCallParams, ToolCallResult, ToolResultContent};
+use crate::speculation::{
+    PrefetchDispatcher, PrefetchOutcome, PrefetchRequest, SkipReason, SpeculationEngine,
+};
 
 /// Maximum number of recent tool names retained for the Paper 3
 /// planner's `follow_up` lookup. 16 covers a "find → fix → verify"
@@ -61,6 +66,12 @@ pub struct SessionPipeline {
     /// `fail_fast_after_n` in `[tools.<name>]`. Reset on the first
     /// non-empty response.
     fail_fast_streak: Arc<Mutex<BTreeMap<String, u32>>>,
+    /// Speculative-execution engine. `None` until the host wires a
+    /// dispatcher via [`Self::with_speculation`]; the engine is
+    /// always live afterwards but only schedules tasks when
+    /// `config.enrichment.enabled = true`. Wrapped in
+    /// `tokio::sync::Mutex` because dispatch / wait are async.
+    speculation: Arc<tokio::sync::Mutex<Option<SpeculationEngine>>>,
 }
 
 impl SessionPipeline {
@@ -102,6 +113,29 @@ impl SessionPipeline {
             recent_tools: Arc::new(Mutex::new(VecDeque::with_capacity(RECENT_TOOLS_WINDOW))),
             enrichment: Arc::new(Mutex::new(EnrichmentEffectiveness::default())),
             fail_fast_streak: Arc::new(Mutex::new(BTreeMap::new())),
+            speculation: Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
+    /// Attach a speculative-execution dispatcher. The host calls this
+    /// once at startup with a [`PrefetchDispatcher`] that bridges to
+    /// its own `tools/call` path. After this, [`Self::speculate_after`]
+    /// schedules out-of-band prefetches when the planner finds high-
+    /// probability follow-ups.
+    pub async fn with_speculation(self, dispatcher: Arc<dyn PrefetchDispatcher>) -> Self {
+        let engine = SpeculationEngine::new(self.config.enrichment.clone(), dispatcher);
+        *self.speculation.lock().await = Some(engine);
+        self
+    }
+
+    /// Best-effort drop hook: on session close, abort every still-
+    /// pending speculative task. The async-aware version of `Drop`
+    /// (Rust's sync `Drop` only sends an abort signal; this method
+    /// also drains the JoinSet so the runtime sees the cancellation
+    /// before we return).
+    pub async fn shutdown(&self) {
+        if let Some(engine) = self.speculation.lock().await.as_mut() {
+            engine.shutdown().await;
         }
     }
 
@@ -163,6 +197,241 @@ impl SessionPipeline {
         }
     }
 
+    /// Run the Paper 3 planner against the response that just landed
+    /// for `tool_name`, dispatch every safe (`Pure` / `ReadOnly`)
+    /// follow-up out-of-band, and wait up to
+    /// `enrichment.prefetch_timeout_ms` for them to complete.
+    ///
+    /// Settled prefetches land in the dedup cache so the LLM's next
+    /// `tools/call` for the same `tool_name+args` collapses to an L0
+    /// hit. Tasks still pending past the timeout keep running and
+    /// land later on the same session — never blocking the main
+    /// response path.
+    ///
+    /// Returns a short hint string the host can append to the LLM's
+    /// response so the model knows what context arrived early. Empty
+    /// when the planner had nothing to schedule (or speculation is
+    /// disabled).
+    ///
+    /// **Speculation is disabled** when:
+    ///
+    /// - `config.enrichment.enabled = false` (default), or
+    /// - no [`PrefetchDispatcher`] has been attached via
+    ///   [`Self::with_speculation`].
+    ///
+    /// In both cases this method is a cheap no-op and returns `""`.
+    pub async fn speculate_after(
+        &self,
+        tool_name: &str,
+        prev_response_json: &serde_json::Value,
+    ) -> String {
+        // Cheap exits when speculation is off — no plan, no dispatch.
+        if !self.config.enrichment.enabled {
+            return String::new();
+        }
+        let mut engine_guard = self.speculation.lock().await;
+        let Some(engine) = engine_guard.as_mut() else {
+            return String::new();
+        };
+        if !engine.is_enabled() {
+            return String::new();
+        }
+
+        // Build the planner's TurnContext from the recent-tools window.
+        // The planner reads `recent_tools` to drive `follow_up` lookup;
+        // we hand it a fresh snapshot each turn.
+        let recent = self.recent_tools_snapshot();
+        let ctx = TurnContext::new(&recent, self.config.enrichment.prefetch_budget_tokens);
+        // Use a slightly lower probability floor than the default 0.5
+        // — corpus mining showed valuable read chains (Glob → Read at
+        // 0.32, Grep → Read at 0.35) sit below the default. The host
+        // gates speculation entirely via `enrichment.enabled` and the
+        // `is_speculatable` filter, so loosening the prob threshold
+        // here is safe.
+        let opts = PlannerOptions {
+            min_followup_probability: 0.3,
+            ..PlannerOptions::default()
+        };
+        let plan = build_plan(&self.config, &ctx, opts);
+
+        // Filter to candidates that are *safe to speculate* and have
+        // resolvable args. The planner's `follow_up` graph already
+        // includes mutating tools as informational hints — the
+        // `is_speculatable()` gate drops them so we never re-issue an
+        // Edit/Write/create_*.
+        let mut requests: Vec<PrefetchRequest> = Vec::new();
+        for call in &plan.calls {
+            let Some(model) = self.config.effective_tool_value_model(&call.tool) else {
+                continue;
+            };
+            if !model.is_speculatable() {
+                continue;
+            }
+            // Find the FollowUpLink that produced this candidate so we
+            // can recover its `projection` / `projection_arg`. Cheap
+            // because every recent_tool's follow_up list is small.
+            let Some(link) = self
+                .config
+                .effective_tool_value_model(tool_name)
+                .and_then(|m| m.follow_up.iter().find(|l| l.tool == call.tool))
+            else {
+                continue;
+            };
+            let arg_objects = extract_args(tool_name, prev_response_json, link);
+            if arg_objects.is_empty() {
+                continue;
+            }
+            for args in arg_objects {
+                let host = static_or_url_host(&args, model.rate_limit_host.as_deref());
+                requests.push(PrefetchRequest {
+                    call: call.clone(),
+                    args,
+                    rate_limit_host: host,
+                });
+            }
+        }
+
+        if requests.is_empty() {
+            return String::new();
+        }
+
+        // Record dispatched / total predictions; counters move *here*
+        // not in the engine so we honour the contract from
+        // EnrichmentEffectiveness::record_prefetch_dispatched.
+        let total_to_dispatch = requests.len() as u32;
+        let skips = engine.dispatch(requests).await;
+        let dispatched = total_to_dispatch.saturating_sub(skips.len() as u32);
+        if let Ok(mut e) = self.enrichment.lock() {
+            for _ in 0..dispatched {
+                e.total_prefetches = e.total_prefetches.saturating_add(1);
+                e.record_prefetch_dispatched();
+            }
+            // Skipped requests still count against the planner's
+            // accounting (they were planned, just rate-limited away).
+            for s in &skips {
+                if let PrefetchOutcome::Skipped { reason, .. } = s {
+                    let label = match reason {
+                        SkipReason::HostSaturated => "host_saturated",
+                        SkipReason::MaxParallelReached => "max_parallel_reached",
+                        SkipReason::NotSpeculatable => "not_speculatable",
+                    };
+                    tracing::debug!(
+                        target: "devboy_mcp::speculation",
+                        "prefetch skipped: {label}"
+                    );
+                }
+            }
+        }
+
+        // Wait inside the prefetch budget. Settled bodies go straight
+        // into the dedup cache so the LLM's eventual call collapses
+        // to L0; failures are logged + counted as wasted.
+        let outcomes = engine.wait_within().await;
+        let mut hint_parts: Vec<String> = Vec::new();
+        for o in outcomes {
+            match o {
+                PrefetchOutcome::Settled { tool, args, body } => {
+                    self.write_prefetch_to_cache(&tool, &args, &body);
+                    hint_parts.push(format!("{tool}({})", short_args(&args)));
+                }
+                PrefetchOutcome::Failed { tool, error } => {
+                    tracing::warn!(
+                        target: "devboy_mcp::speculation",
+                        "prefetch failed for {tool}: {error}"
+                    );
+                    if let Ok(mut e) = self.enrichment.lock() {
+                        e.record_prefetch_wasted();
+                    }
+                }
+                PrefetchOutcome::Skipped { .. } => {}
+            }
+        }
+
+        if hint_parts.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n\n> [enrichment: pre-fetched {} in background — call as usual, results served from cache]",
+                hint_parts.join(", ")
+            )
+        }
+    }
+
+    /// Push a settled prefetch body into the dedup cache so the LLM's
+    /// future `tools/call` for the same content collapses to an L0
+    /// hint. Best-effort: cache failures are logged and discarded.
+    fn write_prefetch_to_cache(&self, tool: &str, args: &serde_json::Value, body: &str) {
+        let Ok(mut p) = self.inner.lock() else {
+            return;
+        };
+        let request_id = format!(
+            "prefetch_{}_{}",
+            tool,
+            // Cheap fingerprint of the args so different prefetches
+            // for the same tool don't share a tool_call_id_hash slot.
+            short_args_hash(args)
+        );
+        let path = args.get("file_path").and_then(|v| v.as_str());
+        let input = ToolResponseInput {
+            tool_call_id: &request_id,
+            tool_name: tool,
+            file_path: path,
+            content: body,
+            is_sidechain: false,
+            ts_ms: 0, // synthetic timestamp; planner will overwrite on real call
+        };
+        // Reuse the regular path so the dedup cache state stays
+        // consistent with main-flow inserts.
+        let _out = p.process(input);
+    }
+}
+
+/// Pull the rate-limit host for a single prefetch. Tries the runtime
+/// URL first (so WebFetch / generic HTTP wrappers resolve correctly),
+/// then falls back to the static `ToolValueModel.rate_limit_host`.
+fn static_or_url_host(args: &serde_json::Value, static_host: Option<&str>) -> Option<String> {
+    if let Some(url) = args.get("url").and_then(|v| v.as_str())
+        && let Some(h) = extract_host(url)
+    {
+        return Some(h);
+    }
+    static_host.map(String::from)
+}
+
+/// Compact one-line stringified args for the LLM hint (full JSON
+/// would be noisy). Returns the first string field's value if any,
+/// else `""`. Bounded to ~40 chars.
+fn short_args(args: &serde_json::Value) -> String {
+    let Some(obj) = args.as_object() else {
+        return String::new();
+    };
+    for (_, v) in obj {
+        if let Some(s) = v.as_str() {
+            let mut t = s.to_string();
+            if t.len() > 40 {
+                t.truncate(40);
+                t.push('…');
+            }
+            return t;
+        }
+    }
+    String::new()
+}
+
+/// Stable short fingerprint for `args` — used to namespace prefetched
+/// entries in the dedup cache so two prefetches for the same tool but
+/// different args don't collide. Just a hex DJB2 — collisions are
+/// fine, the dedup cache uses content-hash for actual uniqueness.
+fn short_args_hash(args: &serde_json::Value) -> String {
+    let s = args.to_string();
+    let mut h: u64 = 5381;
+    for b in s.bytes() {
+        h = h.wrapping_mul(33).wrapping_add(b as u64);
+    }
+    format!("{h:08x}")
+}
+
+impl SessionPipeline {
     /// Notify the pipeline that the host compacted its context. Drops
     /// dedup entries from prior partitions on the next eviction sweep.
     pub fn on_compaction_boundary(&self) {
@@ -616,6 +885,153 @@ mod tests {
         let s = pipeline.enrichment_snapshot();
         assert_eq!(s.inference_calls_saved_fail_fast, 2);
         assert_eq!(s.inference_tokens_saved, 80);
+    }
+
+    // ─── Speculation end-to-end ───────────────────────────────────────
+
+    use crate::speculation::{PrefetchDispatcher, PrefetchError};
+    use async_trait::async_trait;
+    use serde_json::Value;
+
+    /// Mock dispatcher that returns a canned body per tool. Does not
+    /// touch real MCP transport.
+    struct MapDispatcher {
+        bodies: std::collections::HashMap<String, String>,
+        delay_ms: u64,
+    }
+
+    #[async_trait]
+    impl PrefetchDispatcher for MapDispatcher {
+        async fn dispatch(
+            &self,
+            tool: &str,
+            _args: serde_json::Value,
+        ) -> Result<String, PrefetchError> {
+            tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
+            self.bodies
+                .get(tool)
+                .cloned()
+                .ok_or_else(|| PrefetchError::Rejected(format!("no body for {tool}")))
+        }
+    }
+
+    fn enrichment_on_config() -> AdaptiveConfig {
+        let mut cfg = AdaptiveConfig {
+            tools: devboy_format_pipeline::tool_defaults::default_tool_value_models(),
+            ..AdaptiveConfig::default()
+        };
+        cfg.enrichment.enabled = true;
+        cfg.enrichment.prefetch_timeout_ms = 500;
+        cfg.enrichment.max_parallel_prefetches = 3;
+        // Speculation pre-fetch budget needs to clear Read.cost (~640
+        // tokens) so the test fixture isn't dominated by budget gating.
+        cfg.enrichment.prefetch_budget_tokens = 4_000;
+        cfg
+    }
+
+    #[tokio::test]
+    async fn speculate_after_dispatches_glob_to_read_chain() {
+        let cfg = enrichment_on_config();
+        let mut bodies = std::collections::HashMap::new();
+        bodies.insert("Read".into(), "long body of file/main.rs ".repeat(40));
+        let dispatcher = Arc::new(MapDispatcher {
+            bodies,
+            delay_ms: 5,
+        });
+        let pipeline = SessionPipeline::new(cfg).with_speculation(dispatcher).await;
+
+        // Step 1: Glob result lands first — register it in recent_tools.
+        let glob_body = "src/main.rs\nsrc/lib.rs\nsrc/api.rs\n";
+        let _ = pipeline.process(
+            "req_1",
+            &ToolCallParams {
+                name: "Glob".to_string(),
+                arguments: Some(json!({"pattern": "src/**/*.rs"})),
+            },
+            ToolCallResult::text(glob_body.to_string()),
+            0,
+        );
+
+        // Step 2: trigger speculation. Glob's follow_up has Read with
+        // probability 0.32 — the planner picks it up via projection
+        // arg `file_path`.
+        let prev_response = Value::String(glob_body.to_string());
+        let hint = pipeline.speculate_after("Glob", &prev_response).await;
+
+        let snap = pipeline.enrichment_snapshot();
+        // At least one prefetch must have been scheduled and observed.
+        assert!(
+            snap.total_prefetches > 0,
+            "expected total_prefetches > 0, got {snap:?}"
+        );
+        assert!(
+            snap.prefetch_dispatched > 0,
+            "expected prefetch_dispatched > 0, got {snap:?}"
+        );
+        // Hint must mention Read — proves we appended user-visible
+        // text after dispatch.
+        assert!(
+            hint.contains("Read"),
+            "expected Read in hint, got: {hint:?}"
+        );
+        pipeline.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn speculate_after_is_noop_when_disabled() {
+        // enrichment.enabled = false (default) — no dispatch at all.
+        let pipeline = SessionPipeline::new(AdaptiveConfig {
+            tools: devboy_format_pipeline::tool_defaults::default_tool_value_models(),
+            ..AdaptiveConfig::default()
+        });
+        let _ = pipeline.process(
+            "req_1",
+            &ToolCallParams {
+                name: "Glob".to_string(),
+                arguments: Some(json!({"pattern": "src/**/*.rs"})),
+            },
+            ToolCallResult::text("src/main.rs\n".into()),
+            0,
+        );
+        let hint = pipeline
+            .speculate_after("Glob", &Value::String("src/main.rs\n".into()))
+            .await;
+        assert!(hint.is_empty(), "speculation must be silent when disabled");
+        let snap = pipeline.enrichment_snapshot();
+        assert_eq!(snap.total_prefetches, 0);
+        assert_eq!(snap.prefetch_dispatched, 0);
+    }
+
+    #[tokio::test]
+    async fn shutdown_drains_pending_speculation() {
+        let mut cfg = enrichment_on_config();
+        // Tiny timeout — guarantees the prefetch is still in flight
+        // when we shutdown.
+        cfg.enrichment.prefetch_timeout_ms = 1;
+        let mut bodies = std::collections::HashMap::new();
+        bodies.insert("Read".into(), "any body".into());
+        let dispatcher = Arc::new(MapDispatcher {
+            bodies,
+            delay_ms: 200, // longer than prefetch_timeout_ms
+        });
+        let pipeline = SessionPipeline::new(cfg).with_speculation(dispatcher).await;
+        let _ = pipeline.process(
+            "req_1",
+            &ToolCallParams {
+                name: "Glob".to_string(),
+                arguments: Some(json!({"pattern": "x"})),
+            },
+            ToolCallResult::text("src/main.rs\n".into()),
+            0,
+        );
+        let _hint = pipeline
+            .speculate_after("Glob", &Value::String("src/main.rs\n".into()))
+            .await;
+        // Prefetch was dispatched but timed out — still pending.
+        // shutdown() must abort it cleanly without panic.
+        pipeline.shutdown().await;
+        // Idempotent — safe to call twice.
+        pipeline.shutdown().await;
     }
 
     #[test]
