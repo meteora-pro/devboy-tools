@@ -16,7 +16,7 @@
 
 use std::collections::BTreeMap;
 
-use devboy_core::{CostModel, FollowUpLink, ToolValueModel, ValueClass};
+use devboy_core::{CostModel, FollowUpLink, SideEffectClass, ToolValueModel, ValueClass};
 
 /// Returns the seeded `[tools.*]` map every layered pipeline starts
 /// with. `merge_right_wins` lets the user's TOML overrides win over
@@ -41,8 +41,10 @@ pub fn default_tool_value_models() -> BTreeMap<String, ToolValueModel> {
             follow_up: vec![FollowUpLink {
                 tool: "Read".into(),
                 probability: 0.45,
-                projection: None,
+                ..FollowUpLink::default()
             }],
+            // Pure: same path → same bytes (mutation hook invalidates).
+            side_effect_class: SideEffectClass::Pure,
             ..ToolValueModel::default()
         },
     );
@@ -66,15 +68,18 @@ pub fn default_tool_value_models() -> BTreeMap<String, ToolValueModel> {
                 FollowUpLink {
                     tool: "Bash".into(),
                     probability: 0.27,
-                    projection: None,
+                    ..FollowUpLink::default()
                 },
                 FollowUpLink {
                     tool: "Read".into(),
                     probability: 0.14,
-                    projection: None,
+                    ..FollowUpLink::default()
                 },
             ],
             invalidates: vec!["Read".into(), "Grep".into()],
+            // MutatesLocal: never speculate — re-running an Edit would
+            // double-apply the patch.
+            side_effect_class: SideEffectClass::MutatesLocal,
             ..ToolValueModel::default()
         },
     );
@@ -87,6 +92,7 @@ pub fn default_tool_value_models() -> BTreeMap<String, ToolValueModel> {
                 ..CostModel::default()
             },
             invalidates: vec!["Read".into(), "Grep".into(), "Glob".into()],
+            side_effect_class: SideEffectClass::MutatesLocal,
             ..ToolValueModel::default()
         },
     );
@@ -99,6 +105,7 @@ pub fn default_tool_value_models() -> BTreeMap<String, ToolValueModel> {
                 ..CostModel::default()
             },
             invalidates: vec!["Read".into(), "Grep".into()],
+            side_effect_class: SideEffectClass::MutatesLocal,
             ..ToolValueModel::default()
         },
     );
@@ -111,6 +118,7 @@ pub fn default_tool_value_models() -> BTreeMap<String, ToolValueModel> {
                 ..CostModel::default()
             },
             invalidates: vec!["Read".into()],
+            side_effect_class: SideEffectClass::MutatesLocal,
             ..ToolValueModel::default()
         },
     );
@@ -129,6 +137,10 @@ pub fn default_tool_value_models() -> BTreeMap<String, ToolValueModel> {
                 latency_ms_p50: Some(200),
                 ..CostModel::default()
             },
+            // Indeterminate by design — `git status` is read-only,
+            // `rm -rf` is catastrophic. Sub-classification is its own
+            // research direction; until then, never speculate.
+            side_effect_class: SideEffectClass::Indeterminate,
             ..ToolValueModel::default()
         },
     );
@@ -151,18 +163,25 @@ pub fn default_tool_value_models() -> BTreeMap<String, ToolValueModel> {
                     tool: "Read".into(),
                     probability: 0.35,
                     projection: Some("path".into()),
+                    projection_arg: Some("file_path".into()),
                 },
+                // Edit follow-up is informational only — never
+                // speculatively executed (MutatesLocal blocks it).
                 FollowUpLink {
                     tool: "Edit".into(),
                     probability: 0.07,
                     projection: Some("path".into()),
+                    projection_arg: Some("file_path".into()),
                 },
                 FollowUpLink {
                     tool: "Grep".into(),
                     probability: 0.39,
-                    projection: None,
+                    ..FollowUpLink::default()
                 },
             ],
+            // Pure under file-mutation hook: same query → same matches
+            // until Edit/Write fires.
+            side_effect_class: SideEffectClass::Pure,
             ..ToolValueModel::default()
         },
     );
@@ -185,18 +204,23 @@ pub fn default_tool_value_models() -> BTreeMap<String, ToolValueModel> {
                     tool: "Read".into(),
                     probability: 0.32,
                     projection: Some("match_path".into()),
+                    projection_arg: Some("file_path".into()),
                 },
                 FollowUpLink {
                     tool: "Grep".into(),
                     probability: 0.13,
-                    projection: Some("match_path".into()),
+                    // Grep needs a query string the planner cannot
+                    // synthesise from a path — not speculatable, kept
+                    // as informational hint only.
+                    ..FollowUpLink::default()
                 },
                 FollowUpLink {
                     tool: "Glob".into(),
                     probability: 0.41,
-                    projection: None,
+                    ..FollowUpLink::default()
                 },
             ],
+            side_effect_class: SideEffectClass::ReadOnly,
             ..ToolValueModel::default()
         },
     );
@@ -215,10 +239,15 @@ pub fn default_tool_value_models() -> BTreeMap<String, ToolValueModel> {
                 freshness_ttl_s: Some(3600),
                 ..CostModel::default()
             },
+            // Read-only with TTL — same query → near-identical results
+            // for ~1 hour (freshness_ttl_s).
+            side_effect_class: SideEffectClass::ReadOnly,
+            rate_limit_class: Some("web_api".into()),
             follow_up: vec![FollowUpLink {
                 tool: "WebFetch".into(),
                 probability: 0.65,
                 projection: Some("url".into()),
+                projection_arg: Some("url".into()),
             }],
             field_groups: {
                 let mut g = BTreeMap::new();
@@ -254,6 +283,8 @@ pub fn default_tool_value_models() -> BTreeMap<String, ToolValueModel> {
                 freshness_ttl_s: Some(900),
                 ..CostModel::default()
             },
+            side_effect_class: SideEffectClass::ReadOnly,
+            rate_limit_class: Some("web_api".into()),
             ..ToolValueModel::default()
         },
     );
@@ -284,6 +315,10 @@ pub fn default_tool_value_models() -> BTreeMap<String, ToolValueModel> {
                 ..CostModel::default()
             },
             fail_fast_after_n: Some(2),
+            // Read-only metadata lookup — but typical_kb is 0, so the
+            // planner's cost-clamp puts it at 1 token; speculation buys
+            // little and the fail-fast circuit is the real win here.
+            side_effect_class: SideEffectClass::ReadOnly,
             ..ToolValueModel::default()
         },
     );
@@ -301,6 +336,9 @@ pub fn default_tool_value_models() -> BTreeMap<String, ToolValueModel> {
                 latency_ms_p50: Some(60_000),
                 ..CostModel::default()
             },
+            // Sub-agent runs arbitrary tools — assume Indeterminate
+            // until we know its inner side-effect profile.
+            side_effect_class: SideEffectClass::Indeterminate,
             ..ToolValueModel::default()
         },
     );

@@ -390,7 +390,7 @@ mod tests {
         grep.follow_up.push(devboy_core::FollowUpLink {
             tool: "TaskUpdate".into(),
             probability: 0.9,
-            projection: None,
+            ..devboy_core::FollowUpLink::default()
         });
         cfg.tools.insert("Grep".into(), grep);
 
@@ -465,7 +465,7 @@ mod tests {
             follow_up: vec![devboy_core::FollowUpLink {
                 tool: "Cheap".into(),
                 probability: 1.0,
-                projection: None,
+                ..devboy_core::FollowUpLink::default()
             }],
             ..ToolValueModel::default()
         };
@@ -521,6 +521,7 @@ mod tests {
                 tool: "Target".into(),
                 probability: 0.55,
                 projection: Some("low".into()),
+                ..devboy_core::FollowUpLink::default()
             }],
             ..ToolValueModel::default()
         };
@@ -529,6 +530,7 @@ mod tests {
                 tool: "Target".into(),
                 probability: 0.85,
                 projection: Some("high".into()),
+                ..devboy_core::FollowUpLink::default()
             }],
             ..ToolValueModel::default()
         };
