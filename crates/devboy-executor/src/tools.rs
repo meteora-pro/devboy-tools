@@ -805,7 +805,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 47);
+        assert_eq!(tools.len(), 49);
     }
 
     #[test]
@@ -858,6 +858,8 @@ mod tests {
             "get_knowledge_base_spaces",
             "list_knowledge_base_pages",
             "get_knowledge_base_page",
+            "create_knowledge_base_page",
+            "update_knowledge_base_page",
             "search_knowledge_base",
         ];
         let messenger_tools = [
