@@ -32,6 +32,7 @@ pub mod mckp_router;
 pub mod near_ref;
 pub mod page_index;
 pub mod pagination;
+pub mod projection;
 pub mod round_trip;
 pub mod shape;
 pub mod strategy;
