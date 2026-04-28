@@ -92,13 +92,13 @@ impl ToolEnricher for GitHubSchemaEnricher {
                         tool: "get_merge_request_discussions".into(),
                         probability: 0.60,
                         projection: Some("number".into()),
-                        projection_arg: Some("pull_request_number".into()),
+                        projection_arg: Some("key".into()),
                     },
                     FollowUpLink {
                         tool: "get_merge_request_diffs".into(),
                         probability: 0.40,
                         projection: Some("number".into()),
-                        projection_arg: Some("pull_request_number".into()),
+                        projection_arg: Some("key".into()),
                     },
                 ],
                 side_effect_class: SideEffectClass::ReadOnly,
@@ -116,7 +116,7 @@ impl ToolEnricher for GitHubSchemaEnricher {
                     tool: "get_merge_request_discussions".into(),
                     probability: 0.55,
                     projection: Some("number".into()),
-                    projection_arg: Some("pull_request_number".into()),
+                    projection_arg: Some("key".into()),
                 }],
                 side_effect_class: SideEffectClass::ReadOnly,
                 ..ToolValueModel::default()
@@ -145,7 +145,7 @@ impl ToolEnricher for GitHubSchemaEnricher {
                     tool: "get_issue_comments".into(),
                     probability: 0.45,
                     projection: Some("number".into()),
-                    projection_arg: Some("issue_number".into()),
+                    projection_arg: Some("key".into()),
                 }],
                 side_effect_class: SideEffectClass::ReadOnly,
                 ..ToolValueModel::default()
@@ -162,7 +162,7 @@ impl ToolEnricher for GitHubSchemaEnricher {
                     tool: "get_issue_comments".into(),
                     probability: 0.50,
                     projection: Some("number".into()),
-                    projection_arg: Some("issue_number".into()),
+                    projection_arg: Some("key".into()),
                 }],
                 side_effect_class: SideEffectClass::ReadOnly,
                 ..ToolValueModel::default()
@@ -327,7 +327,7 @@ mod tests {
             .iter()
             .find(|l| l.tool == "get_merge_request_discussions")
             .unwrap();
-        assert_eq!(link.projection_arg.as_deref(), Some("pull_request_number"));
+        assert_eq!(link.projection_arg.as_deref(), Some("key"));
     }
 
     #[test]
@@ -338,7 +338,7 @@ mod tests {
             .iter()
             .find(|l| l.tool == "get_issue_comments")
             .unwrap();
-        assert_eq!(link.projection_arg.as_deref(), Some("issue_number"));
+        assert_eq!(link.projection_arg.as_deref(), Some("key"));
     }
 
     #[test]
