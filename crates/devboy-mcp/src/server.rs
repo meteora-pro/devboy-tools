@@ -776,6 +776,75 @@ impl McpServer {
         }
     }
 
+    /// Paper 3 — execute a tool out-of-band for the speculative
+    /// pre-fetch dispatcher.
+    ///
+    /// Goes through the same routing engine as the main flow so that
+    /// transparent-proxy prefixes / fallbacks / mock providers all
+    /// work identically. Differences from `handle_tools_call`:
+    ///
+    /// - No `JsonRpcResponse` wrapping — returns the raw `ToolCallResult`.
+    /// - No telemetry write here — the synthetic `PipelineEvent` is
+    ///   emitted later by `SessionPipeline::write_prefetch_to_cache`
+    ///   with `enricher_prefetched = true`.
+    /// - No mutation invalidation — the planner's `is_speculatable()`
+    ///   filter blocks `MutatesLocal` / `MutatesExternal` upstream, so
+    ///   we never reach this method for a write.
+    /// - No dedup post-pass — the prefetched body is written into the
+    ///   dedup cache *afterward* by `SessionPipeline`, not here.
+    ///
+    /// Internal-context tools (`use_context`, `list_contexts`, …) are
+    /// not eligible for speculation by design, so they short-circuit
+    /// to an error result rather than mutating server state.
+    pub async fn execute_for_prefetch(
+        &self,
+        name: &str,
+        arguments: Option<Value>,
+    ) -> ToolCallResult {
+        // Honour `builtin_tools_config` — a tool the operator turned
+        // off must not be speculatively reached either.
+        if !self.builtin_tools_config.is_empty()
+            && !self.builtin_tools_config.is_tool_allowed(name)
+            && !self.proxy_manager.has_tool(name)
+        {
+            return ToolCallResult::error(format!(
+                "Tool '{name}' is disabled by builtin_tools configuration"
+            ));
+        }
+
+        // Internal context-management tools are stateful and must
+        // never run from the speculation path.
+        if Self::is_internal_tool(name) {
+            return ToolCallResult::error(format!(
+                "Tool '{name}' is internal — never speculatable"
+            ));
+        }
+
+        let params = ToolCallParams {
+            name: name.to_string(),
+            arguments,
+        };
+        // Mirror dispatch_with_routing's main branch but skip
+        // fallback / telemetry — speculation results are best-effort.
+        match self.routing_engine.clone() {
+            Some(engine) => {
+                let decision = engine.decide(name);
+                self.execute_target(&decision.primary, &decision.resolved_name, params.arguments)
+                    .await
+            }
+            None => self.legacy_dispatch(&params).await,
+        }
+    }
+
+    /// Returns `true` for internal context-management tools that
+    /// must never be speculatively executed.
+    fn is_internal_tool(name: &str) -> bool {
+        matches!(
+            name,
+            "use_context" | "list_contexts" | "get_current_context" | "switch_context"
+        )
+    }
+
     /// Legacy dispatch — used only when no routing engine is installed. Preserves the
     /// pre-transparent-proxy behaviour for integrators that haven't opted in.
     async fn legacy_dispatch(&self, params: &ToolCallParams) -> ToolCallResult {
