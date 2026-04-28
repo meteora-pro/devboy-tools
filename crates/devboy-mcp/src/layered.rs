@@ -23,20 +23,44 @@
 //!   partition counter and drop entries that would otherwise outlive
 //!   the cache window.
 
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use devboy_format_pipeline::adaptive_config::AdaptiveConfig;
 use devboy_format_pipeline::layered_pipeline::{LayeredPipeline, ToolResponseInput};
-use devboy_format_pipeline::telemetry::{JsonlSink, Layer, TelemetrySink};
+use devboy_format_pipeline::telemetry::{EnrichmentEffectiveness, JsonlSink, Layer, TelemetrySink};
 
 use crate::protocol::{ToolCallParams, ToolCallResult, ToolResultContent};
 
+/// Maximum number of recent tool names retained for the Paper 3
+/// planner's `follow_up` lookup. 16 covers a "find → fix → verify"
+/// loop comfortably; older calls fall out FIFO.
+const RECENT_TOOLS_WINDOW: usize = 16;
+
+/// Bytes below which a response counts as "empty" for fail-fast
+/// streak tracking. Picked at 8 to absorb pure whitespace / a single
+/// `[]` or `{}` envelope without arming the circuit on real-but-tiny
+/// answers.
+const FAIL_FAST_EMPTY_THRESHOLD_BYTES: usize = 8;
+
 /// Per-session pipeline handle. Cloneable; holds an `Arc` to the inner
-/// `LayeredPipeline`.
+/// `LayeredPipeline` plus Paper 3 enricher state (recent-tools window,
+/// effectiveness counters, fail-fast circuit).
 #[derive(Clone)]
 pub struct SessionPipeline {
     inner: Arc<Mutex<LayeredPipeline>>,
+    config: Arc<AdaptiveConfig>,
+    /// FIFO buffer of tool names invoked on this session — feeds the
+    /// Paper 3 planner's `follow_up` lookup. Anonymisation is not
+    /// applied (see `ToolValueModel` "Naming contract").
+    recent_tools: Arc<Mutex<VecDeque<String>>>,
+    /// Live aggregate of planner effectiveness for this session.
+    enrichment: Arc<Mutex<EnrichmentEffectiveness>>,
+    /// Per-tool count of consecutive empty responses, drives
+    /// `fail_fast_after_n` in `[tools.<name>]`. Reset on the first
+    /// non-empty response.
+    fail_fast_streak: Arc<Mutex<BTreeMap<String, u32>>>,
 }
 
 impl SessionPipeline {
@@ -74,6 +98,68 @@ impl SessionPipeline {
 
         Self {
             inner: Arc::new(Mutex::new(pipeline)),
+            config: Arc::new(config),
+            recent_tools: Arc::new(Mutex::new(VecDeque::with_capacity(RECENT_TOOLS_WINDOW))),
+            enrichment: Arc::new(Mutex::new(EnrichmentEffectiveness::default())),
+            fail_fast_streak: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    /// Snapshot of the Paper 3 enrichment counters so far in this
+    /// session. Cheap (clone of `EnrichmentEffectiveness`); intended
+    /// for `tools/list` debug output, end-of-session summary, or live
+    /// status reporting.
+    pub fn enrichment_snapshot(&self) -> EnrichmentEffectiveness {
+        self.enrichment
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
+    }
+
+    /// Snapshot of recent tool names (oldest first). Used by the host
+    /// when it builds a `TurnContext` for `EnrichmentPlanner::build_plan`.
+    pub fn recent_tools_snapshot(&self) -> Vec<String> {
+        self.recent_tools
+            .lock()
+            .map(|g| g.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Returns `true` when the planner's fail-fast circuit is armed for
+    /// `tool_name` — the host should refuse to dispatch the call and
+    /// emit a short hint instead. Armed iff:
+    /// 1. `[tools.<tool_name>].fail_fast_after_n = Some(n)`, and
+    /// 2. the last `n` consecutive responses for that tool were "empty"
+    ///    (≤ `FAIL_FAST_EMPTY_THRESHOLD_BYTES`).
+    ///
+    /// `EnrichmentEffectiveness` is **not** updated here — the host is
+    /// expected to call [`Self::record_fail_fast_skip`] once it has
+    /// actually skipped the dispatch, so the saved-call counters stay
+    /// honest if the host opts to override the recommendation.
+    pub fn should_skip(&self, tool_name: &str) -> bool {
+        let Some(model) = self.config.effective_tool_value_model(tool_name) else {
+            return false;
+        };
+        let Some(threshold) = model.fail_fast_after_n else {
+            return false;
+        };
+        let streak = self
+            .fail_fast_streak
+            .lock()
+            .ok()
+            .and_then(|g| g.get(tool_name).copied())
+            .unwrap_or(0);
+        streak >= threshold
+    }
+
+    /// Notify the aggregator that the host actually short-circuited a
+    /// call this turn (the host saw `should_skip` return `true` and
+    /// honoured it). `predicted_cost_tokens` should come from the
+    /// tool's `cost_model.typical_kb` so the saved-token count stays
+    /// proportional to the call we avoided.
+    pub fn record_fail_fast_skip(&self, predicted_cost_tokens: u32) {
+        if let Ok(mut e) = self.enrichment.lock() {
+            e.record_fail_fast_skip(predicted_cost_tokens);
         }
     }
 
@@ -124,9 +210,16 @@ impl SessionPipeline {
             Err(_) => return result,
         };
 
+        // Track per-call totals so we can update Paper 3 counters once,
+        // not per content piece.
+        let mut total_dedup_hits: u32 = 0;
+        let mut total_dedup_tokens_saved: u64 = 0;
+        let mut max_original_chars: usize = 0;
+
         for c in result.content {
             match c {
                 ToolResultContent::Text { text } => {
+                    max_original_chars = max_original_chars.max(text.len());
                     let input = ToolResponseInput {
                         tool_call_id: request_id,
                         tool_name: &params.name,
@@ -136,6 +229,15 @@ impl SessionPipeline {
                         ts_ms,
                     };
                     let out = p.process(input);
+                    if matches!(out.layer, Layer::L0) {
+                        total_dedup_hits = total_dedup_hits.saturating_add(1);
+                        // `tokens_saved` is `tokens_baseline - tokens_final`
+                        // — the body the LLM never had to spend context on.
+                        if out.tokens_saved > 0 {
+                            total_dedup_tokens_saved =
+                                total_dedup_tokens_saved.saturating_add(out.tokens_saved as u64);
+                        }
+                    }
                     // Only rewrite when L0 fired — other layers do not
                     // operate on opaque text content from arbitrary
                     // upstream tools (the typed-domain L1/L2 path goes
@@ -148,6 +250,41 @@ impl SessionPipeline {
                     new_content.push(ToolResultContent::Text { text: body });
                 }
             }
+        }
+
+        // Drop the pipeline mutex before grabbing the Paper 3 mutexes —
+        // we never hold both at once, which keeps deadlock impossible
+        // even if a future caller decides to lock them in any order.
+        drop(p);
+
+        // Paper 3: update enrichment counters + recent-tools window +
+        // fail-fast streak. All non-fatal — a poisoned mutex skips the
+        // update but never breaks the response.
+        if total_dedup_hits > 0
+            && let Ok(mut e) = self.enrichment.lock()
+        {
+            e.inference_calls_saved_dedup = e
+                .inference_calls_saved_dedup
+                .saturating_add(total_dedup_hits);
+            e.inference_tokens_saved = e
+                .inference_tokens_saved
+                .saturating_add(total_dedup_tokens_saved);
+        }
+
+        if let Ok(mut streak) = self.fail_fast_streak.lock() {
+            let entry = streak.entry(params.name.clone()).or_insert(0);
+            if max_original_chars <= FAIL_FAST_EMPTY_THRESHOLD_BYTES {
+                *entry = entry.saturating_add(1);
+            } else {
+                *entry = 0;
+            }
+        }
+
+        if let Ok(mut recent) = self.recent_tools.lock() {
+            if recent.len() >= RECENT_TOOLS_WINDOW {
+                recent.pop_front();
+            }
+            recent.push_back(params.name.clone());
         }
 
         ToolCallResult {
@@ -337,6 +474,148 @@ mod tests {
             "expected at least one .jsonl file in {:?}",
             tmp.path()
         );
+    }
+
+    // ─── Paper 3 enrichment wiring ────────────────────────────────────
+
+    fn pipeline_with_fail_fast_on(tool: &str, threshold: u32) -> SessionPipeline {
+        let mut cfg = AdaptiveConfig::default();
+        let model = devboy_core::ToolValueModel {
+            fail_fast_after_n: Some(threshold),
+            ..devboy_core::ToolValueModel::default()
+        };
+        cfg.tools.insert(tool.to_string(), model);
+        SessionPipeline::new(cfg)
+    }
+
+    fn empty_params(name: &str) -> ToolCallParams {
+        ToolCallParams {
+            name: name.to_string(),
+            arguments: None,
+        }
+    }
+
+    #[test]
+    fn dedup_hit_increments_inference_calls_saved_dedup() {
+        let pipeline = SessionPipeline::new(AdaptiveConfig::default());
+        let body = long_text("file-D:");
+        let _ = pipeline.process(
+            "req_1",
+            &read_params("/tmp/d.rs"),
+            ToolCallResult::text(body.clone()),
+            0,
+        );
+        let pre = pipeline.enrichment_snapshot();
+        assert_eq!(pre.inference_calls_saved_dedup, 0);
+
+        // Second identical Read fires L0 → counter must move.
+        let _ = pipeline.process(
+            "req_2",
+            &read_params("/tmp/d.rs"),
+            ToolCallResult::text(body),
+            10,
+        );
+        let post = pipeline.enrichment_snapshot();
+        assert_eq!(post.inference_calls_saved_dedup, 1);
+        assert!(
+            post.inference_tokens_saved > 0,
+            "tokens_saved must be > 0 after a real L0 dedup, got {}",
+            post.inference_tokens_saved
+        );
+        assert_eq!(post.total_calls_saved(), 1);
+    }
+
+    #[test]
+    fn recent_tools_window_records_calls_in_order() {
+        let pipeline = SessionPipeline::new(AdaptiveConfig::default());
+        for (i, name) in ["Glob", "Grep", "Read"].iter().enumerate() {
+            let _ = pipeline.process(
+                &format!("req_{i}"),
+                &ToolCallParams {
+                    name: (*name).to_string(),
+                    arguments: None,
+                },
+                ToolCallResult::text(format!("body-{i}")),
+                i as i64,
+            );
+        }
+        assert_eq!(
+            pipeline.recent_tools_snapshot(),
+            vec!["Glob".to_string(), "Grep".into(), "Read".into()]
+        );
+    }
+
+    #[test]
+    fn fail_fast_arms_after_n_consecutive_empty_responses() {
+        // Tool with fail_fast_after_n = 2: arms on the 2nd empty response.
+        let pipeline = pipeline_with_fail_fast_on("ToolSearch", 2);
+        assert!(!pipeline.should_skip("ToolSearch"), "fresh streak");
+
+        // 1st empty — streak = 1, not yet armed.
+        let _ = pipeline.process(
+            "req_1",
+            &empty_params("ToolSearch"),
+            ToolCallResult::text(String::new()),
+            0,
+        );
+        assert!(!pipeline.should_skip("ToolSearch"));
+
+        // 2nd empty — streak = 2, threshold met.
+        let _ = pipeline.process(
+            "req_2",
+            &empty_params("ToolSearch"),
+            ToolCallResult::text(String::new()),
+            10,
+        );
+        assert!(pipeline.should_skip("ToolSearch"));
+
+        // Tool without fail_fast_after_n must never arm, however many
+        // empty responses it produces.
+        for i in 0..5 {
+            let _ = pipeline.process(
+                &format!("rd_{i}"),
+                &empty_params("Read"),
+                ToolCallResult::text(String::new()),
+                100 + i,
+            );
+        }
+        assert!(!pipeline.should_skip("Read"));
+    }
+
+    #[test]
+    fn fail_fast_streak_resets_on_non_empty_response() {
+        let pipeline = pipeline_with_fail_fast_on("ToolSearch", 2);
+        let _ = pipeline.process(
+            "req_1",
+            &empty_params("ToolSearch"),
+            ToolCallResult::text(String::new()),
+            0,
+        );
+        // Non-empty response must clear the streak.
+        let _ = pipeline.process(
+            "req_2",
+            &empty_params("ToolSearch"),
+            ToolCallResult::text("a real result".to_string()),
+            10,
+        );
+        let _ = pipeline.process(
+            "req_3",
+            &empty_params("ToolSearch"),
+            ToolCallResult::text(String::new()),
+            20,
+        );
+        // Streak is now 1 (not 3) — circuit must NOT be armed.
+        assert!(!pipeline.should_skip("ToolSearch"));
+    }
+
+    #[test]
+    fn record_fail_fast_skip_updates_aggregator() {
+        let pipeline = pipeline_with_fail_fast_on("ToolSearch", 2);
+        pipeline.record_fail_fast_skip(40);
+        pipeline.record_fail_fast_skip(40);
+        let s = pipeline.enrichment_snapshot();
+        assert_eq!(s.inference_calls_saved_fail_fast, 2);
+        assert_eq!(s.inference_tokens_saved, 80);
     }
 
     #[test]

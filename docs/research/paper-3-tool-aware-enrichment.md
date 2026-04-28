@@ -301,27 +301,48 @@ prefetch for textual references to the prefetched body's
   `report()`. +15 tests.
 - `tune analyze` reports the planner ROI line (`# enrichment: …`)
   whenever any saving was recorded in the scanned JSONL.
+- **Host wiring (devboy-mcp)** — `SessionPipeline` now keeps the
+  `recent_tools` window, the `EnrichmentEffectiveness` aggregator and
+  the per-tool fail-fast streak alongside the `LayeredPipeline`. New
+  public methods: `enrichment_snapshot`, `recent_tools_snapshot`,
+  `should_skip(tool_name)` (read-only check the host calls before
+  dispatch) and `record_fail_fast_skip(predicted_tokens)`. Every L0
+  dedup hit now increments `inference_calls_saved_dedup` /
+  `inference_tokens_saved` automatically. +5 integration tests.
+- **`annotate_cited_prefetches.py`** — offline post-pass that walks a
+  devboy telemetry JSONL, sets `cited_in_next_n_turns` on every event
+  with `enricher_prefetched=true` based on whether the same tool was
+  organically called in the next 1-3 events of the session, and writes
+  `<input>.annotated.jsonl`. Output also prints a per-file and grand
+  total `prefetches=… cited=… hit_rate=…` summary, ready to feed back
+  into `tune analyze`.
 - `devboy tune from-claude-logs --tools` seeds `[tools.*]` from the
   user's observed tool mix without overwriting hand overrides. +2
   tests.
 
 ### Deferred
 
-- **Host integration** — the MCP server reads `AdaptiveConfig.tools`
-  but does not yet call `EnrichmentPlanner::build_plan` before
-  emitting tool-use blocks. Wiring that in is the next milestone;
-  the planner is already side-effect-free and ready.
-- **Speculative pre-fetch execution** — once the host calls the
-  planner, the resulting `EnrichmentPlan.calls` need to be issued
-  out-of-band before the LLM's next message lands. Implementation
-  shape: same MCP `tools/call` path the LLM uses, but tagged
-  `enricher_prefetched = true` so telemetry can attribute citations.
-- **Cited-in-next-n-turns post-pass** — Python scanner that walks
-  assistant messages following each prefetch and sets
-  `cited_in_next_n_turns` on the JSONL. Lives next to
-  `extract_paper3_followups.py`.
-- **Corpus replay validation** — produces the headline numbers in
-  the §Validation strategy table.
+- **Speculative pre-fetch execution in the MCP server** — the host
+  now exposes `should_skip` / `record_fail_fast_skip` and accumulates
+  L0 dedup savings, but does not yet *call* `EnrichmentPlanner::build_plan`
+  to actually issue extra `tools/call` requests out-of-band. That is
+  a non-trivial server API change (parallel dispatch + ordering with
+  the LLM stream) and lands as its own PR. The plumbing it depends on
+  — `recent_tools_snapshot`, the fail-fast circuit, the per-session
+  aggregator — is already in place.
+- **Corpus replay validation** — gated on the speculative-execution
+  PR landing first, since meaningful prefetch hit rates require real
+  `enricher_prefetched=true` events. The post-pass scanner
+  (`annotate_cited_prefetches.py`) is shipped and works on whatever
+  telemetry the host produces.
+- **Intent-aware boost** — `TurnContext.intent_keywords` is reserved
+  but the v1 solver ignores it. Picking up intent (e.g. flipping
+  `default_include = false` field groups to opt-in on keyword match)
+  is additive — no schema change required.
+- **Latency / dollar awareness** — `cost_model.latency_ms_p50` and
+  `cost_model.dollars` are stored but the planner does not currently
+  consult them. Trivial to plug into `value_score` once we have a
+  validation harness to measure the trade-off.
 
 ## Related work
 
