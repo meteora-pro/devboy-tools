@@ -408,6 +408,58 @@ mod tests {
         assert!(!groups["nice_to_have"].default_include);
     }
 
+    /// **Safety invariant**: `Bash` and `Agent` are
+    /// `SideEffectClass::Indeterminate` by design — `git status`
+    /// behaves as a read but `rm -rf` is catastrophic; sub-agents
+    /// run arbitrary tools. Speculation must **never** dispatch
+    /// either. Edit / Write / MultiEdit / NotebookEdit must stay
+    /// `MutatesLocal`. Anything that loosens this invariant should
+    /// trip the test.
+    #[test]
+    fn never_speculatable_safety_invariant() {
+        let m = default_tool_value_models();
+        for tool in [
+            "Bash",
+            "Agent",
+            "Edit",
+            "Write",
+            "MultiEdit",
+            "NotebookEdit",
+        ] {
+            let model = m.get(tool).unwrap_or_else(|| panic!("{tool} missing"));
+            assert!(
+                !model.is_speculatable(),
+                "SAFETY: {tool} (side_effect={:?}) must never be speculatable; \
+                 a regression here can lead to double-applied writes / shell \
+                 commands re-run",
+                model.side_effect_class
+            );
+        }
+    }
+
+    /// Counterpart to the safety invariant — every Pure / ReadOnly
+    /// tool stays speculatable. Catches accidental flips of
+    /// `side_effect_class` to `Indeterminate` on the wrong tool.
+    #[test]
+    fn pure_and_read_only_tools_are_speculatable() {
+        let m = default_tool_value_models();
+        for tool in [
+            "Read",
+            "Grep",
+            "Glob",
+            "WebSearch",
+            "WebFetch",
+            "ToolSearch",
+        ] {
+            let model = m.get(tool).unwrap_or_else(|| panic!("{tool} missing"));
+            assert!(
+                model.is_speculatable(),
+                "{tool} (side_effect={:?}) should remain speculatable",
+                model.side_effect_class
+            );
+        }
+    }
+
     #[test]
     fn tool_search_has_fail_fast() {
         let m = default_tool_value_models();
