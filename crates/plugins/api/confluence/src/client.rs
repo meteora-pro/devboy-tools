@@ -1252,15 +1252,17 @@ impl ConfluenceClient {
             .await
     }
 
-    async fn sync_labels(&self, page_id: &str, desired: &[String], current: &[String]) -> Result<()> {
+    async fn sync_labels(
+        &self,
+        page_id: &str,
+        desired: &[String],
+        current: &[String],
+    ) -> Result<()> {
         let desired = normalize_labels(desired);
         let current = normalize_labels(current);
 
         for label in current.iter().filter(|label| !desired.contains(*label)) {
-            let path = format!(
-                "content/{page_id}/label?name={}",
-                encode_query_value(label)
-            );
+            let path = format!("content/{page_id}/label?name={}", encode_query_value(label));
             self.delete_empty(&path).await?;
         }
 
@@ -1479,7 +1481,8 @@ impl ConfluenceClient {
         let page: ConfluencePage = self.put_json(&path, &payload).await?;
         if let Some(labels) = params.labels.as_ref() {
             let current_labels = extract_labels(&current);
-            self.sync_labels(&params.page_id, labels, &current_labels).await?;
+            self.sync_labels(&params.page_id, labels, &current_labels)
+                .await?;
         }
         Ok(map_page_summary(&self.base_url, &page))
     }
@@ -1600,7 +1603,10 @@ impl ConfluenceClient {
 
     async fn update_page_v2(&self, params: UpdatePageParams) -> Result<KbPage> {
         let current_path = if params.labels.is_some() {
-            format!("pages/{}?body-format=storage&include-labels=true", params.page_id)
+            format!(
+                "pages/{}?body-format=storage&include-labels=true",
+                params.page_id
+            )
         } else {
             format!("pages/{}?body-format=storage", params.page_id)
         };
@@ -1675,7 +1681,8 @@ impl ConfluenceClient {
             .await?;
         if let Some(labels) = params.labels.as_ref() {
             let current_labels = extract_labels(&current);
-            self.sync_labels(&params.page_id, labels, &current_labels).await?;
+            self.sync_labels(&params.page_id, labels, &current_labels)
+                .await?;
         }
         let mut summary = map_page_summary(&self.base_url, &page);
         if summary.space_key.is_none() {
@@ -2534,7 +2541,9 @@ mod tests {
                     { "prefix": "global", "name": "adr" },
                     { "prefix": "global", "name": "architecture" }
                 ]));
-            then.status(200).header("content-type", "application/json").body("[]");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("[]");
         });
 
         let client = ConfluenceClient::new(
@@ -2870,9 +2879,10 @@ mod tests {
     async fn update_page_replaces_labels() {
         let server = MockServer::start();
         let get_mock = server.mock(|when, then| {
-            when.method(GET)
-                .path("/rest/api/content/42")
-                .query_param("expand", "space,version,body.storage,ancestors,metadata.labels");
+            when.method(GET).path("/rest/api/content/42").query_param(
+                "expand",
+                "space,version,body.storage,ancestors,metadata.labels",
+            );
             then.status(200)
                 .header("content-type", "application/json")
                 .body(
@@ -2931,7 +2941,9 @@ mod tests {
                 .json_body_obj(&serde_json::json!([
                     { "prefix": "global", "name": "architecture" }
                 ]));
-            then.status(200).header("content-type", "application/json").body("[]");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("[]");
         });
 
         let client = ConfluenceClient::new(

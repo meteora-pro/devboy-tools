@@ -1,8 +1,8 @@
 //! Confluence self-hosted provider implementation for devboy-tools.
 //!
-//! This crate currently provides a reusable HTTP client foundation for
-//! Confluence Server / Data Center integrations. Knowledge-base provider
-//! methods are added separately on top of this client.
+//! This crate provides the Confluence Server / Data Center knowledge base
+//! provider implementation, including API client logic plus page/space/search
+//! operations exposed through the shared `KnowledgeBaseProvider` trait.
 
 mod client;
 
