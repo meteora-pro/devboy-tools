@@ -306,14 +306,20 @@ pub struct ToolValueModel {
     #[serde(default, skip_serializing_if = "is_default_side_effect")]
     pub side_effect_class: SideEffectClass,
 
-    /// Optional opaque label used to group calls that compete for the
-    /// same external rate budget (e.g. `"github_api"`,
-    /// `"gitlab_api"`, `"openai_api"`). The host's speculative
-    /// dispatcher refuses to schedule a prefetch when the named class
-    /// is already saturated this turn. `None` = no rate-limit class
-    /// (default).
+    /// Optional default host for rate-limit grouping
+    /// (e.g. `"github.com"`, `"api.openai.com"`,
+    /// `"gitlab.example.com"`). The host's speculative dispatcher
+    /// caps in-flight prefetches per rate_limit_host; `None` means
+    /// no rate budget tracked for this tool.
+    ///
+    /// **Static vs runtime.** This is the *static* default. For tools
+    /// whose target host depends on runtime arguments (e.g. `WebFetch`
+    /// where the URL is per-call), the provider's
+    /// [`crate::ToolEnricher::rate_limit_host`] override returns the
+    /// runtime value; the static field is only consulted as a
+    /// fallback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rate_limit_class: Option<String>,
+    pub rate_limit_host: Option<String>,
 
     /// Per-tool speculation override. When `Some(false)`, the planner
     /// is forbidden from speculating this tool even if
@@ -450,7 +456,7 @@ mod tests {
             invalidates: vec![],
             fail_fast_after_n: Some(2),
             side_effect_class: SideEffectClass::ReadOnly,
-            rate_limit_class: Some("web_api".into()),
+            rate_limit_host: Some("example.com".into()),
             speculate: None,
         };
         let s = toml::to_string_pretty(&m).unwrap();
@@ -468,7 +474,7 @@ mod tests {
         assert_eq!(back.follow_up[0].projection_arg.as_deref(), Some("url"));
         assert_eq!(back.fail_fast_after_n, Some(2));
         assert_eq!(back.side_effect_class, SideEffectClass::ReadOnly);
-        assert_eq!(back.rate_limit_class.as_deref(), Some("web_api"));
+        assert_eq!(back.rate_limit_host.as_deref(), Some("example.com"));
         assert!(back.is_speculatable());
     }
 
@@ -569,7 +575,7 @@ mod tests {
             !s.contains("side_effect_class"),
             "Indeterminate is the default and must be skip_serializing_if'd, got: {s}"
         );
-        assert!(!s.contains("rate_limit_class"));
+        assert!(!s.contains("rate_limit_host"));
         assert!(!s.contains("speculate"));
     }
 

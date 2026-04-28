@@ -230,6 +230,54 @@ fn string_field(v: &Value, name: &str) -> Option<String> {
     v.get(name).and_then(Value::as_str).map(String::from)
 }
 
+/// Extract the host portion of a URL for rate-limit grouping.
+/// Returns the lower-cased host without scheme, port, path, or query.
+///
+/// The parser is intentionally tiny — no `url` crate dependency and no
+/// IDN normalisation. Edge cases like userinfo (`user:pass@`) and IPv6
+/// brackets are handled, but exotic forms (URN, mailto:) return `None`.
+///
+/// ```
+/// use devboy_format_pipeline::projection::extract_host;
+/// assert_eq!(extract_host("https://api.github.com/repos/x/y"), Some("api.github.com".into()));
+/// assert_eq!(extract_host("http://Example.COM:8080/foo"), Some("example.com".into()));
+/// assert_eq!(extract_host("https://user:p@host.example.org/x"), Some("host.example.org".into()));
+/// assert_eq!(extract_host("https://[::1]:80/p"), Some("[::1]".into()));
+/// assert_eq!(extract_host("/local/path"), None);
+/// ```
+pub fn extract_host(url: &str) -> Option<String> {
+    let after_scheme = url.split_once("://").map(|(_, rest)| rest)?;
+    // Strip everything past the authority section.
+    let authority = after_scheme.split(['/', '?', '#']).next()?;
+    if authority.is_empty() {
+        return None;
+    }
+    // Drop userinfo: `user:pass@host` → `host`.
+    let host_with_port = match authority.rsplit_once('@') {
+        Some((_, rest)) => rest,
+        None => authority,
+    };
+    // IPv6: keep the bracketed form `[::1]`, strip only the trailing port.
+    let host = if let Some(stripped) = host_with_port.strip_prefix('[') {
+        let close = stripped.find(']')?;
+        let inside = &stripped[..close];
+        // Re-add brackets so the dispatcher's per-host map can use the
+        // canonical `[::1]` form as a key.
+        format!("[{inside}]")
+    } else {
+        // Strip the `:port` suffix on a non-bracketed authority.
+        host_with_port
+            .rsplit_once(':')
+            .map(|(h, _)| h)
+            .unwrap_or(host_with_port)
+            .to_string()
+    };
+    if host.is_empty() {
+        return None;
+    }
+    Some(host.to_ascii_lowercase())
+}
+
 fn single_arg(name: &str, value: Value) -> Value {
     let mut m = Map::new();
     m.insert(name.to_string(), value);
@@ -369,6 +417,73 @@ mod tests {
         };
         let args = extract_args("prev", &result, &l);
         assert!(args.is_empty());
+    }
+
+    // ─── extract_host ────────────────────────────────────────────────
+
+    #[test]
+    fn extract_host_strips_scheme_and_path() {
+        assert_eq!(
+            extract_host("https://api.github.com/repos/x/y"),
+            Some("api.github.com".into())
+        );
+        assert_eq!(
+            extract_host("https://gitlab.example.com/project/-/issues"),
+            Some("gitlab.example.com".into())
+        );
+    }
+
+    #[test]
+    fn extract_host_lowercases_and_drops_port() {
+        assert_eq!(
+            extract_host("http://Example.COM:8080/foo"),
+            Some("example.com".into())
+        );
+        assert_eq!(
+            extract_host("https://API.OPENAI.COM"),
+            Some("api.openai.com".into())
+        );
+    }
+
+    #[test]
+    fn extract_host_handles_userinfo() {
+        assert_eq!(
+            extract_host("https://user:pass@host.example.org/x"),
+            Some("host.example.org".into())
+        );
+        assert_eq!(
+            extract_host("ftp://anonymous@ftp.example.org"),
+            Some("ftp.example.org".into())
+        );
+    }
+
+    #[test]
+    fn extract_host_keeps_ipv6_brackets() {
+        assert_eq!(extract_host("https://[::1]:80/p"), Some("[::1]".into()));
+        assert_eq!(
+            extract_host("http://[2001:db8::1]/foo"),
+            Some("[2001:db8::1]".into())
+        );
+    }
+
+    #[test]
+    fn extract_host_returns_none_for_non_urls() {
+        assert!(extract_host("/local/path").is_none());
+        assert!(extract_host("just-a-string").is_none());
+        assert!(extract_host("").is_none());
+        assert!(extract_host("https://").is_none());
+    }
+
+    #[test]
+    fn extract_host_strips_query_and_fragment() {
+        assert_eq!(
+            extract_host("https://example.com/foo?bar=1&baz=2"),
+            Some("example.com".into())
+        );
+        assert_eq!(
+            extract_host("https://example.com#anchor"),
+            Some("example.com".into())
+        );
     }
 
     #[test]

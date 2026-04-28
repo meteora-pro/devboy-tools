@@ -242,7 +242,7 @@ pub fn default_tool_value_models() -> BTreeMap<String, ToolValueModel> {
             // Read-only with TTL — same query → near-identical results
             // for ~1 hour (freshness_ttl_s).
             side_effect_class: SideEffectClass::ReadOnly,
-            rate_limit_class: Some("web_api".into()),
+            rate_limit_host: None,
             follow_up: vec![FollowUpLink {
                 tool: "WebFetch".into(),
                 probability: 0.65,
@@ -284,7 +284,7 @@ pub fn default_tool_value_models() -> BTreeMap<String, ToolValueModel> {
                 ..CostModel::default()
             },
             side_effect_class: SideEffectClass::ReadOnly,
-            rate_limit_class: Some("web_api".into()),
+            rate_limit_host: None,
             ..ToolValueModel::default()
         },
     );

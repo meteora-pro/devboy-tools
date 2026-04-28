@@ -65,6 +65,22 @@ pub trait ToolEnricher: Send + Sync {
     ) -> Option<Value> {
         None
     }
+
+    /// Optional dynamic rate-limit host for `tool_name`, derived from
+    /// runtime `args`. Provider returns the network host the call
+    /// will hit (e.g. `Some("api.github.com")`) so the speculative
+    /// dispatcher can cap concurrent in-flight prefetches per host.
+    ///
+    /// Default: `None` — host falls back to
+    /// `ToolValueModel::rate_limit_host` (the static configuration
+    /// value), and if that is also `None` the prefetch is uncapped.
+    ///
+    /// Override this for tools whose target host is per-call —
+    /// `WebFetch` (host from `url` arg), `WebSearch` against multiple
+    /// search engines, MCP wrappers around generic HTTP clients.
+    fn rate_limit_host(&self, _tool_name: &str, _args: &Value) -> Option<String> {
+        None
+    }
 }
 
 /// JSON Schema property definition for a tool parameter.
