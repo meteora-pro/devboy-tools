@@ -404,27 +404,36 @@ cited, as designed for that fixture).
   tool was organically called in the next 1-3 events.
 - **`replay_paper3_pipeline.py`** — replay validation harness; CSV
   per-session + grand-total + headline summary on stderr.
+- **`McpPrefetchDispatcher`** — production bridge from
+  `SpeculationEngine` to `McpServer::execute_for_prefetch`. Routes
+  prefetches through the same routing engine / proxy / fallback
+  machinery as the main flow. Internal context-management tools
+  (`use_context`, `list_contexts`, …) are explicitly rejected from
+  the speculation path. +4 tests in
+  [`prefetch_adapter.rs`](../../crates/devboy-mcp/src/prefetch_adapter.rs).
+- **Intent-aware boost** — `TurnContext.intent_keywords` now drives
+  planner scoring: every `default_include = false` field group
+  whose member fields case-insensitively match a keyword raises the
+  tool's value-score by `1.0 + Σ estimated_value` (capped at 2.5×).
+  Lets a query like *"snippets about retry logic"* lift WebSearch's
+  opt-in `snippet` group for that turn. +5 tests.
+- **Latency / dollar awareness** —
+  [`PlannerOptions::cost_aware()`](../../crates/plugins/format-pipeline/src/enrichment.rs)
+  enables two compounding penalties: tools with
+  `cost_model.latency_ms_p50 ≥ 5000 ms` get value halved; tools
+  with `cost_model.dollars ≥ $0.10` get value halved; both
+  triggers → `0.25× value`. +6 tests including end-to-end
+  ordering check (FastTool admitted before SlowTool only when
+  cost-aware is on).
 
 ### Deferred
 
-- **Real speculative-prefetch dispatcher in the MCP server** — the
-  `SpeculationEngine` and all wiring are in place, but the
-  `PrefetchDispatcher` trait still needs a production impl that
-  bridges to the actual `tools/call` handler. The current end-to-end
-  test plugs in `MapDispatcher` (canned bodies); the production
-  bridge is a 50-LOC adapter that lives in `server.rs` and lands
-  with the first deployment that flips `enrichment.enabled = true`.
-- **Production replay numbers** — gated on the dispatcher above
-  shipping. The harness, post-pass, and target table are ready;
-  numbers come from the first session with prefetches enabled.
-- **Intent-aware boost** — `TurnContext.intent_keywords` is reserved
-  but the v1 solver ignores it. Picking up intent (e.g. flipping
-  `default_include = false` field groups to opt-in on keyword match)
-  is additive — no schema change required.
-- **Latency / dollar awareness** — `cost_model.latency_ms_p50` and
-  `cost_model.dollars` are stored but the planner does not currently
-  consult them. Trivial to plug into `value_score` once we have
-  validation numbers to measure the trade-off.
+- **Production replay numbers** — gated on the first deployment
+  with `enrichment.enabled = true`. The harness
+  (`replay_paper3_pipeline.py`), post-pass
+  (`annotate_cited_prefetches.py`), production dispatcher
+  (`McpPrefetchDispatcher`), and target table are all ready;
+  headline numbers will land with the first real session.
 
 [adaptive]: ../../crates/plugins/format-pipeline/src/adaptive_config.rs
 
