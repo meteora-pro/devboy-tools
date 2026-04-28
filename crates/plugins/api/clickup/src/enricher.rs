@@ -3,7 +3,10 @@
 //! Dynamic enricher that uses list metadata to populate enum values
 //! and generate custom field parameters.
 
-use devboy_core::{ToolCategory, ToolEnricher, ToolSchema, sanitize_field_name};
+use devboy_core::{
+    CostModel, FollowUpLink, SideEffectClass, ToolCategory, ToolEnricher, ToolSchema,
+    ToolValueModel, ValueClass, sanitize_field_name,
+};
 use serde_json::{Value, json};
 
 use crate::metadata::{ClickUpFieldType, ClickUpMetadata};
@@ -169,6 +172,84 @@ impl ToolEnricher for ClickUpSchemaEnricher {
         if !custom_fields.is_empty() {
             obj.insert("customFields".into(), json!(custom_fields));
         }
+    }
+
+    /// Paper 3 — ClickUp issue → comments / detail chain.
+    fn value_model(&self, tool_name: &str) -> Option<ToolValueModel> {
+        let model = match tool_name {
+            "get_issues" => ToolValueModel {
+                value_class: ValueClass::Supporting,
+                cost_model: CostModel {
+                    typical_kb: 4.0,
+                    latency_ms_p50: Some(420),
+                    freshness_ttl_s: Some(60),
+                    ..CostModel::default()
+                },
+                follow_up: vec![
+                    FollowUpLink {
+                        tool: "get_issue".into(),
+                        probability: 0.50,
+                        projection: Some("id".into()),
+                        projection_arg: Some("task_id".into()),
+                    },
+                    FollowUpLink {
+                        tool: "get_issue_comments".into(),
+                        probability: 0.40,
+                        projection: Some("id".into()),
+                        projection_arg: Some("task_id".into()),
+                    },
+                ],
+                side_effect_class: SideEffectClass::ReadOnly,
+                ..ToolValueModel::default()
+            },
+            "get_issue" => ToolValueModel {
+                value_class: ValueClass::Critical,
+                cost_model: CostModel {
+                    typical_kb: 1.4,
+                    latency_ms_p50: Some(220),
+                    freshness_ttl_s: Some(60),
+                    ..CostModel::default()
+                },
+                follow_up: vec![FollowUpLink {
+                    tool: "get_issue_comments".into(),
+                    probability: 0.50,
+                    projection: Some("id".into()),
+                    projection_arg: Some("task_id".into()),
+                }],
+                side_effect_class: SideEffectClass::ReadOnly,
+                ..ToolValueModel::default()
+            },
+            "get_issue_comments" => ToolValueModel {
+                value_class: ValueClass::Critical,
+                cost_model: CostModel {
+                    typical_kb: 2.0,
+                    latency_ms_p50: Some(260),
+                    freshness_ttl_s: Some(60),
+                    ..CostModel::default()
+                },
+                side_effect_class: SideEffectClass::ReadOnly,
+                ..ToolValueModel::default()
+            },
+            "create_issue" | "update_issue" | "add_issue_comment" | "link_issues" => {
+                ToolValueModel {
+                    value_class: ValueClass::Supporting,
+                    cost_model: CostModel {
+                        typical_kb: 0.5,
+                        latency_ms_p50: Some(360),
+                        ..CostModel::default()
+                    },
+                    side_effect_class: SideEffectClass::MutatesExternal,
+                    ..ToolValueModel::default()
+                }
+            }
+            _ => return None,
+        };
+        Some(model)
+    }
+
+    /// ClickUp SaaS uses `api.clickup.com`.
+    fn rate_limit_host(&self, _tool_name: &str, _args: &Value) -> Option<String> {
+        Some("api.clickup.com".into())
     }
 }
 
