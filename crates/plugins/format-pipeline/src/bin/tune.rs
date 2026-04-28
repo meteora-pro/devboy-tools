@@ -82,9 +82,12 @@ Usage:
         Use this when no telemetry has been collected yet — the logs already
         capture model_id, tool usage, and endpoint distribution.
 
-        --tools also seeds the Paper 3 [tools.<name>] section with built-in
-        defaults for every tool that appeared in the user's logs (skipping
-        tools the user has already annotated by hand).
+        --tools also seeds the Paper 3 [tools.<name>] section with the
+        built-in shipped defaults — but only for tools that both appeared
+        in the user's logs *and* have a shipped default in
+        `tool_defaults`. Tools observed in logs without a shipped default
+        are skipped (write a `[tools.<name>]` block by hand to annotate
+        them). Existing entries are never overwritten.
 
     devboy-tune show [--config <PATH>]
         Pretty-print the current config.

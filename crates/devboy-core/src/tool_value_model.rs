@@ -170,6 +170,16 @@ fn default_followup_probability() -> f32 {
 
 /// Provider-shipped, user-overridable description of how a tool fits
 /// into the enrichment knapsack.
+///
+/// **Naming contract.** Keys in `AdaptiveConfig.tools` and in the
+/// `[tools.<name>]` TOML section are *runtime tool names* — exactly
+/// what the LLM sends in `tool_use.name` (`Read`, `Bash`,
+/// `mcp__gitlab__get_issue`, …). Do **not** anonymize them. The
+/// `mcp__p<hash6>__verb` form only appears in the public corpus
+/// aggregates under `docs/research/data/paper3_*.csv`; resolution
+/// (`AdaptiveConfig::effective_tool_value_model`), cross-tool
+/// invalidation (`invalidates = […]`) and the dedup cache all match
+/// on the live runtime name, so an anonymized key would never resolve.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolValueModel {
     /// First-pass importance class.
