@@ -73,7 +73,16 @@ devboy-tune — offline tuner for the layered pipeline
 
 Usage:
     devboy-tune analyze [--input-dir <PATH>] [--output <PATH>]
+                        [--auto-enrichment]
         Aggregate pipeline telemetry and emit a tuned pipeline_config.toml.
+
+        --auto-enrichment runs the Paper 3 R7 rule:
+          • per-tool: any tool with ≥ 10 prefetches whose hit rate
+            falls below 50% gets `[tools.<name>].speculate = false`
+            written to the config (planner stops speculating it).
+          • global: when corpus-wide hit rate clears 60% AND no
+            per-tool disable was triggered, `enrichment.enabled` is
+            flipped to true (planner becomes active on next start).
 
     devboy-tune from-claude-logs [--input-dir <PATH>] [--project <NAME>]
                                  [--output <PATH>] [--dry-run] [--tools]
@@ -119,6 +128,12 @@ struct EndpointStats {
     /// Tokens saved by L1 / L2 encoders (baseline − final on the L0-miss
     /// branch only).
     encoder_saved_tokens: u64,
+    /// Paper 3 — count of events with `enricher_prefetched=true`.
+    /// Drives R7 per-tool auto-disable.
+    prefetch_count: u64,
+    /// Paper 3 — of `prefetch_count`, how many were cited by the LLM
+    /// in the next 1-3 turns (post-pass populated `cited_in_next_n_turns`).
+    prefetch_cited: u64,
 }
 
 impl EndpointStats {
@@ -145,6 +160,19 @@ impl EndpointStats {
             Layer::L1 | Layer::L2 => self.encoder_saved_tokens += saved,
             Layer::L3 => {} // passthrough — no savings
         }
+        if ev.enricher_prefetched {
+            self.prefetch_count += 1;
+            if matches!(ev.cited_in_next_n_turns, Some(true)) {
+                self.prefetch_cited += 1;
+            }
+        }
+    }
+
+    /// Paper 3 — fraction of prefetched calls cited within the next
+    /// 1-3 turns. `None` when no prefetch was ever issued for this
+    /// endpoint (insufficient data for R7).
+    fn prefetch_hit_rate(&self) -> Option<f32> {
+        (self.prefetch_count > 0).then(|| self.prefetch_cited as f32 / self.prefetch_count as f32)
     }
 
     fn dup_rate(&self) -> f32 {
@@ -390,6 +418,101 @@ fn apply_tuning_rules(cfg: &mut AdaptiveConfig, stats: &CorpusStats) {
         let suggested = (mean_chars * 0.25) as usize;
         cfg.dedup.min_body_chars = suggested.clamp(100, 500);
     }
+}
+
+// ─── R7: AUTO-ENRICHMENT ────────────────────────────────────────────────
+
+/// Paper 3 — `tune analyze --auto-enrichment` rule set.
+///
+/// Two decisions, in order:
+///
+/// 1. **Per-tool disable** — for every endpoint with at least
+///    `min_prefetches` recorded prefetches, if its hit rate is below
+///    `per_tool_floor` (default 0.5), set
+///    `[tools.<name>].speculate = Some(false)`. The planner's
+///    `is_speculatable()` honours this override even on `Pure` /
+///    `ReadOnly` tools — the rule trumps the static class.
+/// 2. **Global enable** — if the corpus-wide prefetch hit rate clears
+///    `global_floor` (default 0.6) AND no per-tool disable was
+///    triggered AND there are at least `min_prefetches` total
+///    prefetches, flip `enrichment.enabled = true` (with a WARN log
+///    so the operator notices). Otherwise leave the existing setting
+///    untouched.
+///
+/// Returns a list of human-readable lines describing the decisions
+/// taken, suitable for `eprintln!` in the CLI.
+pub(crate) fn apply_auto_enrichment_rules(
+    cfg: &mut AdaptiveConfig,
+    stats: &CorpusStats,
+) -> Vec<String> {
+    const PER_TOOL_FLOOR: f32 = 0.5;
+    const GLOBAL_FLOOR: f32 = 0.6;
+    const MIN_PREFETCHES: u64 = 10;
+
+    let mut log: Vec<String> = Vec::new();
+    let mut any_disabled = false;
+
+    // Step 1: per-tool disable. Mutating tools never reach the
+    // planner, so we only touch endpoints that actually fired
+    // prefetches.
+    for (endpoint, s) in &stats.per_endpoint {
+        if s.prefetch_count < MIN_PREFETCHES {
+            continue;
+        }
+        let Some(rate) = s.prefetch_hit_rate() else {
+            continue;
+        };
+        if rate < PER_TOOL_FLOOR {
+            let entry = cfg.tools.entry(endpoint.clone()).or_default();
+            entry.speculate = Some(false);
+            any_disabled = true;
+            log.push(format!(
+                "R7 disabled: [tools.\"{endpoint}\"].speculate = false  ({} prefetches, hit_rate {:.1}% < {:.0}%)",
+                s.prefetch_count,
+                rate * 100.0,
+                PER_TOOL_FLOOR * 100.0
+            ));
+        }
+    }
+
+    // Step 2: global enable.
+    let total_pf = stats.enrichment.total_prefetches as u64;
+    if total_pf >= MIN_PREFETCHES
+        && let Some(global_rate) = stats.enrichment.prefetch_hit_rate()
+    {
+        if global_rate >= GLOBAL_FLOOR && !any_disabled {
+            if !cfg.enrichment.enabled {
+                cfg.enrichment.enabled = true;
+                log.push(format!(
+                    "R7 enabled: enrichment.enabled = true  (global hit_rate {:.1}% ≥ {:.0}%, no per-tool disables)",
+                    global_rate * 100.0,
+                    GLOBAL_FLOOR * 100.0
+                ));
+            } else {
+                log.push(format!(
+                    "R7 ok: enrichment already enabled (global hit_rate {:.1}%)",
+                    global_rate * 100.0
+                ));
+            }
+        } else if any_disabled {
+            log.push(format!(
+                "R7 hold: per-tool disables active — leaving enrichment.enabled = {} until those tools recover",
+                cfg.enrichment.enabled
+            ));
+        } else {
+            log.push(format!(
+                "R7 hold: global hit_rate {:.1}% < {:.0}% — leaving enrichment.enabled = {}",
+                global_rate * 100.0,
+                GLOBAL_FLOOR * 100.0,
+                cfg.enrichment.enabled
+            ));
+        }
+    } else if total_pf > 0 {
+        log.push(format!(
+            "R7 skip: only {total_pf} prefetches recorded (need ≥ {MIN_PREFETCHES})"
+        ));
+    }
+    log
 }
 
 // ─── CLAUDE-LOG SCANNER ──────────────────────────────────────────────────
@@ -667,9 +790,13 @@ fn cmd_analyze(args: &[String]) -> Result<(), String> {
     let output = parse_flag(args, "--output")
         .map(PathBuf::from)
         .unwrap_or_else(default_output);
+    let auto_enrichment = args.iter().any(|a| a == "--auto-enrichment");
 
     eprintln!("# input:  {}", input_dir.display());
     eprintln!("# output: {}", output.display());
+    if auto_enrichment {
+        eprintln!("# auto-enrichment: R7 active");
+    }
 
     let mut corpus = CorpusStats::default();
     let read = if input_dir.exists() {
@@ -719,6 +846,11 @@ fn cmd_analyze(args: &[String]) -> Result<(), String> {
     let mut cfg = AdaptiveConfig::load_or_default(&output)
         .map_err(|e| format!("load existing config: {e}"))?;
     apply_tuning_rules(&mut cfg, &corpus);
+    if auto_enrichment {
+        for line in apply_auto_enrichment_rules(&mut cfg, &corpus) {
+            eprintln!("# {line}");
+        }
+    }
     cfg.save(&output)
         .map_err(|e| format!("write config: {e}"))?;
 
@@ -1434,5 +1566,86 @@ mod tests {
         let added = apply_tool_value_model_defaults(&mut cfg, &stats);
         assert_eq!(added, 0, "user Read override must survive");
         assert_eq!(cfg.tools["Read"].cost_model.typical_kb, 0.05);
+    }
+
+    // ─── R7 — auto-enrichment ───────────────────────────────────────
+
+    fn prefetched_event(endpoint: &str, cited: bool) -> PipelineEvent {
+        let mut e = ev(endpoint, false, Shape::Prose, 100, 100);
+        e.enricher_prefetched = true;
+        e.enricher_predicted_cost_tokens = 80;
+        e.cited_in_next_n_turns = Some(cited);
+        e
+    }
+
+    #[test]
+    fn r7_disables_tool_with_low_hit_rate() {
+        let mut corpus = CorpusStats::default();
+        // 12 prefetches, only 3 cited → hit rate 25% < 50% floor.
+        for i in 0..12 {
+            corpus.update(&prefetched_event("FlakyTool", i < 3));
+        }
+        corpus.finalize();
+
+        let mut cfg = AdaptiveConfig::default();
+        let log = apply_auto_enrichment_rules(&mut cfg, &corpus);
+        assert_eq!(cfg.tools["FlakyTool"].speculate, Some(false));
+        assert!(log.iter().any(|l| l.contains("R7 disabled")));
+        // Global enable must hold because per-tool disable triggered.
+        assert!(!cfg.enrichment.enabled);
+    }
+
+    #[test]
+    fn r7_enables_global_when_hit_rate_clears_floor() {
+        let mut corpus = CorpusStats::default();
+        // 20 prefetches, 14 cited → hit rate 70% ≥ 60% floor.
+        for i in 0..20 {
+            corpus.update(&prefetched_event("ReliableTool", i < 14));
+        }
+        corpus.finalize();
+
+        let mut cfg = AdaptiveConfig::default();
+        assert!(!cfg.enrichment.enabled);
+        let log = apply_auto_enrichment_rules(&mut cfg, &corpus);
+        assert!(cfg.enrichment.enabled, "global flip must trigger");
+        assert!(log.iter().any(|l| l.contains("R7 enabled")), "log: {log:?}");
+    }
+
+    #[test]
+    fn r7_skips_below_min_prefetches_threshold() {
+        let mut corpus = CorpusStats::default();
+        // Only 5 prefetches (< MIN_PREFETCHES = 10) — even at 100%
+        // hit rate, the rule must hold off.
+        for _ in 0..5 {
+            corpus.update(&prefetched_event("Tiny", true));
+        }
+        corpus.finalize();
+
+        let mut cfg = AdaptiveConfig::default();
+        let log = apply_auto_enrichment_rules(&mut cfg, &corpus);
+        assert!(!cfg.enrichment.enabled);
+        assert!(cfg.tools.get("Tiny").is_none_or(|m| m.speculate.is_none()));
+        assert!(log.iter().any(|l| l.contains("R7 skip")));
+    }
+
+    #[test]
+    fn r7_does_not_flip_global_when_per_tool_disabled() {
+        let mut corpus = CorpusStats::default();
+        // High global hit rate but one tool drags below the floor.
+        for i in 0..15 {
+            corpus.update(&prefetched_event("GoodTool", i < 12));
+        }
+        for i in 0..12 {
+            corpus.update(&prefetched_event("BadTool", i < 2));
+        }
+        corpus.finalize();
+
+        let mut cfg = AdaptiveConfig::default();
+        let _log = apply_auto_enrichment_rules(&mut cfg, &corpus);
+        assert_eq!(cfg.tools["BadTool"].speculate, Some(false));
+        assert!(
+            !cfg.enrichment.enabled,
+            "global flip must hold while a per-tool disable is active"
+        );
     }
 }
