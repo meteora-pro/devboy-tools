@@ -20,10 +20,11 @@ reqwest.workspace = true
 reqwest-eventsource.workspace = true
 futures.workspace = true
 tokio-util = { version = "0.7", features = ["io"] }
+async-trait.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true
-async-trait.workspace = true
 httpmock.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

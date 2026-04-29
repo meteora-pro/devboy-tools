@@ -18,6 +18,8 @@ Thumbs.db
 .env.local
 
 # Research benchmark workbenches (never committed — contain host IPs / API keys / raw data)
+# Pattern matches any subdirectory; explicit `paper1/` style entries kept for clarity.
+/docs/research/benchmarks/*/
 /docs/research/benchmarks/paper1/
 /docs/research/benchmarks/paper2/
 /docs/research/benchmarks/paper3/

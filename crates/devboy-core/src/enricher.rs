@@ -9,6 +9,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::tool_category::ToolCategory;
+use crate::tool_value_model::ToolValueModel;
 
 /// Trait for plugins that dynamically modify tool schemas and transform arguments.
 ///
@@ -25,6 +26,61 @@ pub trait ToolEnricher: Send + Sync {
 
     /// Transform arguments before tool execution.
     fn transform_args(&self, tool_name: &str, args: &mut Value);
+
+    /// Optional: provider-shipped value model for `tool_name`. Returned
+    /// models are merged into `AdaptiveConfig.tools` at startup so the
+    /// Paper 3 enrichment planner can read them via
+    /// `effective_tool_value_model`.
+    ///
+    /// Default impl returns `None` — built-in enrichers that do not
+    /// participate in the planner can ignore the method entirely.
+    fn value_model(&self, _tool_name: &str) -> Option<ToolValueModel> {
+        None
+    }
+
+    /// Build the JSON arguments for a *speculatively pre-fetched*
+    /// follow-up call.
+    ///
+    /// Given the tool that just produced `prev_result` (`prev_tool`),
+    /// the follow-up tool's `FollowUpLink` (with `projection` /
+    /// `projection_arg` set), the host asks the enricher: "what `args`
+    /// should I pass to `<follow-up tool>`?"
+    ///
+    /// Returns:
+    ///
+    /// - `Some(json)` — emit one prefetch request per object in the
+    ///   returned array (planner caps at `max_parallel_prefetches`).
+    ///   Top-level shape is `[{ <args1> }, { <args2> }, …]`.
+    /// - `None` (default) — provider has no opinion; the host falls
+    ///   back to the generic projection in `link.projection_arg`.
+    ///
+    /// Built-in enrichers should override this for the high-volume
+    /// follow-up chains identified in `paper3_corpus_findings.md`
+    /// (Glob → Read, Grep → Read, WebSearch → WebFetch, …).
+    fn project_args(
+        &self,
+        _prev_tool: &str,
+        _prev_result: &Value,
+        _link: &crate::tool_value_model::FollowUpLink,
+    ) -> Option<Value> {
+        None
+    }
+
+    /// Optional dynamic rate-limit host for `tool_name`, derived from
+    /// runtime `args`. Provider returns the network host the call
+    /// will hit (e.g. `Some("api.github.com")`) so the speculative
+    /// dispatcher can cap concurrent in-flight prefetches per host.
+    ///
+    /// Default: `None` — host falls back to
+    /// `ToolValueModel::rate_limit_host` (the static configuration
+    /// value), and if that is also `None` the prefetch is uncapped.
+    ///
+    /// Override this for tools whose target host is per-call —
+    /// `WebFetch` (host from `url` arg), `WebSearch` against multiple
+    /// search engines, MCP wrappers around generic HTTP clients.
+    fn rate_limit_host(&self, _tool_name: &str, _args: &Value) -> Option<String> {
+        None
+    }
 }
 
 /// JSON Schema property definition for a tool parameter.

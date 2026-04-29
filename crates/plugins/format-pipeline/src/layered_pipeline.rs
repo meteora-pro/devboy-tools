@@ -33,6 +33,8 @@
 //!     content: &body,
 //!     is_sidechain: false,
 //!     ts_ms: 0,
+//!     enricher_prefetched: false,
+//!     enricher_predicted_cost_tokens: 0,
 //! });
 //! // Second call with identical content emits a hint.
 //! let out2 = p.process(ToolResponseInput {
@@ -42,6 +44,8 @@
 //!     content: &body,
 //!     is_sidechain: false,
 //!     ts_ms: 10,
+//!     enricher_prefetched: false,
+//!     enricher_predicted_cost_tokens: 0,
 //! });
 //! assert!(matches!(out2.layer, devboy_format_pipeline::telemetry::Layer::L0));
 //! ```
@@ -70,6 +74,18 @@ pub struct ToolResponseInput<'a> {
     pub is_sidechain: bool,
     /// Unix milliseconds when the response was produced.
     pub ts_ms: i64,
+    /// Paper 3 — `true` when this response landed via the speculative
+    /// pre-fetch dispatcher (host called the tool ahead of the LLM
+    /// asking). Sets `PipelineEvent.enricher_prefetched` so the
+    /// offline post-pass can attribute citations.
+    /// Default `false` — the LLM emitted the call directly.
+    pub enricher_prefetched: bool,
+    /// Paper 3 — `cost_model.typical_kb`-derived prediction (in
+    /// tokens) that the planner committed to when admitting this
+    /// call. `0` when not a prefetch (LLM-emitted) — the cost-overrun
+    /// rate denominator skips events with `enricher_predicted_cost_tokens
+    /// = 0`.
+    pub enricher_predicted_cost_tokens: u32,
 }
 
 /// Output from [`LayeredPipeline::process`].
@@ -262,6 +278,7 @@ impl LayeredPipeline {
                     tool_kind,
                     file_path_hash.clone(),
                     std::sync::Arc::new(input.content.to_string()),
+                    input.tool_name,
                 );
                 return out;
             }
@@ -270,6 +287,19 @@ impl LayeredPipeline {
         // Not a duplicate — insert into cache for future reference. When
         // near-ref is enabled, also retain the body so future turns can
         // diff against it; otherwise stick to the cheaper hash-only entry.
+        //
+        // `tool_name` is recorded so `DedupCache::invalidate_by_tool`
+        // (Paper 3 §Cross-tool invalidation) can later drop entries for
+        // tools that this writer's `ToolValueModel.invalidates` lists.
+        //
+        // We pass `input.tool_name` *as-is* (e.g. `mcp__gitlab__get_issue`).
+        // Anonymization (`mcp__p<hash6>__verb`) only applies to the
+        // public corpus aggregates in `docs/research/data/paper3_*.csv`;
+        // `[tools.<name>]` keys, `effective_tool_value_model` lookups,
+        // and the dedup cache all use the live runtime name. Otherwise
+        // a user override `[tools."mcp__gitlab__update_issue"]` would
+        // never be found, and `invalidates = ["mcp__gitlab__get_issue"]`
+        // would never match a cached entry.
         let tc_hash = short_hash(input.tool_call_id);
         if self.config.dedup.near_ref_enabled {
             self.dedup.insert_with_body(
@@ -278,6 +308,7 @@ impl LayeredPipeline {
                 tool_kind,
                 file_path_hash.clone(),
                 std::sync::Arc::new(input.content.to_string()),
+                input.tool_name,
             );
         } else {
             self.dedup.insert(
@@ -285,7 +316,17 @@ impl LayeredPipeline {
                 tc_hash.clone(),
                 tool_kind,
                 file_path_hash.clone(),
+                input.tool_name,
             );
+        }
+
+        // Paper 3 cross-tool invalidation: if the tool that just ran
+        // declares an `invalidates` list in its value model, drop every
+        // matching cached entry now so the next call returns fresh.
+        if let Some(model) = self.config.effective_tool_value_model(input.tool_name)
+            && !model.invalidates.is_empty()
+        {
+            self.dedup.invalidate_by_tool(&model.invalidates);
         }
 
         // === Shape classification (used by L1/L2) ===
@@ -424,6 +465,13 @@ impl LayeredPipeline {
             is_sidechain: input.is_sidechain,
             ts_ms: input.ts_ms,
             sample_rate_applied: self.config.telemetry.sample_rate,
+            // Paper 3 enricher fields — set on the input by the host
+            // when the call was issued by the speculative dispatcher.
+            // LLM-emitted calls leave both fields default (false / 0).
+            enricher_prefetched: input.enricher_prefetched,
+            enricher_predicted_cost_tokens: input.enricher_predicted_cost_tokens,
+            enricher_decline_reason: None,
+            cited_in_next_n_turns: None,
         };
         if sink.record(&evt).is_err() {
             return; // Best-effort; do not fail the pipeline.
@@ -496,6 +544,8 @@ mod tests {
             content,
             is_sidechain: false,
             ts_ms: 0,
+            enricher_prefetched: false,
+            enricher_predicted_cost_tokens: 0,
         }
     }
 
@@ -823,5 +873,46 @@ mod tests {
         let p = LayeredPipeline::new("s_h".into(), cfg);
         let body = "abcdefgh"; // 8 chars
         assert_eq!(p.tokens(body), 3);
+    }
+
+    #[test]
+    fn cross_tool_invalidation_drops_cached_response() {
+        // Paper 3 P-3-07 — `update_issue` declares
+        // `invalidates = ["get_issue"]`. After `get_issue` is cached
+        // and `update_issue` runs, a re-read of the same `get_issue`
+        // body must come back fresh (not as a hint).
+        use devboy_core::ToolValueModel;
+        let mut cfg = AdaptiveConfig::default();
+        cfg.tools.insert(
+            "update_issue".into(),
+            ToolValueModel {
+                invalidates: vec!["get_issue".into()],
+                ..ToolValueModel::default()
+            },
+        );
+        let mut p = LayeredPipeline::new("s_invl".into(), cfg);
+        let body = "x".repeat(400);
+
+        // Turn 1 — get_issue caches.
+        let r1 = p.process(input("tc_1", "get_issue", None, &body));
+        assert_eq!(r1.layer, Layer::L3);
+
+        // Turn 2 — same body, would dedup ...
+        let r2 = p.process(input("tc_2", "get_issue", None, &body));
+        assert_eq!(r2.layer, Layer::L0, "second call should dedup");
+
+        // Turn 3 — `update_issue` runs (different body!), declares
+        // `invalidates = ["get_issue"]`. Its run drops the cached
+        // get_issue entry.
+        let _ = p.process(input("tc_3", "update_issue", None, &"u".repeat(400)));
+
+        // Turn 4 — re-issuing get_issue with the *same* body must now
+        // come back fresh; the cache was busted by update_issue.
+        let r4 = p.process(input("tc_4", "get_issue", None, &body));
+        assert_eq!(
+            r4.layer,
+            Layer::L3,
+            "get_issue cache must be invalidated by update_issue"
+        );
     }
 }

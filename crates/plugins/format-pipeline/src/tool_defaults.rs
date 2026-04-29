@@ -1,0 +1,479 @@
+//! Paper 3 — built-in default `ToolValueModel`s for selected common
+//! tools by corpus volume.
+//!
+//! Anchored on `docs/research/paper3_corpus_findings.md` (P-3-01).
+//! We ship defaults for a curated subset of the highest-volume tools
+//! (the canonical patterns from §Real-world patterns); the corpus has
+//! more tools above the 100-session threshold, but the long tail
+//! either reuses one of the shipped defaults via `[tools."*"]` or is
+//! overridden per-installation. Users can override any seeded
+//! annotation through `[tools.<name>]` in `pipeline_config.toml`
+//! (Paper 3 §Provider extensibility).
+//!
+//! The numbers below are *priors* — `tune analyze` will refine them
+//! against real telemetry, the same way Paper 2's adaptive tuner
+//! refines the encoder profiles.
+
+use std::collections::BTreeMap;
+
+use devboy_core::{CostModel, FollowUpLink, SideEffectClass, ToolValueModel, ValueClass};
+
+/// Returns the seeded `[tools.*]` map every layered pipeline starts
+/// with. `merge_right_wins` lets the user's TOML overrides win over
+/// these defaults.
+pub fn default_tool_value_models() -> BTreeMap<String, ToolValueModel> {
+    let mut m = BTreeMap::new();
+
+    // ─── Read — workhorse pattern (50 675 calls, 1 363 sessions) ─────
+    // Median 2.5 kB, p99 43 kB. Critical: file content is non-negotiable
+    // for code-edit work. Mutation hook (already wired in P-203-04)
+    // invalidates on Edit/Write/MultiEdit/NotebookEdit.
+    m.insert(
+        "Read".into(),
+        ToolValueModel {
+            value_class: ValueClass::Critical,
+            cost_model: CostModel {
+                typical_kb: 2.5,
+                max_kb: Some(43.0),
+                latency_ms_p50: Some(50),
+                ..CostModel::default()
+            },
+            follow_up: vec![FollowUpLink {
+                tool: "Read".into(),
+                probability: 0.45,
+                ..FollowUpLink::default()
+            }],
+            // Pure: same path → same bytes (mutation hook invalidates).
+            side_effect_class: SideEffectClass::Pure,
+            ..ToolValueModel::default()
+        },
+    );
+
+    // ─── Edit / Write / MultiEdit — mutating tools ───────────────────
+    // Their responses are tiny (median 162 / 137 / negligible bytes).
+    // Their value is in *invalidating* the read cache — handled by the
+    // mutation hook, but we declare `invalidates` so cross-tool
+    // invalidation in P-3-07 picks them up uniformly.
+    m.insert(
+        "Edit".into(),
+        ToolValueModel {
+            value_class: ValueClass::Supporting,
+            cost_model: CostModel {
+                typical_kb: 0.2,
+                max_kb: Some(1.0),
+                latency_ms_p50: Some(20),
+                ..CostModel::default()
+            },
+            follow_up: vec![
+                FollowUpLink {
+                    tool: "Bash".into(),
+                    probability: 0.27,
+                    ..FollowUpLink::default()
+                },
+                FollowUpLink {
+                    tool: "Read".into(),
+                    probability: 0.14,
+                    ..FollowUpLink::default()
+                },
+            ],
+            invalidates: vec!["Read".into(), "Grep".into()],
+            // MutatesLocal: never speculate — re-running an Edit would
+            // double-apply the patch.
+            side_effect_class: SideEffectClass::MutatesLocal,
+            ..ToolValueModel::default()
+        },
+    );
+    m.insert(
+        "Write".into(),
+        ToolValueModel {
+            value_class: ValueClass::Supporting,
+            cost_model: CostModel {
+                typical_kb: 0.2,
+                ..CostModel::default()
+            },
+            invalidates: vec!["Read".into(), "Grep".into(), "Glob".into()],
+            side_effect_class: SideEffectClass::MutatesLocal,
+            ..ToolValueModel::default()
+        },
+    );
+    m.insert(
+        "MultiEdit".into(),
+        ToolValueModel {
+            value_class: ValueClass::Supporting,
+            cost_model: CostModel {
+                typical_kb: 0.2,
+                ..CostModel::default()
+            },
+            invalidates: vec!["Read".into(), "Grep".into()],
+            side_effect_class: SideEffectClass::MutatesLocal,
+            ..ToolValueModel::default()
+        },
+    );
+    m.insert(
+        "NotebookEdit".into(),
+        ToolValueModel {
+            value_class: ValueClass::Supporting,
+            cost_model: CostModel {
+                typical_kb: 0.5,
+                ..CostModel::default()
+            },
+            invalidates: vec!["Read".into()],
+            side_effect_class: SideEffectClass::MutatesLocal,
+            ..ToolValueModel::default()
+        },
+    );
+
+    // ─── Bash — generic shell (110 930 calls — the most common tool) ─
+    // Critical for verification (cargo test, git, etc.) but median
+    // response is tiny (223 B). No follow-up annotation: corpus shows
+    // Bash → * is too varied to prefetch usefully.
+    m.insert(
+        "Bash".into(),
+        ToolValueModel {
+            value_class: ValueClass::Critical,
+            cost_model: CostModel {
+                typical_kb: 0.2,
+                max_kb: Some(9.0),
+                latency_ms_p50: Some(200),
+                ..CostModel::default()
+            },
+            // Indeterminate by design — `git status` is read-only,
+            // `rm -rf` is catastrophic. Sub-classification is its own
+            // research direction; until then, never speculate.
+            side_effect_class: SideEffectClass::Indeterminate,
+            ..ToolValueModel::default()
+        },
+    );
+
+    // ─── Grep — find-then-fix loop core (16 718 calls) ───────────────
+    // 1 120 (Grep → Edit) + 1 671 (Edit → Grep) edges. Strong prefetch
+    // signal: after Grep, prefetch top-3 file contents as Read.
+    m.insert(
+        "Grep".into(),
+        ToolValueModel {
+            value_class: ValueClass::Critical,
+            cost_model: CostModel {
+                typical_kb: 0.3,
+                max_kb: Some(10.5),
+                latency_ms_p50: Some(80),
+                ..CostModel::default()
+            },
+            follow_up: vec![
+                FollowUpLink {
+                    tool: "Read".into(),
+                    probability: 0.35,
+                    projection: Some("path".into()),
+                    projection_arg: Some("file_path".into()),
+                },
+                // Edit follow-up is informational only — never
+                // speculatively executed (MutatesLocal blocks it).
+                FollowUpLink {
+                    tool: "Edit".into(),
+                    probability: 0.07,
+                    projection: Some("path".into()),
+                    projection_arg: Some("file_path".into()),
+                },
+                FollowUpLink {
+                    tool: "Grep".into(),
+                    probability: 0.39,
+                    ..FollowUpLink::default()
+                },
+            ],
+            // Pure under file-mutation hook: same query → same matches
+            // until Edit/Write fires.
+            side_effect_class: SideEffectClass::Pure,
+            ..ToolValueModel::default()
+        },
+    );
+
+    // ─── Glob — bulk listing → inspect-each (6 202 calls) ────────────
+    // Glob → Read 2 007 edges, Glob → Grep 775. Speculative prefetch
+    // of top-N results when intent is "where is X used".
+    m.insert(
+        "Glob".into(),
+        ToolValueModel {
+            value_class: ValueClass::Supporting,
+            cost_model: CostModel {
+                typical_kb: 0.2,
+                max_kb: Some(16.6),
+                latency_ms_p50: Some(60),
+                ..CostModel::default()
+            },
+            follow_up: vec![
+                FollowUpLink {
+                    tool: "Read".into(),
+                    probability: 0.32,
+                    projection: Some("match_path".into()),
+                    projection_arg: Some("file_path".into()),
+                },
+                FollowUpLink {
+                    tool: "Grep".into(),
+                    probability: 0.13,
+                    // Grep needs a query string the planner cannot
+                    // synthesise from a path — not speculatable, kept
+                    // as informational hint only.
+                    ..FollowUpLink::default()
+                },
+                FollowUpLink {
+                    tool: "Glob".into(),
+                    probability: 0.41,
+                    ..FollowUpLink::default()
+                },
+            ],
+            side_effect_class: SideEffectClass::ReadOnly,
+            ..ToolValueModel::default()
+        },
+    );
+
+    // ─── WebSearch / WebFetch — search → resolve chain (1 081 edges) ─
+    // 6 fields surface in our corpus; only `title`/`url` are reliably
+    // cited downstream — drop snippets first under tight budget.
+    m.insert(
+        "WebSearch".into(),
+        ToolValueModel {
+            value_class: ValueClass::Supporting,
+            cost_model: CostModel {
+                typical_kb: 3.1,
+                max_kb: Some(7.2),
+                latency_ms_p50: Some(900),
+                freshness_ttl_s: Some(3600),
+                ..CostModel::default()
+            },
+            // Read-only with TTL — same query → near-identical results
+            // for ~1 hour (freshness_ttl_s).
+            side_effect_class: SideEffectClass::ReadOnly,
+            rate_limit_host: None,
+            follow_up: vec![FollowUpLink {
+                tool: "WebFetch".into(),
+                probability: 0.65,
+                projection: Some("url".into()),
+                projection_arg: Some("url".into()),
+            }],
+            field_groups: {
+                let mut g = BTreeMap::new();
+                g.insert(
+                    "must_have".into(),
+                    devboy_core::FieldGroup {
+                        fields: vec!["title".into(), "url".into()],
+                        estimated_value: 1.0,
+                        default_include: true,
+                    },
+                );
+                g.insert(
+                    "nice_to_have".into(),
+                    devboy_core::FieldGroup {
+                        fields: vec!["snippet".into()],
+                        estimated_value: 0.3,
+                        default_include: false,
+                    },
+                );
+                g
+            },
+            ..ToolValueModel::default()
+        },
+    );
+    m.insert(
+        "WebFetch".into(),
+        ToolValueModel {
+            value_class: ValueClass::Supporting,
+            cost_model: CostModel {
+                typical_kb: 1.2,
+                max_kb: Some(24.0),
+                latency_ms_p50: Some(800),
+                freshness_ttl_s: Some(900),
+                ..CostModel::default()
+            },
+            side_effect_class: SideEffectClass::ReadOnly,
+            rate_limit_host: None,
+            ..ToolValueModel::default()
+        },
+    );
+
+    // ─── Task management noise (audit_only) ──────────────────────────
+    // `TaskUpdate` median 23 B, `TodoWrite` 160 B, `TaskCreate` 78 B.
+    // Excluded from budget accounting entirely (Paper 3 §6).
+    for name in [
+        "TaskUpdate",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TodoWrite",
+    ] {
+        m.insert(name.into(), ToolValueModel::audit_only());
+    }
+
+    // ─── ToolSearch — fail-fast loop ─────────────────────────────────
+    // 50%+ of repeated calls return zero bytes; planner gives up after
+    // two empty calls and emits a "tool not found" note instead.
+    m.insert(
+        "ToolSearch".into(),
+        ToolValueModel {
+            value_class: ValueClass::Supporting,
+            cost_model: CostModel {
+                typical_kb: 0.0,
+                max_kb: Some(0.1),
+                ..CostModel::default()
+            },
+            fail_fast_after_n: Some(2),
+            // Read-only metadata lookup — but typical_kb is 0, so the
+            // planner's cost-clamp puts it at 1 token; speculation buys
+            // little and the fail-fast circuit is the real win here.
+            side_effect_class: SideEffectClass::ReadOnly,
+            ..ToolValueModel::default()
+        },
+    );
+
+    // ─── Agent / Task subagent — long, expensive, value-rich ─────────
+    // Median 6.6 kB, p99 23.7 kB. `Supporting` because the LLM can
+    // proceed without it but accuracy drops.
+    m.insert(
+        "Agent".into(),
+        ToolValueModel {
+            value_class: ValueClass::Supporting,
+            cost_model: CostModel {
+                typical_kb: 6.5,
+                max_kb: Some(23.7),
+                latency_ms_p50: Some(60_000),
+                ..CostModel::default()
+            },
+            // Sub-agent runs arbitrary tools — assume Indeterminate
+            // until we know its inner side-effect profile.
+            side_effect_class: SideEffectClass::Indeterminate,
+            ..ToolValueModel::default()
+        },
+    );
+
+    m
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_cover_top_tools_from_corpus() {
+        let m = default_tool_value_models();
+        for required in [
+            "Read",
+            "Edit",
+            "Write",
+            "Bash",
+            "Grep",
+            "Glob",
+            "WebSearch",
+            "WebFetch",
+            "TaskUpdate",
+            "TodoWrite",
+            "ToolSearch",
+            "Agent",
+        ] {
+            assert!(m.contains_key(required), "missing default for {required}");
+        }
+    }
+
+    #[test]
+    fn audit_only_tools_are_excluded_from_budget() {
+        let m = default_tool_value_models();
+        for name in ["TaskUpdate", "TaskCreate", "TodoWrite"] {
+            assert!(
+                m[name].excluded_from_budget(),
+                "{name} should be excluded_from_budget"
+            );
+        }
+    }
+
+    #[test]
+    fn read_is_critical_with_typical_kb_anchored_on_corpus() {
+        let m = default_tool_value_models();
+        let read = &m["Read"];
+        assert_eq!(read.value_class, ValueClass::Critical);
+        assert_eq!(read.cost_model.typical_kb, 2.5);
+    }
+
+    #[test]
+    fn grep_followup_includes_read_and_edit_with_path_projection() {
+        let m = default_tool_value_models();
+        let fu = &m["Grep"].follow_up;
+        let read_link = fu.iter().find(|l| l.tool == "Read").unwrap();
+        assert_eq!(read_link.projection.as_deref(), Some("path"));
+        let edit_link = fu.iter().find(|l| l.tool == "Edit").unwrap();
+        assert_eq!(edit_link.projection.as_deref(), Some("path"));
+    }
+
+    #[test]
+    fn web_search_drops_snippets_first_under_budget() {
+        let m = default_tool_value_models();
+        let groups = &m["WebSearch"].field_groups;
+        assert!(groups["must_have"].default_include);
+        assert!(!groups["nice_to_have"].default_include);
+    }
+
+    /// **Safety invariant**: `Bash` and `Agent` are
+    /// `SideEffectClass::Indeterminate` by design — `git status`
+    /// behaves as a read but `rm -rf` is catastrophic; sub-agents
+    /// run arbitrary tools. Speculation must **never** dispatch
+    /// either. Edit / Write / MultiEdit / NotebookEdit must stay
+    /// `MutatesLocal`. Anything that loosens this invariant should
+    /// trip the test.
+    #[test]
+    fn never_speculatable_safety_invariant() {
+        let m = default_tool_value_models();
+        for tool in [
+            "Bash",
+            "Agent",
+            "Edit",
+            "Write",
+            "MultiEdit",
+            "NotebookEdit",
+        ] {
+            let model = m.get(tool).unwrap_or_else(|| panic!("{tool} missing"));
+            assert!(
+                !model.is_speculatable(),
+                "SAFETY: {tool} (side_effect={:?}) must never be speculatable; \
+                 a regression here can lead to double-applied writes / shell \
+                 commands re-run",
+                model.side_effect_class
+            );
+        }
+    }
+
+    /// Counterpart to the safety invariant — every Pure / ReadOnly
+    /// tool stays speculatable. Catches accidental flips of
+    /// `side_effect_class` to `Indeterminate` on the wrong tool.
+    #[test]
+    fn pure_and_read_only_tools_are_speculatable() {
+        let m = default_tool_value_models();
+        for tool in [
+            "Read",
+            "Grep",
+            "Glob",
+            "WebSearch",
+            "WebFetch",
+            "ToolSearch",
+        ] {
+            let model = m.get(tool).unwrap_or_else(|| panic!("{tool} missing"));
+            assert!(
+                model.is_speculatable(),
+                "{tool} (side_effect={:?}) should remain speculatable",
+                model.side_effect_class
+            );
+        }
+    }
+
+    #[test]
+    fn tool_search_has_fail_fast() {
+        let m = default_tool_value_models();
+        assert_eq!(m["ToolSearch"].fail_fast_after_n, Some(2));
+    }
+
+    #[test]
+    fn mutating_tools_invalidate_read_cache() {
+        let m = default_tool_value_models();
+        for name in ["Edit", "Write", "MultiEdit"] {
+            assert!(
+                m[name].invalidates.iter().any(|t| t == "Read"),
+                "{name} should invalidate Read"
+            );
+        }
+    }
+}

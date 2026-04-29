@@ -31,6 +31,7 @@ pub mod remote_config;
 #[cfg(feature = "sentry")]
 pub mod sentry_integration;
 pub mod tool_category;
+pub mod tool_value_model;
 pub mod types;
 
 // Re-export error types
@@ -62,6 +63,12 @@ pub use types::{
 // Re-export enricher traits and utilities
 pub use enricher::{PropertySchema, ToolEnricher, ToolSchema, sanitize_field_name};
 pub use tool_category::ToolCategory;
+
+// Re-export Paper 3 tool value model — provider-shipped per-tool
+// metadata for the enrichment knapsack planner.
+pub use tool_value_model::{
+    CostModel, FieldGroup, FollowUpLink, SideEffectClass, ToolValueModel, ValueClass,
+};
 
 // Re-export asset management types
 pub use asset::{
