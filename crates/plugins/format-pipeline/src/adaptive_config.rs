@@ -44,6 +44,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+use devboy_core::ToolValueModel;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -63,7 +64,7 @@ pub enum ConfigError {
 
 pub type Result<T> = std::result::Result<T, ConfigError>;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 /// Lowest schema version we still accept on load (auto-upgraded in memory).
 pub const MIN_SUPPORTED_SCHEMA_VERSION: u32 = 1;
@@ -90,6 +91,17 @@ pub struct AdaptiveConfig {
     /// Schema-v2: horizontal hint policy.
     #[serde(default)]
     pub hints: HintsConfig,
+    /// Schema-v3: per-tool value models for the Paper 3 enrichment
+    /// planner. Keyed by anonymized tool name (e.g. `"Read"`,
+    /// `"mcp__pXXXXXX__get_branch_pipeline"`). User overrides land
+    /// here from `[tools.<name>]` blocks; provider-shipped defaults
+    /// are merged in at startup time.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tools: BTreeMap<String, ToolValueModel>,
+    /// Schema-v4: speculative-execution settings for the Paper 3
+    /// enrichment planner. Off by default — opt-in.
+    #[serde(default)]
+    pub enrichment: EnrichmentConfig,
 }
 
 fn default_schema_version() -> u32 {
@@ -107,6 +119,8 @@ impl Default for AdaptiveConfig {
             endpoint_overrides: BTreeMap::new(),
             profiles: ProfilesConfig::default(),
             hints: HintsConfig::default(),
+            tools: BTreeMap::new(),
+            enrichment: EnrichmentConfig::default(),
         }
     }
 }
@@ -136,8 +150,13 @@ impl AdaptiveConfig {
     /// Migrate a config in place to `CURRENT_SCHEMA_VERSION`.
     ///
     /// v1 → v2: the on-disk file lacks `[profiles.*]` and `[hints]` sections;
-    /// `serde(default)` already populates them with the v2 defaults, so the
-    /// only work here is bumping `schema_version`.
+    /// `serde(default)` already populates them with the v2 defaults.
+    /// v2 → v3: the on-disk file lacks the `[tools.*]` table;
+    /// `serde(default)` populates an empty BTreeMap, then the runtime
+    /// merges provider-shipped defaults on top at startup time.
+    /// v3 → v4: the on-disk file lacks the `[enrichment]` section;
+    /// `serde(default)` populates the off-by-default Paper 3 settings.
+    /// In all cases the only work here is bumping `schema_version`.
     fn upgrade_in_place(&mut self) -> Result<()> {
         if self.schema_version > CURRENT_SCHEMA_VERSION {
             return Err(ConfigError::UnsupportedSchemaVersion(self.schema_version));
@@ -145,7 +164,7 @@ impl AdaptiveConfig {
         if self.schema_version < MIN_SUPPORTED_SCHEMA_VERSION {
             return Err(ConfigError::UnsupportedSchemaVersion(self.schema_version));
         }
-        // v1 → v2: defaults already injected; just stamp the version.
+        // v1 → v3: defaults already injected; just stamp the version.
         if self.schema_version < CURRENT_SCHEMA_VERSION {
             self.schema_version = CURRENT_SCHEMA_VERSION;
         }
@@ -260,6 +279,20 @@ impl AdaptiveConfig {
         self.templates.template_for(endpoint)
     }
 
+    /// Effective `ToolValueModel` for `tool_name` for the Paper 3
+    /// enrichment planner. Resolution order:
+    ///
+    /// 1. exact match in `[tools.<name>]` (user override or merged provider default);
+    /// 2. wildcard `*` block (catch-all overrides — useful for blanket
+    ///    `value_class = "supporting"` policies);
+    /// 3. `None` — caller substitutes the global default.
+    pub fn effective_tool_value_model(&self, tool_name: &str) -> Option<&ToolValueModel> {
+        if let Some(m) = self.tools.get(tool_name) {
+            return Some(m);
+        }
+        self.tools.get("*")
+    }
+
     /// Merge another config into self. Fields present in `other` override `self`.
     /// Endpoint overrides are unioned (right-wins on collisions).
     pub fn merge_right_wins(&mut self, other: AdaptiveConfig) {
@@ -271,6 +304,12 @@ impl AdaptiveConfig {
         self.hints = other.hints;
         for (k, v) in other.endpoint_overrides {
             self.endpoint_overrides.insert(k, v);
+        }
+        // Provider defaults are typically loaded into `self.tools` first
+        // and then user overrides come in via `other.tools`. Right-wins
+        // matches the documented `[tools.<name>]` semantics.
+        for (k, v) in other.tools {
+            self.tools.insert(k, v);
         }
     }
 }
@@ -526,6 +565,87 @@ impl Default for TelemetryConfig {
             rotate_mib: default_rotate_mib(),
             sample_rate: default_sample_rate(),
             flush_every_n: default_flush_every(),
+        }
+    }
+}
+
+/// Speculative-execution settings for the Paper 3 enrichment planner.
+///
+/// Off by default. Operators (or `tune analyze --auto-enrichment`)
+/// flip `enabled` to `true` once the corpus statistics show that
+/// speculation would have paid off. Once enabled, the host enforces
+/// the budget and concurrency limits below per turn.
+///
+/// **Schema-v4** — added in CURRENT_SCHEMA_VERSION = 4.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrichmentConfig {
+    /// Master switch. `false` (default) means the planner runs only in
+    /// telemetry-only mode: `recent_tools` is tracked, `should_skip`
+    /// can be consulted, but no out-of-band `tools/call` is dispatched.
+    /// Flip to `true` to enable real speculative pre-fetch.
+    #[serde(default = "default_enrichment_enabled")]
+    pub enabled: bool,
+
+    /// Maximum number of speculative pre-fetches the host issues in
+    /// parallel from a single turn's `EnrichmentPlan`. Caps fan-out so
+    /// a Glob → 12 Read does not melt the API rate-limit. Default: 3
+    /// (matches the corpus finding that top-3 prefetch covers > 80%
+    /// of cited follow-ups).
+    #[serde(default = "default_max_parallel_prefetches")]
+    pub max_parallel_prefetches: u32,
+
+    /// Token ceiling for the *speculative* part of one turn — distinct
+    /// from the per-response budget. `EnrichmentPlanner::build_plan`
+    /// reads this when constructing `TurnContext`. Default: 8000 tokens
+    /// (~32 kB at the 4-byte-per-token heuristic).
+    #[serde(default = "default_prefetch_budget_tokens")]
+    pub prefetch_budget_tokens: u32,
+
+    /// Wall-clock budget the host waits for prefetches before
+    /// returning the main response. Past this, the prefetch keeps
+    /// running in the background (its result lands in the dedup cache
+    /// when it returns) but the LLM gets the main response immediately
+    /// + a hint that a prefetch is in flight.
+    ///
+    /// Default: 1000 ms — wide margin so typical Glob/Read can land
+    /// synchronously, but small enough that a slow API never holds
+    /// the agent.
+    #[serde(default = "default_prefetch_timeout_ms")]
+    pub prefetch_timeout_ms: u32,
+
+    /// Honour `[tools.<name>].rate_limit_host` when scheduling
+    /// prefetches. When `true`, the host counts how many prefetches
+    /// per class are inflight this turn and skips new ones once the
+    /// cap is hit. Default: `true` — the only reason to disable is
+    /// for a benchmark harness with a known sandbox API.
+    #[serde(default = "default_respect_rate_limits")]
+    pub respect_rate_limits: bool,
+}
+
+fn default_enrichment_enabled() -> bool {
+    false
+}
+fn default_max_parallel_prefetches() -> u32 {
+    3
+}
+fn default_prefetch_budget_tokens() -> u32 {
+    8000
+}
+fn default_prefetch_timeout_ms() -> u32 {
+    1000
+}
+fn default_respect_rate_limits() -> bool {
+    true
+}
+
+impl Default for EnrichmentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_enrichment_enabled(),
+            max_parallel_prefetches: default_max_parallel_prefetches(),
+            prefetch_budget_tokens: default_prefetch_budget_tokens(),
+            prefetch_timeout_ms: default_prefetch_timeout_ms(),
+            respect_rate_limits: default_respect_rate_limits(),
         }
     }
 }
@@ -1791,5 +1911,163 @@ recursion_depth = 6
             variants.get("ollama_bpe").unwrap().bpe,
             Tokenizer::Heuristic
         );
+    }
+
+    // ─── Paper 3 [tools.*] section ───────────────────────────────────
+
+    #[test]
+    fn schema_v3_default_carries_empty_tools_map() {
+        let cfg = AdaptiveConfig::default();
+        assert_eq!(cfg.schema_version, CURRENT_SCHEMA_VERSION);
+        // The old assertion baked `CURRENT_SCHEMA_VERSION == 3` but the
+        // field migrated to v4 when the [enrichment] section landed.
+        // Comparing the two compile-time constants is a tautology
+        // clippy rejects; the version-agnostic invariant we actually
+        // care about is just that the default carries an empty tools
+        // map.
+        assert!(cfg.tools.is_empty());
+    }
+
+    #[test]
+    fn schema_v1_v2_v3_files_upgrade_to_current_with_empty_tools() {
+        // Older configs lack the [tools.*] / [enrichment] sections;
+        // serde(default) injects empty defaults, then `upgrade_in_place`
+        // stamps the current schema version.
+        for raw in [
+            "schema_version = 1\n",
+            "schema_version = 2\n[profiles.tokenizer]\nactive = \"auto\"\n",
+            "schema_version = 3\n[tools.Read]\nvalue_class = \"critical\"\n",
+        ] {
+            let mut cfg: AdaptiveConfig = toml::from_str(raw).unwrap();
+            cfg.upgrade_in_place().unwrap();
+            assert_eq!(cfg.schema_version, CURRENT_SCHEMA_VERSION);
+            // v3 file pre-populates one tool; v1/v2 files leave it empty.
+            // [enrichment] always defaults to disabled.
+            assert!(!cfg.enrichment.enabled);
+        }
+    }
+
+    #[test]
+    fn enrichment_config_round_trips_with_overrides() {
+        let raw = r#"
+schema_version = 4
+
+[enrichment]
+enabled = true
+max_parallel_prefetches = 5
+prefetch_budget_tokens = 12000
+prefetch_timeout_ms = 1500
+respect_rate_limits = false
+"#;
+        let cfg: AdaptiveConfig = toml::from_str(raw).unwrap();
+        assert!(cfg.enrichment.enabled);
+        assert_eq!(cfg.enrichment.max_parallel_prefetches, 5);
+        assert_eq!(cfg.enrichment.prefetch_budget_tokens, 12000);
+        assert_eq!(cfg.enrichment.prefetch_timeout_ms, 1500);
+        assert!(!cfg.enrichment.respect_rate_limits);
+
+        let s = toml::to_string_pretty(&cfg).unwrap();
+        let back: AdaptiveConfig = toml::from_str(&s).unwrap();
+        assert!(back.enrichment.enabled);
+        assert_eq!(back.enrichment.prefetch_timeout_ms, 1500);
+    }
+
+    #[test]
+    fn enrichment_defaults_are_safe() {
+        let cfg = AdaptiveConfig::default();
+        // Off by default — single most important guarantee for v4
+        // shipping silently into existing deployments.
+        assert!(!cfg.enrichment.enabled);
+        assert_eq!(cfg.enrichment.max_parallel_prefetches, 3);
+        assert_eq!(cfg.enrichment.prefetch_budget_tokens, 8000);
+        assert_eq!(cfg.enrichment.prefetch_timeout_ms, 1000);
+        assert!(cfg.enrichment.respect_rate_limits);
+    }
+
+    #[test]
+    fn effective_tool_value_model_exact_match_wins() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.tools.insert(
+            "Read".into(),
+            devboy_core::ToolValueModel::critical_with_size(2.5),
+        );
+        let m = cfg.effective_tool_value_model("Read").unwrap();
+        assert_eq!(m.cost_model.typical_kb, 2.5);
+        assert_eq!(m.value_class, devboy_core::ValueClass::Critical);
+    }
+
+    #[test]
+    fn effective_tool_value_model_falls_back_to_wildcard() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.tools
+            .insert("*".into(), devboy_core::ToolValueModel::audit_only());
+        let m = cfg.effective_tool_value_model("UnknownTool").unwrap();
+        assert_eq!(m.value_class, devboy_core::ValueClass::AuditOnly);
+    }
+
+    #[test]
+    fn effective_tool_value_model_none_when_unconfigured() {
+        let cfg = AdaptiveConfig::default();
+        assert!(cfg.effective_tool_value_model("Read").is_none());
+    }
+
+    #[test]
+    fn round_trip_via_toml_with_tools_block() {
+        let mut cfg = AdaptiveConfig::default();
+        cfg.tools.insert(
+            "Read".into(),
+            devboy_core::ToolValueModel::critical_with_size(2.5),
+        );
+        cfg.tools.insert(
+            "TaskUpdate".into(),
+            devboy_core::ToolValueModel::audit_only(),
+        );
+        let s = toml::to_string_pretty(&cfg).unwrap();
+        assert!(s.contains("[tools.Read]"));
+        assert!(s.contains("[tools.TaskUpdate]"));
+        let back: AdaptiveConfig = toml::from_str(&s).unwrap();
+        assert_eq!(back.tools.len(), 2);
+        assert_eq!(
+            back.effective_tool_value_model("Read")
+                .unwrap()
+                .cost_model
+                .typical_kb,
+            2.5
+        );
+    }
+
+    #[test]
+    fn merge_right_wins_unions_tools_blocks() {
+        let mut left = AdaptiveConfig::default();
+        left.tools.insert(
+            "Read".into(),
+            devboy_core::ToolValueModel::critical_with_size(2.5),
+        );
+        left.tools
+            .insert("Bash".into(), devboy_core::ToolValueModel::default());
+
+        let mut right = AdaptiveConfig::default();
+        right.tools.insert(
+            "Read".into(),
+            devboy_core::ToolValueModel::critical_with_size(99.0),
+        );
+        right.tools.insert(
+            "WebFetch".into(),
+            devboy_core::ToolValueModel::critical_with_size(1.2),
+        );
+
+        left.merge_right_wins(right);
+        // Right wins on collision (`Read`).
+        assert_eq!(
+            left.effective_tool_value_model("Read")
+                .unwrap()
+                .cost_model
+                .typical_kb,
+            99.0
+        );
+        // Left-only entry (`Bash`) survives.
+        assert!(left.effective_tool_value_model("Bash").is_some());
+        // Right-only entry (`WebFetch`) is added.
+        assert!(left.effective_tool_value_model("WebFetch").is_some());
     }
 }

@@ -2,7 +2,10 @@
 //!
 //! Dynamic enricher supporting single-project and multi-project configurations.
 
-use devboy_core::{ToolCategory, ToolEnricher, ToolSchema, sanitize_field_name};
+use devboy_core::{
+    CostModel, FollowUpLink, SideEffectClass, ToolCategory, ToolEnricher, ToolSchema,
+    ToolValueModel, ValueClass, sanitize_field_name,
+};
 use serde_json::{Value, json};
 
 use crate::metadata::{JiraFieldType, JiraMetadata};
@@ -255,6 +258,88 @@ impl ToolEnricher for JiraSchemaEnricher {
         if !custom_fields.is_empty() {
             obj.insert("customFields".into(), Value::Object(custom_fields));
         }
+    }
+
+    /// Paper 3 — Jira read-only chains (issues / comments). Issue
+    /// detail and comments are the highest-value follow-ups; create /
+    /// update / transition are mutating and never speculatable.
+    fn value_model(&self, tool_name: &str) -> Option<ToolValueModel> {
+        let model = match tool_name {
+            "get_issues" => ToolValueModel {
+                value_class: ValueClass::Supporting,
+                cost_model: CostModel {
+                    typical_kb: 4.0,
+                    max_kb: Some(40.0),
+                    latency_ms_p50: Some(450),
+                    freshness_ttl_s: Some(60),
+                    ..CostModel::default()
+                },
+                follow_up: vec![
+                    FollowUpLink {
+                        tool: "get_issue".into(),
+                        probability: 0.55,
+                        projection: Some("key".into()),
+                        projection_arg: Some("key".into()),
+                    },
+                    FollowUpLink {
+                        tool: "get_issue_comments".into(),
+                        probability: 0.45,
+                        projection: Some("key".into()),
+                        projection_arg: Some("key".into()),
+                    },
+                ],
+                side_effect_class: SideEffectClass::ReadOnly,
+                ..ToolValueModel::default()
+            },
+            "get_issue" => ToolValueModel {
+                value_class: ValueClass::Critical,
+                cost_model: CostModel {
+                    typical_kb: 1.5,
+                    latency_ms_p50: Some(220),
+                    freshness_ttl_s: Some(60),
+                    ..CostModel::default()
+                },
+                follow_up: vec![FollowUpLink {
+                    tool: "get_issue_comments".into(),
+                    probability: 0.50,
+                    projection: Some("key".into()),
+                    projection_arg: Some("key".into()),
+                }],
+                side_effect_class: SideEffectClass::ReadOnly,
+                ..ToolValueModel::default()
+            },
+            "get_issue_comments" => ToolValueModel {
+                value_class: ValueClass::Critical,
+                cost_model: CostModel {
+                    typical_kb: 2.5,
+                    latency_ms_p50: Some(280),
+                    freshness_ttl_s: Some(60),
+                    ..CostModel::default()
+                },
+                side_effect_class: SideEffectClass::ReadOnly,
+                ..ToolValueModel::default()
+            },
+            "create_issue" | "update_issue" | "add_issue_comment" | "link_issues"
+            | "transition_issue" => ToolValueModel {
+                value_class: ValueClass::Supporting,
+                cost_model: CostModel {
+                    typical_kb: 0.6,
+                    latency_ms_p50: Some(380),
+                    ..CostModel::default()
+                },
+                side_effect_class: SideEffectClass::MutatesExternal,
+                ..ToolValueModel::default()
+            },
+            _ => return None,
+        };
+        Some(model)
+    }
+
+    /// Jira hosts vary per deployment (Cloud vs Server vs Data
+    /// Center). Operators set `rate_limit_host` per-tool in TOML for
+    /// shared rate-limit grouping; we don't statically assume Cloud.
+    fn rate_limit_host(&self, _tool_name: &str, _args: &Value) -> Option<String> {
+        None
     }
 }
 
