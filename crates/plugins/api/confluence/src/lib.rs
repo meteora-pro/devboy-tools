@@ -5,8 +5,10 @@
 //! operations exposed through the shared `KnowledgeBaseProvider` trait.
 
 mod client;
+mod enricher;
 
 pub use client::{ConfluenceAuth, ConfluenceClient};
+pub use enricher::ConfluenceSchemaEnricher;
 
 /// Default REST API base path for Confluence Server / Data Center.
 pub const DEFAULT_CONFLUENCE_API_PATH: &str = "/rest/api";
