@@ -1047,6 +1047,11 @@ impl McpServer {
         {
             executor = executor.with_asset_manager(mgr);
         }
+        if !self.active_knowledge_base_providers().is_empty() {
+            executor.add_enricher(Box::new(
+                devboy_confluence::ConfluenceSchemaEnricher::new(),
+            ));
+        }
         executor
     }
 
@@ -2131,6 +2136,33 @@ mod tests {
                 assert!(text.contains("Engineering"));
             }
         }
+    }
+
+    #[test]
+    fn test_create_executor_registers_kb_enricher_for_active_context() {
+        let mut server = McpServer::new();
+        server.ensure_context("wiki-context");
+        server.ensure_context("plain-context");
+        server.add_knowledge_base_provider_to_context(
+            "wiki-context",
+            Arc::new(TestKnowledgeBaseProvider),
+        );
+
+        server.set_active_context("plain-context").unwrap();
+        let plain_tools = server.create_executor().list_tools();
+        assert!(
+            !plain_tools
+                .iter()
+                .any(|tool| tool.name == "get_knowledge_base_spaces")
+        );
+
+        server.set_active_context("wiki-context").unwrap();
+        let wiki_tools = server.create_executor().list_tools();
+        assert!(
+            wiki_tools
+                .iter()
+                .any(|tool| tool.name == "get_knowledge_base_spaces")
+        );
     }
 
     // =========================================================================
