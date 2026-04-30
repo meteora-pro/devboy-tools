@@ -1,0 +1,30 @@
+# Paper 4 — applicability frontier
+# section,key,value
+section,row_size,selectivity_pct,breakeven_rows,verdict
+theoretical,small (150c),10,19,parquet wins
+theoretical,small (150c),25,23,parquet wins
+theoretical,small (150c),50,34,parquet wins
+theoretical,small (150c),80,84,parquet wins
+theoretical,medium (500c),10,6,parquet wins
+theoretical,medium (500c),25,7,parquet wins
+theoretical,medium (500c),50,11,parquet wins
+theoretical,medium (500c),80,26,parquet wins
+theoretical,large (2000c),10,2,parquet wins
+theoretical,large (2000c),25,2,parquet wins
+theoretical,large (2000c),50,3,parquet wins
+theoretical,large (2000c),80,7,parquet wins
+
+section,n_rows,json_tokens,mckp_tokens,parquet_tokens,vs_json_pct,vs_mckp_pct
+microbench,10,687,326,507,26.1,-55.8
+microbench,100,6889,3130,684,90.1,78.1
+microbench,1000,68904,31170,684,99.0,97.8
+
+section,tool_anon,n_loops,median_selectivity,p90_selectivity,mean_estimated_rows
+empirical,Glob,155,0.000,1.000,40
+empirical,mcp__pd16dd1__get_issues,92,0.091,0.250,43
+empirical,mcp__p67cee4__get_issues,55,0.115,1.000,70
+empirical,mcp__pf3c76d__get_issues,52,0.010,0.250,70
+empirical,mcp__pd16dd1__get_merge_requests,24,0.500,1.000,9
+empirical,mcp__pf1a3f9__get_issues,14,0.080,0.137,83
+empirical,mcp__p8eb7a0__get_issues,6,0.000,0.314,42
+empirical,mcp__pf3c76d__get_merge_requests,6,0.000,0.000,5
