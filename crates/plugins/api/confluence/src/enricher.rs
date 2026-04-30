@@ -5,7 +5,10 @@
 //! can register a KnowledgeBase-capable provider consistently, and so later
 //! Paper 3 value-model work has a stable home in this crate.
 
-use devboy_core::{ToolCategory, ToolEnricher, ToolSchema};
+use devboy_core::{
+    ToolCategory, ToolCostModel, ToolEffect, ToolEnricher, ToolFollowUp, ToolSchema,
+    ToolValueClass, ToolValueModel,
+};
 use serde_json::Value;
 
 /// Static schema enricher for Confluence knowledge base tools.
@@ -40,6 +43,70 @@ impl ToolEnricher for ConfluenceSchemaEnricher {
 
     fn transform_args(&self, _tool_name: &str, _args: &mut Value) {
         // No-op for now.
+    }
+
+    fn value_model(&self, tool_name: &str) -> Option<ToolValueModel> {
+        match tool_name {
+            "search_knowledge_base" => Some(ToolValueModel {
+                effect: ToolEffect::ReadOnly,
+                value_class: ToolValueClass::Supporting,
+                cost_model: ToolCostModel {
+                    typical_kb: 4.0,
+                    max_kb: None,
+                },
+                freshness_ttl_s: 60,
+                follow_up: Some(ToolFollowUp {
+                    tool_name: "get_knowledge_base_page".into(),
+                    projection: Some("id".into()),
+                    projection_arg: Some("pageId".into()),
+                }),
+            }),
+            "list_knowledge_base_pages" => Some(ToolValueModel {
+                effect: ToolEffect::ReadOnly,
+                value_class: ToolValueClass::Supporting,
+                cost_model: ToolCostModel {
+                    typical_kb: 3.0,
+                    max_kb: None,
+                },
+                freshness_ttl_s: 60,
+                follow_up: Some(ToolFollowUp {
+                    tool_name: "get_knowledge_base_page".into(),
+                    projection: Some("id".into()),
+                    projection_arg: Some("pageId".into()),
+                }),
+            }),
+            "get_knowledge_base_page" => Some(ToolValueModel {
+                effect: ToolEffect::ReadOnly,
+                value_class: ToolValueClass::Critical,
+                cost_model: ToolCostModel {
+                    typical_kb: 8.0,
+                    max_kb: Some(80.0),
+                },
+                freshness_ttl_s: 300,
+                follow_up: None,
+            }),
+            "get_knowledge_base_spaces" => Some(ToolValueModel {
+                effect: ToolEffect::ReadOnly,
+                value_class: ToolValueClass::Supporting,
+                cost_model: ToolCostModel {
+                    typical_kb: 1.5,
+                    max_kb: None,
+                },
+                freshness_ttl_s: 1800,
+                follow_up: None,
+            }),
+            "create_knowledge_base_page" | "update_knowledge_base_page" => Some(ToolValueModel {
+                effect: ToolEffect::MutatesExternal,
+                value_class: ToolValueClass::Critical,
+                cost_model: ToolCostModel {
+                    typical_kb: 8.0,
+                    max_kb: Some(80.0),
+                },
+                freshness_ttl_s: 0,
+                follow_up: None,
+            }),
+            _ => None,
+        }
     }
 }
 
@@ -85,5 +152,50 @@ mod tests {
         enricher.transform_args("search_knowledge_base", &mut args);
 
         assert_eq!(args, expected);
+    }
+
+    #[test]
+    fn paper3_search_chains_to_get_page_with_page_id_projection() {
+        let enricher = ConfluenceSchemaEnricher::new();
+        let model = enricher.value_model("search_knowledge_base").unwrap();
+
+        let follow_up = model.follow_up.unwrap();
+        assert_eq!(follow_up.tool_name, "get_knowledge_base_page");
+        assert_eq!(follow_up.projection.as_deref(), Some("id"));
+        assert_eq!(follow_up.projection_arg.as_deref(), Some("pageId"));
+    }
+
+    #[test]
+    fn paper3_list_chains_to_get_page() {
+        let enricher = ConfluenceSchemaEnricher::new();
+        let model = enricher.value_model("list_knowledge_base_pages").unwrap();
+
+        let follow_up = model.follow_up.unwrap();
+        assert_eq!(follow_up.tool_name, "get_knowledge_base_page");
+        assert_eq!(follow_up.projection.as_deref(), Some("id"));
+        assert_eq!(follow_up.projection_arg.as_deref(), Some("pageId"));
+    }
+
+    #[test]
+    fn paper3_get_page_is_read_only_with_long_ttl() {
+        let enricher = ConfluenceSchemaEnricher::new();
+        let model = enricher.value_model("get_knowledge_base_page").unwrap();
+
+        assert_eq!(model.effect, ToolEffect::ReadOnly);
+        assert_eq!(model.value_class, ToolValueClass::Critical);
+        assert!(model.freshness_ttl_s >= 300);
+        assert!(model.is_speculatable());
+        assert_eq!(model.cost_model.max_kb, Some(80.0));
+    }
+
+    #[test]
+    fn paper3_mutating_endpoints_are_never_speculatable() {
+        let enricher = ConfluenceSchemaEnricher::new();
+
+        for tool_name in ["create_knowledge_base_page", "update_knowledge_base_page"] {
+            let model = enricher.value_model(tool_name).unwrap();
+            assert_eq!(model.effect, ToolEffect::MutatesExternal);
+            assert!(!model.is_speculatable());
+        }
     }
 }
