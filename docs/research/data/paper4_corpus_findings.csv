@@ -1,0 +1,10 @@
+metric,sum,sessions_with_any,p50,p90,p99,max
+big_4kb,29812,2104,5,16,91,574
+big_10kb,10925,1871,1,7,35,189
+big_25kb,2265,1037,0,2,8,28
+big_50kb,317,189,0,0,2,17
+pagination_loops,0,0,0,0,0,0
+repeated_fingerprints,1737,249,0,0,12,114
+repeated_call_count,8250,249,0,0,61,640
+list_to_detail_loops,5025,1223,0,5,15,53
+list_to_detail_detail_total,26077,1223,0,28,74,234
