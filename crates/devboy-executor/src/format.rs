@@ -341,6 +341,9 @@ pub fn format_output(
             provider_pagination,
             provider_sort,
         )),
+        ToolOutput::KnowledgeBasePageSummary(page) => {
+            Ok(text_result(format_knowledge_base_page_summary(&page), None, None))
+        }
         ToolOutput::KnowledgeBasePage(page) => {
             Ok(text_result(format_knowledge_base_page(&page), None, None))
         }
@@ -686,6 +689,23 @@ fn format_knowledge_base_pages(pages: &[devboy_core::KbPage]) -> String {
         if let Some(url) = &page.url {
             output.push_str(&format!("  {url}\n"));
         }
+    }
+    output
+}
+
+fn format_knowledge_base_page_summary(page: &devboy_core::KbPage) -> String {
+    let mut output = format!("# Knowledge Base Page\n\n{} (`{}`)\n", page.title, page.id);
+    if let Some(space_key) = &page.space_key {
+        output.push_str(&format!("space: {space_key}\n"));
+    }
+    if let Some(author) = &page.author {
+        output.push_str(&format!("author: {author}\n"));
+    }
+    if let Some(last_modified) = &page.last_modified {
+        output.push_str(&format!("updated: {last_modified}\n"));
+    }
+    if let Some(url) = &page.url {
+        output.push_str(&format!("url: {url}\n"));
     }
     output
 }

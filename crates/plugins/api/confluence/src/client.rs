@@ -724,8 +724,9 @@ fn markdown_to_confluence_storage(markdown: &str) -> String {
                 code_lines.push(code_line);
             }
 
+            let code_content = code_lines.join("\n").replace("]]>", "]]]]><![CDATA[>");
             out.push_str(r#"<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA["#);
-            out.push_str(&code_lines.join("\n"));
+            out.push_str(&code_content);
             out.push_str("]]></ac:plain-text-body></ac:structured-macro>");
             continue;
         }
@@ -1220,19 +1221,30 @@ impl ConfluenceClient {
         let path = format!("pages/{page_id}/ancestors?limit=100");
         let response: ConfluenceListResponse<ConfluenceAncestor> =
             self.get_json_from_api(&self.page_api_path, &path).await?;
-        let mut ancestors = Vec::with_capacity(response.results.len());
-        for ancestor in response.results {
-            let detail_path = format!("pages/{}", ancestor.id);
-            let detail: ConfluencePage = self
-                .get_json_from_api(&self.page_api_path, &detail_path)
-                .await?;
-            let mut summary = map_page_summary(&self.base_url, &detail);
-            if summary.url.is_none() {
-                summary.url = Some(format!("{}/pages/{}", self.base_url, detail.id));
-            }
-            ancestors.push(summary);
+        let mut tasks = tokio::task::JoinSet::new();
+        for (index, ancestor) in response.results.into_iter().enumerate() {
+            let client = self.clone();
+            tasks.spawn(async move {
+                let detail_path = format!("pages/{}", ancestor.id);
+                let detail: ConfluencePage = client
+                    .get_json_from_api(&client.page_api_path, &detail_path)
+                    .await?;
+                let mut summary = map_page_summary(&client.base_url, &detail);
+                if summary.url.is_none() {
+                    summary.url = Some(format!("{}/pages/{}", client.base_url, detail.id));
+                }
+                Ok::<(usize, KbPage), Error>((index, summary))
+            });
         }
-        Ok(ancestors)
+
+        let mut ancestors = Vec::with_capacity(tasks.len());
+        while let Some(result) = tasks.join_next().await {
+            let (index, summary) =
+                result.map_err(|error| Error::Network(format!("ancestor fetch task failed: {error}")))??;
+            ancestors.push((index, summary));
+        }
+        ancestors.sort_by_key(|(index, _)| *index);
+        Ok(ancestors.into_iter().map(|(_, summary)| summary).collect())
     }
 
     async fn add_labels(&self, page_id: &str, labels: &[String]) -> Result<()> {
@@ -1292,6 +1304,14 @@ impl ConfluenceClient {
         let limit = params.limit.unwrap_or(25);
         let path = if let Some(cursor) = params.cursor.as_ref() {
             path_from_cursor(cursor, &self.api_path)
+        } else if let Some(parent_id) = params.parent_id.as_ref() {
+            let offset = params.offset.unwrap_or(0);
+            let query = [
+                format!("limit={limit}"),
+                format!("start={offset}"),
+                "expand=space,version,history.lastUpdated,body.view".to_string(),
+            ];
+            format!("content/{parent_id}/child/page?{}", query.join("&"))
         } else {
             let offset = params.offset.unwrap_or(0);
             let query = [
@@ -1309,18 +1329,6 @@ impl ConfluenceClient {
         let mut items = response
             .results
             .iter()
-            .filter(|page| {
-                params
-                    .parent_id
-                    .as_ref()
-                    .map(|parent_id| {
-                        page.ancestors
-                            .last()
-                            .map(|ancestor| ancestor.id == *parent_id)
-                            .unwrap_or(false)
-                    })
-                    .unwrap_or(true)
-            })
             .map(|page| map_page_summary(&self.base_url, page))
             .collect::<Vec<_>>();
 
@@ -1492,13 +1500,17 @@ impl ConfluenceClient {
         let path = if let Some(cursor) = params.cursor.as_ref() {
             path_from_cursor(cursor, &self.page_api_path)
         } else {
-            let space = self.resolve_space_by_key(&params.space_key).await?;
             let mut query = vec![format!("limit={limit}")];
-            query.push("body-format=view".to_string());
-            if let Some(search) = params.search.as_ref() {
-                query.push(format!("title={}", encode_query_value(search)));
+            if let Some(parent_id) = params.parent_id.as_ref() {
+                format!("pages/{parent_id}/children?{}", query.join("&"))
+            } else {
+                let space = self.resolve_space_by_key(&params.space_key).await?;
+                query.push("body-format=view".to_string());
+                if let Some(search) = params.search.as_ref() {
+                    query.push(format!("title={}", encode_query_value(search)));
+                }
+                format!("spaces/{}/pages?{}", space.id, query.join("&"))
             }
-            format!("spaces/{}/pages?{}", space.id, query.join("&"))
         };
 
         let response: ConfluenceListResponse<ConfluencePage> =
@@ -1507,13 +1519,6 @@ impl ConfluenceClient {
         let mut items = response
             .results
             .iter()
-            .filter(|page| {
-                params
-                    .parent_id
-                    .as_ref()
-                    .map(|parent_id| page.parent_id.as_ref().is_some_and(|id| id == parent_id))
-                    .unwrap_or(true)
-            })
             .map(|page| {
                 let mut summary = map_page_summary(&self.base_url, page);
                 if summary.space_key.is_none() {
@@ -1557,10 +1562,11 @@ impl ConfluenceClient {
         let storage_content = page.body.as_ref().and_then(body_value).unwrap_or_default();
         let content = confluence_storage_to_markdown(&storage_content);
         let content_type = "markdown".to_string();
-        let ancestors = self
-            .get_page_ancestor_chain_v2(page_id)
-            .await
-            .unwrap_or_default();
+        let ancestors = match self.get_page_ancestor_chain_v2(page_id).await {
+            Ok(ancestors) => ancestors,
+            Err(error) if should_fallback_to_rest_api(&error) => Vec::new(),
+            Err(error) => return Err(error),
+        };
         let labels = extract_labels(&page);
 
         Ok(KbPageContent {
@@ -2086,27 +2092,10 @@ mod tests {
     #[tokio::test]
     async fn list_pages_uses_v2_pages_when_preferred() {
         let server = MockServer::start();
-        let spaces_mock = server.mock(|when, then| {
-            when.method(GET)
-                .path("/api/v2/space")
-                .query_param("limit", "100")
-                .query_param("type", "global,personal");
-            then.status(200)
-                .header("content-type", "application/json")
-                .body(
-                    r#"{
-                        "results": [
-                            { "id": "123", "key": "ENG", "name": "Engineering" }
-                        ],
-                        "_links": {}
-                    }"#,
-                );
-        });
         let pages_mock = server.mock(|when, then| {
             when.method(GET)
-                .path("/api/v2/spaces/123/pages")
-                .query_param("limit", "25")
-                .query_param("body-format", "view");
+                .path("/api/v2/pages/10/children")
+                .query_param("limit", "25");
             then.status(200)
                 .header("content-type", "application/json")
                 .body(
@@ -2117,14 +2106,12 @@ mod tests {
                                 "title": "ADR-001",
                                 "spaceId": "123",
                                 "parentId": "10",
-                                "version": { "number": 7, "createdAt": "2026-04-26T10:00:00.000Z" },
-                                "body": { "value": "<p>Architecture decision record</p>" },
-                                "_links": { "next": "/api/v2/spaces/123/pages?cursor=abc" }
+                                "_links": { "next": "/api/v2/pages/10/children?cursor=abc" }
                             }
                         ],
                         "limit": 25,
                         "size": 1,
-                        "_links": { "next": "/api/v2/spaces/123/pages?cursor=abc" }
+                        "_links": { "next": "/api/v2/pages/10/children?cursor=abc" }
                     }"#,
                 );
         });
@@ -2146,18 +2133,71 @@ mod tests {
             .await
             .unwrap();
 
-        spaces_mock.assert();
         pages_mock.assert();
         assert_eq!(result.items.len(), 1);
         assert_eq!(result.items[0].id, "42");
         assert_eq!(result.items[0].space_key.as_deref(), Some("ENG"));
-        assert_eq!(result.items[0].version, Some(7));
         assert_eq!(
             result
                 .pagination
                 .and_then(|pagination| pagination.next_cursor),
-            Some("/api/v2/spaces/123/pages?cursor=abc".into())
+            Some("/api/v2/pages/10/children?cursor=abc".into())
         );
+    }
+
+    #[tokio::test]
+    async fn list_pages_uses_v1_child_endpoint_when_parent_filter_is_set() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/content/10/child/page")
+                .query_param("limit", "25")
+                .query_param("start", "0")
+                .query_param("expand", "space,version,history.lastUpdated,body.view");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "results": [
+                            {
+                                "id": "42",
+                                "title": "ADR-001",
+                                "space": { "key": "ENG" },
+                                "version": { "number": 7 },
+                                "body": {
+                                    "view": { "value": "<p>Architecture decision record</p>" }
+                                },
+                                "_links": { "base": "https://wiki.example.com", "webui": "/pages/viewpage.action?pageId=42" }
+                            }
+                        ],
+                        "start": 0,
+                        "limit": 25,
+                        "size": 1,
+                        "_links": {}
+                    }"#,
+                );
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        );
+        let result = client
+            .list_pages(ListPagesParams {
+                space_key: "ENG".into(),
+                limit: Some(25),
+                offset: Some(0),
+                cursor: None,
+                search: None,
+                parent_id: Some("10".into()),
+            })
+            .await
+            .unwrap();
+
+        mock.assert();
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].id, "42");
+        assert_eq!(result.items[0].space_key.as_deref(), Some("ENG"));
     }
 
     #[tokio::test]
@@ -2440,6 +2480,65 @@ mod tests {
         assert_eq!(page.labels, vec!["adr", "architecture"]);
         assert_eq!(page.ancestors.len(), 1);
         assert_eq!(page.ancestors[0].title, "Architecture Decisions");
+    }
+
+    #[tokio::test]
+    async fn get_page_v2_propagates_non_fallback_ancestor_errors() {
+        let server = MockServer::start();
+        let space_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v2/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "results": [
+                            { "id": "123", "key": "ENG", "name": "Engineering" }
+                        ],
+                        "_links": {}
+                    }"#,
+                );
+        });
+        let page_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v2/pages/42")
+                .query_param("body-format", "storage")
+                .query_param("include-labels", "true");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "id": "42",
+                        "title": "ADR-001",
+                        "spaceId": "123",
+                        "version": { "number": 7 },
+                        "body": {
+                            "representation": "storage",
+                            "value": "<p>Hello</p>"
+                        }
+                    }"#,
+                );
+        });
+        let ancestors_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v2/pages/42/ancestors")
+                .query_param("limit", "100");
+            then.status(401).body("unauthorized");
+        });
+
+        let client = ConfluenceClient::new(
+            server.base_url(),
+            ConfluenceAuth::BearerToken("secret-token".into()),
+        )
+        .with_api_version(Some("v2"));
+        let error = client.get_page("42").await.unwrap_err();
+
+        space_mock.assert();
+        page_mock.assert();
+        ancestors_mock.assert();
+        assert!(matches!(error, Error::Unauthorized(_)));
     }
 
     #[tokio::test]
@@ -2987,6 +3086,12 @@ mod tests {
             storage,
             "<h2>ADR</h2><p>Hello <strong>world</strong> and <a href=\"https://example.com\">link</a></p><ul><li>One</li><li>Two</li></ul>"
         );
+    }
+
+    #[test]
+    fn markdown_code_blocks_escape_cdata_terminators() {
+        let storage = markdown_to_confluence_storage("```xml\nbefore ]]> after\n```");
+        assert!(storage.contains("<![CDATA[before ]]]]><![CDATA[> after"));
     }
 
     #[tokio::test]

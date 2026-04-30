@@ -49,6 +49,8 @@ pub enum ToolOutput {
     KnowledgeBaseSpaces(Vec<KbSpace>, Option<ResultMeta>),
     /// List of knowledge base pages
     KnowledgeBasePages(Vec<KbPage>, Option<ResultMeta>),
+    /// Single knowledge base page summary
+    KnowledgeBasePageSummary(Box<KbPage>),
     /// Single knowledge base page with content
     KnowledgeBasePage(Box<KbPageContent>),
     /// Issue relations (parent, subtasks, linked issues)
@@ -135,6 +137,7 @@ impl ToolOutput {
             | Self::Pipeline(_)
             | Self::JobLog(_)
             | Self::MeetingTranscript(_)
+            | Self::KnowledgeBasePageSummary(_)
             | Self::KnowledgeBasePage(_)
             | Self::Relations(_)
             | Self::SingleMessage(_)
@@ -166,6 +169,7 @@ impl ToolOutput {
             Self::MeetingTranscript(_) => "meeting_transcript",
             Self::KnowledgeBaseSpaces(..) => "knowledge_base_spaces",
             Self::KnowledgeBasePages(..) => "knowledge_base_pages",
+            Self::KnowledgeBasePageSummary(_) => "knowledge_base_page_summary",
             Self::KnowledgeBasePage(_) => "knowledge_base_page",
             Self::Relations(_) => "issue_relations",
             Self::MessengerChats(..) => "messenger_chats",
@@ -360,6 +364,10 @@ mod tests {
             1
         );
         assert_eq!(
+            ToolOutput::KnowledgeBasePageSummary(Box::new(kb_page())).item_count(),
+            1
+        );
+        assert_eq!(
             ToolOutput::KnowledgeBasePage(Box::new(kb_page_content())).item_count(),
             1
         );
@@ -452,6 +460,10 @@ mod tests {
         assert_eq!(
             ToolOutput::KnowledgeBasePages(vec![], None).type_name(),
             "knowledge_base_pages"
+        );
+        assert_eq!(
+            ToolOutput::KnowledgeBasePageSummary(Box::new(kb_page())).type_name(),
+            "knowledge_base_page_summary"
         );
         assert_eq!(
             ToolOutput::KnowledgeBasePage(Box::new(kb_page_content())).type_name(),

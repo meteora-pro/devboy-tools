@@ -468,7 +468,7 @@ async fn confluence_connectivity(
     let client = http_client()?;
     let base_url = config.base_url.trim_end_matches('/');
     let auth_modes = if config.username.is_some() {
-        ["bearer", "basic"].as_slice()
+        ["basic"].as_slice()
     } else {
         ["bearer"].as_slice()
     };
@@ -1013,6 +1013,10 @@ mod tests {
         server.mock(|when, then| {
             when.method(GET)
                 .path("/rest/api/space")
+                .header(
+                    "authorization",
+                    "Basic ZGV2QGV4YW1wbGUuY29tOnNlY3JldC10b2tlbg==",
+                )
                 .query_param("limit", "1");
             then.status(200).json_body(json!({
                 "results": [
@@ -1046,12 +1050,20 @@ mod tests {
         server.mock(|when, then| {
             when.method(GET)
                 .path("/api/v2/space")
+                .header(
+                    "authorization",
+                    "Basic ZGV2QGV4YW1wbGUuY29tOnNlY3JldC10b2tlbg==",
+                )
                 .query_param("limit", "1");
             then.status(404);
         });
         let rest_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/rest/api/space")
+                .header(
+                    "authorization",
+                    "Basic ZGV2QGV4YW1wbGUuY29tOnNlY3JldC10b2tlbg==",
+                )
                 .query_param("limit", "1");
             then.status(200).json_body(json!({
                 "results": [
@@ -1086,6 +1098,10 @@ mod tests {
         server.mock(|when, then| {
             when.method(GET)
                 .path("/rest/api/space")
+                .header(
+                    "authorization",
+                    "Basic ZGV2QGV4YW1wbGUuY29tOnNlY3JldC10b2tlbg==",
+                )
                 .query_param("limit", "1");
             then.status(200).json_body(json!({
                 "results": [

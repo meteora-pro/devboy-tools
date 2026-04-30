@@ -346,7 +346,7 @@ async fn execute_get_knowledge_base_page(
     args: &Value,
 ) -> Result<ToolOutput> {
     let params: GetKnowledgeBasePageParams = serde_json::from_value(args.clone())
-        .map_err(|e| Error::InvalidData(format!("missing 'pageId' parameter: {e}")))?;
+        .map_err(|e| Error::InvalidData(format!("invalid get_knowledge_base_page params: {e}")))?;
     let page = provider.get_page(&params.page_id).await?;
     Ok(ToolOutput::KnowledgeBasePage(Box::new(page)))
 }
@@ -382,7 +382,7 @@ async fn execute_create_knowledge_base_page(
             labels: params.labels,
         })
         .await?;
-    Ok(ToolOutput::KnowledgeBasePages(vec![page], None))
+    Ok(ToolOutput::KnowledgeBasePageSummary(Box::new(page)))
 }
 
 #[derive(Deserialize)]
@@ -420,7 +420,7 @@ async fn execute_update_knowledge_base_page(
             parent_id: params.parent_id,
         })
         .await?;
-    Ok(ToolOutput::KnowledgeBasePages(vec![page], None))
+    Ok(ToolOutput::KnowledgeBasePageSummary(Box::new(page)))
 }
 
 #[derive(Deserialize)]
@@ -2719,7 +2719,7 @@ mod tests {
         let result = dispatch_knowledge_base_tool("create_knowledge_base_page", &args, &provider)
             .await
             .unwrap();
-        assert!(matches!(result, ToolOutput::KnowledgeBasePages(v, _) if v.len() == 1));
+        assert!(matches!(result, ToolOutput::KnowledgeBasePageSummary(_)));
     }
 
     #[tokio::test]
@@ -2734,7 +2734,7 @@ mod tests {
         let result = dispatch_knowledge_base_tool("update_knowledge_base_page", &args, &provider)
             .await
             .unwrap();
-        assert!(matches!(result, ToolOutput::KnowledgeBasePages(v, _) if v.len() == 1));
+        assert!(matches!(result, ToolOutput::KnowledgeBasePageSummary(_)));
     }
 
     #[tokio::test]
