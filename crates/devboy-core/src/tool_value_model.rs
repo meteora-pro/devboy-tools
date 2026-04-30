@@ -239,6 +239,64 @@ fn default_followup_probability() -> f32 {
     0.5
 }
 
+/// Paper 4 — provider-declared column schema for a Parquet-eligible
+/// response. The serialiser uses this when `parquet_eligible = true`
+/// to decide column types up-front (instead of inferring from the
+/// first N rows), and the notebook header reflects it verbatim so
+/// the LLM sees the schema even on empty / one-row results.
+///
+/// Joins are optional but powerful — when two datasets in the same
+/// session declare a join, the notebook header lists it as a
+/// comment and the DuckDB executor accepts JOIN queries naturally.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ParquetSchemaHint {
+    /// Ordered list of `(name, type)` pairs. Type is one of
+    /// `"int64"`, `"float64"`, `"utf8"`, `"bool"`, `"datetime"`,
+    /// `"list<utf8>"`. Unknown types fall back to `"utf8"` so a
+    /// hint that omits a column never breaks serialisation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<ParquetColumn>,
+
+    /// Optional join graph. Each entry says "my column X matches
+    /// dataset D's column Y", letting the notebook header surface
+    /// `issues.id ← mr_issues.issue_id → mrs.id` chains for the LLM.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub joins: Vec<ParquetJoin>,
+
+    /// Provider-suggested helper function names the notebook header
+    /// should pre-define (e.g. `"high_priority"`, `"open_only"`,
+    /// `"recent_30d"`). Bodies are generated from the column list
+    /// — we only need the LLM-facing names here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub helpers: Vec<String>,
+}
+
+/// One column in a `ParquetSchemaHint`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ParquetColumn {
+    pub name: String,
+    /// One of `"int64"`, `"float64"`, `"utf8"`, `"bool"`,
+    /// `"datetime"`, `"list<utf8>"`. See [`ParquetSchemaHint`].
+    #[serde(default = "default_parquet_dtype")]
+    pub dtype: String,
+    /// Short human description surfaced in the notebook header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc: Option<String>,
+}
+
+fn default_parquet_dtype() -> String {
+    "utf8".to_string()
+}
+
+/// One join edge in a `ParquetSchemaHint`. `"my <field> matches
+/// other_dataset.other_field"`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ParquetJoin {
+    pub field: String,
+    pub other_dataset: String,
+    pub other_field: String,
+}
+
 impl Default for FollowUpLink {
     /// Empty link with the default probability — wouldn't resolve in
     /// the planner. Provided so callers can use struct-update syntax:
@@ -329,6 +387,40 @@ pub struct ToolValueModel {
     /// guessing wrong too often. `None` = honour `side_effect_class`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speculate: Option<bool>,
+
+    /// Paper 4 — `true` when this tool's response is structured
+    /// enough to serialise as a Parquet artefact (array-of-objects
+    /// or tabular text). When the host's `OutputFormat::Parquet`
+    /// path is active and the agent requests `format = "parquet"`,
+    /// the response body is replaced with a notebook header
+    /// (schema + 5 sample rows + helper functions) and the LLM
+    /// queries the dataset via the `query_dataset` tool.
+    ///
+    /// `false` (default) keeps the legacy push-based pipeline:
+    /// the response is rendered through Paper 1 / Paper 2 encoders
+    /// and sent to the LLM in full. Set `true` only on read-only
+    /// list/detail tools whose result fits the array-of-objects
+    /// shape (Glob, Grep, get_issues, get_merge_requests,
+    /// search_knowledge_base, …). Bash, prose-returning Agent,
+    /// short metadata tools (TaskUpdate, TodoWrite) stay `false`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub parquet_eligible: bool,
+
+    /// Paper 4 — provider-shipped column hint for the Parquet
+    /// serialiser. When `Some`, the writer prefers these column
+    /// names + types over JSON-inferred ones; when `None`, the
+    /// serialiser infers a schema from the first 32 rows of the
+    /// response.
+    ///
+    /// Hint is also surfaced in the auto-generated notebook header
+    /// so the LLM sees the expected schema even when the dataset is
+    /// empty (no sample rows to inspect).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parquet_schema_hint: Option<ParquetSchemaHint>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 fn is_default_side_effect(s: &SideEffectClass) -> bool {
@@ -458,6 +550,8 @@ mod tests {
             side_effect_class: SideEffectClass::ReadOnly,
             rate_limit_host: Some("example.com".into()),
             speculate: None,
+            parquet_eligible: false,
+            parquet_schema_hint: None,
         };
         let s = toml::to_string_pretty(&m).unwrap();
         let back: ToolValueModel = toml::from_str(&s).unwrap();
@@ -639,5 +733,86 @@ mod tests {
         assert!((back.probability - 0.8).abs() < 1e-6);
         assert!(back.projection.is_none());
         assert!(back.projection_arg.is_none());
+    }
+
+    // ─── Paper 4 — parquet_eligible + schema_hint ────────────────────
+
+    #[test]
+    fn default_tool_value_model_is_not_parquet_eligible() {
+        let m = ToolValueModel::default();
+        assert!(!m.parquet_eligible);
+        assert!(m.parquet_schema_hint.is_none());
+    }
+
+    #[test]
+    fn parquet_eligible_skips_serialise_when_default_false() {
+        let m = ToolValueModel::default();
+        let s = toml::to_string_pretty(&m).unwrap();
+        assert!(
+            !s.contains("parquet_eligible"),
+            "default false must be skip_serializing_if'd, got: {s}"
+        );
+        assert!(!s.contains("parquet_schema_hint"));
+    }
+
+    #[test]
+    fn parquet_eligible_round_trips_with_schema_hint() {
+        let m = ToolValueModel {
+            value_class: ValueClass::Supporting,
+            parquet_eligible: true,
+            parquet_schema_hint: Some(ParquetSchemaHint {
+                columns: vec![
+                    ParquetColumn {
+                        name: "id".into(),
+                        dtype: "int64".into(),
+                        doc: Some("Issue id".into()),
+                    },
+                    ParquetColumn {
+                        name: "title".into(),
+                        dtype: "utf8".into(),
+                        doc: None,
+                    },
+                ],
+                joins: vec![ParquetJoin {
+                    field: "id".into(),
+                    other_dataset: "issue_comments".into(),
+                    other_field: "issue_id".into(),
+                }],
+                helpers: vec!["high_priority".into(), "open_only".into()],
+            }),
+            ..Default::default()
+        };
+        let s = toml::to_string_pretty(&m).unwrap();
+        let back: ToolValueModel = toml::from_str(&s).unwrap();
+        assert!(back.parquet_eligible);
+        let hint = back.parquet_schema_hint.expect("hint must round-trip");
+        assert_eq!(hint.columns.len(), 2);
+        assert_eq!(hint.columns[0].name, "id");
+        assert_eq!(hint.columns[0].dtype, "int64");
+        assert_eq!(hint.columns[0].doc.as_deref(), Some("Issue id"));
+        assert_eq!(hint.joins.len(), 1);
+        assert_eq!(hint.joins[0].other_dataset, "issue_comments");
+        assert_eq!(hint.helpers, vec!["high_priority", "open_only"]);
+    }
+
+    #[test]
+    fn parquet_column_dtype_defaults_to_utf8_on_missing() {
+        // A hand-written TOML omitting `dtype` must default to "utf8".
+        let raw = "name = \"description\"\n";
+        let col: ParquetColumn = toml::from_str(raw).unwrap();
+        assert_eq!(col.name, "description");
+        assert_eq!(col.dtype, "utf8");
+        assert!(col.doc.is_none());
+    }
+
+    #[test]
+    fn parquet_schema_hint_with_no_columns_or_joins_serialises_empty() {
+        let h = ParquetSchemaHint::default();
+        let s = toml::to_string_pretty(&h).unwrap();
+        assert!(!s.contains("columns"), "empty list must skip: {s}");
+        assert!(!s.contains("joins"));
+        assert!(!s.contains("helpers"));
+        let back: ParquetSchemaHint = toml::from_str(&s).unwrap();
+        assert_eq!(back, h);
     }
 }
