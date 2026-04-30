@@ -164,6 +164,20 @@ pub fn create_knowledge_base_provider(
     }
 }
 
+/// Create the matching knowledge base enricher for a provider.
+///
+/// Knowledge-base-capable providers use a separate path from the regular
+/// issue/git repository enrichers because they implement
+/// `KnowledgeBaseProvider`, not `Provider`.
+pub fn create_knowledge_base_enricher(config: &ProviderConfig) -> Option<Box<dyn ToolEnricher>> {
+    match config {
+        ProviderConfig::Confluence { .. } => {
+            Some(Box::new(devboy_confluence::ConfluenceSchemaEnricher::new()))
+        }
+        _ => None,
+    }
+}
+
 /// Create a meeting notes provider from config.
 ///
 /// Separate from `create_provider()` because meeting notes providers
@@ -351,6 +365,27 @@ mod tests {
         assert_eq!(
             KnowledgeBaseProvider::provider_name(provider.unwrap().as_ref()),
             "confluence"
+        );
+    }
+
+    #[test]
+    fn test_create_confluence_knowledge_base_enricher() {
+        let config = ProviderConfig::Confluence {
+            base_url: "https://wiki.example.com".into(),
+            auth: ConfluenceAuthConfig::BearerToken {
+                token: "test-token".into(),
+            },
+            scope: ConfluenceScope::Space {
+                key: Some("ENG".into()),
+            },
+            api_version: Some("v1".into()),
+            extra: HashMap::new(),
+        };
+        let enricher = create_knowledge_base_enricher(&config);
+        assert!(enricher.is_some());
+        assert_eq!(
+            enricher.unwrap().supported_categories(),
+            &[devboy_core::ToolCategory::KnowledgeBase]
         );
     }
 
@@ -692,6 +727,20 @@ mod tests {
             config: HashMap::new(),
         };
         assert!(create_enricher(&config, None).is_none());
+    }
+
+    #[test]
+    fn test_create_knowledge_base_enricher_non_kb_returns_none() {
+        let config = ProviderConfig::GitHub {
+            base_url: "https://api.github.com".into(),
+            access_token: "tok".into(),
+            scope: GitHubScope::Repository {
+                owner: "test".into(),
+                repo: "test".into(),
+            },
+            extra: HashMap::new(),
+        };
+        assert!(create_knowledge_base_enricher(&config).is_none());
     }
 
     // --- Enricher with invalid metadata ---
