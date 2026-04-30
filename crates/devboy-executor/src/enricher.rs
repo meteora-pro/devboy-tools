@@ -19,6 +19,9 @@ const LIST_TOOLS: &[&str] = &[
     "get_merge_request",
     "get_merge_request_discussions",
     "get_merge_request_diffs",
+    "list_knowledge_base_pages",
+    "search_knowledge_base",
+    "get_knowledge_base_page",
 ];
 
 // =============================================================================
@@ -66,7 +69,11 @@ pub struct FormatPipelineEnricher;
 
 impl ToolEnricher for FormatPipelineEnricher {
     fn supported_categories(&self) -> &[ToolCategory] {
-        &[ToolCategory::IssueTracker, ToolCategory::GitRepository]
+        &[
+            ToolCategory::IssueTracker,
+            ToolCategory::GitRepository,
+            ToolCategory::KnowledgeBase,
+        ]
     }
 
     fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema) {
@@ -213,5 +220,18 @@ mod tests {
         let cats = enricher.supported_categories();
         assert!(cats.contains(&ToolCategory::IssueTracker));
         assert!(cats.contains(&ToolCategory::GitRepository));
+        assert!(cats.contains(&ToolCategory::KnowledgeBase));
+    }
+
+    #[test]
+    fn test_format_pipeline_enricher_covers_kb_tools() {
+        let enricher = FormatPipelineEnricher;
+        let mut schema = ToolSchema::new();
+
+        enricher.enrich_schema("search_knowledge_base", &mut schema);
+
+        assert!(schema.properties.contains_key("format"));
+        assert!(schema.properties.contains_key("budget"));
+        assert!(schema.properties.contains_key("chunk"));
     }
 }
