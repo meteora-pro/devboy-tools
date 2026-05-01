@@ -1,4 +1,4 @@
-# DevBoy
+# DevBoy tools
 
 [![CI](https://github.com/meteora-pro/devboy-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/meteora-pro/devboy-tools/actions/workflows/ci.yml)
 [![Codecov](https://codecov.io/gh/meteora-pro/devboy-tools/branch/main/graph/badge.svg)](https://codecov.io/gh/meteora-pro/devboy-tools)
@@ -6,7 +6,7 @@
 [![npm](https://img.shields.io/npm/v/@devboy-tools/cli)](https://www.npmjs.com/package/@devboy-tools/cli)
 [![Ask Zread](https://img.shields.io/badge/Ask_Zread-_.svg?style=flat&color=00b0aa&labelColor=000000)](https://zread.ai/meteora-pro/devboy-tools)
 
-**A research-driven dev-workflow toolkit for AI coding agents.** Connects your agent (Claude Code, Copilot CLI, Codex, Cursor, Kimi, Gemini, …) to GitHub, GitLab, Jira, ClickUp, Slack, and Fireflies — through MCP, CLI, or installable agent skills. Output goes through a token-aware pipeline that, on real production traffic, cuts response size by 5–20%.
+**A research-driven tool bundle for AI coding agents.** A single curated set of dev-workflow tools (GitHub, GitLab, Jira, ClickUp, Slack, Fireflies) reachable from any agent — Claude Code, Copilot CLI, Codex, Cursor, Kimi, Gemini, … — through three transports: **MCP server**, **CLI**, or **installable agent skills**. Output goes through a token-aware pipeline that, on real production traffic, cuts response size by 5–20%.
 
 ```bash
 npm install -g @devboy-tools/cli   # binary for your platform
