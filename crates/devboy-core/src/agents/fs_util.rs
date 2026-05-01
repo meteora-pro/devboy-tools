@@ -61,7 +61,9 @@ where
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            let Ok(file_type) = entry.file_type() else { continue };
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
             if file_type.is_dir() {
                 stack.push(path);
             } else if predicate(&path) {
@@ -77,7 +79,9 @@ where
 
 /// Count direct subdirectories of `root`.
 pub(super) fn count_subdirs(root: &Path) -> u64 {
-    let Ok(entries) = fs::read_dir(root) else { return 0 };
+    let Ok(entries) = fs::read_dir(root) else {
+        return 0;
+    };
     entries
         .flatten()
         .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
@@ -86,5 +90,7 @@ pub(super) fn count_subdirs(root: &Path) -> u64 {
 
 /// Whether a directory exists and is non-empty.
 pub(super) fn dir_nonempty(p: &Path) -> bool {
-    fs::read_dir(p).map(|mut it| it.next().is_some()).unwrap_or(false)
+    fs::read_dir(p)
+        .map(|mut it| it.next().is_some())
+        .unwrap_or(false)
 }

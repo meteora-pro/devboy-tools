@@ -5,7 +5,7 @@
 //! on-call). The TOML is `include_str!`-ed at build time so bundles ship
 //! inside the binary — no extra files to look up at runtime.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::Deserialize;
 
 const DEV: &str = include_str!("../../../../skills/bundles/dev.toml");
@@ -28,7 +28,12 @@ pub fn load(profile: &str) -> Result<Bundle> {
         "dev" => DEV,
         "pm" => PM,
         "oncall" => ONCALL,
-        other => return Err(anyhow!("unknown profile: {other} (known: {})", PROFILES.join(", "))),
+        other => {
+            return Err(anyhow!(
+                "unknown profile: {other} (known: {})",
+                PROFILES.join(", ")
+            ));
+        }
     };
     toml::from_str::<Bundle>(raw).map_err(|e| anyhow!("failed to parse {profile}.toml: {e}"))
 }

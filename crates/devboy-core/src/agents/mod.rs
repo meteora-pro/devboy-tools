@@ -7,8 +7,11 @@
 //! used to pick a primary candidate for `devboy onboard`.
 //!
 //! Architecture: one [`AgentDetector`] implementation per agent file, plus
-//! a [`registry::detect_all`] entrypoint that runs them all in parallel and
-//! returns a sorted [`AgentSnapshot`] vector.
+//! a [`registry::detect_all`] entrypoint that runs every detector
+//! sequentially and returns a sorted [`AgentSnapshot`] vector. Each detector
+//! is bound on filesystem I/O (a handful of `read_dir` + `metadata` calls);
+//! the total wall-clock is well under a second on a real machine, so we
+//! don't add a thread pool today.
 //!
 //! See ADR-017.
 

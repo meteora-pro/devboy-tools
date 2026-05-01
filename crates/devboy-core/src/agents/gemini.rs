@@ -21,20 +21,33 @@ const DISPLAY_NAME: &str = "Gemini CLI";
 pub struct GeminiDetector;
 
 impl AgentDetector for GeminiDetector {
-    fn id(&self) -> &'static str { ID }
-    fn display_name(&self) -> &'static str { DISPLAY_NAME }
+    fn id(&self) -> &'static str {
+        ID
+    }
+    fn display_name(&self) -> &'static str {
+        DISPLAY_NAME
+    }
 
     fn detect(&self, home: &Path) -> AgentSnapshot {
         let gemini_dir = home.join(".gemini");
         let history = gemini_dir.join("history");
         let state_json = gemini_dir.join("state.json");
         let settings = gemini_dir.join("settings.json");
-        let paths_checked = vec![gemini_dir.clone(), history.clone(), state_json.clone(), settings.clone()];
+        let paths_checked = vec![
+            gemini_dir.clone(),
+            history.clone(),
+            state_json.clone(),
+            settings.clone(),
+        ];
 
         let dir_present = gemini_dir.is_dir();
         let binary_present = which::which("gemini").is_ok();
 
-        let status = if dir_present || binary_present { InstallStatus::Yes } else { InstallStatus::No };
+        let status = if dir_present || binary_present {
+            InstallStatus::Yes
+        } else {
+            InstallStatus::No
+        };
         if status == InstallStatus::No {
             return AgentSnapshot {
                 id: ID,

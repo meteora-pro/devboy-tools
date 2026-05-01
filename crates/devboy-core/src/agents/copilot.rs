@@ -19,8 +19,12 @@ const MAX_ENTRIES: usize = 5_000;
 pub struct CopilotDetector;
 
 impl AgentDetector for CopilotDetector {
-    fn id(&self) -> &'static str { ID }
-    fn display_name(&self) -> &'static str { DISPLAY_NAME }
+    fn id(&self) -> &'static str {
+        ID
+    }
+    fn display_name(&self) -> &'static str {
+        DISPLAY_NAME
+    }
 
     fn detect(&self, home: &Path) -> AgentSnapshot {
         let copilot_dir = home.join(".copilot");
@@ -30,7 +34,11 @@ impl AgentDetector for CopilotDetector {
         let dir_present = copilot_dir.is_dir();
         let binary_present = which::which("copilot").is_ok();
 
-        let status = if dir_present || binary_present { InstallStatus::Yes } else { InstallStatus::No };
+        let status = if dir_present || binary_present {
+            InstallStatus::Yes
+        } else {
+            InstallStatus::No
+        };
         if status == InstallStatus::No {
             return empty(paths_checked);
         }
@@ -50,23 +58,35 @@ impl AgentDetector for CopilotDetector {
 }
 
 fn walk_session_state(root: &Path) -> (u64, Option<chrono::DateTime<chrono::Utc>>) {
-    let Ok(entries) = std::fs::read_dir(root) else { return (0, None); };
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return (0, None);
+    };
     let mut count = 0u64;
     let mut best: Option<chrono::DateTime<chrono::Utc>> = None;
     for entry in entries.flatten().take(MAX_ENTRIES) {
         let path = entry.path();
-        let Ok(file_type) = entry.file_type() else { continue };
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         let candidate_mtime = if file_type.is_dir() {
             let events = path.join("events.jsonl");
             if events.exists() {
                 count += 1;
-                events.metadata().ok().and_then(|m| m.modified().ok()).and_then(to_utc)
+                events
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(to_utc)
             } else {
                 None
             }
         } else if path.extension().is_some_and(|e| e == "jsonl") {
             count += 1;
-            entry.metadata().ok().and_then(|m| m.modified().ok()).and_then(to_utc)
+            entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(to_utc)
         } else {
             None
         };
