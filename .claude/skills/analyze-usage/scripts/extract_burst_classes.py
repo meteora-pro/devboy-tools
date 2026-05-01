@@ -12,7 +12,7 @@ Per burst we look at its tool-uses and bucket the burst into one of 7 classes:
   - bash_only   only Bash
   - write_only  only Edit/MultiEdit/Write
   - write_heavy ≥50% Edit/Write of tools
-  - chain_run   only Bash with chained commands (>3 split parts)
+  - chain_run   only Bash with chained commands (>=3 split parts)
   - mixed       all the rest
 """
 from __future__ import annotations

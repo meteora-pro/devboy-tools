@@ -113,7 +113,7 @@ def _term_stack(stack_loc: Counter) -> list[str]:
 
 
 def _term_dora(agg: dict) -> list[str]:
-    cfr = (agg["fix"] - agg["review_fix"]) / (agg["feat"] + 1) if agg["feat"] else 0
+    cfr = (agg["fix"] - agg["review_fix"]) / agg["feat"] if agg["feat"] else 0
     em, level = cfr_level(cfr)
     return [
         "  🚀 DORA-радар:",
@@ -224,7 +224,7 @@ def _md_stack(stack_loc: Counter) -> list[str]:
 
 
 def _md_dora(agg: dict) -> list[str]:
-    cfr = (agg["fix"] - agg["review_fix"]) / (agg["feat"] + 1) if agg["feat"] else 0
+    cfr = (agg["fix"] - agg["review_fix"]) / agg["feat"] if agg["feat"] else 0
     em, level = cfr_level(cfr)
     return [
         "### 🚀 DORA",
@@ -461,7 +461,7 @@ def _html_bar_chart(title: str, items: list[tuple[str, str, int]], total: int) -
 
 
 def _html_dora(agg: dict) -> str:
-    cfr = (agg["fix"] - agg["review_fix"]) / (agg["feat"] + 1) if agg["feat"] else 0
+    cfr = (agg["fix"] - agg["review_fix"]) / agg["feat"] if agg["feat"] else 0
     _, level = cfr_level(cfr)
     cfr_class = f"cfr-{level.lower()}"
     cards = [
@@ -570,7 +570,7 @@ def render_weekly_table_terminal(weeks: list[tuple[tuple[int, int], dict]]) -> l
             if n > 0:
                 biomes_str += BIOME_EMOJI[b] + f"{n} "
         top_arch = a["archs"].most_common(1)[0] if a["archs"] else ("—", 0)
-        cfr = (a["fix"] - a["review_fix"]) / (a["feat"] + 1) if a["feat"] else 0
+        cfr = (a["fix"] - a["review_fix"]) / a["feat"] if a["feat"] else 0
         em, _ = cfr_level(cfr)
         out.append(
             f"  {label:<22s}  {a['n']:>4d}  {a['lines_added']:>7,d}  "
@@ -606,7 +606,7 @@ def render_weekly_table_markdown(weeks: list[tuple[tuple[int, int], dict]]) -> l
             if n > 0:
                 biomes_str += BIOME_EMOJI[b] + f"{n} "
         top_arch = a["archs"].most_common(1)[0] if a["archs"] else ("—", 0)
-        cfr = (a["fix"] - a["review_fix"]) / (a["feat"] + 1) if a["feat"] else 0
+        cfr = (a["fix"] - a["review_fix"]) / a["feat"] if a["feat"] else 0
         em, _ = cfr_level(cfr)
         out.append(
             f"| {label} | {a['n']} | {a['lines_added']:,} | {a['feat']} | {a['fix']} | "
@@ -639,7 +639,7 @@ def render_weekly_table_html(weeks: list[tuple[tuple[int, int], dict]]) -> str:
             if n > 0:
                 biomes_str += BIOME_EMOJI[b] + f"{n} "
         top_arch = a["archs"].most_common(1)[0] if a["archs"] else ("—", 0)
-        cfr = (a["fix"] - a["review_fix"]) / (a["feat"] + 1) if a["feat"] else 0
+        cfr = (a["fix"] - a["review_fix"]) / a["feat"] if a["feat"] else 0
         em, _ = cfr_level(cfr)
         bar_w = int(a["lines_added"] * 200 / max_loc)
         out.append(

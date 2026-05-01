@@ -28,7 +28,7 @@ fi
 
 # Sparse-checkout the subdir only
 TMP=$(mktemp -d)
-trap "rm -rf $TMP" EXIT
+trap 'rm -rf "$TMP"' EXIT
 
 git clone --depth 1 --filter=blob:none --sparse \
     --branch "$REF" \
@@ -40,8 +40,9 @@ git sparse-checkout set ".claude/skills/analyze-usage" >/dev/null 2>&1
 # Move into place
 mkdir -p "$(dirname "$DEST")"
 if [ -d "$DEST" ]; then
-    echo "⚠  $DEST already exists — backing up to ${DEST}.backup-$(date +%s)"
-    mv "$DEST" "${DEST}.backup-$(date +%s)"
+    BACKUP="${DEST}.backup-$(date +%s)"
+    echo "⚠  $DEST already exists — backing up to $BACKUP"
+    mv "$DEST" "$BACKUP"
 fi
 mv "$TMP/repo/.claude/skills/analyze-usage" "$DEST"
 
