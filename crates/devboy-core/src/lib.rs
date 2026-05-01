@@ -64,10 +64,7 @@ pub use types::{
 };
 
 // Re-export enricher traits and utilities
-pub use enricher::{
-    PropertySchema, ToolCostModel, ToolEffect, ToolEnricher, ToolFollowUp, ToolSchema,
-    ToolValueClass, ToolValueModel, sanitize_field_name,
-};
+pub use enricher::{PropertySchema, ToolEnricher, ToolSchema, sanitize_field_name};
 pub use tool_category::ToolCategory;
 
 // Re-export Paper 3 tool value model — provider-shipped per-tool

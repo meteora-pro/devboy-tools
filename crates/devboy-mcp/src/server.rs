@@ -1048,9 +1048,7 @@ impl McpServer {
             executor = executor.with_asset_manager(mgr);
         }
         if !self.active_knowledge_base_providers().is_empty() {
-            executor.add_enricher(Box::new(
-                devboy_confluence::ConfluenceSchemaEnricher::new(),
-            ));
+            executor.add_enricher(Box::new(devboy_confluence::ConfluenceSchemaEnricher::new()));
         }
         executor
     }

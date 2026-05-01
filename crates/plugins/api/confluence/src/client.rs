@@ -1239,8 +1239,9 @@ impl ConfluenceClient {
 
         let mut ancestors = Vec::with_capacity(tasks.len());
         while let Some(result) = tasks.join_next().await {
-            let (index, summary) =
-                result.map_err(|error| Error::Network(format!("ancestor fetch task failed: {error}")))??;
+            let (index, summary) = result.map_err(|error| {
+                Error::Network(format!("ancestor fetch task failed: {error}"))
+            })??;
             ancestors.push((index, summary));
         }
         ancestors.sort_by_key(|(index, _)| *index);

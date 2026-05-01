@@ -341,9 +341,11 @@ pub fn format_output(
             provider_pagination,
             provider_sort,
         )),
-        ToolOutput::KnowledgeBasePageSummary(page) => {
-            Ok(text_result(format_knowledge_base_page_summary(&page), None, None))
-        }
+        ToolOutput::KnowledgeBasePageSummary(page) => Ok(text_result(
+            format_knowledge_base_page_summary(&page),
+            None,
+            None,
+        )),
         ToolOutput::KnowledgeBasePage(page) => {
             Ok(text_result(format_knowledge_base_page(&page), None, None))
         }
@@ -1613,5 +1615,166 @@ mod tests {
     fn test_format_time_fractional_seconds() {
         // Fractional seconds are truncated
         assert_eq!(format_time(59.9), "00:59");
+    }
+
+    // ---------------------------------------------------------------
+    // Knowledge-base formatters
+    // ---------------------------------------------------------------
+
+    fn sample_kb_space() -> devboy_core::KbSpace {
+        devboy_core::KbSpace {
+            id: "100".into(),
+            key: "ENG".into(),
+            name: "Engineering".into(),
+            description: Some("Team docs".into()),
+            url: Some("https://wiki.example.com/spaces/ENG".into()),
+            ..Default::default()
+        }
+    }
+
+    fn sample_kb_page() -> devboy_core::KbPage {
+        devboy_core::KbPage {
+            id: "12345".into(),
+            title: "Architecture".into(),
+            space_key: Some("ENG".into()),
+            url: Some("https://wiki.example.com/pages/12345".into()),
+            author: Some("alice".into()),
+            last_modified: Some("2026-04-01T10:00:00Z".into()),
+            excerpt: Some("Top-level architecture overview".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn format_kb_spaces_empty_returns_canonical_message() {
+        assert_eq!(
+            format_knowledge_base_spaces(&[]),
+            "No knowledge base spaces found."
+        );
+    }
+
+    #[test]
+    fn format_kb_spaces_includes_count_name_key_description_url() {
+        let out = format_knowledge_base_spaces(&[sample_kb_space()]);
+        assert!(out.contains("# Knowledge Base Spaces (1)"));
+        assert!(out.contains("Engineering"));
+        assert!(out.contains("`ENG`"));
+        assert!(out.contains("Team docs"));
+        assert!(out.contains("https://wiki.example.com/spaces/ENG"));
+    }
+
+    #[test]
+    fn format_kb_pages_empty_returns_canonical_message() {
+        assert_eq!(
+            format_knowledge_base_pages(&[]),
+            "No knowledge base pages found."
+        );
+    }
+
+    #[test]
+    fn format_kb_pages_renders_all_optional_fields_when_present() {
+        let out = format_knowledge_base_pages(&[sample_kb_page()]);
+        assert!(out.contains("# Knowledge Base Pages (1)"));
+        assert!(out.contains("Architecture"));
+        assert!(out.contains("`12345`"));
+        assert!(out.contains("space: ENG"));
+        assert!(out.contains("author: alice"));
+        assert!(out.contains("updated: 2026-04-01T10:00:00Z"));
+        assert!(out.contains("excerpt: Top-level architecture overview"));
+        assert!(out.contains("https://wiki.example.com/pages/12345"));
+    }
+
+    #[test]
+    fn format_kb_pages_omits_absent_optional_fields() {
+        let mut bare = sample_kb_page();
+        bare.space_key = None;
+        bare.author = None;
+        bare.last_modified = None;
+        bare.excerpt = None;
+        bare.url = None;
+        let out = format_knowledge_base_pages(&[bare]);
+        assert!(!out.contains("space:"));
+        assert!(!out.contains("author:"));
+        assert!(!out.contains("updated:"));
+        assert!(!out.contains("excerpt:"));
+        assert!(!out.contains("https://"));
+    }
+
+    #[test]
+    fn format_kb_page_summary_includes_metadata_lines() {
+        let out = format_knowledge_base_page_summary(&sample_kb_page());
+        assert!(out.contains("# Knowledge Base Page"));
+        assert!(out.contains("Architecture"));
+        assert!(out.contains("`12345`"));
+        assert!(out.contains("space: ENG"));
+        assert!(out.contains("author: alice"));
+        assert!(out.contains("updated: 2026-04-01T10:00:00Z"));
+        assert!(out.contains("url: https://wiki.example.com/pages/12345"));
+    }
+
+    #[test]
+    fn format_kb_page_summary_skips_absent_fields() {
+        let bare = devboy_core::KbPage {
+            id: "x".into(),
+            title: "Bare".into(),
+            ..Default::default()
+        };
+        let out = format_knowledge_base_page_summary(&bare);
+        assert!(out.contains("# Knowledge Base Page"));
+        assert!(out.contains("Bare"));
+        assert!(!out.contains("space:"));
+        assert!(!out.contains("author:"));
+        assert!(!out.contains("url:"));
+    }
+
+    #[test]
+    fn format_kb_page_renders_full_content_with_ancestors_and_labels() {
+        let parent = devboy_core::KbPage {
+            id: "p1".into(),
+            title: "Parent".into(),
+            ..Default::default()
+        };
+        let grandparent = devboy_core::KbPage {
+            id: "p0".into(),
+            title: "Root".into(),
+            ..Default::default()
+        };
+        let content = devboy_core::KbPageContent {
+            page: sample_kb_page(),
+            content: "## Body\n\nFull markdown body.".into(),
+            content_type: "markdown".into(),
+            ancestors: vec![grandparent, parent],
+            labels: vec!["arch".into(), "draft".into()],
+            ..Default::default()
+        };
+
+        let out = format_knowledge_base_page(&content);
+        assert!(out.starts_with("# Architecture\n"));
+        assert!(out.contains("id: `12345`"));
+        assert!(out.contains("space: `ENG`"));
+        assert!(out.contains("content_type: `markdown`"));
+        assert!(out.contains("labels: arch, draft"));
+        assert!(out.contains("ancestors: Root > Parent"));
+        assert!(out.contains("url: https://wiki.example.com/pages/12345"));
+        assert!(out.contains("Full markdown body."));
+    }
+
+    #[test]
+    fn format_kb_page_omits_ancestors_and_labels_when_empty() {
+        let content = devboy_core::KbPageContent {
+            page: devboy_core::KbPage {
+                id: "x".into(),
+                title: "Solo".into(),
+                ..Default::default()
+            },
+            content: "No metadata.".into(),
+            content_type: "markdown".into(),
+            ..Default::default()
+        };
+        let out = format_knowledge_base_page(&content);
+        assert!(!out.contains("ancestors:"));
+        assert!(!out.contains("labels:"));
+        assert!(!out.contains("space:"));
+        assert!(out.contains("No metadata."));
     }
 }
