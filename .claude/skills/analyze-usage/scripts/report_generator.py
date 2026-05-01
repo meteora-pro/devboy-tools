@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     total_fix = sum(r["fix"] for r in out_rows)
     total_review = sum(r["review_fix"] for r in out_rows)
     total_pushes = sum(r["pushes"] for r in out_rows)
-    cfr = (total_fix - total_review) / (total_feat + 1) if total_feat else 0
+    cfr = (total_fix - total_review) / total_feat if total_feat else 0
 
     md = []
     md.append(f"# Usage report — {date.today().isoformat()}\n")

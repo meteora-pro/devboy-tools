@@ -153,7 +153,6 @@ def _aggregate(events) -> dict:
                         a["unique_branches"].add(br)
                 for m in RX_ISSUE.finditer(cmd):
                     a["unique_issues"].add(m.group(0))
-        # also extract issue refs from user prompts text
     return a
 
 
