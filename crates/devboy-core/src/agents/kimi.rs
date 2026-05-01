@@ -24,8 +24,12 @@ const MAX_SESSIONS: usize = 50_000;
 pub struct KimiDetector;
 
 impl AgentDetector for KimiDetector {
-    fn id(&self) -> &'static str { ID }
-    fn display_name(&self) -> &'static str { DISPLAY_NAME }
+    fn id(&self) -> &'static str {
+        ID
+    }
+    fn display_name(&self) -> &'static str {
+        DISPLAY_NAME
+    }
 
     fn detect(&self, home: &Path) -> AgentSnapshot {
         let share_dir = std::env::var_os("KIMI_SHARE_DIR")
@@ -37,7 +41,11 @@ impl AgentDetector for KimiDetector {
         let dir_present = share_dir.is_dir();
         let binary_present = which::which("kimi").is_ok();
 
-        let status = if dir_present || binary_present { InstallStatus::Yes } else { InstallStatus::No };
+        let status = if dir_present || binary_present {
+            InstallStatus::Yes
+        } else {
+            InstallStatus::No
+        };
         if status == InstallStatus::No {
             return empty(paths_checked);
         }
@@ -57,19 +65,31 @@ impl AgentDetector for KimiDetector {
 }
 
 fn walk_sessions(sessions_dir: &Path) -> (u64, Option<chrono::DateTime<chrono::Utc>>) {
-    let Ok(workdir_buckets) = std::fs::read_dir(sessions_dir) else { return (0, None); };
+    let Ok(workdir_buckets) = std::fs::read_dir(sessions_dir) else {
+        return (0, None);
+    };
     let mut count = 0u64;
     let mut best: Option<chrono::DateTime<chrono::Utc>> = None;
     for bucket in workdir_buckets.flatten() {
         let bucket_path = bucket.path();
-        if !bucket_path.is_dir() { continue }
-        let Ok(session_uuids) = std::fs::read_dir(&bucket_path) else { continue };
+        if !bucket_path.is_dir() {
+            continue;
+        }
+        let Ok(session_uuids) = std::fs::read_dir(&bucket_path) else {
+            continue;
+        };
         for session in session_uuids.flatten() {
-            if count as usize >= MAX_SESSIONS { return (count, best); }
+            if count as usize >= MAX_SESSIONS {
+                return (count, best);
+            }
             let session_path = session.path();
-            if !session_path.is_dir() { continue }
+            if !session_path.is_dir() {
+                continue;
+            }
             let context = session_path.join("context.jsonl");
-            if !context.exists() { continue }
+            if !context.exists() {
+                continue;
+            }
             count += 1;
             if let Ok(meta) = context.metadata()
                 && let Ok(t) = meta.modified()

@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use clap::{Subcommand, ValueEnum};
-use devboy_core::agents::{detect_all, pick_primary, AgentSnapshot, InstallStatus};
+use devboy_core::agents::{AgentSnapshot, InstallStatus, detect_all, pick_primary};
 
 #[derive(Subcommand)]
 pub enum AgentsCommands {
@@ -65,7 +65,11 @@ fn render_table(snapshots: &[AgentSnapshot]) {
             Some(t) => format_relative(t),
             None => "-".to_string(),
         };
-        let primary = if Some(s.id) == primary_id { "★ primary" } else { "" };
+        let primary = if Some(s.id) == primary_id {
+            "★ primary"
+        } else {
+            ""
+        };
         println!(
             "{:<14} {:<22} {} {:<8} {:>10} {:<28} {:>6.3}  {}",
             s.id,
@@ -100,6 +104,11 @@ fn format_relative(t: chrono::DateTime<chrono::Utc>) -> String {
     let now = chrono::Utc::now();
     let delta = now - t;
     let secs = delta.num_seconds();
+    if secs < 0 {
+        // Future timestamp — clock skew, bad mtime, or a very-just-written file.
+        // Treat as "just now" rather than printing "-10s ago".
+        return "just now".to_string();
+    }
     if secs < 60 {
         return format!("{secs}s ago");
     }

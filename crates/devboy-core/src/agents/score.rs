@@ -28,11 +28,17 @@ const PRIMARY_THRESHOLD: f64 = 1.5;
 /// imply "I switched to this one and stopped touching the other."
 const RECENCY_DOMINANCE_HOURS: i64 = 4;
 
-pub fn compute_score(last_used: Option<DateTime<Utc>>, sessions: Option<u64>, now: DateTime<Utc>) -> f64 {
+pub fn compute_score(
+    last_used: Option<DateTime<Utc>>,
+    sessions: Option<u64>,
+    now: DateTime<Utc>,
+) -> f64 {
     let freshness = last_used
         .map(|t| {
             let days = (now - t).num_seconds() as f64 / 86_400.0;
-            (1.0 - days / FRESHNESS_DECAY_DAYS).max(0.0)
+            // Clamp to [0, 1]: future timestamps (clock skew / odd mtimes)
+            // would otherwise produce >1.0; ancient timestamps go to 0.
+            (1.0 - days / FRESHNESS_DECAY_DAYS).clamp(0.0, 1.0)
         })
         .unwrap_or(0.0);
 
@@ -56,7 +62,11 @@ pub fn compute_score(last_used: Option<DateTime<Utc>>, sessions: Option<u64>, no
 /// when no candidate has a positive score.
 pub fn pick_primary(snapshots: &[AgentSnapshot]) -> Option<&AgentSnapshot> {
     let mut sorted: Vec<&AgentSnapshot> = snapshots.iter().filter(|s| s.score > 0.0).collect();
-    sorted.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     match sorted.as_slice() {
         [] => None,
@@ -156,7 +166,11 @@ mod tests {
 
     #[test]
     fn primary_picks_top_when_gap_is_clear() {
-        let snaps = vec![snap("claude", 0.95), snap("codex", 0.20), snap("gemini", 0.10)];
+        let snaps = vec![
+            snap("claude", 0.95),
+            snap("codex", 0.20),
+            snap("gemini", 0.10),
+        ];
         assert_eq!(pick_primary(&snaps).unwrap().id, "claude");
     }
 
@@ -220,7 +234,11 @@ mod tests {
         let now = at(2026, 5, 1);
         // Construct so that top by score is the stale one.
         let snaps = vec![
-            snap_with_recency("stale_high_vol", 0.50, Some(now - chrono::Duration::days(7))),
+            snap_with_recency(
+                "stale_high_vol",
+                0.50,
+                Some(now - chrono::Duration::days(7)),
+            ),
             snap_with_recency("fresh_low_vol", 0.45, Some(now)),
         ];
         // top by score = stale_high_vol (0.50). second = fresh_low_vol (0.45).

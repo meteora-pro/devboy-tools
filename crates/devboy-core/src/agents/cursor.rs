@@ -23,8 +23,12 @@ const DISPLAY_NAME: &str = "Cursor";
 pub struct CursorDetector;
 
 impl AgentDetector for CursorDetector {
-    fn id(&self) -> &'static str { ID }
-    fn display_name(&self) -> &'static str { DISPLAY_NAME }
+    fn id(&self) -> &'static str {
+        ID
+    }
+    fn display_name(&self) -> &'static str {
+        DISPLAY_NAME
+    }
 
     fn detect(&self, home: &Path) -> AgentSnapshot {
         let cursor_dir = cursor_data_dir(home);
@@ -35,7 +39,11 @@ impl AgentDetector for CursorDetector {
         // Cursor doesn't typically expose a CLI bin, but check anyway.
         let binary_present = which::which("cursor").is_ok();
 
-        let status = if dir_present || binary_present { InstallStatus::Yes } else { InstallStatus::No };
+        let status = if dir_present || binary_present {
+            InstallStatus::Yes
+        } else {
+            InstallStatus::No
+        };
         if status == InstallStatus::No {
             return empty(paths_checked);
         }
@@ -70,7 +78,9 @@ fn cursor_data_dir(home: &Path) -> PathBuf {
 }
 
 fn max_state_vscdb_mtime(workspace_storage: &Path) -> Option<chrono::DateTime<chrono::Utc>> {
-    let Ok(workspaces) = std::fs::read_dir(workspace_storage) else { return None; };
+    let Ok(workspaces) = std::fs::read_dir(workspace_storage) else {
+        return None;
+    };
     let mut best: Option<chrono::DateTime<chrono::Utc>> = None;
     for ws in workspaces.flatten() {
         let p = ws.path().join("state.vscdb");
@@ -106,7 +116,9 @@ mod tests {
     #[cfg(target_os = "macos")]
     fn counts_workspace_subdirs_macos() {
         let home = tempdir().unwrap();
-        let storage = home.path().join("Library/Application Support/Cursor/User/workspaceStorage");
+        let storage = home
+            .path()
+            .join("Library/Application Support/Cursor/User/workspaceStorage");
         for ws in &["aaaa", "bbbb", "cccc"] {
             let dir = storage.join(ws);
             fs::create_dir_all(&dir).unwrap();

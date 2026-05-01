@@ -19,8 +19,12 @@ const MAX_LINES: usize = 200_000;
 pub struct CodexDetector;
 
 impl AgentDetector for CodexDetector {
-    fn id(&self) -> &'static str { ID }
-    fn display_name(&self) -> &'static str { DISPLAY_NAME }
+    fn id(&self) -> &'static str {
+        ID
+    }
+    fn display_name(&self) -> &'static str {
+        DISPLAY_NAME
+    }
 
     fn detect(&self, home: &Path) -> AgentSnapshot {
         let codex_dir = home.join(".codex");
@@ -30,7 +34,11 @@ impl AgentDetector for CodexDetector {
         let dir_present = codex_dir.is_dir();
         let binary_present = which::which("codex").is_ok();
 
-        let status = if dir_present || binary_present { InstallStatus::Yes } else { InstallStatus::No };
+        let status = if dir_present || binary_present {
+            InstallStatus::Yes
+        } else {
+            InstallStatus::No
+        };
         if status == InstallStatus::No {
             return empty(paths_checked);
         }
@@ -50,12 +58,16 @@ impl AgentDetector for CodexDetector {
 }
 
 fn parse_history(history: &Path) -> (u64, Option<chrono::DateTime<chrono::Utc>>) {
-    let Ok(file) = std::fs::File::open(history) else { return (0, None); };
+    let Ok(file) = std::fs::File::open(history) else {
+        return (0, None);
+    };
     let reader = BufReader::new(file);
     let mut sessions: HashSet<String> = HashSet::new();
     let mut last_ts: i64 = 0;
     for line in reader.lines().map_while(Result::ok).take(MAX_LINES) {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
         if let Some(sid) = value.get("session_id").and_then(|v| v.as_str()) {
             sessions.insert(sid.to_string());
         }
@@ -65,7 +77,14 @@ fn parse_history(history: &Path) -> (u64, Option<chrono::DateTime<chrono::Utc>>)
             last_ts = ts;
         }
     }
-    let last_used = (last_ts > 0).then(|| chrono::DateTime::<chrono::Utc>::from_timestamp(last_ts, 0).unwrap_or_default());
+    // `from_timestamp` returns `None` for out-of-range epoch seconds; in
+    // that case treat the field as missing rather than silently reporting
+    // 1970-01-01 as the last-used time.
+    let last_used = if last_ts > 0 {
+        chrono::DateTime::<chrono::Utc>::from_timestamp(last_ts, 0)
+    } else {
+        None
+    };
     (sessions.len() as u64, last_used)
 }
 

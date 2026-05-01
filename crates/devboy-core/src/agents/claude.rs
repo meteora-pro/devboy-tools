@@ -17,8 +17,12 @@ const MAX_FILES: usize = 20_000;
 pub struct ClaudeDetector;
 
 impl AgentDetector for ClaudeDetector {
-    fn id(&self) -> &'static str { ID }
-    fn display_name(&self) -> &'static str { DISPLAY_NAME }
+    fn id(&self) -> &'static str {
+        ID
+    }
+    fn display_name(&self) -> &'static str {
+        DISPLAY_NAME
+    }
 
     fn detect(&self, home: &Path) -> AgentSnapshot {
         let claude_dir = home.join(".claude");

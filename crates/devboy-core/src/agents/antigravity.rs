@@ -25,8 +25,12 @@ const DISPLAY_NAME: &str = "Antigravity";
 pub struct AntigravityDetector;
 
 impl AgentDetector for AntigravityDetector {
-    fn id(&self) -> &'static str { ID }
-    fn display_name(&self) -> &'static str { DISPLAY_NAME }
+    fn id(&self) -> &'static str {
+        ID
+    }
+    fn display_name(&self) -> &'static str {
+        DISPLAY_NAME
+    }
 
     fn detect(&self, home: &Path) -> AgentSnapshot {
         let dir = home.join(".gemini/antigravity");
@@ -63,7 +67,9 @@ impl AgentDetector for AntigravityDetector {
 }
 
 fn count_pb_files(dir: &Path) -> u64 {
-    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
     entries
         .flatten()
         .filter(|e| e.path().extension().is_some_and(|e| e == "pb"))

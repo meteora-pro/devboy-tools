@@ -42,6 +42,9 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy skills install`↴](#devboy-skills-install)
 * [`devboy skills upgrade`↴](#devboy-skills-upgrade)
 * [`devboy skills remove`↴](#devboy-skills-remove)
+* [`devboy agents`↴](#devboy-agents)
+* [`devboy agents list`↴](#devboy-agents-list)
+* [`devboy onboard`↴](#devboy-onboard)
 * [`devboy trace`↴](#devboy-trace)
 * [`devboy trace begin`↴](#devboy-trace-begin)
 * [`devboy trace event`↴](#devboy-trace-event)
@@ -70,6 +73,8 @@ DevBoy - AI-powered development tools
 * `tools` — Manage built-in tools (enable/disable). Interactive mode when run without subcommand
 * `docs` — Generate reference documentation from the live binary (built-in tools or CLI surface)
 * `skills` — Manage skills — procedural recipes installed alongside the tool bundle
+* `agents` — Inspect AI coding agents installed on this machine
+* `onboard` — First-run setup: detect your AI agent and install the right skills bundle
 * `trace` — Write to a skill's self-feedback session trace (ADR-015)
 * `doctor` — Run diagnostic checks for the local DevBoy setup
 * `upgrade` — Upgrade devboy to the latest version
@@ -628,6 +633,52 @@ Remove installed skills from the resolved target(s)
 * `--agent <AGENTS>` — Apply to these agents' install paths
 * `--strict` — Fail if a requested skill is not present at the target
 * `--dry-run` — Show what would happen without touching the filesystem
+
+
+
+## `devboy agents`
+
+Inspect AI coding agents installed on this machine
+
+**Usage:** `devboy agents <COMMAND>`
+
+###### **Subcommands:**
+
+* `list` — List detected AI coding agents with status, session count, and last-used time
+
+
+
+## `devboy agents list`
+
+List detected AI coding agents with status, session count, and last-used time
+
+**Usage:** `devboy agents list [OPTIONS]`
+
+###### **Options:**
+
+* `--format <FORMAT>` — Output format
+
+  Default value: `table`
+
+  Possible values: `table`, `json`
+
+
+
+
+## `devboy onboard`
+
+First-run setup: detect your AI agent and install the right skills bundle
+
+**Usage:** `devboy onboard [OPTIONS]`
+
+###### **Options:**
+
+* `--agent <AGENT>` — Override the auto-detected primary agent (e.g. `--agent claude`)
+* `--profile <PROFILE>` — Skill bundle profile to install (default: dev)
+
+  Default value: `dev`
+* `-y`, `--yes` — Skip confirmation — install without asking. Required in non-TTY
+* `--dry-run` — Show the plan without writing anything
 
 
 
