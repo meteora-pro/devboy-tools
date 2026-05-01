@@ -22,7 +22,7 @@ sys.path.insert(0, str(_HERE.parent))
 
 from lib.parsers import find_session_files, load_session, find_subagents  # noqa: E402
 from lib.classifiers import biome_of  # noqa: E402
-from lib.stats import median, percentile  # noqa: E402
+from lib.stats import median  # noqa: E402
 from lib.anonymize import hash_path, SidProjector  # noqa: E402
 from lib.io import outputs_dirs, write_parquet  # noqa: E402
 
@@ -60,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
             "parent_sid": sess.sid,
             "project": sess.project,
             "subagent_count": len(sub_asst),
+            "whale_subs": bins["Whale"],
             "shark_subs": bins["Shark"],
             "dolphin_subs": bins["Dolphin"],
             "fish_subs": bins["Fish"],

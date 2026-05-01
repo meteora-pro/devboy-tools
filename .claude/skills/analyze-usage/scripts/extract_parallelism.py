@@ -3,24 +3,24 @@
 # requires-python = ">=3.10"
 # dependencies = ["pyarrow>=15"]
 # ///
-"""Per-minute concurrent session count + hour-of-day map.
+"""Hourly concurrent session count by date/hour bin.
 
 Schema:
-  parallelism.parquet — one row per (date, hour) with cnt_active, max_concurrent
+  parallelism.parquet — one row per (date, hour) with year, month, day,
+  hour, iso_date, concurrent_sessions.
 """
 from __future__ import annotations
 
 import argparse
 import sys
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent))
 
 from lib.parsers import find_session_files, load_session  # noqa: E402
-from lib.anonymize import SidProjector  # noqa: E402
 from lib.io import outputs_dirs, write_parquet  # noqa: E402
 
 

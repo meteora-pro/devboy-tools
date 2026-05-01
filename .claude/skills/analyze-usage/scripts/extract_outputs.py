@@ -25,7 +25,7 @@ sys.path.insert(0, str(_HERE.parent))
 
 from lib.parsers import find_session_files, load_session, find_subagents  # noqa: E402
 from lib.classifiers import commit_type_of, is_review_fix  # noqa: E402
-from lib.anonymize import hash_path, hash_branch, SidProjector  # noqa: E402
+from lib.anonymize import hash_path, SidProjector  # noqa: E402
 from lib.io import outputs_dirs, write_parquet  # noqa: E402
 
 RX_GIT_COMMIT_M = re.compile(

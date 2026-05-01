@@ -40,12 +40,26 @@ def outputs_dirs_v2(base: Path | None = None) -> tuple[Path, Path, Path]:
     return raw, anon, llm
 
 
-def write_parquet(rows: list[dict], path: Path) -> int:
-    """Write rows to parquet. Returns number of rows written."""
+def write_parquet(
+    rows: list[dict], path: Path, schema: pa.Schema | None = None
+) -> int:
+    """Write rows to parquet. Returns number of rows written.
+
+    When `rows` is empty and `schema` is provided, writes an empty table
+    with the given schema so downstream consumers see a stable column set
+    (matters for Tier-2 stubs like `session_names.parquet` where the
+    file may be queried before any rows are populated).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
-        # write an empty marker so pipeline can detect the run happened
-        empty = pa.Table.from_pylist([])
+        # Write an empty marker so the pipeline can detect the run happened.
+        if schema is not None:
+            empty = pa.Table.from_arrays(
+                [pa.array([], type=field.type) for field in schema],
+                schema=schema,
+            )
+        else:
+            empty = pa.Table.from_pylist([])
         pq.write_table(empty, str(path))
         return 0
     table = pa.Table.from_pylist(rows)

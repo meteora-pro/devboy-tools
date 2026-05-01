@@ -85,7 +85,10 @@ def _walk_strings(value):
 
 
 def audit_anon(anon_dir: Path) -> int:
-    """Walk every parquet in anon/ and assert no leaks. Returns leak count."""
+    """Walk every parquet in anon/ and assert no leaks. Returns the total
+    number of leak findings (0 means clean). The CLI translates this into
+    an exit code via `1 if leak_count else 0`.
+    """
     leaks: list[tuple[str, str, str, str]] = []  # (file, col, kind, sample)
     parquets = sorted(anon_dir.glob("*.parquet"))
     if not parquets:
@@ -138,7 +141,7 @@ def audit_anon(anon_dir: Path) -> int:
     print("Anon audit report:")
     print(f"  files scanned: {len(parquets)}")
     if not leaks:
-        print(f"  ✓ no leaks found")
+        print("  ✓ no leaks found")
         return 0
     print(f"  ✗ {len(leaks)} leaks found")
     by_kind: dict[str, int] = {}
@@ -149,7 +152,7 @@ def audit_anon(anon_dir: Path) -> int:
     print("  first 10 examples:")
     for f, c, k, s in leaks[:10]:
         print(f"    [{f}].{c} {k}: {s!r}")
-    return 1
+    return len(leaks)
 
 
 # ─── Heuristic pattern detection (default) ────────────────────────────────
