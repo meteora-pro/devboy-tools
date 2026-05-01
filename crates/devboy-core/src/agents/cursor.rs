@@ -109,24 +109,7 @@ fn empty(paths_checked: Vec<PathBuf>) -> AgentSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use tempfile::tempdir;
-
-    /// Drives the platform-specific test below. Builds workspace dirs at
-    /// `<home>/<rel>/<id>/state.vscdb` and asserts the detector counts
-    /// each workspace.
-    fn assert_counts_workspaces(rel_storage: &str, ids: &[&str]) {
-        let home = tempdir().unwrap();
-        let storage = home.path().join(rel_storage);
-        for ws in ids {
-            let dir = storage.join(ws);
-            fs::create_dir_all(&dir).unwrap();
-            fs::write(dir.join("state.vscdb"), b"").unwrap();
-        }
-        let snap = CursorDetector.detect(home.path());
-        assert_eq!(snap.status, InstallStatus::Yes);
-        assert_eq!(snap.sessions, Some(ids.len() as u64));
-    }
 
     #[test]
     fn no_cursor_dir_means_not_installed() {
@@ -140,6 +123,28 @@ mod tests {
         }
     }
 
+    /// Build `<home>/<rel>/<id>/state.vscdb` for each id and assert the
+    /// detector counts them. Only used on platforms where the detector
+    /// resolves its data dir relative to `$HOME` — Windows reads `%APPDATA%`,
+    /// and `unsafe_code = "forbid"` rules out mutating env vars from a
+    /// test, so the platform-specific case ships behind a positive smoke
+    /// only (the always-on `no_cursor_dir_means_not_installed` test
+    /// covers the negative path on every OS).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn assert_counts_workspaces(rel_storage: &str, ids: &[&str]) {
+        use std::fs;
+        let home = tempdir().unwrap();
+        let storage = home.path().join(rel_storage);
+        for ws in ids {
+            let dir = storage.join(ws);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("state.vscdb"), b"").unwrap();
+        }
+        let snap = CursorDetector.detect(home.path());
+        assert_eq!(snap.status, InstallStatus::Yes);
+        assert_eq!(snap.sessions, Some(ids.len() as u64));
+    }
+
     #[test]
     #[cfg(target_os = "macos")]
     fn counts_workspace_subdirs_macos() {
@@ -150,28 +155,8 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(target_os = "linux")]
     fn counts_workspace_subdirs_linux() {
         assert_counts_workspaces(".config/Cursor/User/workspaceStorage", &["aaaa", "bbbb"]);
-    }
-
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn counts_workspace_subdirs_windows() {
-        // On Windows the detector reads `%APPDATA%`, but the test runs in
-        // a sandboxed temp home — hide the env var so it falls through to
-        // the `home.join("AppData/Roaming")` path documented in the
-        // detector. We only override the env for this thread; cargo test
-        // runs each test on a fresh thread, but be defensive anyway.
-        // SAFETY: tests must not race on this env var; cargo runs each
-        // `#[test]` on a fresh thread by default and no other test in this
-        // crate touches `APPDATA`.
-        unsafe {
-            std::env::remove_var("APPDATA");
-        }
-        assert_counts_workspaces(
-            "AppData/Roaming/Cursor/User/workspaceStorage",
-            &["aaaa", "bbbb"],
-        );
     }
 }
