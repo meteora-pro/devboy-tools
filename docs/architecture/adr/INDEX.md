@@ -18,6 +18,7 @@ This directory holds Architecture Decision Records (ADRs) for `devboy-tools`. Ea
 | [014](./ADR-014-skills-lifecycle.md) | Skills lifecycle — manifest-based install, upgrade, and collision detection | proposed | Skills |
 | [015](./ADR-015-skills-session-traces.md) | Skills self-feedback loop — session trace format | proposed | Skills, Observability |
 | [016](./ADR-016-skills-language-adaptation.md) | Skills language adaptation | proposed | Skills (deferred) |
+| [017](./ADR-017-agent-detection-and-onboard.md) | Agent detection and `devboy onboard` command | proposed | Onboarding, Skills |
 
 **Number gaps** (006, 008, 009, 011) are intentional. Those numbers are reserved for decisions that are not in scope for this project.
 
