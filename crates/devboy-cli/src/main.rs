@@ -1,5 +1,6 @@
 //! DevBoy CLI - Command-line interface for devboy-tools.
 
+mod agents_cmd;
 mod doctor;
 mod skills_cmd;
 mod update_check;
@@ -277,6 +278,12 @@ enum Commands {
     Skills {
         #[command(subcommand)]
         command: SkillsCommands,
+    },
+
+    /// Inspect AI coding agents installed on this machine
+    Agents {
+        #[command(subcommand)]
+        command: agents_cmd::AgentsCommands,
     },
 
     /// Write to a skill's self-feedback session trace (ADR-015)
@@ -933,6 +940,10 @@ async fn main() -> Result<()> {
 
             Some(Commands::Skills { command }) => {
                 skills_cmd::handle(command).await?;
+            }
+
+            Some(Commands::Agents { command }) => {
+                agents_cmd::handle(command)?;
             }
 
             Some(Commands::Trace { command }) => {

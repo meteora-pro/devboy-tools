@@ -22,6 +22,7 @@
 //! }
 //! ```
 
+pub mod agents;
 pub mod asset;
 pub mod config;
 pub mod enricher;
