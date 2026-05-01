@@ -37,6 +37,8 @@ COMMANDS:
     audit        Verify outputs/anon/ has no raw-identifier leaks
     patterns     Heuristic flags from parquet (needs_split, ghost_session, …)
     report       Markdown summary from existing parquet → outputs/reports/<date>.md
+    llm-queue    Tier 2 — enqueue Whale/Shark/Dolphin sessions for narrative
+                 summarisation by the agent (writes outputs/llm/_queue.jsonl)
     test         Run all unit + smoke tests
 
 EXAMPLES:
@@ -80,6 +82,9 @@ case "$cmd" in
         ;;
     report)
         exec uv run --quiet "$SCRIPTS/report_generator.py" "$@"
+        ;;
+    llm-queue)
+        exec uv run --quiet "$SCRIPTS/extract_llm_session_names.py" "$@"
         ;;
     test)
         exec bash "$TESTS/run_all.sh" "$@"
