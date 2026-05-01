@@ -236,3 +236,110 @@ async fn install_bundle(agent: Agent, skill_names: &[String], dry_run: bool) -> 
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn snap(id: &'static str, score: f64, status: InstallStatus) -> AgentSnapshot {
+        AgentSnapshot {
+            id,
+            display_name: id,
+            status,
+            sessions: None,
+            last_used: None,
+            score,
+            paths_checked: vec![],
+        }
+    }
+
+    fn snap_used(
+        id: &'static str,
+        score: f64,
+        last_used: chrono::DateTime<chrono::Utc>,
+    ) -> AgentSnapshot {
+        AgentSnapshot {
+            id,
+            display_name: id,
+            status: InstallStatus::Yes,
+            sessions: Some(10),
+            last_used: Some(last_used),
+            score,
+            paths_checked: vec![],
+        }
+    }
+
+    fn args(agent: Option<&str>) -> OnboardArgs {
+        OnboardArgs {
+            agent: agent.map(|s| s.to_string()),
+            profile: "dev".to_string(),
+            yes: true,
+            dry_run: true,
+        }
+    }
+
+    #[test]
+    fn explicit_agent_override_picks_named_snapshot() {
+        let snaps = vec![
+            snap("claude", 1.0, InstallStatus::Yes),
+            snap("codex", 0.5, InstallStatus::Yes),
+        ];
+        let chosen = pick_agent(&args(Some("codex")), &snaps).unwrap();
+        assert_eq!(chosen.id, "codex");
+    }
+
+    #[test]
+    fn explicit_agent_override_returns_error_for_unknown_id() {
+        let snaps = vec![snap("claude", 1.0, InstallStatus::Yes)];
+        let err = pick_agent(&args(Some("nonexistent")), &snaps).unwrap_err();
+        assert!(err.to_string().contains("nonexistent"));
+        assert!(err.to_string().contains("agents list"));
+    }
+
+    #[test]
+    fn auto_picks_when_recency_dominates() {
+        // Two installed agents, one used today, one a week ago — recency
+        // dominance should pick the fresh one even with a close score gap.
+        let now = chrono::Utc.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap();
+        let snaps = vec![
+            snap_used("claude", 0.8, now),
+            snap_used("codex", 0.7, now - chrono::Duration::days(7)),
+        ];
+        // pick_primary applies a freshness × volume formula on the *score* fields,
+        // and uses last_used for the dominance shortcut. The 7-day gap is over
+        // the 4-hour threshold → claude wins.
+        let chosen = pick_agent(&args(None), &snaps).unwrap();
+        assert_eq!(chosen.id, "claude");
+    }
+
+    #[test]
+    fn auto_returns_error_with_top_candidates_when_scores_are_close() {
+        // Both agents used at the same timestamp → no recency dominance.
+        // Score gap is below 1.5× → defer to user with hints.
+        let now = chrono::Utc.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap();
+        let snaps = vec![
+            snap_used("claude", 0.6, now),
+            snap_used("copilot", 0.55, now),
+        ];
+        let err = pick_agent(&args(None), &snaps).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("top candidates"));
+        assert!(msg.contains("claude"));
+        assert!(msg.contains("--agent"));
+    }
+
+    #[test]
+    fn auto_returns_no_supported_agents_when_nothing_is_installed() {
+        // Every snapshot has status=No → empty installed list → specific
+        // error message rather than the empty "top candidates: ." one.
+        let snaps = vec![
+            snap("claude", 0.0, InstallStatus::No),
+            snap("codex", 0.0, InstallStatus::No),
+        ];
+        let err = pick_agent(&args(None), &snaps).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("no supported agents detected"));
+        assert!(!msg.contains("top candidates"));
+    }
+}
