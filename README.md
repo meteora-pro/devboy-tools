@@ -169,21 +169,20 @@ Adding a provider is a Rust crate implementing `Provider` + a `ToolEnricher` ([A
 
 Every non-trivial optimisation in the pipeline is backed by a paper grounded in a real corpus — 523 Claude Code sessions, 10,644 MCP responses from production traffic. The full [`docs/research/INDEX.md`](docs/research/INDEX.md) tracks methods, datasets, and reproducibility scripts.
 
-| # | Title | Status | Core idea |
-|---|-------|--------|-----------|
-| [1](docs/research/paper-1-trimtree.md) | TrimTree: priority-driven pagination | draft | Binary knapsack for which items to include within a token budget; **p₁** metric |
-| [2](docs/research/paper-2-mckp-format-adaptive.md) | Format-adaptive tree encoding | draft | Multi-choice knapsack: per-subtree format pick (CSV / table / key:value) to minimise tokens |
-| [3](docs/research/paper-3-tool-aware-enrichment.md) | Tool-aware context enrichment | draft, **deployed** | Thin initial context inflates follow-up tool calls; measurement + mitigation |
-| [4](docs/research/paper-4-notebook-parquet.md) | Dataset-as-context (notebook + Parquet) | draft | Large responses become queryable Parquet artefacts; LLM writes pull-queries instead of paginating |
+| # | Paper | Status | Headline result |
+|---|-------|--------|-----------------|
+| [1](docs/research/paper-1-trimtree.md) | TrimTree: priority-driven pagination — binary knapsack within a token budget, `p₁` metric | draft (820-line full draft, all experiments complete) | **3.3× p₁** vs uniform on power-law data; FIFO baseline 35% **replicated across 3 corpora**; KV-cache pass on Sonnet 4.5 ≈ **40% input-side savings** (66.5% hit rate) |
+| [2](docs/research/paper-2-mckp-format-adaptive.md) | Format-adaptive tree encoding — multi-choice knapsack picking CSV / table / key:value per subtree | draft | Per-call savings on the corpus: **avg 69% on `get_issues`** (top 92%), **avg 26% on `*_pipeline`**; ≥ 20% bucket hits 1.25% of all events but most calls of the shape-friendly endpoints |
+| 3 ([theory](docs/research/paper-3-context-enrichment.md) · [implementation](docs/research/paper-3-tool-aware-enrichment.md)) | Context Enrichment Hypothesis + tool-aware knapsack with provider value models | draft (prefetch dispatcher merged in v0.22; production telemetry pending) | **Pearson r = −0.280** between `chars_per_item` and follow-up enrichment calls; thin issues (< 200 chars/item) → **43%** of turns add a `get_issue`; rich (1.5 k–4 k) → **2%** |
+| [4](docs/research/paper-4-notebook-parquet.md) | Dataset-as-context — large responses become queryable Parquet artefacts the LLM pulls from | draft (early concept, no measurements yet) | Hypothesised **60–80% additional** savings on top of TrimTree; evaluation harness not yet built |
 
-Highlights from the corpus:
+Other corpus baselines used across papers (the 523 Claude Code sessions / 10,644 MCP-response sample, paper 1 §B):
 
-- `get_merge_request_diffs`: P90 = 35 k chars ≈ 10 k tokens — **28%** of responses exceed an 8 k budget
+- `get_merge_request_diffs`: P90 = 35 k chars ≈ 10 k tokens — **28%** of responses exceed an 8 k-token budget
 - `get_epics`: P90 = 43 k chars ≈ 12 k tokens — 37% exceed budget
-- After a large response: agents always continue with text on the next turn — they **never** paginate
-- Thin issues (< 200 chars/item) → 43% of turns add a follow-up `get_issue` call. Rich issues (1.5 k–4 k chars) → 2%. Pearson r = −0.28
+- After overflow, agents always produce a text response on the next turn — they **never** retry / paginate (paper 1 §3, paper-1-trimtree.md:30 and §C)
 
-These findings drive concrete code: paper 3 is already shipping in the format pipeline; papers 1 and 2 are landing in the next minor version.
+Paper 3's prefetch dispatcher already runs in the format pipeline; papers 1 and 2 land in the next minor version. Paper 4 is at concept stage — no production code yet.
 
 ---
 
