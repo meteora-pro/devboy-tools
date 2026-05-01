@@ -3,27 +3,133 @@
 [![CI](https://github.com/meteora-pro/devboy-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/meteora-pro/devboy-tools/actions/workflows/ci.yml)
 [![Codecov](https://codecov.io/gh/meteora-pro/devboy-tools/branch/main/graph/badge.svg)](https://codecov.io/gh/meteora-pro/devboy-tools)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![zread](https://img.shields.io/badge/Ask_Zread-_.svg?style=flat&color=00b0aa&labelColor=000000&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTQuOTYxNTYgMS42MDAxSDIuMjQxNTZDMS44ODgxIDEuNjAwMSAxLjYwMTU2IDEuODg2NjQgMS42MDE1NiAyLjI0MDFWNC45NjAxQzEuNjAxNTYgNS4zMTM1NiAxLjg4ODEgNS42MDAxIDIuMjQxNTYgNS42MDAxSDQuOTYxNTZDNS4zMTUwMiA1LjYwMDEgNS42MDE1NiA1LjMxMzU2IDUuNjAxNTYgNC45NjAxVjIuMjQwMUM1LjYwMTU2IDEuODg2NjQgNS4zMTUwMiAxLjYwMDEgNC45NjE1NiAxLjYwMDFaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00Ljk2MTU2IDEwLjM5OTlIMi4yNDE1NkMxLjg4ODEgMTAuMzk5OSAxLjYwMTU2IDEwLjY4NjQgMS42MDE1NiAxMS4wMzk5VjEzLjc1OTlDMS42MDE1NiAxNC4xMTM0IDEuODg4MSAxNC4zOTk5IDIuMjQxNTYgMTQuMzk5OUg0Ljk2MTU2QzUuMzE1MDIgMTQuMzk5OSA1LjYwMTU2IDE0LjExMzQgNS42MDE1NiAxMy43NTk5VjExLjAzOTlDNS42MDE1NiAxMC42ODY0IDUuMzE1MDIgMTAuMzk5OSA0Ljk2MTU2IDEwLjM5OTlaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik0xMy43NTg0IDEuNjAwMUgxMS4wMzg0QzEwLjY4NSAxLjYwMDEgMTAuMzk4NCAxLjg4NjY0IDEwLjM5ODQgMi4yNDAxVjQuOTYwMUMxMC4zOTg0IDUuMzEzNTYgMTAuNjg1IDUuNjAwMSAxMS4wMzg0IDUuNjAwMUgxMy43NTg0QzE0LjExMTkgNS42MDAxIDE0LjM5ODQgNS4zMTM1NiAxNC4zOTg0IDQuOTYwMVYyLjI0MDFDMTQuMzk4NCAxLjg4NjY0IDE0LjExMTkgMS42MDAxIDEzLjc1ODQgMS42MDAxWiIgZmlsbD0iI2ZmZiIvPgo8cGF0aCBkPSJNNCAxMkwxMiA0TDQgMTJaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00IDEyTDEyIDQiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K&logoColor=ffffff)](https://zread.ai/meteora-pro/devboy-tools)
+[![npm](https://img.shields.io/npm/v/@devboy-tools/cli)](https://www.npmjs.com/package/@devboy-tools/cli)
+[![Ask Zread](https://img.shields.io/badge/Ask_Zread-_.svg?style=flat&color=00b0aa&labelColor=000000)](https://zread.ai/meteora-pro/devboy-tools)
 
-A fast, Open Source **configurable tool bundle** for AI coding agents, written in Rust. DevBoy ships a curated set of dev-workflow tools (GitHub, GitLab, ClickUp, Jira, and more) that can be plugged into any agent three ways: as an **MCP server**, as a **CLI** for humans and scripts, or as **agent skills** that call individual tools directly. Under the hood: plugin system for API providers, an LLM-optimized output pipeline, and multi-project context switching.
+**A research-driven tool bundle for AI coding agents.** A single curated set of dev-workflow tools (GitHub, GitLab, Jira, ClickUp, Slack, Fireflies) reachable from any agent — Claude Code, Copilot CLI, Codex, Cursor, Kimi, Gemini, … — through three transports: **MCP server**, **CLI**, or **installable agent skills**. Output goes through a token-aware pipeline that compresses responses by **26–69% per call** on the data-shape-friendly endpoints it targets (issues, pipelines, large lists) — see [paper 2 measurements](docs/research/paper-2-mckp-format-adaptive.md) on a 144k-event production corpus.
 
-## Integration modes
+```bash
+npm install -g @devboy-tools/cli   # binary for your platform
+devboy onboard                     # detects your AI agent, installs the right skills
+```
 
-DevBoy is a tool bundle first — the transport is your choice:
+That's it. Verify with `devboy doctor`.
+
+---
+
+## Why DevBoy
+
+DevBoy isn't another aggregator with a long tool list. Four things that aren't standard elsewhere:
+
+- **Research-driven.** Every optimisation in the pipeline traces back to a paper grounded in a real corpus — 523 Claude Code sessions, 10,644 MCP tool responses. We don't ship a heuristic without measuring it. See [research index](docs/research/INDEX.md).
+- **Three transports, one bundle.** The exact same tool set is reachable as MCP server, CLI for humans / CI, or as agent skills that call individual tools. Pick whichever fits today; layer the rest later.
+- **Privacy by default.** Tokens live in OS keychain (macOS Keychain / Windows Credential Manager / Linux Secret Service) with env-var fallback for CI. No cloud round-trip just to authenticate.
+- **Multi-project context.** One server, many project contexts (different GitHub/GitLab/Jira combinations), instant switch — no respawn, no config edit. Concrete: `devboy context use dashboard` and the same MCP session now talks to a different project's APIs.
+
+| | Generic MCP aggregator | DevBoy |
+|-|------------------------|--------|
+| **Output efficiency** | Default API JSON | Knapsack-based pagination + format-adaptive encoding ([papers 1, 2](docs/research/INDEX.md)) — measured per-call savings on the 144k-event corpus: 69% avg on `get_issues`, 92% top per call, 26% avg on `*_pipeline`. KV-cache pass on Sonnet 4.5 lifts ~40% of tokens off the input side. |
+| **Tool catalogue** | Static | Dynamic per-project, with provider enrichers (custom field params, enum hints) |
+| **Transport** | MCP only | MCP, CLI, or agent skills — same tools |
+| **Onboarding** | Manual config + per-agent install | `devboy onboard` autodetects and bundles |
+| **Credentials** | Cloud / config files | OS keychain, env vars only as fallback |
+| **Extensibility** | Forking | Plugin system (Rust today; WASM, TypeScript planned) |
+
+---
+
+## Quick start (60 seconds)
+
+```bash
+# 1. Install
+npm install -g @devboy-tools/cli
+
+# 2. Bootstrap — picks your agent + installs a curated skill bundle
+devboy onboard
+
+# 3. Configure your first provider (interactive)
+devboy init
+
+# 4. Verify
+devboy doctor
+```
+
+After this `devboy issues` returns your open tickets, your agent has the relevant skills loaded, and the MCP server is registered with whatever client you use.
+
+If you'd rather pick everything by hand:
+
+<details>
+<summary><b>Manual install / configuration</b></summary>
+
+```bash
+# Configure GitHub (replace gitlab/clickup/jira similarly)
+devboy config set github.owner meteora-pro
+devboy config set github.repo devboy-tools
+devboy config set-secret github.token <token>     # → OS keychain
+
+# Or via env vars (CI / Docker — keychain unavailable)
+export DEVBOY_GITHUB_TOKEN=ghp_...
+# Compatibility: GITHUB_TOKEN is read too
+
+# Pick skills explicitly instead of using a profile
+devboy skills list
+devboy skills install devboy-review-mr --agent claude
+devboy skills install --all --agent all
+```
+
+Build from source:
+```bash
+git clone https://github.com/meteora-pro/devboy-tools.git
+cd devboy-tools && cargo build --release
+./target/release/devboy --version
+```
+</details>
+
+---
+
+## Skills & onboarding
+
+DevBoy ships a catalogue of **skills** — one-page Markdown recipes that tell an AI agent how to use the bundle to accomplish a common task. Skills are CLI-first (`devboy tools call <name>` under the hood), agent-agnostic (Claude Code / Codex / Cursor / Kimi or a vendor-neutral path), and versioned with the binary.
+
+`devboy onboard` is the fastest path: it scans `~/.claude/`, `~/.copilot/`, `~/.codex/`, `~/.kimi/`, Cursor's storage, `~/.gemini/`, and `~/.gemini/antigravity/`, scores each agent on freshness × volume (recency wins ties), and installs a profile-specific bundle.
+
+```bash
+devboy onboard                          # auto-detect + install `dev` bundle
+devboy onboard --profile pm             # PM bundle (issues + meetings + chat)
+devboy onboard --profile oncall         # diagnostics + notifications
+devboy onboard --agent kimi --yes       # explicit agent + non-interactive
+devboy agents list                      # show all detected agents with score
+```
+
+Three profiles ship today; categories below cover the full catalogue.
+
+| Category | Skills |
+|----------|--------|
+| `self-bootstrap` | `devboy-setup`, `devboy-repair`, `devboy-tools-catalog`, `devboy-pipeline-tune` |
+| `issue-tracking` | `devboy-get-issues`, `devboy-create-issue`, `devboy-update-issue`, `devboy-link-issues`, `devboy-solve-issue` |
+| `code-review` | `devboy-review-mr`, `devboy-fix-review-comments`, `devboy-self-review` |
+| `self-feedback` | `devboy-run-and-verify`, `devboy-daily-report`, `devboy-retro`, `devboy-knowledge-extract`, `devboy-qa-sweep`, `analyze-usage` |
+| `meeting-notes` | `devboy-meeting-search`, `devboy-meeting-transcript`, `devboy-meeting-to-tasks` |
+| `messenger` | `devboy-chat-search`, `devboy-chat-summary`, `devboy-notify` |
+
+Skill installs keep a per-location manifest with SHA-256s so upgrades leave user-modified files alone ([ADR-014](docs/architecture/adr/ADR-014-skills-lifecycle.md)). Self-feedback skills read session traces from `.devboy/sessions/` ([ADR-015](docs/architecture/adr/ADR-015-skills-session-traces.md)).
+
+**`analyze-usage`** is a featured skill that ships in two parts: a thin baseline (one Markdown file, embedded in the binary) plus a heavier Python backend (`~1 MB`, sparse-checked-out via curl on first use). It produces graphic monthly / weekly digests of how your AI sessions actually went — biome aquariums, 8-archetype bars, DORA radar, friction markers — plus shareable anonymised parquet bundles. See [`./.claude/skills/analyze-usage/`](./.claude/skills/analyze-usage/).
+
+---
+
+## Three integration modes
+
+The same tool set, three transports — pick what your workflow already uses.
 
 | Mode | When to use | Example |
 |------|-------------|---------|
 | **MCP server** | Claude Desktop, Claude Code, any MCP-compatible client | `devboy mcp` (stdio) |
-| **CLI** | Humans, CI jobs, shell scripts | `devboy issues`, `devboy mrs` |
-| **Agent skills** | Agents that don't want the full MCP tool-list tax — call just the tools a skill needs | `devboy tools call get_issues` from a skill script |
+| **CLI** | Humans at the terminal, CI jobs, shell scripts | `devboy issues`, `devboy mrs`, `devboy tools call get_issues '{"limit": 20}'` |
+| **Agent skills** | Agents that don't want the full MCP tool-list tax — call only the tools a skill needs | `devboy tools call get_issues` from inside a skill script |
 
-The same tools, the same pipeline, three ways to reach them. Start with one mode and layer on the others as your workflow grows.
+> **JSON arguments tip.** `devboy tools call <name>` takes an optional positional JSON string (defaults to `{}`). POSIX shells: wrap in single quotes. Windows `cmd.exe`/PowerShell: escape inner quotes — `devboy tools call get_issues "{\"limit\": 20}"`.
 
-> **Note on JSON arguments.** `devboy tools call <name>` takes an optional positional JSON string (defaults to `{}`). On POSIX shells wrap it in single quotes: `devboy tools call get_issues '{"limit": 20}'`. On Windows `cmd.exe` / PowerShell escape the inner quotes instead: `devboy tools call get_issues "{\"limit\": 20}"`.
-
-## Skills — procedural recipes shipped with the tools
-
-`devboy-tools` ships a catalogue of **skills** — one-page Markdown recipes that tell an AI agent how to use the tool bundle to accomplish a common task. Every skill is CLI-first (it calls `devboy tools call <name>`), agent-agnostic (installable into Claude Code / Codex / Cursor / Kimi or a vendor-neutral path), and versioned with the binary.
+### Claude Code
 
 The fastest way to get started is `devboy onboard` — it auto-detects which AI agent you actively use (by scanning `~/.claude/`, `~/.copilot/`, `~/.codex/`, `~/.kimi/`, Cursor's storage, `~/.gemini/`, `~/.gemini/antigravity/`) and installs a curated skill bundle for that agent:
 
@@ -38,327 +144,166 @@ devboy agents list                          # show all detected agents with sess
 If you'd rather pick skills by hand:
 
 ```bash
-devboy skills list                          # see the shipped catalogue
-devboy skills install --all --agent all     # install every skill into every detected agent
-devboy skills install devboy-review-mr      # repo-local by default
-devboy skills upgrade                       # refresh every installed skill after `devboy upgrade`
-```
-
-| Category | Example skills |
-|----------|---------------|
-| `self-bootstrap` | `devboy-setup`, `devboy-repair`, `devboy-tools-catalog` |
-| `issue-tracking` | `devboy-get-issues`, `devboy-create-issue`, `devboy-update-issue`, `devboy-link-issues`, `devboy-solve-issue` |
-| `code-review` | `devboy-review-mr`, `devboy-fix-review-comments`, `devboy-self-review` |
-| `self-feedback` | `devboy-run-and-verify`, `devboy-daily-report`, `devboy-retro`, `devboy-knowledge-extract`, `analyze-usage` |
-| `meeting-notes` | `devboy-meeting-search`, `devboy-meeting-transcript`, `devboy-meeting-to-tasks` |
-| `messenger` | `devboy-chat-search`, `devboy-chat-summary`, `devboy-notify` |
-
-The design lives in `docs/architecture/adr/ADR-012-skills-subsystem.md`; the user guide is at `docs/guide/skills/`. Skill installs keep a per-location manifest with SHA256s so upgrades leave user-modified files alone (ADR-014), and the self-feedback category reads session traces written to `.devboy/sessions/` in the format defined by ADR-015.
-
-### Featured skill: `analyze-usage` (split: thin baseline + fat backend)
-
-`analyze-usage` is the first skill that ships in **two parts**:
-
-1. **Thin baseline** at [`skills/03-self-feedback/analyze-usage/SKILL.md`](./skills/03-self-feedback/analyze-usage/SKILL.md) — installs through the standard catalogue (`devboy skills install analyze-usage`). Single markdown file, embedded in the binary. Tells the agent *what* to do.
-2. **Fat backend** at [`./.claude/skills/analyze-usage/`](./.claude/skills/analyze-usage/) — Python pipeline (`bin/analyze-usage`, `lib/`, `scripts/`, parquet outputs). The agent fetches it on first use via curl-pipe-bash, no full clone:
-
-   ```bash
-   curl -sSL https://raw.githubusercontent.com/meteora-pro/devboy-tools/main/.claude/skills/analyze-usage/scripts/install.sh | bash
-   ```
-
-This pattern keeps the `devboy` binary small (no embedded Python code), lets the backend evolve independently of the binary release cadence, and still gives users a one-command install via the standard catalogue:
-
-```bash
-devboy skills install analyze-usage --agent claude   # baseline
-# (the SKILL.md instructs the agent to curl-install the backend on first run)
-```
-
-Once installed, the skill auto-activates on triggers like *"weekly digest"*, *"DORA"*, *"когда сессия стала китом"*, *"drill into session 2c052d83"*. Or run the CLI directly:
-
-```bash
-~/.claude/skills/analyze-usage/bin/analyze-usage period \
-    --from 2026-04-01 --to 2026-04-30 --format html --open
-```
-
-It produces a graphic monthly/weekly digest (terminal / markdown / html) with biome aquariums (🐋🦈🐬🐟🦐🦠), 8-archetype bars, rhythm, stack palette, DORA radar (CFR + lead time + pushes), friction markers; plus per-session parquet bundles (`outputs/raw/`, `outputs/anon/`, `outputs/llm/`) for further analysis.
-
-- Backend readme: [`./.claude/skills/analyze-usage/README.md`](./.claude/skills/analyze-usage/README.md)
-- Concept glossary (biome, archetype, rhythm, stack, DORA, friction, scaling laws): [`./.claude/skills/analyze-usage/GLOSSARY.md`](./.claude/skills/analyze-usage/GLOSSARY.md)
-- Architecture reference (extractors, library API, anonymization contract): [`./.claude/skills/analyze-usage/SKILL.md`](./.claude/skills/analyze-usage/SKILL.md)
-- Baseline skill (what `devboy skills install` ships): [`./skills/03-self-feedback/analyze-usage/SKILL.md`](./skills/03-self-feedback/analyze-usage/SKILL.md)
-
-## Why DevBoy?
-
-| | Others | DevBoy |
-|-|--------|--------|
-| **Privacy** | Cloud-based credentials | Local OS keychain + env vars for CI |
-| **Focus** | All projects at once | Context-based project isolation |
-| **Context** | Static tool descriptions | Dynamic per-project prompts |
-| **Efficiency** | Default API responses | LLM-optimized pipeline — **~5–20% token savings** on real workloads (higher on large list/diff responses, lower on simple calls). Measured against our own production traffic and benchmarks — no cherry-picked numbers. |
-| **Tools** | Generic aggregators | Purpose-built for dev workflows |
-| **Extensibility** | Monolithic | Plugin system (Rust, WASM, TypeScript) |
-| **Consumption** | MCP only | MCP **or** CLI **or** agent skills — same tool bundle |
-
-## Architecture
-
-### Contexts (Multi-Project)
-
-One server supports multiple project contexts with instant switching:
-
-```
-┌─────────────────────────────────────┐
-│           DevBoy MCP Server         │
-├─────────────────────────────────────┤
-│  Context: devboy-tools              │
-│    └── GitHub: meteora-pro/devboy   │
-│  Context: dashboard                 │
-│    ├── GitLab: project #42          │
-│    └── ClickUp: list abc123         │
-└─────────────────────────────────────┘
-```
-
-Switch contexts via CLI (`devboy context use <name>`) or MCP tools (`use_context`).
-
-### Crate Architecture
-
-```
-crates/
-├── devboy-core/          # Traits (Provider, ToolEnricher), types, config
-├── devboy-executor/      # Tool execution engine + enrichment pipeline
-├── devboy-mcp/           # MCP server (JSON-RPC over stdio)
-├── devboy-cli/           # CLI binary
-├── devboy-storage/       # Credential storage (keychain, env vars)
-└── plugins/
-    ├── api/              # Provider integrations
-    │   ├── gitlab/       # Client + GitLabSchemaEnricher
-    │   ├── github/       # Client + GitHubSchemaEnricher
-    │   ├── clickup/      # Client + ClickUpSchemaEnricher + metadata
-    │   └── jira/         # Client + JiraSchemaEnricher + metadata
-    └── pipeline/         # Output formatting (markdown, truncation)
-```
-
-### Executor & Enricher Pipeline
-
-The `devboy-executor` crate separates tool execution from transport (MCP, HTTP, NAPI).
-Each provider crate includes a schema enricher that dynamically adapts tool schemas:
-
-```
-Tool call → Executor
-  1. Enrichers transform args (cf_story_points → customFields)
-  2. Provider factory creates client from ProviderConfig
-  3. Provider executes API calls → typed ToolOutput
-  4. Pipeline formats output → text (markdown/compact/json)
-```
-
-Three enricher categories, same `ToolEnricher` trait:
-- **Provider enrichers** — adapt schemas per provider (remove unsupported params, add custom field `cf_*` params, populate enums from metadata)
-- **Pipeline enrichers** — add output control params (e.g., `format` enum)
-- **Custom enrichers** — third-party plugins
-
-### Plugin System
-
-Tools are dynamic based on project configuration:
-
-```
-plugins/
-├── api/           # Provider integrations (client + enricher per provider)
-│   ├── gitlab/
-│   ├── github/
-│   ├── clickup/
-│   └── jira/
-└── pipeline/      # Data processing
-    ├── pagination/
-    ├── truncation/
-    └── enrichment/
-```
-
-## Installation
-
-### From npm (Recommended)
-
-```bash
-npm install -g @devboy-tools/cli
-# or
-pnpm add -g @devboy-tools/cli
-```
-
-The correct binary for your platform is installed automatically. Global install makes the `devboy` command available system-wide.
-
-### From source
-
-```bash
-git clone https://github.com/meteora-pro/devboy-tools.git
-cd devboy-tools
-cargo build --release
-```
-
-### From releases
-
-Download binary from [Releases](https://github.com/meteora-pro/devboy-tools/releases).
-
-## Quick start
-
-### 1. Configure Provider
-
-```bash
-# GitHub
-./target/release/devboy config set github.owner <owner>
-./target/release/devboy config set github.repo <repo>
-./target/release/devboy config set-secret github.token <token>
-
-# GitLab
-./target/release/devboy config set gitlab.url https://gitlab.example.com
-./target/release/devboy config set gitlab.project_id <project-id>
-./target/release/devboy config set-secret gitlab.token <token>
-
-# ClickUp
-./target/release/devboy config set clickup.list_id <list-id>
-./target/release/devboy config set clickup.team_id <team-id>  # recommended for custom task IDs
-./target/release/devboy config set-secret clickup.token <token>
-```
-
-Tokens are stored securely in OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service).
-
-### Alternative: Environment Variables (CI/CD)
-
-For CI/CD pipelines and containerized environments where keychain is unavailable, use environment variables:
-
-```bash
-# With DEVBOY_ prefix (recommended)
-export DEVBOY_GITHUB_TOKEN=ghp_xxx
-export DEVBOY_GITLAB_TOKEN=glpat-xxx
-export DEVBOY_CLICKUP_TOKEN=pk_xxx
-export DEVBOY_JIRA_TOKEN=xxx
-
-# Or without prefix (compatible with other tools)
-export GITHUB_TOKEN=ghp_xxx
-export GITLAB_TOKEN=glpat-xxx
-```
-
-**Credential Resolution Order:**
-1. Environment variables (`DEVBOY_{PROVIDER}_TOKEN`, then `{PROVIDER}_TOKEN`)
-2. OS Keychain
-
-This allows seamless use in GitHub Actions, GitLab CI, Docker, and cloud workspaces.
-
-### 2. Verify Connection
-
-```bash
-./target/release/devboy test github
-```
-
-### 3. Test MCP Server
-
-```bash
-./scripts/test-mcp.sh
-```
-
-## Integration with AI Assistants
-
-### Claude Code (CLI)
-
-```bash
-claude mcp add devboy -- /path/to/devboy-tools/target/release/devboy mcp
-```
-
-Verify:
-```bash
+claude mcp add devboy -- devboy mcp
 claude mcp list
 ```
 
 ### Claude Desktop
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+`~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
-{
-  "mcpServers": {
-    "devboy": {
-      "command": "/path/to/devboy-tools/target/release/devboy",
-      "args": ["mcp"]
-    }
-  }
-}
+{ "mcpServers": { "devboy": { "command": "devboy", "args": ["mcp"] } } }
 ```
 
-## CLI Commands
+For Codex / Cursor / Kimi / Copilot CLI / Gemini CLI / Antigravity — `devboy onboard` autoconfigures the MCP entry; or follow the agent's docs for adding a stdio MCP server pointing at `devboy mcp`.
 
-```bash
-devboy --help                           # Show all commands
-devboy config list                      # Show current configuration
-devboy config path                      # Show config file location
-devboy config set <key> <value>         # Set config value
-devboy config set-secret <key> <value>  # Store secret in keychain
-devboy config get <key>                 # Get config value
-devboy context list                     # List contexts, show active
-devboy context use <name>               # Switch active context
-devboy issues                           # List issues
-devboy mrs                              # List merge requests
-devboy test <provider>                  # Test provider connection
-devboy doctor                           # Run all diagnostic checks
-devboy doctor --list-checks             # List available doctor check IDs
-devboy doctor --checks <checks...>      # Run only selected checks
-devboy doctor --format json             # Emit JSON output
-devboy mcp                              # Start MCP server (stdio)
-devboy tools                            # Interactive tool management (TUI)
-devboy tools list                       # List tools with enabled/disabled status
-devboy tools disable <names...>         # Disable specific built-in tools
-devboy tools enable <names...>          # Re-enable specific tools
-devboy tools reset                      # Reset all filtering
-devboy tools call <name> [args]         # Call a built-in tool directly
-devboy tools docs --output FILE         # Auto-generate the tool reference (Markdown / JSON)
-devboy docs cli   --output FILE         # Auto-generate this CLI reference from the live `clap` definition
+---
+
+## Providers
+
+Six provider plugins ship today — each with a dedicated client + schema enricher so the tool list adapts to your project's actual fields (custom fields, enum values, status taxonomies):
+
+| Provider | Crate | What you get |
+|----------|-------|--------------|
+| **GitHub** | [`devboy-github`](crates/plugins/api/github/) | Issues, pull requests, comments, branches, repos |
+| **GitLab** | [`devboy-gitlab`](crates/plugins/api/gitlab/) | Issues, merge requests, discussions, pipelines, MR diffs |
+| **Jira** | [`devboy-jira`](crates/plugins/api/jira/) | Issues with custom-field metadata, sprints, transitions |
+| **ClickUp** | [`devboy-clickup`](crates/plugins/api/clickup/) | Tasks, custom fields, lists, custom task IDs |
+| **Slack** | [`devboy-slack`](crates/plugins/api/slack/) | Chat search, channel summary, post message |
+| **Fireflies** | [`devboy-fireflies`](crates/plugins/api/fireflies/) | Meeting transcripts, search, action items |
+
+Adding a provider is a Rust crate implementing `Provider` + a `ToolEnricher` ([ADR-007](docs/architecture/adr/ADR-007-plugin-architecture.md)).
+
+---
+
+## Research
+
+Every non-trivial optimisation in the pipeline is backed by a paper grounded in a real corpus — 523 Claude Code sessions, 10,644 MCP responses from production traffic. The full [`docs/research/INDEX.md`](docs/research/INDEX.md) tracks methods, datasets, and reproducibility scripts.
+
+| # | Paper | Status | Headline result |
+|---|-------|--------|-----------------|
+| [1](docs/research/paper-1-trimtree.md) | TrimTree: priority-driven pagination — binary knapsack within a token budget, `p₁` metric | draft (820-line full draft, all experiments complete) | **3.3× p₁** vs uniform on power-law data; FIFO baseline 35% **replicated across 3 corpora**; KV-cache pass on Sonnet 4.5 ≈ **40% input-side savings** (66.5% hit rate) |
+| [2](docs/research/paper-2-mckp-format-adaptive.md) | Format-adaptive tree encoding — multi-choice knapsack picking CSV / table / key:value per subtree | draft | Per-call savings on the corpus: **avg 69% on `get_issues`** (top 92%), **avg 26% on `*_pipeline`**; ≥ 20% bucket hits 1.25% of all events but most calls of the shape-friendly endpoints |
+| 3 ([theory](docs/research/paper-3-context-enrichment.md) · [implementation](docs/research/paper-3-tool-aware-enrichment.md)) | Context Enrichment Hypothesis + tool-aware knapsack with provider value models | draft (prefetch dispatcher merged in v0.22; production telemetry pending) | **Pearson r = −0.280** between `chars_per_item` and follow-up enrichment calls; thin issues (< 200 chars/item) → **43%** of turns add a `get_issue`; rich (1.5 k–4 k) → **2%** |
+| [4](docs/research/paper-4-notebook-parquet.md) | Dataset-as-context — large responses become queryable Parquet artefacts the LLM pulls from | draft (early concept, no measurements yet) | Hypothesised **60–80% additional** savings on top of TrimTree; evaluation harness not yet built |
+
+Other corpus baselines used across papers (the 523 Claude Code sessions / 10,644 MCP-response sample, paper 1 §B):
+
+- `get_merge_request_diffs`: P90 = 35 k chars ≈ 10 k tokens — **28%** of responses exceed an 8 k-token budget
+- `get_epics`: P90 = 43 k chars ≈ 12 k tokens — 37% exceed budget
+- After overflow, agents always produce a text response on the next turn — they **never** retry / paginate (paper 1 §3, paper-1-trimtree.md:30 and §C)
+
+Paper 3's prefetch dispatcher already runs in the format pipeline; papers 1 and 2 land in the next minor version. Paper 4 is at concept stage — no production code yet.
+
+---
+
+## Architecture
+
+<details>
+<summary><b>Crate layout</b></summary>
+
+```
+crates/
+├── devboy-core/        Traits (Provider, ToolEnricher), shared types, config
+├── devboy-executor/    Tool execution engine + enrichment pipeline
+├── devboy-mcp/         MCP server (JSON-RPC over stdio)
+├── devboy-cli/         CLI binary (`devboy`)
+├── devboy-skills/      Skill catalogue, install/upgrade, manifests, traces
+├── devboy-storage/     Credential storage (keychain, env vars)
+├── devboy-assets/      File attachments (ADR-010)
+└── plugins/
+    ├── api/            { github, gitlab, jira, clickup, slack, fireflies }
+    └── format-pipeline The token-aware output pipeline (papers 1, 2, 3)
 ```
 
-The full, always-up-to-date listing lives in
-[`docs/guide/reference/cli.md`](docs/guide/reference/cli.md) — refreshed
-automatically by `devboy docs cli` and gated in CI.
+</details>
 
-### Doctor command
+<details>
+<summary><b>Multi-project contexts</b></summary>
 
-```bash
-# Run the full diagnostic suite
-devboy doctor
+One server, many contexts. Each context is its own provider config bundle:
 
-# List all available checks
-devboy doctor --list-checks
-
-# Run a subset of checks (comma-delimited or repeated --checks flags)
-devboy doctor --checks config.exists,config.valid_toml
-
-# Machine-readable output for CI or scripts
-devboy doctor --format json
-devboy doctor --format json --checks providers.github
 ```
+┌─ DevBoy MCP / CLI ────────────────┐
+│  context: devboy-tools             │
+│    ├── GitHub: meteora-pro/devboy  │
+│    └── Slack: #devboy              │
+│  context: dashboard                │
+│    ├── GitLab: project #42         │
+│    ├── ClickUp: list abc123        │
+│    └── Jira: DEV                   │
+└────────────────────────────────────┘
+```
+
+Switch with `devboy context use <name>` (CLI) or the `use_context` tool (MCP). No respawn — the active session re-reads the new bindings on the next call.
+
+</details>
+
+<details>
+<summary><b>Executor + enricher pipeline</b></summary>
+
+```
+Tool call → Executor
+  1. Enrichers transform args   (e.g. cf_story_points → customFields)
+  2. Provider factory builds the client from ProviderConfig
+  3. Provider executes API calls → typed ToolOutput
+  4. Format pipeline encodes output → text (markdown / compact / json)
+```
+
+Three enricher categories, single `ToolEnricher` trait:
+
+- **Provider enrichers** — adapt schemas per provider (drop unsupported params, surface custom-field params, populate enums from project metadata).
+- **Pipeline enrichers** — add output-control parameters (`format` enum, pagination knobs).
+- **Custom enrichers** — third-party plugins.
+
+Architecture details: [executor](docs/guide/architecture/executor.md), [enrichers](docs/guide/architecture/enrichers.md), [format pipeline](docs/guide/architecture/format-pipeline.md).
+
+</details>
+
+---
+
+## Documentation map
+
+- **Getting started** — [`docs/guide/getting-started/`](docs/guide/getting-started/)
+- **CLI reference** (auto-generated) — [`docs/guide/reference/cli.md`](docs/guide/reference/cli.md)
+- **Tool reference** (auto-generated) — [`docs/guide/reference/tools.md`](docs/guide/reference/tools.md)
+- **Skills user guide** — [`docs/guide/skills/`](docs/guide/skills/)
+- **Configuration** (env vars, contexts, doctor, proxy, format pipeline) — [`docs/guide/configuration/`](docs/guide/configuration/)
+- **Architecture** — [`docs/guide/architecture/`](docs/guide/architecture/)
+- **ADRs** — [`docs/architecture/adr/INDEX.md`](docs/architecture/adr/INDEX.md) (17 decisions logged)
+- **Research papers** — [`docs/research/INDEX.md`](docs/research/INDEX.md)
+
+---
 
 ## Development
 
 ```bash
-# Build
-cargo build
-
-# Run tests
-cargo test
-
-# Lint
-cargo clippy
-
-# Build release
-cargo build --release
+cargo build                        # debug build
+cargo test                         # runs the workspace test suite
+cargo clippy --all-targets         # lint (CI uses RUSTFLAGS=-Dwarnings)
+cargo fmt --all                    # format
+cargo run -p devboy-cli -- doctor  # smoke
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+The CLI reference is gated in CI: after touching `clap` definitions, run
 
-## Related projects
+```bash
+cargo run -p devboy-cli -- docs cli --output docs/guide/reference/cli.md
+```
 
-- [devboy-tools-agent-usage](https://github.com/meteora-pro/devboy-tools-agent-usage) — CLI tool for analyzing AI agent usage (Claude Code): cost, time, tasks, focus. Reads JSONL logs and provides token/cost breakdowns, task grouping by git branch, tool call categories, and session timeline visualization.
+so the committed reference matches the binary. Same idea for `devboy tools docs` and the tool reference.
 
-## Coverage report
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide (commit conventions, branch naming, ADR workflow, release process).
 
-[![Codecov](https://codecov.io/gh/meteora-pro/devboy-tools/branch/main/graph/badge.svg)](https://codecov.io/gh/meteora-pro/devboy-tools)
+---
 
-Detailed coverage reports are available on [Codecov](https://codecov.io/gh/meteora-pro/devboy-tools).
+## Community
+
+- **Issues / feature requests** — [GitHub Issues](https://github.com/meteora-pro/devboy-tools/issues)
+- **Design discussions** — [GitHub Discussions](https://github.com/meteora-pro/devboy-tools/discussions)
+- **Code review tooling** — open a PR; CI runs `Format`, `Clippy`, `Test` on macOS / Linux / Windows, `Coverage`, and the docs drift gate
 
 ## License
 
-[Apache License 2.0](LICENSE)
+[Apache License 2.0](LICENSE) — use it, modify it, ship it; if you build something interesting on top, we'd love a heads-up via Discussions.
