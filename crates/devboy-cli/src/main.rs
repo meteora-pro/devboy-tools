@@ -1,6 +1,8 @@
 //! DevBoy CLI - Command-line interface for devboy-tools.
 
+mod agents_cmd;
 mod doctor;
+mod onboard_cmd;
 mod skills_cmd;
 mod update_check;
 mod upgrade;
@@ -278,6 +280,15 @@ enum Commands {
         #[command(subcommand)]
         command: SkillsCommands,
     },
+
+    /// Inspect AI coding agents installed on this machine
+    Agents {
+        #[command(subcommand)]
+        command: agents_cmd::AgentsCommands,
+    },
+
+    /// First-run setup: detect your AI agent and install the right skills bundle
+    Onboard(onboard_cmd::OnboardArgs),
 
     /// Write to a skill's self-feedback session trace (ADR-015)
     Trace {
@@ -933,6 +944,14 @@ async fn main() -> Result<()> {
 
             Some(Commands::Skills { command }) => {
                 skills_cmd::handle(command).await?;
+            }
+
+            Some(Commands::Agents { command }) => {
+                agents_cmd::handle(command)?;
+            }
+
+            Some(Commands::Onboard(args)) => {
+                onboard_cmd::handle(args).await?;
             }
 
             Some(Commands::Trace { command }) => {

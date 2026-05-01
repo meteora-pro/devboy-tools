@@ -25,6 +25,18 @@ The same tools, the same pipeline, three ways to reach them. Start with one mode
 
 `devboy-tools` ships a catalogue of **skills** — one-page Markdown recipes that tell an AI agent how to use the tool bundle to accomplish a common task. Every skill is CLI-first (it calls `devboy tools call <name>`), agent-agnostic (installable into Claude Code / Codex / Cursor / Kimi or a vendor-neutral path), and versioned with the binary.
 
+The fastest way to get started is `devboy onboard` — it auto-detects which AI agent you actively use (by scanning `~/.claude/`, `~/.copilot/`, `~/.codex/`, `~/.kimi/`, Cursor's storage, `~/.gemini/`, `~/.gemini/antigravity/`) and installs a curated skill bundle for that agent:
+
+```bash
+devboy onboard                              # detect primary agent, install the `dev` bundle
+devboy onboard --profile pm                 # PM bundle (issue tracking + meetings + messenger)
+devboy onboard --profile oncall             # on-call bundle (diagnostics + notifications)
+devboy onboard --agent kimi --yes           # explicit agent + non-interactive (CI / dotfiles)
+devboy agents list                          # show all detected agents with sessions / last-used / score
+```
+
+If you'd rather pick skills by hand:
+
 ```bash
 devboy skills list                          # see the shipped catalogue
 devboy skills install --all --agent all     # install every skill into every detected agent

@@ -1,0 +1,30 @@
+# Bundle: dev
+#
+# Default onboarding bundle for software engineers using `devboy` day-to-day.
+# Covers self-bootstrap, self-feedback, code review, and issue tracking.
+
+name = "dev"
+description = "Default bundle for engineers — bootstrap, self-feedback, code review, issue tracking."
+
+skills = [
+    # 00-self-bootstrap
+    "devboy-setup",
+    "devboy-tools-catalog",
+    "devboy-repair",
+
+    # 03-self-feedback
+    "devboy-run-and-verify",
+    "devboy-daily-report",
+    "devboy-retro",
+    "analyze-usage",
+
+    # 02-code-review
+    "devboy-review-mr",
+    "devboy-self-review",
+    "devboy-fix-review-comments",
+
+    # 01-issue-tracking
+    "devboy-get-issues",
+    "devboy-create-issue",
+    "devboy-update-issue",
+]
