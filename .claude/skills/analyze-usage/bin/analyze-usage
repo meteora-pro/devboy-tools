@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# analyze-usage — standalone CLI wrapper for the analyze-usage skill.
+#
+# Subcommands:
+#   period    — graphic monthly/weekly digest (text/markdown/html)
+#   pipeline  — run all 10 extractors → outputs/raw + outputs/anon
+#   session   — drill-down view of one session by sid prefix
+#   audit     — verify outputs/anon/ has no leaks
+#   patterns  — heuristic flags (needs_split, ghost_session, …)
+#   report    — markdown summary from existing parquet
+#   test      — run all unit + smoke tests
+#
+# Usage:
+#   analyze-usage period --from 2026-02-01 --to 2026-04-30 --period both --format html --open
+#   analyze-usage pipeline --since 2026-04-01
+#   analyze-usage session 2c052d83
+#   analyze-usage audit
+#   analyze-usage --help
+
+set -e
+
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPTS="$SKILL_DIR/scripts"
+TESTS="$SKILL_DIR/tests"
+
+usage() {
+    cat <<EOF
+analyze-usage — Claude Code usage analytics (skill standalone CLI)
+
+USAGE:
+    analyze-usage <command> [args...]
+
+COMMANDS:
+    period       Graphic monthly/weekly digest (text/markdown/html/all)
+    pipeline     Run all 10 extractors, write parquet to outputs/raw + outputs/anon
+    session SID  Drill-down view of one session by uuid prefix
+    audit        Verify outputs/anon/ has no raw-identifier leaks
+    patterns     Heuristic flags from parquet (needs_split, ghost_session, …)
+    report       Markdown summary from existing parquet → outputs/reports/<date>.md
+    llm-queue    Tier 2 — enqueue Whale/Shark/Dolphin sessions for narrative
+                 summarisation by the agent (writes outputs/llm/_queue.jsonl)
+    test         Run all unit + smoke tests
+
+EXAMPLES:
+    analyze-usage period --from 2026-02-01 --to 2026-04-30 --period both
+    analyze-usage period --from 2026-04-23 --to 2026-04-30 --format html --open
+    analyze-usage period --from 2026-02-01 --to 2026-04-30 --format all --out-dir /tmp/q1
+
+    analyze-usage pipeline                  # full corpus, all extractors
+    analyze-usage pipeline --since 2026-04-01
+
+    analyze-usage session 2c052d83
+    analyze-usage audit
+    analyze-usage patterns
+    analyze-usage test
+
+ENV:
+    CLAUDE_PROJECTS_ROOT    Override default ~/.claude/projects/ location
+
+Run any subcommand with --help for full args.
+EOF
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+    period)
+        exec uv run --quiet "$SCRIPTS/period_report.py" "$@"
+        ;;
+    pipeline)
+        exec uv run --quiet "$SCRIPTS/pipeline.py" "$@"
+        ;;
+    session|view|drill)
+        exec uv run --quiet "$SCRIPTS/view_session.py" "$@"
+        ;;
+    audit)
+        exec uv run --quiet "$SCRIPTS/pattern_detector.py" --audit-anon "$@"
+        ;;
+    patterns)
+        exec uv run --quiet "$SCRIPTS/pattern_detector.py" "$@"
+        ;;
+    report)
+        exec uv run --quiet "$SCRIPTS/report_generator.py" "$@"
+        ;;
+    llm-queue)
+        exec uv run --quiet "$SCRIPTS/extract_llm_session_names.py" "$@"
+        ;;
+    test)
+        exec bash "$TESTS/run_all.sh" "$@"
+        ;;
+    -h|--help|help|"")
+        usage
+        ;;
+    *)
+        echo "unknown command: $cmd" >&2
+        echo
+        usage
+        exit 2
+        ;;
+esac

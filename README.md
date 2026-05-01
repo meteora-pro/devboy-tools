@@ -37,11 +37,43 @@ devboy skills upgrade                       # refresh every installed skill afte
 | `self-bootstrap` | `devboy-setup`, `devboy-repair`, `devboy-tools-catalog` |
 | `issue-tracking` | `devboy-get-issues`, `devboy-create-issue`, `devboy-update-issue`, `devboy-link-issues`, `devboy-solve-issue` |
 | `code-review` | `devboy-review-mr`, `devboy-fix-review-comments`, `devboy-self-review` |
-| `self-feedback` | `devboy-run-and-verify`, `devboy-daily-report`, `devboy-retro`, `devboy-knowledge-extract` |
+| `self-feedback` | `devboy-run-and-verify`, `devboy-daily-report`, `devboy-retro`, `devboy-knowledge-extract`, `analyze-usage` |
 | `meeting-notes` | `devboy-meeting-search`, `devboy-meeting-transcript`, `devboy-meeting-to-tasks` |
 | `messenger` | `devboy-chat-search`, `devboy-chat-summary`, `devboy-notify` |
 
 The design lives in `docs/architecture/adr/ADR-012-skills-subsystem.md`; the user guide is at `docs/guide/skills/`. Skill installs keep a per-location manifest with SHA256s so upgrades leave user-modified files alone (ADR-014), and the self-feedback category reads session traces written to `.devboy/sessions/` in the format defined by ADR-015.
+
+### Featured skill: `analyze-usage` (split: thin baseline + fat backend)
+
+`analyze-usage` is the first skill that ships in **two parts**:
+
+1. **Thin baseline** at [`skills/03-self-feedback/analyze-usage/SKILL.md`](./skills/03-self-feedback/analyze-usage/SKILL.md) — installs through the standard catalogue (`devboy skills install analyze-usage`). Single markdown file, embedded in the binary. Tells the agent *what* to do.
+2. **Fat backend** at [`./.claude/skills/analyze-usage/`](./.claude/skills/analyze-usage/) — Python pipeline (`bin/analyze-usage`, `lib/`, `scripts/`, parquet outputs). The agent fetches it on first use via curl-pipe-bash, no full clone:
+
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/meteora-pro/devboy-tools/main/.claude/skills/analyze-usage/scripts/install.sh | bash
+   ```
+
+This pattern keeps the `devboy` binary small (no embedded Python code), lets the backend evolve independently of the binary release cadence, and still gives users a one-command install via the standard catalogue:
+
+```bash
+devboy skills install analyze-usage --agent claude   # baseline
+# (the SKILL.md instructs the agent to curl-install the backend on first run)
+```
+
+Once installed, the skill auto-activates on triggers like *"weekly digest"*, *"DORA"*, *"когда сессия стала китом"*, *"drill into session 2c052d83"*. Or run the CLI directly:
+
+```bash
+~/.claude/skills/analyze-usage/bin/analyze-usage period \
+    --from 2026-04-01 --to 2026-04-30 --format html --open
+```
+
+It produces a graphic monthly/weekly digest (terminal / markdown / html) with biome aquariums (🐋🦈🐬🐟🦐🦠), 8-archetype bars, rhythm, stack palette, DORA radar (CFR + lead time + pushes), friction markers; plus per-session parquet bundles (`outputs/raw/`, `outputs/anon/`, `outputs/llm/`) for further analysis.
+
+- Backend readme: [`./.claude/skills/analyze-usage/README.md`](./.claude/skills/analyze-usage/README.md)
+- Concept glossary (biome, archetype, rhythm, stack, DORA, friction, scaling laws): [`./.claude/skills/analyze-usage/GLOSSARY.md`](./.claude/skills/analyze-usage/GLOSSARY.md)
+- Architecture reference (extractors, library API, anonymization contract): [`./.claude/skills/analyze-usage/SKILL.md`](./.claude/skills/analyze-usage/SKILL.md)
+- Baseline skill (what `devboy skills install` ships): [`./skills/03-self-feedback/analyze-usage/SKILL.md`](./skills/03-self-feedback/analyze-usage/SKILL.md)
 
 ## Why DevBoy?
 
