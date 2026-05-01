@@ -94,3 +94,123 @@ pub(super) fn dir_nonempty(p: &Path) -> bool {
         .map(|mut it| it.next().is_some())
         .unwrap_or(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::SystemTime;
+    use tempfile::tempdir;
+
+    #[test]
+    fn to_utc_handles_unix_epoch() {
+        let utc = to_utc(SystemTime::UNIX_EPOCH).unwrap();
+        assert_eq!(utc.timestamp(), 0);
+    }
+
+    #[test]
+    fn to_utc_handles_now_without_panic() {
+        assert!(to_utc(SystemTime::now()).is_some());
+    }
+
+    #[test]
+    fn count_subdirs_zero_for_empty_dir() {
+        let dir = tempdir().unwrap();
+        assert_eq!(count_subdirs(dir.path()), 0);
+    }
+
+    #[test]
+    fn count_subdirs_zero_for_missing_dir() {
+        let dir = tempdir().unwrap();
+        assert_eq!(count_subdirs(&dir.path().join("does-not-exist")), 0);
+    }
+
+    #[test]
+    fn count_subdirs_counts_only_directories() {
+        let dir = tempdir().unwrap();
+        for name in ["a", "b", "c"] {
+            fs::create_dir_all(dir.path().join(name)).unwrap();
+        }
+        fs::write(dir.path().join("file.txt"), b"x").unwrap();
+        fs::write(dir.path().join("README"), b"x").unwrap();
+        assert_eq!(count_subdirs(dir.path()), 3);
+    }
+
+    #[test]
+    fn dir_nonempty_returns_false_for_missing_dir() {
+        let dir = tempdir().unwrap();
+        assert!(!dir_nonempty(&dir.path().join("does-not-exist")));
+    }
+
+    #[test]
+    fn dir_nonempty_returns_false_for_empty_dir() {
+        let dir = tempdir().unwrap();
+        assert!(!dir_nonempty(dir.path()));
+    }
+
+    #[test]
+    fn dir_nonempty_returns_true_when_any_entry_exists() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("anything"), b"").unwrap();
+        assert!(dir_nonempty(dir.path()));
+    }
+
+    #[test]
+    fn walk_files_returns_empty_for_missing_root() {
+        let dir = tempdir().unwrap();
+        let result = walk_files(&dir.path().join("nope"), |_| true, 100);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn walk_files_finds_matching_files_recursively() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("a/b")).unwrap();
+        fs::write(dir.path().join("top.jsonl"), b"").unwrap();
+        fs::write(dir.path().join("a/middle.jsonl"), b"").unwrap();
+        fs::write(dir.path().join("a/b/deep.jsonl"), b"").unwrap();
+        fs::write(dir.path().join("a/skip.txt"), b"").unwrap();
+
+        let result = walk_files(
+            dir.path(),
+            |p| p.extension().is_some_and(|e| e == "jsonl"),
+            100,
+        );
+        assert_eq!(result.len(), 3);
+        assert!(result.iter().all(|p| p.extension().unwrap() == "jsonl"));
+    }
+
+    #[test]
+    fn walk_files_respects_max_entries_cap() {
+        let dir = tempdir().unwrap();
+        for i in 0..10 {
+            fs::write(dir.path().join(format!("f{i}.jsonl")), b"").unwrap();
+        }
+        assert_eq!(walk_files(dir.path(), |_| true, 3).len(), 3);
+    }
+
+    #[test]
+    fn max_mtime_returns_none_for_missing_dir() {
+        let dir = tempdir().unwrap();
+        assert!(max_mtime_in(&dir.path().join("nope"), |_| true).is_none());
+    }
+
+    #[test]
+    fn max_mtime_returns_none_when_no_match() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("a.txt"), b"").unwrap();
+        assert!(
+            max_mtime_in(dir.path(), |p| p.extension().is_some_and(|e| e == "jsonl")).is_none()
+        );
+    }
+
+    #[test]
+    fn max_mtime_picks_latest_match() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("a.jsonl"), b"").unwrap();
+        fs::write(dir.path().join("b.jsonl"), b"").unwrap();
+        fs::write(dir.path().join("c.txt"), b"").unwrap();
+        assert!(
+            max_mtime_in(dir.path(), |p| p.extension().is_some_and(|e| e == "jsonl")).is_some()
+        );
+    }
+}
