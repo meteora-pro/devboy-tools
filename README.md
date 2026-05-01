@@ -6,7 +6,7 @@
 [![npm](https://img.shields.io/npm/v/@devboy-tools/cli)](https://www.npmjs.com/package/@devboy-tools/cli)
 [![Ask Zread](https://img.shields.io/badge/Ask_Zread-_.svg?style=flat&color=00b0aa&labelColor=000000)](https://zread.ai/meteora-pro/devboy-tools)
 
-**A research-driven tool bundle for AI coding agents.** A single curated set of dev-workflow tools (GitHub, GitLab, Jira, ClickUp, Slack, Fireflies) reachable from any agent — Claude Code, Copilot CLI, Codex, Cursor, Kimi, Gemini, … — through three transports: **MCP server**, **CLI**, or **installable agent skills**. Output goes through a token-aware pipeline that, on real production traffic, cuts response size by 5–20%.
+**A research-driven tool bundle for AI coding agents.** A single curated set of dev-workflow tools (GitHub, GitLab, Jira, ClickUp, Slack, Fireflies) reachable from any agent — Claude Code, Copilot CLI, Codex, Cursor, Kimi, Gemini, … — through three transports: **MCP server**, **CLI**, or **installable agent skills**. Output goes through a token-aware pipeline that compresses responses by **26–69% per call** on the data-shape-friendly endpoints it targets (issues, pipelines, large lists) — see [paper 2 measurements](docs/research/paper-2-mckp-format-adaptive.md) on a 144k-event production corpus.
 
 ```bash
 npm install -g @devboy-tools/cli   # binary for your platform
@@ -28,7 +28,7 @@ DevBoy isn't another aggregator with a long tool list. Four things that aren't s
 
 | | Generic MCP aggregator | DevBoy |
 |-|------------------------|--------|
-| **Output efficiency** | Default API JSON | Knapsack-based pagination + format-adaptive encoding (papers 1, 2) — typically 5–20% token savings |
+| **Output efficiency** | Default API JSON | Knapsack-based pagination + format-adaptive encoding ([papers 1, 2](docs/research/INDEX.md)) — measured per-call savings on the 144k-event corpus: 69% avg on `get_issues`, 92% top per call, 26% avg on `*_pipeline`. KV-cache pass on Sonnet 4.5 lifts ~40% of tokens off the input side. |
 | **Tool catalogue** | Static | Dynamic per-project, with provider enrichers (custom field params, enum hints) |
 | **Transport** | MCP only | MCP, CLI, or agent skills — same tools |
 | **Onboarding** | Manual config + per-agent install | `devboy onboard` autodetects and bundles |
