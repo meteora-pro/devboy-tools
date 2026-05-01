@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     md.append("")
 
     out_path = Path(args.out) if args.out else (reports_dir / f"{date.today().isoformat()}.md")
-    out_path.write_text("\n".join(md))
+    out_path.write_text("\n".join(md), encoding="utf-8")
     print(f"report → {out_path}", file=sys.stderr)
     return 0
 

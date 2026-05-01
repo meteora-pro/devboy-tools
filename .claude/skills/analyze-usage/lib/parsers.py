@@ -25,13 +25,13 @@ DEFAULT_ROOT = Path(os.environ.get("CLAUDE_PROJECTS_ROOT", str(Path.home() / ".c
 
 
 def find_session_files(root: Path | None = None) -> list[Path]:
-    if root is None:
-        root = Path(os.environ.get("CLAUDE_PROJECTS_ROOT", str(DEFAULT_ROOT)))
     """Return all main-session jsonl files (top-level under each project dir).
 
     Subagent jsonls live one level deeper (in `<sid>/subagents/`) and are
     excluded here. Use `find_subagents()` for those.
     """
+    if root is None:
+        root = Path(os.environ.get("CLAUDE_PROJECTS_ROOT", str(DEFAULT_ROOT)))
     if not root.exists():
         return []
     out: list[Path] = []

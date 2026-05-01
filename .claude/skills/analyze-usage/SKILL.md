@@ -58,9 +58,9 @@ outputs/
 
 ## Tier model
 
-- **Tier 0 — tests**: `tests/run_all.sh` runs 22 unit + smoke tests
-  (classifiers, stats, full extractor pipeline on a synthetic fixture).
-  Run before shipping a new extractor.
+- **Tier 0 — tests**: `tests/run_all.sh` runs 28 unit + smoke tests
+  (classifiers, stats, full extractor pipeline on a synthetic fixture,
+  anonymization leak audit). Run before shipping a new extractor.
 - **Tier 1 — always-on (no API key)**: pure Python extractors using regex
   and statistics. Lives in `scripts/extract_*.py`. Reuses `lib/` helpers.
 - **Tier 2 — agent-side LLM**: when the skill is active, the agent itself
@@ -105,9 +105,11 @@ The pipeline expects `~/.claude/projects/*.jsonl` to be present. Override
 the location by setting `CLAUDE_PROJECTS_ROOT=/some/dir/projects` (used by
 the smoke tests; useful for sandboxed runs on someone else's logs).
 
-If `/tmp/claude_analysis/sessions.parquet` already exists from
-`research-pipeline`, the skill reuses it; otherwise it parses jsonl
-directly.
+The current extractors parse the jsonl logs directly — they do not
+reuse `/tmp/claude_analysis/sessions.parquet` from `research-pipeline`.
+A future extractor can short-circuit by reading that parquet if it
+exists, but until that lands, every extractor walks `~/.claude/projects/`
+on each run.
 
 ## Available extractors
 
@@ -201,7 +203,7 @@ To add a new metric `foo`:
 4. Add a row to the `Available extractors` table above.
 5. Add an assertion in `tests/test_extractors_smoke.py` checking the new
    schema + at least one value on the synthetic fixture.
-6. Run `bash tests/run_all.sh` — must stay 22+/22+ green.
+6. Run `bash tests/run_all.sh` — must stay 28+/28+ green.
 
 Do not assume only humans extend this — the agent itself adds extractors
 when the user asks "what about <new angle>" and the existing tables don't

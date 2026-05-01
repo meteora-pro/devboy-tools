@@ -73,10 +73,23 @@ def main(argv: list[str] | None = None) -> int:
     queue_path.write_text("\n".join(json.dumps(q, ensure_ascii=False) for q in queue))
     print(f"queue: {len(queue)} sessions → {queue_path}", file=sys.stderr)
 
-    # Stub the parquet so consumers know it exists (empty until agent fills)
+    # Stub the parquet so consumers know it exists (empty until agent fills).
+    # Pin the schema so consumers querying column names get a stable answer
+    # even before any rows are written.
     if not (llm / "session_names.parquet").exists():
+        import pyarrow as pa
         from lib.io import write_parquet
-        write_parquet([], llm / "session_names.parquet")
+        schema = pa.schema([
+            pa.field("sid", pa.string()),
+            pa.field("project", pa.string()),
+            pa.field("name", pa.string()),
+            pa.field("summary", pa.string()),
+            pa.field("phases", pa.list_(pa.string())),
+            pa.field("pivots", pa.int64()),
+            pa.field("generator", pa.string()),
+            pa.field("generated_at", pa.string()),
+        ])
+        write_parquet([], llm / "session_names.parquet", schema=schema)
         print(f"  empty stub → {llm}/session_names.parquet", file=sys.stderr)
 
     print(
