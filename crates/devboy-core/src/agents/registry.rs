@@ -93,6 +93,15 @@ mod tests {
     }
 
     #[test]
+    fn detect_all_runs_against_real_home_without_panicking() {
+        // Smoke: detect_all() reads `dirs::home_dir()`. On a CI runner
+        // that has no home (very unusual) it returns empty; on a normal
+        // machine it returns the seven detector snapshots. Either is fine.
+        let snaps = detect_all();
+        assert!(snaps.is_empty() || snaps.len() == 7);
+    }
+
+    #[test]
     fn snapshots_sorted_by_score_descending() {
         // Build a synthetic Claude install — many sessions, recent mtime.
         // Should rank highest among the seven on this synthetic home.

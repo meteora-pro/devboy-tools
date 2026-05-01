@@ -61,4 +61,53 @@ mod tests {
         let b = load("dev").unwrap();
         assert!(b.skills.contains(&"analyze-usage".to_string()));
     }
+
+    #[test]
+    fn each_profile_has_unique_skill_ids() {
+        for p in PROFILES {
+            let b = load(p).unwrap();
+            let mut deduped = b.skills.clone();
+            deduped.sort();
+            deduped.dedup();
+            assert_eq!(
+                deduped.len(),
+                b.skills.len(),
+                "profile '{p}' has duplicate skills"
+            );
+        }
+    }
+
+    #[test]
+    fn each_profile_starts_with_self_bootstrap() {
+        for p in PROFILES {
+            let b = load(p).unwrap();
+            assert!(
+                b.skills.iter().any(|s| s == "devboy-setup"),
+                "profile '{p}' missing devboy-setup"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_profile_error_lists_known_profiles() {
+        let err = load("ceo").unwrap_err().to_string();
+        for p in PROFILES {
+            assert!(
+                err.contains(p),
+                "error message missing profile '{p}': {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn pm_profile_emphasises_meeting_skills() {
+        let b = load("pm").unwrap();
+        assert!(b.skills.iter().any(|s| s.starts_with("devboy-meeting")));
+    }
+
+    #[test]
+    fn oncall_profile_includes_notify() {
+        let b = load("oncall").unwrap();
+        assert!(b.skills.iter().any(|s| s == "devboy-notify"));
+    }
 }

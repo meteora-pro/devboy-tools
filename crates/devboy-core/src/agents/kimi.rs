@@ -139,4 +139,23 @@ mod tests {
         assert_eq!(snap.status, InstallStatus::Yes);
         assert_eq!(snap.sessions, Some(3));
     }
+
+    #[test]
+    fn no_kimi_dir_means_not_installed() {
+        let home = tempdir().unwrap();
+        let snap = KimiDetector.detect(home.path());
+        if which::which("kimi").is_err() {
+            assert_eq!(snap.status, InstallStatus::No);
+            assert!(snap.sessions.is_none());
+        }
+    }
+
+    #[test]
+    fn kimi_dir_without_sessions_still_reports_install() {
+        let home = tempdir().unwrap();
+        fs::create_dir_all(home.path().join(".kimi")).unwrap();
+        let snap = KimiDetector.detect(home.path());
+        assert_eq!(snap.status, InstallStatus::Yes);
+        assert!(snap.sessions.is_none());
+    }
 }

@@ -125,4 +125,36 @@ mod tests {
         assert_eq!(snap.sessions, Some(4));
         assert!(snap.last_used.is_some());
     }
+
+    #[test]
+    fn claude_dir_without_projects_subdir_still_reports_install() {
+        let home = tempdir().unwrap();
+        fs::create_dir_all(home.path().join(".claude")).unwrap();
+        let snap = ClaudeDetector.detect(home.path());
+        assert_eq!(snap.status, InstallStatus::Yes);
+        assert!(snap.sessions.is_none());
+        assert!(snap.last_used.is_none());
+    }
+
+    #[test]
+    fn empty_projects_dir_yields_no_sessions() {
+        let home = tempdir().unwrap();
+        fs::create_dir_all(home.path().join(".claude/projects")).unwrap();
+        let snap = ClaudeDetector.detect(home.path());
+        assert_eq!(snap.status, InstallStatus::Yes);
+        assert!(snap.sessions.is_none());
+    }
+
+    #[test]
+    fn ignores_non_jsonl_files_inside_project_dir() {
+        let home = tempdir().unwrap();
+        let proj = home.path().join(".claude/projects/-x-y");
+        fs::create_dir_all(&proj).unwrap();
+        fs::write(proj.join("session.jsonl"), b"{}\n").unwrap();
+        fs::write(proj.join("README.md"), b"x").unwrap();
+        fs::write(proj.join("data.json"), b"{}").unwrap();
+
+        let snap = ClaudeDetector.detect(home.path());
+        assert_eq!(snap.sessions, Some(1));
+    }
 }

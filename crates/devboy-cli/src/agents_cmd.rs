@@ -210,8 +210,6 @@ mod tests {
 
     #[test]
     fn render_json_emits_primary_and_agents_keys() {
-        // Build a snapshot vector that exercises both an "installed" and a
-        // "not installed" entry.
         let snaps = vec![AgentSnapshot {
             id: "claude",
             display_name: "Claude Code",
@@ -221,10 +219,79 @@ mod tests {
             score: 0.9,
             paths_checked: vec!["/tmp/a".into()],
         }];
+        assert!(render_json(&snaps).is_ok());
+    }
 
-        // We can't easily capture stdout, but at least make sure the
-        // function does not panic on a typical input.
-        let result = render_json(&snaps);
-        assert!(result.is_ok());
+    #[test]
+    fn render_json_handles_empty_snapshot_list() {
+        assert!(render_json(&[]).is_ok());
+    }
+
+    #[test]
+    fn render_table_handles_empty_snapshot_list() {
+        // Smoke — must not panic.
+        render_table(&[]);
+    }
+
+    #[test]
+    fn render_table_handles_typical_machine() {
+        // Mix of statuses, present/absent sessions, present/absent last_used.
+        render_table(&[
+            AgentSnapshot {
+                id: "claude",
+                display_name: "Claude Code",
+                status: InstallStatus::Yes,
+                sessions: Some(100),
+                last_used: Some(at(2026, 5, 1, 12, 0)),
+                score: 0.9,
+                paths_checked: vec![],
+            },
+            AgentSnapshot {
+                id: "codex",
+                display_name: "Codex CLI",
+                status: InstallStatus::Yes,
+                sessions: None,
+                last_used: None,
+                score: 0.0,
+                paths_checked: vec![],
+            },
+            AgentSnapshot {
+                id: "gemini",
+                display_name: "Gemini CLI",
+                status: InstallStatus::No,
+                sessions: None,
+                last_used: None,
+                score: 0.0,
+                paths_checked: vec![],
+            },
+            AgentSnapshot {
+                id: "x",
+                display_name: "X",
+                status: InstallStatus::Unknown,
+                sessions: None,
+                last_used: None,
+                score: 0.0,
+                paths_checked: vec![],
+            },
+        ]);
+    }
+
+    #[test]
+    fn handle_dispatches_table_and_json_without_panicking() {
+        // The handler reads $HOME via `detect_all()`. On the test machine
+        // either zero or seven snapshots come back; both are valid here.
+        // We just need the function to not panic and to return Ok.
+        assert!(
+            handle(AgentsCommands::List {
+                format: AgentsListFormat::Table,
+            })
+            .is_ok()
+        );
+        assert!(
+            handle(AgentsCommands::List {
+                format: AgentsListFormat::Json,
+            })
+            .is_ok()
+        );
     }
 }
