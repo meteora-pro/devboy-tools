@@ -124,4 +124,55 @@ mod tests {
         assert_eq!(snap.sessions, Some(3));
         assert_eq!(snap.last_used.unwrap().timestamp(), 1700000030);
     }
+
+    #[test]
+    fn no_codex_dir_means_not_installed() {
+        let home = tempdir().unwrap();
+        let snap = CodexDetector.detect(home.path());
+        if which::which("codex").is_err() {
+            assert_eq!(snap.status, InstallStatus::No);
+            assert!(snap.sessions.is_none());
+            assert!(snap.last_used.is_none());
+        }
+    }
+
+    #[test]
+    fn empty_history_file_means_zero_sessions() {
+        let home = tempdir().unwrap();
+        let codex = home.path().join(".codex");
+        fs::create_dir_all(&codex).unwrap();
+        fs::write(codex.join("history.jsonl"), b"").unwrap();
+        let snap = CodexDetector.detect(home.path());
+        assert_eq!(snap.status, InstallStatus::Yes);
+        assert!(snap.sessions.is_none());
+        assert!(snap.last_used.is_none());
+    }
+
+    #[test]
+    fn malformed_json_lines_are_skipped() {
+        let home = tempdir().unwrap();
+        let codex = home.path().join(".codex");
+        fs::create_dir_all(&codex).unwrap();
+        let body = "\
+not json at all
+{\"session_id\":\"X\",\"ts\":1700000000,\"text\":\"valid\"}
+{this is also broken}
+";
+        fs::write(codex.join("history.jsonl"), body).unwrap();
+        let snap = CodexDetector.detect(home.path());
+        assert_eq!(snap.sessions, Some(1));
+        assert_eq!(snap.last_used.unwrap().timestamp(), 1700000000);
+    }
+
+    #[test]
+    fn missing_history_file_yields_no_session_data_but_install_yes() {
+        let home = tempdir().unwrap();
+        let codex = home.path().join(".codex");
+        fs::create_dir_all(&codex).unwrap();
+        // No history.jsonl present.
+        let snap = CodexDetector.detect(home.path());
+        assert_eq!(snap.status, InstallStatus::Yes);
+        assert!(snap.sessions.is_none());
+        assert!(snap.last_used.is_none());
+    }
 }

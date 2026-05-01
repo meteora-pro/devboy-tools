@@ -104,4 +104,23 @@ mod tests {
         let snap = AntigravityDetector.detect(home.path());
         assert_eq!(snap.status, InstallStatus::No);
     }
+
+    #[test]
+    fn antigravity_empty_present_dir_means_not_installed() {
+        let home = tempdir().unwrap();
+        fs::create_dir_all(home.path().join(".gemini/antigravity")).unwrap();
+        let snap = AntigravityDetector.detect(home.path());
+        assert_eq!(snap.status, InstallStatus::No);
+    }
+
+    #[test]
+    fn antigravity_dir_with_only_marker_file_still_installed_no_sessions() {
+        let home = tempdir().unwrap();
+        let dir = home.path().join(".gemini/antigravity");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("installation_id"), b"abc").unwrap();
+        let snap = AntigravityDetector.detect(home.path());
+        assert_eq!(snap.status, InstallStatus::Yes);
+        assert!(snap.sessions.is_none());
+    }
 }

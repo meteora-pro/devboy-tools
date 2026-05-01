@@ -64,15 +64,7 @@ pub async fn handle(args: OnboardArgs) -> Result<()> {
         return Ok(());
     }
 
-    let skills_agent = match chosen.id {
-        "claude" => Some(Agent::Claude),
-        "codex" => Some(Agent::Codex),
-        "cursor" => Some(Agent::Cursor),
-        "kimi" => Some(Agent::Kimi),
-        _ => None,
-    };
-
-    let Some(agent) = skills_agent else {
+    let Some(agent) = agent_id_to_skills_agent(chosen.id) else {
         println!(
             "⚠ install target for '{}' is not implemented yet.",
             chosen.id
@@ -126,21 +118,27 @@ fn pick_agent<'a>(args: &OnboardArgs, snapshots: &'a [AgentSnapshot]) -> Result<
 
 fn print_agent_table(snapshots: &[AgentSnapshot], chosen_id: &str) {
     for s in snapshots {
-        let glyph = match s.status {
-            InstallStatus::Yes => "✓",
-            InstallStatus::No => "✗",
-            InstallStatus::Unknown => "?",
-        };
-        let marker = if s.id == chosen_id { " ← chosen" } else { "" };
-        let sessions = s
-            .sessions
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "-".into());
-        println!(
-            "  {} {:<14} {:<22} sessions={:>5}  score={:.3}{}",
-            glyph, s.id, s.display_name, sessions, s.score, marker
-        );
+        println!("{}", agent_table_row(s, chosen_id));
     }
+}
+
+/// Pure function used by `print_agent_table` — renders one row. Extracted
+/// so the formatting can be unit-tested without capturing stdout.
+fn agent_table_row(s: &AgentSnapshot, chosen_id: &str) -> String {
+    let glyph = match s.status {
+        InstallStatus::Yes => "✓",
+        InstallStatus::No => "✗",
+        InstallStatus::Unknown => "?",
+    };
+    let marker = if s.id == chosen_id { " ← chosen" } else { "" };
+    let sessions = s
+        .sessions
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "-".into());
+    format!(
+        "  {} {:<14} {:<22} sessions={:>5}  score={:.3}{}",
+        glyph, s.id, s.display_name, sessions, s.score, marker
+    )
 }
 
 fn confirm(args: &OnboardArgs) -> Result<bool> {
@@ -158,6 +156,41 @@ fn confirm(args: &OnboardArgs) -> Result<bool> {
     io::stdin().read_line(&mut buf)?;
     let answer = buf.trim().to_lowercase();
     Ok(answer.is_empty() || answer == "y" || answer == "yes")
+}
+
+/// Map a detector id (`AgentDetector::id()`) onto the install target that
+/// the `devboy_skills` crate knows how to write to. Returns `None` for
+/// agents whose install support is not yet implemented (Copilot, Gemini,
+/// Antigravity).
+fn agent_id_to_skills_agent(id: &str) -> Option<Agent> {
+    match id {
+        "claude" => Some(Agent::Claude),
+        "codex" => Some(Agent::Codex),
+        "cursor" => Some(Agent::Cursor),
+        "kimi" => Some(Agent::Kimi),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct InstallSummary {
+    installed: u32,
+    unchanged: u32,
+    upgraded: u32,
+    skipped: u32,
+}
+
+fn summarise_outcomes(report: &devboy_skills::InstallReport) -> InstallSummary {
+    let mut s = InstallSummary::default();
+    for outcome in report.outcomes.values() {
+        match outcome {
+            InstallOutcome::Installed | InstallOutcome::OverwrittenWithForce => s.installed += 1,
+            InstallOutcome::Unchanged => s.unchanged += 1,
+            InstallOutcome::Upgraded { .. } => s.upgraded += 1,
+            InstallOutcome::SkippedUserModified | InstallOutcome::SkippedUnknown => s.skipped += 1,
+        }
+    }
+    s
 }
 
 async fn install_bundle(agent: Agent, skill_names: &[String], dry_run: bool) -> Result<()> {
@@ -206,24 +239,14 @@ async fn install_bundle(agent: Agent, skill_names: &[String], dry_run: bool) -> 
         let report = install_skills_to_target(target, &skills, &history, &options)
             .with_context(|| format!("install failed for target {}", target.label))?;
 
-        let mut installed = 0;
-        let mut unchanged = 0;
-        let mut upgraded = 0;
-        let mut skipped = 0;
-        for outcome in report.outcomes.values() {
-            match outcome {
-                InstallOutcome::Installed => installed += 1,
-                InstallOutcome::Unchanged => unchanged += 1,
-                InstallOutcome::Upgraded { .. } => upgraded += 1,
-                InstallOutcome::SkippedUserModified | InstallOutcome::SkippedUnknown => {
-                    skipped += 1
-                }
-                InstallOutcome::OverwrittenWithForce => installed += 1,
-            }
-        }
+        let s = summarise_outcomes(&report);
         println!(
-            "  ✓ installed={installed} unchanged={unchanged} upgraded={upgraded} skipped={skipped}{}",
-            if dry_run { "  (dry-run)" } else { "" }
+            "  ✓ installed={i} unchanged={u} upgraded={up} skipped={sk}{tag}",
+            i = s.installed,
+            u = s.unchanged,
+            up = s.upgraded,
+            sk = s.skipped,
+            tag = if dry_run { "  (dry-run)" } else { "" }
         );
     }
 
@@ -341,5 +364,146 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("no supported agents detected"));
         assert!(!msg.contains("top candidates"));
+    }
+
+    #[test]
+    fn agent_id_mapping_covers_supported_install_targets() {
+        assert!(matches!(
+            agent_id_to_skills_agent("claude"),
+            Some(Agent::Claude)
+        ));
+        assert!(matches!(
+            agent_id_to_skills_agent("codex"),
+            Some(Agent::Codex)
+        ));
+        assert!(matches!(
+            agent_id_to_skills_agent("cursor"),
+            Some(Agent::Cursor)
+        ));
+        assert!(matches!(
+            agent_id_to_skills_agent("kimi"),
+            Some(Agent::Kimi)
+        ));
+    }
+
+    #[test]
+    fn agent_id_mapping_returns_none_for_unsupported_agents() {
+        assert!(agent_id_to_skills_agent("copilot").is_none());
+        assert!(agent_id_to_skills_agent("gemini").is_none());
+        assert!(agent_id_to_skills_agent("antigravity").is_none());
+        assert!(agent_id_to_skills_agent("unknown").is_none());
+    }
+
+    #[test]
+    fn summarise_outcomes_buckets_each_variant() {
+        use devboy_skills::{InstallOutcome, InstallReport};
+
+        let mut report = InstallReport::default();
+        report
+            .outcomes
+            .insert("a".to_string(), InstallOutcome::Installed);
+        report
+            .outcomes
+            .insert("b".to_string(), InstallOutcome::Unchanged);
+        report.outcomes.insert(
+            "c".to_string(),
+            InstallOutcome::Upgraded { from_version: None },
+        );
+        report
+            .outcomes
+            .insert("d".to_string(), InstallOutcome::SkippedUserModified);
+        report
+            .outcomes
+            .insert("e".to_string(), InstallOutcome::SkippedUnknown);
+        report
+            .outcomes
+            .insert("f".to_string(), InstallOutcome::OverwrittenWithForce);
+
+        let s = summarise_outcomes(&report);
+        // Installed + OverwrittenWithForce both count as installed
+        assert_eq!(s.installed, 2);
+        assert_eq!(s.unchanged, 1);
+        assert_eq!(s.upgraded, 1);
+        assert_eq!(s.skipped, 2);
+    }
+
+    #[test]
+    fn summarise_outcomes_handles_empty_report() {
+        let report = devboy_skills::InstallReport::default();
+        assert_eq!(summarise_outcomes(&report), InstallSummary::default());
+    }
+
+    #[test]
+    fn confirm_returns_true_with_yes_flag() {
+        let mut a = args(None);
+        a.yes = true;
+        a.dry_run = false;
+        assert!(confirm(&a).unwrap());
+    }
+
+    #[test]
+    fn confirm_returns_true_with_dry_run_flag() {
+        let mut a = args(None);
+        a.yes = false;
+        a.dry_run = true;
+        assert!(confirm(&a).unwrap());
+    }
+
+    #[test]
+    fn agent_table_row_marks_chosen_with_arrow() {
+        let s = AgentSnapshot {
+            id: "claude",
+            display_name: "Claude Code",
+            status: InstallStatus::Yes,
+            sessions: Some(42),
+            last_used: None,
+            score: 0.9,
+            paths_checked: vec![],
+        };
+        let row = agent_table_row(&s, "claude");
+        assert!(row.contains("← chosen"));
+        assert!(row.contains("✓"));
+        assert!(row.contains("claude"));
+        assert!(row.contains("42"));
+    }
+
+    #[test]
+    fn agent_table_row_omits_arrow_for_non_chosen() {
+        let s = AgentSnapshot {
+            id: "codex",
+            display_name: "Codex CLI",
+            status: InstallStatus::Yes,
+            sessions: None,
+            last_used: None,
+            score: 0.4,
+            paths_checked: vec![],
+        };
+        let row = agent_table_row(&s, "claude");
+        assert!(!row.contains("← chosen"));
+        assert!(row.contains("-")); // sessions=None rendered as "-"
+    }
+
+    #[test]
+    fn agent_table_row_glyph_per_status() {
+        for (status, expected) in [
+            (InstallStatus::Yes, "✓"),
+            (InstallStatus::No, "✗"),
+            (InstallStatus::Unknown, "?"),
+        ] {
+            let s = AgentSnapshot {
+                id: "x",
+                display_name: "X",
+                status,
+                sessions: None,
+                last_used: None,
+                score: 0.0,
+                paths_checked: vec![],
+            };
+            let row = agent_table_row(&s, "");
+            assert!(
+                row.contains(expected),
+                "row {row:?} missing glyph {expected}"
+            );
+        }
     }
 }

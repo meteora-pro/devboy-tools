@@ -120,16 +120,56 @@ mod tests {
         let home = tempdir().unwrap();
         let state = home.path().join(".copilot/session-state");
         fs::create_dir_all(&state).unwrap();
-        // New format
         fs::create_dir_all(state.join("aaa-new1")).unwrap();
         fs::write(state.join("aaa-new1/events.jsonl"), b"{}\n").unwrap();
         fs::create_dir_all(state.join("bbb-new2")).unwrap();
         fs::write(state.join("bbb-new2/events.jsonl"), b"{}\n").unwrap();
-        // Old format
         fs::write(state.join("ccc-old1.jsonl"), b"{}\n").unwrap();
 
         let snap = CopilotDetector.detect(home.path());
         assert_eq!(snap.status, InstallStatus::Yes);
         assert_eq!(snap.sessions, Some(3));
+    }
+
+    #[test]
+    fn no_copilot_dir_means_not_installed() {
+        let home = tempdir().unwrap();
+        let snap = CopilotDetector.detect(home.path());
+        if which::which("copilot").is_err() {
+            assert_eq!(snap.status, InstallStatus::No);
+            assert!(snap.sessions.is_none());
+        }
+    }
+
+    #[test]
+    fn empty_session_state_dir_yields_no_sessions() {
+        let home = tempdir().unwrap();
+        fs::create_dir_all(home.path().join(".copilot/session-state")).unwrap();
+        let snap = CopilotDetector.detect(home.path());
+        assert_eq!(snap.status, InstallStatus::Yes);
+        assert!(snap.sessions.is_none());
+        assert!(snap.last_used.is_none());
+    }
+
+    #[test]
+    fn ignores_random_non_jsonl_files_and_orphan_dirs() {
+        let home = tempdir().unwrap();
+        let state = home.path().join(".copilot/session-state");
+        fs::create_dir_all(&state).unwrap();
+        fs::write(state.join("readme.txt"), b"hello").unwrap();
+        fs::create_dir_all(state.join("orphan-dir")).unwrap();
+        fs::write(state.join("real.jsonl"), b"{}\n").unwrap();
+
+        let snap = CopilotDetector.detect(home.path());
+        assert_eq!(snap.sessions, Some(1));
+    }
+
+    #[test]
+    fn copilot_dir_alone_without_session_state_still_reports_install() {
+        let home = tempdir().unwrap();
+        fs::create_dir_all(home.path().join(".copilot")).unwrap();
+        let snap = CopilotDetector.detect(home.path());
+        assert_eq!(snap.status, InstallStatus::Yes);
+        assert!(snap.sessions.is_none());
     }
 }

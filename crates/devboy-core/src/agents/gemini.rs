@@ -101,4 +101,22 @@ mod tests {
         assert_eq!(snap.sessions, Some(2));
         assert!(snap.last_used.is_some());
     }
+
+    #[test]
+    fn no_gemini_dir_means_not_installed() {
+        let home = tempdir().unwrap();
+        let snap = GeminiDetector.detect(home.path());
+        if which::which("gemini").is_err() {
+            assert_eq!(snap.status, InstallStatus::No);
+        }
+    }
+
+    #[test]
+    fn gemini_dir_without_history_still_reports_install() {
+        let home = tempdir().unwrap();
+        fs::create_dir_all(home.path().join(".gemini")).unwrap();
+        let snap = GeminiDetector.detect(home.path());
+        assert_eq!(snap.status, InstallStatus::Yes);
+        assert!(snap.sessions.is_none());
+    }
 }
