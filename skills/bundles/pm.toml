@@ -1,0 +1,29 @@
+# Bundle: pm
+#
+# Onboarding bundle for product / project managers and team leads. Skips the
+# code-review surface, focuses on issue tracking, meetings, and messengers.
+
+name = "pm"
+description = "PM / team lead bundle — issue tracking, meeting notes, messengers, bootstrap."
+
+skills = [
+    # 00-self-bootstrap
+    "devboy-setup",
+    "devboy-tools-catalog",
+
+    # 01-issue-tracking
+    "devboy-get-issues",
+    "devboy-create-issue",
+    "devboy-update-issue",
+    "devboy-link-issues",
+
+    # 04-meeting-notes
+    "devboy-meeting-search",
+    "devboy-meeting-transcript",
+    "devboy-meeting-to-tasks",
+
+    # 05-messenger
+    "devboy-chat-search",
+    "devboy-chat-summary",
+    "devboy-notify",
+]

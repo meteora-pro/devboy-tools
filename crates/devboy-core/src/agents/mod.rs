@@ -13,6 +13,7 @@
 //! See ADR-017.
 
 pub mod antigravity;
+pub mod bundles;
 pub mod claude;
 pub mod codex;
 pub mod copilot;

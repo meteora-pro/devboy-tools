@@ -1,0 +1,24 @@
+# Bundle: oncall
+#
+# Minimal bundle for on-call shifts — diagnostics, run-and-verify checks,
+# notification helpers. Stays lean to avoid context bloat during incidents.
+
+name = "oncall"
+description = "On-call bundle — diagnostics, verification, notifications."
+
+skills = [
+    # 00-self-bootstrap
+    "devboy-setup",
+    "devboy-repair",
+
+    # 03-self-feedback
+    "devboy-run-and-verify",
+    "devboy-qa-sweep",
+
+    # 05-messenger
+    "devboy-notify",
+
+    # 01-issue-tracking — keep minimum for filing/linking incidents
+    "devboy-create-issue",
+    "devboy-link-issues",
+]
