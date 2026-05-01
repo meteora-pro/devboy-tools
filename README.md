@@ -43,6 +43,28 @@ devboy skills upgrade                       # refresh every installed skill afte
 
 The design lives in `docs/architecture/adr/ADR-012-skills-subsystem.md`; the user guide is at `docs/guide/skills/`. Skill installs keep a per-location manifest with SHA256s so upgrades leave user-modified files alone (ADR-014), and the self-feedback category reads session traces written to `.devboy/sessions/` in the format defined by ADR-015.
 
+### Repo-local Claude skill: `analyze-usage`
+
+In addition to the shipped catalogue above, this repository ships a **repo-local Claude Code skill** at [`.claude/skills/analyze-usage/`](./.claude/skills/analyze-usage/). It is **not** part of the baseline catalogue (it doesn't install via `devboy skills install`); it lives only here, for analysing your local `~/.claude/projects/*.jsonl` traces.
+
+```bash
+# Run from the repo root, no extra install needed:
+.claude/skills/analyze-usage/bin/analyze-usage period \
+    --from 2026-04-01 --to 2026-04-30 --format html --open
+
+# Or add to PATH for system-wide use:
+export PATH="$PWD/.claude/skills/analyze-usage/bin:$PATH"
+analyze-usage --help
+```
+
+It produces a graphic monthly/weekly digest (terminal / markdown / html) with biome aquariums, archetype bars, DORA radar, friction markers; plus per-session parquet bundles for further analysis.
+
+- Full readme: [`./.claude/skills/analyze-usage/README.md`](./.claude/skills/analyze-usage/README.md)
+- Glossary of concepts (biome, archetype, rhythm, stack, DORA, friction, …): [`./.claude/skills/analyze-usage/GLOSSARY.md`](./.claude/skills/analyze-usage/GLOSSARY.md)
+- Architecture reference (extractors, library API, anonymization contract): [`./.claude/skills/analyze-usage/SKILL.md`](./.claude/skills/analyze-usage/SKILL.md)
+
+When you use Claude Code inside this repo, the skill auto-activates on triggers like *"weekly digest"*, *"DORA"*, *"когда сессия стала китом"*, *"drill into session 2c052d83"*. Use the standalone CLI when you want a report without the agent.
+
 ## Why DevBoy?
 
 | | Others | DevBoy |

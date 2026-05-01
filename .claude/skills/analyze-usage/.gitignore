@@ -1,0 +1,7 @@
+# Generated artefacts — never commit
+outputs/
+
+# Python caches
+__pycache__/
+*.pyc
+.pytest_cache/

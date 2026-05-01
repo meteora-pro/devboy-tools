@@ -21,10 +21,12 @@ from typing import Iterable, Iterator
 
 # ─── Paths ────────────────────────────────────────────────────────────────
 
-DEFAULT_ROOT = Path.home() / ".claude" / "projects"
+DEFAULT_ROOT = Path(os.environ.get("CLAUDE_PROJECTS_ROOT", str(Path.home() / ".claude" / "projects")))
 
 
-def find_session_files(root: Path = DEFAULT_ROOT) -> list[Path]:
+def find_session_files(root: Path | None = None) -> list[Path]:
+    if root is None:
+        root = Path(os.environ.get("CLAUDE_PROJECTS_ROOT", str(DEFAULT_ROOT)))
     """Return all main-session jsonl files (top-level under each project dir).
 
     Subagent jsonls live one level deeper (in `<sid>/subagents/`) and are
@@ -54,12 +56,14 @@ def find_subagents(session_jsonl: Path) -> list[Path]:
     return sorted(sub_dir.glob("agent-*.jsonl"))
 
 
-def project_name_from_path(jsonl: Path, root: Path = DEFAULT_ROOT) -> str:
+def project_name_from_path(jsonl: Path, root: Path | None = None) -> str:
     """Reconstruct the original project path from the encoded directory name.
 
     Claude Code stores `~/projects/foo/bar` as `~/.claude/projects/-foo-bar`
     (slashes replaced with dashes, leading dash for the absolute root).
     """
+    if root is None:
+        root = Path(os.environ.get("CLAUDE_PROJECTS_ROOT", str(DEFAULT_ROOT)))
     proj_dir = jsonl.parent
     while proj_dir.parent != root and proj_dir != root:
         # subagent jsonl is two levels deep; walk up to the project dir
@@ -512,7 +516,7 @@ def load_session(
     since: datetime | None = None,
     until: datetime | None = None,
     include_subagents: bool = True,
-    root: Path = DEFAULT_ROOT,
+    root: Path | None = None,
 ) -> ParsedSession:
     """Parse one main-session jsonl and (optionally) all its subagents."""
     events = list(parse_session(jsonl, since=since, until=until))
