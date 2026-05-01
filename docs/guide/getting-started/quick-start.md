@@ -1,20 +1,38 @@
 # Quick start
 
-This guide will help you get DevBoy tools up and running in minutes.
+Sixty seconds from `npm install` to a working setup with skills wired into your AI agent.
 
-## Step 1: Initialize your project
+## Step 1: Onboard
 
-The fastest way to get started is using the interactive init command:
+After installing the CLI (see [Installation](./)), run:
+
+```bash
+devboy onboard
+```
+
+This auto-detects which AI agent you actively use (Claude Code, Copilot CLI, Codex, Cursor, Kimi, Gemini, …) by scanning the agent's home directory, picks a primary candidate by recency × volume, and installs a curated skill bundle for that agent.
+
+Profiles let you tailor the bundle:
+
+```bash
+devboy onboard                          # default `dev` bundle
+devboy onboard --profile pm             # PM bundle (issues, meetings, messengers)
+devboy onboard --profile oncall         # diagnostics + notifications
+devboy onboard --agent kimi --yes       # explicit agent + non-interactive
+devboy agents list                      # show all detected agents with score
+```
+
+## Step 2: Initialise your project (interactive)
 
 ```bash
 devboy init
 ```
 
-This will guide you through selecting providers and configuring them. For more details, see [Project initialization](./init).
+Walks you through picking providers and pasting tokens — they go straight to the OS keychain. For details see [Project initialization](./init).
 
-### Alternative: Manual configuration
+### Alternative: manual configuration
 
-If you prefer manual setup, follow the steps below.
+If you'd rather configure providers by hand, follow the steps below.
 
 ## Step 2: Choose your provider
 

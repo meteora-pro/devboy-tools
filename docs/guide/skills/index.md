@@ -24,11 +24,30 @@ The baseline catalogue is compiled into the binary and falls into six categories
 | `self-bootstrap` | Configure and repair `devboy-tools` itself. |
 | `issue-tracking` | Fetch, create, update, link, and solve issues across GitHub / GitLab / ClickUp / Jira. |
 | `code-review` | Review a merge request, apply reviewer feedback, dry-run a review pass of your own MR. |
-| `self-feedback` | Run and verify a command, produce a daily report, do a retrospective over the last N days, extract the lesson from a fix. |
+| `self-feedback` | Run and verify a command, produce a daily report, do a retrospective over the last N days, extract the lesson from a fix, fan out parallel QA sub-agents (`devboy-qa-sweep`), analyse your own AI usage (`analyze-usage`). |
 | `meeting-notes` | Search meeting notes, fetch a transcript, turn action items into issues. |
 | `messenger` | Search chat history, summarise a channel over a time window, send a structured notification. |
 
-## Quick start
+## Onboarding (the fast path)
+
+`devboy onboard` is the fastest way to get a curated skill bundle into your AI agent — it auto-detects which agent you actually use and installs a profile-specific bundle. See [Quick start](../getting-started/quick-start) for the full flow.
+
+```bash
+devboy onboard                          # default `dev` bundle
+devboy onboard --profile pm             # PM bundle
+devboy onboard --profile oncall         # on-call bundle
+devboy agents list                      # inspect detected agents
+```
+
+Three profiles ship today:
+
+| Profile | Skills included |
+|---------|-----------------|
+| `dev` (default) | bootstrap + self-feedback (incl. `analyze-usage`) + code-review + issue-tracking — 13 skills |
+| `pm` | bootstrap + issue-tracking + meeting-notes + messenger — 12 skills |
+| `oncall` | bootstrap + run-and-verify / qa-sweep + notify — 7 skills |
+
+## Picking skills by hand
 
 Install the self-bootstrap skills into the current project:
 
@@ -55,6 +74,14 @@ Upgrade previously-installed skills after a `devboy upgrade` — with no argumen
 devboy skills upgrade                       # every installed skill
 devboy skills upgrade devboy-review-mr      # just one
 ```
+
+## Featured skill: `analyze-usage`
+
+`analyze-usage` is the first skill that ships in **two parts**: a thin Markdown baseline embedded in the binary (installs through the standard catalogue) plus a heavier Python backend (~1 MB sparse-checked-out via `curl` on first use). The split keeps the `devboy` binary small and lets the backend evolve independently of the binary release cadence.
+
+It produces graphic monthly / weekly digests of how your AI sessions actually went — biome aquariums (🐋🦈🐬🐟🦐🦠), 8-archetype bars, rhythm, stack palette, DORA radar (CFR + lead time + pushes), friction markers — plus shareable anonymised parquet bundles for further analysis.
+
+See the [backend README](https://github.com/meteora-pro/devboy-tools/blob/main/.claude/skills/analyze-usage/README.md) and [GLOSSARY](https://github.com/meteora-pro/devboy-tools/blob/main/.claude/skills/analyze-usage/GLOSSARY.md) for the full feature set.
 
 ## Where skills go
 
