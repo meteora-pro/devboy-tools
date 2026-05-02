@@ -24,6 +24,7 @@ devboy-github = { path = "../plugins/api/github" }
 devboy-gitlab = { path = "../plugins/api/gitlab" }
 devboy-clickup = { path = "../plugins/api/clickup" }
 devboy-jira = { path = "../plugins/api/jira" }
+devboy-confluence = { path = "../plugins/api/confluence" }
 devboy-fireflies = { path = "../plugins/api/fireflies" }
 devboy-slack = { path = "../plugins/api/slack" }
 devboy-format-pipeline = { path = "../plugins/format-pipeline" }
@@ -38,6 +39,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+futures.workspace = true
 reqwest.workspace = true
 dialoguer = "0.11"
 chrono = "0.4"

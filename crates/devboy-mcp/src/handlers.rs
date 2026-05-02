@@ -43,6 +43,13 @@ pub const KNOWN_BUILTIN_TOOLS: &[&str] = &[
     "get_meeting_notes",
     "get_meeting_transcript",
     "search_meeting_notes",
+    // Knowledge base tools
+    "get_knowledge_base_spaces",
+    "list_knowledge_base_pages",
+    "get_knowledge_base_page",
+    "create_knowledge_base_page",
+    "update_knowledge_base_page",
+    "search_knowledge_base",
     // Messenger tools
     "get_messenger_chats",
     "get_chat_messages",

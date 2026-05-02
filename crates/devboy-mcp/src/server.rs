@@ -39,6 +39,7 @@ pub struct DeferredInit {
 /// MCP server for devboy-tools.
 pub struct McpServer {
     contexts: HashMap<String, Vec<Arc<dyn Provider>>>,
+    knowledge_base_contexts: HashMap<String, Vec<Arc<dyn devboy_core::KnowledgeBaseProvider>>>,
     messenger_contexts: HashMap<String, Vec<Arc<dyn devboy_core::MessengerProvider>>>,
     active_context: RwLock<String>,
     initialized: bool,
@@ -64,10 +65,13 @@ impl McpServer {
     pub fn new() -> Self {
         let mut contexts = HashMap::new();
         contexts.insert("default".to_string(), Vec::new());
+        let mut knowledge_base_contexts = HashMap::new();
+        knowledge_base_contexts.insert("default".to_string(), Vec::new());
         let mut messenger_contexts = HashMap::new();
         messenger_contexts.insert("default".to_string(), Vec::new());
         Self {
             contexts,
+            knowledge_base_contexts,
             messenger_contexts,
             active_context: RwLock::new("default".to_string()),
             initialized: false,
@@ -170,6 +174,25 @@ impl McpServer {
         self.meeting_providers.push(provider);
     }
 
+    pub fn add_knowledge_base_provider(
+        &mut self,
+        provider: Arc<dyn devboy_core::KnowledgeBaseProvider>,
+    ) {
+        self.add_knowledge_base_provider_to_context("default", provider);
+    }
+
+    pub fn add_knowledge_base_provider_to_context(
+        &mut self,
+        context: &str,
+        provider: Arc<dyn devboy_core::KnowledgeBaseProvider>,
+    ) {
+        self.contexts.entry(context.to_string()).or_default();
+        self.knowledge_base_contexts
+            .entry(context.to_string())
+            .or_default()
+            .push(provider);
+    }
+
     pub fn add_messenger_provider(&mut self, provider: Arc<dyn devboy_core::MessengerProvider>) {
         self.add_messenger_provider_to_context("default", provider);
     }
@@ -205,6 +228,9 @@ impl McpServer {
     /// Ensure a named context exists, even if it has no providers.
     pub fn ensure_context(&mut self, context: &str) {
         self.contexts.entry(context.to_string()).or_default();
+        self.knowledge_base_contexts
+            .entry(context.to_string())
+            .or_default();
         self.messenger_contexts
             .entry(context.to_string())
             .or_default();
@@ -246,6 +272,17 @@ impl McpServer {
     pub fn active_providers(&self) -> Vec<Arc<dyn Provider>> {
         let active = self.active_context_name();
         self.contexts.get(&active).cloned().unwrap_or_default()
+    }
+
+    /// Get knowledge base providers in active context.
+    pub fn active_knowledge_base_providers(
+        &self,
+    ) -> Vec<Arc<dyn devboy_core::KnowledgeBaseProvider>> {
+        let active = self.active_context_name();
+        self.knowledge_base_contexts
+            .get(&active)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Get messenger providers in active context.
@@ -451,6 +488,7 @@ impl McpServer {
             .iter()
             .any(|p| IssueProvider::provider_name(p.as_ref()) == "jira");
         let has_meeting_providers = !self.meeting_providers.is_empty();
+        let has_knowledge_base_providers = !self.active_knowledge_base_providers().is_empty();
         let has_messenger_providers = !self.active_messenger_providers().is_empty();
 
         // Pre-compute per-tool asset capability flags.
@@ -477,6 +515,7 @@ impl McpServer {
                     devboy_core::ToolCategory::Epics => has_issue_providers,
                     devboy_core::ToolCategory::GitRepository => has_mr_providers,
                     devboy_core::ToolCategory::MeetingNotes => has_meeting_providers,
+                    devboy_core::ToolCategory::KnowledgeBase => has_knowledge_base_providers,
                     devboy_core::ToolCategory::Messenger => has_messenger_providers,
                     devboy_core::ToolCategory::Releases => has_mr_providers,
                     devboy_core::ToolCategory::JiraStructure => has_jira_provider,
@@ -924,6 +963,7 @@ impl McpServer {
     ///
     /// Routes tool calls to the appropriate provider type based on tool category:
     /// - MeetingNotes -> meeting providers
+    /// - KnowledgeBase -> knowledge base providers
     /// - Messenger -> messenger providers
     /// - Everything else -> standard providers (issues, MRs, pipelines, assets, epics)
     async fn dispatch_builtin_tool(&self, name: &str, arguments: Option<Value>) -> ToolCallResult {
@@ -962,6 +1002,21 @@ impl McpServer {
                 }
                 ToolCallResult::error(format!("No messenger provider supports '{}'", name))
             }
+            Some(devboy_core::ToolCategory::KnowledgeBase) => {
+                for provider in &self.active_knowledge_base_providers() {
+                    match executor
+                        .execute_direct_knowledge_base(name, args.clone(), provider.as_ref())
+                        .await
+                    {
+                        Ok(output) => return output_to_result(output),
+                        Err(e) => {
+                            tracing::debug!("Knowledge base provider failed: {}", e);
+                            continue;
+                        }
+                    }
+                }
+                ToolCallResult::error(format!("No knowledge base provider supports '{}'", name))
+            }
             _ => {
                 // Issues, MRs, Pipelines, Assets, Epics, etc.
                 let providers = self.active_providers();
@@ -991,6 +1046,9 @@ impl McpServer {
             devboy_assets::AssetManager::from_config(devboy_assets::AssetConfig::default())
         {
             executor = executor.with_asset_manager(mgr);
+        }
+        if !self.active_knowledge_base_providers().is_empty() {
+            executor.add_enricher(Box::new(devboy_confluence::ConfluenceSchemaEnricher::new()));
         }
         executor
     }
@@ -1114,8 +1172,9 @@ mod tests {
     use devboy_core::types::ChatType;
     use devboy_core::{
         Comment, CreateCommentInput, CreateIssueInput, Discussion, FileDiff, GetChatsParams,
-        GetMessagesParams, Issue, IssueFilter, IssueProvider, MergeRequest, MergeRequestProvider,
-        MessageAuthor, MessengerChat, MessengerMessage, MessengerProvider, MrFilter,
+        GetMessagesParams, Issue, IssueFilter, IssueProvider, KbPage, KbPageContent, KbSpace,
+        KnowledgeBaseProvider, ListPagesParams, MergeRequest, MergeRequestProvider, MessageAuthor,
+        MessengerChat, MessengerMessage, MessengerProvider, MrFilter, SearchKbParams,
         SearchMessagesParams, SendMessageParams, UpdateIssueInput, User,
     };
 
@@ -1272,6 +1331,101 @@ mod tests {
                 attachments: vec![],
                 is_edited: false,
             })
+        }
+    }
+
+    struct TestKnowledgeBaseProvider;
+
+    #[async_trait]
+    impl KnowledgeBaseProvider for TestKnowledgeBaseProvider {
+        fn provider_name(&self) -> &'static str {
+            "confluence"
+        }
+
+        async fn get_spaces(&self) -> devboy_core::Result<devboy_core::ProviderResult<KbSpace>> {
+            Ok(vec![KbSpace {
+                id: "space-1".to_string(),
+                key: "ENG".to_string(),
+                name: "Engineering".to_string(),
+                space_type: Some("global".to_string()),
+                status: Some("current".to_string()),
+                description: Some("Team docs".to_string()),
+                url: Some("https://wiki.example.com/spaces/ENG".to_string()),
+            }]
+            .into())
+        }
+
+        async fn list_pages(
+            &self,
+            _params: ListPagesParams,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<KbPage>> {
+            Ok(vec![KbPage {
+                id: "42".to_string(),
+                title: "Architecture".to_string(),
+                space_key: Some("ENG".to_string()),
+                url: Some("https://wiki.example.com/pages/42".to_string()),
+                version: Some(3),
+                last_modified: None,
+                author: Some("Alice".to_string()),
+                excerpt: Some("System architecture".to_string()),
+            }]
+            .into())
+        }
+
+        async fn get_page(&self, page_id: &str) -> devboy_core::Result<KbPageContent> {
+            Ok(KbPageContent {
+                page: KbPage {
+                    id: page_id.to_string(),
+                    title: "Architecture".to_string(),
+                    space_key: Some("ENG".to_string()),
+                    url: Some(format!("https://wiki.example.com/pages/{page_id}")),
+                    version: Some(3),
+                    last_modified: None,
+                    author: Some("Alice".to_string()),
+                    excerpt: Some("System architecture".to_string()),
+                },
+                content: "# Architecture".to_string(),
+                content_type: "markdown".to_string(),
+                ancestors: vec![],
+                labels: vec!["docs".to_string()],
+            })
+        }
+
+        async fn create_page(
+            &self,
+            _params: devboy_core::CreatePageParams,
+        ) -> devboy_core::Result<KbPage> {
+            Err(devboy_core::Error::ProviderUnsupported {
+                provider: "confluence".to_string(),
+                operation: "create_page".to_string(),
+            })
+        }
+
+        async fn update_page(
+            &self,
+            _params: devboy_core::UpdatePageParams,
+        ) -> devboy_core::Result<KbPage> {
+            Err(devboy_core::Error::ProviderUnsupported {
+                provider: "confluence".to_string(),
+                operation: "update_page".to_string(),
+            })
+        }
+
+        async fn search(
+            &self,
+            _params: SearchKbParams,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<KbPage>> {
+            Ok(vec![KbPage {
+                id: "42".to_string(),
+                title: "Architecture".to_string(),
+                space_key: Some("ENG".to_string()),
+                url: Some("https://wiki.example.com/pages/42".to_string()),
+                version: Some(3),
+                last_modified: None,
+                author: Some("Alice".to_string()),
+                excerpt: Some("System architecture".to_string()),
+            }]
+            .into())
         }
     }
 
@@ -1900,6 +2054,113 @@ mod tests {
         // Switch to custom context and verify provider is there
         server.set_active_context("custom").unwrap();
         assert_eq!(server.active_providers().len(), 1);
+    }
+
+    #[test]
+    fn test_knowledge_base_tools_are_scoped_to_active_context() {
+        let mut server = McpServer::new();
+        server.ensure_context("wiki-context");
+        server.ensure_context("plain-context");
+        server.add_knowledge_base_provider_to_context(
+            "wiki-context",
+            Arc::new(TestKnowledgeBaseProvider),
+        );
+
+        server.set_active_context("plain-context").unwrap();
+        let plain_result: ToolsListResult = serde_json::from_value(
+            server
+                .handle_tools_list(RequestId::Number(1))
+                .result
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            !plain_result
+                .tools
+                .iter()
+                .any(|tool| tool.name == "get_knowledge_base_spaces")
+        );
+
+        server.set_active_context("wiki-context").unwrap();
+        let wiki_result: ToolsListResult = serde_json::from_value(
+            server
+                .handle_tools_list(RequestId::Number(2))
+                .result
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            wiki_result
+                .tools
+                .iter()
+                .any(|tool| tool.name == "get_knowledge_base_spaces")
+        );
+    }
+
+    #[test]
+    fn test_add_knowledge_base_provider_creates_context_for_activation() {
+        let mut server = McpServer::new();
+        server.add_knowledge_base_provider_to_context(
+            "wiki-only",
+            Arc::new(TestKnowledgeBaseProvider),
+        );
+
+        assert!(server.context_names().contains(&"wiki-only".to_string()));
+        assert!(server.set_active_context("wiki-only").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_tools_call_dispatches_knowledge_base_provider() {
+        let mut server = McpServer::new();
+        server.add_knowledge_base_provider(Arc::new(TestKnowledgeBaseProvider));
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(6),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "get_knowledge_base_spaces",
+                "arguments": {}
+            })),
+        };
+
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none());
+        let result: ToolCallResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+        assert_eq!(result.is_error, None);
+        match &result.content[0] {
+            ToolResultContent::Text { text } => {
+                assert!(text.contains("Knowledge Base Spaces"));
+                assert!(text.contains("Engineering"));
+            }
+        }
+    }
+
+    #[test]
+    fn test_create_executor_registers_kb_enricher_for_active_context() {
+        let mut server = McpServer::new();
+        server.ensure_context("wiki-context");
+        server.ensure_context("plain-context");
+        server.add_knowledge_base_provider_to_context(
+            "wiki-context",
+            Arc::new(TestKnowledgeBaseProvider),
+        );
+
+        server.set_active_context("plain-context").unwrap();
+        let plain_tools = server.create_executor().list_tools();
+        assert!(
+            !plain_tools
+                .iter()
+                .any(|tool| tool.name == "get_knowledge_base_spaces")
+        );
+
+        server.set_active_context("wiki-context").unwrap();
+        let wiki_tools = server.create_executor().list_tools();
+        assert!(
+            wiki_tools
+                .iter()
+                .any(|tool| tool.name == "get_knowledge_base_spaces")
+        );
     }
 
     // =========================================================================

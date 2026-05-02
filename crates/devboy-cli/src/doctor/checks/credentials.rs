@@ -10,6 +10,7 @@ pub struct GitHubTokenCheck;
 pub struct GitLabTokenCheck;
 pub struct ClickUpTokenCheck;
 pub struct JiraTokenCheck;
+pub struct ConfluenceTokenCheck;
 pub struct SlackTokenCheck;
 
 struct CredentialSpec {
@@ -164,6 +165,10 @@ fn slack_configured(context: &ContextConfig) -> bool {
     context.slack.is_some()
 }
 
+fn confluence_configured(context: &ContextConfig) -> bool {
+    context.confluence.is_some()
+}
+
 fn validate_github_token(token: &str) -> TokenFormat {
     let token = token.trim();
     if token.starts_with("ghp_")
@@ -220,6 +225,15 @@ fn validate_slack_token(token: &str) -> TokenFormat {
         TokenFormat::Suspicious("token does not look like a Slack OAuth token")
     } else {
         TokenFormat::Suspicious("token is shorter than a typical Slack bot token")
+    }
+}
+
+fn validate_confluence_credential(token: &str) -> TokenFormat {
+    let token = token.trim();
+    if token.len() >= 12 {
+        TokenFormat::Recognized
+    } else {
+        TokenFormat::Suspicious("credential is shorter than a typical Confluence PAT or password")
     }
 }
 
@@ -388,12 +402,46 @@ impl DiagnosticCheck for SlackTokenCheck {
     }
 }
 
+#[async_trait]
+impl DiagnosticCheck for ConfluenceTokenCheck {
+    fn id(&self) -> &'static str {
+        "credentials.confluence"
+    }
+
+    fn name(&self) -> &'static str {
+        "Confluence credential available"
+    }
+
+    fn category(&self) -> &'static str {
+        "Credentials"
+    }
+
+    async fn run(&self, ctx: &DiagnosticContext) -> CheckResult {
+        let spec = CredentialSpec {
+            provider: "confluence",
+            label: "Confluence",
+            help_key: "confluence.token",
+            format_hint: "Confluence personal access token or password",
+            validator: validate_confluence_credential,
+        };
+
+        let configured = ctx
+            .config
+            .as_ref()
+            .and_then(resolve_active_provider_context)
+            .is_some_and(|active| confluence_configured(&active.config));
+
+        spec.build_result(self, ctx, configured)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::doctor::DiagnosticContext;
     use devboy_core::{
-        ClickUpConfig, Config, ContextConfig, Error, GitHubConfig, GitLabConfig, JiraConfig,
+        ClickUpConfig, Config, ConfluenceConfig, ContextConfig, Error, GitHubConfig, GitLabConfig,
+        JiraConfig,
     };
     use devboy_storage::{CredentialStore, MemoryStore};
     use std::collections::BTreeMap;
@@ -446,6 +494,18 @@ mod tests {
                 owner: "owner".to_string(),
                 repo: "repo".to_string(),
                 base_url: None,
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn confluence_context() -> ContextConfig {
+        ContextConfig {
+            confluence: Some(ConfluenceConfig {
+                base_url: "https://wiki.example.com".to_string(),
+                api_version: Some("v1".to_string()),
+                username: Some("dev@example.com".to_string()),
+                space_key: Some("ENG".to_string()),
             }),
             ..Default::default()
         }
@@ -611,6 +671,42 @@ mod tests {
             result.details.unwrap()["error"],
             "Storage error: credential backend unavailable"
         );
+    }
+
+    #[tokio::test]
+    async fn confluence_token_check_passes_for_present_credential() {
+        let store = Arc::new(MemoryStore::with_credentials([(
+            "contexts.workspace.confluence.token".to_string(),
+            "pat_confluence_secret".to_string(),
+        )]));
+        let ctx = context_with_store(store, confluence_context());
+
+        let result = ConfluenceTokenCheck.run(&ctx).await;
+
+        assert_eq!(result.status, CheckStatus::Pass);
+        assert_eq!(result.details.unwrap()["provider"], "confluence");
+    }
+
+    #[tokio::test]
+    async fn confluence_token_check_skips_when_not_configured() {
+        let ctx = context_with_store(Arc::new(MemoryStore::new()), ContextConfig::default());
+
+        let result = ConfluenceTokenCheck.run(&ctx).await;
+
+        assert_eq!(result.status, CheckStatus::Skipped);
+        assert!(result.message.contains("not configured"));
+    }
+
+    #[test]
+    fn confluence_credential_validator_flags_short_values() {
+        assert!(matches!(
+            validate_confluence_credential("short"),
+            TokenFormat::Suspicious(_)
+        ));
+        assert!(matches!(
+            validate_confluence_credential("pat_confluence_secret"),
+            TokenFormat::Recognized
+        ));
     }
 
     #[test]

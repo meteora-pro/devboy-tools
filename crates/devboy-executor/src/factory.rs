@@ -1,8 +1,11 @@
-use devboy_core::{Error, MeetingNotesProvider, MessengerProvider, Provider, Result, ToolEnricher};
+use devboy_core::{
+    Error, KnowledgeBaseProvider, MeetingNotesProvider, MessengerProvider, Provider, Result,
+    ToolEnricher,
+};
 
 use crate::context::{
-    ClickUpScope, GitHubScope, GitLabScope, JiraScope, ProviderConfig, ProviderMetadata,
-    ProxyConfig, SlackScope,
+    ClickUpScope, ConfluenceAuthConfig, ConfluenceScope, GitHubScope, GitLabScope, JiraScope,
+    ProviderConfig, ProviderMetadata, ProxyConfig, SlackScope,
 };
 
 /// Create a provider instance from a typed `ProviderConfig`.
@@ -107,6 +110,11 @@ pub fn create_provider(
             }),
         },
 
+        ProviderConfig::Confluence { .. } => Err(Error::ProviderUnsupported {
+            provider: "confluence".into(),
+            operation: "Confluence is a KnowledgeBaseProvider, not a Provider. Use create_knowledge_base_provider() instead.".into(),
+        }),
+
         ProviderConfig::Fireflies { .. } => Err(Error::ProviderUnsupported {
             provider: "fireflies".into(),
             operation: "Fireflies is a MeetingNotesProvider, not a Provider. Use create_meeting_notes_provider() instead.".into(),
@@ -120,6 +128,53 @@ pub fn create_provider(
         ProviderConfig::Custom { name, .. } => Err(Error::ProviderNotFound(format!(
             "custom provider '{name}' not yet supported"
         ))),
+    }
+}
+
+/// Create a knowledge base provider from config.
+pub fn create_knowledge_base_provider(
+    config: &ProviderConfig,
+    proxy: Option<&ProxyConfig>,
+) -> Result<Box<dyn KnowledgeBaseProvider>> {
+    match config {
+        ProviderConfig::Confluence {
+            base_url,
+            auth,
+            api_version,
+            scope: ConfluenceScope::Space { .. },
+            ..
+        } => {
+            let client = if let Some(proxy) = proxy {
+                devboy_confluence::ConfluenceClient::new(
+                    &proxy.url,
+                    devboy_confluence::ConfluenceAuth::None,
+                )
+                .with_api_version(api_version.as_deref())
+                .with_proxy(proxy.headers.clone())
+            } else {
+                devboy_confluence::ConfluenceClient::new(base_url, confluence_auth(auth))
+                    .with_api_version(api_version.as_deref())
+            };
+            Ok(Box::new(client))
+        }
+        other => Err(Error::ProviderUnsupported {
+            provider: other.provider_name().into(),
+            operation: "not a knowledge base provider".into(),
+        }),
+    }
+}
+
+/// Create the matching knowledge base enricher for a provider.
+///
+/// Knowledge-base-capable providers use a separate path from the regular
+/// issue/git repository enrichers because they implement
+/// `KnowledgeBaseProvider`, not `Provider`.
+pub fn create_knowledge_base_enricher(config: &ProviderConfig) -> Option<Box<dyn ToolEnricher>> {
+    match config {
+        ProviderConfig::Confluence { .. } => {
+            Some(Box::new(devboy_confluence::ConfluenceSchemaEnricher::new()))
+        }
+        _ => None,
     }
 }
 
@@ -189,6 +244,7 @@ pub fn create_enricher(
                 serde_json::from_value(meta.data.clone()).ok()?;
             Some(Box::new(devboy_jira::JiraSchemaEnricher::new(jira_meta)))
         }
+        ProviderConfig::Confluence { .. } => None,
         ProviderConfig::Fireflies { .. } => {
             Some(Box::new(devboy_fireflies::FirefliesSchemaEnricher))
         }
@@ -197,11 +253,27 @@ pub fn create_enricher(
     }
 }
 
+fn confluence_auth(auth: &ConfluenceAuthConfig) -> devboy_confluence::ConfluenceAuth {
+    match auth {
+        ConfluenceAuthConfig::BearerToken { token } => {
+            devboy_confluence::ConfluenceAuth::BearerToken(token.clone())
+        }
+        ConfluenceAuthConfig::Basic { username, password } => {
+            devboy_confluence::ConfluenceAuth::Basic {
+                username: username.clone(),
+                password: password.clone(),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::context::*;
-    use devboy_core::IssueProvider;
+    use devboy_core::{IssueProvider, KnowledgeBaseProvider};
+    use httpmock::Method::GET;
+    use httpmock::MockServer;
     use std::collections::HashMap;
 
     #[test]
@@ -273,6 +345,96 @@ mod tests {
             IssueProvider::provider_name(provider.unwrap().as_ref()),
             "jira"
         );
+    }
+
+    #[test]
+    fn test_create_confluence_knowledge_base_provider() {
+        let config = ProviderConfig::Confluence {
+            base_url: "https://wiki.example.com".into(),
+            auth: ConfluenceAuthConfig::BearerToken {
+                token: "test-token".into(),
+            },
+            scope: ConfluenceScope::Space {
+                key: Some("ENG".into()),
+            },
+            api_version: Some("v1".into()),
+            extra: HashMap::new(),
+        };
+        let provider = create_knowledge_base_provider(&config, None);
+        assert!(provider.is_ok());
+        assert_eq!(
+            KnowledgeBaseProvider::provider_name(provider.unwrap().as_ref()),
+            "confluence"
+        );
+    }
+
+    #[test]
+    fn test_create_confluence_knowledge_base_enricher() {
+        let config = ProviderConfig::Confluence {
+            base_url: "https://wiki.example.com".into(),
+            auth: ConfluenceAuthConfig::BearerToken {
+                token: "test-token".into(),
+            },
+            scope: ConfluenceScope::Space {
+                key: Some("ENG".into()),
+            },
+            api_version: Some("v1".into()),
+            extra: HashMap::new(),
+        };
+        let enricher = create_knowledge_base_enricher(&config);
+        assert!(enricher.is_some());
+        assert_eq!(
+            enricher.unwrap().supported_categories(),
+            &[devboy_core::ToolCategory::KnowledgeBase]
+        );
+    }
+
+    #[test]
+    fn test_confluence_is_not_regular_provider() {
+        let config = ProviderConfig::Confluence {
+            base_url: "https://wiki.example.com".into(),
+            auth: ConfluenceAuthConfig::BearerToken {
+                token: "test-token".into(),
+            },
+            scope: ConfluenceScope::Space { key: None },
+            api_version: None,
+            extra: HashMap::new(),
+        };
+
+        let result = create_provider(&config, None);
+        assert!(matches!(
+            result,
+            Err(Error::ProviderUnsupported { provider, .. }) if provider == "confluence"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_create_confluence_knowledge_base_provider_honors_api_version() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v2/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"results":[],"start":0,"limit":100,"size":0,"_links":{}}"#);
+        });
+
+        let config = ProviderConfig::Confluence {
+            base_url: server.base_url(),
+            auth: ConfluenceAuthConfig::BearerToken {
+                token: "test-token".into(),
+            },
+            scope: ConfluenceScope::Space { key: None },
+            api_version: Some("v2".into()),
+            extra: HashMap::new(),
+        };
+
+        let provider = create_knowledge_base_provider(&config, None).unwrap();
+        let _ = provider.get_spaces().await.unwrap();
+
+        mock.assert();
     }
 
     #[test]
@@ -565,6 +727,20 @@ mod tests {
             config: HashMap::new(),
         };
         assert!(create_enricher(&config, None).is_none());
+    }
+
+    #[test]
+    fn test_create_knowledge_base_enricher_non_kb_returns_none() {
+        let config = ProviderConfig::GitHub {
+            base_url: "https://api.github.com".into(),
+            access_token: "tok".into(),
+            scope: GitHubScope::Repository {
+                owner: "test".into(),
+                repo: "test".into(),
+            },
+            extra: HashMap::new(),
+        };
+        assert!(create_knowledge_base_enricher(&config).is_none());
     }
 
     // --- Enricher with invalid metadata ---

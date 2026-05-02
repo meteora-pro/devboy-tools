@@ -11,6 +11,7 @@ authors.workspace = true
 devboy-core = { path = "../devboy-core" }
 devboy-assets = { path = "../devboy-assets" }
 devboy-executor = { path = "../devboy-executor" }
+devboy-confluence = { path = "../plugins/api/confluence" }
 devboy-format-pipeline = { path = "../plugins/format-pipeline" }
 tokio.workspace = true
 serde.workspace = true

@@ -396,6 +396,90 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s
             },
         },
+        // Knowledge base tools
+        ToolDefinition {
+            name: "get_knowledge_base_spaces".into(),
+            description: "List available knowledge base spaces.".into(),
+            category: ToolCategory::KnowledgeBase,
+            input_schema: ToolSchema::new(),
+        },
+        ToolDefinition {
+            name: "list_knowledge_base_pages".into(),
+            description: "List pages in a knowledge base space with pagination.".into(),
+            category: ToolCategory::KnowledgeBase,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("spaceKey", PropertySchema::string("Space key to list pages from"));
+                s.add_property("limit", PropertySchema::integer("Maximum number of results (default: 25)", Some(1.0), Some(100.0)));
+                s.add_property("offset", PropertySchema::integer("Number of results to skip when offset pagination is supported", Some(0.0), None));
+                s.add_property("cursor", PropertySchema::string("Provider pagination cursor/token"));
+                s.add_property("search", PropertySchema::string("Optional free-text title/content filter"));
+                s.add_property("parentId", PropertySchema::string("Optional ancestor/parent page ID to scope the listing"));
+                s.set_required("spaceKey", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "get_knowledge_base_page".into(),
+            description: "Get a knowledge base page with content, labels, and ancestors.".into(),
+            category: ToolCategory::KnowledgeBase,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("pageId", PropertySchema::string("Knowledge base page ID"));
+                s.set_required("pageId", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "create_knowledge_base_page".into(),
+            description: "Create a knowledge base page in a space.".into(),
+            category: ToolCategory::KnowledgeBase,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("spaceKey", PropertySchema::string("Target space key"));
+                s.add_property("title", PropertySchema::string("Page title"));
+                s.add_property("content", PropertySchema::string("Page body content"));
+                s.add_property("contentType", PropertySchema::string_enum(&["markdown", "html", "storage"], "Content representation supplied by the caller"));
+                s.add_property("parentId", PropertySchema::string("Optional parent page ID"));
+                s.add_property("labels", PropertySchema::array(PropertySchema::string("label"), "Labels to set on the page"));
+                s.set_required("spaceKey", true);
+                s.set_required("title", true);
+                s.set_required("content", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "update_knowledge_base_page".into(),
+            description: "Update a knowledge base page title, content, metadata, or labels.".into(),
+            category: ToolCategory::KnowledgeBase,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("pageId", PropertySchema::string("Knowledge base page ID"));
+                s.add_property("title", PropertySchema::string("New page title"));
+                s.add_property("content", PropertySchema::string("New page body content"));
+                s.add_property("contentType", PropertySchema::string_enum(&["markdown", "html", "storage"], "Content representation supplied by the caller"));
+                s.add_property("version", PropertySchema::integer("Expected current version for optimistic locking", Some(1.0), None));
+                s.add_property("parentId", PropertySchema::string("Optional new parent page ID"));
+                s.add_property("labels", PropertySchema::array(PropertySchema::string("label"), "Labels to replace on the page"));
+                s.set_required("pageId", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "search_knowledge_base".into(),
+            description: "Search knowledge base pages across spaces using free text or provider-native syntax such as CQL.".into(),
+            category: ToolCategory::KnowledgeBase,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("query", PropertySchema::string("Free-text query or provider-native search expression"));
+                s.add_property("spaceKey", PropertySchema::string("Restrict search to a specific space key"));
+                s.add_property("cursor", PropertySchema::string("Provider pagination cursor/token"));
+                s.add_property("limit", PropertySchema::integer("Maximum number of matches to return", Some(1.0), Some(100.0)));
+                s.add_property("rawQuery", PropertySchema::boolean("Whether `query` should be treated as raw provider-native syntax"));
+                s.set_required("query", true);
+                s
+            },
+        },
         ToolDefinition {
             name: "update_merge_request".into(),
             description: "Update a merge request / pull request (title, description, state, labels, draft).".into(),
@@ -721,7 +805,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 43);
+        assert_eq!(tools.len(), 49);
     }
 
     #[test]
@@ -770,6 +854,14 @@ mod tests {
             "get_meeting_transcript",
             "search_meeting_notes",
         ];
+        let knowledge_base_tools = [
+            "get_knowledge_base_spaces",
+            "list_knowledge_base_pages",
+            "get_knowledge_base_page",
+            "create_knowledge_base_page",
+            "update_knowledge_base_page",
+            "search_knowledge_base",
+        ];
         let messenger_tools = [
             "get_messenger_chats",
             "get_chat_messages",
@@ -815,6 +907,13 @@ mod tests {
                     tool.category,
                     ToolCategory::MeetingNotes,
                     "tool {} should be MeetingNotes",
+                    tool.name
+                );
+            } else if knowledge_base_tools.contains(&tool.name.as_str()) {
+                assert_eq!(
+                    tool.category,
+                    ToolCategory::KnowledgeBase,
+                    "tool {} should be KnowledgeBase",
                     tool.name
                 );
             } else if messenger_tools.contains(&tool.name.as_str()) {

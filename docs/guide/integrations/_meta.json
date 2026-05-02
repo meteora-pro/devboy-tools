@@ -21,6 +21,11 @@
   },
   {
     "type": "file",
+    "name": "confluence",
+    "label": "Confluence"
+  },
+  {
+    "type": "file",
     "name": "fireflies",
     "label": "Fireflies.ai"
   }

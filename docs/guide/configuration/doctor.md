@@ -90,6 +90,7 @@ This makes `devboy doctor` safe to use in CI gates.
 - `credentials.gitlab` - GitLab token available
 - `credentials.clickup` - ClickUp token available
 - `credentials.jira` - Jira token available
+- `credentials.confluence` - Confluence credential available
 
 ### Provider connectivity
 
@@ -97,6 +98,7 @@ This makes `devboy doctor` safe to use in CI gates.
 - `providers.gitlab` - GitLab API connectivity
 - `providers.clickup` - ClickUp API connectivity
 - `providers.jira` - Jira API connectivity
+- `providers.confluence` - Confluence API connectivity
 
 ### MCP and proxy
 

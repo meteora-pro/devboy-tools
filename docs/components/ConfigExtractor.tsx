@@ -171,14 +171,72 @@ const PROVIDERS: Record<string, ProviderConfig> = {
       ],
     },
   },
+  confluence: {
+    regex: /^(https?:\/\/[^/\s?#]+(?:\/[^/\s?#]+)*)\/?$/,
+    urlPlaceholder: 'https://wiki.company.com',
+    tokenLabel: 'Confluence Token',
+    urlLabel: 'Confluence Base URL',
+    extractInfo: (match) => [{ label: 'Base URL', value: match[1] }],
+    extraFields: [
+      {
+        key: 'apiVersion',
+        label: 'API Version',
+        placeholder: 'v2',
+        hint: 'Optional. Use v2 for newer Data Center installs when available.',
+      },
+      {
+        key: 'username',
+        label: 'Username',
+        placeholder: 'user@company.com',
+        hint: 'Optional. Set this to use basic auth instead of bearer token auth.',
+      },
+      {
+        key: 'spaceKey',
+        label: 'Default Space Key',
+        placeholder: 'ENG',
+        hint: 'Optional. Stored as a default space hint for this context.',
+      },
+    ],
+    commands: (info, extra, token) => {
+      const lines = [
+        `devboy config set confluence.base_url ${info[0].value}`,
+        extra.apiVersion &&
+          `devboy config set confluence.api_version ${extra.apiVersion}`,
+        extra.username &&
+          `devboy config set confluence.username ${extra.username}`,
+        extra.spaceKey &&
+          `devboy config set confluence.space_key ${extra.spaceKey}`,
+        `devboy config set-secret confluence.token ${token}`,
+      ].filter(Boolean);
+
+      return lines.join('\n');
+    },
+    tokenHelp: {
+      title: 'Steps to get a Confluence credential:',
+      steps: [
+        {
+          text: 'For bearer auth, create a Confluence Personal Access Token in your Confluence profile or administration UI.',
+        },
+        {
+          text: 'For basic auth, use your Confluence username or email in the Username field above.',
+        },
+        {
+          text: 'Paste either the PAT or your password or app-specific token into the token field.',
+        },
+      ],
+    },
+  },
 };
 
 type ConfigExtractorProps = {
-  provider: 'github' | 'gitlab' | 'clickup' | 'jira';
+  provider: 'github' | 'gitlab' | 'clickup' | 'jira' | 'confluence';
 };
 
 export default function ConfigExtractor({ provider }: ConfigExtractorProps) {
   const config = PROVIDERS[provider];
+  if (!config) {
+    return null;
+  }
   const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
   const [infoFields, setInfoFields] = useState<ExtractedField[]>([]);
