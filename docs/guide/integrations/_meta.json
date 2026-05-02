@@ -26,6 +26,11 @@
   },
   {
     "type": "file",
+    "name": "slack",
+    "label": "Slack"
+  },
+  {
+    "type": "file",
     "name": "fireflies",
     "label": "Fireflies.ai"
   }
