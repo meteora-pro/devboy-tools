@@ -1,0 +1,129 @@
+# Slack Integration
+
+DevBoy tools provide integration with [Slack](https://slack.com) for searching chat history, fetching messages, and posting structured notifications through AI assistants. Slack is the first provider in the **Messenger** category.
+
+## Authentication
+
+Slack uses an OAuth-issued bot token (Bot User OAuth Token, `xoxb-…`):
+
+| Auth Method | Token Source |
+|-------------|--------------|
+| Bearer Token (Bot User OAuth Token) | [Slack App OAuth & Permissions page](https://api.slack.com/apps) |
+
+The bot needs the following OAuth scopes — `devboy doctor` will tell you which ones are missing:
+
+| Scope | Used by |
+|-------|---------|
+| `channels:read` | listing channels |
+| `channels:history` | reading channel messages |
+| `groups:read` / `groups:history` | private channels |
+| `im:read` / `im:history` | DMs |
+| `mpim:read` / `mpim:history` | group DMs |
+| `chat:write` | posting messages |
+| `search:read` | searching messages |
+| `users:read` | resolving user IDs into names |
+
+You can list extra required scopes via `slack.required_scopes` in config (the doctor check enforces them).
+
+## Configuration
+
+### Basic configuration
+
+```bash
+# Store the Slack bot token in OS keychain
+devboy config set-secret slack.token <xoxb-...>
+```
+
+### Configuration file
+
+`~/.config/devboy-tools/config.toml`:
+
+```toml
+[slack]
+# Token is stored in the OS keychain, not in the config file.
+# Optional — list of scope names you require beyond the defaults.
+required_scopes = ["channels:read", "channels:history", "chat:write"]
+
+# Optional — point at a Slack-compatible API (e.g. Mattermost in Slack-API mode).
+# base_url = "https://slack.example.com/api"
+```
+
+### Environment variables
+
+```bash
+export DEVBOY_SLACK_TOKEN=xoxb-...
+```
+
+## Available tools
+
+The Slack provider implements the **Messenger** category. The same four tools are exposed for any Messenger-class provider; this page documents the shape against Slack.
+
+### `get_messenger_chats`
+
+List channels / DMs visible to the bot.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `kind` | string | `channel`, `private`, `dm`, `mpim`, or `all` (default: `all`) |
+| `query` | string | Optional name filter |
+| `limit` | integer | Max results (default: 50) |
+| `cursor` | string | Pagination cursor (returned by previous call) |
+
+### `get_chat_messages`
+
+Fetch recent messages from one chat.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `chat_id` | string | Yes | Channel / IM ID |
+| `limit` | integer | No | Default 50 |
+| `before` | string | No | ISO 8601 timestamp; return messages older than this |
+| `after` | string | No | ISO 8601 timestamp; return messages newer than this |
+| `cursor` | string | No | Pagination cursor |
+
+### `search_chat_messages`
+
+Full-text search across messages the bot can see.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | Yes | Slack search syntax (`from:@alice in:#sprint`) |
+| `chat_id` | string | No | Restrict to one channel |
+| `limit` | integer | No | Default 50 |
+
+### `send_message`
+
+Post a message to a channel / DM.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `chat_id` | string | Yes | Target channel / IM ID |
+| `text` | string | Yes | Message body (Slack mrkdwn) |
+| `thread_ts` | string | No | Reply in thread |
+| `blocks` | object[] | No | Slack [Block Kit](https://api.slack.com/block-kit) blocks |
+| `attachments` | object[] | No | Legacy attachments |
+
+## Doctor check
+
+```bash
+devboy doctor --checks providers.slack
+```
+
+Verifies:
+
+1. The bot token authenticates against `auth.test`.
+2. All scopes listed in `slack.required_scopes` are present on the token.
+3. Reports the missing scopes in the diagnostic output if any.
+
+## Use cases
+
+1. **Daily summary** — `devboy-chat-summary` skill summarises the last 24 h of a channel for a stand-up note.
+2. **Notification** — `devboy-notify` posts a structured message after a long-running CI / deploy.
+3. **Decision archaeology** — `devboy-chat-search` lets the agent grep team channels for "why did we choose Postgres over MySQL".
+
+## API reference
+
+- **Endpoint:** `https://slack.com/api`
+- **Protocol:** HTTPS / JSON
+- **Rate limits:** Slack's [tier-based rate limits](https://api.slack.com/docs/rate-limits) — typically 50–100 calls/minute per method.
+- **Documentation:** [Slack Web API methods](https://api.slack.com/methods)
