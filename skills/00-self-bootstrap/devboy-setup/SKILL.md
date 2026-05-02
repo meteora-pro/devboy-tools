@@ -1,16 +1,18 @@
 ---
 name: devboy-setup
-description: Walk a user through configuring devboy-tools from scratch — providers, credentials, Claude Code registration, verification.
+description: Bootstrap devboy from scratch — install the CLI if missing, register the MCP server, run `devboy onboard` for the active agent, verify with `doctor`. First-run skill for both manual installs and the Claude Code / Codex plugin.
 category: self-bootstrap
-version: 1
-compatibility: devboy-tools >= 0.18
+version: 2
+compatibility: devboy-tools >= 0.24
 activation:
   - "setup devboy"
   - "configure devboy"
   - "initialise devboy"
   - "install devboy"
+  - "bootstrap devboy"
 tools:
   - init
+  - onboard
   - config
   - doctor
   - test
@@ -18,64 +20,80 @@ tools:
 
 # devboy-setup
 
-Configure `devboy-tools` end-to-end for the current project or the current user. The skill handles the happy path and the common "something is not quite right" branches; for a broken state that needs triage, use `devboy-repair`.
+Bring `devboy` from "nothing on this machine" to "MCP server registered, providers configured, doctor green". Works in two modes:
+
+- **Plugin-driven** — when invoked from the Claude Code plugin (`devboy@meteora-devboy`) or the Codex plugin. The plugin manifest is already loaded; this skill installs the CLI binary and runs `devboy onboard` to wire up the rest. Detected by `$CLAUDE_PLUGIN_DATA` (Claude) or `$CODEX_PLUGIN_DATA` (Codex) being set.
+- **Manual** — when the user invoked the skill directly after `npm install -g @devboy-tools/cli`. The CLI is already present; only configuration remains.
+
+For a broken state that needs triage, use `devboy-repair` instead.
 
 ## When to use
 
 - A new clone of a project and `.devboy.toml` is missing.
 - A new machine and `devboy doctor` reports no configured providers.
+- The Claude Code or Codex plugin was just installed and the agent is doing first-run setup.
 - A user asks "how do I set devboy up for this repo?" or equivalent.
-
-## Preconditions
-
-1. `devboy` is on `PATH`. If it is not:
-
-   ```bash
-   command -v devboy >/dev/null 2>&1 || \
-     echo "devboy is not on PATH — install it via 'npm install -g @devboy-tools/cli' first"
-   ```
-
-2. The user knows which provider(s) they want to configure (GitHub, GitLab, ClickUp, Jira, Slack, Fireflies).
 
 ## Procedure
 
-### 1. Pick the install target
-
-- If a `.devboy.toml` already exists in the repo root, the skill is operating on an already-initialised project — jump to **step 4**.
-- If not, run `devboy init` interactively or use `--yes` for auto-detection:
-
-  ```bash
-  devboy init --yes
-  ```
-
-  This auto-detects GitHub / GitLab from the `origin` remote and creates `.devboy.toml`.
-
-### 2. Non-interactive bootstrap with remote config
-
-When the user mentions a remote configuration endpoint, prefer that path — it keeps the machine's local config minimal and avoids drift:
+### 1. Detect plugin context
 
 ```bash
-devboy init --yes \
-  --remote-config-url "<URL from the user>" \
-  --remote-config-token "<token>" \
-  --claude
+if [ -n "$CLAUDE_PLUGIN_DATA" ]; then
+  PLUGIN_CONTEXT=claude
+  PLUGIN_DATA="$CLAUDE_PLUGIN_DATA"
+  AGENT=claude
+elif [ -n "$CODEX_PLUGIN_DATA" ]; then
+  PLUGIN_CONTEXT=codex
+  PLUGIN_DATA="$CODEX_PLUGIN_DATA"
+  AGENT=codex
+else
+  PLUGIN_CONTEXT=manual
+  AGENT=auto    # let `devboy onboard` autodetect
+fi
 ```
 
-By design (ADR-DEV-798), `--remote-config-url` suppresses the local git auto-detection — the remote endpoint is treated as the source of truth for integrations.
-
-### 3. Register with Claude Code
-
-If the `--claude` flag was not passed during init, register separately:
+### 2. Ensure `devboy` is on PATH
 
 ```bash
-devboy init --claude
-# or, equivalently:
-claude mcp add devboy -- devboy mcp
+if command -v devboy >/dev/null 2>&1; then
+  echo "devboy already installed: $(devboy --version)"
+else
+  # Plugin context: prefer npm, fall back to GitHub Release binary in ${PLUGIN_DATA}/bin
+  if command -v npm >/dev/null 2>&1; then
+    npm install -g @devboy-tools/cli
+  elif [ -n "$PLUGIN_DATA" ]; then
+    mkdir -p "$PLUGIN_DATA/bin"
+    PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
+    curl -sSL "https://github.com/meteora-pro/devboy-tools/releases/latest/download/devboy-${PLATFORM}" \
+      -o "$PLUGIN_DATA/bin/devboy"
+    chmod +x "$PLUGIN_DATA/bin/devboy"
+    export PATH="$PLUGIN_DATA/bin:$PATH"
+  else
+    echo "ERROR: neither npm nor a plugin data dir is available — cannot install devboy automatically."
+    echo "Install manually with: npm install -g @devboy-tools/cli"
+    exit 1
+  fi
+fi
 ```
 
-### 4. Add per-provider tokens
+If the binary was installed under `$PLUGIN_DATA/bin`, **tell the user to run `/reload-plugins`** in Claude Code so the MCP entry picks up the new binary on PATH. The MCP server will not connect until reload.
 
-For each provider the user wants to exercise:
+### 3. Run `devboy onboard`
+
+`devboy onboard` (ADR-017) detects the active AI agent (or uses `--agent`), picks a profile, and installs the curated skill bundle into the right directory.
+
+```bash
+devboy onboard --agent "$AGENT" --yes
+```
+
+In plugin context, `--agent claude` (or `--agent codex`) is forced because we already know which agent loaded us. `onboard` reads `~/.claude/settings.json#enabledPlugins` and **skips** installing skills into `~/.claude/skills/` when this plugin is already there (ADR-018 §5) — it only configures providers.
+
+For manual context (`--agent auto`), `onboard` falls back to its `freshness × volume` scorer and asks the user to confirm.
+
+### 4. Configure providers (if not already done by onboard)
+
+`onboard` covers detection and skill install but does not collect credentials. Run for each provider the user wants to exercise:
 
 ```bash
 # GitHub
@@ -100,7 +118,17 @@ devboy config set jira.email <email>
 devboy config set-secret jira.token
 ```
 
-On CI / headless hosts where the OS keychain is unavailable, set the corresponding env vars instead (`DEVBOY_GITHUB_TOKEN`, `DEVBOY_GITLAB_TOKEN`, …). See the `README` for the full fallback chain.
+On CI / headless hosts where the OS keychain is unavailable, set the corresponding env vars instead (`DEVBOY_GITHUB_TOKEN`, `DEVBOY_GITLAB_TOKEN`, …). See the README for the full fallback chain.
+
+If the user passed a `--remote-config-url`, prefer that path — it keeps the machine's local config minimal and avoids drift:
+
+```bash
+devboy init --yes \
+  --remote-config-url "<URL from the user>" \
+  --remote-config-token "<token>"
+```
+
+By design, `--remote-config-url` suppresses local git auto-detection.
 
 ### 5. Verify
 
@@ -109,7 +137,7 @@ devboy test github            # once per configured provider
 devboy doctor                 # overall health check
 ```
 
-Both must print green. If either flags a failure, stop and fall through to `devboy-repair`.
+Both must print green. If either flags a failure, stop and switch to `devboy-repair`.
 
 ### 6. Confirm the tool bundle is wired
 
@@ -118,16 +146,19 @@ devboy tools list
 devboy tools call get_issues '{"limit": 3}'
 ```
 
-If `tools list` is empty or the tool call returns `ProviderUnsupported`, something was misconfigured — go to `devboy-repair`.
+If `tools list` is empty or the tool call returns `ProviderUnsupported`, something is misconfigured — go to `devboy-repair`.
 
 ## Success criteria
 
+- `command -v devboy` resolves; `devboy --version` reports the expected version.
+- `devboy onboard --yes` exits 0 with an `installed` line for the right agent (or a `skipped — already provided by plugin` line in plugin context).
 - `devboy doctor` reports every configured provider as healthy.
 - `devboy test <provider>` succeeds for each provider the user cares about.
-- At least one real tool call (`get_issues`, `get_merge_requests`, or the equivalent for the provider) returns data rather than `ProviderUnsupported`.
-- If the user asked for Claude Code integration, `claude mcp list` shows `devboy`.
+- At least one real tool call (`get_issues`, `get_merge_requests`, or equivalent) returns data rather than `ProviderUnsupported`.
+- In plugin context, `claude mcp list` shows `devboy` as registered after `/reload-plugins`.
 
 ## Non-goals
 
 - This skill does not configure a proxy MCP server. Use `devboy proxy add` with its documented flags.
 - This skill does not migrate an existing setup between machines — it assumes a fresh install.
+- This skill does not pick which agent to install skills for in manual mode — `devboy onboard` does that.

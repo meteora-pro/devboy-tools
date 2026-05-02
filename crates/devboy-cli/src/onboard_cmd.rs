@@ -15,7 +15,8 @@ use clap::Args;
 use devboy_core::agents::{AgentSnapshot, InstallStatus, bundles, detect_all, pick_primary};
 use devboy_skills::{
     Agent, EmbeddedSkillSource, Environment, HistoricalHashes, InstallOptions, InstallOutcome,
-    InstallSpec, SkillSource, install_skills_to_target, resolve_targets,
+    InstallSpec, SkillSource, install_skills_to_target, is_claude_plugin_installed,
+    is_codex_plugin_installed, resolve_targets,
 };
 use std::io::{self, IsTerminal, Write};
 
@@ -180,6 +181,17 @@ struct InstallSummary {
     skipped: u32,
 }
 
+/// Whether the matching plugin (Claude Code or Codex) already provides
+/// the devboy skill bundle in the agent's settings. Returns `false` for
+/// agents that have no plugin format yet (Cursor, Kimi, …).
+fn dedup_against_plugin(agent: Agent, home: &std::path::Path) -> bool {
+    match agent {
+        Agent::Claude => is_claude_plugin_installed(home, "devboy"),
+        Agent::Codex => is_codex_plugin_installed(home, "devboy"),
+        _ => false,
+    }
+}
+
 fn summarise_outcomes(report: &devboy_skills::InstallReport) -> InstallSummary {
     let mut s = InstallSummary::default();
     for outcome in report.outcomes.values() {
@@ -195,6 +207,24 @@ fn summarise_outcomes(report: &devboy_skills::InstallReport) -> InstallSummary {
 
 async fn install_bundle(agent: Agent, skill_names: &[String], dry_run: bool) -> Result<()> {
     let env = Environment::detect().context("failed to detect environment")?;
+
+    // ADR-018 §5: skip the agent install when the matching Claude Code /
+    // Codex plugin already provides the skill bundle — avoids shadowing
+    // the namespaced plugin skills with stand-alone copies in
+    // `~/.claude/skills/` (or `~/.codex/skills/`).
+    if dedup_against_plugin(agent, &env.home) {
+        let dir = match agent {
+            Agent::Claude => ".claude",
+            Agent::Codex => ".codex",
+            _ => "",
+        };
+        println!(
+            "  ⏭  {agent}: skipped — already provided by plugin meteora-devboy/devboy ({dir}/settings.json)",
+            agent = agent.as_str()
+        );
+        return Ok(());
+    }
+
     let spec = InstallSpec {
         agents: vec![agent],
         ..Default::default()

@@ -291,3 +291,41 @@ jobs:
           npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.DEVBOY_TOOLS_NPM_TOKEN }}
+
+  plugin-marketplace-sync:
+    name: Sync plugin marketplace
+    needs: npm-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      # Bring plugin manifests in line with the just-released Cargo
+      # workspace version, then regenerate plugin skill trees from
+      # /skills/ (in case anything was committed during the release
+      # window without the corresponding regen).
+      - name: Sync plugin version into manifests
+        run: scripts/release/sync-plugin-version.sh
+
+      - name: Regenerate plugin skill trees
+        run: scripts/release/build-skills.sh
+
+      - name: Commit and push if changed
+        run: |
+          if [[ -z "$(git status --porcelain plugins/ .claude-plugin/)" ]]; then
+            echo "Plugin manifests already in sync."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add plugins/ .claude-plugin/
+          git commit -m "release: sync plugin manifests for ${GITHUB_REF_NAME} [skip ci]"
+          git push origin main
