@@ -8,17 +8,21 @@ use devboy_core::{
 };
 use reqwest::RequestBuilder;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::DEFAULT_CONFLUENCE_API_PATH;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum ConfluenceAuth {
     None,
-    BearerToken(String),
-    Basic { username: String, password: String },
+    BearerToken(SecretString),
+    Basic {
+        username: String,
+        password: SecretString,
+    },
 }
 
 impl fmt::Debug for ConfluenceAuth {
@@ -31,6 +35,21 @@ impl fmt::Debug for ConfluenceAuth {
                 .field("username", username)
                 .field("password", &"<redacted>")
                 .finish(),
+        }
+    }
+}
+
+impl ConfluenceAuth {
+    /// Build a bearer-token auth from any string-like input.
+    pub fn bearer(token: impl Into<String>) -> Self {
+        Self::BearerToken(SecretString::from(token.into()))
+    }
+
+    /// Build a basic-auth pair from username and password strings.
+    pub fn basic(username: impl Into<String>, password: impl Into<String>) -> Self {
+        Self::Basic {
+            username: username.into(),
+            password: SecretString::from(password.into()),
         }
     }
 }
@@ -256,9 +275,9 @@ impl ConfluenceClient {
 
         match &self.auth {
             ConfluenceAuth::None => request,
-            ConfluenceAuth::BearerToken(token) => request.bearer_auth(token),
+            ConfluenceAuth::BearerToken(token) => request.bearer_auth(token.expose_secret()),
             ConfluenceAuth::Basic { username, password } => {
-                request.basic_auth(username, Some(password))
+                request.basic_auth(username, Some(password.expose_secret()))
             }
         }
     }
@@ -1833,10 +1852,8 @@ mod tests {
 
     #[tokio::test]
     async fn rest_api_url_normalizes_base_url() {
-        let client = ConfluenceClient::new(
-            "https://wiki.example.com/",
-            ConfluenceAuth::BearerToken("token".into()),
-        );
+        let client =
+            ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("token"));
 
         assert_eq!(
             client.rest_api_url("content"),
@@ -1846,11 +1863,9 @@ mod tests {
 
     #[tokio::test]
     async fn rest_api_url_honors_v2_api_version() {
-        let client = ConfluenceClient::new(
-            "https://wiki.example.com/",
-            ConfluenceAuth::BearerToken("token".into()),
-        )
-        .with_api_version(Some("v2"));
+        let client =
+            ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("token"))
+                .with_api_version(Some("v2"));
 
         assert_eq!(
             client.space_api_url("space"),
@@ -1878,11 +1893,9 @@ mod tests {
                 .body(r#"{"results":[],"start":0,"limit":100,"size":0,"_links":{}}"#);
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        )
-        .with_api_version(Some("v2"));
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_api_version(Some("v2"));
 
         let response = client.get_spaces().await.unwrap();
 
@@ -1903,10 +1916,8 @@ mod tests {
                 .body(r#"{"ok":true}"#);
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        );
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
         let response: EchoResponse = client.get_json("content").await.unwrap();
 
         mock.assert();
@@ -1931,10 +1942,7 @@ mod tests {
 
         let client = ConfluenceClient::new(
             server.base_url(),
-            ConfluenceAuth::Basic {
-                username: "user@example.com".into(),
-                password: "password".into(),
-            },
+            ConfluenceAuth::basic("user@example.com", "password"),
         );
         let response: EchoResponse = client
             .post_json(
@@ -1966,11 +1974,9 @@ mod tests {
         let mut headers = HashMap::new();
         headers.insert("x-proxy-auth".into(), "secret".into());
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        )
-        .with_proxy(headers);
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_proxy(headers);
         let response: EchoResponse = client.get_json("content").await.unwrap();
 
         mock.assert();
@@ -2009,10 +2015,8 @@ mod tests {
                 );
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        );
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
         let result = client.get_spaces().await.unwrap();
 
         mock.assert();
@@ -2069,11 +2073,9 @@ mod tests {
                 .body(r#"{"results":[],"start":0,"limit":25,"size":0,"_links":{}}"#);
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        )
-        .with_api_version(Some("v2"));
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_api_version(Some("v2"));
         let result = client
             .list_pages(ListPagesParams {
                 space_key: "ENG".into(),
@@ -2117,11 +2119,9 @@ mod tests {
                 );
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        )
-        .with_api_version(Some("v2"));
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_api_version(Some("v2"));
         let result = client
             .list_pages(ListPagesParams {
                 space_key: "ENG".into(),
@@ -2179,10 +2179,8 @@ mod tests {
                 );
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        );
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
         let result = client
             .list_pages(ListPagesParams {
                 space_key: "ENG".into(),
@@ -2242,10 +2240,8 @@ mod tests {
                 );
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        );
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
         let result = client
             .list_pages(ListPagesParams {
                 space_key: "ENG".into(),
@@ -2306,10 +2302,8 @@ mod tests {
                 );
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        );
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
         let result = client
             .list_pages(ListPagesParams {
                 space_key: "ENG".into(),
@@ -2375,10 +2369,8 @@ mod tests {
                 );
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        );
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
         let page = client.get_page("42").await.unwrap();
 
         mock.assert();
@@ -2463,11 +2455,9 @@ mod tests {
                 );
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        )
-        .with_api_version(Some("v2"));
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_api_version(Some("v2"));
         let page = client.get_page("42").await.unwrap();
 
         space_mock.assert();
@@ -2529,11 +2519,9 @@ mod tests {
             then.status(401).body("unauthorized");
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        )
-        .with_api_version(Some("v2"));
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_api_version(Some("v2"));
         let error = client.get_page("42").await.unwrap_err();
 
         space_mock.assert();
@@ -2579,10 +2567,8 @@ mod tests {
                 );
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        );
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
         let page = client
             .create_page(CreatePageParams {
                 space_key: "ENG".into(),
@@ -2646,10 +2632,8 @@ mod tests {
                 .body("[]");
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        );
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
         let page = client
             .create_page(CreatePageParams {
                 space_key: "ENG".into(),
@@ -2713,11 +2697,9 @@ mod tests {
                 );
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        )
-        .with_api_version(Some("v2"));
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_api_version(Some("v2"));
         let page = client
             .create_page(CreatePageParams {
                 space_key: "ENG".into(),
@@ -2800,10 +2782,8 @@ mod tests {
                 );
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        );
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
         let page = client
             .update_page(UpdatePageParams {
                 page_id: "42".into(),
@@ -2893,11 +2873,9 @@ mod tests {
                 );
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        )
-        .with_api_version(Some("v2"));
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_api_version(Some("v2"));
         let page = client
             .update_page(UpdatePageParams {
                 page_id: "42".into(),
@@ -2947,10 +2925,8 @@ mod tests {
                 );
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        );
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
         let error = client
             .update_page(UpdatePageParams {
                 page_id: "42".into(),
@@ -3046,10 +3022,8 @@ mod tests {
                 .body("[]");
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        );
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
         let page = client
             .update_page(UpdatePageParams {
                 page_id: "42".into(),
@@ -3133,10 +3107,8 @@ mod tests {
                 );
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        );
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
         let result = client
             .search(SearchKbParams {
                 query: "architecture".into(),
@@ -3204,10 +3176,8 @@ mod tests {
                 );
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        );
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
         let first = client
             .search(SearchKbParams {
                 query: r#"label = "adr""#.into(),
@@ -3261,10 +3231,8 @@ mod tests {
                 .body(r#"{"results":[],"start":0,"limit":5,"size":0,"_links":{}}"#);
         });
 
-        let client = ConfluenceClient::new(
-            server.base_url(),
-            ConfluenceAuth::BearerToken("secret-token".into()),
-        );
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
         let result = client
             .search(SearchKbParams {
                 query: "R&D?x=y+z".into(),

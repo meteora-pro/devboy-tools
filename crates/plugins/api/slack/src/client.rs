@@ -11,6 +11,7 @@ use devboy_core::{
     SendMessageParams,
 };
 use reqwest::header::HeaderMap;
+use secrecy::{ExposeSecret, SecretString};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
@@ -33,7 +34,7 @@ pub struct SlackAuthInfo {
 
 #[derive(Clone)]
 pub struct SlackClient {
-    token: String,
+    token: SecretString,
     base_url: String,
     http: reqwest::Client,
     required_scopes: Vec<String>,
@@ -232,9 +233,9 @@ struct SlackRichAttachment {
 }
 
 impl SlackClient {
-    pub fn new(token: impl Into<String>) -> Self {
+    pub fn new(token: SecretString) -> Self {
         Self {
-            token: token.into(),
+            token,
             base_url: DEFAULT_SLACK_API_URL.to_string(),
             http: reqwest::Client::new(),
             required_scopes: devboy_core::default_slack_required_scopes(),
@@ -337,7 +338,7 @@ impl SlackClient {
             let response = self
                 .http
                 .post(&url)
-                .bearer_auth(&self.token)
+                .bearer_auth(self.token.expose_secret())
                 .form(params)
                 .send()
                 .await
@@ -1283,6 +1284,10 @@ mod tests {
     use httpmock::Method::POST;
     use httpmock::MockServer;
 
+    fn token(s: &str) -> SecretString {
+        SecretString::from(s.to_string())
+    }
+
     #[tokio::test]
     async fn auth_info_reads_identity_and_scopes() {
         let server = MockServer::start();
@@ -1304,7 +1309,7 @@ mod tests {
                 }));
         });
 
-        let info = SlackClient::new("xoxb-test")
+        let info = SlackClient::new(token("xoxb-test"))
             .with_base_url(server.base_url())
             .auth_info()
             .await
@@ -1330,7 +1335,7 @@ mod tests {
                 }));
         });
 
-        let error = SlackClient::new("xoxb-test")
+        let error = SlackClient::new(token("xoxb-test"))
             .with_base_url(server.base_url())
             .ensure_healthy()
             .await
@@ -1360,7 +1365,7 @@ mod tests {
             }));
         });
 
-        let result = SlackClient::new("xoxb-test")
+        let result = SlackClient::new(token("xoxb-test"))
             .with_base_url(server.base_url())
             .get_chats(GetChatsParams::default())
             .await
@@ -1418,7 +1423,7 @@ mod tests {
             }));
         });
 
-        let result = SlackClient::new("xoxb-test")
+        let result = SlackClient::new(token("xoxb-test"))
             .with_base_url(server.base_url())
             .get_messages(GetMessagesParams {
                 chat_id: "C123".to_string(),
@@ -1467,7 +1472,7 @@ mod tests {
             }));
         });
 
-        let result = SlackClient::new("xoxb-test")
+        let result = SlackClient::new(token("xoxb-test"))
             .with_base_url(server.base_url())
             .send_message(SendMessageParams {
                 chat_id: "C123".to_string(),
@@ -1500,7 +1505,7 @@ mod tests {
             }));
         });
 
-        let result = SlackClient::new("xoxb-test")
+        let result = SlackClient::new(token("xoxb-test"))
             .with_base_url(server.base_url())
             .send_message(SendMessageParams {
                 chat_id: "C123".to_string(),
@@ -1519,7 +1524,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_message_rejects_attachments() {
-        let err = SlackClient::new("xoxb-test")
+        let err = SlackClient::new(token("xoxb-test"))
             .send_message(SendMessageParams {
                 chat_id: "C123".to_string(),
                 text: "reply message".to_string(),
@@ -1578,7 +1583,7 @@ mod tests {
             }));
         });
 
-        let client = SlackClient::new("xoxb-test").with_base_url(server.base_url());
+        let client = SlackClient::new(token("xoxb-test")).with_base_url(server.base_url());
         let result = client
             .get_messages(GetMessagesParams {
                 chat_id: "C123".to_string(),
@@ -1599,7 +1604,7 @@ mod tests {
 
     #[test]
     fn client_configuration_helpers_update_settings() {
-        let client = SlackClient::new("xoxb-test")
+        let client = SlackClient::new(token("xoxb-test"))
             .with_base_url("https://slack.example.test/")
             .with_required_scopes(vec!["search:read".to_string(), "chat:write".to_string()]);
 
@@ -1621,7 +1626,7 @@ mod tests {
             }));
         });
 
-        let error = SlackClient::new("xoxb-test")
+        let error = SlackClient::new(token("xoxb-test"))
             .with_base_url(server.base_url())
             .auth_info()
             .await
@@ -1641,7 +1646,7 @@ mod tests {
             }));
         });
 
-        let error = SlackClient::new("xoxb-test")
+        let error = SlackClient::new(token("xoxb-test"))
             .with_base_url(server.base_url())
             .auth_info()
             .await
@@ -1658,7 +1663,7 @@ mod tests {
             then.status(429).header("retry-after", "7");
         });
 
-        let error = SlackClient::new("xoxb-test")
+        let error = SlackClient::new(token("xoxb-test"))
             .with_base_url(server.base_url())
             .auth_info()
             .await
@@ -1674,7 +1679,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_messages_rejects_empty_query() {
-        let error = SlackClient::new("xoxb-test")
+        let error = SlackClient::new(token("xoxb-test"))
             .search_messages(SearchMessagesParams {
                 query: "   ".to_string(),
                 ..SearchMessagesParams::default()
@@ -1714,7 +1719,7 @@ mod tests {
             }));
         });
 
-        let client = SlackClient::new("xoxb-test").with_base_url(server.base_url());
+        let client = SlackClient::new(token("xoxb-test")).with_base_url(server.base_url());
         let first = client
             .search_messages(SearchMessagesParams {
                 query: "needle".to_string(),
@@ -1759,7 +1764,7 @@ mod tests {
             }));
         });
 
-        let client = SlackClient::new("xoxb-test").with_base_url(server.base_url());
+        let client = SlackClient::new(token("xoxb-test")).with_base_url(server.base_url());
         let first = client
             .search_messages(SearchMessagesParams {
                 chat_id: Some("C1".to_string()),
@@ -2142,7 +2147,7 @@ mod tests {
             }));
         });
 
-        let user = SlackClient::new("xoxb-test")
+        let user = SlackClient::new(token("xoxb-test"))
             .with_base_url(server.base_url())
             .get_user_profile("U1")
             .await
@@ -2167,7 +2172,7 @@ mod tests {
             }));
         });
 
-        let result = SlackClient::new("xoxb-test")
+        let result = SlackClient::new(token("xoxb-test"))
             .with_base_url(server.base_url())
             .lookup_user_by_email("missing@example.com")
             .await
@@ -2197,7 +2202,7 @@ mod tests {
             }));
         });
 
-        let user = SlackClient::new("xoxb-test")
+        let user = SlackClient::new(token("xoxb-test"))
             .with_base_url(server.base_url())
             .lookup_user_by_email("bob@example.com")
             .await
@@ -2222,7 +2227,7 @@ mod tests {
             }));
         });
 
-        let err = SlackClient::new("xoxb-test")
+        let err = SlackClient::new(token("xoxb-test"))
             .with_base_url(server.base_url())
             .lookup_user_by_email("alice@example.com")
             .await

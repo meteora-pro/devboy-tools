@@ -25,20 +25,20 @@ use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
 use devboy_core::Result;
-use zeroize::Zeroizing;
+use secrecy::{ExposeSecret, SecretString};
 
 use crate::CredentialStore;
 
-/// Entry in the cache — a zeroized buffer plus an expiry timestamp.
+/// Entry in the cache — a `SecretString` (zeroized on drop) plus an expiry timestamp.
 struct CachedEntry {
-    value: Zeroizing<String>,
+    value: SecretString,
     expires_at: Instant,
 }
 
 impl CachedEntry {
-    fn new(value: String, ttl: Duration) -> Self {
+    fn new(value: SecretString, ttl: Duration) -> Self {
         Self {
-            value: Zeroizing::new(value),
+            value,
             expires_at: Instant::now() + ttl,
         }
     }
@@ -90,23 +90,26 @@ impl<S: CredentialStore> CachedStore<S> {
         self.ttl.is_zero()
     }
 
-    fn lookup_fresh(&self, key: &str) -> Option<String> {
+    fn lookup_fresh(&self, key: &str) -> Option<SecretString> {
         let entries = self.entries.read().ok()?;
         let entry = entries.get(key)?;
         if entry.is_fresh() {
-            Some(entry.value.as_str().to_string())
+            Some(SecretString::from(entry.value.expose_secret().to_string()))
         } else {
             None
         }
     }
 
-    fn insert(&self, key: &str, value: &str) {
+    fn insert(&self, key: &str, value: &SecretString) {
         let Ok(mut entries) = self.entries.write() else {
             return;
         };
         entries.insert(
             key.to_string(),
-            CachedEntry::new(value.to_string(), self.ttl),
+            CachedEntry::new(
+                SecretString::from(value.expose_secret().to_string()),
+                self.ttl,
+            ),
         );
     }
 
@@ -131,13 +134,13 @@ impl<S: CredentialStore> std::fmt::Debug for CachedStore<S> {
 }
 
 impl<S: CredentialStore> CredentialStore for CachedStore<S> {
-    fn store(&self, key: &str, value: &str) -> Result<()> {
+    fn store(&self, key: &str, value: &SecretString) -> Result<()> {
         let res = self.inner.store(key, value);
         self.invalidate(key);
         res
     }
 
-    fn get(&self, key: &str) -> Result<Option<String>> {
+    fn get(&self, key: &str) -> Result<Option<SecretString>> {
         if self.caching_disabled() {
             return self.inner.get(key);
         }
@@ -183,6 +186,14 @@ mod tests {
         MemoryStore::with_credentials([(k.to_string(), v.to_string())])
     }
 
+    fn secret(s: &str) -> SecretString {
+        SecretString::from(s.to_string())
+    }
+
+    fn exposed(s: &Option<SecretString>) -> Option<&str> {
+        s.as_ref().map(|v| v.expose_secret())
+    }
+
     #[test]
     fn test_cache_hit_returns_value_without_hitting_inner() {
         // A MemoryStore whose credentials vanish after the first read would prove this,
@@ -191,7 +202,7 @@ mod tests {
         let cache = CachedStore::new(store_with_entry("a/b", "secret-A"), Duration::from_secs(60));
 
         // Prime
-        assert_eq!(cache.get("a/b").unwrap().as_deref(), Some("secret-A"));
+        assert_eq!(exposed(&cache.get("a/b").unwrap()), Some("secret-A"));
         // Debug does not leak the value
         let dbg = format!("{:?}", cache);
         assert!(dbg.contains("cached_entries: 1"));
@@ -205,16 +216,16 @@ mod tests {
             Duration::from_millis(50),
         );
 
-        assert_eq!(cache.get("a/b").unwrap().as_deref(), Some("secret-A"));
+        assert_eq!(exposed(&cache.get("a/b").unwrap()), Some("secret-A"));
         thread::sleep(Duration::from_millis(80));
         // Still finds it but now from the inner store (cache miss → fresh fetch).
-        assert_eq!(cache.get("a/b").unwrap().as_deref(), Some("secret-A"));
+        assert_eq!(exposed(&cache.get("a/b").unwrap()), Some("secret-A"));
     }
 
     #[test]
     fn test_cache_zero_ttl_disables_caching() {
         let cache = CachedStore::new(store_with_entry("a/b", "v"), Duration::ZERO);
-        assert_eq!(cache.get("a/b").unwrap().as_deref(), Some("v"));
+        assert_eq!(exposed(&cache.get("a/b").unwrap()), Some("v"));
 
         let dbg = format!("{:?}", cache);
         assert!(dbg.contains("cached_entries: 0"));
@@ -223,26 +234,26 @@ mod tests {
     #[test]
     fn test_store_invalidates_cache_entry() {
         let inner = MemoryStore::new();
-        inner.store("k", "v1").unwrap();
+        inner.store("k", &secret("v1")).unwrap();
 
         let cache = CachedStore::new(inner, Duration::from_secs(60));
-        assert_eq!(cache.get("k").unwrap().as_deref(), Some("v1"));
+        assert_eq!(exposed(&cache.get("k").unwrap()), Some("v1"));
 
         // Rotate through the cache — rotation must reach the inner store AND bust cache.
-        cache.store("k", "v2").unwrap();
-        assert_eq!(cache.get("k").unwrap().as_deref(), Some("v2"));
+        cache.store("k", &secret("v2")).unwrap();
+        assert_eq!(exposed(&cache.get("k").unwrap()), Some("v2"));
     }
 
     #[test]
     fn test_delete_invalidates_cache_entry() {
         let inner = MemoryStore::new();
-        inner.store("k", "v1").unwrap();
+        inner.store("k", &secret("v1")).unwrap();
         let cache = CachedStore::new(inner, Duration::from_secs(60));
 
-        assert_eq!(cache.get("k").unwrap().as_deref(), Some("v1"));
+        assert_eq!(exposed(&cache.get("k").unwrap()), Some("v1"));
 
         cache.delete("k").unwrap();
-        assert_eq!(cache.get("k").unwrap(), None);
+        assert!(cache.get("k").unwrap().is_none());
     }
 
     #[test]
@@ -252,14 +263,14 @@ mod tests {
         let inner = MemoryStore::new();
         let cache = CachedStore::new(inner, Duration::from_secs(60));
 
-        assert_eq!(cache.get("k").unwrap(), None);
+        assert!(cache.get("k").unwrap().is_none());
 
         // Populate inner directly (bypass cache)…
         // we need a &inner, but `cache` owns it — so reach through `invalidate_all` as a
         // proxy for "do not keep negative entries".
         // Simpler: set via cache.store(), which invalidates and then the lookup is fresh.
-        cache.store("k", "later").unwrap();
-        assert_eq!(cache.get("k").unwrap().as_deref(), Some("later"));
+        cache.store("k", &secret("later")).unwrap();
+        assert_eq!(exposed(&cache.get("k").unwrap()), Some("later"));
     }
 
     #[test]

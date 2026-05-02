@@ -9,6 +9,33 @@
 //! Uses `temp_env` for safe env var manipulation (thread-safe, automatic cleanup).
 
 use devboy_storage::{ChainStore, CredentialStore, EnvVarStore, MemoryStore};
+use secrecy::{ExposeSecret, SecretString};
+
+/// Compare an `Option<SecretString>` from a credential store against an
+/// expected plaintext — the integration tests pre-date `SecretString` and
+/// were written as `assert_eq!(result, Some("…".to_string()))`. The wrapper
+/// keeps the test bodies legible without reaching into the secret elsewhere.
+fn assert_secret_eq(actual: Option<SecretString>, expected: Option<&str>) {
+    match (actual, expected) {
+        (Some(secret), Some(want)) => {
+            assert_eq!(
+                secret.expose_secret(),
+                want,
+                "secret value did not match expected plaintext"
+            );
+        }
+        (None, None) => {}
+        (got, want) => panic!(
+            "expected Option<SecretString> presence={:?}, got presence={}",
+            want.is_some(),
+            got.is_some()
+        ),
+    }
+}
+
+fn secret(s: &str) -> SecretString {
+    SecretString::from(s.to_string())
+}
 
 // =============================================================================
 // EnvVarStore Integration Tests
@@ -22,7 +49,7 @@ fn test_env_var_store_prefixed_token() {
         || {
             let store = EnvVarStore::new();
             let result = store.get("test.prefixed.myservice.token").unwrap();
-            assert_eq!(result, Some("test_prefixed_value".to_string()));
+            assert_secret_eq(result, Some("test_prefixed_value"));
         },
     );
 }
@@ -35,7 +62,7 @@ fn test_env_var_store_unprefixed_token() {
         || {
             let store = EnvVarStore::new();
             let result = store.get("test.unprefixed.myservice.token").unwrap();
-            assert_eq!(result, Some("test_unprefixed_value".to_string()));
+            assert_secret_eq(result, Some("test_unprefixed_value"));
         },
     );
 }
@@ -45,7 +72,7 @@ fn test_env_var_store_gitlab_token() {
     temp_env::with_var("DEVBOY_TEST_GITLAB_INTEG_TOKEN", Some("glpat_test"), || {
         let store = EnvVarStore::new();
         let result = store.get("test.gitlab.integ.token").unwrap();
-        assert_eq!(result, Some("glpat_test".to_string()));
+        assert_secret_eq(result, Some("glpat_test"));
     });
 }
 
@@ -54,7 +81,7 @@ fn test_env_var_store_clickup_token() {
     temp_env::with_var("DEVBOY_TEST_CLICKUP_INTEG_TOKEN", Some("pk_test"), || {
         let store = EnvVarStore::new();
         let result = store.get("test.clickup.integ.token").unwrap();
-        assert_eq!(result, Some("pk_test".to_string()));
+        assert_secret_eq(result, Some("pk_test"));
     });
 }
 
@@ -66,7 +93,7 @@ fn test_env_var_store_jira_token() {
         || {
             let store = EnvVarStore::new();
             let result = store.get("test.jira.integ.token").unwrap();
-            assert_eq!(result, Some("jira_api_token".to_string()));
+            assert_secret_eq(result, Some("jira_api_token"));
         },
     );
 }
@@ -81,7 +108,7 @@ fn test_env_var_store_context_scoped_token() {
             let result = store
                 .get("contexts.testdashboard.testprovider.token")
                 .unwrap();
-            assert_eq!(result, Some("ghp_dashboard".to_string()));
+            assert_secret_eq(result, Some("ghp_dashboard"));
         },
     );
 }
@@ -96,7 +123,7 @@ fn test_env_var_store_prefixed_has_priority_over_unprefixed() {
         || {
             let store = EnvVarStore::new();
             let result = store.get("test.priority.service.token").unwrap();
-            assert_eq!(result, Some("prefixed_value".to_string()));
+            assert_secret_eq(result, Some("prefixed_value"));
         },
     );
 }
@@ -109,7 +136,7 @@ fn test_env_var_store_fallback_disabled() {
         || {
             let store = EnvVarStore::new().without_fallback();
             let result = store.get("test.fallback.disabled.service.token").unwrap();
-            assert_eq!(result, None);
+            assert_secret_eq(result, None);
         },
     );
 }
@@ -127,7 +154,7 @@ fn test_chain_store_env_var_priority_over_memory() {
         )]);
         let chain = ChainStore::new(vec![Box::new(EnvVarStore::new()), Box::new(memory)]);
         let result = chain.get("chain.integ.token").unwrap();
-        assert_eq!(result, Some("from_env".to_string()));
+        assert_secret_eq(result, Some("from_env"));
     });
 }
 
@@ -139,7 +166,7 @@ fn test_chain_store_fallback_to_memory() {
     )]);
     let chain = ChainStore::new(vec![Box::new(EnvVarStore::new()), Box::new(memory)]);
     let result = chain.get("chain.fallback.integ.token").unwrap();
-    assert_eq!(result, Some("from_memory".to_string()));
+    assert_secret_eq(result, Some("from_memory"));
 }
 
 #[test]
@@ -149,7 +176,7 @@ fn test_chain_store_not_found_in_any() {
         Box::new(MemoryStore::new()),
     ]);
     let result = chain.get("nonexistent.key.integration").unwrap();
-    assert_eq!(result, None);
+    assert_secret_eq(result, None);
 }
 
 #[test]
@@ -158,9 +185,11 @@ fn test_chain_store_write_to_memory() {
         Box::new(EnvVarStore::new()),
         Box::new(MemoryStore::new()),
     ]);
-    chain.store("test.write.key", "test_value").unwrap();
+    chain
+        .store("test.write.key", &secret("test_value"))
+        .unwrap();
     let result = chain.get("test.write.key").unwrap();
-    assert_eq!(result, Some("test_value".to_string()));
+    assert_secret_eq(result, Some("test_value"));
 }
 
 #[test]
@@ -168,12 +197,9 @@ fn test_chain_store_delete_from_memory() {
     let memory =
         MemoryStore::with_credentials([("delete.test.key".to_string(), "value".to_string())]);
     let chain = ChainStore::new(vec![Box::new(EnvVarStore::new()), Box::new(memory)]);
-    assert_eq!(
-        chain.get("delete.test.key").unwrap(),
-        Some("value".to_string())
-    );
+    assert_secret_eq(chain.get("delete.test.key").unwrap(), Some("value"));
     chain.delete("delete.test.key").unwrap();
-    assert_eq!(chain.get("delete.test.key").unwrap(), None);
+    assert_secret_eq(chain.get("delete.test.key").unwrap(), None);
 }
 
 #[test]
@@ -181,13 +207,10 @@ fn test_chain_store_ci_mode_no_keychain() {
     temp_env::with_var("DEVBOY_CI_MODE_TOKEN", Some("ci_value"), || {
         let chain = ChainStore::ci_chain();
         let result = chain.get("ci.mode.token").unwrap();
-        assert_eq!(result, Some("ci_value".to_string()));
+        assert_secret_eq(result, Some("ci_value"));
 
-        chain.store("ci.write.key", "written").unwrap();
-        assert_eq!(
-            chain.get("ci.write.key").unwrap(),
-            Some("written".to_string())
-        );
+        chain.store("ci.write.key", &secret("written")).unwrap();
+        assert_secret_eq(chain.get("ci.write.key").unwrap(), Some("written"));
     });
 }
 
@@ -200,7 +223,7 @@ fn test_default_chain_env_var_works() {
     temp_env::with_var("DEVBOY_DEFAULT_CHAIN_TEST", Some("env_value"), || {
         let chain = ChainStore::default_chain();
         let result = chain.get("default.chain.test").unwrap();
-        assert_eq!(result, Some("env_value".to_string()));
+        assert_secret_eq(result, Some("env_value"));
     });
 }
 
@@ -219,7 +242,7 @@ fn test_scenario_unprefixed_fallback() {
     temp_env::with_var("SCENARIO_GHA_TOKEN", Some("ghs_workflow_token"), || {
         let chain = ChainStore::default_chain();
         let result = chain.get("scenario.gha.token").unwrap();
-        assert_eq!(result, Some("ghs_workflow_token".to_string()));
+        assert_secret_eq(result, Some("ghs_workflow_token"));
     });
 }
 
@@ -231,7 +254,7 @@ fn test_scenario_prefixed_priority() {
         || {
             let chain = ChainStore::default_chain();
             let result = chain.get("scenario.docker.token").unwrap();
-            assert_eq!(result, Some("docker_secret".to_string()));
+            assert_secret_eq(result, Some("docker_secret"));
         },
     );
 }
@@ -246,18 +269,15 @@ fn test_multiple_contexts_scenario() {
         ],
         || {
             let chain = ChainStore::default_chain();
-            assert_eq!(
+            assert_secret_eq(
                 chain.get("contexts.testprod.testgh.token").unwrap(),
-                Some("ghp_prod".to_string())
+                Some("ghp_prod"),
             );
-            assert_eq!(
+            assert_secret_eq(
                 chain.get("contexts.testdev.testgh.token").unwrap(),
-                Some("ghp_dev".to_string())
+                Some("ghp_dev"),
             );
-            assert_eq!(
-                chain.get("testgh.token").unwrap(),
-                Some("ghp_default".to_string())
-            );
+            assert_secret_eq(chain.get("testgh.token").unwrap(), Some("ghp_default"));
         },
     );
 }
@@ -270,7 +290,7 @@ fn test_proxy_server_token_scenario() {
         || {
             let chain = ChainStore::default_chain();
             let result = chain.get("test-proxy-cloud.token").unwrap();
-            assert_eq!(result, Some("proxy_auth_token".to_string()));
+            assert_secret_eq(result, Some("proxy_auth_token"));
         },
     );
 }

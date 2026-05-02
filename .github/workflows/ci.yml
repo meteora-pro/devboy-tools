@@ -23,6 +23,41 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  secrets-discipline:
+    name: Secrets discipline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Guard against secrets sneaking back in as plain `String`.
+      # Every credential in non-test source under `crates/` must be carried
+      # as `secrecy::SecretString` (or a wrapper that redacts on `Debug` and
+      # zeroizes on drop) — see ADR-019. Tests are exempt because their
+      # fixtures pre-wrap literals at the field boundary.
+      #
+      # The CLI binary `crates/devboy-cli/src/main.rs` is also exempt
+      # because clap value parsers operate on `String` at the user-input
+      # boundary; that string is wrapped in `SecretString` immediately on
+      # use and never persisted back as a plaintext field.
+      - name: Forbid plain String for known secret field names
+        run: |
+          set -euo pipefail
+          # Field names that must never be `String` / `Option<String>`.
+          PATTERN='(\b(token|api_key|password|secret|client_secret|access_token|refresh_token|bearer_token)\b)\s*:\s*(Option<)?\s*String'
+          if grep -RInE \
+                --include='*.rs' \
+                --exclude-dir=target \
+                --exclude-dir=tests \
+                --exclude='*test*.rs' \
+                --exclude='main.rs' \
+                "$PATTERN" crates/ \
+              | grep -v '^[^:]*:[0-9]*: *//' \
+              | tee /tmp/leaks.txt; then
+            if [ -s /tmp/leaks.txt ]; then
+              echo "::error::Plain String secrets detected. Wrap them in secrecy::SecretString (see ADR-019)."
+              exit 1
+            fi
+          fi
+
   docs:
     name: Docs
     runs-on: ubuntu-latest
