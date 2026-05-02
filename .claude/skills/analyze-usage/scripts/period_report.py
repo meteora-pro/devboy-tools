@@ -59,6 +59,10 @@ RX_HEREDOC_MSG = re.compile(
     re.DOTALL,
 )
 
+# Issue #235 — keep these in lockstep with extract_outputs.py.
+RX_MCP_MR_CREATE = re.compile(r"^mcp__.*__(create|open|submit)_merge_request$")
+RX_MCP_PR_CREATE = re.compile(r"^mcp__.*__(create|open|submit)_pull_request$")
+
 
 def _extract_msgs(cmd: str) -> list[str]:
     out = []
@@ -189,6 +193,16 @@ def parse_all(root: Path, since: datetime | None = None, until: datetime | None 
                                     sd["sub"] += 1
                                 elif name.startswith("mcp__"):
                                     sd["mcp"] += 1
+                                    # Issue #235: also count MCP-mediated
+                                    # MR/PR creation toward the same
+                                    # `pr_create`/`mr_create` totals as
+                                    # the Bash CLI variants above. Anchored
+                                    # `_request$` so we don't double-count
+                                    # comment / discussion variants.
+                                    if RX_MCP_MR_CREATE.match(name):
+                                        sd["mr_create"] += 1
+                                    elif RX_MCP_PR_CREATE.match(name):
+                                        sd["pr_create"] += 1
                         elif typ == "user":
                             is_meta = m.get("isMeta", False)
                             ctype = ""

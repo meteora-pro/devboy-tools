@@ -42,6 +42,19 @@ RX_BRANCH = re.compile(
 )
 RX_ISSUE = re.compile(r"(DEV-\d+|CU-[\w]+|JIRA-\d+|GH-\d+|#\d+)", re.I)
 
+# MCP-mediated MR/PR/issue creation tool names. Anchored on `_request$` /
+# `_issue$` so we don't match the comment / discussion variants
+# (`*_merge_request_comment`, `*_pull_request_review_comment`,
+# `*_issue_comment`) — those are counted as comments, not creates.
+# Captures `create`, `open`, `submit` verbs to cover GitHub/GitLab/Jira
+# server naming conventions (issue #235).
+RX_MCP_MR_CREATE = re.compile(r"^mcp__.*__(create|open|submit)_merge_request$")
+RX_MCP_PR_CREATE = re.compile(r"^mcp__.*__(create|open|submit)_pull_request$")
+RX_MCP_ISSUE_CREATE = re.compile(r"^mcp__.*__(create|open|submit)_issue$")
+RX_MCP_COMMENT = re.compile(
+    r"^mcp__.*__(create|add|post)_(merge_request|pull_request|issue)_comment$"
+)
+
 
 def _extract_msgs(cmd: str) -> list[str]:
     out = []
@@ -114,6 +127,22 @@ def _aggregate(events) -> dict:
                         rem = ol or 1
                     a["lines_added"] += add
                     a["lines_removed"] += rem
+            elif n.startswith("mcp__"):
+                # Issue #235: MCP tool calls (mcp__<server>__create_*)
+                # were never counted toward pr_create / mr_create /
+                # issue_create / comments — only the Bash CLI variants
+                # (`gh pr create` / `glab mr create`) below were. For
+                # devboy users whose MR/PR workflow runs through MCP
+                # this drops the entire category, so DORA radar PR/MR
+                # counts come out as zero.
+                if RX_MCP_MR_CREATE.match(n):
+                    a["mr_create"] += 1
+                elif RX_MCP_PR_CREATE.match(n):
+                    a["pr_create"] += 1
+                elif RX_MCP_ISSUE_CREATE.match(n):
+                    a["issue_create"] += 1
+                elif RX_MCP_COMMENT.match(n):
+                    a["comments"] += 1
             elif n == "Bash":
                 cmd = inp.get("command", "") or ""
                 if "git push" in cmd:
