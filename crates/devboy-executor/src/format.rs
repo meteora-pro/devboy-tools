@@ -1745,7 +1745,6 @@ mod tests {
             content_type: "markdown".into(),
             ancestors: vec![grandparent, parent],
             labels: vec!["arch".into(), "draft".into()],
-            ..Default::default()
         };
 
         let out = format_knowledge_base_page(&content);
