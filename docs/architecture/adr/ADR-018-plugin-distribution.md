@@ -28,7 +28,7 @@ The two ecosystems we care about most (Claude Code and Codex) now ship a first-c
 
 A naive way to package us as a Claude Code plugin would be to bundle five pre-built Rust binaries (~125 MB total) inside `.claude-plugin/bin/`. This is heavyweight and duplicates GitHub Releases. A second option — requiring users to pre-install via npm before installing the plugin — defeats the "one-click" goal that motivates packaging in the first place.
 
-There is a third option, which leverages the fact that we are shipping to *agents*, not to humans: **the plugin carries skills, and the agent runs them to install the binary**. We already have `devboy-setup` and `devboy-repair` skills in `skills/00-self-bootstrap/`. Once Claude Code loads the plugin, the agent itself can be instructed by the skill to check `command -v devboy`, run `npm install -g @devboy-tools/cli` (or fall back to a GitHub Release binary (unsigned today; users can verify against `sha256sums.txt` if needed)), and verify with `devboy doctor`. No bundled binary, no pre-install requirement, and any breakage is debuggable in the same agent session.
+There is a third option, which leverages the fact that we are shipping to *agents*, not to humans: **the plugin carries skills, and the agent runs them to install the binary**. We already have `setup` and `repair` skills in `skills/00-self-bootstrap/`. Once Claude Code loads the plugin, the agent itself can be instructed by the skill to check `command -v devboy`, run `npm install -g @devboy-tools/cli` (or fall back to a GitHub Release binary (unsigned today; users can verify against `sha256sums.txt` if needed)), and verify with `devboy doctor`. No bundled binary, no pre-install requirement, and any breakage is debuggable in the same agent session.
 
 Constraints:
 
@@ -42,14 +42,14 @@ This ADR is **distinct from ADR-007**, which uses the word *plugin* for an inter
 
 ## Decision
 
-> **Decision:** Ship `devboy` as a Claude Code plugin and a Codex plugin from the same `meteora-pro/devboy-tools` repository, with no bundled binary. The plugin carries only skills, manifests, and an MCP-server registration; the agent installs the `devboy` binary on first use by running the `devboy-setup` skill. `devboy onboard` remains the canonical install path for the four agents that lack a plugin format and learns to detect — and skip — installations that the plugin already provided.
+> **Decision:** Ship `devboy` as a Claude Code plugin and a Codex plugin from the same `meteora-pro/devboy-tools` repository, with no bundled binary. The plugin carries only skills, manifests, and an MCP-server registration; the agent installs the `devboy` binary on first use by running the `setup` skill. `devboy onboard` remains the canonical install path for the four agents that lack a plugin format and learns to detect — and skip — installations that the plugin already provided.
 
 Specifically:
 
 ### 1. Plugin distribution model — agent-driven bootstrap
 
 - Plugins ship **no compiled binary**. The `.claude-plugin/` and `.codex-plugin/` manifests reference `devboy mcp serve` from `$PATH`.
-- The plugin's `skills/` is a directory of symlinks onto `/skills/<category>/<name>/`, including `devboy-setup` and `devboy-repair`. On first activation Claude Code surfaces these to the user; the user runs `/devboy:devboy-setup` (or accepts an auto-trigger).
+- The plugin's `skills/` is a directory of symlinks onto `/skills/<category>/<name>/`, including `setup` and `repair`. On first activation Claude Code surfaces these to the user; the user runs `/devboy:setup` (or accepts an auto-trigger).
 - `setup` instructs the agent to:
   1. Check `command -v devboy`. If present, jump to step 4.
   2. Try `npm install -g @devboy-tools/cli`. If npm is missing, fall back to fetching the platform binary from the latest GitHub Release into `${CLAUDE_PLUGIN_DATA}/bin/devboy` and adding it to `$PATH` for the session. The release asset is not currently signed; users in security-sensitive environments can verify the binary against the `sha256sums.txt` published alongside the release.
@@ -68,10 +68,10 @@ Specifically:
 
 ### 3. Skill naming and storage inside the plugin
 
-- The plugin tree under `plugins/claude/skills/<name>/` is a directory of **symlinks** pointing at the real source under `/skills/<category>/<name>/`. There is no rename and no generated copy — editing `skills/00-self-bootstrap/devboy-setup/SKILL.md` updates the plugin in the same edit.
+- Source skill directories under `/skills/<category>/<name>/` are named without a prefix (`setup`, `get-issues`, …, `analyze-usage`). The plugin tree under `plugins/claude/skills/<name>/` is a directory of **symlinks** pointing at those sources. There is no rename and no generated copy — editing `skills/00-self-bootstrap/setup/SKILL.md` updates the plugin in the same edit.
 - The Codex plugin reuses the same tree via a single top-level symlink (`plugins/codex/skills -> ../claude/skills`).
-- Plugin namespacing prefixes skills with the **plugin name** (`plugin.json#name = "devboy"`), not the marketplace name. Inside Claude Code skills are invoked as `/devboy:devboy-setup`, `/devboy:devboy-get-issues`, …, `/devboy:analyze-usage`. The doubled `devboy` is a cosmetic cost of keeping a single source-of-truth file (no rename, no copy); a future change can drop the prefix from source filenames if the cosmetics outweigh the migration cost (`history.json`, `bundles/*.toml`, embedded loader, existing user installs in `~/.claude/skills/devboy-*` would all need to migrate).
-- The skills catalogue keeps a backward-compat alias in `Catalog::get()` (`Catalog::get("setup")` and `Catalog::get("devboy-setup")` resolve to the same entry) so that future rename would not break callers.
+- Plugin namespacing prefixes skills with the **plugin name** (`plugin.json#name = "devboy"`), not the marketplace name. Inside Claude Code skills are invoked as `/devboy:setup`, `/devboy:get-issues`, …, `/devboy:analyze-usage`.
+- The skills catalogue keeps a backward-compat alias in `Catalog::get()` so that callers still passing the legacy `devboy-` form (older scripts, dotfiles, AGENTS.md cheat-sheets) keep resolving: `Catalog::get("devboy-setup")` returns the same `SkillSummary` as `Catalog::get("setup")`. The alias lives in `crates/devboy-skills/src/catalog.rs`'s `canonical_skill_name()`.
 
 ### 4. Versioning synchronised with the Cargo workspace tag
 

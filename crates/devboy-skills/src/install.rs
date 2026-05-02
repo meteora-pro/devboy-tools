@@ -693,9 +693,9 @@ mod tests {
             skills_dir: dir.path().to_path_buf(),
         };
         let skill = crate::skill::Skill::parse(
-            "devboy-setup",
+            "setup",
             r#"---
-name: devboy-setup
+name: setup
 description: test
 category: self-bootstrap
 version: 1
@@ -709,7 +709,7 @@ body
         let body = render_skill_file(&skill);
         let mut history = HistoricalHashes::default();
         history.by_skill.insert(
-            "devboy-setup".into(),
+            "setup".into(),
             crate::manifest::SkillHistory {
                 current: crate::manifest::HistoricalVersion {
                     version: 1,
@@ -724,14 +724,14 @@ body
             install_skills_to_target(&target, std::slice::from_ref(&skill), &history, &options)
                 .unwrap();
         assert_eq!(
-            report.outcomes.get("devboy-setup"),
+            report.outcomes.get("setup"),
             Some(&InstallOutcome::Installed)
         );
 
         // Second run: file on disk now matches current; outcome = Unchanged.
         let report = install_skills_to_target(&target, &[skill], &history, &options).unwrap();
         assert_eq!(
-            report.outcomes.get("devboy-setup"),
+            report.outcomes.get("setup"),
             Some(&InstallOutcome::Unchanged)
         );
     }
@@ -744,9 +744,9 @@ body
             skills_dir: dir.path().to_path_buf(),
         };
         let skill = crate::skill::Skill::parse(
-            "devboy-setup",
+            "setup",
             r#"---
-name: devboy-setup
+name: setup
 description: test
 category: self-bootstrap
 version: 1
@@ -757,15 +757,15 @@ body
         .unwrap();
 
         // Plant a user-modified file.
-        let skill_dir = dir.path().join("devboy-setup");
+        let skill_dir = dir.path().join("setup");
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(skill_dir.join("SKILL.md"), b"user version").unwrap();
 
-        // History knows devboy-setup but neither the current nor any
+        // History knows setup but neither the current nor any
         // historical hash matches "user version".
         let mut history = HistoricalHashes::default();
         history.by_skill.insert(
-            "devboy-setup".into(),
+            "setup".into(),
             crate::manifest::SkillHistory {
                 current: crate::manifest::HistoricalVersion {
                     version: 1,
@@ -783,7 +783,7 @@ body
         )
         .unwrap();
         assert_eq!(
-            report.outcomes.get("devboy-setup"),
+            report.outcomes.get("setup"),
             Some(&InstallOutcome::SkippedUserModified)
         );
 
@@ -799,7 +799,7 @@ body
         )
         .unwrap();
         assert_eq!(
-            report.outcomes.get("devboy-setup"),
+            report.outcomes.get("setup"),
             Some(&InstallOutcome::OverwrittenWithForce)
         );
     }
@@ -811,13 +811,13 @@ body
             label: "test".into(),
             skills_dir: dir.path().to_path_buf(),
         };
-        let skill_dir = dir.path().join("devboy-setup");
+        let skill_dir = dir.path().join("setup");
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(skill_dir.join("SKILL.md"), b"hi").unwrap();
 
         let removed =
-            remove_skills_from_target(&target, &["devboy-setup".into()], false, false).unwrap();
-        assert_eq!(removed, vec!["devboy-setup".to_string()]);
+            remove_skills_from_target(&target, &["setup".into()], false, false).unwrap();
+        assert_eq!(removed, vec!["setup".to_string()]);
         assert!(!skill_dir.exists());
     }
 
@@ -862,7 +862,7 @@ body
     #[test]
     fn render_skill_file_produces_round_trippable_markdown() {
         let original = r#"---
-name: devboy-setup
+name: setup
 description: Walk the user through initial devboy configuration.
 category: self-bootstrap
 version: 3
@@ -873,11 +873,11 @@ tools:
   - doctor
 ---
 
-# devboy-setup
+# setup
 
 Body stays intact across a render round-trip.
 "#;
-        let skill = Skill::parse("devboy-setup", original).unwrap();
+        let skill = Skill::parse("setup", original).unwrap();
         let rendered = render_skill_file(&skill);
         assert!(rendered.starts_with("---\n"));
         assert!(rendered.contains("\n---\n"));
@@ -885,7 +885,7 @@ Body stays intact across a render round-trip.
 
         // Re-parse: the rendered file must round-trip back to the same
         // frontmatter + body pair.
-        let reparsed = Skill::parse("devboy-setup", &rendered).unwrap();
+        let reparsed = Skill::parse("setup", &rendered).unwrap();
         assert_eq!(reparsed.name(), skill.name());
         assert_eq!(reparsed.version(), skill.version());
         assert_eq!(reparsed.category(), skill.category());

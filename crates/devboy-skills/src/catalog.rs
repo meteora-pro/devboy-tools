@@ -9,12 +9,14 @@ use std::collections::BTreeMap;
 
 use crate::skill::{Category, SkillSummary};
 
-/// Strip the legacy `devboy-` prefix when present.
+/// Fold the legacy `devboy-` prefix when callers still use it.
 ///
-/// Skills are stored in `/skills/` under their source names (`devboy-setup`),
-/// but the Claude Code / Codex plugin drops the prefix (`setup`) — see
-/// ADR-018 §3 and `skills/PLUGIN_NAMING.md`. This helper folds both forms
-/// to the same canonical name so lookups work regardless of which side asks.
+/// Skill source files were renamed in 0.25 to drop the `devboy-` prefix
+/// (see ADR-018 §3 and `skills/PLUGIN_NAMING.md`). For one or two
+/// releases we keep accepting the legacy form so external callers
+/// (scripted installs, dotfile copies, AGENTS.md cheat-sheets) keep
+/// resolving. `Catalog::get("devboy-setup")` returns the same entry as
+/// `Catalog::get("setup")`.
 pub fn canonical_skill_name(name: &str) -> &str {
     name.strip_prefix("devboy-").unwrap_or(name)
 }
@@ -61,10 +63,10 @@ impl Catalog {
         self.entries.iter().filter(move |s| s.category == category)
     }
 
-    /// Look a skill up by exact name or its plugin-canonical alias.
+    /// Look a skill up by exact name or by the legacy `devboy-` form.
     ///
-    /// `get("devboy-setup")` and `get("setup")` both return the embedded
-    /// `devboy-setup` summary — see [`canonical_skill_name`].
+    /// Both `get("setup")` and `get("devboy-setup")` resolve to the
+    /// same entry — see [`canonical_skill_name`].
     pub fn get(&self, name: &str) -> Option<&SkillSummary> {
         if let Some(direct) = self.entries.iter().find(|s| s.name == name) {
             return Some(direct);
@@ -135,7 +137,7 @@ mod tests {
 
     #[test]
     fn canonical_skill_name_strips_devboy_prefix() {
-        assert_eq!(canonical_skill_name("devboy-setup"), "setup");
+        assert_eq!(canonical_skill_name("setup"), "setup");
         assert_eq!(canonical_skill_name("setup"), "setup");
         assert_eq!(canonical_skill_name("analyze-usage"), "analyze-usage");
         // Only one prefix is stripped — guard against repeated trimming.
@@ -144,11 +146,11 @@ mod tests {
 
     #[test]
     fn get_resolves_plugin_alias_for_legacy_entry() {
-        let cat = Catalog::from_summaries(vec![sum("devboy-setup", Category::SelfBootstrap, 2)]);
+        let cat = Catalog::from_summaries(vec![sum("setup", Category::SelfBootstrap, 2)]);
         // Plugin-style query without prefix finds the legacy entry.
-        assert_eq!(cat.get("setup").unwrap().name, "devboy-setup");
+        assert_eq!(cat.get("setup").unwrap().name, "setup");
         // Exact legacy query still works.
-        assert_eq!(cat.get("devboy-setup").unwrap().name, "devboy-setup");
+        assert_eq!(cat.get("setup").unwrap().name, "setup");
         // Unrelated query returns None.
         assert!(cat.get("not-a-skill").is_none());
     }
@@ -158,7 +160,7 @@ mod tests {
         // If a future source ships skills already under the plugin name
         // (e.g., a marketplace overlay), legacy queries must still hit.
         let cat = Catalog::from_summaries(vec![sum("setup", Category::SelfBootstrap, 2)]);
-        assert_eq!(cat.get("devboy-setup").unwrap().name, "setup");
+        assert_eq!(cat.get("setup").unwrap().name, "setup");
         assert_eq!(cat.get("setup").unwrap().name, "setup");
     }
 

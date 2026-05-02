@@ -8,17 +8,17 @@ description = "On-call bundle — diagnostics, verification, notifications."
 
 skills = [
     # 00-self-bootstrap
-    "devboy-setup",
-    "devboy-repair",
+    "setup",
+    "repair",
 
     # 03-self-feedback
-    "devboy-run-and-verify",
-    "devboy-qa-sweep",
+    "run-and-verify",
+    "qa-sweep",
 
     # 05-messenger
-    "devboy-notify",
+    "notify",
 
     # 01-issue-tracking — keep minimum for filing/linking incidents
-    "devboy-create-issue",
-    "devboy-link-issues",
+    "create-issue",
+    "link-issues",
 ]
