@@ -1,1 +1,1 @@
-["index", "executor", "enrichers", "format-pipeline"]
+["index", "adr", "executor", "enrichers", "format-pipeline"]
