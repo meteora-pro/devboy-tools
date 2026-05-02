@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 #
-# Generate plugin skill trees for Claude Code and Codex from /skills/.
+# Generate the Claude Code plugin skill tree from /skills/.
 #
 # Source of truth: skills/<category>/<name>/SKILL.md (and any sibling files).
-# Target:
-#   plugins/claude/skills/<rule(name)>/SKILL.md
-#   plugins/codex/skills/<rule(name)>/SKILL.md
+# Target:           plugins/claude/skills/<rule(name)>/SKILL.md
+#
+# The Codex plugin reuses the same tree via a relative symlink committed
+# to the repo (`plugins/codex/skills -> ../claude/skills`). We do NOT
+# generate a separate Codex tree — both plugins read the identical files.
+# `--check` validates the symlink as well.
 #
 # Plugin root layout follows the Claude Code spec: only plugin.json lives in
 # .claude-plugin/; skills/ sit next to it at the plugin root. Multi-plugin
@@ -35,7 +38,8 @@ esac
 ROOT="$(git rev-parse --show-toplevel)"
 SKILLS_SRC="$ROOT/skills"
 CLAUDE_DST="$ROOT/plugins/claude/skills"
-CODEX_DST="$ROOT/plugins/codex/skills"
+CODEX_LINK="$ROOT/plugins/codex/skills"
+EXPECTED_CODEX_TARGET="../claude/skills"
 
 # Renaming rule. Override here if a skill needs a non-default mapping.
 plugin_name_for() {
@@ -79,32 +83,53 @@ generate_dry() {
 }
 
 drift_check() {
-  local tmp_claude tmp_codex
-  tmp_claude="$(mktemp -d)"
-  tmp_codex="$(mktemp -d)"
-  CLAUDE_DST="$tmp_claude" CODEX_DST="$tmp_codex" generate_to "$tmp_claude"
-  CLAUDE_DST="$tmp_claude" CODEX_DST="$tmp_codex" generate_to "$tmp_codex"
   local rc=0
-  diff -ruN "$tmp_claude" "$ROOT/plugins/claude/skills" >/dev/null 2>&1 || rc=1
-  diff -ruN "$tmp_codex"  "$ROOT/plugins/codex/skills"  >/dev/null 2>&1 || rc=1
-  rm -rf "$tmp_claude" "$tmp_codex"
+
+  # 1. Claude skill tree is in sync with /skills/.
+  local tmp
+  tmp="$(mktemp -d)"
+  generate_to "$tmp"
+  if ! diff -ruN "$tmp" "$CLAUDE_DST" >/dev/null 2>&1; then
+    rc=1
+  fi
+  rm -rf "$tmp"
+
+  # 2. Codex skills/ is a symlink pointing at ../claude/skills (relative).
+  if [ ! -L "$CODEX_LINK" ]; then
+    echo "Drift: $CODEX_LINK is not a symlink (expected -> $EXPECTED_CODEX_TARGET)" >&2
+    rc=1
+  else
+    local actual
+    actual="$(readlink "$CODEX_LINK")"
+    if [ "$actual" != "$EXPECTED_CODEX_TARGET" ]; then
+      echo "Drift: $CODEX_LINK -> $actual, expected -> $EXPECTED_CODEX_TARGET" >&2
+      rc=1
+    fi
+  fi
+
   if [ "$rc" -ne 0 ]; then
-    echo "Drift detected: plugin skill tree is out of sync with /skills/." >&2
     echo "Run scripts/release/build-skills.sh and commit the result." >&2
     exit 1
   fi
-  echo "OK: plugin skill trees match /skills/."
+  echo "OK: plugin skill tree matches /skills/ and Codex symlink is correct."
 }
 
 case "$MODE" in
   write)
     generate_to "$CLAUDE_DST"
-    generate_to "$CODEX_DST"
     cc_count=$(find "$CLAUDE_DST" -name SKILL.md | wc -l | tr -d ' ')
-    cx_count=$(find "$CODEX_DST"  -name SKILL.md | wc -l | tr -d ' ')
     echo "Generated:"
     echo "  Claude Code plugin: $cc_count skills at plugins/claude/skills/"
-    echo "  Codex plugin:       $cx_count skills at plugins/codex/skills/"
+    # Re-establish the Codex symlink if it has been removed (e.g. by
+    # a clean checkout on a platform with broken symlink semantics).
+    if [ ! -L "$CODEX_LINK" ]; then
+      mkdir -p "$(dirname "$CODEX_LINK")"
+      rm -rf "$CODEX_LINK"
+      ln -s "$EXPECTED_CODEX_TARGET" "$CODEX_LINK"
+      echo "  Codex plugin:       restored symlink $CODEX_LINK -> $EXPECTED_CODEX_TARGET"
+    else
+      echo "  Codex plugin:       symlink → $(readlink "$CODEX_LINK") (shared with Claude)"
+    fi
     ;;
   dry)
     echo "Would generate (rule: drop 'devboy-' prefix):"
