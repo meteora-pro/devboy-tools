@@ -2510,7 +2510,31 @@ fn handle_context_command(command: ContextCommands) -> Result<()> {
             let names = config.context_names();
 
             if names.is_empty() {
-                println!("No contexts configured.");
+                // Issue #229: a remote_config / proxy install is the
+                // supported "thin client" mode — no local contexts by
+                // design. Don't lie that nothing is configured.
+                if config.remote_config.is_some() || !config.proxy_mcp_servers.is_empty() {
+                    println!(
+                        "This install uses a remote MCP proxy; no local contexts are required."
+                    );
+                    if let Some(rc) = &config.remote_config {
+                        let url = rc.url.as_deref().unwrap_or("(not set)");
+                        println!("Remote config URL: {url}");
+                    }
+                    if !config.proxy_mcp_servers.is_empty() {
+                        println!(
+                            "Proxy MCP servers: {}",
+                            config
+                                .proxy_mcp_servers
+                                .iter()
+                                .map(|p| p.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                    }
+                } else {
+                    println!("No contexts configured.");
+                }
                 println!("Config source: {}", source_path.display());
                 return Ok(());
             }

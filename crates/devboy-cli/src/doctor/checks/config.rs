@@ -174,6 +174,39 @@ impl DiagnosticCheck for ActiveContextCheck {
                 fix_command: None,
                 fix_url: None,
             },
+            // Issue #229: a `[remote_config]`-only or `[[proxy_mcp_servers]]`
+            // install is the supported "thin client" mode — the actual tool
+            // surface is exposed by the remote MCP server we proxy to. There
+            // are no local contexts by design, so the generic "no context"
+            // warning misleads the user into running `devboy init` in a loop.
+            None if config.remote_config.is_some() || !config.proxy_mcp_servers.is_empty() => {
+                let url = config
+                    .remote_config
+                    .as_ref()
+                    .and_then(|rc| rc.url.as_deref())
+                    .unwrap_or("(not set)");
+                CheckResult {
+                    id: self.id().to_string(),
+                    category: self.category().to_string(),
+                    name: self.name().to_string(),
+                    status: CheckStatus::Pass,
+                    message: format!(
+                        "Remote-config / proxy install detected; local contexts are not required (remote_config.url: {url})"
+                    ),
+                    details: ctx.verbose.then(|| {
+                        json!({
+                            "remote_config_url": config.remote_config.as_ref().and_then(|rc| rc.url.clone()),
+                            "proxy_mcp_servers": config
+                                .proxy_mcp_servers
+                                .iter()
+                                .map(|p| p.name.clone())
+                                .collect::<Vec<_>>(),
+                        })
+                    }),
+                    fix_command: None,
+                    fix_url: None,
+                }
+            }
             None => CheckResult {
                 id: self.id().to_string(),
                 category: self.category().to_string(),
@@ -382,5 +415,74 @@ mod tests {
         assert_eq!(result.status, CheckStatus::Pass);
         assert!(result.message.contains("workspace"));
         assert_eq!(result.details.unwrap()["active_context"], "workspace");
+    }
+
+    /// Issue #229: a `[remote_config]`-only install (the supported
+    /// thin-client / proxy mode) must not warn about a missing context
+    /// nor suggest re-running `devboy init` (which would loop).
+    #[tokio::test]
+    async fn active_context_check_passes_for_remote_config_install() {
+        use devboy_core::config::RemoteConfigSettings;
+
+        let config = Config {
+            remote_config: Some(RemoteConfigSettings {
+                url: Some("https://example.com/api/config/mcp".to_string()),
+                token_key: Some("remote_config.token".to_string()),
+            }),
+            ..Default::default()
+        };
+        let ctx = test_context(
+            Some(config),
+            Some(PathBuf::from("config.toml")),
+            true,
+            None,
+            None,
+            true,
+        );
+
+        let result = ActiveContextCheck.run(&ctx).await;
+
+        assert_eq!(result.status, CheckStatus::Pass);
+        assert!(result.message.contains("Remote-config"));
+        assert!(
+            result
+                .message
+                .contains("https://example.com/api/config/mcp")
+        );
+        assert!(result.fix_command.is_none());
+    }
+
+    /// Issue #229: same goes for an install where the runtime fetch
+    /// has already populated `[[proxy_mcp_servers]]` (no
+    /// `[remote_config]` block, but the proxy is configured).
+    #[tokio::test]
+    async fn active_context_check_passes_when_proxy_servers_configured() {
+        use devboy_core::config::ProxyMcpServerConfig;
+
+        let config = Config {
+            proxy_mcp_servers: vec![ProxyMcpServerConfig {
+                name: "remote-1".to_string(),
+                url: "https://example.com/api/mcp".to_string(),
+                auth_type: "none".to_string(),
+                token_key: None,
+                tool_prefix: None,
+                transport: "streamable-http".to_string(),
+                routing: None,
+            }],
+            ..Default::default()
+        };
+        let ctx = test_context(
+            Some(config),
+            Some(PathBuf::from("config.toml")),
+            true,
+            None,
+            None,
+            true,
+        );
+
+        let result = ActiveContextCheck.run(&ctx).await;
+
+        assert_eq!(result.status, CheckStatus::Pass);
+        assert!(result.fix_command.is_none());
     }
 }
