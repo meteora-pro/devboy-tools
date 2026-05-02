@@ -1,1 +1,27 @@
-["index", "adr", "executor", "enrichers", "format-pipeline"]
+[
+  {
+    "type": "file",
+    "name": "index",
+    "label": "Overview"
+  },
+  {
+    "type": "dir",
+    "name": "adr",
+    "label": "ADRs"
+  },
+  {
+    "type": "file",
+    "name": "executor",
+    "label": "Executor"
+  },
+  {
+    "type": "file",
+    "name": "enrichers",
+    "label": "Enrichers"
+  },
+  {
+    "type": "file",
+    "name": "format-pipeline",
+    "label": "Format pipeline"
+  }
+]
