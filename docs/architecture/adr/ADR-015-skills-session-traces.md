@@ -17,7 +17,7 @@ superseded_by: null
 
 ## Context
 
-The self-feedback category of skills (ADR-012, category 03 — `devboy-retro`, `devboy-daily-report`, `devboy-knowledge-extract`, `devboy-run-and-verify`) is only useful if there is **something to look back at**. We need a simple, standard way for skills (and any external agent that wants to opt in) to emit a trace of what they did, so that downstream skills can summarise, critique, or learn from it.
+The self-feedback category of skills (ADR-012, category 03 — `retro`, `daily-report`, `knowledge-extract`, `run-and-verify`) is only useful if there is **something to look back at**. We need a simple, standard way for skills (and any external agent that wants to opt in) to emit a trace of what they did, so that downstream skills can summarise, critique, or learn from it.
 
 Requirements:
 
@@ -36,12 +36,12 @@ Requirements:
 ```
 <target>/.devboy/sessions/
 ├── 2026-04-17/
-│   ├── devboy-solve-issue/
+│   ├── solve-issue/
 │   │   ├── trace.jsonl           # append-only event stream
 │   │   └── meta.json             # session-level metadata (start, end, skill, version, outcome)
-│   ├── devboy-review-mr/
+│   ├── review-mr/
 │   │   └── trace.jsonl
-│   └── devboy-run-and-verify/
+│   └── run-and-verify/
 │       └── trace.jsonl
 └── 2026-04-18/
     └── ...
@@ -59,7 +59,7 @@ One JSON object per line. All fields are optional except `ts`, `phase`, and `ski
 ```json
 {
   "ts": "2026-04-17T12:34:56.789Z",
-  "skill": "devboy-solve-issue",
+  "skill": "solve-issue",
   "session_id": "01J123ABC...",              // ULID per session — same across all events
   "phase": "tool_call",                        // see phase enum below
   "payload": {
@@ -94,7 +94,7 @@ A sibling file written at session end (or updated periodically during a long ses
 ```json
 {
   "session_id": "01J123ABC...",
-  "skill": "devboy-solve-issue",
+  "skill": "solve-issue",
   "skill_version": 3,
   "devboy_version": "0.18.0",
   "started_at": "2026-04-17T12:34:56.789Z",

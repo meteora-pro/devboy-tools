@@ -51,7 +51,7 @@ End users install skills through the CLI (see [`ADR-013`](../docs/architecture/a
 
 ```bash
 devboy skills list
-devboy skills install devboy-setup
+devboy skills install setup
 devboy skills install --category self-bootstrap
 devboy skills install --all --agent claude
 ```

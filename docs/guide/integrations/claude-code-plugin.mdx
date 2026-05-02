@@ -1,0 +1,84 @@
+# Claude Code Plugin
+
+Install `devboy` as a [Claude Code plugin](https://code.claude.com/docs/en/plugins) — one slash-command, no manual `npm` step. The plugin ships skills, MCP server registration, and a bootstrap recipe that the agent itself runs to install the CLI binary on first use.
+
+## Install
+
+From inside any Claude Code session:
+
+```text
+/plugin marketplace add meteora-pro/devboy-tools
+/plugin install devboy@meteora-devboy
+```
+
+That is the only thing the user does manually. Claude Code fetches the plugin, registers the skills, wires up the MCP server placeholder, and surfaces the `setup` skill on first use.
+
+## What happens next — agent-driven bootstrap
+
+The plugin does **not** ship the Rust binary. On first activation the bundled `setup` skill detects whether `devboy` is on `$PATH` and, if not, installs it. ADR-018 §1 has the full sequence; the short version:
+
+1. Detect plugin context — `$CLAUDE_PLUGIN_DATA` is set, so the skill picks `--agent claude` automatically.
+2. Check `command -v devboy`. If found, jump to step 4.
+3. `npm install -g @devboy-tools/cli` if npm is available; otherwise download the platform tarball (`devboy-<os>-<arch>.tar.gz`) and the matching `.sha256` sibling from [the latest GitHub Release](https://github.com/meteora-pro/devboy-tools/releases), `shasum -a 256 -c` to verify, extract into `${CLAUDE_PLUGIN_DATA}/bin/`, add to PATH. Releases are not currently code-signed; the per-asset SHA-256 is the integrity check.
+4. Run `devboy onboard --agent claude --yes` to detect agents on the machine and (where applicable) install the curated skill bundle.
+5. Run `devboy doctor` and report.
+
+If something fails along the way the agent invokes the `repair` skill in the same session — no out-of-band debugging.
+
+After the binary is installed, **run `/reload-plugins`** so Claude Code picks up the MCP server entry. The MCP shim (`bin/devboy-shim.sh`) finds the binary in either `${CLAUDE_PLUGIN_DATA}/bin/` or `$PATH` and exec's it.
+
+## What the plugin ships
+
+| Component | Path inside the plugin |
+|---|---|
+| Manifest | `plugins/claude/.claude-plugin/plugin.json` |
+| Skills (24, symlinks → `/skills/<category>/<name>`) | `plugins/claude/skills/<name>/` |
+| MCP server | `plugins/claude/.mcp.json` |
+| Binary locator | `plugins/claude/bin/devboy-shim.sh` |
+
+Skill names match the source filenames one-to-one — `plugins/claude/skills/<name>` is a symlink to `skills/<category>/<name>/`, so editing `/skills/00-self-bootstrap/setup/SKILL.md` updates the plugin in the same edit. Plugin namespacing prepends `devboy:`, so:
+
+- `/devboy:setup` — bootstrap
+- `/devboy:get-issues` — fetch open / closed issues
+- `/devboy:review-mr` — review a merge / pull request
+- `/devboy:analyze-usage` — Claude Code session analytics
+
+See [PLUGIN_NAMING.md](https://github.com/meteora-pro/devboy-tools/blob/main/skills/PLUGIN_NAMING.md) for the full layout.
+
+## Updating
+
+The plugin's `version` field is synced with the Cargo workspace version on every tag push. To pull a new release:
+
+```text
+/plugin update devboy@meteora-devboy
+```
+
+…then `/reload-plugins`. The CLI binary is updated separately (npm or a fresh GitHub Release pull) — re-running `/devboy:setup` upgrades it.
+
+## Compared to the npm path
+
+Both install paths produce the same end state — same binary, same MCP server, same skills surface — but cover different audiences.
+
+| | Plugin install | `npm install -g` + `devboy onboard` |
+|---|---|---|
+| Audience | Interactive Claude Code users | CI, dotfiles, Docker, headless |
+| Steps | 1 (`/plugin install …`) | 2 (`npm i -g`, then `onboard`) |
+| Distribution | Marketplace + agent-driven bootstrap | npm registry |
+| Updates | `/plugin update` | `npm i -g @devboy-tools/cli` |
+| Skill installation | Provided by plugin (namespaced) | Copied into `~/.claude/skills/` |
+| Dedup | `devboy onboard` skips Claude target when plugin enabled | n/a |
+
+You can mix and match — `npm install -g` first, then install the plugin later: `devboy onboard` reads `~/.claude/settings.json#enabledPlugins` and skips the Claude target so you don't end up with duplicate skill copies (ADR-018 §5).
+
+## Troubleshooting
+
+- **MCP server not connected.** Run `/reload-plugins` after `setup` finishes the install. The shim only finds `devboy` once it is on PATH or in `${CLAUDE_PLUGIN_DATA}/bin/`.
+- **`npm install -g` fails with permissions.** The bootstrap will fall back to the GitHub Release binary in `${CLAUDE_PLUGIN_DATA}/bin/` automatically. If both fail, ask `/devboy:repair`.
+- **Skills don't show up after install.** Trigger `/reload-plugins`, or restart Claude Code if reload is unavailable.
+- **Conflicting skills in `~/.claude/skills/`.** Run `devboy onboard --agent claude --yes` once — it detects the active plugin and removes nothing, but future runs respect the dedup rule.
+
+## See also
+
+- [ADR-018 — Distribution as Claude Code and Codex plugins](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-018-plugin-distribution.md)
+- [ADR-017 — `devboy onboard`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-017-agent-detection-and-onboard.md)
+- [Codex plugin install](./codex-plugin) — same architecture for OpenAI Codex CLI

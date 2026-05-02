@@ -82,8 +82,8 @@ mod tests {
         for p in PROFILES {
             let b = load(p).unwrap();
             assert!(
-                b.skills.iter().any(|s| s == "devboy-setup"),
-                "profile '{p}' missing devboy-setup"
+                b.skills.iter().any(|s| s == "setup"),
+                "profile '{p}' missing setup"
             );
         }
     }
@@ -102,12 +102,12 @@ mod tests {
     #[test]
     fn pm_profile_emphasises_meeting_skills() {
         let b = load("pm").unwrap();
-        assert!(b.skills.iter().any(|s| s.starts_with("devboy-meeting")));
+        assert!(b.skills.iter().any(|s| s.starts_with("meeting-")));
     }
 
     #[test]
     fn oncall_profile_includes_notify() {
         let b = load("oncall").unwrap();
-        assert!(b.skills.iter().any(|s| s == "devboy-notify"));
+        assert!(b.skills.iter().any(|s| s == "notify"));
     }
 }

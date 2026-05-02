@@ -8,22 +8,22 @@ description = "PM / team lead bundle — issue tracking, meeting notes, messenge
 
 skills = [
     # 00-self-bootstrap
-    "devboy-setup",
-    "devboy-tools-catalog",
+    "setup",
+    "tools-catalog",
 
     # 01-issue-tracking
-    "devboy-get-issues",
-    "devboy-create-issue",
-    "devboy-update-issue",
-    "devboy-link-issues",
+    "get-issues",
+    "create-issue",
+    "update-issue",
+    "link-issues",
 
     # 04-meeting-notes
-    "devboy-meeting-search",
-    "devboy-meeting-transcript",
-    "devboy-meeting-to-tasks",
+    "meeting-search",
+    "meeting-transcript",
+    "meeting-to-tasks",
 
     # 05-messenger
-    "devboy-chat-search",
-    "devboy-chat-summary",
-    "devboy-notify",
+    "chat-search",
+    "chat-summary",
+    "notify",
 ]

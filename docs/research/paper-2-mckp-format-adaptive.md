@@ -680,9 +680,9 @@ This complements the existing `devboy tune analyze` (which mines
 emitted telemetry events) and lets a fresh install converge to a
 near-tuned configuration on first run.
 
-### Skill: `devboy-pipeline-tune`
+### Skill: `pipeline-tune`
 
-`skills/00-self-bootstrap/devboy-pipeline-tune/SKILL.md` is a procedural
+`skills/00-self-bootstrap/pipeline-tune/SKILL.md` is a procedural
 recipe for an agent driving the CLI on a user's behalf:
 
 1. Sanity-check that `~/.claude/projects` exists and has data.
