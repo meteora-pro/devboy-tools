@@ -467,64 +467,95 @@ async fn confluence_connectivity(
 ) -> Result<ConnectivityOutcome, String> {
     let client = http_client()?;
     let base_url = config.base_url.trim_end_matches('/');
-    let auth_modes = if config.username.is_some() {
-        ["basic"].as_slice()
-    } else {
-        ["bearer"].as_slice()
-    };
     let api_paths = confluence_space_api_paths(config.api_version.as_deref());
 
-    let mut last_error = None;
-    for api_path in api_paths {
-        let url = format!("{base_url}{api_path}/space?limit=1");
-        for auth_mode in auth_modes {
-            let mut request = client
-                .request(Method::GET, &url)
-                .header(USER_AGENT, "devboy-tools")
-                .header(ACCEPT, "application/json");
+    // Doctor probes every candidate API path concurrently rather than
+    // walking them as a sequential fallback chain. Trade-off: one extra
+    // HTTP request when v1 succeeds (the v2 probe runs anyway), bought
+    // for ~half the wall-clock when v2 is the working version. Doctor
+    // is a diagnostic, not the hot path — speed of feedback for the
+    // operator wins.
+    let probes = api_paths
+        .iter()
+        .map(|api_path| probe_confluence_endpoint(&client, base_url, api_path, config, token));
 
-            request = match *auth_mode {
-                "basic" => {
-                    let username = config.username.as_deref().unwrap_or_default();
-                    request.basic_auth(username, Some(token))
-                }
-                _ => request.bearer_auth(token),
-            };
+    let results = futures::future::join_all(probes).await;
 
-            let response = request
-                .send()
-                .await
-                .map_err(|error| format!("Network error: {error}"))?;
-
-            let status = response.status();
-            if !status.is_success() {
-                let body = response.text().await.unwrap_or_default();
-                last_error = Some(parse_error(status, body).1);
-                continue;
-            }
-
-            let payload: ConfluenceSpaceResponse = response
-                .json()
-                .await
-                .map_err(|error| format!("Invalid Confluence response: {error}"))?;
-
-            let message = match payload.results.into_iter().next() {
-                Some(space) => format!(
-                    "Confluence API reachable for space {} ({}) [id: {}]",
-                    space.key, space.name, space.id
-                ),
-                None => "Confluence API reachable".to_string(),
-            };
-
-            return Ok(ConnectivityOutcome {
-                message,
-                user: None,
-                rate_limit: None,
-            });
+    let mut last_error: Option<String> = None;
+    for result in results {
+        match result {
+            Ok(outcome) => return Ok(outcome),
+            Err(ProbeError::AuthOrApi(msg)) => last_error = Some(msg),
+            Err(ProbeError::Transport(msg)) => return Err(msg),
         }
     }
-
     Err(last_error.unwrap_or_else(|| "request failed".to_string()))
+}
+
+/// One probe = one (base_url, api_path) HTTP call. Returns the
+/// connectivity outcome on success; on auth / API errors returns a
+/// recoverable [`ProbeError::AuthOrApi`] so the caller can fall through
+/// to the next probe; on transport errors returns
+/// [`ProbeError::Transport`] (no point trying the next probe — DNS /
+/// TLS failures hit every endpoint equally).
+async fn probe_confluence_endpoint(
+    client: &Client,
+    base_url: &str,
+    api_path: &str,
+    config: &ConfluenceConfig,
+    token: &str,
+) -> Result<ConnectivityOutcome, ProbeError> {
+    let url = format!("{base_url}{api_path}/space?limit=1");
+    let mut request = client
+        .request(Method::GET, &url)
+        .header(USER_AGENT, "devboy-tools")
+        .header(ACCEPT, "application/json");
+
+    request = if config.username.is_some() {
+        let username = config.username.as_deref().unwrap_or_default();
+        request.basic_auth(username, Some(token))
+    } else {
+        request.bearer_auth(token)
+    };
+
+    let response = request
+        .send()
+        .await
+        .map_err(|error| ProbeError::Transport(format!("Network error: {error}")))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(ProbeError::AuthOrApi(parse_error(status, body).1));
+    }
+
+    let payload: ConfluenceSpaceResponse = response
+        .json()
+        .await
+        .map_err(|error| ProbeError::Transport(format!("Invalid Confluence response: {error}")))?;
+
+    let message = match payload.results.into_iter().next() {
+        Some(space) => format!(
+            "Confluence API reachable for space {} ({}) [id: {}]",
+            space.key, space.name, space.id
+        ),
+        None => "Confluence API reachable".to_string(),
+    };
+
+    Ok(ConnectivityOutcome {
+        message,
+        user: None,
+        rate_limit: None,
+    })
+}
+
+enum ProbeError {
+    /// HTTP-level error (4xx / 5xx) or non-JSON response from the server.
+    /// The caller can fall through to the next candidate API path.
+    AuthOrApi(String),
+    /// Transport / DNS / TLS failure. Same error will hit every endpoint,
+    /// so propagate immediately.
+    Transport(String),
 }
 
 fn confluence_space_api_paths(api_version: Option<&str>) -> Vec<&'static str> {
