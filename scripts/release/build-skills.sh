@@ -9,6 +9,14 @@
 #   plugins/codex/skills                 -> ../claude/skills            (single link)
 #   plugins/codex/bin/devboy-shim.sh     -> ../../claude/bin/devboy-shim.sh
 #
+# Claude Code registers each skill under the `name:` field in its
+# frontmatter (and dedupes when the same `name:` appears twice), so we
+# do NOT create extra short-form alias symlinks like `setup ->
+# .../devboy-setup` — Claude would only show one of them. To get
+# `/devboy:setup`, the source filename + frontmatter name has to drop
+# the `devboy-` prefix, which is a deferred refactor (history.json
+# migration, bundles update, embedded loader, existing user installs).
+#
 # Source of truth: skills/<category>/<name>/SKILL.md.
 #
 # This script has two responsibilities:
@@ -42,6 +50,7 @@ EXPECTED_CODEX_SKILLS="../claude/skills"
 EXPECTED_CODEX_SHIM="../../claude/bin/devboy-shim.sh"
 
 # Each plugin entry: name, expected symlink target relative to CLAUDE_DST.
+# One symlink per source skill, name preserved (see header comment).
 discover_skills() {
   while IFS= read -r skill_md; do
     local src_dir src_name cat
