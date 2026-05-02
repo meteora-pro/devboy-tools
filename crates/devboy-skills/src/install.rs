@@ -491,6 +491,86 @@ pub fn remove_skills_from_target(
 }
 
 // ---------------------------------------------------------------------------
+// Legacy name migration
+// ---------------------------------------------------------------------------
+
+/// Result of `scan_legacy_skills_at_target` for one entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacySkill {
+    /// Legacy directory name on disk, e.g. `devboy-setup`.
+    pub legacy_name: String,
+    /// New name without the `devboy-` prefix, e.g. `setup`.
+    pub canonical_name: String,
+    /// `true` if a sibling directory with the canonical name already
+    /// exists at the same target (meaning the legacy entry is a safe
+    /// duplicate to remove).
+    pub canonical_present: bool,
+    /// Absolute path of the legacy skill directory.
+    pub path: PathBuf,
+}
+
+/// Find `devboy-<name>` directories at a target where the new
+/// canonical entry `<name>` is also present (a safe-to-remove
+/// duplicate). Directories without a sibling are returned with
+/// `canonical_present: false` and the caller decides what to do.
+pub fn scan_legacy_skills_at_target(target: &InstallTarget) -> Result<Vec<LegacySkill>> {
+    let mut out = Vec::new();
+    let entries = match fs::read_dir(&target.skills_dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+        Err(source) => {
+            return Err(SkillError::Io {
+                path: target.skills_dir.clone(),
+                source,
+            });
+        }
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(canonical) = name.strip_prefix("devboy-").map(str::to_owned) else {
+            continue;
+        };
+        // Only consider directories (real or symlinks to dirs); skip files.
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let canonical_path = target.skills_dir.join(&canonical);
+        out.push(LegacySkill {
+            legacy_name: name,
+            canonical_name: canonical,
+            canonical_present: canonical_path.exists(),
+            path,
+        });
+    }
+    out.sort_by(|a, b| a.legacy_name.cmp(&b.legacy_name));
+    Ok(out)
+}
+
+/// Remove legacy `devboy-<name>` skill directories at a target where a
+/// canonical sibling `<name>` is present (safe duplicates). Returns the
+/// list of legacy names actually removed. Skips entries without a
+/// canonical sibling — those are surfaced by the caller as warnings.
+///
+/// `dry_run = true` reports what would be removed without touching the
+/// filesystem.
+pub fn migrate_legacy_skills_at_target(
+    target: &InstallTarget,
+    dry_run: bool,
+) -> Result<Vec<String>> {
+    let scan = scan_legacy_skills_at_target(target)?;
+    let safe: Vec<String> = scan
+        .iter()
+        .filter(|s| s.canonical_present)
+        .map(|s| s.legacy_name.clone())
+        .collect();
+    if safe.is_empty() {
+        return Ok(safe);
+    }
+    remove_skills_from_target(target, &safe, false, dry_run)
+}
+
+// ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
 
@@ -815,8 +895,7 @@ body
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(skill_dir.join("SKILL.md"), b"hi").unwrap();
 
-        let removed =
-            remove_skills_from_target(&target, &["setup".into()], false, false).unwrap();
+        let removed = remove_skills_from_target(&target, &["setup".into()], false, false).unwrap();
         assert_eq!(removed, vec!["setup".to_string()]);
         assert!(!skill_dir.exists());
     }
@@ -890,5 +969,117 @@ Body stays intact across a render round-trip.
         assert_eq!(reparsed.version(), skill.version());
         assert_eq!(reparsed.category(), skill.category());
         assert_eq!(reparsed.body.trim_end(), skill.body.trim_end());
+    }
+
+    // -------------------------------------------------------------------
+    // Legacy migration
+    // -------------------------------------------------------------------
+
+    fn plant_skill(target: &InstallTarget, name: &str) {
+        let dir = target.skills_dir.join(name);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("SKILL.md"),
+            format!(
+                "---\nname: {n}\ndescription: x\ncategory: self-bootstrap\nversion: 1\n---\nbody\n",
+                n = name
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn scan_finds_legacy_dirs_and_reports_canonical_presence() {
+        let dir = tempdir().unwrap();
+        let target = InstallTarget {
+            label: "test".into(),
+            skills_dir: dir.path().to_path_buf(),
+        };
+        // Legacy with sibling — safe to remove.
+        plant_skill(&target, "devboy-setup");
+        plant_skill(&target, "setup");
+        // Legacy without sibling — caller decides.
+        plant_skill(&target, "devboy-orphan");
+        // New-style entry — should be ignored by the scanner.
+        plant_skill(&target, "review-mr");
+        // A regular file with `devboy-` prefix — must NOT be flagged
+        // (the scanner only considers directories).
+        fs::write(dir.path().join("devboy-readme.txt"), "hi").unwrap();
+
+        let scan = scan_legacy_skills_at_target(&target).unwrap();
+        let names: Vec<&str> = scan.iter().map(|s| s.legacy_name.as_str()).collect();
+        assert_eq!(names, vec!["devboy-orphan", "devboy-setup"]);
+        let setup = scan
+            .iter()
+            .find(|s| s.legacy_name == "devboy-setup")
+            .unwrap();
+        assert!(setup.canonical_present);
+        assert_eq!(setup.canonical_name, "setup");
+        let orphan = scan
+            .iter()
+            .find(|s| s.legacy_name == "devboy-orphan")
+            .unwrap();
+        assert!(!orphan.canonical_present);
+    }
+
+    #[test]
+    fn scan_returns_empty_when_target_dir_missing() {
+        let target = InstallTarget {
+            label: "test".into(),
+            skills_dir: PathBuf::from("/definitely/does/not/exist"),
+        };
+        let scan = scan_legacy_skills_at_target(&target).unwrap();
+        assert!(scan.is_empty());
+    }
+
+    #[test]
+    fn migrate_removes_safe_duplicates_only() {
+        let dir = tempdir().unwrap();
+        let target = InstallTarget {
+            label: "test".into(),
+            skills_dir: dir.path().to_path_buf(),
+        };
+        plant_skill(&target, "devboy-setup");
+        plant_skill(&target, "setup");
+        plant_skill(&target, "devboy-orphan");
+
+        let removed = migrate_legacy_skills_at_target(&target, false).unwrap();
+        assert_eq!(removed, vec!["devboy-setup".to_string()]);
+
+        // The safe duplicate is gone; the canonical and the orphan stay.
+        assert!(!dir.path().join("devboy-setup").exists());
+        assert!(dir.path().join("setup").exists());
+        assert!(dir.path().join("devboy-orphan").exists());
+    }
+
+    #[test]
+    fn migrate_dry_run_does_not_touch_filesystem() {
+        let dir = tempdir().unwrap();
+        let target = InstallTarget {
+            label: "test".into(),
+            skills_dir: dir.path().to_path_buf(),
+        };
+        plant_skill(&target, "devboy-setup");
+        plant_skill(&target, "setup");
+
+        let would_remove = migrate_legacy_skills_at_target(&target, true).unwrap();
+        assert_eq!(would_remove, vec!["devboy-setup".to_string()]);
+        assert!(dir.path().join("devboy-setup").exists());
+        assert!(dir.path().join("setup").exists());
+    }
+
+    #[test]
+    fn migrate_is_noop_when_nothing_legacy() {
+        let dir = tempdir().unwrap();
+        let target = InstallTarget {
+            label: "test".into(),
+            skills_dir: dir.path().to_path_buf(),
+        };
+        plant_skill(&target, "setup");
+        plant_skill(&target, "review-mr");
+        let removed = migrate_legacy_skills_at_target(&target, false).unwrap();
+        assert!(removed.is_empty());
+        assert!(dir.path().join("setup").exists());
+        assert!(dir.path().join("review-mr").exists());
     }
 }

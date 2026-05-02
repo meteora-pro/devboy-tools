@@ -230,11 +230,7 @@ fn skills_remove_deletes_files_and_manifest_entry() {
     assert!(install.status.success());
     assert!(installed.exists());
 
-    let remove = spawn(
-        &home,
-        cwd.path(),
-        ["skills", "remove", "setup", "--global"],
-    );
+    let remove = spawn(&home, cwd.path(), ["skills", "remove", "setup", "--global"]);
     assert!(
         remove.status.success(),
         "remove should succeed:\nstdout={}\nstderr={}",
