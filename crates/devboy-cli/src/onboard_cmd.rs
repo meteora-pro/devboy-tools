@@ -14,9 +14,9 @@ use anyhow::{Context, Result, anyhow};
 use clap::Args;
 use devboy_core::agents::{AgentSnapshot, InstallStatus, bundles, detect_all, pick_primary};
 use devboy_skills::{
-    Agent, EmbeddedSkillSource, Environment, HistoricalHashes, InstallOptions, InstallOutcome,
-    InstallSpec, SkillSource, install_skills_to_target, is_claude_plugin_installed,
-    is_codex_plugin_installed, resolve_targets,
+    Agent, DEVBOY_PLUGIN, EmbeddedSkillSource, Environment, HistoricalHashes, InstallOptions,
+    InstallOutcome, InstallSpec, SkillSource, install_skills_to_target, is_claude_plugin_enabled,
+    is_codex_plugin_enabled, resolve_targets,
 };
 use std::io::{self, IsTerminal, Write};
 
@@ -182,12 +182,14 @@ struct InstallSummary {
 }
 
 /// Whether the matching plugin (Claude Code or Codex) already provides
-/// the devboy skill bundle in the agent's settings. Returns `false` for
-/// agents that have no plugin format yet (Cursor, Kimi, …).
+/// the devboy skill bundle in the agent's settings. Exact-match lookup
+/// against `enabledPlugins` for the canonical `devboy@meteora-devboy`
+/// id (see [`DEVBOY_PLUGIN`]). Returns `false` for agents that have no
+/// plugin format yet (Cursor, Kimi, …).
 fn dedup_against_plugin(agent: Agent, home: &std::path::Path) -> bool {
     match agent {
-        Agent::Claude => is_claude_plugin_installed(home, "devboy"),
-        Agent::Codex => is_codex_plugin_installed(home, "devboy"),
+        Agent::Claude => is_claude_plugin_enabled(home, &DEVBOY_PLUGIN),
+        Agent::Codex => is_codex_plugin_enabled(home, &DEVBOY_PLUGIN),
         _ => false,
     }
 }
@@ -219,8 +221,10 @@ async fn install_bundle(agent: Agent, skill_names: &[String], dry_run: bool) -> 
             _ => "",
         };
         println!(
-            "  ⏭  {agent}: skipped — already provided by plugin meteora-devboy/devboy ({dir}/settings.json)",
-            agent = agent.as_str()
+            "  ⏭  {agent}: skipped — already provided by plugin {plugin_name}@{marketplace} ({dir}/settings.json)",
+            agent = agent.as_str(),
+            plugin_name = DEVBOY_PLUGIN.name,
+            marketplace = DEVBOY_PLUGIN.marketplace,
         );
         return Ok(());
     }

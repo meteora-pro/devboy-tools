@@ -16,7 +16,7 @@ tools:
   - create_merge_request_comment
 ---
 
-# devboy-review-mr
+# review-mr
 
 Perform a strict, calibrated code review of a single merge request / pull request. Output is one summary comment plus a handful of targeted inline comments — each tagged with `[nit]`, `[suggestion]`, or `[issue]` so the author can triage quickly.
 

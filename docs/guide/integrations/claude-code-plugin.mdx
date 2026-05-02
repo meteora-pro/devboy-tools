@@ -19,7 +19,7 @@ The plugin does **not** ship the Rust binary. On first activation the bundled `s
 
 1. Detect plugin context — `$CLAUDE_PLUGIN_DATA` is set, so the skill picks `--agent claude` automatically.
 2. Check `command -v devboy`. If found, jump to step 4.
-3. `npm install -g @devboy-tools/cli` if npm is available; otherwise fetch the signed binary for your platform from [the latest GitHub Release](https://github.com/meteora-pro/devboy-tools/releases) into `${CLAUDE_PLUGIN_DATA}/bin/devboy` and add it to PATH.
+3. `npm install -g @devboy-tools/cli` if npm is available; otherwise download the platform tarball (`devboy-<os>-<arch>.tar.gz`) and the matching `.sha256` sibling from [the latest GitHub Release](https://github.com/meteora-pro/devboy-tools/releases), `shasum -a 256 -c` to verify, extract into `${CLAUDE_PLUGIN_DATA}/bin/`, add to PATH. Releases are not currently code-signed; the per-asset SHA-256 is the integrity check.
 4. Run `devboy onboard --agent claude --yes` to detect agents on the machine and (where applicable) install the curated skill bundle.
 5. Run `devboy doctor` and report.
 

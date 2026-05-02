@@ -14,7 +14,7 @@ tools:
   - config
 ---
 
-# devboy-tools-catalog
+# tools-catalog
 
 Answer the question "what tools does the current `devboy-tools` installation expose, and how do I invoke them?". Useful as the first step of any exploration — other skills invoke tools through `devboy tools call`, and that assumes the agent knows the tool names and argument shapes.
 

@@ -16,7 +16,7 @@ tools:
   - add_issue_comment
 ---
 
-# devboy-solve-issue
+# solve-issue
 
 Take a ticket from "assigned" to "review-ready MR with a comment on the issue pointing at it". The skill wraps the typical loop: read the issue, cut a branch, do the work, push, open an MR on the configured Git provider, and leave a breadcrumb on the issue so the next person can follow the trail.
 

@@ -12,7 +12,7 @@ tools:
   - trace
 ---
 
-# devboy-run-and-verify
+# run-and-verify
 
 The opinionated wrapper that the other skills in this category assume.
 It runs one command, emits a structured session trace for every attempt,

@@ -14,7 +14,7 @@ tools:
   - trace
 ---
 
-# devboy-qa-sweep
+# qa-sweep
 
 Run a batch of narrowly-scoped QA sub-agents against a built `devboy` binary, each chasing one class of regression, and merge their findings into a single bug log. The skill does **not** exercise third-party provider APIs by itself — it focuses on contract / hygiene / schema-drift regressions that the unit test suite does not catch (exit codes, stdout vs stderr separation, `ProviderUnsupported` fallbacks, schema ↔ executor mismatches, etc.).
 

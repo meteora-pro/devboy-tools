@@ -12,7 +12,7 @@ tools:
   - trace
 ---
 
-# devboy-knowledge-extract
+# knowledge-extract
 
 Inspects a single session trace that went from a failure streak to a
 clean success, pulls out what changed between "not working" and

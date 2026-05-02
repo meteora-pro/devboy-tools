@@ -15,7 +15,7 @@ tools:
   - get_meeting_notes
 ---
 
-# devboy-meeting-search
+# meeting-search
 
 Answer "which meeting did we talk about X?" without making the user scroll through a calendar. The skill narrows a corpus of meeting notes down to a short hit list the user can act on — drill-down into a single meeting's metadata is a follow-up step, and pulling the full transcript is the job of `devboy-meeting-transcript`.
 

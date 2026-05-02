@@ -14,7 +14,7 @@ tools:
   - get_merge_request_discussions
 ---
 
-# devboy-self-review
+# self-review
 
 Run the `devboy-review-mr` checklist over your **own** MR before handing it to a reviewer. Findings stay local — the output is a plain-text report to the user, not comments on the MR. If anything serious turns up, you fix it and amend the branch first.
 

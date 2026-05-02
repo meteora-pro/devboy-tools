@@ -16,7 +16,7 @@ tools:
   - doctor
 ---
 
-# devboy-pipeline-tune
+# pipeline-tune
 
 Adapt the layered-pipeline (Paper 2 / `crates/plugins/format-pipeline`) to **this** user. The pipeline has four profile axes — tokenizer, LLM, agent/session, data/endpoint — and a horizontal hint policy. Defaults are conservative; this skill mines the user's existing agent logs to pick a tuned profile that matches their actual tool and model mix.
 

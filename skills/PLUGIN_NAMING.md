@@ -13,9 +13,11 @@ plugin_name = source_name.strip_prefix("devboy-").unwrap_or(source_name)
 Implemented in:
 
 - `scripts/release/build-skills.sh` — applies the rule when generating
-  `.claude-plugin/skills/` and `.codex-plugin/skills/`.
-- `crates/devboy-skills/src/catalog.rs` — alias resolution so that
-  `find("devboy-setup")` and `find("setup")` both return the same skill.
+  `plugins/claude/skills/` (the Codex plugin shares the same tree via
+  `plugins/codex/skills -> ../claude/skills` symlink).
+- `crates/devboy-skills/src/catalog.rs` — alias resolution via
+  `Catalog::get()` so that `Catalog::get("devboy-setup")` and
+  `Catalog::get("setup")` both return the same `SkillSummary`.
 
 Non-plugin install paths (`devboy onboard`, `devboy skills install`,
 manual copy) keep producing the historical filenames in

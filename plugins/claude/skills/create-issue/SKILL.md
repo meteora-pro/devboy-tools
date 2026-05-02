@@ -18,7 +18,7 @@ tools:
   - get_issue
 ---
 
-# devboy-create-issue
+# create-issue
 
 Turn a free-form user request into a structured ticket the team can actually work on. The skill picks one of three templates, fills it, creates the issue, and (optionally) attaches reproduction details or logs as a follow-up comment.
 

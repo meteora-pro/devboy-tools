@@ -44,7 +44,9 @@ pub use manifest::{
     HistoricalHashes, HistoricalVersion, InstallState, InstalledFile, InstalledSkill,
     MANIFEST_FILE, MANIFEST_VERSION, Manifest, SkillHistory, classify, classify_path, sha256_hex,
 };
-pub use plugin_dedup::{is_claude_plugin_installed, is_codex_plugin_installed};
+pub use plugin_dedup::{
+    DEVBOY_PLUGIN, PluginId, is_claude_plugin_enabled, is_codex_plugin_enabled,
+};
 pub use skill::{Category, Frontmatter, Skill, SkillSummary};
 pub use source::SkillSource;
 pub use trace::{

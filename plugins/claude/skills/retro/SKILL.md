@@ -16,7 +16,7 @@ tools:
   - get_job_logs
 ---
 
-# devboy-retro
+# retro
 
 Looks back over the last N days of session traces, recent merge
 requests, and CI pipelines to surface recurring patterns: skills whose

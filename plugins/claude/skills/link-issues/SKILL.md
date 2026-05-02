@@ -18,7 +18,7 @@ tools:
   - update_issue
 ---
 
-# devboy-link-issues
+# link-issues
 
 Create a typed relationship between two issues so the tracker's dependency graph reflects the real one. The skill covers the four canonical link types plus the special case of parent/subtask, and it inspects existing links first to avoid duplicates.
 

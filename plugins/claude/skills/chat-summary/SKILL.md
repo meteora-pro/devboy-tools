@@ -15,7 +15,7 @@ tools:
   - get_chat_messages
 ---
 
-# devboy-chat-summary
+# chat-summary
 
 Produce a concise, grouped summary of what happened in a chat (channel, group, or DM) over a user-specified window. The skill pulls message history in pages, summarises each page, then merges the page-level summaries into a single grouped bullet list — it does **not** keyword-search across chats (that's `devboy-chat-search`) and it does **not** send anything (that's `devboy-notify`).
 
