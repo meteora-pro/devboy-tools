@@ -25,6 +25,11 @@
     "activeMatch": "/architecture/"
   },
   {
+    "text": "Research",
+    "link": "/research/",
+    "activeMatch": "/research/"
+  },
+  {
     "text": "Integrations",
     "link": "/integrations/github",
     "activeMatch": "/integrations/"
