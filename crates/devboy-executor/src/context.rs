@@ -39,11 +39,26 @@ pub enum JiraScope {
     MultiProject { keys: Vec<String> },
 }
 
+/// Scope for Confluence API calls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ConfluenceScope {
+    /// Single Confluence instance, optionally scoped by a default space key.
+    Space { key: Option<String> },
+}
+
 /// Scope for Slack API calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SlackScope {
     /// Single Slack workspace/team.
     Workspace { team_id: Option<String> },
+}
+
+/// Authentication configuration for Confluence self-hosted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ConfluenceAuthConfig {
+    BearerToken { token: String },
+    Basic { username: String, password: String },
 }
 
 /// Provider connection configuration with typed scope.
@@ -84,6 +99,15 @@ pub enum ProviderConfig {
         #[serde(default)]
         extra: HashMap<String, serde_json::Value>,
     },
+    Confluence {
+        base_url: String,
+        auth: ConfluenceAuthConfig,
+        scope: ConfluenceScope,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        api_version: Option<String>,
+        #[serde(default)]
+        extra: HashMap<String, serde_json::Value>,
+    },
     /// Fireflies.ai meeting notes provider.
     Fireflies {
         api_key: String,
@@ -115,6 +139,7 @@ impl ProviderConfig {
             Self::GitHub { .. } => "github",
             Self::ClickUp { .. } => "clickup",
             Self::Jira { .. } => "jira",
+            Self::Confluence { .. } => "confluence",
             Self::Fireflies { .. } => "fireflies",
             Self::Slack { .. } => "slack",
             Self::Custom { name, .. } => name,
@@ -208,6 +233,22 @@ mod tests {
             config: HashMap::new(),
         };
         assert_eq!(config.provider_name(), "my-provider");
+    }
+
+    #[test]
+    fn test_provider_config_confluence_scope() {
+        let config = ProviderConfig::Confluence {
+            base_url: "https://wiki.example.com".into(),
+            auth: ConfluenceAuthConfig::BearerToken {
+                token: "pat-token".into(),
+            },
+            scope: ConfluenceScope::Space {
+                key: Some("ENG".into()),
+            },
+            api_version: Some("v1".into()),
+            extra: HashMap::new(),
+        };
+        assert_eq!(config.provider_name(), "confluence");
     }
 
     #[test]
@@ -534,6 +575,51 @@ mod tests {
                 assert_eq!(config["endpoint"], serde_json::json!("https://custom.api"));
             }
             _ => panic!("expected Custom"),
+        }
+    }
+
+    #[test]
+    fn test_confluence_provider_config_serde() {
+        let config = ProviderConfig::Confluence {
+            base_url: "https://wiki.example.com".into(),
+            auth: ConfluenceAuthConfig::Basic {
+                username: "dev@example.com".into(),
+                password: "secret".into(),
+            },
+            scope: ConfluenceScope::Space {
+                key: Some("ENG".into()),
+            },
+            api_version: Some("v1".into()),
+            extra: HashMap::new(),
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ProviderConfig = serde_json::from_str(&json).unwrap();
+
+        match deserialized {
+            ProviderConfig::Confluence {
+                base_url,
+                auth,
+                scope,
+                api_version,
+                ..
+            } => {
+                assert_eq!(base_url, "https://wiki.example.com");
+                assert_eq!(api_version.as_deref(), Some("v1"));
+                match auth {
+                    ConfluenceAuthConfig::Basic { username, password } => {
+                        assert_eq!(username, "dev@example.com");
+                        assert_eq!(password, "secret");
+                    }
+                    _ => panic!("expected Basic auth"),
+                }
+                match scope {
+                    ConfluenceScope::Space { key } => {
+                        assert_eq!(key.as_deref(), Some("ENG"));
+                    }
+                }
+            }
+            _ => panic!("expected Confluence"),
         }
     }
 }

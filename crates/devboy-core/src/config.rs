@@ -64,6 +64,10 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fireflies: Option<FirefliesConfig>,
 
+    /// Confluence self-hosted configuration (knowledge base)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confluence: Option<ConfluenceConfig>,
+
     /// Slack configuration (messenger)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slack: Option<SlackConfig>,
@@ -161,6 +165,10 @@ pub struct ContextConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fireflies: Option<FirefliesConfig>,
 
+    /// Confluence self-hosted configuration (knowledge base)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confluence: Option<ConfluenceConfig>,
+
     /// Slack configuration (messenger)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slack: Option<SlackConfig>,
@@ -214,6 +222,21 @@ pub struct JiraConfig {
 pub struct FirefliesConfig {
     // API key is stored in OS keychain (key: "fireflies.token")
     // No fields needed — config just enables the provider
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfluenceConfig {
+    /// Confluence base URL, e.g. `https://wiki.example.com`.
+    pub base_url: String,
+    /// Preferred REST API generation when the instance supports multiple.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_version: Option<String>,
+    /// Username/email for basic auth when that auth mode is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// Optional default space hint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space_key: Option<String>,
 }
 
 /// Slack provider configuration (messenger).
@@ -927,6 +950,7 @@ impl Config {
             || self.clickup.is_some()
             || self.jira.is_some()
             || self.fireflies.is_some()
+            || self.confluence.is_some()
             || self.slack.is_some()
             || self.contexts.values().any(ContextConfig::has_any_provider)
     }
@@ -945,6 +969,9 @@ impl Config {
         }
         if self.jira.is_some() {
             providers.push("jira");
+        }
+        if self.confluence.is_some() {
+            providers.push("confluence");
         }
         if self.slack.is_some() {
             providers.push("slack");
@@ -1009,6 +1036,7 @@ impl Config {
             clickup: self.clickup.clone(),
             jira: self.jira.clone(),
             fireflies: self.fireflies.clone(),
+            confluence: self.confluence.clone(),
             slack: self.slack.clone(),
         };
 
@@ -1110,6 +1138,28 @@ impl Config {
                     }
                 }
             }
+            "confluence" => {
+                let config = self.confluence.get_or_insert_with(|| ConfluenceConfig {
+                    base_url: String::new(),
+                    api_version: None,
+                    username: None,
+                    space_key: None,
+                });
+                match field {
+                    "base_url" | "url" => config.base_url = value.to_string(),
+                    "api_version" | "api" | "version" => {
+                        config.api_version = Some(value.to_string())
+                    }
+                    "username" | "email" | "user" => config.username = Some(value.to_string()),
+                    "space_key" | "space" => config.space_key = Some(value.to_string()),
+                    _ => {
+                        return Err(Error::Config(format!(
+                            "Unknown Confluence config field: {}",
+                            field
+                        )));
+                    }
+                }
+            }
             "slack" => {
                 let config = self.slack.get_or_insert_with(SlackConfig::default);
                 match field {
@@ -1206,6 +1256,21 @@ impl Config {
                     "email" => Ok(Some(config.email.clone())),
                     _ => Err(Error::Config(format!(
                         "Unknown Jira config field: {}",
+                        field
+                    ))),
+                }
+            }
+            "confluence" => {
+                let Some(config) = &self.confluence else {
+                    return Ok(None);
+                };
+                match field {
+                    "base_url" | "url" => Ok(Some(config.base_url.clone())),
+                    "api_version" | "api" | "version" => Ok(config.api_version.clone()),
+                    "username" | "email" | "user" => Ok(config.username.clone()),
+                    "space_key" | "space" => Ok(config.space_key.clone()),
+                    _ => Err(Error::Config(format!(
+                        "Unknown Confluence config field: {}",
                         field
                     ))),
                 }
@@ -1447,6 +1512,7 @@ impl ContextConfig {
             || self.clickup.is_some()
             || self.jira.is_some()
             || self.fireflies.is_some()
+            || self.confluence.is_some()
             || self.slack.is_some()
     }
 
@@ -1464,6 +1530,9 @@ impl ContextConfig {
         }
         if self.jira.is_some() {
             providers.push("jira");
+        }
+        if self.confluence.is_some() {
+            providers.push("confluence");
         }
         if self.slack.is_some() {
             providers.push("slack");
@@ -1701,6 +1770,41 @@ mod tests {
     }
 
     #[test]
+    fn test_set_and_get_confluence() {
+        let mut config = Config::default();
+
+        config
+            .set("confluence.base_url", "https://wiki.example.com")
+            .unwrap();
+        config.set("confluence.api_version", "v1").unwrap();
+        config
+            .set("confluence.username", "dev@example.com")
+            .unwrap();
+        config.set("confluence.space_key", "ENG").unwrap();
+
+        assert_eq!(
+            config.get("confluence.base_url").unwrap(),
+            Some("https://wiki.example.com".to_string())
+        );
+        assert_eq!(
+            config.get("confluence.url").unwrap(),
+            Some("https://wiki.example.com".to_string())
+        );
+        assert_eq!(
+            config.get("confluence.api").unwrap(),
+            Some("v1".to_string())
+        );
+        assert_eq!(
+            config.get("confluence.username").unwrap(),
+            Some("dev@example.com".to_string())
+        );
+        assert_eq!(
+            config.get("confluence.space").unwrap(),
+            Some("ENG".to_string())
+        );
+    }
+
+    #[test]
     fn test_set_github_base_url() {
         let mut config = Config::default();
 
@@ -1766,6 +1870,7 @@ mod tests {
         assert_eq!(config.get("gitlab.url").unwrap(), None);
         assert_eq!(config.get("clickup.list_id").unwrap(), None);
         assert_eq!(config.get("jira.url").unwrap(), None);
+        assert_eq!(config.get("confluence.base_url").unwrap(), None);
     }
 
     #[test]
@@ -1819,6 +1924,7 @@ mod tests {
                 email: "e".to_string(),
             }),
             fireflies: None,
+            confluence: None,
             slack: None,
             contexts: BTreeMap::new(),
             active_context: None,
@@ -1902,6 +2008,7 @@ mod tests {
             clickup: None,
             jira: None,
             fireflies: None,
+            confluence: None,
             slack: None,
             contexts: BTreeMap::new(),
             active_context: None,

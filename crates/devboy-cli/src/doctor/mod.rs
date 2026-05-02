@@ -3,12 +3,14 @@ mod output;
 
 use self::checks::config::{ActiveContextCheck, ConfigExistsCheck, ConfigValidTomlCheck};
 use self::checks::credentials::{
-    ClickUpTokenCheck, GitHubTokenCheck, GitLabTokenCheck, JiraTokenCheck, SlackTokenCheck,
+    ClickUpTokenCheck, ConfluenceTokenCheck, GitHubTokenCheck, GitLabTokenCheck, JiraTokenCheck,
+    SlackTokenCheck,
 };
 use self::checks::environment::{ConfigDirCheck, CredentialStoreCheck, OsSupportCheck};
 use self::checks::mcp::McpToolsCheck;
 use self::checks::providers::{
-    ClickUpApiCheck, GitHubApiCheck, GitLabApiCheck, JiraApiCheck, SlackApiCheck,
+    ClickUpApiCheck, ConfluenceApiCheck, GitHubApiCheck, GitLabApiCheck, JiraApiCheck,
+    SlackApiCheck,
 };
 use self::checks::proxy::ProxyServersCheck;
 use self::output::console::{print_check_list, print_report, summarize};
@@ -151,11 +153,13 @@ impl CheckRegistry {
         registry.register(Box::new(GitLabTokenCheck));
         registry.register(Box::new(ClickUpTokenCheck));
         registry.register(Box::new(JiraTokenCheck));
+        registry.register(Box::new(ConfluenceTokenCheck));
         registry.register(Box::new(SlackTokenCheck));
         registry.register(Box::new(GitHubApiCheck));
         registry.register(Box::new(GitLabApiCheck));
         registry.register(Box::new(ClickUpApiCheck));
         registry.register(Box::new(JiraApiCheck));
+        registry.register(Box::new(ConfluenceApiCheck));
         registry.register(Box::new(SlackApiCheck));
         registry.register(Box::new(McpToolsCheck));
         registry.register(Box::new(ProxyServersCheck));

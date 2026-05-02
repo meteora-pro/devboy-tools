@@ -71,6 +71,12 @@ pub fn known_providers() -> Vec<ProviderInfo> {
             }],
         },
         ProviderInfo {
+            display_name: "Confluence",
+            key: "confluence",
+            default_categories: &[ToolCategory::KnowledgeBase],
+            conditional_categories: &[],
+        },
+        ProviderInfo {
             display_name: "Fireflies",
             key: "fireflies",
             default_categories: &[ToolCategory::MeetingNotes],
@@ -500,7 +506,8 @@ fn parameters_to_json(schema: &devboy_core::ToolSchema) -> Vec<Value> {
 mod tests {
     use super::*;
     use crate::context::{
-        ClickUpScope, GitHubScope, GitLabScope, JiraScope, ProviderConfig, SlackScope,
+        ClickUpScope, ConfluenceAuthConfig, ConfluenceScope, GitHubScope, GitLabScope, JiraScope,
+        ProviderConfig, SlackScope,
     };
     use devboy_core::ToolEnricher;
     use std::collections::HashMap;
@@ -672,6 +679,15 @@ mod tests {
                 flavor: None,
                 extra: HashMap::new(),
             },
+            ProviderConfig::Confluence {
+                base_url: "https://wiki.example.com".into(),
+                auth: ConfluenceAuthConfig::BearerToken { token: "x".into() },
+                scope: ConfluenceScope::Space {
+                    key: Some("ENG".into()),
+                },
+                api_version: Some("v1".into()),
+                extra: HashMap::new(),
+            },
             ProviderConfig::Fireflies {
                 api_key: "x".into(),
                 extra: HashMap::new(),
@@ -698,6 +714,7 @@ mod tests {
                 ProviderConfig::GitHub { .. } => Some("github"),
                 ProviderConfig::ClickUp { .. } => Some("clickup"),
                 ProviderConfig::Jira { .. } => Some("jira"),
+                ProviderConfig::Confluence { .. } => Some("confluence"),
                 ProviderConfig::Fireflies { .. } => Some("fireflies"),
                 ProviderConfig::Slack { .. } => Some("slack"),
                 ProviderConfig::Custom { .. } => None,

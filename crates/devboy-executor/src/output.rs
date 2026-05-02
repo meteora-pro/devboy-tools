@@ -1,8 +1,8 @@
 use devboy_core::{
     Comment, Discussion, FileDiff, ForestModifyResult, Issue, IssueRelations, IssueStatus,
-    JobLogOutput, MeetingNote, MeetingTranscript, MergeRequest, MessengerChat, MessengerMessage,
-    Pagination, PipelineInfo, SortInfo, Structure, StructureForest, StructureValues, StructureView,
-    User,
+    JobLogOutput, KbPage, KbPageContent, KbSpace, MeetingNote, MeetingTranscript, MergeRequest,
+    MessengerChat, MessengerMessage, Pagination, PipelineInfo, SortInfo, Structure,
+    StructureForest, StructureValues, StructureView, User,
 };
 
 /// Metadata from provider result (pagination + sort info).
@@ -45,6 +45,14 @@ pub enum ToolOutput {
     MeetingNotes(Vec<MeetingNote>, Option<ResultMeta>),
     /// Single meeting transcript with sentences
     MeetingTranscript(Box<MeetingTranscript>),
+    /// List of knowledge base spaces
+    KnowledgeBaseSpaces(Vec<KbSpace>, Option<ResultMeta>),
+    /// List of knowledge base pages
+    KnowledgeBasePages(Vec<KbPage>, Option<ResultMeta>),
+    /// Single knowledge base page summary
+    KnowledgeBasePageSummary(Box<KbPage>),
+    /// Single knowledge base page with content
+    KnowledgeBasePage(Box<KbPageContent>),
     /// Issue relations (parent, subtasks, linked issues)
     Relations(Box<IssueRelations>),
     /// List of messenger chats
@@ -117,6 +125,8 @@ impl ToolOutput {
             Self::Statuses(v, _) => v.len(),
             Self::Users(v, _) => v.len(),
             Self::MeetingNotes(v, _) => v.len(),
+            Self::KnowledgeBaseSpaces(v, _) => v.len(),
+            Self::KnowledgeBasePages(v, _) => v.len(),
             Self::MessengerChats(v, _) => v.len(),
             Self::MessengerMessages(v, _) => v.len(),
             Self::Structures(v, _) => v.len(),
@@ -127,6 +137,8 @@ impl ToolOutput {
             | Self::Pipeline(_)
             | Self::JobLog(_)
             | Self::MeetingTranscript(_)
+            | Self::KnowledgeBasePageSummary(_)
+            | Self::KnowledgeBasePage(_)
             | Self::Relations(_)
             | Self::SingleMessage(_)
             | Self::StructureForest(_)
@@ -155,6 +167,10 @@ impl ToolOutput {
             Self::Users(..) => "users",
             Self::MeetingNotes(..) => "meeting_notes",
             Self::MeetingTranscript(_) => "meeting_transcript",
+            Self::KnowledgeBaseSpaces(..) => "knowledge_base_spaces",
+            Self::KnowledgeBasePages(..) => "knowledge_base_pages",
+            Self::KnowledgeBasePageSummary(_) => "knowledge_base_page_summary",
+            Self::KnowledgeBasePage(_) => "knowledge_base_page",
             Self::Relations(_) => "issue_relations",
             Self::MessengerChats(..) => "messenger_chats",
             Self::MessengerMessages(..) => "messenger_messages",
@@ -183,6 +199,8 @@ impl ToolOutput {
             | Self::Statuses(_, meta)
             | Self::Users(_, meta)
             | Self::MeetingNotes(_, meta)
+            | Self::KnowledgeBaseSpaces(_, meta)
+            | Self::KnowledgeBasePages(_, meta)
             | Self::MessengerChats(_, meta)
             | Self::MessengerMessages(_, meta)
             | Self::Structures(_, meta)
@@ -195,7 +213,7 @@ impl ToolOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use devboy_core::{Issue, IssueStatus, MergeRequest, User};
+    use devboy_core::{Issue, IssueStatus, KbPage, KbPageContent, KbSpace, MergeRequest, User};
 
     fn issue() -> Issue {
         Issue {
@@ -234,6 +252,34 @@ mod tests {
             url: None,
             created_at: None,
             updated_at: None,
+        }
+    }
+
+    fn kb_space() -> KbSpace {
+        KbSpace {
+            id: "space-1".into(),
+            key: "ENG".into(),
+            name: "Engineering".into(),
+            ..Default::default()
+        }
+    }
+
+    fn kb_page() -> KbPage {
+        KbPage {
+            id: "page-1".into(),
+            title: "Architecture".into(),
+            space_key: Some("ENG".into()),
+            ..Default::default()
+        }
+    }
+
+    fn kb_page_content() -> KbPageContent {
+        KbPageContent {
+            page: kb_page(),
+            content: "<p>hello</p>".into(),
+            content_type: "storage".into(),
+            ancestors: vec![],
+            labels: vec!["docs".into()],
         }
     }
 
@@ -309,6 +355,22 @@ mod tests {
             1
         );
         assert_eq!(ToolOutput::Users(vec![], None).item_count(), 0);
+        assert_eq!(
+            ToolOutput::KnowledgeBaseSpaces(vec![kb_space()], None).item_count(),
+            1
+        );
+        assert_eq!(
+            ToolOutput::KnowledgeBasePages(vec![kb_page()], None).item_count(),
+            1
+        );
+        assert_eq!(
+            ToolOutput::KnowledgeBasePageSummary(Box::new(kb_page())).item_count(),
+            1
+        );
+        assert_eq!(
+            ToolOutput::KnowledgeBasePage(Box::new(kb_page_content())).item_count(),
+            1
+        );
         assert_eq!(ToolOutput::Relations(Box::default()).item_count(), 1);
         assert_eq!(ToolOutput::Structures(vec![], None).item_count(), 0);
         assert_eq!(
@@ -391,6 +453,22 @@ mod tests {
         );
         assert_eq!(ToolOutput::Statuses(vec![], None).type_name(), "statuses");
         assert_eq!(ToolOutput::Users(vec![], None).type_name(), "users");
+        assert_eq!(
+            ToolOutput::KnowledgeBaseSpaces(vec![], None).type_name(),
+            "knowledge_base_spaces"
+        );
+        assert_eq!(
+            ToolOutput::KnowledgeBasePages(vec![], None).type_name(),
+            "knowledge_base_pages"
+        );
+        assert_eq!(
+            ToolOutput::KnowledgeBasePageSummary(Box::new(kb_page())).type_name(),
+            "knowledge_base_page_summary"
+        );
+        assert_eq!(
+            ToolOutput::KnowledgeBasePage(Box::new(kb_page_content())).type_name(),
+            "knowledge_base_page"
+        );
         assert_eq!(
             ToolOutput::Relations(Box::default()).type_name(),
             "issue_relations"
@@ -481,6 +559,16 @@ mod tests {
         assert!(ToolOutput::Users(vec![], None).result_meta().is_none());
         assert!(
             ToolOutput::MeetingNotes(vec![], None)
+                .result_meta()
+                .is_none()
+        );
+        assert!(
+            ToolOutput::KnowledgeBaseSpaces(vec![], None)
+                .result_meta()
+                .is_none()
+        );
+        assert!(
+            ToolOutput::KnowledgeBasePages(vec![], None)
                 .result_meta()
                 .is_none()
         );

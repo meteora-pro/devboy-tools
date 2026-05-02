@@ -1,0 +1,219 @@
+import ConfigExtractor from '../../components/ConfigExtractor';
+
+# Confluence Integration
+
+DevBoy tools provide integration with Confluence Server and Data Center for reading and updating internal documentation through AI assistants. Confluence is the first provider in the **KnowledgeBase** category.
+
+<ConfigExtractor provider="confluence" />
+
+## Authentication
+
+Confluence self-hosted supports two authentication modes:
+
+| Auth Method | Configuration | Token Source |
+|-------------|---------------|--------------|
+| Bearer Token (PAT) | `confluence.token` | Confluence Personal Access Tokens |
+| Basic Auth | `confluence.username` + `confluence.token` | Username/email plus password or app-specific token |
+
+:::note
+When `confluence.username` is set, DevBoy can use basic auth. Without a username, it uses bearer token auth.
+:::
+
+## Configuration
+
+### Basic configuration
+
+```bash
+# Set Confluence base URL
+devboy config set confluence.base_url https://wiki.company.com
+
+# Optional: prefer the newer Data Center API where available
+devboy config set confluence.api_version v2
+
+# Optional: set a default space hint for this context
+devboy config set confluence.space_key ENG
+
+# For bearer token / PAT auth
+devboy config set-secret confluence.token <token>
+```
+
+### Basic auth configuration
+
+```bash
+devboy config set confluence.base_url https://wiki.company.com
+devboy config set confluence.username user@company.com
+devboy config set-secret confluence.token <password-or-token>
+```
+
+### Configuration file
+
+Settings are stored in `~/.config/devboy-tools/config.toml`:
+
+```toml
+[confluence]
+base_url = "https://wiki.company.com"
+api_version = "v2"
+username = "user@company.com"
+space_key = "ENG"
+```
+
+The token is stored separately in the OS keychain for security.
+
+:::note
+`confluence.space_key` is currently a stored default-space hint for the provider context. Knowledge base tools such as `list_knowledge_base_pages` and `create_knowledge_base_page` still expect an explicit `spaceKey` argument today.
+:::
+
+### Environment variables
+
+```bash
+export DEVBOY_CONFLUENCE_TOKEN=your-token
+```
+
+## API version selection
+
+Confluence self-hosted installations are not uniform. DevBoy supports:
+
+| `api_version` | Behavior |
+|---------------|----------|
+| omitted / `v1` | Use the classic REST API at `/rest/api` |
+| `v2` | Prefer `/api/v2` for pages and spaces, with fallback to `/rest/api` where needed |
+
+Use `v2` for newer Data Center installs when available. If a v2 endpoint is missing, DevBoy falls back to the classic REST API for supported operations.
+
+## MCP tools
+
+Once configured, the following MCP tools are available:
+
+| Tool | Description |
+|------|-------------|
+| `get_knowledge_base_spaces` | List available Confluence spaces |
+| `list_knowledge_base_pages` | List pages in a space with pagination and optional search |
+| `get_knowledge_base_page` | Get a single page with content, labels, and ancestors |
+| `create_knowledge_base_page` | Create a page in a space |
+| `update_knowledge_base_page` | Update title, content, labels, parent, or versioned page content |
+| `search_knowledge_base` | Search pages using free text or raw CQL |
+
+## Tool behavior
+
+### Page content format
+
+Confluence stores content in its own storage format. DevBoy handles conversion for agent-friendly workflows:
+
+- Reads return page content as Markdown.
+- Writes accept `contentType` values of `markdown`, `html`, or `storage`.
+- `markdown` is the best default for agent-generated docs.
+
+### Labels
+
+`create_knowledge_base_page` and `update_knowledge_base_page` support a `labels` parameter:
+
+- On create, labels are added after the page is created.
+- On update, labels replace the previous set when the parameter is provided.
+- If `labels` is omitted on update, existing labels are left unchanged.
+
+### Optimistic locking
+
+`update_knowledge_base_page` supports an optional `version` field:
+
+- If provided, DevBoy verifies the current page version before writing.
+- If the current version differs, the tool returns a conflict error instead of overwriting newer content.
+
+### Search and CQL
+
+`search_knowledge_base` supports two modes:
+
+- Free-text search: pass `query` and optionally `spaceKey`
+- Raw CQL: set `rawQuery: true` and provide a full Confluence query
+
+Example:
+
+```json
+{
+  "query": "label = \"adr\"",
+  "rawQuery": true
+}
+```
+
+## Example usage
+
+### List pages in a space
+
+```json
+{
+  "spaceKey": "ENG",
+  "limit": 10
+}
+```
+
+### Create a page from Markdown
+
+```json
+{
+  "spaceKey": "ENG",
+  "title": "ADR-012: Event Routing",
+  "content": "# Decision\n\nWe route events through the queue.",
+  "contentType": "markdown",
+  "labels": ["adr", "architecture"]
+}
+```
+
+### Update a page with version checking
+
+```json
+{
+  "pageId": "123456",
+  "content": "## Updated\n\nNew content here.",
+  "contentType": "markdown",
+  "version": 7,
+  "labels": ["adr", "accepted"]
+}
+```
+
+## Testing
+
+Verify your Confluence configuration:
+
+```bash
+devboy test confluence
+```
+
+This checks connectivity against the spaces endpoint and confirms that the configured auth method can reach the API.
+
+## Proxy support
+
+Confluence self-hosted instances are often only reachable through internal routing or gateway services. DevBoy supports proxy-mode provider wiring for Confluence using the same proxy mechanism used for other self-hosted providers.
+
+Use this when:
+
+- the Confluence base URL is not directly reachable from the assistant runtime
+- authentication must be injected by a gateway
+- custom routing headers are required
+
+## Troubleshooting
+
+### "401 Unauthorized" error
+
+- Verify the token is valid and not expired
+- If using basic auth, check that `confluence.username` is set correctly
+- If using bearer auth, make sure the token is a Confluence PAT and not a Jira token
+
+### "404 Not Found" error
+
+- Use the site root as `base_url`, for example `https://wiki.company.com`
+- Do not include `/rest/api` or `/api/v2` in `base_url`
+- If `api_version = "v2"` is configured, your instance may not expose all v2 endpoints; DevBoy will fall back where supported
+
+### "space not found" error
+
+- Verify the `spaceKey` is the short Confluence space key, not the display name
+- Confirm the authenticated user can access that space
+
+### Version conflict on update
+
+- Another user or automation updated the page after you read it
+- Re-fetch the page, inspect the latest content, then retry with the new version
+
+### Markdown formatting looks different in Confluence
+
+- Confluence storage format is not identical to Markdown
+- Basic headings, paragraphs, links, lists, and code blocks are handled, but some Confluence-specific macros may not round-trip exactly

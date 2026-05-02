@@ -15,6 +15,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use devboy_clickup::ClickUpClient;
+use devboy_confluence::{ConfluenceAuth, ConfluenceClient};
 use devboy_core::{
     BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, GitHubConfig, GitLabConfig,
     IssueFilter, IssueProvider, JiraConfig, MergeRequestProvider, MrFilter, Provider,
@@ -1785,6 +1786,7 @@ fn build_config(options: &InitOptions) -> Config {
             clickup: options.clickup.clone(),
             jira: options.jira.clone(),
             fireflies: None,
+            confluence: None,
             slack: options.slack.clone(),
         };
         config.contexts.insert(context_name, context);
@@ -3754,6 +3756,7 @@ impl EnvContextBuilder {
             clickup,
             jira,
             fireflies: None,
+            confluence: None,
             slack: if self.slack_team_id.is_some()
                 || self.slack_workspace.is_some()
                 || self.slack_base_url.is_some()
@@ -3866,6 +3869,33 @@ fn add_context_providers_from_env(
         } else {
             tracing::warn!(
                 "Jira configured via env for context '{}' but no token found",
+                context_name
+            );
+        }
+    }
+
+    if let Some(confluence) = &context.confluence {
+        if let Some(token) = get_token_for_context(store, context_name, "confluence") {
+            let auth = match &confluence.username {
+                Some(username) => ConfluenceAuth::Basic {
+                    username: username.clone(),
+                    password: token,
+                },
+                None => ConfluenceAuth::BearerToken(token),
+            };
+            let client = ConfluenceClient::new(&confluence.base_url, auth)
+                .with_api_version(confluence.api_version.as_deref());
+            server.add_knowledge_base_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added Confluence knowledge base provider to context '{}': {}",
+                context_name,
+                confluence.base_url
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "Confluence configured in context '{}' but no token found (tried contexts.{}.confluence.token then confluence.token)",
+                context_name,
                 context_name
             );
         }
@@ -4072,6 +4102,33 @@ fn add_context_providers(
         } else {
             tracing::warn!(
                 "Jira configured in context '{}' but no token found (tried contexts.{}.jira.token then jira.token)",
+                context_name,
+                context_name
+            );
+        }
+    }
+
+    if let Some(confluence) = &context.confluence {
+        if let Some(token) = get_token_for_context(store, context_name, "confluence") {
+            let auth = match &confluence.username {
+                Some(username) => ConfluenceAuth::Basic {
+                    username: username.clone(),
+                    password: token,
+                },
+                None => ConfluenceAuth::BearerToken(token),
+            };
+            let client = ConfluenceClient::new(&confluence.base_url, auth)
+                .with_api_version(confluence.api_version.as_deref());
+            server.add_knowledge_base_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added Confluence knowledge base provider to context '{}': {}",
+                context_name,
+                confluence.base_url
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "Confluence configured in context '{}' but no token found (tried contexts.{}.confluence.token then confluence.token)",
                 context_name,
                 context_name
             );
@@ -4848,6 +4905,8 @@ fn detect_data_type(value: &serde_json::Value) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use devboy_core::ConfluenceConfig;
+    use devboy_storage::MemoryStore;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -5156,6 +5215,33 @@ mod tests {
         assert!(ctx.github.is_some());
         assert_eq!(ctx.github.as_ref().unwrap().owner, "owner");
         assert_eq!(ctx.github.as_ref().unwrap().repo, "repo");
+    }
+
+    #[test]
+    fn test_add_context_providers_registers_confluence_knowledge_base_provider() {
+        let mut server = McpServer::new();
+        let store = MemoryStore::with_credentials([(
+            "contexts.default.confluence.token".to_string(),
+            "pat-secret".to_string(),
+        )]);
+        let context = ContextConfig {
+            confluence: Some(ConfluenceConfig {
+                base_url: "https://wiki.example.com".to_string(),
+                api_version: Some("v1".to_string()),
+                username: None,
+                space_key: Some("ENG".to_string()),
+            }),
+            ..Default::default()
+        };
+
+        let added = add_context_providers(&mut server, &store, "default", &context);
+
+        assert!(added);
+        assert_eq!(server.active_knowledge_base_providers().len(), 1);
+        assert_eq!(
+            server.active_knowledge_base_providers()[0].provider_name(),
+            "confluence"
+        );
     }
 
     #[test]

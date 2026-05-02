@@ -34,6 +34,10 @@ pub enum ToolCategory {
     /// Providers: Fireflies
     MeetingNotes,
 
+    /// Knowledge base tools: spaces, pages, search, page updates.
+    /// Providers: Confluence
+    KnowledgeBase,
+
     /// Messenger tools: chats, messages, search, sending.
     /// Providers: Slack
     Messenger,
@@ -52,6 +56,7 @@ impl ToolCategory {
             ToolCategory::Epics => "Epics",
             ToolCategory::Releases => "Releases",
             ToolCategory::MeetingNotes => "Meeting Notes",
+            ToolCategory::KnowledgeBase => "Knowledge Base",
             ToolCategory::Messenger => "Messenger",
             ToolCategory::JiraStructure => "Jira Structure",
         }
@@ -65,6 +70,7 @@ impl ToolCategory {
             ToolCategory::Epics => "epics",
             ToolCategory::Releases => "releases",
             ToolCategory::MeetingNotes => "meeting_notes",
+            ToolCategory::KnowledgeBase => "knowledge_base",
             ToolCategory::Messenger => "messenger",
             ToolCategory::JiraStructure => "jira_structure",
         }
