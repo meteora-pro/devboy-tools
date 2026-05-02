@@ -11,7 +11,7 @@ description: A research-driven tool bundle for AI coding agents — MCP, CLI, or
 [![npm](https://img.shields.io/npm/v/@devboy-tools/cli)](https://www.npmjs.com/package/@devboy-tools/cli)
 [![Ask Zread](https://img.shields.io/badge/Ask_Zread-_.svg?style=flat&color=00b0aa&labelColor=000000)](https://zread.ai/meteora-pro/devboy-tools)
 
-**A research-driven tool bundle for AI coding agents.** A single curated set of dev-workflow tools (GitHub, GitLab, Jira, ClickUp, Slack, Fireflies) reachable from any agent — Claude Code, Copilot CLI, Codex, Cursor, Kimi, Gemini, … — through three transports: **MCP server**, **CLI**, or **installable agent skills**. Output goes through a token-aware pipeline that compresses responses by **26–69% per call** on the data-shape-friendly endpoints it targets (issues, pipelines, large lists) — see [paper 2 measurements](https://github.com/meteora-pro/devboy-tools/blob/main/docs/research/paper-2-mckp-format-adaptive.md) on a 144k-event production corpus.
+**A research-driven tool bundle for AI coding agents.** A single curated set of dev-workflow tools (GitHub, GitLab, Jira, ClickUp, Confluence, Slack, Fireflies) reachable from any agent — Claude Code, Copilot CLI, Codex, Cursor, Kimi, Gemini, … — through three transports: **MCP server**, **CLI**, or **installable agent skills**. Output goes through a token-aware pipeline that compresses responses by **26–69% per call** on the data-shape-friendly endpoints it targets (issues, pipelines, large lists) — see [paper 2 measurements](https://github.com/meteora-pro/devboy-tools/blob/main/docs/research/paper-2-mckp-format-adaptive.md) on a 144k-event production corpus.
 
 ```bash
 npm install -g @devboy-tools/cli   # binary for your platform
@@ -167,7 +167,7 @@ For Codex / Cursor / Kimi / Copilot CLI / Gemini CLI / Antigravity — `devboy o
 
 ## Providers
 
-Six provider plugins ship today — each with a dedicated client + schema enricher so the tool list adapts to your project's actual fields (custom fields, enum values, status taxonomies):
+Seven provider plugins ship today — each with a dedicated client + schema enricher so the tool list adapts to your project's actual fields (custom fields, enum values, status taxonomies):
 
 | Provider | Crate | What you get |
 |----------|-------|--------------|
@@ -175,6 +175,7 @@ Six provider plugins ship today — each with a dedicated client + schema enrich
 | **GitLab** | [`devboy-gitlab`](https://github.com/meteora-pro/devboy-tools/blob/main/crates/plugins/api/gitlab/) | Issues, merge requests, discussions, pipelines, MR diffs |
 | **Jira** | [`devboy-jira`](https://github.com/meteora-pro/devboy-tools/blob/main/crates/plugins/api/jira/) | Issues with custom-field metadata, sprints, transitions |
 | **ClickUp** | [`devboy-clickup`](https://github.com/meteora-pro/devboy-tools/blob/main/crates/plugins/api/clickup/) | Tasks, custom fields, lists, custom task IDs |
+| **Confluence** | [`devboy-confluence`](https://github.com/meteora-pro/devboy-tools/blob/main/crates/plugins/api/confluence/) | Knowledge-base pages, search, spaces, create / update with labels (Server / Data Center, v1 + v2 API) |
 | **Slack** | [`devboy-slack`](https://github.com/meteora-pro/devboy-tools/blob/main/crates/plugins/api/slack/) | Chat search, channel summary, post message |
 | **Fireflies** | [`devboy-fireflies`](https://github.com/meteora-pro/devboy-tools/blob/main/crates/plugins/api/fireflies/) | Meeting transcripts, search, action items |
 
