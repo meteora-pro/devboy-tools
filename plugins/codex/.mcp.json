@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "devboy": {
+      "command": "${CODEX_PLUGIN_ROOT}/bin/devboy-shim.sh",
+      "args": ["mcp", "serve"]
+    }
+  }
+}

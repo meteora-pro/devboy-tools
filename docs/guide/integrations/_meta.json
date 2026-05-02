@@ -1,6 +1,16 @@
 [
   {
     "type": "file",
+    "name": "claude-code-plugin",
+    "label": "Claude Code Plugin"
+  },
+  {
+    "type": "file",
+    "name": "codex-plugin",
+    "label": "Codex Plugin"
+  },
+  {
+    "type": "file",
     "name": "github",
     "label": "GitHub"
   },

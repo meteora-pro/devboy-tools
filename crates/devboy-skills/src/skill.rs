@@ -325,7 +325,7 @@ mod tests {
     use super::*;
 
     const VALID: &str = r#"---
-name: devboy-setup
+name: setup
 description: Walk the user through initial devboy configuration.
 category: self-bootstrap
 version: 1
@@ -338,15 +338,15 @@ tools:
   - config
 ---
 
-# devboy-setup
+# setup
 
 Body goes here.
 "#;
 
     #[test]
     fn parses_valid_skill() {
-        let skill = Skill::parse("devboy-setup", VALID).expect("valid skill parses");
-        assert_eq!(skill.name(), "devboy-setup");
+        let skill = Skill::parse("setup", VALID).expect("valid skill parses");
+        assert_eq!(skill.name(), "setup");
         assert_eq!(skill.category(), Category::SelfBootstrap);
         assert_eq!(skill.version(), 1);
         assert_eq!(skill.frontmatter.activation.len(), 2);
@@ -363,13 +363,13 @@ Body goes here.
     #[test]
     fn rejects_missing_required_field() {
         let input = r#"---
-name: devboy-setup
+name: setup
 description: test
 category: self-bootstrap
 ---
 body
 "#;
-        let err = Skill::parse("devboy-setup", input).unwrap_err();
+        let err = Skill::parse("setup", input).unwrap_err();
         assert!(
             matches!(
                 err,
@@ -385,14 +385,14 @@ body
     #[test]
     fn rejects_wrong_field_type() {
         let input = r#"---
-name: devboy-setup
+name: setup
 description: test
 category: self-bootstrap
 version: "not a number"
 ---
 body
 "#;
-        let err = Skill::parse("devboy-setup", input).unwrap_err();
+        let err = Skill::parse("setup", input).unwrap_err();
         assert!(
             matches!(
                 err,
@@ -408,14 +408,14 @@ body
     #[test]
     fn rejects_unknown_category() {
         let input = r#"---
-name: devboy-setup
+name: setup
 description: test
 category: not-a-real-category
 version: 1
 ---
 body
 "#;
-        let err = Skill::parse("devboy-setup", input).unwrap_err();
+        let err = Skill::parse("setup", input).unwrap_err();
         assert!(
             matches!(err, SkillError::UnknownCategory { ref category, .. } if category == "not-a-real-category"),
             "expected UnknownCategory, got {err:?}"
@@ -425,7 +425,7 @@ body
     #[test]
     fn preserves_unknown_frontmatter_fields() {
         let input = r#"---
-name: devboy-setup
+name: setup
 description: test
 category: self-bootstrap
 version: 1
@@ -433,7 +433,7 @@ x-custom-vendor-field: hello
 ---
 body
 "#;
-        let skill = Skill::parse("devboy-setup", input).unwrap();
+        let skill = Skill::parse("setup", input).unwrap();
         assert!(
             skill
                 .frontmatter
@@ -457,9 +457,9 @@ body
 
     #[test]
     fn summary_from_skill() {
-        let skill = Skill::parse("devboy-setup", VALID).unwrap();
+        let skill = Skill::parse("setup", VALID).unwrap();
         let sum = SkillSummary::from(&skill);
-        assert_eq!(sum.name, "devboy-setup");
+        assert_eq!(sum.name, "setup");
         assert_eq!(sum.category, Category::SelfBootstrap);
     }
 
@@ -493,8 +493,8 @@ body
     fn parse_rejects_frontmatter_without_closing_fence() {
         // Missing closing `---` must yield MissingFrontmatter, not
         // a YAML error on the half-parsed body.
-        let input = "---\nname: devboy-setup\ndescription: incomplete\ncategory: self-bootstrap\nversion: 1\nbody starts here\n";
-        let err = Skill::parse("devboy-setup", input).unwrap_err();
+        let input = "---\nname: setup\ndescription: incomplete\ncategory: self-bootstrap\nversion: 1\nbody starts here\n";
+        let err = Skill::parse("setup", input).unwrap_err();
         assert!(
             matches!(err, SkillError::MissingFrontmatter { .. }),
             "expected MissingFrontmatter, got {err:?}"
@@ -506,8 +506,8 @@ body
         // UTF-8 BOM at the very start must not confuse the fence
         // detector.
         let bom_input = format!("\u{FEFF}{VALID}");
-        let skill = Skill::parse("devboy-setup", &bom_input).expect("BOM-prefixed file parses");
-        assert_eq!(skill.name(), "devboy-setup");
+        let skill = Skill::parse("setup", &bom_input).expect("BOM-prefixed file parses");
+        assert_eq!(skill.name(), "setup");
     }
 
     #[test]
@@ -541,7 +541,7 @@ version: 1
 ---
 body
 "#;
-        let err = Skill::parse("devboy-setup", input).unwrap_err();
+        let err = Skill::parse("setup", input).unwrap_err();
         assert!(
             matches!(err, SkillError::InvalidFieldType { field: "name", .. }),
             "expected InvalidFieldType(name), got {err:?}"
@@ -551,14 +551,14 @@ body
     #[test]
     fn parse_rejects_negative_version() {
         let input = r#"---
-name: devboy-setup
+name: setup
 description: test
 category: self-bootstrap
 version: -1
 ---
 body
 "#;
-        let err = Skill::parse("devboy-setup", input).unwrap_err();
+        let err = Skill::parse("setup", input).unwrap_err();
         // Negative values serialise as i64 in serde_yaml, so they
         // fail the `as_u64()` guard in `require_u32`.
         assert!(

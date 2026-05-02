@@ -62,35 +62,35 @@ Multiple sources can be layered; the CLI picks the source explicitly (`--source 
 ```
 skills/
 ├── 00-self-bootstrap/         # Skills that configure / repair devboy itself
-│   ├── devboy-setup/
+│   ├── setup/
 │   │   └── SKILL.md
-│   ├── devboy-repair/
+│   ├── repair/
 │   │   └── SKILL.md
-│   └── devboy-tools-catalog/
+│   └── tools-catalog/
 │       └── SKILL.md
 ├── 01-issue-tracking/
-│   ├── devboy-get-issues/
-│   ├── devboy-create-issue/
-│   ├── devboy-update-issue/
-│   ├── devboy-link-issues/
-│   └── devboy-solve-issue/
+│   ├── get-issues/
+│   ├── create-issue/
+│   ├── update-issue/
+│   ├── link-issues/
+│   └── solve-issue/
 ├── 02-code-review/
-│   ├── devboy-review-mr/
-│   ├── devboy-fix-review-comments/
-│   └── devboy-self-review/
+│   ├── review-mr/
+│   ├── fix-review-comments/
+│   └── self-review/
 ├── 03-self-feedback/
-│   ├── devboy-run-and-verify/
-│   ├── devboy-daily-report/
-│   ├── devboy-retro/
-│   └── devboy-knowledge-extract/
+│   ├── run-and-verify/
+│   ├── daily-report/
+│   ├── retro/
+│   └── knowledge-extract/
 ├── 04-meeting-notes/
-│   ├── devboy-meeting-search/
-│   ├── devboy-meeting-transcript/
-│   └── devboy-meeting-to-tasks/
+│   ├── meeting-search/
+│   ├── meeting-transcript/
+│   └── meeting-to-tasks/
 └── 05-messenger/
-    ├── devboy-chat-search/
-    ├── devboy-chat-summary/
-    └── devboy-notify/
+    ├── chat-search/
+    ├── chat-summary/
+    └── notify/
 ```
 
 ### SKILL.md frontmatter
@@ -99,7 +99,7 @@ The on-disk format is a Markdown file with YAML frontmatter. Fields are delibera
 
 ```yaml
 ---
-name: devboy-get-issues
+name: get-issues
 description: Fetch and summarise issues from the configured tracker.
 category: issue-tracking
 version: 1                              # integer; bumped on every change
@@ -114,7 +114,7 @@ tools:                                  # optional — lists tools the skill cal
   - add_issue_comment
 ---
 
-# devboy-get-issues
+# get-issues
 
 ...body of the skill in plain Markdown...
 ```
@@ -192,7 +192,7 @@ Tracking issues:
 - **Issue A (epic):** "Skills subsystem: bring procedural recipes into the tool bundle" — umbrella
 - **Issue B:** `feat(skills): add devboy-skills crate with embedded SkillSource`
 - **Issue C:** `feat(cli): add devboy skills {list,install,show,remove,upgrade} commands`
-- **Issue D:** `feat(skills): category 0 — self-bootstrap (devboy-setup, devboy-repair, devboy-tools-catalog)`
+- **Issue D:** `feat(skills): category 0 — self-bootstrap (setup, repair, tools-catalog)`
 
 See ADR-013 for install targets, ADR-014 for the install / upgrade lifecycle, ADR-015 for the session-trace format that the self-feedback category depends on, and ADR-016 (deferred) for skill language adaptation.
 

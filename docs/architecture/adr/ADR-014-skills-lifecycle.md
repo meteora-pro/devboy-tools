@@ -44,7 +44,7 @@ on-disk SHA256 =
   "version": 1,
   "installed_from": "devboy-tools 0.18.0",
   "skills": {
-    "devboy-setup": {
+    "setup": {
       "version": 3,
       "installed_at": "2026-04-17T12:34:56Z",
       "source": "embedded",
@@ -67,7 +67,7 @@ Inside the binary, `devboy-skills` ships (via `rust-embed`) a file describing ev
 
 ```json
 {
-  "devboy-setup": {
+  "setup": {
     "current": { "version": 3, "sha256": "3f2b..." },
     "history": [
       { "version": 1, "sha256": "abcd..." },
@@ -99,8 +99,8 @@ Final report:
 ```
 installed       : 3
 unchanged       : 2
-upgraded        : 1   (was devboy-setup v2 → now v3)
-skipped (user)  : 1   (devboy-retro has local edits; pass --force to overwrite)
+upgraded        : 1   (was setup v2 → now v3)
+skipped (user)  : 1   (retro has local edits; pass --force to overwrite)
 failed          : 0
 
 exit code: 0   (some skills skipped, not an error)
@@ -121,7 +121,7 @@ Every install / upgrade command supports `--dry-run`, which prints the per-skill
 Overwrites user-modified skills. Always paired with an explicit warning line per file:
 
 ```
-forcing overwrite: .agents/skills/devboy-retro/SKILL.md (user-modified, last edit 2026-04-15)
+forcing overwrite: .agents/skills/retro/SKILL.md (user-modified, last edit 2026-04-15)
 ```
 
 ### `devboy skills remove`

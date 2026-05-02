@@ -24,7 +24,7 @@ The baseline catalogue is compiled into the binary and falls into six categories
 | `self-bootstrap` | Configure and repair `devboy-tools` itself. |
 | `issue-tracking` | Fetch, create, update, link, and solve issues across GitHub / GitLab / ClickUp / Jira. |
 | `code-review` | Review a merge request, apply reviewer feedback, dry-run a review pass of your own MR. |
-| `self-feedback` | Run and verify a command, produce a daily report, do a retrospective over the last N days, extract the lesson from a fix, fan out parallel QA sub-agents (`devboy-qa-sweep`), analyse your own AI usage (`analyze-usage`). |
+| `self-feedback` | Run and verify a command, produce a daily report, do a retrospective over the last N days, extract the lesson from a fix, fan out parallel QA sub-agents (`qa-sweep`), analyse your own AI usage (`analyze-usage`). |
 | `meeting-notes` | Search meeting notes, fetch a transcript, turn action items into issues. |
 | `messenger` | Search chat history, summarise a channel over a time window, send a structured notification. |
 
@@ -65,14 +65,14 @@ devboy skills install --all --agent all
 Preview a change without touching disk:
 
 ```bash
-devboy skills install devboy-review-mr --agent claude --dry-run
+devboy skills install review-mr --agent claude --dry-run
 ```
 
 Upgrade previously-installed skills after a `devboy upgrade` — with no arguments the subcommand upgrades every skill recorded in the local manifest; pass explicit names to scope it to a subset:
 
 ```bash
 devboy skills upgrade                       # every installed skill
-devboy skills upgrade devboy-review-mr      # just one
+devboy skills upgrade review-mr      # just one
 ```
 
 ## Featured skill: `analyze-usage`

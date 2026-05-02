@@ -28,20 +28,26 @@ pub mod embedded;
 pub mod error;
 pub mod install;
 pub mod manifest;
+pub mod plugin_dedup;
 pub mod skill;
 pub mod source;
 pub mod trace;
 
-pub use catalog::Catalog;
+pub use catalog::{Catalog, canonical_skill_name};
 pub use embedded::EmbeddedSkillSource;
 pub use error::{Result, SkillError};
 pub use install::{
     Agent, Environment, InstallOptions, InstallOutcome, InstallReport, InstallSpec, InstallTarget,
-    detect_installed_agents, install_skills_to_target, remove_skills_from_target, resolve_targets,
+    LegacySkill, detect_installed_agents, install_skills_to_target,
+    migrate_legacy_skills_at_target, remove_skills_from_target, resolve_targets,
+    scan_legacy_skills_at_target,
 };
 pub use manifest::{
     HistoricalHashes, HistoricalVersion, InstallState, InstalledFile, InstalledSkill,
     MANIFEST_FILE, MANIFEST_VERSION, Manifest, SkillHistory, classify, classify_path, sha256_hex,
+};
+pub use plugin_dedup::{
+    DEVBOY_PLUGIN, PluginId, is_claude_plugin_enabled, is_codex_plugin_enabled,
 };
 pub use skill::{Category, Frontmatter, Skill, SkillSummary};
 pub use source::SkillSource;

@@ -28,7 +28,7 @@ The two ecosystems we care about most (Claude Code and Codex) now ship a first-c
 
 A naive way to package us as a Claude Code plugin would be to bundle five pre-built Rust binaries (~125 MB total) inside `.claude-plugin/bin/`. This is heavyweight and duplicates GitHub Releases. A second option — requiring users to pre-install via npm before installing the plugin — defeats the "one-click" goal that motivates packaging in the first place.
 
-There is a third option, which leverages the fact that we are shipping to *agents*, not to humans: **the plugin carries skills, and the agent runs them to install the binary**. We already have `devboy-setup` and `devboy-repair` skills in `skills/00-self-bootstrap/`. Once Claude Code loads the plugin, the agent itself can be instructed by the skill to check `command -v devboy`, run `npm install -g @devboy-tools/cli` (or fall back to a signed GitHub Release binary), and verify with `devboy doctor`. No bundled binary, no pre-install requirement, and any breakage is debuggable in the same agent session.
+There is a third option, which leverages the fact that we are shipping to *agents*, not to humans: **the plugin carries skills, and the agent runs them to install the binary**. We already have `setup` and `repair` skills in `skills/00-self-bootstrap/`. Once Claude Code loads the plugin, the agent itself can be instructed by the skill to check `command -v devboy`, run `npm install -g @devboy-tools/cli` (or fall back to a GitHub Release binary (unsigned today; users can verify against `sha256sums.txt` if needed)), and verify with `devboy doctor`. No bundled binary, no pre-install requirement, and any breakage is debuggable in the same agent session.
 
 Constraints:
 
@@ -42,17 +42,17 @@ This ADR is **distinct from ADR-007**, which uses the word *plugin* for an inter
 
 ## Decision
 
-> **Decision:** Ship `devboy` as a Claude Code plugin and a Codex plugin from the same `meteora-pro/devboy-tools` repository, with no bundled binary. The plugin carries only skills, manifests, and an MCP-server registration; the agent installs the `devboy` binary on first use by running the `devboy-setup` skill. `devboy onboard` remains the canonical install path for the four agents that lack a plugin format and learns to detect — and skip — installations that the plugin already provided.
+> **Decision:** Ship `devboy` as a Claude Code plugin and a Codex plugin from the same `meteora-pro/devboy-tools` repository, with no bundled binary. The plugin carries only skills, manifests, and an MCP-server registration; the agent installs the `devboy` binary on first use by running the `setup` skill. `devboy onboard` remains the canonical install path for the four agents that lack a plugin format and learns to detect — and skip — installations that the plugin already provided.
 
 Specifically:
 
 ### 1. Plugin distribution model — agent-driven bootstrap
 
 - Plugins ship **no compiled binary**. The `.claude-plugin/` and `.codex-plugin/` manifests reference `devboy mcp serve` from `$PATH`.
-- The plugin's `skills/` includes `setup` (renamed from `devboy-setup`) and `repair` (renamed from `devboy-repair`). On first activation Claude Code surfaces these to the user; the user runs `/devboy-meteora:setup` (or accepts an auto-trigger).
+- The plugin's `skills/` is a directory of symlinks onto `/skills/<category>/<name>/`, including `setup` and `repair`. On first activation Claude Code surfaces these to the user; the user runs `/devboy:setup` (or accepts an auto-trigger).
 - `setup` instructs the agent to:
   1. Check `command -v devboy`. If present, jump to step 4.
-  2. Try `npm install -g @devboy-tools/cli`. If npm is missing, fall back to fetching the signed binary for the user's platform from the latest GitHub Release into `${CLAUDE_PLUGIN_DATA}/bin/devboy` and adding it to `$PATH` for the session.
+  2. Try `npm install -g @devboy-tools/cli`. If npm is missing, fall back to fetching the platform binary from the latest GitHub Release into `${CLAUDE_PLUGIN_DATA}/bin/devboy` and adding it to `$PATH` for the session. The release asset is not currently signed; users in security-sensitive environments can verify the binary against the `sha256sums.txt` published alongside the release.
   3. Run `devboy onboard --agent claude --yes` (inside Codex: `--agent codex`).
   4. Run `devboy doctor` and report.
 - If anything goes wrong, the agent invokes `repair` in the same session — no out-of-band debugging.
@@ -60,16 +60,18 @@ Specifically:
 ### 2. Single repository, single source of truth
 
 - Both manifests live in `meteora-pro/devboy-tools` alongside the Cargo workspace:
-  - `.claude-plugin/plugin.json`
-  - `.claude-plugin/marketplace.json` (lists this repo as a single-plugin marketplace)
-  - `.codex-plugin/plugin.json`
-- Skills remain at `/skills/` as the master. The Claude Code plugin's `skills/` directory is generated at build-time (or symlinked, where the platform allows) from the same tree.
-- Embedded skills inside the Rust binary continue to be generated from `/skills/` at compile time and serve as the offline fallback when the binary is run on a machine with no network access (e.g., for `devboy onboard` from a Dockerfile cache).
+  - `plugins/claude/.claude-plugin/plugin.json`
+  - `.claude-plugin/marketplace.json` (lists this repo as a single-plugin marketplace; `source.path = "plugins/claude"`)
+  - `plugins/codex/.codex-plugin/plugin.json`
+- Skills remain at `/skills/` as the single source. The Claude plugin's `skills/` directory is a directory of symlinks; the Codex plugin's `skills/` is a single top-level symlink onto the Claude tree. No copies, no generated files.
+- Embedded skills inside the Rust binary continue to be generated from `/skills/` at compile time via `rust-embed` and serve as the offline fallback when the binary is run on a machine with no network access (e.g., for `devboy onboard` from a Dockerfile cache).
 
-### 3. Skill naming inside the plugin
+### 3. Skill naming and storage inside the plugin
 
-- Inside the plugin we drop the `devboy-` prefix from skill names (`get-issues`, `create-issue`, `setup`, `repair`, …). Plugin namespacing turns them into `/devboy-meteora:get-issues`, which already disambiguates without the prefix.
-- Old names (`devboy-get-issues`, `devboy-setup`, …) are kept as **aliases** in the skills catalogue so that non-plugin install paths (`devboy onboard`, `devboy skills install`, manual copy) keep producing the historical filenames in `~/.claude/skills/`, `~/.codex/skills/`, and `~/.kimi/skills/`.
+- Source skill directories under `/skills/<category>/<name>/` are named without a prefix (`setup`, `get-issues`, …, `analyze-usage`). The plugin tree under `plugins/claude/skills/<name>/` is a directory of **symlinks** pointing at those sources. There is no rename and no generated copy — editing `skills/00-self-bootstrap/setup/SKILL.md` updates the plugin in the same edit.
+- The Codex plugin reuses the same tree via a single top-level symlink (`plugins/codex/skills -> ../claude/skills`).
+- Plugin namespacing prefixes skills with the **plugin name** (`plugin.json#name = "devboy"`), not the marketplace name. Inside Claude Code skills are invoked as `/devboy:setup`, `/devboy:get-issues`, …, `/devboy:analyze-usage`.
+- The skills catalogue keeps a backward-compat alias in `Catalog::get()` so that callers still passing the legacy `devboy-` form (older scripts, dotfiles, AGENTS.md cheat-sheets) keep resolving: `Catalog::get("devboy-setup")` returns the same `SkillSummary` as `Catalog::get("setup")`. The alias lives in `crates/devboy-skills/src/catalog.rs`'s `canonical_skill_name()`.
 
 ### 4. Versioning synchronised with the Cargo workspace tag
 
@@ -117,10 +119,10 @@ Specifically:
 
 ### Risks
 
-- ⚠️ **Source-of-truth drift between `/skills/`, embedded Rust skills, and the plugin's `skills/`.** Mitigation: all three are generated from the same tree by `scripts/release/build-skills.sh`, with a CI check that the contents match SHA-by-SHA before publishing.
+- ⚠️ **Source-of-truth drift between `/skills/`, embedded Rust skills, and the plugin tree.** Largely mitigated by the symlink layout — the plugin tree references the same files; the only thing that can drift is a new skill being added to `/skills/` without the matching symlink under `plugins/claude/skills/`. `scripts/release/build-skills.sh --check` catches that in CI; the embedded copy is regenerated from `/skills/` at compile time by `rust-embed`.
 - ⚠️ **Marketplace plugin cache TTL** — Claude Code keeps orphaned plugin versions for 7 days, so dev iterations could pick up stale code. Mitigation: use `claude --plugin-dir .` against the working tree during development, only test the marketplace path on tag releases.
 - ⚠️ **Codex plugin format is new and may change.** Mitigation: keep `.codex-plugin/` and `.claude-plugin/` decoupled; if the Codex format breaks, the Claude side keeps shipping.
-- ⚠️ **`npm install -g` permission failures** on machines without sudo / with restrictive global npm prefix. Mitigation: `setup` falls back to the signed GitHub Release binary in `${CLAUDE_PLUGIN_DATA}/bin/`, which does not require root.
+- ⚠️ **`npm install -g` permission failures** on machines without sudo / with restrictive global npm prefix. Mitigation: `setup` falls back to the GitHub Release binary (unsigned today; users can verify against `sha256sums.txt` if needed) in `${CLAUDE_PLUGIN_DATA}/bin/`, which does not require root.
 - ⚠️ **Naming collision with ADR-007.** The word *plugin* is now overloaded inside this project. Mitigation: README and ADR-018 explicitly disambiguate; ADR-007's title remains "Plugin architecture (Rust)" and ADR-018's tags do not include the bare `plugins` tag.
 
 ## Alternatives Considered
@@ -129,7 +131,7 @@ Specifically:
 
 **Description:** Include cross-compiled binaries for darwin-arm64, darwin-x64, linux-x64, linux-arm64, win32-x64 under `.claude-plugin/bin/`. The plugin's MCP entry points to the bundled binary directly, and the user never sees `npm install`.
 
-**Why rejected:** Plugin payload grows by ~125 MB; the marketplace caches every commit-SHA version for 7 days, multiplying disk usage on user machines; the bundled binaries duplicate the existing signed artefacts on GitHub Releases; signing/notarisation would have to happen twice.
+**Why rejected:** Plugin payload grows by ~125 MB; the marketplace caches every commit-SHA version for 7 days, multiplying disk usage on user machines; the bundled binaries duplicate the existing artefacts on GitHub Releases; once we add signing/notarisation it would have to happen twice.
 
 ### Alternative 2: Plugin requires `devboy` pre-installed via npm
 

@@ -55,6 +55,17 @@ devboy doctor
 
 After this `devboy issues` returns your open tickets, your agent has the relevant skills loaded, and the MCP server is registered with whatever client you use.
 
+### Install via Claude Code Plugin
+
+If you live inside Claude Code, skip the npm step entirely:
+
+```text
+/plugin marketplace add meteora-pro/devboy-tools
+/plugin install devboy@meteora-devboy
+```
+
+The plugin's `setup` skill installs the `devboy` CLI on first use (npm with a signed-binary fallback), wires up the MCP server, and runs `devboy onboard`. After the binary lands, run `/reload-plugins` once. The same plugin format reaches **OpenCode** and **Kimi CLI** automatically (both auto-read `~/.claude/skills/`); a parallel **Codex** plugin lives at `plugins/codex/` for OpenAI Codex CLI users. See [the Claude Code plugin guide](docs/guide/integrations/claude-code-plugin.mdx) and [ADR-018](docs/architecture/adr/ADR-018-plugin-distribution.md) for the architecture.
+
 If you'd rather pick everything by hand:
 
 <details>
@@ -72,7 +83,7 @@ export DEVBOY_GITHUB_TOKEN=ghp_...
 
 # Pick skills explicitly instead of using a profile
 devboy skills list
-devboy skills install devboy-review-mr --agent claude
+devboy skills install review-mr --agent claude
 devboy skills install --all --agent all
 ```
 
@@ -104,12 +115,12 @@ Three profiles ship today; categories below cover the full catalogue.
 
 | Category | Skills |
 |----------|--------|
-| `self-bootstrap` | `devboy-setup`, `devboy-repair`, `devboy-tools-catalog`, `devboy-pipeline-tune` |
-| `issue-tracking` | `devboy-get-issues`, `devboy-create-issue`, `devboy-update-issue`, `devboy-link-issues`, `devboy-solve-issue` |
-| `code-review` | `devboy-review-mr`, `devboy-fix-review-comments`, `devboy-self-review` |
-| `self-feedback` | `devboy-run-and-verify`, `devboy-daily-report`, `devboy-retro`, `devboy-knowledge-extract`, `devboy-qa-sweep`, `analyze-usage` |
-| `meeting-notes` | `devboy-meeting-search`, `devboy-meeting-transcript`, `devboy-meeting-to-tasks` |
-| `messenger` | `devboy-chat-search`, `devboy-chat-summary`, `devboy-notify` |
+| `self-bootstrap` | `setup`, `repair`, `tools-catalog`, `pipeline-tune` |
+| `issue-tracking` | `get-issues`, `create-issue`, `update-issue`, `link-issues`, `solve-issue` |
+| `code-review` | `review-mr`, `fix-review-comments`, `self-review` |
+| `self-feedback` | `run-and-verify`, `daily-report`, `retro`, `knowledge-extract`, `qa-sweep`, `analyze-usage` |
+| `meeting-notes` | `meeting-search`, `meeting-transcript`, `meeting-to-tasks` |
+| `messenger` | `chat-search`, `chat-summary`, `notify` |
 
 Skill installs keep a per-location manifest with SHA-256s so upgrades leave user-modified files alone ([ADR-014](docs/architecture/adr/ADR-014-skills-lifecycle.md)). Self-feedback skills read session traces from `.devboy/sessions/` ([ADR-015](docs/architecture/adr/ADR-015-skills-session-traces.md)).
 

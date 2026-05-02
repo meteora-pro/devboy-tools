@@ -1,0 +1,25 @@
+{
+  "name": "devboy",
+  "version": "0.24.0",
+  "description": "Research-driven tool bundle for AI coding agents — providers (GitHub, GitLab, Jira, ClickUp, Slack, Fireflies, Confluence) reachable via MCP, CLI, and 24 namespaced skills. Token-aware output pipeline compresses responses 26-69% per call.",
+  "author": {
+    "name": "Meteora Pro",
+    "email": "ai-dev@meteora.pro",
+    "url": "https://meteora.pro"
+  },
+  "homepage": "https://devboy.pro",
+  "repository": "https://github.com/meteora-pro/devboy-tools",
+  "license": "Apache-2.0",
+  "skills": "skills",
+  "mcp": ".mcp.json",
+  "agents": "agents",
+  "keywords": [
+    "mcp",
+    "ai-agent",
+    "github",
+    "gitlab",
+    "jira",
+    "clickup",
+    "code-review"
+  ]
+}
