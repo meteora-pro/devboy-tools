@@ -29,11 +29,11 @@ After install, restart the Codex session so the MCP server entry binds against t
 | Component | Path inside the plugin |
 |---|---|
 | Manifest | `plugins/codex/.codex-plugin/plugin.json` |
-| Skills (24, namespaced) | `plugins/codex/skills/<name>/SKILL.md` |
+| Skills (24) | `plugins/codex/skills` symlink → `../claude/skills` |
 | MCP server | `plugins/codex/.mcp.json` |
-| Binary locator | `plugins/codex/bin/devboy-shim.sh` |
+| Binary locator | `plugins/codex/bin/devboy-shim.sh` symlink → `../../claude/bin/devboy-shim.sh` |
 
-Skill names match the Claude Code plugin (no `devboy-` prefix). Namespaced as `/devboy-meteora:setup`, `/devboy-meteora:review-mr`, etc.
+Skill names match the source one-to-one (no rename). Namespaced as `/devboy:devboy-setup`, `/devboy:devboy-review-mr`, …, `/devboy:analyze-usage`.
 
 ## Compared to the Claude Code plugin
 
@@ -55,7 +55,7 @@ Same playbook as Claude Code:
 
 - After `setup` finishes, restart the Codex session for the MCP server to bind.
 - If `npm install -g` fails, the GitHub Release fallback in `${CODEX_PLUGIN_DATA}/bin/` activates automatically.
-- For everything else, run `/devboy-meteora:repair`.
+- For everything else, run `/devboy:repair`.
 
 ## See also
 

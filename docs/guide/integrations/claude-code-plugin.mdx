@@ -32,16 +32,18 @@ After the binary is installed, **run `/reload-plugins`** so Claude Code picks up
 | Component | Path inside the plugin |
 |---|---|
 | Manifest | `plugins/claude/.claude-plugin/plugin.json` |
-| Skills (24, namespaced) | `plugins/claude/skills/<name>/SKILL.md` |
+| Skills (24, symlinks → `/skills/<category>/<name>`) | `plugins/claude/skills/<name>/` |
 | MCP server | `plugins/claude/.mcp.json` |
 | Binary locator | `plugins/claude/bin/devboy-shim.sh` |
 
-Skill names drop the legacy `devboy-` prefix (Claude Code namespacing already disambiguates) — see [PLUGIN_NAMING.md](https://github.com/meteora-pro/devboy-tools/blob/main/skills/PLUGIN_NAMING.md). For example:
+Skill names match the source filenames one-to-one — `plugins/claude/skills/<name>` is a symlink to `skills/<category>/<name>/`, so editing `/skills/00-self-bootstrap/devboy-setup/SKILL.md` updates the plugin in the same edit. Plugin namespacing prepends `devboy:`, so:
 
-- `/devboy-meteora:setup` — bootstrap
-- `/devboy-meteora:get-issues` — fetch open / closed issues
-- `/devboy-meteora:review-mr` — review a merge / pull request
-- `/devboy-meteora:analyze-usage` — Claude Code session analytics
+- `/devboy:devboy-setup` — bootstrap
+- `/devboy:devboy-get-issues` — fetch open / closed issues
+- `/devboy:devboy-review-mr` — review a merge / pull request
+- `/devboy:analyze-usage` — Claude Code session analytics
+
+See [PLUGIN_NAMING.md](https://github.com/meteora-pro/devboy-tools/blob/main/skills/PLUGIN_NAMING.md) for the full layout.
 
 ## Updating
 
@@ -51,7 +53,7 @@ The plugin's `version` field is synced with the Cargo workspace version on every
 /plugin update devboy@meteora-devboy
 ```
 
-…then `/reload-plugins`. The CLI binary is updated separately (npm or a fresh GitHub Release pull) — re-running `/devboy-meteora:setup` upgrades it.
+…then `/reload-plugins`. The CLI binary is updated separately (npm or a fresh GitHub Release pull) — re-running `/devboy:setup` upgrades it.
 
 ## Compared to the npm path
 
@@ -71,7 +73,7 @@ You can mix and match — `npm install -g` first, then install the plugin later:
 ## Troubleshooting
 
 - **MCP server not connected.** Run `/reload-plugins` after `setup` finishes the install. The shim only finds `devboy` once it is on PATH or in `${CLAUDE_PLUGIN_DATA}/bin/`.
-- **`npm install -g` fails with permissions.** The bootstrap will fall back to the GitHub Release binary in `${CLAUDE_PLUGIN_DATA}/bin/` automatically. If both fail, ask `/devboy-meteora:repair`.
+- **`npm install -g` fails with permissions.** The bootstrap will fall back to the GitHub Release binary in `${CLAUDE_PLUGIN_DATA}/bin/` automatically. If both fail, ask `/devboy:repair`.
 - **Skills don't show up after install.** Trigger `/reload-plugins`, or restart Claude Code if reload is unavailable.
 - **Conflicting skills in `~/.claude/skills/`.** Run `devboy onboard --agent claude --yes` once — it detects the active plugin and removes nothing, but future runs respect the dedup rule.
 
