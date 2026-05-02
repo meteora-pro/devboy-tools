@@ -54,6 +54,8 @@ jobs:
         run: |
           cargo run -p devboy-cli --quiet -- docs cli \
             --output docs/guide/reference/cli.md --check
+      - name: Check site landing matches README.md
+        run: python3 scripts/check-readme-sync.py
       - name: Build docs
         run: pnpm build
         working-directory: docs

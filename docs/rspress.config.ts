@@ -10,7 +10,7 @@ export default defineConfig({
   base: process.env.DOCS_BASE_PATH || '/',
   title: 'DevBoy tools',
   description:
-    'Configurable tool bundle for AI coding agents — consume via MCP, CLI, or agent skills. GitHub, GitLab, ClickUp, and Jira integrations.',
+    'A research-driven tool bundle for AI coding agents — MCP server, CLI, or installable agent skills. GitHub, GitLab, Jira, ClickUp, Slack, Fireflies. Token-aware output pipeline backed by four research papers.',
   themeConfig: {
     socialLinks: [
       {

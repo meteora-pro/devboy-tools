@@ -2,19 +2,18 @@
 
 import { PackageManagerTabs } from '@rspress/core/theme';
 
-This guide covers various ways to install DevBoy tools on your system.
+This guide covers the supported install paths. **Most users want the npm install.** Pre-built binaries and a from-source build are documented below for niche cases.
 
 ## Prerequisites
 
-- **Rust** 1.75 or later (for building from source)
-- **Git** (for cloning the repository)
-- A **GitHub**, **GitLab**, **Jira**, or **ClickUp** account (for API access)
+- An account for the provider(s) you'll use: **GitHub**, **GitLab**, **Jira**, **ClickUp**, **Slack**, or **Fireflies** (any subset).
+- For the **build-from-source** path only: **Rust** 1.75 or later and **Git**.
 
 ## Installation methods
 
 ### From npm (recommended)
 
-The easiest way to install DevBoy tools. Install globally so the `devboy` command is available system-wide. The correct binary for your platform is installed automatically.
+Single command — the correct binary for your platform is fetched automatically. Global install puts `devboy` on your `PATH`.
 
 <PackageManagerTabs
   command={{
@@ -24,25 +23,25 @@ The easiest way to install DevBoy tools. Install globally so the `devboy` comman
   }}
 />
 
-Then use via CLI:
+After install, the fastest first run:
+
 ```bash
-devboy --help
+devboy onboard      # auto-detects your AI agent + installs the right skill bundle
+devboy doctor       # verifies provider config and credentials
 ```
 
-### From source (recommended for development)
+See [Quick start](./quick-start) for the full first-run flow.
 
-Building from source gives you the latest features and is recommended for development.
+### From source (for contributors)
+
+Build the binary yourself. Requires Rust 1.75+ and Git.
 
 ```bash
-# Clone the repository
 git clone https://github.com/meteora-pro/devboy-tools.git
 cd devboy-tools
-
-# Build the project
 cargo build --release
-
-# The binary will be available at:
-# ./target/release/devboy
+# Binary lands at ./target/release/devboy — copy to a PATH dir
+sudo cp ./target/release/devboy /usr/local/bin/devboy
 ```
 
 ### From pre-built binaries

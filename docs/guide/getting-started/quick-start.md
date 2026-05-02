@@ -1,26 +1,44 @@
 # Quick start
 
-This guide will help you get DevBoy tools up and running in minutes.
+Sixty seconds from `npm install` to a working setup with skills wired into your AI agent.
 
-## Step 1: Initialize your project
+## Step 1: Onboard
 
-The fastest way to get started is using the interactive init command:
+After installing the CLI (see [Installation](./)), run:
+
+```bash
+devboy onboard
+```
+
+This auto-detects which AI agent you actively use (Claude Code, Copilot CLI, Codex, Cursor, Kimi, Gemini, …) by scanning the agent's home directory, picks a primary candidate by recency × volume, and installs a curated skill bundle for that agent.
+
+Profiles let you tailor the bundle:
+
+```bash
+devboy onboard                          # default `dev` bundle
+devboy onboard --profile pm             # PM bundle (issues, meetings, messengers)
+devboy onboard --profile oncall         # diagnostics + notifications
+devboy onboard --agent kimi --yes       # explicit agent + non-interactive
+devboy agents list                      # show all detected agents with score
+```
+
+## Step 2: Initialise your project (interactive)
 
 ```bash
 devboy init
 ```
 
-This will guide you through selecting providers and configuring them. For more details, see [Project initialization](./init).
+Walks you through picking providers and pasting tokens — they go straight to the OS keychain. For details see [Project initialization](./init).
 
-### Alternative: Manual configuration
+### Alternative: manual configuration
 
-If you prefer manual setup, follow the steps below.
+If you'd rather configure providers by hand, follow the steps below.
 
-## Step 2: Choose your provider
+#### Choose your provider
 
 DevBoy tools supports GitHub, GitLab, ClickUp, and Jira. Pick the one your project uses.
 
-### GitHub
+##### GitHub
 
 1. Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
 2. Click **Generate new token (classic)**
@@ -33,7 +51,7 @@ devboy config set github.repo <repo>
 devboy config set-secret github.token <token>
 ```
 
-### GitLab
+##### GitLab
 
 1. Go to GitLab → User Settings → Access Tokens
 2. Click **Add new token**
@@ -46,7 +64,7 @@ devboy config set gitlab.project_id <project-id>
 devboy config set-secret gitlab.token <token>
 ```
 
-### Jira
+##### Jira
 
 1. For Jira Cloud: Go to https://id.atlassian.com/manage-profile/security/api-tokens
 2. Click **Create API token**, give it a label, and copy it
@@ -60,7 +78,7 @@ devboy config set-secret jira.token <token>
 
 > **Tip:** Use the Quick Config Generator on the [GitHub](/integrations/github), [GitLab](/integrations/gitlab), or [Jira](/integrations/jira) integration page — paste your URL and it will generate the commands for you.
 
-## Step 2: Verify connection
+## Step 3: Verify connection
 
 ```bash
 # For GitHub
@@ -75,7 +93,7 @@ devboy test jira
 
 You should see output confirming the connection is successful.
 
-## Step 3: Try some commands
+## Step 4: Try some commands
 
 ### List issues
 
@@ -89,7 +107,7 @@ devboy issues
 devboy mrs
 ```
 
-## Step 4: Integrate with AI assistants
+## Step 5: Integrate with AI assistants
 
 ### Claude Code (CLI)
 
