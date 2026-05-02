@@ -1704,6 +1704,7 @@ impl IssueProvider for JiraClient {
                 priority,
                 assignee,
                 components,
+                parent: input.parent.map(|key| ProjectKey { key }),
             },
         };
 
@@ -4095,6 +4096,98 @@ mod tests {
             assert_eq!(issue.key, "jira#PROJ-11");
         }
 
+        /// Issue #214 — sub-task creation requires `fields.parent.key`
+        /// in the payload; the API returns 400 otherwise. The
+        /// `CreateIssueInput.parent` field must round-trip into the body.
+        #[tokio::test]
+        async fn test_create_issue_subtask_includes_parent_in_payload() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST).path("/issue").is_true(|req| {
+                    let body = String::from_utf8_lossy(req.body().as_ref());
+                    body.contains("\"parent\":{\"key\":\"PROJ-1\"}")
+                        && body.contains("\"name\":\"Sub-task\"")
+                });
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10010",
+                    "key": "PROJ-10"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-10");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10010",
+                    "key": "PROJ-10",
+                    "fields": {
+                        "summary": "Sub task work",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-06T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "Sub task work".to_string(),
+                    issue_type: Some("Sub-task".to_string()),
+                    parent: Some("PROJ-1".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-10");
+        }
+
+        /// Without a parent, the body must not include `"parent"` — Jira
+        /// rejects empty `parent` objects, and we don't want to emit a
+        /// dangling field for non-sub-task issue types.
+        #[tokio::test]
+        async fn test_create_issue_without_parent_omits_field() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST).path("/issue").is_true(|req| {
+                    let body = String::from_utf8_lossy(req.body().as_ref());
+                    !body.contains("\"parent\"")
+                });
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10011",
+                    "key": "PROJ-11"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-11");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10011",
+                    "key": "PROJ-11",
+                    "fields": {
+                        "summary": "Plain task",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-06T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "Plain task".to_string(),
+                    parent: None,
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-11");
+        }
+
         /// Issue #197 — update_issue with components replaces them.
         /// `Some(vec![])` clears; `None` does not touch (handled upstream).
         #[tokio::test]
@@ -5089,6 +5182,7 @@ mod tests {
                     priority: None,
                     assignee: None,
                     components: None,
+                    parent: None,
                 },
             };
 
@@ -5118,6 +5212,7 @@ mod tests {
                     priority: None,
                     assignee: None,
                     components: None,
+                    parent: None,
                 },
             };
 
@@ -5143,6 +5238,7 @@ mod tests {
                     priority: None,
                     assignee: None,
                     components: None,
+                    parent: None,
                 },
             };
 
