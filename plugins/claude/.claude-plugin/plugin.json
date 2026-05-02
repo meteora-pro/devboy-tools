@@ -1,0 +1,26 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "devboy",
+  "version": "0.24.0",
+  "description": "Research-driven tool bundle for AI coding agents — providers (GitHub, GitLab, Jira, ClickUp, Slack, Fireflies, Confluence) reachable via MCP, CLI, and 24 namespaced skills. Token-aware output pipeline compresses responses 26-69% per call.",
+  "author": {
+    "name": "Meteora Pro",
+    "email": "ai-dev@meteora.pro",
+    "url": "https://meteora.pro"
+  },
+  "homepage": "https://devboy.pro",
+  "repository": "https://github.com/meteora-pro/devboy-tools",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "devboy",
+    "ai-agent",
+    "github",
+    "gitlab",
+    "jira",
+    "clickup",
+    "slack",
+    "code-review"
+  ]
+}

@@ -28,11 +28,12 @@ pub mod embedded;
 pub mod error;
 pub mod install;
 pub mod manifest;
+pub mod plugin_dedup;
 pub mod skill;
 pub mod source;
 pub mod trace;
 
-pub use catalog::Catalog;
+pub use catalog::{Catalog, canonical_skill_name};
 pub use embedded::EmbeddedSkillSource;
 pub use error::{Result, SkillError};
 pub use install::{
@@ -43,6 +44,7 @@ pub use manifest::{
     HistoricalHashes, HistoricalVersion, InstallState, InstalledFile, InstalledSkill,
     MANIFEST_FILE, MANIFEST_VERSION, Manifest, SkillHistory, classify, classify_path, sha256_hex,
 };
+pub use plugin_dedup::{is_claude_plugin_installed, is_codex_plugin_installed};
 pub use skill::{Category, Frontmatter, Skill, SkillSummary};
 pub use source::SkillSource;
 pub use trace::{

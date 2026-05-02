@@ -60,6 +60,21 @@ jobs:
         run: pnpm build
         working-directory: docs
 
+  plugin-drift:
+    name: Plugin manifests drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      # Detect drift between /skills/ (master) and the generated
+      # plugins/{claude,codex}/skills/ trees. Same command contributors
+      # run locally — if it fails, regenerate and commit.
+      - name: Build plugin skills
+        run: scripts/release/build-skills.sh
+      - name: Check skill tree is in sync
+        run: scripts/release/build-skills.sh --check
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

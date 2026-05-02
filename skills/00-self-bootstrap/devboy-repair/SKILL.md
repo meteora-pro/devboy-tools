@@ -1,14 +1,15 @@
 ---
 name: devboy-repair
-description: Diagnose and fix a broken devboy-tools setup — corrupt config, missing tokens, keychain trouble, wrong paths.
+description: Diagnose and fix a broken devboy-tools setup — corrupt config, missing tokens, keychain trouble, wrong paths, plugin install failures.
 category: self-bootstrap
-version: 1
-compatibility: devboy-tools >= 0.18
+version: 2
+compatibility: devboy-tools >= 0.24
 activation:
   - "repair devboy"
   - "fix devboy"
   - "devboy is broken"
   - "devboy doctor failing"
+  - "devboy plugin not working"
 tools:
   - doctor
   - config
@@ -30,7 +31,37 @@ If the issue is "nothing is configured yet" — use `devboy-setup` instead. This
 
 ## Procedure
 
-### 1. Pin the fault
+### 1. Plugin context first
+
+Before running `doctor`, check whether we are in plugin context (Claude Code plugin or Codex plugin) and whether the binary is reachable at all:
+
+```bash
+if [ -n "$CLAUDE_PLUGIN_DATA" ]; then PLUGIN_CONTEXT=claude; PLUGIN_DATA="$CLAUDE_PLUGIN_DATA"; fi
+if [ -n "$CODEX_PLUGIN_DATA"  ]; then PLUGIN_CONTEXT=codex;  PLUGIN_DATA="$CODEX_PLUGIN_DATA";  fi
+
+command -v devboy || ls -la "${PLUGIN_DATA:-/dev/null}/bin/devboy" 2>/dev/null
+```
+
+If the binary is **missing entirely**, the plugin's `setup` skill failed during install. Recover before continuing:
+
+- **npm path failed** (sudo refused, restrictive prefix, npm not installed) — fall back to the signed GitHub Release binary:
+
+  ```bash
+  PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
+  mkdir -p "$PLUGIN_DATA/bin"
+  curl -sSL "https://github.com/meteora-pro/devboy-tools/releases/latest/download/devboy-${PLATFORM}" \
+    -o "$PLUGIN_DATA/bin/devboy"
+  chmod +x "$PLUGIN_DATA/bin/devboy"
+  export PATH="$PLUGIN_DATA/bin:$PATH"
+  ```
+
+- **Binary present but MCP not connected** — Claude Code or Codex needs `/reload-plugins` (or a session restart) for the MCP server entry to pick up a newly installed binary. Tell the user to run `/reload-plugins` and try again.
+
+- **Plugin enabled but skills missing in the agent's skill catalogue** — the agent has not refreshed; either reload or check that `~/.claude/settings.json#enabledPlugins` actually contains `devboy@meteora-devboy`.
+
+Once the binary is reachable, continue with `doctor`.
+
+### 2. Pin the fault
 
 ```bash
 devboy doctor --format json > /tmp/devboy-doctor.json
@@ -52,7 +83,7 @@ Every result has `{ id, category, name, status, message, details, fix_command, f
 
 If the command itself fails to run, `devboy` is not on `PATH` — install or re-link the binary before continuing.
 
-### 2. Classify by check id
+### 3. Classify by check id
 
 The real check id taxonomy (from `devboy doctor --list-checks`):
 
@@ -63,7 +94,7 @@ The real check id taxonomy (from `devboy doctor --list-checks`):
 - **MCP Server** — `mcp.tools` reports on the built-in tool filter; only warns if the config disables every tool.
 - **Proxy** — `proxy.servers` checks upstream MCP proxy connectivity. Failure usually means a bad `--proxy-token` or a dead URL; re-issue with `devboy proxy add <name> --url <url> --force --token <new>`.
 
-### 3. Re-verify
+### 4. Re-verify
 
 After each fix:
 
@@ -71,9 +102,9 @@ After each fix:
 devboy doctor --format json | jq '[.results[] | select(.status=="error")] | length'
 ```
 
-Zero `error` results is the target (some `warning`s are expected — e.g. "no config file" until `devboy init` runs). Repeat step 2 until every `error` is resolved.
+Zero `error` results is the target (some `warning`s are expected — e.g. "no config file" until `devboy init` runs). Repeat step 3 until every `error` is resolved.
 
-### 4. Smoke-test the tool bundle
+### 5. Smoke-test the tool bundle
 
 ```bash
 devboy tools list

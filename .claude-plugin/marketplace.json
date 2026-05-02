@@ -1,0 +1,31 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "meteora-devboy",
+  "description": "DevBoy — tool bundle for AI coding agents. Single-plugin marketplace.",
+  "owner": {
+    "name": "Meteora Pro",
+    "email": "ai-dev@meteora.pro",
+    "url": "https://meteora.pro"
+  },
+  "plugins": [
+    {
+      "name": "devboy",
+      "description": "Providers (GitHub/GitLab/Jira/ClickUp/Slack/Fireflies/Confluence), MCP server, and 24 skills with token-aware output compression.",
+      "version": "0.24.0",
+      "category": "development",
+      "source": {
+        "source": "github",
+        "repo": "meteora-pro/devboy-tools",
+        "path": "plugins/claude"
+      },
+      "keywords": [
+        "mcp",
+        "ai-agent",
+        "github",
+        "gitlab",
+        "code-review",
+        "issue-tracking"
+      ]
+    }
+  ]
+}

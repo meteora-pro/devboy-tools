@@ -55,6 +55,17 @@ devboy doctor
 
 After this `devboy issues` returns your open tickets, your agent has the relevant skills loaded, and the MCP server is registered with whatever client you use.
 
+### Install via Claude Code Plugin
+
+If you live inside Claude Code, skip the npm step entirely:
+
+```text
+/plugin marketplace add meteora-pro/devboy-tools
+/plugin install devboy@meteora-devboy
+```
+
+The plugin's `setup` skill installs the `devboy` CLI on first use (npm with a signed-binary fallback), wires up the MCP server, and runs `devboy onboard`. After the binary lands, run `/reload-plugins` once. The same plugin format reaches **OpenCode** and **Kimi CLI** automatically (both auto-read `~/.claude/skills/`); a parallel **Codex** plugin lives at `plugins/codex/` for OpenAI Codex CLI users. See [the Claude Code plugin guide](docs/guide/integrations/claude-code-plugin.mdx) and [ADR-018](docs/architecture/adr/ADR-018-plugin-distribution.md) for the architecture.
+
 If you'd rather pick everything by hand:
 
 <details>

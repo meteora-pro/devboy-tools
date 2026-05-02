@@ -1,0 +1,64 @@
+# Codex Plugin
+
+Install `devboy` as a [Codex plugin](https://developers.openai.com/codex/plugins). Same architecture as the [Claude Code plugin](./claude-code-plugin) — agent-driven bootstrap, no bundled binary, MCP server registration, namespaced skills.
+
+## Install
+
+From inside a Codex CLI session:
+
+```text
+/plugin install devboy@meteora-devboy
+```
+
+(Once we list on [codex-marketplace.com](https://www.codex-marketplace.com/) the marketplace registration step is implicit; until then add it manually as a custom marketplace pointing at this repo.)
+
+## What happens next
+
+The bundled `setup` skill triggers on first use and:
+
+1. Detects plugin context — `$CODEX_PLUGIN_DATA` is set, picks `--agent codex`.
+2. Installs `devboy` (npm → fallback to signed GitHub Release binary in `${CODEX_PLUGIN_DATA}/bin/`).
+3. Runs `devboy onboard --agent codex --yes`.
+4. Runs `devboy doctor`.
+5. On failure, hands off to `repair`.
+
+After install, restart the Codex session so the MCP server entry binds against the new binary.
+
+## What the plugin ships
+
+| Component | Path inside the plugin |
+|---|---|
+| Manifest | `plugins/codex/.codex-plugin/plugin.json` |
+| Skills (24, namespaced) | `plugins/codex/skills/<name>/SKILL.md` |
+| MCP server | `plugins/codex/.mcp.json` |
+| Binary locator | `plugins/codex/bin/devboy-shim.sh` |
+
+Skill names match the Claude Code plugin (no `devboy-` prefix). Namespaced as `/devboy-meteora:setup`, `/devboy-meteora:review-mr`, etc.
+
+## Compared to the Claude Code plugin
+
+The two plugins share `/skills/` as their source of truth and produce identical user-visible skill surface. Differences are mechanical:
+
+| | Claude Code | Codex |
+|---|---|---|
+| Manifest dir | `.claude-plugin/` | `.codex-plugin/` |
+| Plugin data env | `CLAUDE_PLUGIN_DATA` | `CODEX_PLUGIN_DATA` |
+| Plugin root env | `CLAUDE_PLUGIN_ROOT` | `CODEX_PLUGIN_ROOT` |
+| Subagent format | Markdown | TOML (none today) |
+| Marketplace | `meteora-pro/devboy-tools` (this repo) | [codex-marketplace.com](https://www.codex-marketplace.com/) |
+
+`devboy onboard` dedups against `~/.codex/settings.json#enabledPlugins` the same way it does for Claude.
+
+## Troubleshooting
+
+Same playbook as Claude Code:
+
+- After `setup` finishes, restart the Codex session for the MCP server to bind.
+- If `npm install -g` fails, the GitHub Release fallback in `${CODEX_PLUGIN_DATA}/bin/` activates automatically.
+- For everything else, run `/devboy-meteora:repair`.
+
+## See also
+
+- [ADR-018 — Distribution as Claude Code and Codex plugins](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-018-plugin-distribution.md)
+- [Claude Code plugin install](./claude-code-plugin) — sibling plugin, same architecture
+- [Codex Plugin Build Guide](https://developers.openai.com/codex/plugins/build) — upstream plugin spec
