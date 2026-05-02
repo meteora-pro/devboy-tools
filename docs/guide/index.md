@@ -136,6 +136,18 @@ The same tool set, three transports — pick what your workflow already uses.
 
 ### Claude Code
 
+The fastest way to get started is `devboy onboard` — it auto-detects which AI agent you actively use (by scanning `~/.claude/`, `~/.copilot/`, `~/.codex/`, `~/.kimi/`, Cursor's storage, `~/.gemini/`, `~/.gemini/antigravity/`) and installs a curated skill bundle for that agent:
+
+```bash
+devboy onboard                              # detect primary agent, install the `dev` bundle
+devboy onboard --profile pm                 # PM bundle (issue tracking + meetings + messenger)
+devboy onboard --profile oncall             # on-call bundle (diagnostics + notifications)
+devboy onboard --agent kimi --yes           # explicit agent + non-interactive (CI / dotfiles)
+devboy agents list                          # show all detected agents with sessions / last-used / score
+```
+
+If you'd rather pick skills by hand:
+
 ```bash
 claude mcp add devboy -- devboy mcp
 claude mcp list
@@ -250,7 +262,7 @@ Three enricher categories, single `ToolEnricher` trait:
 - **Pipeline enrichers** — add output-control parameters (`format` enum, pagination knobs).
 - **Custom enrichers** — third-party plugins.
 
-Architecture details: [executor](./architecture/executor.md), [enrichers](./architecture/enrichers.md), [format pipeline](./architecture/format-pipeline.md).
+Architecture details: [executor](./architecture/executor), [enrichers](./architecture/enrichers), [format pipeline](./architecture/format-pipeline).
 
 </details>
 
@@ -259,8 +271,8 @@ Architecture details: [executor](./architecture/executor.md), [enrichers](./arch
 ## Documentation map
 
 - **Getting started** — [`docs/guide/getting-started/`](./getting-started/)
-- **CLI reference** (auto-generated) — [`docs/guide/reference/cli.md`](./reference/cli.md)
-- **Tool reference** (auto-generated) — [`docs/guide/reference/tools.md`](./reference/tools.md)
+- **CLI reference** (auto-generated) — [`docs/guide/reference/cli.md`](./reference/cli)
+- **Tool reference** (auto-generated) — [`docs/guide/reference/tools.md`](./reference/tools)
 - **Skills user guide** — [`docs/guide/skills/`](./skills/)
 - **Configuration** (env vars, contexts, doctor, proxy, format pipeline) — [`docs/guide/configuration/`](./configuration/)
 - **Architecture** — [`docs/guide/architecture/`](./architecture/)

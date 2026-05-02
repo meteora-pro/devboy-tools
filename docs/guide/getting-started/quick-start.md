@@ -34,11 +34,11 @@ Walks you through picking providers and pasting tokens — they go straight to t
 
 If you'd rather configure providers by hand, follow the steps below.
 
-## Step 2: Choose your provider
+#### Choose your provider
 
 DevBoy tools supports GitHub, GitLab, ClickUp, and Jira. Pick the one your project uses.
 
-### GitHub
+##### GitHub
 
 1. Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
 2. Click **Generate new token (classic)**
@@ -51,7 +51,7 @@ devboy config set github.repo <repo>
 devboy config set-secret github.token <token>
 ```
 
-### GitLab
+##### GitLab
 
 1. Go to GitLab → User Settings → Access Tokens
 2. Click **Add new token**
@@ -64,7 +64,7 @@ devboy config set gitlab.project_id <project-id>
 devboy config set-secret gitlab.token <token>
 ```
 
-### Jira
+##### Jira
 
 1. For Jira Cloud: Go to https://id.atlassian.com/manage-profile/security/api-tokens
 2. Click **Create API token**, give it a label, and copy it
@@ -78,7 +78,7 @@ devboy config set-secret jira.token <token>
 
 > **Tip:** Use the Quick Config Generator on the [GitHub](/integrations/github), [GitLab](/integrations/gitlab), or [Jira](/integrations/jira) integration page — paste your URL and it will generate the commands for you.
 
-## Step 2: Verify connection
+## Step 3: Verify connection
 
 ```bash
 # For GitHub
@@ -93,7 +93,7 @@ devboy test jira
 
 You should see output confirming the connection is successful.
 
-## Step 3: Try some commands
+## Step 4: Try some commands
 
 ### List issues
 
@@ -107,7 +107,7 @@ devboy issues
 devboy mrs
 ```
 
-## Step 4: Integrate with AI assistants
+## Step 5: Integrate with AI assistants
 
 ### Claude Code (CLI)
 

@@ -37,8 +37,28 @@ description: A research-driven tool bundle for AI coding agents — MCP, CLI, or
 
 def render_from_readme(readme_text: str) -> str:
     text = readme_text
+
     # docs/guide/* → ./* (relative within site)
-    text = re.sub(r"\]\(docs/guide/", "](./", text)
+    #
+    # Strip the trailing `.md` extension on the way through: Rspress (and
+    # most static-site routers) serve `./quick-start` and 404 on
+    # `./quick-start.md`. The rest of the guide already uses the
+    # extensionless form, so emit consistent canonical URLs from the
+    # README sync. Anchors and trailing slashes are preserved.
+    def site_link(match: re.Match[str]) -> str:
+        path = match.group(1)
+        # Split off `?query` / `#anchor` if any.
+        suffix = ""
+        for sep in ("#", "?"):
+            if sep in path:
+                head, _, tail = path.partition(sep)
+                path, suffix = head, sep + tail
+                break
+        if path.endswith(".md"):
+            path = path[: -len(".md")]
+        return f"](./{path}{suffix})"
+
+    text = re.sub(r"\]\(docs/guide/([^)]+)\)", site_link, text)
     # Other docs/* → absolute GitHub
     text = re.sub(r"\]\(docs/", f"]({GH_BASE}/docs/", text)
     # crates/* → absolute GitHub
