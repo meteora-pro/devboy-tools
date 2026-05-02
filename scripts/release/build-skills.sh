@@ -1,29 +1,27 @@
 #!/usr/bin/env bash
 #
-# Generate the Claude Code plugin skill tree from /skills/.
+# Verify (and where missing, restore) the symlink-based plugin skill tree.
 #
-# Source of truth: skills/<category>/<name>/SKILL.md (and any sibling files).
-# Target:           plugins/claude/skills/<rule(name)>/SKILL.md
+# We do NOT copy or transform skill files. The plugin tree is just a
+# directory of symlinks pointing at the real source under /skills/:
 #
-# The Codex plugin reuses the same tree via a relative symlink committed
-# to the repo (`plugins/codex/skills -> ../claude/skills`). We do NOT
-# generate a separate Codex tree — both plugins read the identical files.
-# `--check` validates the symlink as well.
+#   plugins/claude/skills/<source-name>  -> ../../../skills/<category>/<source-name>
+#   plugins/codex/skills                 -> ../claude/skills            (single link)
+#   plugins/codex/bin/devboy-shim.sh     -> ../../claude/bin/devboy-shim.sh
 #
-# Plugin root layout follows the Claude Code spec: only plugin.json lives in
-# .claude-plugin/; skills/ sit next to it at the plugin root. Multi-plugin
-# repos use plugins/<name>/ subdirectories (anthropics/claude-plugins-official
-# pattern).
+# Source of truth: skills/<category>/<name>/SKILL.md.
 #
-# Renaming rule: drop the "devboy-" prefix where present (see PLUGIN_NAMING.md).
-# The frontmatter `name:` field is rewritten to match the new directory name.
+# This script has two responsibilities:
+#   1. Detect drift: any source skill that does not have a matching link,
+#      or any link with a wrong target, or the Codex top-level link gone.
+#   2. Repair: in `write` mode, recreate missing or broken links so that a
+#      fresh checkout (or one that lost symlinks for any reason) is fixed
+#      with one command.
 #
 # Usage:
-#   scripts/release/build-skills.sh             # regenerate
-#   scripts/release/build-skills.sh --dry-run   # print actions without writing
-#   scripts/release/build-skills.sh --check     # exit 1 if generated tree differs from on-disk
-#
-# CI runs the script, then `--check` to detect drift.
+#   scripts/release/build-skills.sh             # restore any missing/broken links
+#   scripts/release/build-skills.sh --dry-run   # print expected layout
+#   scripts/release/build-skills.sh --check     # exit 1 on drift (used in CI)
 
 set -euo pipefail
 
@@ -39,108 +37,115 @@ ROOT="$(git rev-parse --show-toplevel)"
 SKILLS_SRC="$ROOT/skills"
 CLAUDE_DST="$ROOT/plugins/claude/skills"
 CODEX_LINK="$ROOT/plugins/codex/skills"
-EXPECTED_CODEX_TARGET="../claude/skills"
+CODEX_BIN_LINK="$ROOT/plugins/codex/bin/devboy-shim.sh"
+EXPECTED_CODEX_SKILLS="../claude/skills"
+EXPECTED_CODEX_SHIM="../../claude/bin/devboy-shim.sh"
 
-# Renaming rule. Override here if a skill needs a non-default mapping.
-plugin_name_for() {
-  local src_name="$1"
-  echo "${src_name#devboy-}"
-}
-
-generate_to() {
-  local dst_root="$1"
-  rm -rf "$dst_root"
-  mkdir -p "$dst_root"
+# Each plugin entry: name, expected symlink target relative to CLAUDE_DST.
+discover_skills() {
   while IFS= read -r skill_md; do
-    local src_dir src_name plugin_name dst_dir
+    local src_dir src_name cat
     src_dir="$(dirname "$skill_md")"
     src_name="$(basename "$src_dir")"
-    plugin_name="$(plugin_name_for "$src_name")"
-    dst_dir="$dst_root/$plugin_name"
-    mkdir -p "$dst_dir"
-    # Copy every file in the skill directory (SKILL.md + helpers/templates).
-    cp -R "$src_dir"/. "$dst_dir/"
-    # Rewrite the `name:` field in the frontmatter and any matching `# H1`
-    # body header to match the plugin name. Without the body rewrite the
-    # rendered skill would read e.g. `name: setup` but `# devboy-setup`,
-    # which is internally inconsistent.
-    if [ "$src_name" != "$plugin_name" ]; then
-      sed -i.bak -E "
-        s/^name:[[:space:]]*${src_name}[[:space:]]*$/name: ${plugin_name}/
-        s/^#[[:space:]]+${src_name}[[:space:]]*$/# ${plugin_name}/
-      " "$dst_dir/SKILL.md"
-      rm -f "$dst_dir/SKILL.md.bak"
-    fi
+    cat="$(basename "$(dirname "$src_dir")")"
+    printf '%s\t../../../skills/%s/%s\n' "$src_name" "$cat" "$src_name"
   done < <(find "$SKILLS_SRC" -mindepth 3 -maxdepth 3 -name SKILL.md -type f | sort)
 }
 
-generate_dry() {
-  while IFS= read -r skill_md; do
-    local src_dir src_name plugin_name
-    src_dir="$(dirname "$skill_md")"
-    src_name="$(basename "$src_dir")"
-    plugin_name="$(plugin_name_for "$src_name")"
-    if [ "$src_name" = "$plugin_name" ]; then
-      printf '  %-32s (no rename)\n' "$src_name"
-    else
-      printf '  %-32s -> %s\n' "$src_name" "$plugin_name"
-    fi
-  done < <(find "$SKILLS_SRC" -mindepth 3 -maxdepth 3 -name SKILL.md -type f | sort)
+restore_link() {
+  local link="$1"
+  local target="$2"
+  mkdir -p "$(dirname "$link")"
+  if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
+    return 0
+  fi
+  rm -rf "$link"
+  ln -s "$target" "$link"
+  echo "  (re)created $link -> $target"
 }
 
 drift_check() {
   local rc=0
 
-  # 1. Claude skill tree is in sync with /skills/.
-  local tmp
-  tmp="$(mktemp -d)"
-  generate_to "$tmp"
-  if ! diff -ruN "$tmp" "$CLAUDE_DST" >/dev/null 2>&1; then
-    rc=1
-  fi
-  rm -rf "$tmp"
-
-  # 2. Codex skills/ is a symlink pointing at ../claude/skills (relative).
-  if [ ! -L "$CODEX_LINK" ]; then
-    echo "Drift: $CODEX_LINK is not a symlink (expected -> $EXPECTED_CODEX_TARGET)" >&2
-    rc=1
-  else
-    local actual
-    actual="$(readlink "$CODEX_LINK")"
-    if [ "$actual" != "$EXPECTED_CODEX_TARGET" ]; then
-      echo "Drift: $CODEX_LINK -> $actual, expected -> $EXPECTED_CODEX_TARGET" >&2
+  # 1. Every source skill has a matching link in plugins/claude/skills/.
+  while IFS=$'\t' read -r name target; do
+    local link="$CLAUDE_DST/$name"
+    if [ ! -L "$link" ]; then
+      echo "Drift: missing symlink $link -> $target" >&2
+      rc=1
+    elif [ "$(readlink "$link")" != "$target" ]; then
+      echo "Drift: $link -> $(readlink "$link"), expected -> $target" >&2
       rc=1
     fi
+  done < <(discover_skills)
+
+  # 2. No stale links / extra entries in plugins/claude/skills/.
+  if [ -d "$CLAUDE_DST" ]; then
+    local expected_names
+    expected_names="$(discover_skills | cut -f1 | sort)"
+    while IFS= read -r entry; do
+      [ -z "$entry" ] && continue
+      if ! grep -qx "$entry" <<<"$expected_names"; then
+        echo "Drift: unexpected entry $CLAUDE_DST/$entry (no matching skill in /skills/)" >&2
+        rc=1
+      fi
+    done < <(ls -1 "$CLAUDE_DST" 2>/dev/null | sort)
+  fi
+
+  # 3. Codex top-level skills link present and correct.
+  if [ ! -L "$CODEX_LINK" ]; then
+    echo "Drift: $CODEX_LINK is not a symlink (expected -> $EXPECTED_CODEX_SKILLS)" >&2
+    rc=1
+  elif [ "$(readlink "$CODEX_LINK")" != "$EXPECTED_CODEX_SKILLS" ]; then
+    echo "Drift: $CODEX_LINK -> $(readlink "$CODEX_LINK"), expected -> $EXPECTED_CODEX_SKILLS" >&2
+    rc=1
+  fi
+
+  # 4. Codex shim symlink present and correct.
+  if [ ! -L "$CODEX_BIN_LINK" ]; then
+    echo "Drift: $CODEX_BIN_LINK is not a symlink (expected -> $EXPECTED_CODEX_SHIM)" >&2
+    rc=1
+  elif [ "$(readlink "$CODEX_BIN_LINK")" != "$EXPECTED_CODEX_SHIM" ]; then
+    echo "Drift: $CODEX_BIN_LINK -> $(readlink "$CODEX_BIN_LINK"), expected -> $EXPECTED_CODEX_SHIM" >&2
+    rc=1
   fi
 
   if [ "$rc" -ne 0 ]; then
     echo "Run scripts/release/build-skills.sh and commit the result." >&2
     exit 1
   fi
-  echo "OK: plugin skill tree matches /skills/ and Codex symlink is correct."
+  echo "OK: plugin skill links match /skills/."
 }
 
 case "$MODE" in
   write)
-    generate_to "$CLAUDE_DST"
-    cc_count=$(find "$CLAUDE_DST" -name SKILL.md | wc -l | tr -d ' ')
-    echo "Generated:"
-    echo "  Claude Code plugin: $cc_count skills at plugins/claude/skills/"
-    # Re-establish the Codex symlink if it is missing OR pointing at the
-    # wrong target (e.g. became absolute after a manual move, or got
-    # replaced by a directory on a clean Windows checkout).
-    mkdir -p "$(dirname "$CODEX_LINK")"
-    if [ ! -L "$CODEX_LINK" ] || [ "$(readlink "$CODEX_LINK")" != "$EXPECTED_CODEX_TARGET" ]; then
-      rm -rf "$CODEX_LINK"
-      ln -s "$EXPECTED_CODEX_TARGET" "$CODEX_LINK"
-      echo "  Codex plugin:       (re)created symlink $CODEX_LINK -> $EXPECTED_CODEX_TARGET"
-    else
-      echo "  Codex plugin:       symlink → $(readlink "$CODEX_LINK") (shared with Claude)"
-    fi
+    mkdir -p "$CLAUDE_DST"
+    # Restore per-skill links.
+    while IFS=$'\t' read -r name target; do
+      restore_link "$CLAUDE_DST/$name" "$target"
+    done < <(discover_skills)
+    # Prune entries that no longer have a source.
+    expected_names="$(discover_skills | cut -f1 | sort)"
+    while IFS= read -r entry; do
+      [ -z "$entry" ] && continue
+      if ! grep -qx "$entry" <<<"$expected_names"; then
+        echo "  removed stale entry $CLAUDE_DST/$entry"
+        rm -rf "$CLAUDE_DST/$entry"
+      fi
+    done < <(ls -1 "$CLAUDE_DST" 2>/dev/null | sort)
+    # Top-level Codex links.
+    restore_link "$CODEX_LINK"     "$EXPECTED_CODEX_SKILLS"
+    restore_link "$CODEX_BIN_LINK" "$EXPECTED_CODEX_SHIM"
+    cnt=$(discover_skills | wc -l | tr -d ' ')
+    echo "OK: $cnt skill symlinks under plugins/claude/skills/ (Codex shares via top-level symlink)."
     ;;
   dry)
-    echo "Would generate (rule: drop 'devboy-' prefix):"
-    generate_dry
+    echo "Expected layout:"
+    while IFS=$'\t' read -r name target; do
+      printf '  plugins/claude/skills/%-30s -> %s\n' "$name" "$target"
+    done < <(discover_skills)
+    printf '  %-49s -> %s\n' "$CODEX_LINK"     "$EXPECTED_CODEX_SKILLS"
+    printf '  %-49s -> %s\n' "$CODEX_BIN_LINK" "$EXPECTED_CODEX_SHIM"
     ;;
   check)
     drift_check

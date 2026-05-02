@@ -1,67 +1,71 @@
-# Plugin naming convention
+# Plugin skill layout
 
-When the Claude Code / Codex plugin is built, skill names are renamed to drop
-the `devboy-` prefix. Plugin namespacing (`/devboy-meteora:<skill>`) already
-provides disambiguation, so the prefix becomes redundant.
-
-## Rule
+The Claude Code and Codex plugins share **the same source files** as
+`devboy onboard` — there is no separate plugin tree. `plugins/claude/skills/`
+is a directory of **symlinks** pointing at the real skill directories
+under `/skills/<category>/<source-name>/`. The Codex plugin reuses the
+same tree via a single top-level symlink:
 
 ```
-plugin_name = source_name.strip_prefix("devboy-").unwrap_or(source_name)
+plugins/claude/skills/devboy-setup    -> ../../../skills/00-self-bootstrap/devboy-setup
+plugins/claude/skills/devboy-get-issues -> ../../../skills/01-issue-tracking/devboy-get-issues
+…  (24 entries, one per source skill)
+
+plugins/codex/skills                  -> ../claude/skills
+plugins/codex/bin/devboy-shim.sh      -> ../../claude/bin/devboy-shim.sh
 ```
 
-Implemented in:
+Skill names are **identical everywhere** — `devboy-setup`,
+`devboy-get-issues`, …, `analyze-usage` (the only one without a
+`devboy-` prefix). Inside Claude Code the plugin namespacing prepends
+`devboy:`, so users invoke skills as
+`/devboy:devboy-setup`. Verbose, but the trade-off bought us
+zero file duplication: editing `skills/00-self-bootstrap/devboy-setup/SKILL.md`
+updates the plugin in the same edit.
 
-- `scripts/release/build-skills.sh` — applies the rule when generating
-  `plugins/claude/skills/` (the Codex plugin shares the same tree via
-  `plugins/codex/skills -> ../claude/skills` symlink).
-- `crates/devboy-skills/src/catalog.rs` — alias resolution via
-  `Catalog::get()` so that `Catalog::get("devboy-setup")` and
-  `Catalog::get("setup")` both return the same `SkillSummary`.
+## Why no rename rule
 
-Non-plugin install paths (`devboy onboard`, `devboy skills install`,
-manual copy) keep producing the historical filenames in
-`~/.claude/skills/`, `~/.codex/skills/`, and `~/.kimi/skills/` to preserve
-backward compatibility.
+The previous design generated copies of every SKILL.md under
+`plugins/claude/skills/<short-name>/` with the `devboy-` prefix
+stripped from the frontmatter `name:` field. That created 48 files on
+disk, two of every skill, and forced contributors to either edit both
+copies or remember to run a generator before committing. The symlink
+layout removes the rename and the generator step.
 
-## Full mapping (24 skills)
+## Maintaining the layout
 
-| Source | Plugin (CC / Codex) | Notes |
-|---|---|---|
-| `devboy-setup` | `setup` | bootstrap |
-| `devboy-repair` | `repair` | bootstrap |
-| `devboy-tools-catalog` | `tools-catalog` | bootstrap |
-| `devboy-pipeline-tune` | `pipeline-tune` | bootstrap |
-| `devboy-create-issue` | `create-issue` | issue tracking |
-| `devboy-get-issues` | `get-issues` | issue tracking |
-| `devboy-link-issues` | `link-issues` | issue tracking |
-| `devboy-solve-issue` | `solve-issue` | issue tracking |
-| `devboy-update-issue` | `update-issue` | issue tracking |
-| `devboy-fix-review-comments` | `fix-review-comments` | code review |
-| `devboy-review-mr` | `review-mr` | code review |
-| `devboy-self-review` | `self-review` | code review |
-| `analyze-usage` | `analyze-usage` | already without prefix — no rename |
-| `devboy-daily-report` | `daily-report` | self-feedback |
-| `devboy-knowledge-extract` | `knowledge-extract` | self-feedback |
-| `devboy-qa-sweep` | `qa-sweep` | self-feedback |
-| `devboy-retro` | `retro` | self-feedback |
-| `devboy-run-and-verify` | `run-and-verify` | self-feedback |
-| `devboy-meeting-search` | `meeting-search` | meeting notes |
-| `devboy-meeting-to-tasks` | `meeting-to-tasks` | meeting notes |
-| `devboy-meeting-transcript` | `meeting-transcript` | meeting notes |
-| `devboy-chat-search` | `chat-search` | messenger |
-| `devboy-chat-summary` | `chat-summary` | messenger |
-| `devboy-notify` | `notify` | messenger |
+Use `scripts/release/build-skills.sh` for both maintenance and
+validation:
 
-## Adding a new skill
+| Command | What it does |
+|---|---|
+| `scripts/release/build-skills.sh`           | Restores any missing or wrong-target symlinks; prunes stale entries. Idempotent — safe to run any time. |
+| `scripts/release/build-skills.sh --dry-run` | Prints the expected layout without touching the filesystem. |
+| `scripts/release/build-skills.sh --check`   | Exits non-zero on any drift — used as a CI gate. |
 
-If the skill follows the `devboy-` prefix convention, no extra step is
-needed — the rule applies automatically.
+Adding a new skill:
 
-If the skill needs an exception (rare), add the override in:
+1. Create `skills/<category>/<name>/SKILL.md` with frontmatter
+   (`name:` matches the directory name).
+2. Run `scripts/release/build-skills.sh` to (re)create the matching
+   symlink.
+3. Commit both — the source files and the new symlink under
+   `plugins/claude/skills/`.
 
-- `scripts/release/build-skills.sh` — manual rename branch
-- `crates/devboy-skills/src/catalog.rs` — alias entry
+Removing a skill:
+
+1. `git rm -r skills/<category>/<name>/`.
+2. Run `scripts/release/build-skills.sh` — the orphan symlink is
+   pruned automatically.
+3. Commit.
+
+## Backward-compat alias in `Catalog::get()`
+
+`crates/devboy-skills/src/catalog.rs` retains a small alias rule:
+`Catalog::get("devboy-setup")` and `Catalog::get("setup")` both
+resolve to the same `SkillSummary`. This is only useful if a future
+change ever drops the prefix from source filenames; today the alias
+returns the same entry whichever form the caller uses.
 
 ## See also
 

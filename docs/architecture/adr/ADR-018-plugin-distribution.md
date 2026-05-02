@@ -49,7 +49,7 @@ Specifically:
 ### 1. Plugin distribution model — agent-driven bootstrap
 
 - Plugins ship **no compiled binary**. The `.claude-plugin/` and `.codex-plugin/` manifests reference `devboy mcp serve` from `$PATH`.
-- The plugin's `skills/` includes `setup` (renamed from `devboy-setup`) and `repair` (renamed from `devboy-repair`). On first activation Claude Code surfaces these to the user; the user runs `/devboy-meteora:setup` (or accepts an auto-trigger).
+- The plugin's `skills/` is a directory of symlinks onto `/skills/<category>/<name>/`, including `devboy-setup` and `devboy-repair`. On first activation Claude Code surfaces these to the user; the user runs `/devboy:devboy-setup` (or accepts an auto-trigger).
 - `setup` instructs the agent to:
   1. Check `command -v devboy`. If present, jump to step 4.
   2. Try `npm install -g @devboy-tools/cli`. If npm is missing, fall back to fetching the platform binary from the latest GitHub Release into `${CLAUDE_PLUGIN_DATA}/bin/devboy` and adding it to `$PATH` for the session. The release asset is not currently signed; users in security-sensitive environments can verify the binary against the `sha256sums.txt` published alongside the release.
@@ -60,16 +60,18 @@ Specifically:
 ### 2. Single repository, single source of truth
 
 - Both manifests live in `meteora-pro/devboy-tools` alongside the Cargo workspace:
-  - `.claude-plugin/plugin.json`
-  - `.claude-plugin/marketplace.json` (lists this repo as a single-plugin marketplace)
-  - `.codex-plugin/plugin.json`
-- Skills remain at `/skills/` as the master. The Claude Code plugin's `skills/` directory is generated at build-time (or symlinked, where the platform allows) from the same tree.
-- Embedded skills inside the Rust binary continue to be generated from `/skills/` at compile time and serve as the offline fallback when the binary is run on a machine with no network access (e.g., for `devboy onboard` from a Dockerfile cache).
+  - `plugins/claude/.claude-plugin/plugin.json`
+  - `.claude-plugin/marketplace.json` (lists this repo as a single-plugin marketplace; `source.path = "plugins/claude"`)
+  - `plugins/codex/.codex-plugin/plugin.json`
+- Skills remain at `/skills/` as the single source. The Claude plugin's `skills/` directory is a directory of symlinks; the Codex plugin's `skills/` is a single top-level symlink onto the Claude tree. No copies, no generated files.
+- Embedded skills inside the Rust binary continue to be generated from `/skills/` at compile time via `rust-embed` and serve as the offline fallback when the binary is run on a machine with no network access (e.g., for `devboy onboard` from a Dockerfile cache).
 
-### 3. Skill naming inside the plugin
+### 3. Skill naming and storage inside the plugin
 
-- Inside the plugin we drop the `devboy-` prefix from skill names (`get-issues`, `create-issue`, `setup`, `repair`, …). Plugin namespacing turns them into `/devboy-meteora:get-issues`, which already disambiguates without the prefix.
-- Old names (`devboy-get-issues`, `devboy-setup`, …) are kept as **aliases** in the skills catalogue so that non-plugin install paths (`devboy onboard`, `devboy skills install`, manual copy) keep producing the historical filenames in `~/.claude/skills/`, `~/.codex/skills/`, and `~/.kimi/skills/`.
+- The plugin tree under `plugins/claude/skills/<name>/` is a directory of **symlinks** pointing at the real source under `/skills/<category>/<name>/`. There is no rename and no generated copy — editing `skills/00-self-bootstrap/devboy-setup/SKILL.md` updates the plugin in the same edit.
+- The Codex plugin reuses the same tree via a single top-level symlink (`plugins/codex/skills -> ../claude/skills`).
+- Plugin namespacing prefixes skills with the **plugin name** (`plugin.json#name = "devboy"`), not the marketplace name. Inside Claude Code skills are invoked as `/devboy:devboy-setup`, `/devboy:devboy-get-issues`, …, `/devboy:analyze-usage`. The doubled `devboy` is a cosmetic cost of keeping a single source-of-truth file (no rename, no copy); a future change can drop the prefix from source filenames if the cosmetics outweigh the migration cost (`history.json`, `bundles/*.toml`, embedded loader, existing user installs in `~/.claude/skills/devboy-*` would all need to migrate).
+- The skills catalogue keeps a backward-compat alias in `Catalog::get()` (`Catalog::get("setup")` and `Catalog::get("devboy-setup")` resolve to the same entry) so that future rename would not break callers.
 
 ### 4. Versioning synchronised with the Cargo workspace tag
 
@@ -117,7 +119,7 @@ Specifically:
 
 ### Risks
 
-- ⚠️ **Source-of-truth drift between `/skills/`, embedded Rust skills, and the plugin's `skills/`.** Mitigation: all three are generated from the same tree by `scripts/release/build-skills.sh`, with a CI check that the contents match SHA-by-SHA before publishing.
+- ⚠️ **Source-of-truth drift between `/skills/`, embedded Rust skills, and the plugin tree.** Largely mitigated by the symlink layout — the plugin tree references the same files; the only thing that can drift is a new skill being added to `/skills/` without the matching symlink under `plugins/claude/skills/`. `scripts/release/build-skills.sh --check` catches that in CI; the embedded copy is regenerated from `/skills/` at compile time by `rust-embed`.
 - ⚠️ **Marketplace plugin cache TTL** — Claude Code keeps orphaned plugin versions for 7 days, so dev iterations could pick up stale code. Mitigation: use `claude --plugin-dir .` against the working tree during development, only test the marketplace path on tag releases.
 - ⚠️ **Codex plugin format is new and may change.** Mitigation: keep `.codex-plugin/` and `.claude-plugin/` decoupled; if the Codex format breaks, the Claude side keeps shipping.
 - ⚠️ **`npm install -g` permission failures** on machines without sudo / with restrictive global npm prefix. Mitigation: `setup` falls back to the GitHub Release binary (unsigned today; users can verify against `sha256sums.txt` if needed) in `${CLAUDE_PLUGIN_DATA}/bin/`, which does not require root.
