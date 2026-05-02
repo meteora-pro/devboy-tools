@@ -14,7 +14,7 @@ tools:
   - get_issues
 ---
 
-# devboy-daily-report
+# daily-report
 
 Reads today's session traces and cross-references them with the git
 provider's recent activity to produce a short Markdown report. The

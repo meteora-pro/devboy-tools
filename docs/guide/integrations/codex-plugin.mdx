@@ -17,7 +17,7 @@ From inside a Codex CLI session:
 The bundled `setup` skill triggers on first use and:
 
 1. Detects plugin context — `$CODEX_PLUGIN_DATA` is set, picks `--agent codex`.
-2. Installs `devboy` (npm → fallback to signed GitHub Release binary in `${CODEX_PLUGIN_DATA}/bin/`).
+2. Installs `devboy` (npm → fallback to GitHub Release tarball in `${CODEX_PLUGIN_DATA}/bin/`, verified via the per-asset `.sha256` sibling; releases are not code-signed, the SHA file is the integrity check).
 3. Runs `devboy onboard --agent codex --yes`.
 4. Runs `devboy doctor`.
 5. On failure, hands off to `repair`.

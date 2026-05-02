@@ -15,7 +15,7 @@ tools:
   - send_message
 ---
 
-# devboy-notify
+# notify
 
 Send a one-shot, structured notification — a short subject line, 2–3 body bullets, and an optional link — to a chat or channel the user has explicitly asked you to post in. The skill confirms the target and verifies the required write scope **before** calling `send_message`; it never posts speculatively.
 

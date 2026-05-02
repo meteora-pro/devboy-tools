@@ -15,7 +15,7 @@ tools:
   - search_chat_messages
 ---
 
-# devboy-chat-search
+# chat-search
 
 Locate one or more messages across the configured messenger (Slack today, additional providers as they come online) by keyword, optional chat scope, and optional time window. The skill returns a ranked list of hits — it does **not** condense a long conversation into a narrative; for that, use `devboy-chat-summary`.
 

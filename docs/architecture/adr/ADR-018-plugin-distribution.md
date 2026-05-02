@@ -28,7 +28,7 @@ The two ecosystems we care about most (Claude Code and Codex) now ship a first-c
 
 A naive way to package us as a Claude Code plugin would be to bundle five pre-built Rust binaries (~125 MB total) inside `.claude-plugin/bin/`. This is heavyweight and duplicates GitHub Releases. A second option — requiring users to pre-install via npm before installing the plugin — defeats the "one-click" goal that motivates packaging in the first place.
 
-There is a third option, which leverages the fact that we are shipping to *agents*, not to humans: **the plugin carries skills, and the agent runs them to install the binary**. We already have `devboy-setup` and `devboy-repair` skills in `skills/00-self-bootstrap/`. Once Claude Code loads the plugin, the agent itself can be instructed by the skill to check `command -v devboy`, run `npm install -g @devboy-tools/cli` (or fall back to a signed GitHub Release binary), and verify with `devboy doctor`. No bundled binary, no pre-install requirement, and any breakage is debuggable in the same agent session.
+There is a third option, which leverages the fact that we are shipping to *agents*, not to humans: **the plugin carries skills, and the agent runs them to install the binary**. We already have `devboy-setup` and `devboy-repair` skills in `skills/00-self-bootstrap/`. Once Claude Code loads the plugin, the agent itself can be instructed by the skill to check `command -v devboy`, run `npm install -g @devboy-tools/cli` (or fall back to a GitHub Release binary (unsigned today; users can verify against `sha256sums.txt` if needed)), and verify with `devboy doctor`. No bundled binary, no pre-install requirement, and any breakage is debuggable in the same agent session.
 
 Constraints:
 
@@ -52,7 +52,7 @@ Specifically:
 - The plugin's `skills/` includes `setup` (renamed from `devboy-setup`) and `repair` (renamed from `devboy-repair`). On first activation Claude Code surfaces these to the user; the user runs `/devboy-meteora:setup` (or accepts an auto-trigger).
 - `setup` instructs the agent to:
   1. Check `command -v devboy`. If present, jump to step 4.
-  2. Try `npm install -g @devboy-tools/cli`. If npm is missing, fall back to fetching the signed binary for the user's platform from the latest GitHub Release into `${CLAUDE_PLUGIN_DATA}/bin/devboy` and adding it to `$PATH` for the session.
+  2. Try `npm install -g @devboy-tools/cli`. If npm is missing, fall back to fetching the platform binary from the latest GitHub Release into `${CLAUDE_PLUGIN_DATA}/bin/devboy` and adding it to `$PATH` for the session. The release asset is not currently signed; users in security-sensitive environments can verify the binary against the `sha256sums.txt` published alongside the release.
   3. Run `devboy onboard --agent claude --yes` (inside Codex: `--agent codex`).
   4. Run `devboy doctor` and report.
 - If anything goes wrong, the agent invokes `repair` in the same session — no out-of-band debugging.
@@ -120,7 +120,7 @@ Specifically:
 - ⚠️ **Source-of-truth drift between `/skills/`, embedded Rust skills, and the plugin's `skills/`.** Mitigation: all three are generated from the same tree by `scripts/release/build-skills.sh`, with a CI check that the contents match SHA-by-SHA before publishing.
 - ⚠️ **Marketplace plugin cache TTL** — Claude Code keeps orphaned plugin versions for 7 days, so dev iterations could pick up stale code. Mitigation: use `claude --plugin-dir .` against the working tree during development, only test the marketplace path on tag releases.
 - ⚠️ **Codex plugin format is new and may change.** Mitigation: keep `.codex-plugin/` and `.claude-plugin/` decoupled; if the Codex format breaks, the Claude side keeps shipping.
-- ⚠️ **`npm install -g` permission failures** on machines without sudo / with restrictive global npm prefix. Mitigation: `setup` falls back to the signed GitHub Release binary in `${CLAUDE_PLUGIN_DATA}/bin/`, which does not require root.
+- ⚠️ **`npm install -g` permission failures** on machines without sudo / with restrictive global npm prefix. Mitigation: `setup` falls back to the GitHub Release binary (unsigned today; users can verify against `sha256sums.txt` if needed) in `${CLAUDE_PLUGIN_DATA}/bin/`, which does not require root.
 - ⚠️ **Naming collision with ADR-007.** The word *plugin* is now overloaded inside this project. Mitigation: README and ADR-018 explicitly disambiguate; ADR-007's title remains "Plugin architecture (Rust)" and ADR-018's tags do not include the bare `plugins` tag.
 
 ## Alternatives Considered
@@ -129,7 +129,7 @@ Specifically:
 
 **Description:** Include cross-compiled binaries for darwin-arm64, darwin-x64, linux-x64, linux-arm64, win32-x64 under `.claude-plugin/bin/`. The plugin's MCP entry points to the bundled binary directly, and the user never sees `npm install`.
 
-**Why rejected:** Plugin payload grows by ~125 MB; the marketplace caches every commit-SHA version for 7 days, multiplying disk usage on user machines; the bundled binaries duplicate the existing signed artefacts on GitHub Releases; signing/notarisation would have to happen twice.
+**Why rejected:** Plugin payload grows by ~125 MB; the marketplace caches every commit-SHA version for 7 days, multiplying disk usage on user machines; the bundled binaries duplicate the existing artefacts on GitHub Releases; once we add signing/notarisation it would have to happen twice.
 
 ### Alternative 2: Plugin requires `devboy` pre-installed via npm
 

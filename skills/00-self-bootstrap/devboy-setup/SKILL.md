@@ -63,12 +63,30 @@ else
   if command -v npm >/dev/null 2>&1; then
     npm install -g @devboy-tools/cli
   elif [ -n "$PLUGIN_DATA" ]; then
+    # GitHub Release binary fallback. Releases are not signed today; we
+    # *do* publish a per-asset SHA-256 file alongside each tarball, and
+    # the steps below verify it before extracting.
+    case "$(uname -s)" in
+      Linux*)  os=linux ;;
+      Darwin*) os=macos ;;
+      *) echo "Unsupported OS: $(uname -s)" >&2; exit 1 ;;
+    esac
+    case "$(uname -m)" in
+      x86_64|amd64)  arch=x86_64 ;;
+      aarch64|arm64) arch=arm64 ;;
+      *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
+    esac
+    asset="devboy-${os}-${arch}.tar.gz"
+    base="https://github.com/meteora-pro/devboy-tools/releases/latest/download"
     mkdir -p "$PLUGIN_DATA/bin"
-    PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
-    curl -sSL "https://github.com/meteora-pro/devboy-tools/releases/latest/download/devboy-${PLATFORM}" \
-      -o "$PLUGIN_DATA/bin/devboy"
+    cd "$PLUGIN_DATA"
+    curl -sSL "$base/$asset"        -o "$asset"
+    curl -sSL "$base/$asset.sha256" -o "$asset.sha256"
+    shasum -a 256 -c "$asset.sha256"            # aborts on mismatch
+    tar -xzf "$asset" -C "$PLUGIN_DATA/bin/"
     chmod +x "$PLUGIN_DATA/bin/devboy"
     export PATH="$PLUGIN_DATA/bin:$PATH"
+    cd - >/dev/null
   else
     echo "ERROR: neither npm nor a plugin data dir is available — cannot install devboy automatically."
     echo "Install manually with: npm install -g @devboy-tools/cli"

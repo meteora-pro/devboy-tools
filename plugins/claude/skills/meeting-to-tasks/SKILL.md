@@ -18,7 +18,7 @@ tools:
   - link_issues
 ---
 
-# devboy-meeting-to-tasks
+# meeting-to-tasks
 
 Convert a meeting into concrete, trackable work. The skill is deliberately conservative: extract → deduplicate → **confirm with the user** → create. Automatic creation from a transcript produces nonsense tickets far too often — human review before the first `create_issue` is not optional.
 

@@ -18,7 +18,7 @@ tools:
   - get_available_statuses
 ---
 
-# devboy-get-issues
+# get-issues
 
 Enumerate issues from whichever tracker is active (GitLab, GitHub, ClickUp, or Jira) and hand back either a compact summary of the result set or the full body of a single ticket the user cares about. The skill is always a read-only operation — it never mutates state.
 

@@ -60,9 +60,15 @@ generate_to() {
     mkdir -p "$dst_dir"
     # Copy every file in the skill directory (SKILL.md + helpers/templates).
     cp -R "$src_dir"/. "$dst_dir/"
-    # Rewrite the `name:` field in the frontmatter to match the plugin name.
+    # Rewrite the `name:` field in the frontmatter and any matching `# H1`
+    # body header to match the plugin name. Without the body rewrite the
+    # rendered skill would read e.g. `name: setup` but `# devboy-setup`,
+    # which is internally inconsistent.
     if [ "$src_name" != "$plugin_name" ]; then
-      sed -i.bak -E "s/^name:[[:space:]]*${src_name}[[:space:]]*$/name: ${plugin_name}/" "$dst_dir/SKILL.md"
+      sed -i.bak -E "
+        s/^name:[[:space:]]*${src_name}[[:space:]]*$/name: ${plugin_name}/
+        s/^#[[:space:]]+${src_name}[[:space:]]*$/# ${plugin_name}/
+      " "$dst_dir/SKILL.md"
       rm -f "$dst_dir/SKILL.md.bak"
     fi
   done < <(find "$SKILLS_SRC" -mindepth 3 -maxdepth 3 -name SKILL.md -type f | sort)
@@ -120,13 +126,14 @@ case "$MODE" in
     cc_count=$(find "$CLAUDE_DST" -name SKILL.md | wc -l | tr -d ' ')
     echo "Generated:"
     echo "  Claude Code plugin: $cc_count skills at plugins/claude/skills/"
-    # Re-establish the Codex symlink if it has been removed (e.g. by
-    # a clean checkout on a platform with broken symlink semantics).
-    if [ ! -L "$CODEX_LINK" ]; then
-      mkdir -p "$(dirname "$CODEX_LINK")"
+    # Re-establish the Codex symlink if it is missing OR pointing at the
+    # wrong target (e.g. became absolute after a manual move, or got
+    # replaced by a directory on a clean Windows checkout).
+    mkdir -p "$(dirname "$CODEX_LINK")"
+    if [ ! -L "$CODEX_LINK" ] || [ "$(readlink "$CODEX_LINK")" != "$EXPECTED_CODEX_TARGET" ]; then
       rm -rf "$CODEX_LINK"
       ln -s "$EXPECTED_CODEX_TARGET" "$CODEX_LINK"
-      echo "  Codex plugin:       restored symlink $CODEX_LINK -> $EXPECTED_CODEX_TARGET"
+      echo "  Codex plugin:       (re)created symlink $CODEX_LINK -> $EXPECTED_CODEX_TARGET"
     else
       echo "  Codex plugin:       symlink → $(readlink "$CODEX_LINK") (shared with Claude)"
     fi

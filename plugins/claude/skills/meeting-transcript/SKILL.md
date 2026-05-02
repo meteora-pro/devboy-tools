@@ -15,7 +15,7 @@ tools:
   - get_meeting_notes
 ---
 
-# devboy-meeting-transcript
+# meeting-transcript
 
 Retrieve the speaker-attributed, timestamped transcript for a single meeting. Transcripts are routinely large (thousands of sentences for a one-hour call), so the skill is built around pulling only what the question actually needs rather than the whole thing.
 

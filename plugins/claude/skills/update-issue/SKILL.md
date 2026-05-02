@@ -18,7 +18,7 @@ tools:
   - get_available_statuses
 ---
 
-# devboy-update-issue
+# update-issue
 
 Apply a targeted change to an existing issue — transition state, swap labels, hand it to someone else, bump priority — without disturbing fields the user did not mention. The skill always inspects the current record first so the update is informed.
 

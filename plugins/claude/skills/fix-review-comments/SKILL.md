@@ -15,7 +15,7 @@ tools:
   - create_merge_request_comment
 ---
 
-# devboy-fix-review-comments
+# fix-review-comments
 
 Address a reviewer's feedback on one MR / PR. For every unresolved discussion: decide whether to accept, push back, or clarify; if accepting, make the change locally and verify it; then reply to the thread with a short acknowledgement.
 

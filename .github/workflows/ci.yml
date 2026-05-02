@@ -67,13 +67,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
-      # Detect drift between /skills/ (master) and the generated
-      # plugins/{claude,codex}/skills/ trees. Same command contributors
-      # run locally — if it fails, regenerate and commit.
-      - name: Build plugin skills
-        run: scripts/release/build-skills.sh
-      - name: Check skill tree is in sync
+      # Detect drift between /skills/ (master) and the committed plugin
+      # tree at plugins/claude/skills/ (Codex shares via symlink).
+      # Run only the --check, NOT the regenerator: regenerating first
+      # would mask real drift in the PR by silently rewriting the tree
+      # in the CI workspace before the check.
+      - name: Check skill tree is in sync with /skills/
         run: scripts/release/build-skills.sh --check
+      - name: Check plugin manifests match Cargo workspace version
+        run: scripts/release/sync-plugin-version.sh --check
 
   clippy:
     name: Clippy
