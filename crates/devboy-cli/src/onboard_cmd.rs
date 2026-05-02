@@ -16,7 +16,8 @@ use devboy_core::agents::{AgentSnapshot, InstallStatus, bundles, detect_all, pic
 use devboy_skills::{
     Agent, DEVBOY_PLUGIN, EmbeddedSkillSource, Environment, HistoricalHashes, InstallOptions,
     InstallOutcome, InstallSpec, SkillSource, install_skills_to_target, is_claude_plugin_enabled,
-    is_codex_plugin_enabled, resolve_targets,
+    is_codex_plugin_enabled, migrate_legacy_skills_at_target, resolve_targets,
+    scan_legacy_skills_at_target,
 };
 use std::io::{self, IsTerminal, Write};
 
@@ -194,6 +195,47 @@ fn dedup_against_plugin(agent: Agent, home: &std::path::Path) -> bool {
     }
 }
 
+/// Find and remove legacy `devboy-<name>` skill directories at a target
+/// (left over from before the 0.25 rename). Only the safe-duplicate
+/// case — a sibling `<name>` already exists — is auto-removed; orphan
+/// `devboy-<name>` entries without a sibling are reported and left
+/// alone.
+fn run_legacy_sweep(target: &devboy_skills::InstallTarget, dry_run: bool) -> Result<()> {
+    let scan = scan_legacy_skills_at_target(target)
+        .with_context(|| format!("legacy scan failed for target {}", target.label))?;
+    if scan.is_empty() {
+        return Ok(());
+    }
+    let removed = migrate_legacy_skills_at_target(target, dry_run)
+        .with_context(|| format!("legacy migration failed for target {}", target.label))?;
+    if !removed.is_empty() {
+        println!(
+            "  ↳ legacy sweep: removed {n} `devboy-*` duplicate(s){tag}",
+            n = removed.len(),
+            tag = if dry_run { "  (dry-run)" } else { "" }
+        );
+        for r in &removed {
+            println!("       • {r}");
+        }
+    }
+    let orphans: Vec<_> = scan.iter().filter(|s| !s.canonical_present).collect();
+    if !orphans.is_empty() {
+        println!(
+            "  ↳ legacy sweep: {n} `devboy-*` skill(s) without a canonical sibling — left in place:",
+            n = orphans.len()
+        );
+        for o in &orphans {
+            println!(
+                "       • {legacy} (canonical `{canon}` not present)",
+                legacy = o.legacy_name,
+                canon = o.canonical_name
+            );
+        }
+        println!("       Remove manually if unwanted: `devboy skills remove <name>`.");
+    }
+    Ok(())
+}
+
 fn summarise_outcomes(report: &devboy_skills::InstallReport) -> InstallSummary {
     let mut s = InstallSummary::default();
     for outcome in report.outcomes.values() {
@@ -282,6 +324,12 @@ async fn install_bundle(agent: Agent, skill_names: &[String], dry_run: bool) -> 
             sk = s.skipped,
             tag = if dry_run { "  (dry-run)" } else { "" }
         );
+
+        // Sweep legacy `devboy-<name>` directories that the rename in
+        // 0.25 left behind. Only safe duplicates (a sibling with the
+        // canonical short name exists) get removed automatically;
+        // orphans are listed for the user to handle.
+        run_legacy_sweep(target, dry_run)?;
     }
 
     if !dry_run {

@@ -38,7 +38,9 @@ pub use embedded::EmbeddedSkillSource;
 pub use error::{Result, SkillError};
 pub use install::{
     Agent, Environment, InstallOptions, InstallOutcome, InstallReport, InstallSpec, InstallTarget,
-    detect_installed_agents, install_skills_to_target, remove_skills_from_target, resolve_targets,
+    LegacySkill, detect_installed_agents, install_skills_to_target,
+    migrate_legacy_skills_at_target, remove_skills_from_target, resolve_targets,
+    scan_legacy_skills_at_target,
 };
 pub use manifest::{
     HistoricalHashes, HistoricalVersion, InstallState, InstalledFile, InstalledSkill,
