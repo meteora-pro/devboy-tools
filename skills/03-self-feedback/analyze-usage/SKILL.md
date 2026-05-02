@@ -79,7 +79,7 @@ SESSION_DIR=$(echo "$result" | jq -r .session_dir)
 SESSION_ID=$(echo "$result" | jq -r .session_id)
 ```
 
-This skill is traceable — `devboy-retro` will see when it ran and how
+This skill is traceable — `retro` will see when it ran and how
 long it took.
 
 ### 3. Resolve the period
@@ -211,11 +211,11 @@ devboy trace end \
 ## Non-goals
 
 - This skill does **not** post the report anywhere. Pipe output into
-  `devboy-notify` (category 5) if you need delivery.
+  `notify` (category 5) if you need delivery.
 - It does **not** call external LLM APIs. Tier 2 enrichment runs
   agent-side.
 - It does **not** modify session jsonls. Source data stays untouched.
-- It does **not** analyse long-term trends — that's `devboy-retro`.
+- It does **not** analyse long-term trends — that's `retro`.
 
 ## Concepts reference
 

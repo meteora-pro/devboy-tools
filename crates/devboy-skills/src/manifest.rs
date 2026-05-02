@@ -342,7 +342,7 @@ mod tests {
             },
         );
         m.record(
-            "devboy-setup",
+            "setup",
             InstalledSkill {
                 version: 1,
                 installed_at: Utc::now(),
@@ -354,7 +354,7 @@ mod tests {
 
         let loaded = Manifest::load(&path).unwrap();
         assert_eq!(loaded.version, MANIFEST_VERSION);
-        assert_eq!(loaded.skills["devboy-setup"].version, 1);
+        assert_eq!(loaded.skills["setup"].version, 1);
     }
 
     #[test]
@@ -373,7 +373,7 @@ mod tests {
 
         let mut history = HistoricalHashes::default();
         history.by_skill.insert(
-            "devboy-setup".into(),
+            "setup".into(),
             SkillHistory {
                 current: HistoricalVersion {
                     version: 2,
@@ -387,15 +387,15 @@ mod tests {
         );
 
         assert_eq!(
-            classify(&history, "devboy-setup", current_body),
+            classify(&history, "setup", current_body),
             InstallState::Unchanged
         );
         assert_eq!(
-            classify(&history, "devboy-setup", older_body),
+            classify(&history, "setup", older_body),
             InstallState::HistoricalSafe
         );
         assert_eq!(
-            classify(&history, "devboy-setup", user_body),
+            classify(&history, "setup", user_body),
             InstallState::UserModified
         );
         assert_eq!(
@@ -446,13 +446,13 @@ mod tests {
             source: "embedded".into(),
             files: BTreeMap::new(),
         };
-        m.record("devboy-setup", entry.clone());
-        assert_eq!(m.get("devboy-setup").unwrap().version, 3);
+        m.record("setup", entry.clone());
+        assert_eq!(m.get("setup").unwrap().version, 3);
 
-        let removed = m.forget("devboy-setup").expect("entry removed");
+        let removed = m.forget("setup").expect("entry removed");
         assert_eq!(removed.version, entry.version);
-        assert!(m.forget("devboy-setup").is_none());
-        assert!(m.get("devboy-setup").is_none());
+        assert!(m.forget("setup").is_none());
+        assert!(m.get("setup").is_none());
     }
 
     #[test]
@@ -476,7 +476,7 @@ mod tests {
             ..Default::default()
         };
         m2.record(
-            "devboy-setup",
+            "setup",
             InstalledSkill {
                 version: 7,
                 installed_at: Utc::now(),
@@ -488,7 +488,7 @@ mod tests {
 
         let loaded = Manifest::load(&path).unwrap();
         assert_eq!(loaded.installed_from.as_deref(), Some("v2"));
-        assert_eq!(loaded.skills["devboy-setup"].version, 7);
+        assert_eq!(loaded.skills["setup"].version, 7);
     }
 
     #[test]

@@ -59,8 +59,8 @@ fn skills_list_shows_at_least_one_skill() {
     let output = spawn(&home, cwd.path(), ["skills", "list"]);
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // At minimum the placeholder `devboy-setup` skill is shipped.
-    assert!(stdout.contains("devboy-setup"), "stdout was: {stdout}");
+    // At minimum the placeholder `setup` skill is shipped.
+    assert!(stdout.contains("setup"), "stdout was: {stdout}");
     assert!(stdout.contains("[self-bootstrap]"));
 }
 
@@ -68,18 +68,18 @@ fn skills_list_shows_at_least_one_skill() {
 fn skills_show_prints_frontmatter_and_body() {
     let home = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
-    let output = spawn(&home, cwd.path(), ["skills", "show", "devboy-setup"]);
+    let output = spawn(&home, cwd.path(), ["skills", "show", "setup"]);
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("name: devboy-setup"));
-    assert!(stdout.contains("# devboy-setup"));
+    assert!(stdout.contains("name: setup"));
+    assert!(stdout.contains("# setup"));
 }
 
 #[test]
 fn skills_install_fails_without_repo_or_flags() {
     let home = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap(); // not a git repo, no .devboy.toml
-    let output = spawn(&home, cwd.path(), ["skills", "install", "devboy-setup"]);
+    let output = spawn(&home, cwd.path(), ["skills", "install", "setup"]);
     assert!(
         !output.status.success(),
         "install without repo + flags should fail"
@@ -98,7 +98,7 @@ fn skills_install_global_writes_to_home_agents_skills() {
     let output = spawn(
         &home,
         cwd.path(),
-        ["skills", "install", "devboy-setup", "--global"],
+        ["skills", "install", "setup", "--global"],
     );
     assert!(
         output.status.success(),
@@ -106,7 +106,7 @@ fn skills_install_global_writes_to_home_agents_skills() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let installed = home.path().join(".agents/skills/devboy-setup/SKILL.md");
+    let installed = home.path().join(".agents/skills/setup/SKILL.md");
     assert!(
         installed.exists(),
         "expected {} to exist",
@@ -119,7 +119,7 @@ fn skills_install_global_writes_to_home_agents_skills() {
         manifest.display()
     );
     let body = fs::read_to_string(&installed).unwrap();
-    assert!(body.contains("name: devboy-setup"));
+    assert!(body.contains("name: setup"));
 }
 
 #[test]
@@ -129,10 +129,10 @@ fn skills_install_agent_claude_writes_to_home_claude_skills() {
     let output = spawn(
         &home,
         cwd.path(),
-        ["skills", "install", "devboy-setup", "--agent", "claude"],
+        ["skills", "install", "setup", "--agent", "claude"],
     );
     assert!(output.status.success());
-    let installed = home.path().join(".claude/skills/devboy-setup/SKILL.md");
+    let installed = home.path().join(".claude/skills/setup/SKILL.md");
     assert!(
         installed.exists(),
         "expected {} to exist",
@@ -149,12 +149,12 @@ fn skills_install_second_run_reports_unchanged() {
     let first = spawn(
         &home,
         cwd.path(),
-        ["skills", "install", "devboy-setup", "--global"],
+        ["skills", "install", "setup", "--global"],
     );
     assert!(first.status.success());
     let first_stdout = String::from_utf8_lossy(&first.stdout).to_string();
     assert!(
-        first_stdout.contains("installed devboy-setup"),
+        first_stdout.contains("installed setup"),
         "first run: {first_stdout}"
     );
 
@@ -162,7 +162,7 @@ fn skills_install_second_run_reports_unchanged() {
     let second = spawn(
         &home,
         cwd.path(),
-        ["skills", "install", "devboy-setup", "--global"],
+        ["skills", "install", "setup", "--global"],
     );
     assert!(second.status.success());
     let second_stdout = String::from_utf8_lossy(&second.stdout).to_string();
@@ -179,10 +179,10 @@ fn skills_install_dry_run_does_not_write() {
     let output = spawn(
         &home,
         cwd.path(),
-        ["skills", "install", "devboy-setup", "--global", "--dry-run"],
+        ["skills", "install", "setup", "--global", "--dry-run"],
     );
     assert!(output.status.success());
-    let installed = home.path().join(".agents/skills/devboy-setup/SKILL.md");
+    let installed = home.path().join(".agents/skills/setup/SKILL.md");
     assert!(
         !installed.exists(),
         "--dry-run should not write the skill file"
@@ -201,14 +201,14 @@ fn skills_install_repo_local_uses_devboy_toml() {
     // Mark the cwd as a repo via `.devboy.toml`.
     fs::write(cwd.path().join(".devboy.toml"), b"").unwrap();
 
-    let output = spawn(&home, cwd.path(), ["skills", "install", "devboy-setup"]);
+    let output = spawn(&home, cwd.path(), ["skills", "install", "setup"]);
     assert!(
         output.status.success(),
         "repo-local default install should succeed:\nstdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let installed = cwd.path().join(".agents/skills/devboy-setup/SKILL.md");
+    let installed = cwd.path().join(".agents/skills/setup/SKILL.md");
     assert!(
         installed.exists(),
         "expected repo-local install at {}",
@@ -221,11 +221,11 @@ fn skills_remove_deletes_files_and_manifest_entry() {
     let home = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
 
-    let installed = home.path().join(".agents/skills/devboy-setup/SKILL.md");
+    let installed = home.path().join(".agents/skills/setup/SKILL.md");
     let install = spawn(
         &home,
         cwd.path(),
-        ["skills", "install", "devboy-setup", "--global"],
+        ["skills", "install", "setup", "--global"],
     );
     assert!(install.status.success());
     assert!(installed.exists());
@@ -233,7 +233,7 @@ fn skills_remove_deletes_files_and_manifest_entry() {
     let remove = spawn(
         &home,
         cwd.path(),
-        ["skills", "remove", "devboy-setup", "--global"],
+        ["skills", "remove", "setup", "--global"],
     );
     assert!(
         remove.status.success(),
@@ -257,7 +257,7 @@ fn trace_begin_event_end_round_trip() {
             "trace",
             "begin",
             "--skill",
-            "devboy-setup",
+            "setup",
             "--dir",
             dir_override.path().to_str().unwrap(),
         ],
@@ -284,7 +284,7 @@ fn trace_begin_event_end_round_trip() {
             "--session-id",
             &session_id,
             "--skill",
-            "devboy-setup",
+            "setup",
             "--phase",
             "tool_call",
             "--payload",
@@ -308,7 +308,7 @@ fn trace_begin_event_end_round_trip() {
             "--session-id",
             &session_id,
             "--skill",
-            "devboy-setup",
+            "setup",
             "--outcome",
             "success",
             "--summary",

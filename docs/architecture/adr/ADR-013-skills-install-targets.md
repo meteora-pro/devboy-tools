@@ -33,14 +33,14 @@ The landscape of install paths today:
 ### Path resolver
 
 ```
-devboy skills install devboy-setup               # → <repo>/.agents/skills/devboy-setup/
-devboy skills install devboy-setup --global      # → ~/.agents/skills/devboy-setup/
-devboy skills install devboy-setup --agent claude     # → ~/.claude/skills/devboy-setup/
-devboy skills install devboy-setup --agent codex      # → ~/.codex/skills/devboy-setup/
-devboy skills install devboy-setup --agent cursor     # → ~/.cursor/skills/devboy-setup/
-devboy skills install devboy-setup --agent kimi       # → ~/.kimi/skills/devboy-setup/
-devboy skills install devboy-setup --agent all        # → all detected agents + ~/.agents/skills/
-devboy skills install devboy-setup --agent claude --local  # → <repo>/.claude/skills/devboy-setup/
+devboy skills install setup               # → <repo>/.agents/skills/setup/
+devboy skills install setup --global      # → ~/.agents/skills/setup/
+devboy skills install setup --agent claude     # → ~/.claude/skills/setup/
+devboy skills install setup --agent codex      # → ~/.codex/skills/setup/
+devboy skills install setup --agent cursor     # → ~/.cursor/skills/setup/
+devboy skills install setup --agent kimi       # → ~/.kimi/skills/setup/
+devboy skills install setup --agent all        # → all detected agents + ~/.agents/skills/
+devboy skills install setup --agent claude --local  # → <repo>/.claude/skills/setup/
 ```
 
 The `--local` modifier switches agent-specific installs from their global home to their project-local conventional path. `--local` on its own (without `--agent`) is the default and therefore redundant — included only for clarity in scripts.

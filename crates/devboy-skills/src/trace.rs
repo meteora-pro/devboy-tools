@@ -610,7 +610,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let target = TraceTarget::Custom(dir.path().to_path_buf());
 
-        let tracer = SessionTracer::begin("devboy-setup", &target).unwrap();
+        let tracer = SessionTracer::begin("setup", &target).unwrap();
         let trace_path = tracer.trace_path().to_path_buf();
         let meta_path = tracer.session_dir().join("meta.json");
 
@@ -639,12 +639,12 @@ mod tests {
         assert_eq!(events.len(), 5);
         assert_eq!(events[0].phase, Phase::Start);
         assert_eq!(events.last().unwrap().phase, Phase::End);
-        assert!(events.iter().all(|e| e.skill == "devboy-setup"));
+        assert!(events.iter().all(|e| e.skill == "setup"));
         assert!(events.iter().all(|e| e.session_id == events[0].session_id));
 
         let meta_bytes = std::fs::read(&meta_path).unwrap();
         let meta: SessionMeta = serde_json::from_slice(&meta_bytes).unwrap();
-        assert_eq!(meta.skill, "devboy-setup");
+        assert_eq!(meta.skill, "setup");
         assert_eq!(meta.outcome, Some(Outcome::Success));
         assert_eq!(meta.tool_calls, 1);
         assert_eq!(meta.errors, 0);

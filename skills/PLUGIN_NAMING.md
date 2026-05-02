@@ -7,21 +7,21 @@ under `/skills/<category>/<source-name>/`. The Codex plugin reuses the
 same tree via a single top-level symlink:
 
 ```
-plugins/claude/skills/devboy-setup    -> ../../../skills/00-self-bootstrap/devboy-setup
-plugins/claude/skills/devboy-get-issues -> ../../../skills/01-issue-tracking/devboy-get-issues
+plugins/claude/skills/setup    -> ../../../skills/00-self-bootstrap/setup
+plugins/claude/skills/get-issues -> ../../../skills/01-issue-tracking/get-issues
 …  (24 entries, one per source skill)
 
 plugins/codex/skills                  -> ../claude/skills
 plugins/codex/bin/devboy-shim.sh      -> ../../claude/bin/devboy-shim.sh
 ```
 
-Skill names are **identical everywhere** — `devboy-setup`,
-`devboy-get-issues`, …, `analyze-usage` (the only one without a
-`devboy-` prefix). Inside Claude Code the plugin namespacing prepends
-`devboy:`, so users invoke skills as
-`/devboy:devboy-setup`. Verbose, but the trade-off bought us
-zero file duplication: editing `skills/00-self-bootstrap/devboy-setup/SKILL.md`
-updates the plugin in the same edit.
+Skill names are **identical everywhere** — source folder name, plugin
+folder name, and the `name:` field in the frontmatter all match
+(`setup`, `get-issues`, …, `analyze-usage`). Inside Claude Code the
+plugin namespacing prepends `devboy:` (the plugin name from
+`plugin.json`), so users invoke skills as `/devboy:setup`,
+`/devboy:get-issues`, … Editing `skills/00-self-bootstrap/setup/SKILL.md`
+updates the plugin in the same edit — zero file duplication.
 
 ## Why no rename rule
 
@@ -59,13 +59,15 @@ Removing a skill:
    pruned automatically.
 3. Commit.
 
-## Backward-compat alias in `Catalog::get()`
+## Legacy name compatibility
 
-`crates/devboy-skills/src/catalog.rs` retains a small alias rule:
-`Catalog::get("devboy-setup")` and `Catalog::get("setup")` both
-resolve to the same `SkillSummary`. This is only useful if a future
-change ever drops the prefix from source filenames; today the alias
-returns the same entry whichever form the caller uses.
+Source skill files were renamed in 0.25 to drop the `devboy-` prefix.
+Older callers (scripts, dotfiles, AGENTS.md cheat-sheets) that still
+ask for `devboy-setup` keep working: `Catalog::get("devboy-setup")`
+returns the same entry as `Catalog::get("setup")`. The alias rule
+lives in `canonical_skill_name()` in
+`crates/devboy-skills/src/catalog.rs` and will stay until at least
+0.27 to give external scripts time to update.
 
 ## See also
 

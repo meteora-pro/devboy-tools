@@ -8,23 +8,23 @@ description = "Default bundle for engineers — bootstrap, self-feedback, code r
 
 skills = [
     # 00-self-bootstrap
-    "devboy-setup",
-    "devboy-tools-catalog",
-    "devboy-repair",
+    "setup",
+    "tools-catalog",
+    "repair",
 
     # 03-self-feedback
-    "devboy-run-and-verify",
-    "devboy-daily-report",
-    "devboy-retro",
+    "run-and-verify",
+    "daily-report",
+    "retro",
     "analyze-usage",
 
     # 02-code-review
-    "devboy-review-mr",
-    "devboy-self-review",
-    "devboy-fix-review-comments",
+    "review-mr",
+    "self-review",
+    "fix-review-comments",
 
     # 01-issue-tracking
-    "devboy-get-issues",
-    "devboy-create-issue",
-    "devboy-update-issue",
+    "get-issues",
+    "create-issue",
+    "update-issue",
 ]
