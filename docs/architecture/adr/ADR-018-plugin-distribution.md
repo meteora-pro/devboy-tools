@@ -21,7 +21,7 @@ Today `devboy` is installed in two steps: `npm install -g @devboy-tools/cli` put
 
 - the user has to know about npm and remember the second command;
 - there is no canonical install path *inside* Claude Code itself — no slash-command, no marketplace listing;
-- the [Codex Plugin Marketplace](https://www.codex-marketplace.com/) launched with 20+ third-party plugins; we have no distribution answer for Codex CLI users;
+- the [Codex CLI plugin format](https://developers.openai.com/codex/plugins/build) shipped with first-class marketplace support reading from four sources (the official Plugin Directory, repo-local `.agents/plugins/marketplace.json`, repo-local `.claude-plugin/marketplace.json`, and a personal `~/.agents/plugins/marketplace.json`); we have no distribution answer for Codex CLI users;
 - updates repeat both steps (`npm i -g` followed by `onboard`).
 
 The two ecosystems we care about most (Claude Code and Codex) now ship a first-class plugin format that bundles skills, agents, hooks, and MCP server registrations under a single manifest with versioning, atomic install, and namespaced commands. Three other agents we support do not have a plugin format, but two of them (OpenCode, Kimi CLI) auto-read `~/.claude/skills/`, so a Claude-Code-shaped plugin gives them coverage for free. The remaining four (Copilot CLI, Cursor, Gemini CLI, Antigravity) keep using `devboy onboard`.
@@ -97,7 +97,7 @@ Specifically:
 
 - `.codex-plugin/plugin.json` references the same `/skills/` master.
 - Existing files under `agents/codex/*.md` are converted mechanically to TOML at the `.codex-plugin/agents/*.toml` location during build.
-- After the first release we list the plugin on [codex-marketplace.com](https://www.codex-marketplace.com/).
+- Codex CLI auto-discovers the same `.claude-plugin/marketplace.json` we ship for Claude Code (per [Codex plugin marketplace docs](https://developers.openai.com/codex/plugins/build)), so users install with `codex plugin marketplace add meteora-pro/devboy-tools && codex plugin install devboy@meteora-devboy` — no separate registration. OpenAI's official Plugin Directory submission flow ("coming soon" at time of writing) will be a future follow-up once it opens.
 
 ## Consequences
 
@@ -171,7 +171,7 @@ Specifically:
 - [Plugin marketplaces](https://code.claude.com/docs/en/plugin-marketplaces)
 - [Plugins reference](https://code.claude.com/docs/en/plugins-reference)
 - [Codex Plugin Build Guide](https://developers.openai.com/codex/plugins/build)
-- [Codex Plugin Marketplace](https://www.codex-marketplace.com/)
+- [Codex Plugin Build Guide & marketplace sources](https://developers.openai.com/codex/plugins/build) — official docs
 - [anthropics/claude-plugins-official](https://github.com/anthropics/claude-plugins-official) — reference structure
 - [OpenCode Skills](https://opencode.ai/docs/skills/) — reads `~/.claude/skills/` directly
 - [Kimi CLI Skills](https://moonshotai.github.io/kimi-cli/en/customization/skills.html) — reads `~/.claude/skills/` and `~/.codex/skills/`

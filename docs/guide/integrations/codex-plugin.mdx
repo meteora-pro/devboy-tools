@@ -4,13 +4,14 @@ Install `devboy` as a [Codex plugin](https://developers.openai.com/codex/plugins
 
 ## Install
 
-From inside a Codex CLI session:
+Codex CLI reads the same `Claude-style marketplace.json` that the Claude Code plugin uses (one of the four marketplace sources documented in [Codex plugin docs](https://developers.openai.com/codex/plugins/build)), so add this repo as a marketplace and install:
 
-```text
-/plugin install devboy@meteora-devboy
+```bash
+codex plugin marketplace add meteora-pro/devboy-tools
+codex plugin install devboy@meteora-devboy
 ```
 
-(Once we list on [codex-marketplace.com](https://www.codex-marketplace.com/) the marketplace registration step is implicit; until then add it manually as a custom marketplace pointing at this repo.)
+OpenAI's official Plugin Directory does not yet accept self-serve community submissions ("coming soon" per the official docs at the time of writing); the per-repo marketplace path above is the supported way to ship today.
 
 ## What happens next
 
@@ -45,7 +46,7 @@ The two plugins share `/skills/` as their source of truth and produce identical 
 | Plugin data env | `CLAUDE_PLUGIN_DATA` | `CODEX_PLUGIN_DATA` |
 | Plugin root env | `CLAUDE_PLUGIN_ROOT` | `CODEX_PLUGIN_ROOT` |
 | Subagent format | Markdown | TOML (none today) |
-| Marketplace | `meteora-pro/devboy-tools` (this repo) | [codex-marketplace.com](https://www.codex-marketplace.com/) |
+| Marketplace | `meteora-pro/devboy-tools` (this repo, via `.claude-plugin/marketplace.json`) | same `.claude-plugin/marketplace.json` — Codex CLI also reads it (see [Codex plugin sources](https://developers.openai.com/codex/plugins/build)) |
 
 `devboy onboard` dedups against `~/.codex/settings.json#enabledPlugins` the same way it does for Claude.
 
