@@ -53,7 +53,7 @@ The plugin's `version` field is synced with the Cargo workspace version on every
 /plugin update devboy@meteora-devboy
 ```
 
-…then `/reload-plugins`. The CLI binary is updated separately (npm or a fresh GitHub Release pull) — re-running `/devboy:setup` upgrades it.
+…then `/reload-plugins`. The CLI binary is updated separately (npm or a fresh GitHub Release pull) — re-running `/devboy:devboy-setup` upgrades it.
 
 ## Compared to the npm path
 
@@ -73,7 +73,7 @@ You can mix and match — `npm install -g` first, then install the plugin later:
 ## Troubleshooting
 
 - **MCP server not connected.** Run `/reload-plugins` after `setup` finishes the install. The shim only finds `devboy` once it is on PATH or in `${CLAUDE_PLUGIN_DATA}/bin/`.
-- **`npm install -g` fails with permissions.** The bootstrap will fall back to the GitHub Release binary in `${CLAUDE_PLUGIN_DATA}/bin/` automatically. If both fail, ask `/devboy:repair`.
+- **`npm install -g` fails with permissions.** The bootstrap will fall back to the GitHub Release binary in `${CLAUDE_PLUGIN_DATA}/bin/` automatically. If both fail, ask `/devboy:devboy-repair`.
 - **Skills don't show up after install.** Trigger `/reload-plugins`, or restart Claude Code if reload is unavailable.
 - **Conflicting skills in `~/.claude/skills/`.** Run `devboy onboard --agent claude --yes` once — it detects the active plugin and removes nothing, but future runs respect the dedup rule.
 

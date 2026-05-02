@@ -10,7 +10,7 @@
 #                                                  (offline / no npm)
 #   2. devboy on $PATH                          — npm install -g, brew, manual cp
 #
-# Exec into the first one found. Print a hint to /devboy:setup if
+# Exec into the first one found. Print a hint to /devboy:devboy-setup if
 # both are missing.
 
 set -e
@@ -31,7 +31,7 @@ devboy: binary not found.
 The plugin "devboy@meteora-devboy" is loaded but the CLI itself is not
 installed. Run the bundled bootstrap skill:
 
-  /devboy:setup
+  /devboy:devboy-setup
 
 Or install manually:
 
