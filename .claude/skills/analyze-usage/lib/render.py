@@ -17,6 +17,28 @@ from .classifiers import (
     BIOME_EMOJI,
     RHYTHM_EMOJI,
 )
+from .hints import hint
+from .share import share_oneline, share_paragraph
+
+
+# Toggled off by `period_report.py --no-hints`. Module-level state keeps
+# the section-render helpers' signatures unchanged.
+SHOW_HINTS = True
+
+
+def _hint_terminal(section: str) -> list[str]:
+    text = hint(section) if SHOW_HINTS else ""
+    return [f"     ↳ {text}"] if text else []
+
+
+def _hint_markdown(section: str) -> list[str]:
+    text = hint(section) if SHOW_HINTS else ""
+    return [f"> _{text}_", ""] if text else []
+
+
+def _hint_html(section: str) -> str:
+    text = hint(section) if SHOW_HINTS else ""
+    return f'<p class="hint">{h(text)}</p>' if text else ""
 
 
 # ─── Common helpers ───────────────────────────────────────────────────────
@@ -57,7 +79,8 @@ def cfr_level(cfr: float) -> tuple[str, str]:
 
 
 def _term_aquarium(biomes: Counter) -> list[str]:
-    out = ["  🌊 АКВАРИУМ:"]
+    out = ["  🌊 AQUARIUM:"]
+    out.extend(_hint_terminal("aquarium"))
     for b in _BIOMES_ORDER:
         n = biomes.get(b, 0)
         if n == 0:
@@ -69,7 +92,8 @@ def _term_aquarium(biomes: Counter) -> list[str]:
 
 
 def _term_archs(archs: Counter, total: int) -> list[str]:
-    out = ["  🎭 АРХЕТИПЫ:"]
+    out = ["  🎭 ARCHETYPES:"]
+    out.extend(_hint_terminal("archetypes"))
     if total == 0:
         return out
     max_a = max(archs.values()) if archs else 1
@@ -85,7 +109,8 @@ def _term_archs(archs: Counter, total: int) -> list[str]:
 
 
 def _term_rhythm(rhythms: Counter, total: int) -> list[str]:
-    out = ["  🎵 РИТМЫ:"]
+    out = ["  🎵 RHYTHMS:"]
+    out.extend(_hint_terminal("rhythms"))
     if total == 0:
         return out
     for r in _RHYTHMS_ORDER:
@@ -99,7 +124,8 @@ def _term_rhythm(rhythms: Counter, total: int) -> list[str]:
 
 
 def _term_stack(stack_loc: Counter) -> list[str]:
-    out = ["  🎨 ПАЛИТРА КОДА (LOC):"]
+    out = ["  🎨 STACK PALETTE (LOC):"]
+    out.extend(_hint_terminal("stack"))
     total = sum(stack_loc.values()) or 1
     for st in _STACKS_ORDER:
         v = stack_loc.get(st, 0)
@@ -115,8 +141,9 @@ def _term_stack(stack_loc: Counter) -> list[str]:
 def _term_dora(agg: dict) -> list[str]:
     cfr = (agg["fix"] - agg["review_fix"]) / agg["feat"] if agg["feat"] else 0
     em, level = cfr_level(cfr)
-    return [
-        "  🚀 DORA-радар:",
+    out = ["  🚀 DORA RADAR:"]
+    out.extend(_hint_terminal("dora"))
+    out += [
         "     ┌────────────────────────────────────────────┐",
         f"     │  📤 Pushes:       {agg['pushes']:>4d}                       │",
         f"     │  🔀 PR/MR:        {agg['pr_mr']:>4d}                       │",
@@ -125,15 +152,18 @@ def _term_dora(agg: dict) -> list[str]:
         f"     │  {em} CFR:          {cfr:>4.2f}  [{level:<6s}]            │",
         "     └────────────────────────────────────────────┘",
     ]
+    return out
 
 
 def _term_friction(agg: dict) -> list[str]:
-    return [
-        "  ⚡ ТРЕНИЕ:",
+    out = ["  ⚡ FRICTION:"]
+    out.extend(_hint_terminal("friction"))
+    out += [
         f"     compacts ({agg['compacts']})    {'🌀' * min(agg['compacts'] // 10, 30)}",
         f"     pivots   ({agg['pivots']})    {'🚧' * min(agg['pivots'] // 5, 30)}",
         f"     subagents({agg['subs']})    {'🤖' * min(agg['subs'] // 20, 30)}",
     ]
+    return out
 
 
 def render_period_terminal(label: str, agg: dict) -> list[str]:
@@ -168,7 +198,8 @@ def render_period_terminal(label: str, agg: dict) -> list[str]:
 
 
 def _md_aquarium(biomes: Counter) -> list[str]:
-    out = ["### 🌊 Аквариум", ""]
+    out = ["### 🌊 Aquarium", ""]
+    out.extend(_hint_markdown("aquarium"))
     for b in _BIOMES_ORDER:
         n = biomes.get(b, 0)
         if n == 0:
@@ -183,7 +214,9 @@ def _md_aquarium(biomes: Counter) -> list[str]:
 def _md_archs(archs: Counter, total: int) -> list[str]:
     if total == 0:
         return []
-    out = ["### 🎭 Архетипы", "", "| | Архетип | N | % | |", "|--|--|--:|--:|--|"]
+    out = ["### 🎭 Archetypes", ""]
+    out.extend(_hint_markdown("archetypes"))
+    out += ["| | Archetype | N | % | |", "|--|--|--:|--:|--|"]
     for a in _ARCHS_ORDER:
         n = archs.get(a, 0)
         if n == 0:
@@ -198,7 +231,9 @@ def _md_archs(archs: Counter, total: int) -> list[str]:
 def _md_rhythm(rhythms: Counter, total: int) -> list[str]:
     if total == 0:
         return []
-    out = ["### 🎵 Ритмы", "", "| Ритм | N | % |", "|--|--:|--:|"]
+    out = ["### 🎵 Rhythms", ""]
+    out.extend(_hint_markdown("rhythms"))
+    out += ["| Rhythm | N | % |", "|--|--:|--:|"]
     for r in _RHYTHMS_ORDER:
         n = rhythms.get(r, 0)
         if n == 0:
@@ -212,7 +247,9 @@ def _md_stack(stack_loc: Counter) -> list[str]:
     total = sum(stack_loc.values())
     if total == 0:
         return []
-    out = ["### 🎨 Палитра кода (LOC)", "", "| Слой | LOC | % |", "|--|--:|--:|"]
+    out = ["### 🎨 Stack palette (LOC)", ""]
+    out.extend(_hint_markdown("stack"))
+    out += ["| Layer | LOC | % |", "|--|--:|--:|"]
     for st in _STACKS_ORDER:
         v = stack_loc.get(st, 0)
         if v == 0:
@@ -226,10 +263,10 @@ def _md_stack(stack_loc: Counter) -> list[str]:
 def _md_dora(agg: dict) -> list[str]:
     cfr = (agg["fix"] - agg["review_fix"]) / agg["feat"] if agg["feat"] else 0
     em, level = cfr_level(cfr)
-    return [
-        "### 🚀 DORA",
-        "",
-        "| Метрика | Значение |",
+    out = ["### 🚀 DORA", ""]
+    out.extend(_hint_markdown("dora"))
+    out += [
+        "| Metric | Value |",
         "|--|--:|",
         f"| 📤 Pushes | {agg['pushes']} |",
         f"| 🔀 PR/MR | {agg['pr_mr']} |",
@@ -238,17 +275,19 @@ def _md_dora(agg: dict) -> list[str]:
         f"| {em} **True CFR** | **{cfr:.2f}** ({level}) |",
         "",
     ]
+    return out
 
 
 def _md_friction(agg: dict) -> list[str]:
-    return [
-        "### ⚡ Трение",
-        "",
+    out = ["### ⚡ Friction", ""]
+    out.extend(_hint_markdown("friction"))
+    out += [
         f"- 🌀 compacts: **{agg['compacts']}**",
         f"- 🚧 pivots: **{agg['pivots']}**",
         f"- 🤖 subagent spawns: **{agg['subs']}**",
         "",
     ]
+    return out
 
 
 def render_period_markdown(label: str, agg: dict) -> list[str]:
@@ -411,6 +450,61 @@ h3 {{ font-size: 1.1rem; margin: 24px 0 12px; color: var(--accent); }}
 .trends-table th {{ text-align: left; color: var(--text-dim); }}
 .trends-table td.num {{ text-align: right; }}
 .trend-arrow {{ font-size: 0.85rem; color: var(--text-dim); }}
+.hint {{
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  font-style: italic;
+  margin: -6px 0 12px;
+  line-height: 1.45;
+}}
+.share-card {{
+  background: linear-gradient(135deg, #0e7490 0%, #155e75 100%);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin: 0 0 18px;
+  border: 1px solid #0891b2;
+  position: relative;
+}}
+.share-card .share-title {{
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #cffafe;
+  margin: 0 0 10px;
+  font-weight: 600;
+}}
+.share-card .share-line,
+.share-card .share-paragraph {{
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 6px 0 10px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.92rem;
+  color: #ffffff;
+  white-space: pre-wrap;
+  word-break: break-word;
+}}
+.share-card .share-paragraph {{
+  font-family: inherit;
+  font-size: 0.95rem;
+  line-height: 1.55;
+}}
+.copy-btn {{
+  background: #06b6d4;
+  border: none;
+  color: white;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 5px;
+  cursor: pointer;
+  margin-left: 8px;
+  vertical-align: middle;
+  transition: background 0.15s;
+}}
+.copy-btn:hover {{ background: #0891b2; }}
+.copy-btn.copied {{ background: var(--success); }}
 footer {{ color: var(--text-dim); font-size: 0.85rem; margin-top: 32px; text-align: center; }}
 </style></head><body>
 <div class="container">
@@ -418,12 +512,118 @@ footer {{ color: var(--text-dim); font-size: 0.85rem; margin-top: 32px; text-ali
 
 _HTML_TAIL = """
 <footer>Generated by analyze-usage skill · {ts}</footer>
-</div></body></html>
+</div>
+<script>
+function flashCopyButton(btn, label) {
+  const orig = btn.textContent;
+  btn.textContent = label;
+  btn.classList.add('copied');
+  setTimeout(() => {
+    btn.textContent = orig;
+    btn.classList.remove('copied');
+  }, 1600);
+}
+function selectionFallback(el) {
+  // Used when navigator.clipboard is unavailable (file:// URLs, http
+  // pages without secure context, Firefox with permissions denied) or
+  // its writeText() promise rejects. Selects the element's text so the
+  // user can hit ⌘/Ctrl+C as a manual fallback.
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+document.querySelectorAll('.copy-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const id = btn.getAttribute('data-target');
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(el.textContent).then(
+        () => flashCopyButton(btn, '✓ Copied'),
+        () => {
+          // Permission denied or insecure context. Select the text and
+          // tell the user how to copy manually instead of failing
+          // silently with an unhandled promise rejection.
+          selectionFallback(el);
+          flashCopyButton(btn, '⌘/Ctrl+C');
+        }
+      );
+    } else {
+      selectionFallback(el);
+      flashCopyButton(btn, '⌘/Ctrl+C');
+    }
+  });
+});
+</script>
+</body></html>
 """
 
 
+# ─── Share block renderers (Issue: hints + share PR) ──────────────────────
+
+
+def render_share_block_terminal(label: str, agg: dict) -> list[str]:
+    """Single line + paragraph, plain text, no markup. Easy to scrape."""
+    line = share_oneline(label, agg)
+    para = share_paragraph(label, agg)
+    return [
+        "  ┌─ SHARE ─────────────────────────────────────────────────────────",
+        f"  │ {line}",
+        "  │",
+        "  │ " + para.replace("\n", "\n  │ "),
+        "  └─────────────────────────────────────────────────────────────────",
+    ]
+
+
+def render_share_block_markdown(label: str, agg: dict) -> list[str]:
+    """Two fenced blocks so users can copy either format from a Markdown viewer."""
+    line = share_oneline(label, agg)
+    para = share_paragraph(label, agg)
+    return [
+        "### 🔗 Share",
+        "",
+        "**One-liner:**",
+        "",
+        "```",
+        line,
+        "```",
+        "",
+        "**Paragraph:**",
+        "",
+        "> " + para,
+        "",
+    ]
+
+
+# Counter for unique element ids inside one HTML doc — share block can
+# render multiple times (per period / per week) so ids must not clash.
+_share_html_id = 0
+
+
+def render_share_block_html(label: str, agg: dict) -> str:
+    """Card-style block with a copy-to-clipboard button on each artefact."""
+    global _share_html_id
+    _share_html_id += 1
+    line_id = f"share-line-{_share_html_id}"
+    para_id = f"share-para-{_share_html_id}"
+    line = share_oneline(label, agg)
+    para = share_paragraph(label, agg)
+    return (
+        '<div class="share-card">'
+        f'<div class="share-title">🔗 Share — {h(label)}'
+        f'<button class="copy-btn" data-target="{line_id}">📋 Copy line</button>'
+        f'<button class="copy-btn" data-target="{para_id}">📋 Copy paragraph</button>'
+        '</div>'
+        f'<div class="share-line" id="{line_id}">{h(line)}</div>'
+        f'<div class="share-paragraph" id="{para_id}">{h(para)}</div>'
+        '</div>'
+    )
+
+
 def _html_aquarium(biomes: Counter) -> str:
-    out = ['<h3>🌊 Аквариум</h3>', '<div class="aquarium">']
+    out = ['<h3>🌊 Aquarium</h3>', _hint_html("aquarium"), '<div class="aquarium">']
     for b in _BIOMES_ORDER:
         n = biomes.get(b, 0)
         if n == 0:
@@ -438,12 +638,17 @@ def _html_aquarium(biomes: Counter) -> str:
     return "\n".join(out)
 
 
-def _html_bar_chart(title: str, items: list[tuple[str, str, int]], total: int) -> str:
-    """items: list of (emoji, label, count)."""
+def _html_bar_chart(title: str, items: list[tuple[str, str, int]], total: int,
+                    hint_section: str = "") -> str:
+    """items: list of (emoji, label, count). `hint_section` adds an
+    explainer line above the chart when set and SHOW_HINTS is true."""
     if total == 0:
         return ""
     max_v = max((c for _, _, c in items), default=1)
-    out = [f"<h3>{h(title)}</h3>", '<div class="bar-chart">']
+    out = [f"<h3>{h(title)}</h3>"]
+    if hint_section:
+        out.append(_hint_html(hint_section))
+    out.append('<div class="bar-chart">')
     for em, label, n in items:
         if n == 0:
             continue
@@ -471,7 +676,7 @@ def _html_dora(agg: dict) -> str:
         ("🐛 fix", f"{agg['fix']} ({agg['fix']-agg['review_fix']} prod, {agg['review_fix']} review)", ""),
         (f"True CFR [{level}]", f"{cfr:.2f}", cfr_class),
     ]
-    out = ['<h3>🚀 DORA</h3>', '<div class="dora">']
+    out = ['<h3>🚀 DORA</h3>', _hint_html("dora"), '<div class="dora">']
     for label, val, cls in cards:
         out.append(
             f'<div class="dora-card {cls}">'
@@ -485,8 +690,9 @@ def _html_dora(agg: dict) -> str:
 
 def _html_friction(agg: dict) -> str:
     return (
-        '<h3>⚡ Трение</h3>'
-        '<div class="friction">'
+        '<h3>⚡ Friction</h3>'
+        + _hint_html("friction")
+        + '<div class="friction">'
         f'<div>🌀 compacts: <strong>{agg["compacts"]}</strong></div>'
         f'<div>🚧 pivots: <strong>{agg["pivots"]}</strong></div>'
         f'<div>🤖 subagents: <strong>{agg["subs"]}</strong></div>'
@@ -504,7 +710,7 @@ def _html_stack(stack_loc: Counter) -> str:
         if v == 0:
             continue
         items.append((_STACK_EMOJI[st], st, v))
-    return _html_bar_chart("🎨 Палитра кода (LOC)", items, total)
+    return _html_bar_chart("🎨 Stack palette (LOC)", items, total, hint_section="stack")
 
 
 def render_period_html_section(label: str, agg: dict) -> str:
@@ -523,10 +729,10 @@ def render_period_html_section(label: str, agg: dict) -> str:
     out.append(_html_aquarium(agg["biomes"]))
 
     arch_items = [(ARCHETYPE_EMOJI[a], a, agg["archs"].get(a, 0)) for a in _ARCHS_ORDER]
-    out.append(_html_bar_chart("🎭 Архетипы", arch_items, agg["n"]))
+    out.append(_html_bar_chart("🎭 Archetypes", arch_items, agg["n"], hint_section="archetypes"))
 
     rhy_items = [(RHYTHM_EMOJI[r], r, agg["rhythms"].get(r, 0)) for r in _RHYTHMS_ORDER]
-    out.append(_html_bar_chart("🎵 Ритмы", rhy_items, agg["n"]))
+    out.append(_html_bar_chart("🎵 Rhythms", rhy_items, agg["n"], hint_section="rhythms"))
 
     out.append(_html_stack(agg["stack_loc"]))
     out.append(_html_dora(agg))
@@ -554,10 +760,11 @@ def render_weekly_table_terminal(weeks: list[tuple[tuple[int, int], dict]]) -> l
     out = []
     out.append("")
     out.append("═" * 100)
-    out.append("  📅 НЕДЕЛЬНАЯ ТЕМПЕРАТУРА")
+    out.append("  📅 WEEKLY TEMPERATURE")
     out.append("═" * 100)
+    out.extend(_hint_terminal("weekly_table"))
     out.append("")
-    out.append(f"  {'неделя':<22s}  {'sess':>4s}  {'+LOC':>7s}  {'feat':>4s}  "
+    out.append(f"  {'week':<22s}  {'sess':>4s}  {'+LOC':>7s}  {'feat':>4s}  "
                f"{'fix':>4s}  {'CFR':>4s}  {'biomes':<32s}  {'top arch':<14s}")
     out.append(f"  {'─'*22}  {'─'*4}  {'─'*7}  {'─'*4}  {'─'*4}  {'─'*4}  {'─'*32}  {'─'*14}")
     for (yr, wk), a in weeks:
@@ -581,7 +788,7 @@ def render_weekly_table_terminal(weeks: list[tuple[tuple[int, int], dict]]) -> l
 
     # Bar charts
     out.append("")
-    out.append("  📊 +LOC по неделям:")
+    out.append("  📊 +LOC by week:")
     max_loc = max((a["lines_added"] for _, a in weeks), default=1) or 1
     for (yr, wk), a in weeks:
         d_start = datetime.fromisocalendar(yr, wk, 1)
@@ -593,8 +800,9 @@ def render_weekly_table_terminal(weeks: list[tuple[tuple[int, int], dict]]) -> l
 
 
 def render_weekly_table_markdown(weeks: list[tuple[tuple[int, int], dict]]) -> list[str]:
-    out = ["", "## 📅 Недели", ""]
-    out.append("| Неделя | sess | +LOC | feat | fix | CFR | биомы | top archetype |")
+    out = ["", "## 📅 Weeks", ""]
+    out.extend(_hint_markdown("weekly_table"))
+    out.append("| Week | sess | +LOC | feat | fix | CFR | biomes | top archetype |")
     out.append("|--|--:|--:|--:|--:|--:|--|--|")
     for (yr, wk), a in weeks:
         d_start = datetime.fromisocalendar(yr, wk, 1)
@@ -621,12 +829,13 @@ def render_weekly_table_html(weeks: list[tuple[tuple[int, int], dict]]) -> str:
     if not weeks:
         return ""
     max_loc = max((a["lines_added"] for _, a in weeks), default=1) or 1
-    out = ['<section class="period"><h2>📅 Недели</h2>']
+    out = ['<section class="period"><h2>📅 Weeks</h2>']
+    out.append(_hint_html("weekly_table"))
     out.append('<table class="weeks-table">')
     out.append(
-        '<thead><tr><th>Неделя</th><th class="num">sess</th>'
+        '<thead><tr><th>Week</th><th class="num">sess</th>'
         '<th class="num">+LOC</th><th class="num">feat</th><th class="num">fix</th>'
-        '<th class="num">CFR</th><th>биомы</th><th>top arch</th><th>+LOC bar</th></tr></thead>'
+        '<th class="num">CFR</th><th>biomes</th><th>top arch</th><th>+LOC bar</th></tr></thead>'
     )
     out.append("<tbody>")
     for (yr, wk), a in weeks:
@@ -696,12 +905,14 @@ def _trend_value(agg: dict, key: str, name: str) -> float:
 
 
 def render_trends_terminal(months_data: dict[int, dict], months_labels: dict[int, str]) -> list[str]:
-    out = ["", "═" * 100, "  📈 ТРЕНДЫ (по периодам)", "═" * 100, ""]
+    out = ["", "═" * 100, "  📈 TRENDS (by period)", "═" * 100]
+    out.extend(_hint_terminal("trends"))
+    out.append("")
     keys = sorted(months_data.keys())
     if len(keys) < 2:
         return out
     headers = "  ".join(f"{months_labels[k][:14]:>14s}" for k in keys)
-    out.append(f"  {'метрика':<24s}     {headers}    тренд")
+    out.append(f"  {'metric':<24s}     {headers}    trend")
     out.append(f"  {'─'*24}     {'  '.join('─'*14 for _ in keys)}    ─────")
     for name, key, fmt in _TREND_METRICS:
         vs = [_trend_value(months_data[k], key, name) for k in keys]
@@ -711,11 +922,12 @@ def render_trends_terminal(months_data: dict[int, dict], months_labels: dict[int
 
 
 def render_trends_markdown(months_data: dict[int, dict], months_labels: dict[int, str]) -> list[str]:
-    out = ["", "## 📈 Тренды", ""]
+    out = ["", "## 📈 Trends", ""]
+    out.extend(_hint_markdown("trends"))
     keys = sorted(months_data.keys())
     if len(keys) < 2:
         return out
-    header = "| Метрика | " + " | ".join(months_labels[k] for k in keys) + " | Тренд |"
+    header = "| Metric | " + " | ".join(months_labels[k] for k in keys) + " | Trend |"
     sep = "|--|" + "|".join("--:" for _ in keys) + "|--|"
     out.append(header)
     out.append(sep)
@@ -731,11 +943,12 @@ def render_trends_html(months_data: dict[int, dict], months_labels: dict[int, st
     keys = sorted(months_data.keys())
     if len(keys) < 2:
         return ""
-    out = ['<section class="period"><h2>📈 Тренды</h2>']
-    out.append('<table class="trends-table"><thead><tr><th>Метрика</th>')
+    out = ['<section class="period"><h2>📈 Trends</h2>']
+    out.append(_hint_html("trends"))
+    out.append('<table class="trends-table"><thead><tr><th>Metric</th>')
     for k in keys:
         out.append(f'<th class="num">{h(months_labels[k])}</th>')
-    out.append("<th>Тренд</th></tr></thead><tbody>")
+    out.append("<th>Trend</th></tr></thead><tbody>")
     for name, key, fmt in _TREND_METRICS:
         vs = [_trend_value(months_data[k], key, name) for k in keys]
         cells = "".join(f'<td class="num">{fmt.format(v)}</td>' for v in vs)

@@ -34,11 +34,15 @@ from lib.classifiers import (  # noqa: E402
     biome_of, archetype_of, rhythm_of, stack_of, bash_sub_of,
     commit_type_of, is_review_fix,
 )
+from lib import render as _render_module  # noqa: E402
 from lib.render import (  # noqa: E402
     render_period_terminal,
     render_period_markdown,
     render_period_html_section,
     render_html_doc,
+    render_share_block_terminal,
+    render_share_block_markdown,
+    render_share_block_html,
     render_weekly_table_terminal,
     render_weekly_table_markdown,
     render_weekly_table_html,
@@ -280,28 +284,31 @@ def aggregate(sessions: list[tuple[str, dict]]) -> dict:
 # ─── Format builders ──────────────────────────────────────────────────────
 
 
-RU_MONTHS = {1: "Январь ❄️", 2: "Февраль ❄️", 3: "Март 🌸", 4: "Апрель 🌱",
-             5: "Май ☀️", 6: "Июнь ☀️", 7: "Июль ☀️", 8: "Август 🌾",
-             9: "Сентябрь 🍂", 10: "Октябрь 🍁", 11: "Ноябрь 🌨", 12: "Декабрь 🎄"}
+EN_MONTHS = {1: "January ❄️", 2: "February ❄️", 3: "March 🌸", 4: "April 🌱",
+             5: "May ☀️", 6: "June ☀️", 7: "July ☀️", 8: "August 🌾",
+             9: "September 🍂", 10: "October 🍁", 11: "November 🌨", 12: "December 🎄"}
 
 
 def build_terminal(period: str, dt_from, dt_to,
-                   month_groups, week_groups, n_total) -> str:
+                   month_groups, week_groups, n_total, with_share: bool = True) -> str:
     out = []
     out.append("")
     out.append("🌊" * 50)
-    out.append(f"  ОКЕАН CLAUDE CODE — {dt_from.date()} … {dt_to.date()}")
-    out.append(f"  {n_total} sessions, биомы от 🦠 до 🐋")
+    out.append(f"  CLAUDE CODE OCEAN — {dt_from.date()} … {dt_to.date()}")
+    out.append(f"  {n_total} sessions, biomes from 🦠 to 🐋")
     out.append("🌊" * 50)
     if period in ("monthly", "both"):
         months_data = {}
         months_labels = {}
         for (y, m) in sorted(month_groups.keys()):
             agg = aggregate(month_groups[(y, m)])
-            label = f"📅 {RU_MONTHS.get(m, str(m))} {y}"
+            label = f"📅 {EN_MONTHS.get(m, str(m))} {y}"
+            if with_share:
+                out.append("")
+                out.extend(render_share_block_terminal(label, agg))
             out.extend(render_period_terminal(label, agg))
             months_data[m] = agg
-            months_labels[m] = RU_MONTHS.get(m, str(m)).split(" ")[0]
+            months_labels[m] = EN_MONTHS.get(m, str(m)).split(" ")[0]
         if len(months_data) >= 2:
             out.extend(render_trends_terminal(months_data, months_labels))
     if period in ("weekly", "both"):
@@ -312,21 +319,23 @@ def build_terminal(period: str, dt_from, dt_to,
 
 
 def build_markdown(period: str, dt_from, dt_to,
-                   month_groups, week_groups, n_total) -> str:
+                   month_groups, week_groups, n_total, with_share: bool = True) -> str:
     out = []
-    out.append(f"# 🌊 Океан Claude Code — {dt_from.date()} … {dt_to.date()}")
+    out.append(f"# 🌊 Claude Code Ocean — {dt_from.date()} … {dt_to.date()}")
     out.append("")
-    out.append(f"**{n_total} sessions** · биомы от 🦠 до 🐋")
+    out.append(f"**{n_total} sessions** · biomes from 🦠 to 🐋")
     out.append("")
     if period in ("monthly", "both"):
         months_data = {}
         months_labels = {}
         for (y, m) in sorted(month_groups.keys()):
             agg = aggregate(month_groups[(y, m)])
-            label = f"📅 {RU_MONTHS.get(m, str(m))} {y}"
+            label = f"📅 {EN_MONTHS.get(m, str(m))} {y}"
+            if with_share:
+                out.extend(render_share_block_markdown(label, agg))
             out.extend(render_period_markdown(label, agg))
             months_data[m] = agg
-            months_labels[m] = RU_MONTHS.get(m, str(m)).split(" ")[0]
+            months_labels[m] = EN_MONTHS.get(m, str(m)).split(" ")[0]
         if len(months_data) >= 2:
             out.extend(render_trends_markdown(months_data, months_labels))
     if period in ("weekly", "both"):
@@ -337,18 +346,20 @@ def build_markdown(period: str, dt_from, dt_to,
 
 
 def build_html(period: str, dt_from, dt_to,
-               month_groups, week_groups, n_total) -> str:
-    title = f"Океан Claude Code · {dt_from.date()} … {dt_to.date()} · {n_total} sessions"
+               month_groups, week_groups, n_total, with_share: bool = True) -> str:
+    title = f"Claude Code Ocean · {dt_from.date()} … {dt_to.date()} · {n_total} sessions"
     sections: list[str] = []
     if period in ("monthly", "both"):
         months_data = {}
         months_labels = {}
         for (y, m) in sorted(month_groups.keys()):
             agg = aggregate(month_groups[(y, m)])
-            label = f"📅 {RU_MONTHS.get(m, str(m))} {y}"
+            label = f"📅 {EN_MONTHS.get(m, str(m))} {y}"
+            if with_share:
+                sections.append(render_share_block_html(label, agg))
             sections.append(render_period_html_section(label, agg))
             months_data[m] = agg
-            months_labels[m] = RU_MONTHS.get(m, str(m)).split(" ")[0]
+            months_labels[m] = EN_MONTHS.get(m, str(m)).split(" ")[0]
         if len(months_data) >= 2:
             tr = render_trends_html(months_data, months_labels)
             if tr:
@@ -378,12 +389,18 @@ def main(argv: list[str] | None = None) -> int:
                    help="Directory for --format all (default: /tmp/analyze-usage-<date>)")
     p.add_argument("--open", dest="open_in_browser", action="store_true",
                    help="Auto-open HTML output in default browser (requires html or all format)")
+    p.add_argument("--no-hints", dest="show_hints", action="store_false",
+                   help="Suppress the dim explainer line under each section header.")
+    p.add_argument("--no-share", dest="with_share", action="store_false",
+                   help="Suppress the copy-pasteable share block (one-liner + paragraph).")
+    p.set_defaults(show_hints=True, with_share=True)
     args = p.parse_args(argv)
+    _render_module.SHOW_HINTS = bool(args.show_hints)
 
     dt_from = datetime.fromisoformat(args.dt_from).replace(tzinfo=timezone.utc)
     dt_to = datetime.fromisoformat(args.dt_to).replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
 
-    print(f"Парсим {args.root}…", file=sys.stderr, flush=True)
+    print(f"Parsing {args.root}…", file=sys.stderr, flush=True)
     sessions = parse_all(Path(args.root), since=dt_from, until=dt_to)
     items = list(sessions.items())
     n_total = len(items)
@@ -402,13 +419,16 @@ def main(argv: list[str] | None = None) -> int:
     for fmt in formats:
         if fmt == "text":
             artefacts["text"] = build_terminal(args.period, dt_from, dt_to,
-                                                month_groups, week_groups, n_total)
+                                                month_groups, week_groups, n_total,
+                                                with_share=args.with_share)
         elif fmt == "markdown":
             artefacts["markdown"] = build_markdown(args.period, dt_from, dt_to,
-                                                    month_groups, week_groups, n_total)
+                                                    month_groups, week_groups, n_total,
+                                                    with_share=args.with_share)
         elif fmt == "html":
             artefacts["html"] = build_html(args.period, dt_from, dt_to,
-                                            month_groups, week_groups, n_total)
+                                            month_groups, week_groups, n_total,
+                                            with_share=args.with_share)
 
     out_paths: dict[str, Path] = {}
     if args.format == "all":
