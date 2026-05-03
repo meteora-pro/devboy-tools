@@ -1704,7 +1704,7 @@ impl IssueProvider for JiraClient {
                 priority,
                 assignee,
                 components,
-                parent: input.parent.map(|key| ProjectKey { key }),
+                parent: input.parent.map(|key| crate::types::IssueKeyRef { key }),
             },
         };
 
