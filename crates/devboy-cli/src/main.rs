@@ -2512,16 +2512,22 @@ fn handle_context_command(command: ContextCommands) -> Result<()> {
             if names.is_empty() {
                 // Issue #229: a remote_config / proxy install is the
                 // supported "thin client" mode — no local contexts by
-                // design. Don't lie that nothing is configured.
-                if config.remote_config.is_some() || !config.proxy_mcp_servers.is_empty() {
+                // design. `DEVBOY_REMOTE_CONFIG_URL` env var is also
+                // honoured (see `devboy_core::remote_config::resolve_url`).
+                let resolved_url = devboy_core::remote_config::resolve_url(&config);
+                let has_proxy = !config.proxy_mcp_servers.is_empty();
+                if resolved_url.is_some() || has_proxy {
                     println!(
                         "This install uses a remote MCP proxy; no local contexts are required."
                     );
-                    if let Some(rc) = &config.remote_config {
-                        let url = rc.url.as_deref().unwrap_or("(not set)");
-                        println!("Remote config URL: {url}");
+                    if let Some(url) = resolved_url.as_deref() {
+                        // Strip userinfo (basic-auth) + query/fragment
+                        // before printing so accidental credentials in
+                        // the URL don't leak to the terminal.
+                        let safe = devboy_core::remote_config::redact_url_for_display(url);
+                        println!("Remote config URL: {safe}");
                     }
-                    if !config.proxy_mcp_servers.is_empty() {
+                    if has_proxy {
                         println!(
                             "Proxy MCP servers: {}",
                             config

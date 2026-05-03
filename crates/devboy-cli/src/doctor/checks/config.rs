@@ -174,33 +174,49 @@ impl DiagnosticCheck for ActiveContextCheck {
                 fix_command: None,
                 fix_url: None,
             },
-            // Issue #229: a `[remote_config]`-only or `[[proxy_mcp_servers]]`
-            // install is the supported "thin client" mode — the actual tool
-            // surface is exposed by the remote MCP server we proxy to. There
-            // are no local contexts by design, so the generic "no context"
-            // warning misleads the user into running `devboy init` in a loop.
-            None if config.remote_config.is_some() || !config.proxy_mcp_servers.is_empty() => {
-                let url = config
-                    .remote_config
-                    .as_ref()
-                    .and_then(|rc| rc.url.as_deref())
-                    .unwrap_or("(not set)");
+            // Issue #229: a `[remote_config]`-only or
+            // `[[proxy_mcp_servers]]` install is the supported "thin
+            // client" mode — the actual tool surface is exposed by the
+            // remote MCP server we proxy to. `DEVBOY_REMOTE_CONFIG_URL`
+            // env var is also respected even when `[remote_config]` is
+            // absent (see `devboy_core::remote_config::resolve_url`).
+            // There are no local contexts by design; the generic "no
+            // context" warning would otherwise loop the user into
+            // re-running `devboy init`.
+            None if devboy_core::remote_config::resolve_url(config).is_some()
+                || !config.proxy_mcp_servers.is_empty() =>
+            {
+                let proxy_names: Vec<String> = config
+                    .proxy_mcp_servers
+                    .iter()
+                    .map(|p| p.name.clone())
+                    .collect();
+                let resolved_url = devboy_core::remote_config::resolve_url(config);
+                let redacted = resolved_url
+                    .as_deref()
+                    .map(devboy_core::remote_config::redact_url_for_display);
+                let message = match (&redacted, proxy_names.is_empty()) {
+                    (Some(url), _) => format!(
+                        "Remote-config install detected; local contexts are not required (url: {url})"
+                    ),
+                    (None, false) => format!(
+                        "Proxy MCP install detected; local contexts are not required (servers: {})",
+                        proxy_names.join(", ")
+                    ),
+                    (None, true) => unreachable!("guarded by `if` arm"),
+                };
                 CheckResult {
                     id: self.id().to_string(),
                     category: self.category().to_string(),
                     name: self.name().to_string(),
                     status: CheckStatus::Pass,
-                    message: format!(
-                        "Remote-config / proxy install detected; local contexts are not required (remote_config.url: {url})"
-                    ),
+                    message,
                     details: ctx.verbose.then(|| {
                         json!({
-                            "remote_config_url": config.remote_config.as_ref().and_then(|rc| rc.url.clone()),
-                            "proxy_mcp_servers": config
-                                .proxy_mcp_servers
-                                .iter()
-                                .map(|p| p.name.clone())
-                                .collect::<Vec<_>>(),
+                            // Note: redacted (userinfo + query stripped) for
+                            // safe display in `--verbose` output too.
+                            "remote_config_url": redacted,
+                            "proxy_mcp_servers": proxy_names,
                         })
                     }),
                     fix_command: None,
