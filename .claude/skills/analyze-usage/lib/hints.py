@@ -2,8 +2,10 @@
 
 The period digest renders these as a dim/italic line right after the
 section header so a reader who doesn't know our jargon can decode the
-emoji/labels without reading GLOSSARY.md. Keep each entry short
-(< ~120 chars) — they're tooltips, not paragraphs.
+emoji/labels without reading GLOSSARY.md. Keep each entry under 280
+chars (the same upper bound `tests/test_hints_and_renders.py` asserts);
+shorter is better, but several sections legitimately need to enumerate
+their emoji legends (archetypes, biomes).
 
 Keys map onto the section identifiers used by `lib.render`. The
 period_report orchestrator opts the whole thing in or out via
