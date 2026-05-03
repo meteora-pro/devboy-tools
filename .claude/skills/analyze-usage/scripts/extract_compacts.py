@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["pyarrow>=15"]
 # ///
-"""Per-session compact pattern: how many compactов, max context size before each.
+"""Per-session compact pattern: how many compacts, max context size before each.
 
 Schema (raw + anon):
   sid, project, compacts, real_prompts_before_first_compact,
