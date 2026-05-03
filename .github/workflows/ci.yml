@@ -43,14 +43,19 @@ jobs:
           set -euo pipefail
           # Field names that must never be `String` / `Option<String>`.
           PATTERN='(\b(token|api_key|password|secret|client_secret|access_token|refresh_token|bearer_token)\b)\s*:\s*(Option<)?\s*String'
+          # Path-level exemption: `crates/devboy-cli/src/main.rs` (CLI input
+          # boundary; see header comment). A blanket `--exclude='main.rs'`
+          # would also exempt other binaries (e.g. `crates/llm-eval/src/main.rs`)
+          # — undesired. Filter the exact path post-grep instead.
+          CLI_MAIN='crates/devboy-cli/src/main.rs'
           if grep -RInE \
                 --include='*.rs' \
                 --exclude-dir=target \
                 --exclude-dir=tests \
                 --exclude='*test*.rs' \
-                --exclude='main.rs' \
                 "$PATTERN" crates/ \
               | grep -v '^[^:]*:[0-9]*: *//' \
+              | grep -v "^${CLI_MAIN}:" \
               | tee /tmp/leaks.txt; then
             if [ -s /tmp/leaks.txt ]; then
               echo "::error::Plain String secrets detected. Wrap them in secrecy::SecretString (see ADR-019)."

@@ -224,11 +224,28 @@ impl CredentialStore for KeychainStore {
 
 /// In-memory credential store for testing.
 ///
-/// This store keeps credentials in memory and is suitable for unit tests
-/// where you don't want to interact with the real OS keychain.
-#[derive(Debug, Default)]
+/// This store keeps credentials in memory wrapped in [`SecretString`]
+/// (zeroize-on-drop, redacted `Debug`) for unit tests that don't want
+/// to interact with the real OS keychain. The `Debug` impl shows the
+/// key set and a count, never the values, so accidentally logging a
+/// `MemoryStore` cannot leak plaintext.
+#[derive(Default)]
 pub struct MemoryStore {
-    credentials: std::sync::RwLock<std::collections::HashMap<String, String>>,
+    credentials: std::sync::RwLock<std::collections::HashMap<String, SecretString>>,
+}
+
+impl std::fmt::Debug for MemoryStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let creds = self.credentials.read();
+        let (count, keys) = match &creds {
+            Ok(map) => (map.len(), map.keys().cloned().collect::<Vec<_>>()),
+            Err(_) => (0, vec!["<lock-poisoned>".to_string()]),
+        };
+        f.debug_struct("MemoryStore")
+            .field("credentials", &format!("<{count} redacted secret(s)>"))
+            .field("keys", &keys)
+            .finish()
+    }
 }
 
 impl MemoryStore {
@@ -237,12 +254,16 @@ impl MemoryStore {
         Self::default()
     }
 
-    /// Create a store pre-populated with credentials.
+    /// Create a store pre-populated with credentials. Accepts plaintext
+    /// `(key, value)` pairs for test ergonomics; the values are wrapped
+    /// in [`SecretString`] before storage.
     pub fn with_credentials(credentials: impl IntoIterator<Item = (String, String)>) -> Self {
         let store = Self::new();
         {
             let mut creds = store.credentials.write().unwrap();
-            creds.extend(credentials);
+            for (k, v) in credentials {
+                creds.insert(k, SecretString::from(v));
+            }
         }
         store
     }
@@ -254,7 +275,10 @@ impl CredentialStore for MemoryStore {
             .credentials
             .write()
             .map_err(|e| Error::Storage(format!("Lock poisoned: {}", e)))?;
-        creds.insert(key.to_string(), value.expose_secret().to_string());
+        // Clone the SecretString directly — no `expose_secret()` call,
+        // no extra plaintext String allocation, and the cached value
+        // keeps the same zeroize-on-drop discipline as the input.
+        creds.insert(key.to_string(), value.clone());
         Ok(())
     }
 
@@ -263,7 +287,7 @@ impl CredentialStore for MemoryStore {
             .credentials
             .read()
             .map_err(|e| Error::Storage(format!("Lock poisoned: {}", e)))?;
-        Ok(creds.get(key).cloned().map(SecretString::from))
+        Ok(creds.get(key).cloned())
     }
 
     fn delete(&self, key: &str) -> Result<()> {

@@ -11,8 +11,10 @@
 //! - TTL of `0` disables caching entirely (useful for high-security configurations).
 //! - `store()` / `delete()` on the wrapped store also invalidate the cache entry so we
 //!   do not serve stale secrets after rotation.
-//! - The cached value is wrapped in [`zeroize::Zeroizing`], ensuring the buffer is
-//!   scrubbed when the entry is evicted or the cache is dropped.
+//! - Cached values are held as [`secrecy::SecretString`], whose `Debug` impl
+//!   redacts the value and which zeroizes its buffer on drop — so eviction
+//!   and cache-drop scrub the in-memory copy without manual `Zeroizing`
+//!   wrappers.
 //! - The [`std::fmt::Debug`] impl never prints values.
 //!
 //! # Non-goals
@@ -25,7 +27,7 @@ use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
 use devboy_core::Result;
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 
 use crate::CredentialStore;
 
@@ -94,7 +96,11 @@ impl<S: CredentialStore> CachedStore<S> {
         let entries = self.entries.read().ok()?;
         let entry = entries.get(key)?;
         if entry.is_fresh() {
-            Some(SecretString::from(entry.value.expose_secret().to_string()))
+            // Clone the SecretString directly — no `expose_secret()`
+            // call, no extra plaintext String allocation, and the
+            // returned value keeps the same zeroize-on-drop discipline
+            // as the cached entry.
+            Some(entry.value.clone())
         } else {
             None
         }
@@ -104,13 +110,7 @@ impl<S: CredentialStore> CachedStore<S> {
         let Ok(mut entries) = self.entries.write() else {
             return;
         };
-        entries.insert(
-            key.to_string(),
-            CachedEntry::new(
-                SecretString::from(value.expose_secret().to_string()),
-                self.ttl,
-            ),
-        );
+        entries.insert(key.to_string(), CachedEntry::new(value.clone(), self.ttl));
     }
 
     fn purge_expired_locked(&self) {
@@ -180,6 +180,7 @@ impl<S: CredentialStore> CredentialStore for CachedStore<S> {
 mod tests {
     use super::*;
     use crate::MemoryStore;
+    use secrecy::ExposeSecret;
     use std::thread;
 
     fn store_with_entry(k: &str, v: &str) -> MemoryStore {
