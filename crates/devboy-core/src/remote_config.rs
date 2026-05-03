@@ -78,9 +78,7 @@ pub fn redact_url_for_display(raw: &str) -> String {
 
     // Authority ends at the first `/`, `?`, or `#`. Userinfo is
     // everything before the rightmost `@` inside that authority.
-    let auth_end = rest
-        .find(|c: char| c == '/' || c == '?' || c == '#')
-        .unwrap_or(rest.len());
+    let auth_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let (auth, tail) = rest.split_at(auth_end);
     let host = match auth.rfind('@') {
         Some(at) => &auth[at + 1..],
