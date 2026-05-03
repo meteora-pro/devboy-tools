@@ -196,9 +196,11 @@ def parse_all(root: Path, since: datetime | None = None, until: datetime | None 
                                     # Issue #235: also count MCP-mediated
                                     # MR/PR creation toward the same
                                     # `pr_create`/`mr_create` totals as
-                                    # the Bash CLI variants above. Anchored
-                                    # `_request$` so we don't double-count
-                                    # comment / discussion variants.
+                                    # the Bash CLI variants above. The
+                                    # regexes anchor on `_merge_request$`
+                                    # / `_pull_request$` so a sibling
+                                    # `_..._comment` tool name doesn't
+                                    # overmatch as a create.
                                     if RX_MCP_MR_CREATE.match(name):
                                         sd["mr_create"] += 1
                                     elif RX_MCP_PR_CREATE.match(name):

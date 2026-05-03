@@ -42,17 +42,23 @@ RX_BRANCH = re.compile(
 )
 RX_ISSUE = re.compile(r"(DEV-\d+|CU-[\w]+|JIRA-\d+|GH-\d+|#\d+)", re.I)
 
-# MCP-mediated MR/PR/issue creation tool names. Anchored on `_request$` /
-# `_issue$` so we don't match the comment / discussion variants
-# (`*_merge_request_comment`, `*_pull_request_review_comment`,
-# `*_issue_comment`) — those are counted as comments, not creates.
+# MCP-mediated MR/PR/issue creation tool names. The create regexes anchor
+# on `_merge_request$` / `_pull_request$` / `_issue$` (the full bare
+# nouns), so a sibling tool whose name extends past the create noun —
+# `..._merge_request_comment`, `..._pull_request_review_comment`,
+# `..._issue_comment` — does not overmatch as a create. Those comment
+# variants are caught by `RX_MCP_COMMENT` below and counted as comments.
 # Captures `create`, `open`, `submit` verbs to cover GitHub/GitLab/Jira
 # server naming conventions (issue #235).
 RX_MCP_MR_CREATE = re.compile(r"^mcp__.*__(create|open|submit)_merge_request$")
 RX_MCP_PR_CREATE = re.compile(r"^mcp__.*__(create|open|submit)_pull_request$")
 RX_MCP_ISSUE_CREATE = re.compile(r"^mcp__.*__(create|open|submit)_issue$")
+# Comment / discussion variants. The optional `_review` segment also
+# catches `pull_request_review_comment` (GitHub's inline-review comments)
+# so they roll up alongside top-level PR/MR/issue comments.
 RX_MCP_COMMENT = re.compile(
-    r"^mcp__.*__(create|add|post)_(merge_request|pull_request|issue)_comment$"
+    r"^mcp__.*__(create|add|post)_"
+    r"(merge_request|pull_request(_review)?|issue)_comment$"
 )
 
 

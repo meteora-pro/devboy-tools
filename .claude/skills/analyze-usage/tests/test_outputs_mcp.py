@@ -76,21 +76,26 @@ def test_mcp_comment_variants_counted():
         _Ev("assistant", [_tool("mcp__jira__create_issue_comment", body="t")]),
         _Ev("assistant", [_tool("mcp__github__add_pull_request_comment",
                                 body="x")]),
+        # GitHub's inline-review comments end in `_pull_request_review_comment`;
+        # they're still discussion comments and should roll up here.
+        _Ev("assistant", [_tool("mcp__github__create_pull_request_review_comment",
+                                body="inline")]),
     ]
     agg = _aggregate(events)
-    assert agg["comments"] == 4, agg
+    assert agg["comments"] == 5, agg
     # Comments must NOT be miscounted as creates — anchor regression.
     assert agg["mr_create"] == 0, agg
     assert agg["pr_create"] == 0, agg
 
 
 def test_anchor_does_not_overmatch_comment_variants():
-    """Critical regression guard for the regex anchor: MR/PR creation
-    regexes end with `$_request$`, so a `..._merge_request_comment` tool
-    must NOT increment `mr_create`."""
+    """Critical regression guard for the create regexes. They anchor on
+    `_merge_request$` / `_pull_request$` (the bare nouns), so a sibling
+    tool whose name extends past the create noun must NOT increment
+    `mr_create` / `pr_create`."""
     events = [
         _Ev("assistant", [_tool("mcp__x__create_merge_request_comment", body="x")]),
-        _Ev("assistant", [_tool("mcp__x__open_pull_request_review_comment", body="y")]),
+        _Ev("assistant", [_tool("mcp__x__create_pull_request_review_comment", body="y")]),
     ]
     agg = _aggregate(events)
     assert agg["mr_create"] == 0, "anchor failure — comment counted as MR"
