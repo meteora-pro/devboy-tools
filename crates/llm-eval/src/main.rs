@@ -26,6 +26,7 @@ use std::io::{self, Write as IoWrite};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Value, json};
 
 use devboy_format_pipeline::strategy::{
@@ -46,7 +47,7 @@ struct ModelConfig {
     /// OpenAI-compatible base URL (without /chat/completions suffix)
     pub base_url: String,
     /// API key
-    pub api_key: String,
+    pub api_key: SecretString,
     /// Model ID sent in the request
     pub model_id: String,
     /// Max tokens to generate in response
@@ -117,7 +118,7 @@ fn load_model_configs(dotenv: &std::collections::HashMap<String, String>) -> Vec
         configs.push(ModelConfig {
             name: "kimi".into(),
             base_url: getv!("KIMI_BASE_URL", "https://api.moonshot.cn/v1"),
-            api_key: kimi_key,
+            api_key: SecretString::from(kimi_key),
             model_id: getv!("KIMI_MODEL", "moonshot-v1-32k"),
             max_tokens: 64,
             is_ollama: false,
@@ -130,7 +131,7 @@ fn load_model_configs(dotenv: &std::collections::HashMap<String, String>) -> Vec
         configs.push(ModelConfig {
             name: "glm".into(),
             base_url: getv!("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"),
-            api_key: zhipu_key,
+            api_key: SecretString::from(zhipu_key),
             model_id: getv!("ZHIPU_MODEL", "glm-4-flash"),
             max_tokens: 64,
             is_ollama: false,
@@ -151,7 +152,7 @@ fn load_model_configs(dotenv: &std::collections::HashMap<String, String>) -> Vec
             configs.push(ModelConfig {
                 name: ollama_short_name(model_id),
                 base_url: ollama_url.clone(),
-                api_key: "ollama".into(),
+                api_key: SecretString::from("ollama".to_string()),
                 model_id: model_id.to_string(),
                 max_tokens: 4096,
                 is_ollama: true,
@@ -164,7 +165,7 @@ fn load_model_configs(dotenv: &std::collections::HashMap<String, String>) -> Vec
             configs.push(ModelConfig {
                 name: ollama_short_name(&gemma_model),
                 base_url: ollama_url.clone(),
-                api_key: "ollama".into(),
+                api_key: SecretString::from("ollama".to_string()),
                 model_id: gemma_model,
                 max_tokens: 4096,
                 is_ollama: true,
@@ -176,7 +177,7 @@ fn load_model_configs(dotenv: &std::collections::HashMap<String, String>) -> Vec
             configs.push(ModelConfig {
                 name: ollama_short_name(&gptoss_model),
                 base_url: ollama_url,
-                api_key: "ollama".into(),
+                api_key: SecretString::from("ollama".to_string()),
                 model_id: gptoss_model,
                 max_tokens: 4096,
                 is_ollama: true,
@@ -366,7 +367,7 @@ fn call_llm(
     let start = Instant::now();
     let resp = client
         .post(&url)
-        .bearer_auth(&config.api_key)
+        .bearer_auth(config.api_key.expose_secret())
         .json(&body)
         .send()
         .context("HTTP request failed")?;

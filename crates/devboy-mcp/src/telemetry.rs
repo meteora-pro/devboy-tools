@@ -93,7 +93,7 @@ fn unix_now() -> u64 {
 /// Authentication credentials used when uploading batches.
 #[derive(Clone, Default)]
 pub struct TelemetryAuth {
-    pub bearer_token: Option<String>,
+    pub bearer_token: Option<secrecy::SecretString>,
 }
 
 /// Request body shape expected by the backend (documented for the future endpoint).
@@ -222,7 +222,8 @@ impl TelemetryUploader {
             .post(&self.endpoint)
             .header("content-type", "application/json");
         if let Some(token) = &self.auth.bearer_token {
-            req = req.header("authorization", format!("Bearer {}", token));
+            use secrecy::ExposeSecret;
+            req = req.header("authorization", format!("Bearer {}", token.expose_secret()));
         }
         let resp = req.json(batch).send().await.map_err(|e| {
             devboy_core::Error::Http(format!("telemetry upload to {}: {}", self.endpoint, e))

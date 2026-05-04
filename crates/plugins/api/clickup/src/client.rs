@@ -7,6 +7,7 @@ use devboy_core::{
     PipelineProvider, Provider, ProviderResult, Result, SortInfo, SortOrder, UpdateIssueInput,
     User,
 };
+use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, warn};
 
 use crate::DEFAULT_CLICKUP_URL;
@@ -29,13 +30,13 @@ pub struct ClickUpClient {
     base_url: String,
     list_id: String,
     team_id: Option<String>,
-    token: String,
+    token: SecretString,
     client: reqwest::Client,
 }
 
 impl ClickUpClient {
     /// Create a new ClickUp client.
-    pub fn new(list_id: impl Into<String>, token: impl Into<String>) -> Self {
+    pub fn new(list_id: impl Into<String>, token: SecretString) -> Self {
         Self::with_base_url(DEFAULT_CLICKUP_URL, list_id, token)
     }
 
@@ -43,13 +44,13 @@ impl ClickUpClient {
     pub fn with_base_url(
         base_url: impl Into<String>,
         list_id: impl Into<String>,
-        token: impl Into<String>,
+        token: SecretString,
     ) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             list_id: list_id.into(),
             team_id: None,
-            token: token.into(),
+            token,
             client: reqwest::Client::builder()
                 .user_agent("devboy-tools")
                 .build()
@@ -67,7 +68,7 @@ impl ClickUpClient {
     fn request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
         self.client
             .request(method, url)
-            .header("Authorization", &self.token)
+            .header("Authorization", self.token.expose_secret())
             .header("Content-Type", "application/json")
     }
 
@@ -1141,7 +1142,7 @@ impl IssueProvider for ClickUpClient {
         let response = self
             .client
             .post(&url)
-            .header("Authorization", &self.token)
+            .header("Authorization", self.token.expose_secret())
             .multipart(form)
             .send()
             .await
@@ -1204,7 +1205,7 @@ impl IssueProvider for ClickUpClient {
         let response = self
             .client
             .get(download_url)
-            .header("Authorization", &self.token)
+            .header("Authorization", self.token.expose_secret())
             .send()
             .await
             .map_err(|e| Error::Http(e.to_string()))?;
@@ -1443,6 +1444,10 @@ mod tests {
     use crate::types::{ClickUpStatus, ClickUpTag};
     use devboy_core::{CreateCommentInput, MrFilter};
 
+    fn token(s: &str) -> SecretString {
+        SecretString::from(s.to_string())
+    }
+
     #[test]
     fn test_epoch_ms_to_iso8601() {
         // 2024-01-01T00:00:00Z = 1704067200000 ms
@@ -1470,7 +1475,7 @@ mod tests {
     #[test]
     fn test_task_url_cu_prefix() {
         let client =
-            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", "token");
+            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", token("token"));
         let url = client.task_url("CU-abc123").unwrap();
         assert_eq!(url, "https://api.clickup.com/api/v2/task/abc123");
     }
@@ -1478,7 +1483,7 @@ mod tests {
     #[test]
     fn test_task_url_custom_id_with_team() {
         let client =
-            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", "token")
+            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", token("token"))
                 .with_team_id("9876");
         let url = client.task_url("DEV-42").unwrap();
         assert_eq!(
@@ -1490,7 +1495,7 @@ mod tests {
     #[test]
     fn test_task_url_custom_id_without_team() {
         let client =
-            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", "token");
+            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", token("token"));
         let result = client.task_url("DEV-42");
         assert!(result.is_err());
     }
@@ -1762,7 +1767,7 @@ mod tests {
     #[test]
     fn test_clickup_asset_capabilities() {
         let client =
-            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", "token");
+            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", token("token"));
         let caps = client.asset_capabilities();
         assert!(caps.issue.upload);
         assert!(caps.issue.download);
@@ -1830,27 +1835,30 @@ mod tests {
     #[test]
     fn test_api_url() {
         let client =
-            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", "token");
+            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", token("token"));
         assert_eq!(client.base_url, "https://api.clickup.com/api/v2");
         assert_eq!(client.list_id, "12345");
     }
 
     #[test]
     fn test_api_url_strips_trailing_slash() {
-        let client =
-            ClickUpClient::with_base_url("https://api.clickup.com/api/v2/", "12345", "token");
+        let client = ClickUpClient::with_base_url(
+            "https://api.clickup.com/api/v2/",
+            "12345",
+            token("token"),
+        );
         assert_eq!(client.base_url, "https://api.clickup.com/api/v2");
     }
 
     #[test]
     fn test_with_team_id() {
-        let client = ClickUpClient::new("12345", "token").with_team_id("9876");
+        let client = ClickUpClient::new("12345", token("token")).with_team_id("9876");
         assert_eq!(client.team_id, Some("9876".to_string()));
     }
 
     #[test]
     fn test_provider_name() {
-        let client = ClickUpClient::new("12345", "token");
+        let client = ClickUpClient::new("12345", token("token"));
         assert_eq!(IssueProvider::provider_name(&client), "clickup");
         assert_eq!(MergeRequestProvider::provider_name(&client), "clickup");
     }
@@ -2174,11 +2182,11 @@ mod tests {
         use httpmock::prelude::*;
 
         fn create_test_client(server: &MockServer) -> ClickUpClient {
-            ClickUpClient::with_base_url(server.base_url(), "12345", "pk_test_token")
+            ClickUpClient::with_base_url(server.base_url(), "12345", token("pk_test_token"))
         }
 
         fn create_test_client_with_team(server: &MockServer) -> ClickUpClient {
-            ClickUpClient::with_base_url(server.base_url(), "12345", "pk_test_token")
+            ClickUpClient::with_base_url(server.base_url(), "12345", token("pk_test_token"))
                 .with_team_id("9876")
         }
 
@@ -2398,7 +2406,7 @@ mod tests {
         #[tokio::test]
         async fn test_get_issues_limit_zero() {
             // No server needed — should return immediately without making API calls
-            let client = ClickUpClient::new("12345", "token");
+            let client = ClickUpClient::new("12345", token("token"));
             let issues = client
                 .get_issues(IssueFilter {
                     limit: Some(0),
@@ -2522,7 +2530,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_get_issue_custom_id_without_team_fails() {
-            let client = ClickUpClient::new("12345", "token");
+            let client = ClickUpClient::new("12345", token("token"));
             let result = client.get_issue("DEV-42").await;
             assert!(result.is_err());
         }
@@ -2968,7 +2976,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_mr_methods_unsupported() {
-            let client = ClickUpClient::new("12345", "token");
+            let client = ClickUpClient::new("12345", token("token"));
 
             let result = client.get_merge_requests(MrFilter::default()).await;
             assert!(matches!(

@@ -4,6 +4,7 @@ use crate::doctor::checks::{
 use crate::doctor::{CheckResult, CheckStatus, DiagnosticCheck, DiagnosticContext};
 use async_trait::async_trait;
 use devboy_core::ContextConfig;
+use secrecy::ExposeSecret;
 use serde_json::json;
 
 pub struct GitHubTokenCheck;
@@ -53,7 +54,7 @@ impl CredentialSpec {
 
         match resolve_secret(ctx, Some(&active.name), self.provider) {
             Ok(Some(secret)) => {
-                let format = (self.validator)(&secret.value);
+                let format = (self.validator)(secret.value.expose_secret());
                 let status = match format {
                     TokenFormat::Recognized => CheckStatus::Pass,
                     TokenFormat::Suspicious(_) => CheckStatus::Warning,
@@ -444,6 +445,7 @@ mod tests {
         JiraConfig,
     };
     use devboy_storage::{CredentialStore, MemoryStore};
+    use secrecy::SecretString;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -452,11 +454,11 @@ mod tests {
     struct FailingStore;
 
     impl CredentialStore for FailingStore {
-        fn store(&self, _key: &str, _value: &str) -> devboy_core::Result<()> {
+        fn store(&self, _key: &str, _value: &SecretString) -> devboy_core::Result<()> {
             Err(Error::Storage("store failed".to_string()))
         }
 
-        fn get(&self, _key: &str) -> devboy_core::Result<Option<String>> {
+        fn get(&self, _key: &str) -> devboy_core::Result<Option<SecretString>> {
             Err(Error::Storage("credential backend unavailable".to_string()))
         }
 

@@ -11,6 +11,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest_eventsource::{Event, EventSource};
+use secrecy::{ExposeSecret, SecretString};
 use serde_json::Value;
 use tokio::sync::{Mutex, RwLock, oneshot};
 
@@ -60,7 +61,7 @@ impl McpProxyClient {
         name: &str,
         url: &str,
         tool_prefix: Option<&str>,
-        token: Option<&str>,
+        token: Option<&SecretString>,
         auth_type: &str,
         transport: ProxyTransport,
     ) -> devboy_core::Result<Self> {
@@ -68,12 +69,14 @@ impl McpProxyClient {
         if let Some(token) = token {
             match auth_type {
                 "bearer" => {
-                    let val = HeaderValue::from_str(&format!("Bearer {}", token))
-                        .map_err(|e| devboy_core::Error::Config(format!("Invalid token: {}", e)))?;
+                    let val = HeaderValue::from_str(&format!("Bearer {}", token.expose_secret()))
+                        .map_err(|e| {
+                        devboy_core::Error::Config(format!("Invalid token: {}", e))
+                    })?;
                     headers.insert(AUTHORIZATION, val);
                 }
                 "api_key" => {
-                    let val = HeaderValue::from_str(token)
+                    let val = HeaderValue::from_str(token.expose_secret())
                         .map_err(|e| devboy_core::Error::Config(format!("Invalid token: {}", e)))?;
                     headers.insert("X-API-Key", val);
                 }
@@ -660,6 +663,10 @@ mod tests {
     use crate::protocol::ToolResultContent;
     use httpmock::prelude::*;
 
+    fn token_secret(s: &str) -> SecretString {
+        SecretString::from(s.to_string())
+    }
+
     // =========================================================================
     // ProxyTransport
     // =========================================================================
@@ -757,11 +764,12 @@ mod tests {
         setup_mock_upstream(&server, sample_tools());
 
         let url = format!("{}/mcp", server.base_url());
+        let token = token_secret("my-token");
         let client = McpProxyClient::connect(
             "test-server",
             &url,
             None,
-            Some("my-token"),
+            Some(&token),
             "bearer",
             ProxyTransport::StreamableHttp,
         )
@@ -1129,11 +1137,12 @@ mod tests {
         });
 
         let url = format!("{}/mcp", server.base_url());
+        let token = token_secret("secret-token");
         McpProxyClient::connect(
             "test-server",
             &url,
             None,
-            Some("secret-token"),
+            Some(&token),
             "bearer",
             ProxyTransport::StreamableHttp,
         )
@@ -1164,11 +1173,12 @@ mod tests {
         });
 
         let url = format!("{}/mcp", server.base_url());
+        let token = token_secret("my-api-key");
         McpProxyClient::connect(
             "test-server",
             &url,
             None,
-            Some("my-api-key"),
+            Some(&token),
             "api_key",
             ProxyTransport::StreamableHttp,
         )
@@ -1331,11 +1341,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_connect_invalid_bearer_token() {
+        let token = token_secret("token-with-\x01-control-chars");
         let result = McpProxyClient::connect(
             "test-server",
             "http://localhost:1/mcp",
             None,
-            Some("token-with-\x01-control-chars"),
+            Some(&token),
             "bearer",
             ProxyTransport::StreamableHttp,
         )
@@ -1347,11 +1358,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_connect_invalid_api_key_token() {
+        let token = token_secret("key-with-\x01-control");
         let result = McpProxyClient::connect(
             "test-server",
             "http://localhost:1/mcp",
             None,
-            Some("key-with-\x01-control"),
+            Some(&token),
             "api_key",
             ProxyTransport::StreamableHttp,
         )
@@ -1432,11 +1444,12 @@ mod tests {
         });
 
         let url = format!("{}/sse", server.base_url());
+        let token = token_secret("sse-token");
         let result = McpProxyClient::connect(
             "sse-server",
             &url,
             None,
-            Some("sse-token"),
+            Some(&token),
             "bearer",
             ProxyTransport::Sse,
         )

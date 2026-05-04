@@ -5,6 +5,7 @@ use devboy_core::{
     Error, MeetingFilter, MeetingNote, MeetingNotesProvider, MeetingSpeaker, MeetingTranscript,
     ProviderResult, Result, TranscriptSentence,
 };
+use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Value, json};
 use tracing::debug;
 
@@ -77,15 +78,15 @@ query GetTranscript($transcriptId: String!) {
 
 /// Fireflies.ai API client.
 pub struct FirefliesClient {
-    api_key: String,
+    api_key: SecretString,
     api_url: String,
     http: reqwest::Client,
 }
 
 impl FirefliesClient {
-    pub fn new(api_key: &str) -> Self {
+    pub fn new(api_key: SecretString) -> Self {
         Self {
-            api_key: api_key.to_string(),
+            api_key,
             api_url: FIREFLIES_API_URL.to_string(),
             http: reqwest::Client::new(),
         }
@@ -114,7 +115,10 @@ impl FirefliesClient {
         let response = self
             .http
             .post(&self.api_url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.api_key.expose_secret()),
+            )
             .header("Content-Type", "application/json")
             .json(&body)
             .send()
@@ -398,6 +402,10 @@ fn parse_array_or_string(value: &Value) -> Vec<String> {
 mod tests {
     use super::*;
 
+    fn key(s: &str) -> SecretString {
+        SecretString::from(s.to_string())
+    }
+
     #[test]
     fn test_parse_array_or_string_with_array() {
         let val = json!(["item1", "item2", "item3"]);
@@ -576,13 +584,13 @@ mod tests {
 
     #[test]
     fn test_fireflies_client_new() {
-        let client = FirefliesClient::new("test-key");
+        let client = FirefliesClient::new(key("test-key"));
         assert_eq!(client.provider_name(), "fireflies");
     }
 
     #[test]
     fn test_with_api_url_overrides_endpoint() {
-        let client = FirefliesClient::new("k").with_api_url("http://localhost:1234/gql");
+        let client = FirefliesClient::new(key("k")).with_api_url("http://localhost:1234/gql");
         assert_eq!(client.api_url, "http://localhost:1234/gql");
     }
 
@@ -594,8 +602,12 @@ mod tests {
         use super::*;
         use httpmock::prelude::*;
 
+        fn key(s: &str) -> SecretString {
+            SecretString::from(s.to_string())
+        }
+
         fn mock_client(server: &MockServer) -> FirefliesClient {
-            FirefliesClient::new("test-token").with_api_url(server.url("/gql"))
+            FirefliesClient::new(key("test-token")).with_api_url(server.url("/gql"))
         }
 
         #[tokio::test]

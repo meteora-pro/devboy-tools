@@ -226,7 +226,7 @@ async fn probe_proxy_server(
     };
 
     let started = Instant::now();
-    let token_value = token.as_ref().map(|(_, value)| value.as_str());
+    let token_value = token.as_ref().map(|(_, value)| value);
     let mut client = match McpProxyClient::connect(
         &proxy.name,
         &proxy.url,
@@ -330,6 +330,7 @@ mod tests {
     use devboy_storage::{CredentialStore, MemoryStore};
     use httpmock::Method::POST;
     use httpmock::MockServer;
+    use secrecy::SecretString;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -337,11 +338,11 @@ mod tests {
     struct FailingStore;
 
     impl CredentialStore for FailingStore {
-        fn store(&self, _key: &str, _value: &str) -> devboy_core::Result<()> {
+        fn store(&self, _key: &str, _value: &SecretString) -> devboy_core::Result<()> {
             Err(Error::Storage("store failed".to_string()))
         }
 
-        fn get(&self, _key: &str) -> devboy_core::Result<Option<String>> {
+        fn get(&self, _key: &str) -> devboy_core::Result<Option<SecretString>> {
             Err(Error::Storage("proxy store unavailable".to_string()))
         }
 

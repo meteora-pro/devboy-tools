@@ -79,6 +79,9 @@ sha2 = "0.10"
 sentry = { version = "0.35", default-features = false, features = ["rustls", "reqwest", "tracing", "panic", "backtrace", "contexts"] }
 sentry-tracing = "0.35"
 
+# Secrets (in-process secret protection: redacted Debug, zeroize on drop)
+secrecy = { version = "0.10", features = ["serde"] }
+
 [profile.release]
 lto = true
 codegen-units = 1

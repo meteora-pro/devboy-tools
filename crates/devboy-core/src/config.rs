@@ -475,7 +475,12 @@ fn default_true() -> bool {
 /// sample_rate = 1.0
 /// traces_sample_rate = 0.0
 /// ```
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+///
+/// `Debug` is implemented manually so the `dsn` (which contains an auth token
+/// in its userinfo segment) does not leak through `tracing::debug!` /
+/// `dbg!()` /  panic backtraces. Serialization preserves the value because
+/// the DSN must round-trip back to the on-disk TOML config.
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SentryConfig {
     /// Sentry DSN endpoint. When empty, Sentry is disabled (no-op).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -492,6 +497,17 @@ pub struct SentryConfig {
     /// Performance tracing sample rate (0.0 - 1.0). Default: 0.0 (disabled).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub traces_sample_rate: Option<f32>,
+}
+
+impl std::fmt::Debug for SentryConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SentryConfig")
+            .field("dsn", &self.dsn.as_ref().map(|_| "<redacted>"))
+            .field("environment", &self.environment)
+            .field("sample_rate", &self.sample_rate)
+            .field("traces_sample_rate", &self.traces_sample_rate)
+            .finish()
+    }
 }
 
 /// Remote configuration endpoint settings.

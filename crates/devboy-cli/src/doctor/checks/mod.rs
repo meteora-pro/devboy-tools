@@ -7,6 +7,7 @@ pub mod proxy;
 
 use crate::doctor::DiagnosticContext;
 use devboy_core::{Config, ContextConfig};
+use secrecy::SecretString;
 
 pub(super) const DEFAULT_CONTEXT_NAME: &str = Config::DEFAULT_CONTEXT_NAME;
 
@@ -20,7 +21,7 @@ pub(super) struct ActiveProviderContext {
 pub(super) struct ResolvedSecret {
     pub key: String,
     pub source: &'static str,
-    pub value: String,
+    pub value: SecretString,
 }
 
 pub(super) fn resolve_active_provider_context(config: &Config) -> Option<ActiveProviderContext> {
@@ -82,6 +83,7 @@ mod tests {
     use super::*;
     use devboy_core::{Config, ContextConfig, Error, GitHubConfig};
     use devboy_storage::{CredentialStore, MemoryStore};
+    use secrecy::ExposeSecret;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -90,11 +92,11 @@ mod tests {
     struct FailingStore;
 
     impl CredentialStore for FailingStore {
-        fn store(&self, _key: &str, _value: &str) -> devboy_core::Result<()> {
+        fn store(&self, _key: &str, _value: &SecretString) -> devboy_core::Result<()> {
             Err(Error::Storage("store failed".to_string()))
         }
 
-        fn get(&self, _key: &str) -> devboy_core::Result<Option<String>> {
+        fn get(&self, _key: &str) -> devboy_core::Result<Option<SecretString>> {
             Err(Error::Storage("secret backend unavailable".to_string()))
         }
 
@@ -167,7 +169,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(context_secret.source, "context");
-        assert_eq!(context_secret.value, "context-secret");
+        assert_eq!(context_secret.value.expose_secret(), "context-secret");
 
         let global_ctx = context_with_store(
             Arc::new(MemoryStore::with_credentials([(
@@ -212,11 +214,11 @@ mod tests {
         }
 
         impl CredentialStore for ScopedFailingStore {
-            fn store(&self, key: &str, value: &str) -> devboy_core::Result<()> {
+            fn store(&self, key: &str, value: &SecretString) -> devboy_core::Result<()> {
                 self.inner.store(key, value)
             }
 
-            fn get(&self, key: &str) -> devboy_core::Result<Option<String>> {
+            fn get(&self, key: &str) -> devboy_core::Result<Option<SecretString>> {
                 if key.starts_with("contexts.") {
                     Err(Error::Storage("scoped key backend unavailable".to_string()))
                 } else {
@@ -244,7 +246,7 @@ mod tests {
             .unwrap();
         assert_eq!(resolved.source, "global");
         assert_eq!(resolved.key, "github.token");
-        assert_eq!(resolved.value, "ghp_from_env_var_fallback");
+        assert_eq!(resolved.value.expose_secret(), "ghp_from_env_var_fallback");
     }
 
     #[test]
@@ -257,11 +259,11 @@ mod tests {
         struct ScopedOnlyFails;
 
         impl CredentialStore for ScopedOnlyFails {
-            fn store(&self, _key: &str, _value: &str) -> devboy_core::Result<()> {
+            fn store(&self, _key: &str, _value: &SecretString) -> devboy_core::Result<()> {
                 Err(Error::Storage("store failed".into()))
             }
 
-            fn get(&self, key: &str) -> devboy_core::Result<Option<String>> {
+            fn get(&self, key: &str) -> devboy_core::Result<Option<SecretString>> {
                 if key.starts_with("contexts.") {
                     Err(Error::Storage("keychain unavailable".into()))
                 } else {

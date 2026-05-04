@@ -20,6 +20,7 @@ This directory holds Architecture Decision Records (ADRs) for `devboy-tools`. Ea
 | [016](./ADR-016-skills-language-adaptation.md) | Skills language adaptation | proposed | Skills (deferred) |
 | [017](./ADR-017-agent-detection-and-onboard.md) | Agent detection and `devboy onboard` command | proposed | Onboarding, Skills |
 | [018](./ADR-018-plugin-distribution.md) | Distribution as Claude Code and Codex plugins with agent-driven bootstrap | proposed | Distribution, Onboarding |
+| [019](./ADR-019-secret-string-discipline.md) | Secrets carry `SecretString` end-to-end | accepted | Security, Storage, Providers |
 
 **Number gaps** (006, 008, 009, 011) are intentional. Those numbers are reserved for decisions that are not in scope for this project.
 
