@@ -2601,8 +2601,12 @@ impl IssueProvider for JiraClient {
         // Cloud only and isn't worth the flavor split — projects with
         // O(10²) versions still fit in one round-trip; we trim the
         // response in-memory below to honour Paper 1's 8k-token cap.
+        //
+        // `?expand=issuesstatus` is a Cloud-only payload extension —
+        // Server/DC ignores it but we still skip the param there so we
+        // don't bake hidden flavor-quirk dependencies into the URL.
         let mut url = format!("{}/project/{}/versions", self.base_url, project_key);
-        if params.include_issue_count {
+        if params.include_issue_count && self.flavor == JiraFlavor::Cloud {
             url.push_str("?expand=issuesstatus");
         }
 
@@ -2620,20 +2624,54 @@ impl IssueProvider for JiraClient {
             versions.retain(|v| v.archived == want_archived);
         }
 
-        // Order: most recent release_date first, undated last, ties broken
-        // by name desc so the latest semver-style "X.Y.Z" surfaces first.
-        versions.sort_by(|a, b| match (&b.release_date, &a.release_date) {
-            (Some(b_d), Some(a_d)) => b_d.cmp(a_d).then_with(|| b.name.cmp(&a.name)),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => b.name.cmp(&a.name),
+        // Order (Paper 1 — keep the *current* release at the top, not the
+        // most recently shipped one):
+        //   1. unreleased before released — work-in-flight beats history;
+        //   2. release_date placement depends on the group:
+        //      - unreleased: undated *first* (undated == "planned, no
+        //        date yet" → still in flight), then dated desc;
+        //      - released: dated desc, undated *last* ("released without
+        //        a date" usually means unspecified history);
+        //   3. semver-numeric tiebreak on name so "10.0.0" beats "9.10.0".
+        versions.sort_by(|a, b| {
+            use std::cmp::Ordering;
+            let group = a.released.cmp(&b.released);
+            if group != Ordering::Equal {
+                return group;
+            }
+            // Both `a` and `b` are in the same released/unreleased group,
+            // so checking one is enough.
+            let undated_first = !a.released;
+            let date = match (&a.release_date, &b.release_date) {
+                (Some(a_d), Some(b_d)) => b_d.cmp(a_d),
+                (None, None) => Ordering::Equal,
+                (None, Some(_)) if undated_first => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (Some(_), None) if undated_first => Ordering::Greater,
+                (Some(_), None) => Ordering::Less,
+            };
+            date.then_with(|| compare_version_names(&b.name, &a.name))
         });
 
-        if let Some(limit) = params.limit {
-            versions.truncate(limit as usize);
+        let total_after_filter = versions.len() as u32;
+        let limit_applied = params.limit.unwrap_or(total_after_filter);
+        if (limit_applied as usize) < versions.len() {
+            versions.truncate(limit_applied as usize);
         }
 
-        Ok(versions.into())
+        // Pagination carries total + has_more so the formatter can render
+        // a "[+N more …]" hint when truncation hid items (Paper 1 §Chunk
+        // Index). We start at offset 0 — the list endpoint is unpaginated
+        // server-side, all chunking is client-side trimming.
+        let pagination = devboy_core::Pagination {
+            offset: 0,
+            limit: limit_applied,
+            total: Some(total_after_filter),
+            has_more: (versions.len() as u32) < total_after_filter,
+            next_cursor: None,
+        };
+
+        Ok(ProviderResult::new(versions).with_pagination(pagination))
     }
 
     async fn upsert_project_version(
@@ -2703,6 +2741,81 @@ impl IssueProvider for JiraClient {
 /// `project_fallback` covers DTOs returned by `POST /version` on some
 /// Server/DC builds where the `project` key is omitted — we fall back to
 /// the key the caller addressed.
+/// Compare two Jira version *names* with semver-aware ordering.
+///
+/// Splits each name into runs of digits and runs of non-digits and
+/// compares them piecewise — digit runs numerically (so `10` > `9`),
+/// non-digit runs lexicographically (so `1.0.0-rc1` < `1.0.0`). Falls
+/// back to plain string compare when either side has no digits, which
+/// keeps non-semver release names (e.g. `"Sprint 42 cleanup"`) stable.
+fn compare_version_names(a: &str, b: &str) -> std::cmp::Ordering {
+    fn tokens(s: &str) -> Vec<(bool, &str)> {
+        let mut out = Vec::new();
+        let mut start = 0;
+        let mut last_digit: Option<bool> = None;
+        for (i, ch) in s.char_indices() {
+            let is_digit = ch.is_ascii_digit();
+            match last_digit {
+                Some(prev) if prev != is_digit => {
+                    out.push((prev, &s[start..i]));
+                    start = i;
+                }
+                _ => {}
+            }
+            last_digit = Some(is_digit);
+        }
+        if let Some(prev) = last_digit {
+            out.push((prev, &s[start..]));
+        }
+        out
+    }
+
+    let a_toks = tokens(a);
+    let b_toks = tokens(b);
+    for (ax, bx) in a_toks.iter().zip(b_toks.iter()) {
+        let cmp = match (ax, bx) {
+            ((true, ad), (true, bd)) => {
+                // Numeric token compare — strip leading zeros, then by
+                // length, then lexicographically as a tiebreak.
+                let an = ad.trim_start_matches('0');
+                let bn = bd.trim_start_matches('0');
+                an.len().cmp(&bn.len()).then_with(|| an.cmp(bn))
+            }
+            ((false, at), (false, bt)) => at.cmp(bt),
+            // Numeric runs sort *after* alpha runs at the same position
+            // — this matches semver's rule that `1.0.0-rc1 < 1.0.0`.
+            ((true, _), (false, _)) => std::cmp::Ordering::Greater,
+            ((false, _), (true, _)) => std::cmp::Ordering::Less,
+        };
+        if cmp != std::cmp::Ordering::Equal {
+            return cmp;
+        }
+    }
+    // Equal token-by-token up to the shorter side. SemVer treats a
+    // pre-release suffix as *lower* than the bare version, so when one
+    // side has more tokens *and* the next token starts with `-` (or
+    // `+` build metadata), the longer side is considered smaller.
+    match a_toks.len().cmp(&b_toks.len()) {
+        std::cmp::Ordering::Equal => std::cmp::Ordering::Equal,
+        std::cmp::Ordering::Greater => {
+            let next = a_toks[b_toks.len()].1;
+            if next.starts_with('-') || next.starts_with('+') {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            }
+        }
+        std::cmp::Ordering::Less => {
+            let next = b_toks[a_toks.len()].1;
+            if next.starts_with('-') || next.starts_with('+') {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Less
+            }
+        }
+    }
+}
+
 fn jira_version_to_project_version(dto: JiraVersionDto, project_fallback: &str) -> ProjectVersion {
     // Cloud `?expand=issuesstatus` gives a per-category breakdown we sum
     // for total. Server/DC only inlines `issuesUnresolvedCount` — a
@@ -6950,6 +7063,16 @@ mod tests {
             )
         }
 
+        fn create_cloud_client(server: &MockServer) -> JiraClient {
+            JiraClient::with_base_url(
+                server.base_url(),
+                "PROJ",
+                "user@example.com",
+                token("api-token"),
+                true,
+            )
+        }
+
         fn version_dto(
             id: &str,
             name: &str,
@@ -7077,7 +7200,11 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn list_project_versions_passes_expand_query_when_requested() {
+        async fn list_project_versions_passes_expand_query_on_cloud() {
+            // Cloud responds to `?expand=issuesstatus` with a per-status
+            // breakdown we can sum into `issue_count`. Server/DC ignores
+            // the param, so the gate applies only to Cloud — see the
+            // sibling `omits_expand_on_self_hosted` test below.
             let server = MockServer::start();
             let mock = server.mock(|when, then| {
                 when.method(GET)
@@ -7099,7 +7226,7 @@ mod tests {
                 ]));
             });
 
-            let client = create_client(&server);
+            let client = create_cloud_client(&server);
             let result = client
                 .list_project_versions(ListProjectVersionsParams {
                     project: "PROJ".into(),
@@ -7113,6 +7240,151 @@ mod tests {
             mock.assert();
             assert_eq!(result.items.len(), 1);
             assert_eq!(result.items[0].issue_count, Some(10));
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_omits_expand_on_self_hosted() {
+            // Copilot review on PR #239 — the expand parameter is a Cloud
+            // payload extension. We don't want to bake "Server/DC silently
+            // ignores Cloud query params" into the URL contract, so on
+            // Self-Hosted the client must not append `?expand=...` even
+            // when the caller asks for issue counts.
+            let server = MockServer::start();
+            let bare_mock = server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([{
+                    "id": "1",
+                    "name": "v1",
+                    "released": false,
+                    "archived": false,
+                    "issuesUnresolvedCount": 4,
+                }]));
+            });
+            let expanded_mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/project/PROJ/versions")
+                    .query_param("expand", "issuesstatus");
+                then.status(500); // would fail the test if we hit it
+            });
+
+            let client = create_client(&server); // self-hosted
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: None,
+                    include_issue_count: true,
+                })
+                .await
+                .unwrap();
+            bare_mock.assert();
+            expanded_mock.assert_calls(0);
+            assert_eq!(result.items[0].issue_count, Some(4));
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_orders_unreleased_first_then_recent() {
+            // Copilot review #3 on PR #239 — unreleased versions are the
+            // ones the agent is actually working on, they must surface
+            // before history regardless of date.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    version_dto("1", "9.10.0", Some("2026-04-01"), true, false),
+                    version_dto("2", "10.0.0", Some("2026-04-02"), false, false),
+                    version_dto("3", "next", None, false, false),
+                    version_dto("4", "1.0.0", Some("2024-01-01"), true, true),
+                ]));
+            });
+
+            let client = create_client(&server);
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: None,
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+            // Unreleased first: undated `next` then dated `10.0.0`.
+            // Released after: `9.10.0` (newer date) then `1.0.0` (older).
+            let names: Vec<_> = result.items.iter().map(|v| v.name.as_str()).collect();
+            assert_eq!(names, vec!["next", "10.0.0", "9.10.0", "1.0.0"]);
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_pagination_reflects_truncation() {
+            // Copilot review #4 on PR #239 — without total/has_more the
+            // formatter can't render a "+N more" hint.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    version_dto("1", "v1", Some("2024-01-01"), true, false),
+                    version_dto("2", "v2", Some("2025-01-01"), true, false),
+                    version_dto("3", "v3", Some("2026-01-01"), true, false),
+                ]));
+            });
+
+            let client = create_client(&server);
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: Some(2),
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+            let p = result.pagination.expect("pagination must be set");
+            assert_eq!(p.total, Some(3));
+            assert_eq!(p.limit, 2);
+            assert!(p.has_more);
+
+            // No truncation → has_more is false.
+            let server2 = MockServer::start();
+            server2.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([version_dto(
+                    "1",
+                    "v1",
+                    Some("2024-01-01"),
+                    true,
+                    false
+                ),]));
+            });
+            let client2 = create_client(&server2);
+            let result2 = client2
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: Some(20),
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+            let p2 = result2.pagination.unwrap();
+            assert_eq!(p2.total, Some(1));
+            assert!(!p2.has_more);
+        }
+
+        #[test]
+        fn compare_version_names_handles_semver_and_alpha() {
+            use std::cmp::Ordering;
+            assert_eq!(compare_version_names("10.0.0", "9.10.0"), Ordering::Greater);
+            assert_eq!(compare_version_names("1.0.0", "1.0.0"), Ordering::Equal);
+            assert_eq!(compare_version_names("1.0.10", "1.0.2"), Ordering::Greater);
+            // Pre-release < release at the same numeric prefix.
+            assert_eq!(compare_version_names("1.0.0-rc1", "1.0.0"), Ordering::Less);
+            // Non-semver names fall back to lexicographic / token compare,
+            // but at minimum they must be a total order.
+            let _ = compare_version_names("Sprint 42 cleanup", "Sprint 9 cleanup");
         }
 
         #[tokio::test]

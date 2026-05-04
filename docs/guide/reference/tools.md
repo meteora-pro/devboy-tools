@@ -152,7 +152,7 @@ Link two issues together (blocks, relates_to, etc.).
 
 ### `list_project_versions`
 
-List Jira project versions / fixVersion targets (releases). Returns rich per-version payload (description, dates, released/archived flags, optional issue counts). Default filter hides archived versions and limits to 20 most recent. Pair with `search_issues(fixVersion=<name>)` for issue-level details — there is no per-id get tool by design.
+List Jira project versions / fixVersion targets (releases). Returns rich per-version payload (description, dates, released/archived flags, optional issue counts). Default filter hides archived versions and limits to 20 most recent (unreleased first, then released by releaseDate desc). For issue-level details on a release, follow up with `get_issues` and a JQL `nativeQuery` such as `fixVersion = "<name>"` — there is no per-id get tool by design.
 
 | Parameter | Type | Required | Description |
 |---|---|:---:|---|

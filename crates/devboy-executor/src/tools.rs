@@ -764,7 +764,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
         // with numeric ids. See `docs/research/paper-3-context-enrichment.md`.
         ToolDefinition {
             name: "list_project_versions".into(),
-            description: "List Jira project versions / fixVersion targets (releases). Returns rich per-version payload (description, dates, released/archived flags, optional issue counts). Default filter hides archived versions and limits to 20 most recent. Pair with `search_issues(fixVersion=<name>)` for issue-level details — there is no per-id get tool by design.".into(),
+            description: "List Jira project versions / fixVersion targets (releases). Returns rich per-version payload (description, dates, released/archived flags, optional issue counts). Default filter hides archived versions and limits to 20 most recent (unreleased first, then released by releaseDate desc). For issue-level details on a release, follow up with `get_issues` and a JQL `nativeQuery` such as `fixVersion = \"<name>\"` — there is no per-id get tool by design.".into(),
             category: ToolCategory::IssueTracker,
             input_schema: {
                 let mut s = ToolSchema::new();
