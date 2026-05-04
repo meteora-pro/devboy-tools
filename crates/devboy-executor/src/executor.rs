@@ -2341,9 +2341,16 @@ async fn execute_list_project_versions(
     let params: ListProjectVersionsArgs = parse_tool_params(args, "list_project_versions")?;
 
     // Paper 1 / TrimTree defaults: hide archived noise + cap at 20 most
-    // recent. Callers can override either explicitly.
-    let archived = parse_tri_filter(params.archived.as_deref())?.or(Some(false));
-    let released = parse_tri_filter(params.released.as_deref())?;
+    // recent. Defaults only apply when the caller omits the field —
+    // explicit `"all"` must round-trip as `None` (no filter).
+    let archived = match params.archived.as_deref() {
+        None => Some(false),
+        Some(s) => parse_tri_filter(Some(s))?,
+    };
+    let released = match params.released.as_deref() {
+        None => None,
+        Some(s) => parse_tri_filter(Some(s))?,
+    };
     let limit = params.limit.unwrap_or(20).min(200);
 
     let result = provider
@@ -2631,6 +2638,60 @@ mod tests {
                 id: 42,
                 name: input.name,
                 description: input.description,
+            })
+        }
+        async fn list_project_versions(
+            &self,
+            params: devboy_core::ListProjectVersionsParams,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<devboy_core::ProjectVersion>> {
+            // Echo applied filters back through the data so dispatch
+            // tests can pin behaviour without sniffing call args.
+            let mut name = format!(
+                "v-released={:?}-archived={:?}-limit={:?}-expand={}",
+                params.released, params.archived, params.limit, params.include_issue_count
+            );
+            if !params.project.is_empty() {
+                name.push_str(&format!("-project={}", params.project));
+            }
+            Ok(vec![devboy_core::ProjectVersion {
+                id: "1".into(),
+                project: if params.project.is_empty() {
+                    "MOCK".into()
+                } else {
+                    params.project
+                },
+                name,
+                description: Some("desc".into()),
+                start_date: None,
+                release_date: Some("2026-01-01".into()),
+                released: false,
+                archived: false,
+                overdue: None,
+                issue_count: Some(0),
+                source: "mock".into(),
+            }]
+            .into())
+        }
+        async fn upsert_project_version(
+            &self,
+            input: devboy_core::UpsertProjectVersionInput,
+        ) -> devboy_core::Result<devboy_core::ProjectVersion> {
+            Ok(devboy_core::ProjectVersion {
+                id: "777".into(),
+                project: if input.project.is_empty() {
+                    "MOCK".into()
+                } else {
+                    input.project
+                },
+                name: input.name,
+                description: input.description,
+                start_date: input.start_date,
+                release_date: input.release_date,
+                released: input.released.unwrap_or(false),
+                archived: input.archived.unwrap_or(false),
+                overdue: None,
+                issue_count: None,
+                source: "mock".into(),
             })
         }
         fn provider_name(&self) -> &'static str {
@@ -3650,6 +3711,127 @@ mod tests {
             }
             _ => panic!("expected Structures"),
         }
+    }
+
+    // -------------------------------------------------------------------
+    // Project versions / fixVersion (issue #238)
+    // -------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_dispatch_list_project_versions_applies_paper_defaults() {
+        // No filter args → archived defaults to false, limit to 20.
+        let provider = MockProvider;
+        let result = dispatch_tool(
+            "list_project_versions",
+            &serde_json::json!({}),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap();
+        match result {
+            ToolOutput::ProjectVersions(items, _) => {
+                let echoed = &items[0].name;
+                assert!(echoed.contains("released=None"), "got {echoed}");
+                assert!(echoed.contains("archived=Some(false)"), "got {echoed}");
+                assert!(echoed.contains("limit=Some(20)"), "got {echoed}");
+                assert!(echoed.contains("expand=false"), "got {echoed}");
+            }
+            other => panic!("expected ProjectVersions, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_list_project_versions_explicit_filters_override_defaults() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "project": "PROJ",
+            "released": "true",
+            "archived": "all",
+            "limit": 5,
+            "includeIssueCount": true,
+        });
+        let result = dispatch_tool("list_project_versions", &args, &provider, None)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::ProjectVersions(items, _) => {
+                let echoed = &items[0].name;
+                assert!(echoed.contains("released=Some(true)"), "got {echoed}");
+                assert!(echoed.contains("archived=None"), "got {echoed}");
+                assert!(echoed.contains("limit=Some(5)"), "got {echoed}");
+                assert!(echoed.contains("expand=true"), "got {echoed}");
+                assert_eq!(items[0].project, "PROJ");
+            }
+            other => panic!("expected ProjectVersions, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_list_project_versions_rejects_unknown_filter() {
+        let provider = MockProvider;
+        let err = dispatch_tool(
+            "list_project_versions",
+            &serde_json::json!({"released": "maybe"}),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, devboy_core::Error::InvalidData(ref m) if m.contains("'maybe'")),
+            "expected InvalidData about 'maybe', got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_upsert_project_version_returns_single() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "project": "PROJ",
+            "name": "3.18.0",
+            "description": "release notes",
+            "released": true,
+            "releaseDate": "2026-05-01",
+        });
+        let result = dispatch_tool("upsert_project_version", &args, &provider, None)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::SingleProjectVersion(v) => {
+                assert_eq!(v.name, "3.18.0");
+                assert_eq!(v.project, "PROJ");
+                assert!(v.released);
+                assert_eq!(v.release_date.as_deref(), Some("2026-05-01"));
+                assert_eq!(v.description.as_deref(), Some("release notes"));
+            }
+            other => panic!("expected SingleProjectVersion, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_upsert_project_version_requires_name() {
+        let provider = MockProvider;
+        let err = dispatch_tool(
+            "upsert_project_version",
+            &serde_json::json!({"project": "PROJ"}),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, devboy_core::Error::InvalidData(_)));
+    }
+
+    #[test]
+    fn parse_tri_filter_accepts_canonical_strings() {
+        assert_eq!(parse_tri_filter(None).unwrap(), None);
+        assert_eq!(parse_tri_filter(Some("all")).unwrap(), None);
+        assert_eq!(parse_tri_filter(Some("True")).unwrap(), Some(true));
+        assert_eq!(parse_tri_filter(Some("false")).unwrap(), Some(false));
+        assert_eq!(parse_tri_filter(Some("yes")).unwrap(), Some(true));
+        assert_eq!(parse_tri_filter(Some("0")).unwrap(), Some(false));
+        assert!(parse_tri_filter(Some("maybe")).is_err());
     }
 
     // -------------------------------------------------------------------
