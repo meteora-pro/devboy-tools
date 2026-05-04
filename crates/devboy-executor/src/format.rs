@@ -475,6 +475,16 @@ pub fn format_output(
             })?;
             Ok(text_result(json, None, None))
         }
+        ToolOutput::ProjectVersions(versions, _meta) => Ok(text_result(
+            format_project_versions(&versions),
+            provider_pagination,
+            provider_sort,
+        )),
+        ToolOutput::SingleProjectVersion(version) => Ok(text_result(
+            format_single_project_version(&version),
+            None,
+            None,
+        )),
         ToolOutput::Text(text) => Ok(text_result(text, None, None)),
     }
 }
@@ -559,6 +569,91 @@ fn format_statuses(statuses: &[devboy_core::IssueStatus]) -> String {
     }
 
     output
+}
+
+/// Format project versions as a compact markdown table.
+///
+/// Paper 2 / format-adaptive encoding: tabular flat-record data is
+/// denser as a table than as JSON. Truncates `description` to ~120
+/// chars (with ellipsis) — full description stays in the structured
+/// `ToolOutput::ProjectVersions` payload.
+fn format_project_versions(versions: &[devboy_core::ProjectVersion]) -> String {
+    if versions.is_empty() {
+        return "No project versions found.".to_string();
+    }
+
+    let mut output = format!("# Project Versions ({})\n\n", versions.len());
+    output.push_str("| Name | Released | Release Date | Issues | Description |\n");
+    output.push_str("|---|---|---|---|---|\n");
+
+    for v in versions {
+        let released = if v.released { "yes" } else { "no" };
+        let release_date = v.release_date.as_deref().unwrap_or("-");
+        let issue_count = v
+            .issue_count
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let description = match v.description.as_deref() {
+            None | Some("") => "-".to_string(),
+            Some(d) => truncate_for_table(d, 120),
+        };
+        let archived_marker = if v.archived { " (archived)" } else { "" };
+        output.push_str(&format!(
+            "| {}{} | {} | {} | {} | {} |\n",
+            v.name, archived_marker, released, release_date, issue_count, description
+        ));
+    }
+
+    output
+}
+
+/// Format a single project version as a small detail block (used by
+/// the `upsert_project_version` response so the caller can confirm what
+/// they wrote).
+fn format_single_project_version(v: &devboy_core::ProjectVersion) -> String {
+    let mut output = format!("# {} (project {})\n\n", v.name, v.project);
+    output.push_str(&format!("- **id:** {}\n", v.id));
+    output.push_str(&format!(
+        "- **released:** {}\n",
+        if v.released { "yes" } else { "no" }
+    ));
+    output.push_str(&format!(
+        "- **archived:** {}\n",
+        if v.archived { "yes" } else { "no" }
+    ));
+    if let Some(ref d) = v.start_date {
+        output.push_str(&format!("- **start_date:** {d}\n"));
+    }
+    if let Some(ref d) = v.release_date {
+        output.push_str(&format!("- **release_date:** {d}\n"));
+    }
+    if let Some(overdue) = v.overdue {
+        output.push_str(&format!("- **overdue:** {overdue}\n"));
+    }
+    if let Some(count) = v.issue_count {
+        output.push_str(&format!("- **issue_count:** {count}\n"));
+    }
+    if let Some(ref desc) = v.description.as_deref().filter(|d| !d.is_empty()) {
+        output.push_str(&format!("\n## Description\n\n{desc}\n"));
+    }
+    output
+}
+
+/// Truncate a string to `max_chars` characters (Unicode-safe), appending
+/// an ellipsis when something was cut. Newlines are flattened to spaces
+/// so the cell stays on one row of the markdown table.
+fn truncate_for_table(s: &str, max_chars: usize) -> String {
+    let single_line: String = s
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect();
+    let count = single_line.chars().count();
+    if count <= max_chars {
+        return single_line;
+    }
+    let mut out: String = single_line.chars().take(max_chars).collect();
+    out.push('…');
+    out
 }
 
 /// Format users as a markdown table.
