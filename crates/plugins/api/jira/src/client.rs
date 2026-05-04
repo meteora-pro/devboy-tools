@@ -2678,9 +2678,17 @@ impl IssueProvider for JiraClient {
         &self,
         input: UpsertProjectVersionInput,
     ) -> Result<ProjectVersion> {
-        if input.name.trim().is_empty() {
+        let trimmed_name = input.name.trim().to_string();
+        if trimmed_name.is_empty() {
             return Err(Error::InvalidData(
                 "upsert_project_version: name must not be empty".into(),
+            ));
+        }
+        // Jira limits version names to 255 characters; rejecting client-side
+        // gives a clearer error than a late 400 from the server.
+        if trimmed_name.chars().count() > 255 {
+            return Err(Error::InvalidData(
+                "upsert_project_version: name must be ≤ 255 characters".into(),
             ));
         }
         let project_key = if input.project.is_empty() {
@@ -2689,43 +2697,74 @@ impl IssueProvider for JiraClient {
             input.project.clone()
         };
 
+        let update_payload = UpdateVersionPayload {
+            name: None,
+            description: input.description.clone(),
+            start_date: input.start_date.clone(),
+            release_date: input.release_date.clone(),
+            released: input.released,
+            archived: input.archived,
+        };
+        let create_payload = CreateVersionPayload {
+            name: trimmed_name.clone(),
+            project: Some(project_key.clone()),
+            project_id: None,
+            description: input.description,
+            start_date: input.start_date,
+            release_date: input.release_date,
+            released: input.released,
+            archived: input.archived,
+        };
+
         // Resolve `(project, name)` → existing id. We list all versions
         // in the project rather than filtering server-side — Jira has no
         // exact-name lookup, and a single project rarely has more than a
         // few hundred versions.
         let list_url = format!("{}/project/{}/versions", self.base_url, project_key);
         let dtos: Vec<JiraVersionDto> = self.get(&list_url).await?;
-        let existing = dtos.into_iter().find(|d| d.name == input.name);
+        let existing = dtos.into_iter().find(|d| d.name == trimmed_name);
 
-        let dto: JiraVersionDto = if let Some(existing) = existing {
-            // Update path — partial. `name` is the lookup key so we
-            // deliberately don't expose renaming via this entry point.
-            let payload = UpdateVersionPayload {
-                name: None,
-                description: input.description,
-                start_date: input.start_date,
-                release_date: input.release_date,
-                released: input.released,
-                archived: input.archived,
-            };
-            let url = format!("{}/version/{}", self.base_url, existing.id);
-            self.put_with_response(&url, &payload).await?
-        } else {
-            // Create path. Pass project key as `project` — accepted by
-            // both Cloud v3 and Server/DC v2 payloads, which lets us
-            // skip a project-id lookup.
-            let payload = CreateVersionPayload {
-                name: input.name.clone(),
-                project: Some(project_key.clone()),
-                project_id: None,
-                description: input.description,
-                start_date: input.start_date,
-                release_date: input.release_date,
-                released: input.released,
-                archived: input.archived,
-            };
-            let url = format!("{}/version", self.base_url);
-            self.post(&url, &payload).await?
+        let dto: JiraVersionDto = match existing {
+            Some(existing) => {
+                self.put_with_response(
+                    &format!("{}/version/{}", self.base_url, existing.id),
+                    &update_payload,
+                )
+                .await?
+            }
+            None => {
+                // Create path. Two callers can race here: both miss the
+                // version on the initial list and both POST. Jira rejects
+                // the loser with a 400 + "already exists" message; we
+                // re-list, find the winner's id, and apply the update so
+                // the loser still observes a consistent post-condition.
+                match self
+                    .post::<JiraVersionDto, _>(
+                        &format!("{}/version", self.base_url),
+                        &create_payload,
+                    )
+                    .await
+                {
+                    Ok(dto) => dto,
+                    Err(e) if is_duplicate_version_error(&e) => {
+                        let dtos: Vec<JiraVersionDto> = self.get(&list_url).await?;
+                        let recovered = dtos
+                            .into_iter()
+                            .find(|d| d.name == trimmed_name)
+                            .ok_or_else(|| {
+                                Error::InvalidData(format!(
+                                    "upsert_project_version: create rejected as duplicate but version '{trimmed_name}' is not in the project list"
+                                ))
+                            })?;
+                        self.put_with_response(
+                            &format!("{}/version/{}", self.base_url, recovered.id),
+                            &update_payload,
+                        )
+                        .await?
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
         };
 
         Ok(jira_version_to_project_version(dto, &project_key))
@@ -2741,6 +2780,15 @@ impl IssueProvider for JiraClient {
 /// `project_fallback` covers DTOs returned by `POST /version` on some
 /// Server/DC builds where the `project` key is omitted — we fall back to
 /// the key the caller addressed.
+/// True when the error returned by `POST /version` indicates Jira
+/// rejected the create because a version with that name already exists
+/// in the project. Both Cloud v3 and Server/DC v2 surface this as a 400
+/// with the phrase "already exists" in the response body.
+fn is_duplicate_version_error(e: &Error) -> bool {
+    let lowered = e.to_string().to_lowercase();
+    lowered.contains("already exists") || lowered.contains("already used")
+}
+
 /// Compare two Jira version *names* with semver-aware ordering.
 ///
 /// Splits each name into runs of digits and runs of non-digits and
@@ -2817,15 +2865,18 @@ fn compare_version_names(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 fn jira_version_to_project_version(dto: JiraVersionDto, project_fallback: &str) -> ProjectVersion {
-    // Cloud `?expand=issuesstatus` gives a per-category breakdown we sum
-    // for total. Server/DC only inlines `issuesUnresolvedCount` — a
-    // proper total there would need a follow-up
-    // `/version/{id}/relatedIssueCounts` call, deferred for now.
+    // Cloud `?expand=issuesstatus` returns a per-category breakdown we
+    // sum into a true `issue_count` total. Server/DC inlines
+    // `issuesUnresolvedCount` on the base payload but *not* a total, so
+    // we route that into `unresolved_issue_count` and leave
+    // `issue_count` unset there — conflating the two would let callers
+    // compare a Cloud total against a Server unresolved count and not
+    // notice the categorical mismatch.
     let issue_count = dto
         .issues_status_for_fix_version
         .as_ref()
-        .map(|c| c.total())
-        .or(dto.issues_unresolved_count);
+        .map(|c| c.total());
+    let unresolved_issue_count = dto.issues_unresolved_count;
 
     ProjectVersion {
         id: dto.id,
@@ -2838,6 +2889,7 @@ fn jira_version_to_project_version(dto: JiraVersionDto, project_fallback: &str) 
         archived: dto.archived,
         overdue: dto.overdue,
         issue_count,
+        unresolved_issue_count,
         source: "jira".to_string(),
     }
 }
@@ -7280,7 +7332,11 @@ mod tests {
                 .unwrap();
             bare_mock.assert();
             expanded_mock.assert_calls(0);
-            assert_eq!(result.items[0].issue_count, Some(4));
+            // On Self-Hosted we don't have a true total — it goes into
+            // `unresolved_issue_count` rather than `issue_count` to keep
+            // the two flavors comparable (Codex review on PR #239).
+            assert_eq!(result.items[0].issue_count, None);
+            assert_eq!(result.items[0].unresolved_issue_count, Some(4));
         }
 
         #[tokio::test]
@@ -7545,6 +7601,120 @@ mod tests {
                 .await
                 .unwrap_err();
             assert!(matches!(err, devboy_core::Error::InvalidData(_)));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_rejects_overlong_name() {
+            // Codex review on PR #239 — Jira caps version names at 255
+            // chars; failing client-side gives a clearer error than
+            // letting the server return a 400.
+            let server = MockServer::start();
+            let client = create_client(&server);
+            let err = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "x".repeat(256),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert!(matches!(err, devboy_core::Error::InvalidData(_)));
+        }
+
+        #[test]
+        fn duplicate_version_error_classifier_matches_jira_phrasing() {
+            // Codex review on PR #239 — race recovery hangs on this
+            // classifier. Pin the strings Jira actually returns so a
+            // copy-paste regression in the wording table doesn't
+            // silently turn duplicate errors into hard failures.
+            let dup1 = devboy_core::Error::Api {
+                status: 400,
+                message: "A version with this name already exists in this project.".into(),
+            };
+            let dup2 = devboy_core::Error::Api {
+                status: 400,
+                message: "Name is already used by another version in this project.".into(),
+            };
+            let unrelated = devboy_core::Error::Api {
+                status: 400,
+                message: "releaseDate is in the wrong format.".into(),
+            };
+            assert!(is_duplicate_version_error(&dup1));
+            assert!(is_duplicate_version_error(&dup2));
+            assert!(!is_duplicate_version_error(&unrelated));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_propagates_non_duplicate_400() {
+            // Make sure the duplicate-recovery path doesn't swallow
+            // unrelated 400s — only "already exists" is retried.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            server.mock(|when, then| {
+                when.method(POST).path("/version");
+                then.status(400).json_body(serde_json::json!({
+                    "errorMessages": ["releaseDate is in the wrong format."]
+                }));
+            });
+            let client = create_client(&server);
+            let err = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "3.18.0".into(),
+                    release_date: Some("not-a-date".into()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            // 400 → Error::Api (see Error::from_status).
+            assert!(matches!(err, devboy_core::Error::Api { .. }));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_works_on_cloud_flavor() {
+            // Codex review on PR #239 — coverage gap: every upsert test
+            // ran against self-hosted. Pin Cloud insert path to make
+            // sure the same code works against Cloud's response shape.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/CLOUDPROJ/versions");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            let post_mock = server.mock(|when, then| {
+                when.method(POST)
+                    .path("/version")
+                    .body_includes("\"name\":\"4.0.0\"")
+                    .body_includes("\"project\":\"CLOUDPROJ\"");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "30001",
+                    "name": "4.0.0",
+                    "project": "CLOUDPROJ",
+                    "description": "Cloud release",
+                    "released": false,
+                    "archived": false,
+                    // Cloud-shaped issuesStatusForFixVersion would normally
+                    // not appear on the create response — the field
+                    // surfaces via list_project_versions(includeIssueCount).
+                }));
+            });
+
+            let client = create_cloud_client(&server);
+            let v = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "CLOUDPROJ".into(),
+                    name: "4.0.0".into(),
+                    description: Some("Cloud release".into()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            post_mock.assert();
+            assert_eq!(v.id, "30001");
+            assert_eq!(v.project, "CLOUDPROJ");
+            assert_eq!(v.description.as_deref(), Some("Cloud release"));
         }
     }
 }

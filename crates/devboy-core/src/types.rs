@@ -767,8 +767,24 @@ pub struct ProjectVersion {
     /// and the version is still unreleased. Optional because the
     /// provider may not return it.
     pub overdue: Option<bool>,
-    /// Number of issues with this `fixVersion` (when expanded).
+    /// Total number of issues attached to this version, when the
+    /// provider can report it.
+    ///
+    /// Provider semantics differ:
+    /// - **Jira Cloud** populates this from `?expand=issuesstatus`
+    ///   (sum across all status categories — true total).
+    /// - **Jira Self-Hosted / DC** does *not* populate this on the
+    ///   listing endpoint — `unresolved_issue_count` carries what the
+    ///   server returns instead. Fetching a real total there requires
+    ///   a per-version `/version/{id}/relatedIssueCounts` call which
+    ///   we deliberately don't make on the list path.
     pub issue_count: Option<u32>,
+    /// Number of *unresolved* issues attached to this version. Set on
+    /// Jira Self-Hosted/DC from the base payload; on Cloud the same
+    /// number is buried inside the per-status breakdown so we don't
+    /// re-derive it here. Kept separate from `issue_count` so callers
+    /// can't accidentally compare an unresolved-count against a total.
+    pub unresolved_issue_count: Option<u32>,
     /// Source provider name (e.g. `"jira"`).
     pub source: String,
 }
