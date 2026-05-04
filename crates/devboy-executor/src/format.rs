@@ -1556,8 +1556,7 @@ mod tests {
 
     #[test]
     fn format_project_versions_renders_table_with_counts_and_dates() {
-        let output =
-            ToolOutput::ProjectVersions(vec![sample_project_version("3.18.0")], None);
+        let output = ToolOutput::ProjectVersions(vec![sample_project_version("3.18.0")], None);
         let result = format_output(output, None, None, None).unwrap().content;
         assert!(result.contains("# Project Versions (1)"), "{result}");
         assert!(result.contains("| Name |"), "{result}");
