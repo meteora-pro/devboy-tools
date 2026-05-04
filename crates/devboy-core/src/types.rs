@@ -736,6 +736,88 @@ pub struct GetUsersOptions {
 }
 
 // =============================================================================
+// Project Versions (Jira fixVersion / release marker)
+// =============================================================================
+
+/// A project-scoped release marker (Jira "version" / `fixVersion`).
+///
+/// Provider-agnostic abstraction over the Jira Versions API; other
+/// providers (GitLab milestones, GitHub releases) could implement the
+/// same surface in the future. Carries enough fields up-front to avoid
+/// per-id follow-up calls (Paper 3 — Context Enrichment Hypothesis).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ProjectVersion {
+    /// Provider-native identifier (Jira: numeric id as string).
+    pub id: String,
+    /// Project key this version belongs to (e.g. `"PROJ"`).
+    pub project: String,
+    /// Human-readable version name (e.g. `"3.18.0"`).
+    pub name: String,
+    /// Release notes / description.
+    pub description: Option<String>,
+    /// Planned start date (ISO 8601 date, no time).
+    pub start_date: Option<String>,
+    /// Planned or actual release date (ISO 8601 date, no time).
+    pub release_date: Option<String>,
+    /// Whether the version has been released.
+    pub released: bool,
+    /// Whether the version has been archived.
+    pub archived: bool,
+    /// Provider-computed flag — true when `release_date` is in the past
+    /// and the version is still unreleased. Optional because the
+    /// provider may not return it.
+    pub overdue: Option<bool>,
+    /// Number of issues with this `fixVersion` (when expanded).
+    pub issue_count: Option<u32>,
+    /// Source provider name (e.g. `"jira"`).
+    pub source: String,
+}
+
+/// Filters / pagination for `IssueProvider::list_project_versions`.
+#[derive(Debug, Clone, Default)]
+pub struct ListProjectVersionsParams {
+    /// Project key to scope the query (required).
+    pub project: String,
+    /// `Some(true)` → only released; `Some(false)` → only unreleased;
+    /// `None` → both.
+    pub released: Option<bool>,
+    /// `Some(true)` → only archived; `Some(false)` → only non-archived;
+    /// `None` → both. Tool layer defaults this to `Some(false)` to
+    /// hide archival noise.
+    pub archived: Option<bool>,
+    /// Maximum results to return after filtering. Tool layer defaults to 20.
+    pub limit: Option<u32>,
+    /// Whether to fetch per-version `issue_count` (extra round-trip
+    /// or `?expand=issuesstatus` on Cloud).
+    pub include_issue_count: bool,
+}
+
+/// Input to `IssueProvider::upsert_project_version`.
+///
+/// Resolves `(project, name)` → existing version id. If found, the
+/// provider issues a partial update preserving any fields not
+/// explicitly set here (Optional means "don't touch"). If not found,
+/// the version is created.
+#[derive(Debug, Clone, Default)]
+pub struct UpsertProjectVersionInput {
+    /// Project key (required).
+    pub project: String,
+    /// Version name — used both as the lookup key and as the value
+    /// when creating (required).
+    pub name: String,
+    /// Release notes / description.
+    pub description: Option<String>,
+    /// Planned start date (ISO 8601 date).
+    pub start_date: Option<String>,
+    /// Planned or actual release date (ISO 8601 date).
+    pub release_date: Option<String>,
+    /// Mark released / unreleased.
+    pub released: Option<bool>,
+    /// Archive / unarchive.
+    pub archived: Option<bool>,
+}
+
+// =============================================================================
 // Releases
 // =============================================================================
 

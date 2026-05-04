@@ -20,23 +20,24 @@ use devboy_core::{
     AddStructureRowsInput, AssetCapabilities, AssetMeta, Comment, ContextCapabilities,
     CreateIssueInput, CreateStructureInput, Error, ForestModifyResult, GetForestOptions,
     GetStructureValuesInput, GetUsersOptions, Issue, IssueFilter, IssueLink, IssueProvider,
-    IssueRelations, IssueStatus, MergeRequestProvider, MoveStructureRowsInput, PipelineProvider,
-    Provider, ProviderResult, Result, SaveStructureViewInput, Structure, StructureColumnValue,
-    StructureForest, StructureNode, StructureRowValues, StructureValues, StructureView,
-    StructureViewColumn, UpdateIssueInput, User,
+    IssueRelations, IssueStatus, ListProjectVersionsParams, MergeRequestProvider,
+    MoveStructureRowsInput, PipelineProvider, ProjectVersion, Provider, ProviderResult, Result,
+    SaveStructureViewInput, Structure, StructureColumnValue, StructureForest, StructureNode,
+    StructureRowValues, StructureValues, StructureView, StructureViewColumn, UpdateIssueInput,
+    UpsertProjectVersionInput, User,
 };
 use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, warn};
 
 use crate::types::{
     AddCommentPayload, CreateIssueFields, CreateIssueLinkPayload, CreateIssuePayload,
-    CreateIssueResponse, IssueKeyRef, IssueLinkTypeName, IssueType, JiraAttachment,
-    JiraCloudSearchResponse, JiraComment, JiraCommentsResponse, JiraForestModifyResponse,
-    JiraForestResponse, JiraIssue, JiraIssueTypeStatuses, JiraPriority, JiraProjectStatus,
-    JiraSearchResponse, JiraStatus, JiraStructure, JiraStructureListResponse,
+    CreateIssueResponse, CreateVersionPayload, IssueKeyRef, IssueLinkTypeName, IssueType,
+    JiraAttachment, JiraCloudSearchResponse, JiraComment, JiraCommentsResponse,
+    JiraForestModifyResponse, JiraForestResponse, JiraIssue, JiraIssueTypeStatuses, JiraPriority,
+    JiraProjectStatus, JiraSearchResponse, JiraStatus, JiraStructure, JiraStructureListResponse,
     JiraStructureValuesResponse, JiraStructureView, JiraStructureViewListResponse, JiraTransition,
-    JiraTransitionsResponse, JiraUser, PriorityName, ProjectKey, TransitionId, TransitionPayload,
-    UpdateIssueFields, UpdateIssuePayload,
+    JiraTransitionsResponse, JiraUser, JiraVersionDto, PriorityName, ProjectKey, TransitionId,
+    TransitionPayload, UpdateIssueFields, UpdateIssuePayload, UpdateVersionPayload,
 };
 
 /// Jira deployment flavor.
@@ -244,6 +245,28 @@ impl JiraClient {
         }
 
         Ok(())
+    }
+
+    /// Make an authenticated PUT request that parses a JSON response body.
+    ///
+    /// Jira's `PUT /version/{id}` (issue #238) — unlike `PUT /issue/{key}` —
+    /// returns the updated entity, so we need a typed variant alongside the
+    /// `put` helper that discards the body.
+    async fn put_with_response<T: serde::de::DeserializeOwned, B: serde::Serialize>(
+        &self,
+        url: &str,
+        body: &B,
+    ) -> Result<T> {
+        debug!(url = url, "Jira PUT request (typed response)");
+
+        let response = self
+            .request(reqwest::Method::PUT, url)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        self.handle_response(response).await
     }
 
     /// Make an authenticated PUT request (Jira PUT returns 204 No Content).
@@ -2560,8 +2583,151 @@ impl IssueProvider for JiraClient {
             .await
     }
 
+    // --- Project versions / fixVersion (issue #238) --------------------
+
+    async fn list_project_versions(
+        &self,
+        params: ListProjectVersionsParams,
+    ) -> Result<ProviderResult<ProjectVersion>> {
+        let project_key = if params.project.is_empty() {
+            self.project_key.clone()
+        } else {
+            params.project
+        };
+
+        // Both Cloud v3 and Server/DC v2 expose
+        // `GET /project/{key}/versions` as an unpaginated list of all
+        // versions. The paginated `/version/page` endpoint exists on
+        // Cloud only and isn't worth the flavor split — projects with
+        // O(10²) versions still fit in one round-trip; we trim the
+        // response in-memory below to honour Paper 1's 8k-token cap.
+        let mut url = format!("{}/project/{}/versions", self.base_url, project_key);
+        if params.include_issue_count {
+            url.push_str("?expand=issuesstatus");
+        }
+
+        let dtos: Vec<JiraVersionDto> = self.get(&url).await?;
+
+        let mut versions: Vec<ProjectVersion> = dtos
+            .into_iter()
+            .map(|dto| jira_version_to_project_version(dto, &project_key))
+            .collect();
+
+        if let Some(want_released) = params.released {
+            versions.retain(|v| v.released == want_released);
+        }
+        if let Some(want_archived) = params.archived {
+            versions.retain(|v| v.archived == want_archived);
+        }
+
+        // Order: most recent release_date first, undated last, ties broken
+        // by name desc so the latest semver-style "X.Y.Z" surfaces first.
+        versions.sort_by(|a, b| match (&b.release_date, &a.release_date) {
+            (Some(b_d), Some(a_d)) => b_d.cmp(a_d).then_with(|| b.name.cmp(&a.name)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => b.name.cmp(&a.name),
+        });
+
+        if let Some(limit) = params.limit {
+            versions.truncate(limit as usize);
+        }
+
+        Ok(versions.into())
+    }
+
+    async fn upsert_project_version(
+        &self,
+        input: UpsertProjectVersionInput,
+    ) -> Result<ProjectVersion> {
+        if input.name.trim().is_empty() {
+            return Err(Error::InvalidData(
+                "upsert_project_version: name must not be empty".into(),
+            ));
+        }
+        let project_key = if input.project.is_empty() {
+            self.project_key.clone()
+        } else {
+            input.project.clone()
+        };
+
+        // Resolve `(project, name)` → existing id. We list all versions
+        // in the project rather than filtering server-side — Jira has no
+        // exact-name lookup, and a single project rarely has more than a
+        // few hundred versions.
+        let list_url = format!("{}/project/{}/versions", self.base_url, project_key);
+        let dtos: Vec<JiraVersionDto> = self.get(&list_url).await?;
+        let existing = dtos.into_iter().find(|d| d.name == input.name);
+
+        let dto: JiraVersionDto = if let Some(existing) = existing {
+            // Update path — partial. `name` is the lookup key so we
+            // deliberately don't expose renaming via this entry point.
+            let payload = UpdateVersionPayload {
+                name: None,
+                description: input.description,
+                start_date: input.start_date,
+                release_date: input.release_date,
+                released: input.released,
+                archived: input.archived,
+            };
+            let url = format!("{}/version/{}", self.base_url, existing.id);
+            self.put_with_response(&url, &payload).await?
+        } else {
+            // Create path. Pass project key as `project` — accepted by
+            // both Cloud v3 and Server/DC v2 payloads, which lets us
+            // skip a project-id lookup.
+            let payload = CreateVersionPayload {
+                name: input.name.clone(),
+                project: Some(project_key.clone()),
+                project_id: None,
+                description: input.description,
+                start_date: input.start_date,
+                release_date: input.release_date,
+                released: input.released,
+                archived: input.archived,
+            };
+            let url = format!("{}/version", self.base_url);
+            self.post(&url, &payload).await?
+        };
+
+        Ok(jira_version_to_project_version(dto, &project_key))
+    }
+
     fn provider_name(&self) -> &'static str {
         "jira"
+    }
+}
+
+/// Map the raw Jira version DTO to the provider-agnostic [`ProjectVersion`].
+///
+/// `project_fallback` covers DTOs returned by `POST /version` on some
+/// Server/DC builds where the `project` key is omitted — we fall back to
+/// the key the caller addressed.
+fn jira_version_to_project_version(dto: JiraVersionDto, project_fallback: &str) -> ProjectVersion {
+    // Cloud `?expand=issuesstatus` gives a per-category breakdown we sum
+    // for total. Server/DC only inlines `issuesUnresolvedCount` — a
+    // proper total there would need a follow-up
+    // `/version/{id}/relatedIssueCounts` call, deferred for now.
+    let issue_count = dto
+        .issues_status_for_fix_version
+        .as_ref()
+        .map(|c| c.total())
+        .or(dto.issues_unresolved_count);
+
+    ProjectVersion {
+        id: dto.id,
+        project: dto
+            .project
+            .unwrap_or_else(|| project_fallback.to_string()),
+        name: dto.name,
+        description: dto.description.filter(|d| !d.is_empty()),
+        start_date: dto.start_date.filter(|d| !d.is_empty()),
+        release_date: dto.release_date.filter(|d| !d.is_empty()),
+        released: dto.released,
+        archived: dto.archived,
+        overdue: dto.overdue,
+        issue_count,
+        source: "jira".to_string(),
     }
 }
 
