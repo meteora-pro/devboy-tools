@@ -287,6 +287,14 @@ pub struct CreateIssueFields {
     /// Components (issue #197).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub components: Option<Vec<ComponentRef>>,
+    /// Parent issue reference. Required by Jira when `issuetype` is a
+    /// sub-task or any "is_subtask" hierarchical type — the API rejects
+    /// the request with a 400 otherwise (issue #214). Serialised as
+    /// `{ "key": "PROJ-1" }`, matching Jira's `fields.parent` shape.
+    /// Uses [`IssueKeyRef`] (not [`ProjectKey`]) because the value is an
+    /// **issue** key (e.g. `PROJ-1`), not a project key (e.g. `PROJ`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<IssueKeyRef>,
 }
 
 /// Component reference used in create/update issue payloads (issue #197).
