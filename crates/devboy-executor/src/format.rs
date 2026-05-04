@@ -605,10 +605,16 @@ fn format_project_versions(
     for v in versions {
         let released = if v.released { "yes" } else { "no" };
         let release_date = v.release_date.as_deref().unwrap_or("-");
-        let issue_count = v
-            .issue_count
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "-".to_string());
+        // Cell intentionally surfaces both numbers when both exist so a
+        // mixed-flavor result set isn't silently misaligned (Codex review
+        // on PR #239). On Cloud only `total` is set; on Server/DC only
+        // `unresolved` — the marker after the number disambiguates.
+        let issue_count = match (v.issue_count, v.unresolved_issue_count) {
+            (Some(t), Some(u)) => format!("{t} ({u} open)"),
+            (Some(t), None) => t.to_string(),
+            (None, Some(u)) => format!("{u} open"),
+            (None, None) => "-".to_string(),
+        };
         let description = match v.description.as_deref() {
             None | Some("") => "-".to_string(),
             Some(d) => escape_table_cell(&truncate_for_table(d, 120)),
@@ -627,13 +633,24 @@ fn format_project_versions(
 
     if total > shown {
         let omitted = total - shown;
+        // The hard upper bound on `limit` is 200 (set in tools.rs); never
+        // suggest a value above that — the caller would just get a 400
+        // back. `archived: "all"` is the right enum value to *include*
+        // archived versions; `archived: true` would *only* return
+        // archived ones (Codex review on PR #239).
+        let suggested_limit = total.min(MAX_VERSION_LIMIT);
         output.push_str(&format!(
-            "\n[+{omitted} more — call with `limit: {total}` (or `archived: true` to include archived versions)]\n"
+            "\n[+{omitted} more — call with `limit: {suggested_limit}` (or `archived: \"all\"` to include archived versions)]\n"
         ));
     }
 
     output
 }
+
+/// Maximum value the `list_project_versions` schema accepts for `limit`.
+/// Mirrors the `Some(200.0)` cap declared in
+/// `crates/devboy-executor/src/tools.rs`.
+const MAX_VERSION_LIMIT: u32 = 200;
 
 /// Escape a string for safe inclusion in a markdown-table cell:
 /// `|` becomes `\|` (would otherwise start a new column), and the
@@ -672,6 +689,9 @@ fn format_single_project_version(v: &devboy_core::ProjectVersion) -> String {
     }
     if let Some(count) = v.issue_count {
         output.push_str(&format!("- **issue_count:** {count}\n"));
+    }
+    if let Some(count) = v.unresolved_issue_count {
+        output.push_str(&format!("- **unresolved_issue_count:** {count}\n"));
     }
     if let Some(ref desc) = v.description.as_deref().filter(|d| !d.is_empty()) {
         output.push_str(&format!("\n## Description\n\n{desc}\n"));
@@ -1583,6 +1603,7 @@ mod tests {
             archived: false,
             overdue: Some(false),
             issue_count: Some(7),
+            unresolved_issue_count: None,
             source: "jira".into(),
         }
     }
@@ -1697,6 +1718,71 @@ mod tests {
         assert!(
             result.contains("`limit: 35`"),
             "expected limit suggestion: {result}"
+        );
+    }
+
+    #[test]
+    fn format_project_versions_hint_caps_limit_at_max_and_uses_archived_all() {
+        // Codex review on PR #239 — `limit` is capped at 200 by the
+        // schema and "include archived" is `archived: "all"` (the union),
+        // not `archived: true` (which means "archived only").
+        let pagination = devboy_core::Pagination {
+            offset: 0,
+            limit: 1,
+            total: Some(5_000),
+            has_more: true,
+            next_cursor: None,
+        };
+        let v = sample_project_version("3.18.0");
+        let output = ToolOutput::ProjectVersions(
+            vec![v],
+            Some(crate::output::ResultMeta {
+                pagination: Some(pagination),
+                sort_info: None,
+            }),
+        );
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(
+            result.contains("`limit: 200`"),
+            "limit suggestion should clamp at 200, got: {result}"
+        );
+        assert!(
+            result.contains("`archived: \"all\"`"),
+            "expected archived hint to suggest 'all', got: {result}"
+        );
+        assert!(
+            !result.contains("`archived: true`"),
+            "must not suggest archived: true (means 'archived only'), got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_project_versions_renders_unresolved_only_cell() {
+        // Codex review #3 on PR #239 — Server/DC sets only
+        // unresolved_issue_count; the table cell must still convey that
+        // it's an unresolved count (not a misleading total).
+        let mut v = sample_project_version("3.18.0");
+        v.issue_count = None;
+        v.unresolved_issue_count = Some(4);
+        let output = ToolOutput::ProjectVersions(vec![v], None);
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(
+            result.contains("4 open"),
+            "expected '4 open' marker, got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_single_project_version_renders_unresolved_count() {
+        let mut v = sample_project_version("3.18.0");
+        v.issue_count = Some(20);
+        v.unresolved_issue_count = Some(7);
+        let output = ToolOutput::SingleProjectVersion(Box::new(v));
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(result.contains("- **issue_count:** 20"), "{result}");
+        assert!(
+            result.contains("- **unresolved_issue_count:** 7"),
+            "{result}"
         );
     }
 
