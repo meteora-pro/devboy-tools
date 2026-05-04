@@ -6,6 +6,33 @@
 //! Uses `temp_env` for safe env var manipulation (thread-safe, automatic cleanup).
 
 use devboy_storage::{ChainStore, CredentialStore, EnvVarStore};
+use secrecy::{ExposeSecret, SecretString};
+
+/// Compare an `Option<SecretString>` from a credential store against an
+/// expected plaintext. Pre-existing tests were written against `Option<String>`
+/// before the SecretString migration; the helper keeps the assertions
+/// readable without leaking the inner value elsewhere.
+fn assert_secret_eq(actual: Option<SecretString>, expected: Option<&str>) {
+    match (actual, expected) {
+        (Some(secret), Some(want)) => {
+            assert_eq!(
+                secret.expose_secret(),
+                want,
+                "secret value did not match expected plaintext"
+            );
+        }
+        (None, None) => {}
+        (got, want) => panic!(
+            "expected Option<SecretString> presence={:?}, got presence={}",
+            want.is_some(),
+            got.is_some()
+        ),
+    }
+}
+
+fn secret(s: &str) -> SecretString {
+    SecretString::from(s.to_string())
+}
 
 // =============================================================================
 // Context Token Resolution Tests
@@ -19,7 +46,7 @@ fn test_context_github_token_resolution() {
         || {
             let store = EnvVarStore::new();
             let result = store.get("contexts.integ-prod.github.token").unwrap();
-            assert_eq!(result, Some("ghp_prod_token".to_string()));
+            assert_secret_eq(result, Some("ghp_prod_token"));
         },
     );
 }
@@ -32,7 +59,7 @@ fn test_context_gitlab_token_resolution() {
         || {
             let store = EnvVarStore::new();
             let result = store.get("contexts.integ-staging.gitlab.token").unwrap();
-            assert_eq!(result, Some("glpat_staging".to_string()));
+            assert_secret_eq(result, Some("glpat_staging"));
         },
     );
 }
@@ -45,7 +72,7 @@ fn test_context_clickup_token_resolution() {
         || {
             let store = EnvVarStore::new();
             let result = store.get("contexts.integ-tasks.clickup.token").unwrap();
-            assert_eq!(result, Some("pk_tasks_token".to_string()));
+            assert_secret_eq(result, Some("pk_tasks_token"));
         },
     );
 }
@@ -58,7 +85,7 @@ fn test_context_jira_token_resolution() {
         || {
             let store = EnvVarStore::new();
             let result = store.get("contexts.integ-jira.jira.token").unwrap();
-            assert_eq!(result, Some("jira_token_123".to_string()));
+            assert_secret_eq(result, Some("jira_token_123"));
         },
     );
 }
@@ -75,7 +102,7 @@ fn test_context_with_underscores_in_name() {
         || {
             let store = EnvVarStore::new();
             let result = store.get("contexts.my-cool-project.github.token").unwrap();
-            assert_eq!(result, Some("ghp_cool_project".to_string()));
+            assert_secret_eq(result, Some("ghp_cool_project"));
         },
     );
 }
@@ -88,7 +115,7 @@ fn test_context_single_word_name() {
         || {
             let store = EnvVarStore::new();
             let result = store.get("contexts.prod.github.token").unwrap();
-            assert_eq!(result, Some("ghp_single_word".to_string()));
+            assert_secret_eq(result, Some("ghp_single_word"));
         },
     );
 }
@@ -110,9 +137,9 @@ fn test_context_specific_token_over_global() {
         || {
             let chain = ChainStore::ci_chain();
             let context_result = chain.get("contexts.integ-prio.github.token").unwrap();
-            assert_eq!(context_result, Some("ghp_context_specific".to_string()));
+            assert_secret_eq(context_result, Some("ghp_context_specific"));
             let global_result = chain.get("github.token").unwrap();
-            assert_eq!(global_result, Some("ghp_global".to_string()));
+            assert_secret_eq(global_result, Some("ghp_global"));
         },
     );
 }
@@ -127,9 +154,9 @@ fn test_fallback_to_global_token_when_no_context_specific() {
             let context_result = chain
                 .get("contexts.nonexistent.integ-fallback.github.token")
                 .unwrap();
-            assert_eq!(context_result, None);
+            assert_secret_eq(context_result, None);
             let global_result = chain.get("integ-fallback.github.token").unwrap();
-            assert_eq!(global_result, Some("ghp_global_only".to_string()));
+            assert_secret_eq(global_result, Some("ghp_global_only"));
         },
     );
 }
@@ -157,17 +184,17 @@ fn test_multiple_providers_in_context() {
         ],
         || {
             let store = EnvVarStore::new();
-            assert_eq!(
+            assert_secret_eq(
                 store.get("contexts.integ-multi.github.token").unwrap(),
-                Some("ghp_multi_context".to_string())
+                Some("ghp_multi_context"),
             );
-            assert_eq!(
+            assert_secret_eq(
                 store.get("contexts.integ-multi.gitlab.token").unwrap(),
-                Some("glpat_multi_context".to_string())
+                Some("glpat_multi_context"),
             );
-            assert_eq!(
+            assert_secret_eq(
                 store.get("contexts.integ-multi.clickup.token").unwrap(),
-                Some("pk_multi_context".to_string())
+                Some("pk_multi_context"),
             );
         },
     );
@@ -196,17 +223,17 @@ fn test_multiple_contexts_isolation() {
         ],
         || {
             let store = EnvVarStore::new();
-            assert_eq!(
+            assert_secret_eq(
                 store.get("contexts.integ-ctx-a.github.token").unwrap(),
-                Some("ghp_context_a".to_string())
+                Some("ghp_context_a"),
             );
-            assert_eq!(
+            assert_secret_eq(
                 store.get("contexts.integ-ctx-b.github.token").unwrap(),
-                Some("ghp_context_b".to_string())
+                Some("ghp_context_b"),
             );
-            assert_eq!(
+            assert_secret_eq(
                 store.get("contexts.integ-ctx-c.github.token").unwrap(),
-                Some("ghp_context_c".to_string())
+                Some("ghp_context_c"),
             );
         },
     );
@@ -224,7 +251,7 @@ fn test_ci_chain_context_tokens() {
         || {
             let chain = ChainStore::ci_chain();
             let result = chain.get("contexts.integ-ci.github.token").unwrap();
-            assert_eq!(result, Some("ghp_ci_context".to_string()));
+            assert_secret_eq(result, Some("ghp_ci_context"));
         },
     );
 }
@@ -233,10 +260,10 @@ fn test_ci_chain_context_tokens() {
 fn test_ci_chain_write_to_memory() {
     let chain = ChainStore::ci_chain();
     chain
-        .store("ci.context.test.key", "test_value")
+        .store("ci.context.test.key", &secret("test_value"))
         .expect("Should be able to write in CI chain");
     let result = chain.get("ci.context.test.key").unwrap();
-    assert_eq!(result, Some("test_value".to_string()));
+    assert_secret_eq(result, Some("test_value"));
 }
 
 // =============================================================================
@@ -251,7 +278,7 @@ fn test_double_underscore_in_env_var() {
         || {
             let store = EnvVarStore::new();
             let result = store.get("contexts..github.token").unwrap();
-            assert_eq!(result, Some("double_underscore_value".to_string()));
+            assert_secret_eq(result, Some("double_underscore_value"));
         },
     );
 }
@@ -264,7 +291,7 @@ fn test_provider_name_in_context_name() {
         || {
             let store = EnvVarStore::new();
             let result = store.get("contexts.my-github-app.github.token").unwrap();
-            assert_eq!(result, Some("ghp_github_in_name".to_string()));
+            assert_secret_eq(result, Some("ghp_github_in_name"));
         },
     );
 }
@@ -275,7 +302,7 @@ fn test_nonexistent_context_returns_none() {
     let result = store
         .get("contexts.completely-nonexistent-ctx-12345.github.token")
         .unwrap();
-    assert_eq!(result, None);
+    assert_secret_eq(result, None);
 }
 
 // =============================================================================
@@ -297,13 +324,13 @@ fn test_scenario_docker_deployment() {
         ],
         || {
             let chain = ChainStore::ci_chain();
-            assert_eq!(
+            assert_secret_eq(
                 chain.get("contexts.integ-docker.github.token").unwrap(),
-                Some("ghp_docker".to_string())
+                Some("ghp_docker"),
             );
-            assert_eq!(
+            assert_secret_eq(
                 chain.get("contexts.integ-docker.gitlab.token").unwrap(),
-                Some("glpat_docker".to_string())
+                Some("glpat_docker"),
             );
         },
     );
@@ -324,15 +351,15 @@ fn test_scenario_kubernetes_secrets() {
         ],
         || {
             let chain = ChainStore::ci_chain();
-            assert_eq!(
+            assert_secret_eq(
                 chain.get("contexts.integ-k8s-prod.github.token").unwrap(),
-                Some("ghp_k8s".to_string())
+                Some("ghp_k8s"),
             );
-            assert_eq!(
+            assert_secret_eq(
                 chain
                     .get("contexts.integ-k8s-staging.github.token")
                     .unwrap(),
-                Some("ghp_k8s_staging".to_string())
+                Some("ghp_k8s_staging"),
             );
         },
     );
@@ -357,17 +384,17 @@ fn test_scenario_github_actions_matrix() {
         ],
         || {
             let chain = ChainStore::ci_chain();
-            assert_eq!(
+            assert_secret_eq(
                 chain.get("contexts.integ-gha-node16.github.token").unwrap(),
-                Some("ghp_node16".to_string())
+                Some("ghp_node16"),
             );
-            assert_eq!(
+            assert_secret_eq(
                 chain.get("contexts.integ-gha-node18.github.token").unwrap(),
-                Some("ghp_node18".to_string())
+                Some("ghp_node18"),
             );
-            assert_eq!(
+            assert_secret_eq(
                 chain.get("contexts.integ-gha-node20.github.token").unwrap(),
-                Some("ghp_node20".to_string())
+                Some("ghp_node20"),
             );
         },
     );

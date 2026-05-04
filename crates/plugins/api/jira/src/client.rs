@@ -25,6 +25,7 @@ use devboy_core::{
     StructureForest, StructureNode, StructureRowValues, StructureValues, StructureView,
     StructureViewColumn, UpdateIssueInput, User,
 };
+use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, warn};
 
 use crate::types::{
@@ -56,7 +57,7 @@ pub struct JiraClient {
     instance_url: String,
     project_key: String,
     email: String,
-    token: String,
+    token: SecretString,
     flavor: JiraFlavor,
     proxy_headers: Option<std::collections::HashMap<String, String>>,
     client: reqwest::Client,
@@ -68,7 +69,7 @@ impl JiraClient {
         url: impl Into<String>,
         project_key: impl Into<String>,
         email: impl Into<String>,
-        token: impl Into<String>,
+        token: SecretString,
     ) -> Self {
         let url = url.into();
         let flavor = detect_flavor(&url);
@@ -79,7 +80,7 @@ impl JiraClient {
             instance_url: instance,
             project_key: project_key.into(),
             email: email.into(),
-            token: token.into(),
+            token,
             flavor,
             proxy_headers: None,
             client: reqwest::Client::builder()
@@ -124,7 +125,7 @@ impl JiraClient {
         base_url: impl Into<String>,
         project_key: impl Into<String>,
         email: impl Into<String>,
-        token: impl Into<String>,
+        token: SecretString,
         flavor: bool, // true = Cloud, false = SelfHosted
     ) -> Self {
         let url = base_url.into().trim_end_matches('/').to_string();
@@ -133,7 +134,7 @@ impl JiraClient {
             base_url: url,
             project_key: project_key.into(),
             email: email.into(),
-            token: token.into(),
+            token,
             flavor: if flavor {
                 JiraFlavor::Cloud
             } else {
@@ -170,15 +171,17 @@ impl JiraClient {
         } else {
             builder = match self.flavor {
                 JiraFlavor::Cloud => {
-                    let credentials = base64_encode(&format!("{}:{}", self.email, self.token));
+                    let token_value = self.token.expose_secret();
+                    let credentials = base64_encode(&format!("{}:{}", self.email, token_value));
                     builder.header("Authorization", format!("Basic {}", credentials))
                 }
                 JiraFlavor::SelfHosted => {
-                    if self.token.contains(':') {
-                        let credentials = base64_encode(&self.token);
+                    let token_value = self.token.expose_secret();
+                    if token_value.contains(':') {
+                        let credentials = base64_encode(token_value);
                         builder.header("Authorization", format!("Basic {}", credentials))
                     } else {
-                        builder.header("Authorization", format!("Bearer {}", self.token))
+                        builder.header("Authorization", format!("Bearer {}", token_value))
                     }
                 }
             };
@@ -2627,6 +2630,10 @@ mod tests {
     use crate::types::*;
     use devboy_core::{CreateCommentInput, MrFilter};
 
+    fn token(s: &str) -> SecretString {
+        SecretString::from(s.to_string())
+    }
+
     // =========================================================================
     // Structure error mapping tests
     // =========================================================================
@@ -2847,7 +2854,7 @@ mod tests {
             "http://localhost",
             "PROJ",
             "user@example.com",
-            "api-token-123",
+            token("api-token-123"),
             true,
         );
         // Cloud uses Basic auth with email:token
@@ -2869,7 +2876,7 @@ mod tests {
             "http://localhost",
             "PROJ",
             "user@example.com",
-            "personal-access-token",
+            token("personal-access-token"),
             false,
         );
         let req = client.request(reqwest::Method::GET, "http://localhost/test");
@@ -2889,7 +2896,7 @@ mod tests {
             "http://localhost",
             "PROJ",
             "user@example.com",
-            "user:password",
+            token("user:password"),
             false,
         );
         let expected = base64_encode("user:password");
@@ -3301,7 +3308,7 @@ mod tests {
             "http://localhost",
             "PROJ",
             "user@example.com",
-            "token",
+            token("token"),
             false,
         );
         assert_eq!(IssueProvider::provider_name(&client), "jira");
@@ -3386,12 +3393,16 @@ mod tests {
         use super::*;
         use httpmock::prelude::*;
 
+        fn token(s: &str) -> SecretString {
+            SecretString::from(s.to_string())
+        }
+
         fn create_self_hosted_client(server: &MockServer) -> JiraClient {
             JiraClient::with_base_url(
                 server.base_url(),
                 "PROJ",
                 "user@example.com",
-                "pat-token",
+                token("pat-token"),
                 false,
             )
         }
@@ -3401,7 +3412,7 @@ mod tests {
                 server.base_url(),
                 "PROJ",
                 "user@example.com",
-                "api-token",
+                token("api-token"),
                 true,
             )
         }
@@ -4831,7 +4842,7 @@ mod tests {
                 "http://localhost",
                 "PROJ",
                 "user@example.com",
-                "token",
+                token("token"),
                 false,
             );
 
@@ -5978,6 +5989,10 @@ mod tests {
         use devboy_core::StructureRowItem;
         use httpmock::prelude::*;
 
+        fn token(s: &str) -> SecretString {
+            SecretString::from(s.to_string())
+        }
+
         fn create_client(server: &MockServer) -> JiraClient {
             // with_base_url sets base_url WITHOUT /rest/api/N,
             // but Structure uses instance_url. Adjust:
@@ -5987,7 +6002,7 @@ mod tests {
                 server.base_url(),
                 "PROJ",
                 "user@example.com",
-                "token",
+                token("token"),
                 false,
             )
         }
@@ -6530,12 +6545,16 @@ mod tests {
         use super::*;
         use httpmock::prelude::*;
 
+        fn token(s: &str) -> SecretString {
+            SecretString::from(s.to_string())
+        }
+
         fn create_client(server: &MockServer) -> JiraClient {
             JiraClient::with_base_url(
                 server.base_url(),
                 "PROJ",
                 "user@example.com",
-                "token",
+                token("token"),
                 false,
             )
         }

@@ -159,6 +159,7 @@ mod tests {
     use super::*;
     use devboy_core::{Config, Error};
     use devboy_storage::{CredentialStore, MemoryStore};
+    use secrecy::SecretString;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -166,11 +167,11 @@ mod tests {
     struct FailingStore;
 
     impl CredentialStore for FailingStore {
-        fn store(&self, _key: &str, _value: &str) -> devboy_core::Result<()> {
+        fn store(&self, _key: &str, _value: &SecretString) -> devboy_core::Result<()> {
             Err(Error::Storage("store failed".to_string()))
         }
 
-        fn get(&self, _key: &str) -> devboy_core::Result<Option<String>> {
+        fn get(&self, _key: &str) -> devboy_core::Result<Option<SecretString>> {
             Err(Error::Storage("store unavailable".to_string()))
         }
 

@@ -35,6 +35,7 @@
 
 use devboy_core::{Error, Result};
 use keyring::Entry;
+use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, warn};
 
 pub mod cache;
@@ -52,13 +53,19 @@ pub trait CredentialStore: Send + Sync {
     /// Store a credential securely.
     ///
     /// The key should follow the convention: `{provider}.{credential_name}`
-    /// For example: `gitlab.token`, `github.token`, `jira.email`
-    fn store(&self, key: &str, value: &str) -> Result<()>;
+    /// For example: `gitlab.token`, `github.token`, `jira.email`.
+    ///
+    /// The value is taken as `&SecretString` so callers cannot accidentally
+    /// log or otherwise leak the plaintext on its way into storage.
+    fn store(&self, key: &str, value: &SecretString) -> Result<()>;
 
     /// Retrieve a stored credential.
     ///
-    /// Returns `Ok(None)` if the credential doesn't exist.
-    fn get(&self, key: &str) -> Result<Option<String>>;
+    /// Returns `Ok(None)` if the credential doesn't exist. The returned
+    /// `SecretString` redacts itself in `Debug` output and zeroizes the
+    /// buffer on drop — call `.expose_secret()` only at the boundary that
+    /// actually consumes the secret (HTTP header, etc.).
+    fn get(&self, key: &str) -> Result<Option<SecretString>>;
 
     /// Delete a stored credential.
     ///
@@ -131,7 +138,7 @@ impl Default for KeychainStore {
 }
 
 impl CredentialStore for KeychainStore {
-    fn store(&self, key: &str, value: &str) -> Result<()> {
+    fn store(&self, key: &str, value: &SecretString) -> Result<()> {
         debug!(key = key, "Storing credential in keychain");
 
         let entry = self.make_entry(key).map_err(|e| {
@@ -142,13 +149,13 @@ impl CredentialStore for KeychainStore {
         })?;
 
         entry
-            .set_password(value)
+            .set_password(value.expose_secret())
             .map_err(|e| Error::Storage(format!("Failed to store credential '{}': {}", key, e)))?;
 
         Ok(())
     }
 
-    fn get(&self, key: &str) -> Result<Option<String>> {
+    fn get(&self, key: &str) -> Result<Option<SecretString>> {
         debug!(key = key, "Retrieving credential from keychain");
 
         let entry = self.make_entry(key).map_err(|e| {
@@ -159,7 +166,7 @@ impl CredentialStore for KeychainStore {
         })?;
 
         match entry.get_password() {
-            Ok(password) => Ok(Some(password)),
+            Ok(password) => Ok(Some(SecretString::from(password))),
             Err(keyring::Error::NoEntry) => {
                 debug!(key = key, "Credential not found");
                 Ok(None)
@@ -217,11 +224,28 @@ impl CredentialStore for KeychainStore {
 
 /// In-memory credential store for testing.
 ///
-/// This store keeps credentials in memory and is suitable for unit tests
-/// where you don't want to interact with the real OS keychain.
-#[derive(Debug, Default)]
+/// This store keeps credentials in memory wrapped in [`SecretString`]
+/// (zeroize-on-drop, redacted `Debug`) for unit tests that don't want
+/// to interact with the real OS keychain. The `Debug` impl shows the
+/// key set and a count, never the values, so accidentally logging a
+/// `MemoryStore` cannot leak plaintext.
+#[derive(Default)]
 pub struct MemoryStore {
-    credentials: std::sync::RwLock<std::collections::HashMap<String, String>>,
+    credentials: std::sync::RwLock<std::collections::HashMap<String, SecretString>>,
+}
+
+impl std::fmt::Debug for MemoryStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let creds = self.credentials.read();
+        let (count, keys) = match &creds {
+            Ok(map) => (map.len(), map.keys().cloned().collect::<Vec<_>>()),
+            Err(_) => (0, vec!["<lock-poisoned>".to_string()]),
+        };
+        f.debug_struct("MemoryStore")
+            .field("credentials", &format!("<{count} redacted secret(s)>"))
+            .field("keys", &keys)
+            .finish()
+    }
 }
 
 impl MemoryStore {
@@ -230,28 +254,35 @@ impl MemoryStore {
         Self::default()
     }
 
-    /// Create a store pre-populated with credentials.
+    /// Create a store pre-populated with credentials. Accepts plaintext
+    /// `(key, value)` pairs for test ergonomics; the values are wrapped
+    /// in [`SecretString`] before storage.
     pub fn with_credentials(credentials: impl IntoIterator<Item = (String, String)>) -> Self {
         let store = Self::new();
         {
             let mut creds = store.credentials.write().unwrap();
-            creds.extend(credentials);
+            for (k, v) in credentials {
+                creds.insert(k, SecretString::from(v));
+            }
         }
         store
     }
 }
 
 impl CredentialStore for MemoryStore {
-    fn store(&self, key: &str, value: &str) -> Result<()> {
+    fn store(&self, key: &str, value: &SecretString) -> Result<()> {
         let mut creds = self
             .credentials
             .write()
             .map_err(|e| Error::Storage(format!("Lock poisoned: {}", e)))?;
-        creds.insert(key.to_string(), value.to_string());
+        // Clone the SecretString directly — no `expose_secret()` call,
+        // no extra plaintext String allocation, and the cached value
+        // keeps the same zeroize-on-drop discipline as the input.
+        creds.insert(key.to_string(), value.clone());
         Ok(())
     }
 
-    fn get(&self, key: &str) -> Result<Option<String>> {
+    fn get(&self, key: &str) -> Result<Option<SecretString>> {
         let creds = self
             .credentials
             .read()
@@ -399,19 +430,19 @@ impl Default for EnvVarStore {
 }
 
 impl CredentialStore for EnvVarStore {
-    fn store(&self, _key: &str, _value: &str) -> Result<()> {
+    fn store(&self, _key: &str, _value: &SecretString) -> Result<()> {
         Err(Error::Storage(
             "EnvVarStore is read-only. Use OS keychain or set environment variables directly."
                 .to_string(),
         ))
     }
 
-    fn get(&self, key: &str) -> Result<Option<String>> {
+    fn get(&self, key: &str) -> Result<Option<SecretString>> {
         // Try prefixed first (e.g., DEVBOY_GITHUB_TOKEN)
         let prefixed = self.prefixed_env_name(key);
         if let Ok(value) = (self.env_reader)(&prefixed) {
             debug!(key = key, env_var = %prefixed, "Found credential in environment variable");
-            return Ok(Some(value));
+            return Ok(Some(SecretString::from(value)));
         }
 
         // Fallback to unprefixed (e.g., GITHUB_TOKEN)
@@ -419,7 +450,7 @@ impl CredentialStore for EnvVarStore {
             let unprefixed = self.unprefixed_env_name(key);
             if let Ok(value) = (self.env_reader)(&unprefixed) {
                 debug!(key = key, env_var = %unprefixed, "Found credential in environment variable (unprefixed)");
-                return Ok(Some(value));
+                return Ok(Some(SecretString::from(value)));
             }
         }
 
@@ -528,7 +559,7 @@ impl std::fmt::Debug for ChainStore {
 }
 
 impl CredentialStore for ChainStore {
-    fn store(&self, key: &str, value: &str) -> Result<()> {
+    fn store(&self, key: &str, value: &SecretString) -> Result<()> {
         // Try each writable and available store in order
         let mut last_error: Option<Error> = None;
         for store in &self.stores {
@@ -547,7 +578,7 @@ impl CredentialStore for ChainStore {
         }))
     }
 
-    fn get(&self, key: &str) -> Result<Option<String>> {
+    fn get(&self, key: &str) -> Result<Option<SecretString>> {
         // Try each store in order, tracking errors
         let mut last_error: Option<Error> = None;
         for store in &self.stores {
@@ -656,16 +687,24 @@ pub fn email_key(provider: &str) -> String {
 mod tests {
     use super::*;
 
+    fn secret(s: &str) -> SecretString {
+        SecretString::from(s.to_string())
+    }
+
+    fn exposed(s: &Option<SecretString>) -> Option<&str> {
+        s.as_ref().map(|v| v.expose_secret())
+    }
+
     #[test]
     fn test_memory_store_basic() {
         let store = MemoryStore::new();
 
         // Store
-        store.store("test/key", "test-value").unwrap();
+        store.store("test/key", &secret("test-value")).unwrap();
 
         // Get
         let value = store.get("test/key").unwrap();
-        assert_eq!(value, Some("test-value".to_string()));
+        assert_eq!(exposed(&value), Some("test-value"));
 
         // Exists
         assert!(store.exists("test/key"));
@@ -674,7 +713,7 @@ mod tests {
         // Delete
         store.delete("test/key").unwrap();
         let value = store.get("test/key").unwrap();
-        assert_eq!(value, None);
+        assert!(value.is_none());
 
         // Delete non-existent (should not error)
         store.delete("nonexistent").unwrap();
@@ -688,12 +727,12 @@ mod tests {
         ]);
 
         assert_eq!(
-            store.get("gitlab/token").unwrap(),
-            Some("glpat-xxx".to_string())
+            exposed(&store.get("gitlab/token").unwrap()),
+            Some("glpat-xxx")
         );
         assert_eq!(
-            store.get("github/token").unwrap(),
-            Some("ghp-yyy".to_string())
+            exposed(&store.get("github/token").unwrap()),
+            Some("ghp-yyy")
         );
     }
 
@@ -716,7 +755,7 @@ mod tests {
         store.delete("nonexistent/key").unwrap();
 
         // Verify it's still not there
-        assert_eq!(store.get("nonexistent/key").unwrap(), None);
+        assert!(store.get("nonexistent/key").unwrap().is_none());
     }
 
     #[test]
@@ -725,7 +764,7 @@ mod tests {
 
         assert!(!store.exists("test/key"));
 
-        store.store("test/key", "value").unwrap();
+        store.store("test/key", &secret("value")).unwrap();
         assert!(store.exists("test/key"));
 
         store.delete("test/key").unwrap();
@@ -736,11 +775,11 @@ mod tests {
     fn test_memory_store_overwrite() {
         let store = MemoryStore::new();
 
-        store.store("test/key", "value1").unwrap();
-        assert_eq!(store.get("test/key").unwrap(), Some("value1".to_string()));
+        store.store("test/key", &secret("value1")).unwrap();
+        assert_eq!(exposed(&store.get("test/key").unwrap()), Some("value1"));
 
-        store.store("test/key", "value2").unwrap();
-        assert_eq!(store.get("test/key").unwrap(), Some("value2".to_string()));
+        store.store("test/key", &secret("value2")).unwrap();
+        assert_eq!(exposed(&store.get("test/key").unwrap()), Some("value2"));
     }
 
     #[test]
@@ -748,7 +787,7 @@ mod tests {
         // Test the default exists() impl from the trait
         let store = MemoryStore::new();
 
-        store.store("key1", "val1").unwrap();
+        store.store("key1", &secret("val1")).unwrap();
 
         // CredentialStore::exists uses the default impl calling get()
         assert!(CredentialStore::exists(&store, "key1"));
@@ -852,7 +891,7 @@ mod tests {
         let store = EnvVarStore::new().with_env_reader(mock_env_reader);
 
         let result = store.get("test.token").unwrap();
-        assert_eq!(result, Some("prefixed-value".to_string()));
+        assert_eq!(exposed(&result), Some("prefixed-value"));
     }
 
     #[test]
@@ -860,7 +899,7 @@ mod tests {
         let store = EnvVarStore::new().with_env_reader(mock_env_reader);
 
         let result = store.get("test.fallback.token").unwrap();
-        assert_eq!(result, Some("unprefixed-value".to_string()));
+        assert_eq!(exposed(&result), Some("unprefixed-value"));
     }
 
     #[test]
@@ -868,7 +907,7 @@ mod tests {
         let store = EnvVarStore::new().with_env_reader(mock_env_reader);
 
         let result = store.get("test.priority.token").unwrap();
-        assert_eq!(result, Some("prefixed".to_string()));
+        assert_eq!(exposed(&result), Some("prefixed"));
     }
 
     #[test]
@@ -880,7 +919,7 @@ mod tests {
         // Should NOT find it because fallback is disabled
         // (TEST_NO_FALLBACK_TOKEN exists but only as unprefixed)
         let result = store.get("test.no.fallback.token").unwrap();
-        assert_eq!(result, None);
+        assert!(result.is_none());
     }
 
     #[test]
@@ -888,7 +927,7 @@ mod tests {
         let store = EnvVarStore::new().with_env_reader(mock_env_reader);
 
         let result = store.get("nonexistent.key.that.does.not.exist").unwrap();
-        assert_eq!(result, None);
+        assert!(result.is_none());
     }
 
     #[test]
@@ -897,7 +936,7 @@ mod tests {
 
         assert!(!store.is_writable());
 
-        let store_result = store.store("test.key", "value");
+        let store_result = store.store("test.key", &secret("value"));
         assert!(store_result.is_err());
 
         let delete_result = store.delete("test.key");
@@ -946,13 +985,13 @@ mod tests {
         let chain = ChainStore::new(vec![Box::new(store1), Box::new(store2)]);
 
         // key1 should come from first store
-        assert_eq!(chain.get("key1").unwrap(), Some("value1".to_string()));
+        assert_eq!(exposed(&chain.get("key1").unwrap()), Some("value1"));
 
         // key2 should come from second store (not in first)
-        assert_eq!(chain.get("key2").unwrap(), Some("value2".to_string()));
+        assert_eq!(exposed(&chain.get("key2").unwrap()), Some("value2"));
 
         // key3 not found in either
-        assert_eq!(chain.get("key3").unwrap(), None);
+        assert!(chain.get("key3").unwrap().is_none());
     }
 
     #[test]
@@ -964,13 +1003,10 @@ mod tests {
         ]);
 
         // Should store to MemoryStore (first writable)
-        chain.store("test.key", "test-value").unwrap();
+        chain.store("test.key", &secret("test-value")).unwrap();
 
         // Should retrieve from chain
-        assert_eq!(
-            chain.get("test.key").unwrap(),
-            Some("test-value".to_string())
-        );
+        assert_eq!(exposed(&chain.get("test.key").unwrap()), Some("test-value"));
     }
 
     #[test]
@@ -978,7 +1014,7 @@ mod tests {
         // Chain with only read-only stores
         let chain = ChainStore::new(vec![Box::new(EnvVarStore::new())]);
 
-        let result = chain.store("test.key", "value");
+        let result = chain.store("test.key", &secret("value"));
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("No writable"));
     }
@@ -989,8 +1025,8 @@ mod tests {
         let store2 = MemoryStore::new();
 
         // Store in both
-        store1.store("key", "val1").unwrap();
-        store2.store("key", "val2").unwrap();
+        store1.store("key", &secret("val1")).unwrap();
+        store2.store("key", &secret("val2")).unwrap();
 
         let chain = ChainStore::new(vec![Box::new(store1), Box::new(store2)]);
 
@@ -998,7 +1034,7 @@ mod tests {
         chain.delete("key").unwrap();
 
         // Neither should have the key now
-        assert_eq!(chain.get("key").unwrap(), None);
+        assert!(chain.get("key").unwrap().is_none());
     }
 
     #[test]
@@ -1041,8 +1077,8 @@ mod tests {
 
         // Env var should win
         assert_eq!(
-            chain.get("chain.test.token").unwrap(),
-            Some("from-env".to_string())
+            exposed(&chain.get("chain.test.token").unwrap()),
+            Some("from-env")
         );
     }
 
@@ -1059,8 +1095,8 @@ mod tests {
 
         // Should fall back to memory
         assert_eq!(
-            chain.get("fallback.test.token").unwrap(),
-            Some("from-memory".to_string())
+            exposed(&chain.get("fallback.test.token").unwrap()),
+            Some("from-memory")
         );
     }
 
@@ -1094,7 +1130,7 @@ mod tests {
     fn test_wrap_with_cache_zero_ttl_is_passthrough() {
         let inner = MemoryStore::with_credentials([("k".to_string(), "v".to_string())]);
         let store = wrap_with_cache(inner, 0);
-        assert_eq!(store.get("k").unwrap().as_deref(), Some("v"));
+        assert_eq!(exposed(&store.get("k").unwrap()), Some("v"));
     }
 
     #[test]
@@ -1102,9 +1138,9 @@ mod tests {
         let inner = MemoryStore::with_credentials([("k".to_string(), "v1".to_string())]);
         let store = wrap_with_cache(inner, 60);
 
-        assert_eq!(store.get("k").unwrap().as_deref(), Some("v1"));
+        assert_eq!(exposed(&store.get("k").unwrap()), Some("v1"));
 
         // Second call returns the same value — cached or not, semantics are identical.
-        assert_eq!(store.get("k").unwrap().as_deref(), Some("v1"));
+        assert_eq!(exposed(&store.get("k").unwrap()), Some("v1"));
     }
 }

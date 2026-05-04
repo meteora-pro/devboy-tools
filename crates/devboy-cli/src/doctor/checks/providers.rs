@@ -7,6 +7,7 @@ use devboy_core::{
 };
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, USER_AGENT};
 use reqwest::{Client, Method};
+use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -432,8 +433,8 @@ async fn slack_connectivity(
     config: &SlackConfig,
     token: &str,
 ) -> Result<ConnectivityOutcome, String> {
-    let mut client =
-        devboy_slack::SlackClient::new(token).with_required_scopes(config.required_scopes.clone());
+    let mut client = devboy_slack::SlackClient::new(SecretString::from(token.to_string()))
+        .with_required_scopes(config.required_scopes.clone());
     if let Some(base_url) = &config.base_url {
         client = client.with_base_url(base_url);
     }
@@ -625,7 +626,7 @@ where
         }
     };
 
-    match connect(&provider_config, &secret.value).await {
+    match connect(&provider_config, secret.value.expose_secret()).await {
         Ok(outcome) => {
             let details = ctx.verbose.then(|| {
                 connectivity_details(provider, &active.name, &secret.key, secret.source, &outcome)
@@ -831,6 +832,7 @@ mod tests {
     use httpmock::Method::GET;
     use httpmock::MockServer;
     use reqwest::header::HeaderValue;
+    use secrecy::SecretString;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -839,11 +841,11 @@ mod tests {
     struct FailingStore;
 
     impl CredentialStore for FailingStore {
-        fn store(&self, _key: &str, _value: &str) -> devboy_core::Result<()> {
+        fn store(&self, _key: &str, _value: &SecretString) -> devboy_core::Result<()> {
             Err(Error::Storage("store failed".to_string()))
         }
 
-        fn get(&self, _key: &str) -> devboy_core::Result<Option<String>> {
+        fn get(&self, _key: &str) -> devboy_core::Result<Option<SecretString>> {
             Err(Error::Storage("provider store unavailable".to_string()))
         }
 
