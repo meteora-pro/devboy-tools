@@ -2716,9 +2716,7 @@ fn jira_version_to_project_version(dto: JiraVersionDto, project_fallback: &str) 
 
     ProjectVersion {
         id: dto.id,
-        project: dto
-            .project
-            .unwrap_or_else(|| project_fallback.to_string()),
+        project: dto.project.unwrap_or_else(|| project_fallback.to_string()),
         name: dto.name,
         description: dto.description.filter(|d| !d.is_empty()),
         start_date: dto.start_date.filter(|d| !d.is_empty()),
@@ -7011,7 +7009,10 @@ mod tests {
             assert_eq!(result.items[0].name, "2.0.0");
             assert_eq!(result.items[1].name, "1.0.0");
             assert_eq!(result.items[2].name, "0.9.0");
-            assert_eq!(result.items[1].description.as_deref(), Some("Initial release"));
+            assert_eq!(
+                result.items[1].description.as_deref(),
+                Some("Initial release")
+            );
             assert_eq!(result.items[1].source, "jira");
         }
 
@@ -7120,9 +7121,13 @@ mod tests {
             // 1) list returns no match
             server.mock(|when, then| {
                 when.method(GET).path("/project/PROJ/versions");
-                then.status(200).json_body(serde_json::json!([
-                    version_dto("99", "1.0.0", Some("2025-01-01"), true, false),
-                ]));
+                then.status(200).json_body(serde_json::json!([version_dto(
+                    "99",
+                    "1.0.0",
+                    Some("2025-01-01"),
+                    true,
+                    false
+                ),]));
             });
             // 2) POST /version creates
             server.mock(|when, then| {
@@ -7165,9 +7170,9 @@ mod tests {
             // 1) list returns match
             server.mock(|when, then| {
                 when.method(GET).path("/project/PROJ/versions");
-                then.status(200).json_body(serde_json::json!([
-                    version_dto("777", "3.18.0", None, false, false),
-                ]));
+                then.status(200).json_body(serde_json::json!([version_dto(
+                    "777", "3.18.0", None, false, false
+                ),]));
             });
             // 2) PUT /version/{id}
             server.mock(|when, then| {
@@ -7210,9 +7215,13 @@ mod tests {
             let server = MockServer::start();
             server.mock(|when, then| {
                 when.method(GET).path("/project/PROJ/versions");
-                then.status(200).json_body(serde_json::json!([
-                    version_dto("42", "2.0.0", Some("2026-01-01"), false, false),
-                ]));
+                then.status(200).json_body(serde_json::json!([version_dto(
+                    "42",
+                    "2.0.0",
+                    Some("2026-01-01"),
+                    false,
+                    false
+                ),]));
             });
             // PUT body should include description; `name`, `released`,
             // `archived`, and date fields stay out (serde skip_if = None).
