@@ -476,7 +476,7 @@ pub fn format_output(
             Ok(text_result(json, None, None))
         }
         ToolOutput::ProjectVersions(versions, _meta) => Ok(text_result(
-            format_project_versions(&versions),
+            format_project_versions(&versions, provider_pagination.as_ref()),
             provider_pagination,
             provider_sort,
         )),
@@ -577,12 +577,28 @@ fn format_statuses(statuses: &[devboy_core::IssueStatus]) -> String {
 /// denser as a table than as JSON. Truncates `description` to ~120
 /// chars (with ellipsis) — full description stays in the structured
 /// `ToolOutput::ProjectVersions` payload.
-fn format_project_versions(versions: &[devboy_core::ProjectVersion]) -> String {
+///
+/// `pagination` (when supplied) is used to emit a Paper 1 §Chunk Index
+/// hint when the underlying provider had to truncate to fit the limit
+/// — without it the renderer can't tell the LLM that more results exist.
+fn format_project_versions(
+    versions: &[devboy_core::ProjectVersion],
+    pagination: Option<&devboy_core::Pagination>,
+) -> String {
     if versions.is_empty() {
         return "No project versions found.".to_string();
     }
 
-    let mut output = format!("# Project Versions ({})\n\n", versions.len());
+    let total = pagination
+        .and_then(|p| p.total)
+        .unwrap_or(versions.len() as u32);
+    let shown = versions.len() as u32;
+    let header = if total > shown {
+        format!("# Project Versions ({} of {})\n\n", shown, total)
+    } else {
+        format!("# Project Versions ({})\n\n", shown)
+    };
+    let mut output = header;
     output.push_str("| Name | Released | Release Date | Issues | Description |\n");
     output.push_str("|---|---|---|---|---|\n");
 
@@ -595,23 +611,47 @@ fn format_project_versions(versions: &[devboy_core::ProjectVersion]) -> String {
             .unwrap_or_else(|| "-".to_string());
         let description = match v.description.as_deref() {
             None | Some("") => "-".to_string(),
-            Some(d) => truncate_for_table(d, 120),
+            Some(d) => escape_table_cell(&truncate_for_table(d, 120)),
         };
         let archived_marker = if v.archived { " (archived)" } else { "" };
         output.push_str(&format!(
             "| {}{} | {} | {} | {} | {} |\n",
-            v.name, archived_marker, released, release_date, issue_count, description
+            escape_table_cell(&v.name),
+            archived_marker,
+            released,
+            release_date,
+            issue_count,
+            description
+        ));
+    }
+
+    if total > shown {
+        let omitted = total - shown;
+        output.push_str(&format!(
+            "\n[+{omitted} more — call with `limit: {total}` (or `archived: true` to include archived versions)]\n"
         ));
     }
 
     output
 }
 
+/// Escape a string for safe inclusion in a markdown-table cell:
+/// `|` becomes `\|` (would otherwise start a new column), and the
+/// backslash itself is escaped. Newlines are out of scope here — the
+/// caller flattens them via `truncate_for_table`.
+fn escape_table_cell(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('|', "\\|")
+}
+
 /// Format a single project version as a small detail block (used by
 /// the `upsert_project_version` response so the caller can confirm what
 /// they wrote).
 fn format_single_project_version(v: &devboy_core::ProjectVersion) -> String {
-    let mut output = format!("# {} (project {})\n\n", v.name, v.project);
+    // Detail block — heading is plain markdown text (not a table cell)
+    // so pipe-escaping isn't needed here, but flatten newlines so a
+    // multi-line `name` doesn't break the heading.
+    let safe_name = v.name.replace(['\n', '\r'], " ");
+    let mut output = format!("# {} (project {})\n\n", safe_name, v.project);
     output.push_str(&format!("- **id:** {}\n", v.id));
     output.push_str(&format!(
         "- **released:** {}\n",
@@ -1597,6 +1637,101 @@ mod tests {
         assert!(result.contains("- **released:** yes"), "{result}");
         assert!(result.contains("## Description"), "{result}");
         assert!(result.contains("Initial release"), "{result}");
+    }
+
+    #[test]
+    fn format_project_versions_escapes_pipes_in_name_and_description() {
+        // Copilot review on PR #239 — release notes can carry `|` chars
+        // that would otherwise break the markdown table.
+        let mut v = sample_project_version("v|1.0");
+        v.description = Some("Highlights | breaking changes".into());
+        let output = ToolOutput::ProjectVersions(vec![v], None);
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(
+            result.contains("v\\|1.0"),
+            "name pipe not escaped: {result}"
+        );
+        assert!(
+            result.contains("Highlights \\| breaking changes"),
+            "description pipe not escaped: {result}"
+        );
+        // And the resulting table still has 5 columns, not 6 — header line
+        // is split into 6 fields (5 cells + leading/trailing empty).
+        let line = result
+            .lines()
+            .find(|l| l.starts_with("| v\\|1.0"))
+            .expect("expected table row, got: {result}");
+        let cells = line.split(" | ").count();
+        assert!(cells <= 6, "row split into too many cells: {line:?}");
+    }
+
+    #[test]
+    fn format_project_versions_emits_more_hint_when_truncated() {
+        // Copilot review #4 on PR #239 — Paper 1 §Chunk Index. When the
+        // provider trimmed the list, the renderer must surface that fact
+        // so the agent can ask for the rest.
+        let pagination = devboy_core::Pagination {
+            offset: 0,
+            limit: 1,
+            total: Some(35),
+            has_more: true,
+            next_cursor: None,
+        };
+        let v = sample_project_version("3.18.0");
+        let output = ToolOutput::ProjectVersions(
+            vec![v],
+            Some(crate::output::ResultMeta {
+                pagination: Some(pagination),
+                sort_info: None,
+            }),
+        );
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(
+            result.contains("Project Versions (1 of 35)"),
+            "expected 'X of Y' header: {result}"
+        );
+        assert!(
+            result.contains("[+34 more"),
+            "expected +N more hint: {result}"
+        );
+        assert!(
+            result.contains("`limit: 35`"),
+            "expected limit suggestion: {result}"
+        );
+    }
+
+    #[test]
+    fn format_project_versions_no_hint_when_not_truncated() {
+        let pagination = devboy_core::Pagination {
+            offset: 0,
+            limit: 5,
+            total: Some(1),
+            has_more: false,
+            next_cursor: None,
+        };
+        let v = sample_project_version("3.18.0");
+        let output = ToolOutput::ProjectVersions(
+            vec![v],
+            Some(crate::output::ResultMeta {
+                pagination: Some(pagination),
+                sort_info: None,
+            }),
+        );
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(
+            !result.contains("more"),
+            "shouldn't suggest more results: {result}"
+        );
+    }
+
+    #[test]
+    fn escape_table_cell_handles_backslash_and_pipe() {
+        assert_eq!(escape_table_cell("a|b"), "a\\|b");
+        assert_eq!(escape_table_cell("a\\b"), "a\\\\b");
+        // Backslashes are doubled *first*, so a literal `\|` doesn't
+        // collapse into an over-escaped `\\|`.
+        assert_eq!(escape_table_cell("a\\|b"), "a\\\\\\|b");
+        assert_eq!(escape_table_cell("plain"), "plain");
     }
 
     // --- JobLog without total_lines ---
