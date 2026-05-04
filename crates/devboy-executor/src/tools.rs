@@ -757,6 +757,42 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s
             },
         },
+
+        // Project versions / fixVersion targets (issue #238).
+        // Two-tool surface — list returns a rich payload so a per-id GET
+        // is unnecessary, upsert is name-keyed so the LLM never deals
+        // with numeric ids. See `docs/research/paper-3-context-enrichment.md`.
+        ToolDefinition {
+            name: "list_project_versions".into(),
+            description: "List Jira project versions / fixVersion targets (releases). Returns rich per-version payload (description, dates, released/archived flags, optional issue counts). Default filter hides archived versions and limits to 20 most recent. Pair with `search_issues(fixVersion=<name>)` for issue-level details — there is no per-id get tool by design.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("project", PropertySchema::string("Jira project key (e.g., \"PROJ\"). Defaults to the configured project."));
+                s.add_property("released", PropertySchema::string_enum(&["true", "false", "all"], "Filter by release state: \"true\" → only released, \"false\" → only unreleased, \"all\" → both (default: \"all\")."));
+                s.add_property("archived", PropertySchema::string_enum(&["true", "false", "all"], "Filter by archived flag (default: \"false\" — hides archival noise)."));
+                s.add_property("limit", PropertySchema::integer("Max versions to return (default: 20). Sorted by releaseDate desc; oldest archival entries trimmed first.", Some(1.0), Some(200.0)));
+                s.add_property("includeIssueCount", PropertySchema::boolean("Fetch issue counts per version via Cloud `?expand=issuesstatus` (default: false). Adds latency on large projects."));
+                s
+            },
+        },
+        ToolDefinition {
+            name: "upsert_project_version".into(),
+            description: "Create or partially update a Jira project version, keyed by `(project, name)`. If a version with this name exists, fields you supply are updated and unspecified fields are preserved. If not, a new version is created. Useful for writing release notes (`description`) or closing a release (`released: true`, `releaseDate`).".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("project", PropertySchema::string("Jira project key (e.g., \"PROJ\"). Defaults to the configured project."));
+                s.add_property("name", PropertySchema::string("Version name — both the lookup key and, on create, the value (e.g., \"3.18.0\")."));
+                s.add_property("description", PropertySchema::string("Release notes / version description. Markdown-style text is preserved on Server/DC; Cloud accepts plain text."));
+                s.add_property("startDate", PropertySchema::string("Planned start date as ISO 8601 calendar date (`YYYY-MM-DD`)."));
+                s.add_property("releaseDate", PropertySchema::string("Planned or actual release date (`YYYY-MM-DD`)."));
+                s.add_property("released", PropertySchema::boolean("Mark released (true) / unreleased (false). Pair with `releaseDate` when closing a release."));
+                s.add_property("archived", PropertySchema::boolean("Archive (true) / unarchive (false) the version."));
+                s.set_required("name", true);
+                s
+            },
+        },
     ]
 }
 
@@ -805,7 +841,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 49);
+        assert_eq!(tools.len(), 51);
     }
 
     #[test]
@@ -836,6 +872,8 @@ mod tests {
             "upload_asset",
             "download_asset",
             "delete_asset",
+            "list_project_versions",
+            "upsert_project_version",
         ];
         let git_repository_tools = [
             "get_merge_requests",

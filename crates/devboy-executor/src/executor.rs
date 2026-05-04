@@ -4,10 +4,11 @@ use devboy_core::{
     CreatePageParams, CreateStructureInput, Error, GetChatsParams, GetForestOptions,
     GetMessagesParams, GetPipelineInput, GetStructureValuesInput, GetUsersOptions, IssueFilter,
     IssueProvider, JobLogMode, JobLogOptions, KnowledgeBaseProvider, ListPagesParams,
-    MeetingFilter, MeetingNotesProvider, MergeRequestProvider, MessengerProvider,
-    MoveStructureRowsInput, MrFilter, PipelineProvider, Result, SaveStructureViewInput,
-    SearchKbParams, SearchMessagesParams, SendMessageParams, StructureRowItem, StructureViewColumn,
-    ToolCategory, UpdateIssueInput, UpdatePageParams,
+    ListProjectVersionsParams, MeetingFilter, MeetingNotesProvider, MergeRequestProvider,
+    MessengerProvider, MoveStructureRowsInput, MrFilter, PipelineProvider, Result,
+    SaveStructureViewInput, SearchKbParams, SearchMessagesParams, SendMessageParams,
+    StructureRowItem, StructureViewColumn, ToolCategory, UpdateIssueInput, UpdatePageParams,
+    UpsertProjectVersionInput,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -658,6 +659,10 @@ async fn dispatch_tool(
         "get_structure_views" => execute_get_structure_views(provider, args).await,
         "save_structure_view" => execute_save_structure_view(provider, args).await,
         "create_structure" => execute_create_structure(provider, args).await,
+
+        // Project versions / fixVersion (issue #238)
+        "list_project_versions" => execute_list_project_versions(provider, args).await,
+        "upsert_project_version" => execute_upsert_project_version(provider, args).await,
 
         _ => Err(Error::NotFound(format!("unknown tool: {tool}"))),
     }
@@ -2300,6 +2305,96 @@ async fn execute_create_structure(
         })
         .await?;
     Ok(ToolOutput::Structures(vec![structure], None))
+}
+
+// =============================================================================
+// Project versions / fixVersion handlers (issue #238)
+// =============================================================================
+
+/// Tri-state filter for `released` / `archived` — accepts the strings
+/// `"true"`, `"false"`, `"all"` (default `"all"` → no filter).
+fn parse_tri_filter(s: Option<&str>) -> Result<Option<bool>> {
+    match s.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        None | Some("") | Some("all") | Some("any") => Ok(None),
+        Some("true") | Some("yes") | Some("1") => Ok(Some(true)),
+        Some("false") | Some("no") | Some("0") => Ok(Some(false)),
+        Some(other) => Err(Error::InvalidData(format!(
+            "expected 'true' | 'false' | 'all', got '{other}'"
+        ))),
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ListProjectVersionsArgs {
+    project: Option<String>,
+    released: Option<String>,
+    archived: Option<String>,
+    limit: Option<u32>,
+    include_issue_count: Option<bool>,
+}
+
+async fn execute_list_project_versions(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: ListProjectVersionsArgs = parse_tool_params(args, "list_project_versions")?;
+
+    // Paper 1 / TrimTree defaults: hide archived noise + cap at 20 most
+    // recent. Callers can override either explicitly.
+    let archived = parse_tri_filter(params.archived.as_deref())?.or(Some(false));
+    let released = parse_tri_filter(params.released.as_deref())?;
+    let limit = params.limit.unwrap_or(20).min(200);
+
+    let result = provider
+        .list_project_versions(ListProjectVersionsParams {
+            project: params.project.unwrap_or_default(),
+            released,
+            archived,
+            limit: Some(limit),
+            include_issue_count: params.include_issue_count.unwrap_or(false),
+        })
+        .await?;
+
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::ProjectVersions(result.items, Some(meta)))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpsertProjectVersionArgs {
+    project: Option<String>,
+    name: String,
+    description: Option<String>,
+    start_date: Option<String>,
+    release_date: Option<String>,
+    released: Option<bool>,
+    archived: Option<bool>,
+}
+
+async fn execute_upsert_project_version(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: UpsertProjectVersionArgs = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid upsert_project_version params: {e}")))?;
+
+    let version = provider
+        .upsert_project_version(UpsertProjectVersionInput {
+            project: params.project.unwrap_or_default(),
+            name: params.name,
+            description: params.description,
+            start_date: params.start_date,
+            release_date: params.release_date,
+            released: params.released,
+            archived: params.archived,
+        })
+        .await?;
+
+    Ok(ToolOutput::SingleProjectVersion(Box::new(version)))
 }
 
 #[cfg(test)]
