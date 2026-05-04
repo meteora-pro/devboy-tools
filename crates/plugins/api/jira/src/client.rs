@@ -6929,4 +6929,341 @@ mod tests {
                 .unwrap();
         }
     }
+
+    // =====================================================================
+    // Project Versions / fixVersion — issue #238
+    // =====================================================================
+    mod versions_integration {
+        use super::*;
+        use devboy_core::{ListProjectVersionsParams, UpsertProjectVersionInput};
+        use httpmock::prelude::*;
+
+        fn token(s: &str) -> SecretString {
+            SecretString::from(s.to_string())
+        }
+
+        fn create_client(server: &MockServer) -> JiraClient {
+            JiraClient::with_base_url(
+                server.base_url(),
+                "PROJ",
+                "user@example.com",
+                token("pat-token"),
+                false,
+            )
+        }
+
+        fn version_dto(
+            id: &str,
+            name: &str,
+            release_date: Option<&str>,
+            released: bool,
+            archived: bool,
+        ) -> serde_json::Value {
+            let mut v = serde_json::json!({
+                "id": id,
+                "name": name,
+                "project": "PROJ",
+                "released": released,
+                "archived": archived,
+            });
+            if let Some(d) = release_date {
+                v["releaseDate"] = serde_json::json!(d);
+            }
+            v
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_returns_rich_payload() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    {
+                        "id": "10001",
+                        "name": "1.0.0",
+                        "project": "PROJ",
+                        "description": "Initial release",
+                        "startDate": "2025-01-01",
+                        "releaseDate": "2025-02-01",
+                        "released": true,
+                        "archived": false,
+                        "overdue": false,
+                    },
+                    version_dto("10002", "2.0.0", Some("2026-04-01"), false, false),
+                    version_dto("10003", "0.9.0", Some("2024-06-01"), true, true),
+                ]));
+            });
+
+            let client = create_client(&server);
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: None,
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(result.items.len(), 3);
+            // Sorted by release_date desc
+            assert_eq!(result.items[0].name, "2.0.0");
+            assert_eq!(result.items[1].name, "1.0.0");
+            assert_eq!(result.items[2].name, "0.9.0");
+            assert_eq!(result.items[1].description.as_deref(), Some("Initial release"));
+            assert_eq!(result.items[1].source, "jira");
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_filters_archived_and_released() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    version_dto("1", "current", Some("2026-04-01"), false, false),
+                    version_dto("2", "shipped", Some("2025-12-01"), true, false),
+                    version_dto("3", "old", Some("2024-01-01"), true, true),
+                ]));
+            });
+
+            let client = create_client(&server);
+
+            let unreleased_only = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: Some(false),
+                    archived: Some(false),
+                    limit: None,
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+            assert_eq!(unreleased_only.items.len(), 1);
+            assert_eq!(unreleased_only.items[0].name, "current");
+
+            // Re-mock for the second call (httpmock mocks are per-server,
+            // and the previous mock matches all GETs to that path).
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_applies_limit_and_keeps_most_recent() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    version_dto("1", "v1", Some("2024-01-01"), true, false),
+                    version_dto("2", "v2", Some("2025-01-01"), true, false),
+                    version_dto("3", "v3", Some("2026-01-01"), true, false),
+                    version_dto("4", "v4", Some("2026-02-01"), false, false),
+                ]));
+            });
+
+            let client = create_client(&server);
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: Some(2),
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+            assert_eq!(result.items.len(), 2);
+            assert_eq!(result.items[0].name, "v4");
+            assert_eq!(result.items[1].name, "v3");
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_passes_expand_query_when_requested() {
+            let server = MockServer::start();
+            let mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/project/PROJ/versions")
+                    .query_param("expand", "issuesstatus");
+                then.status(200).json_body(serde_json::json!([
+                    {
+                        "id": "1",
+                        "name": "v1",
+                        "released": false,
+                        "archived": false,
+                        "issuesStatusForFixVersion": {
+                            "unmapped": 0,
+                            "toDo": 5,
+                            "inProgress": 3,
+                            "done": 2
+                        }
+                    }
+                ]));
+            });
+
+            let client = create_client(&server);
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: None,
+                    include_issue_count: true,
+                })
+                .await
+                .unwrap();
+            mock.assert();
+            assert_eq!(result.items.len(), 1);
+            assert_eq!(result.items[0].issue_count, Some(10));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_creates_when_missing() {
+            let server = MockServer::start();
+            // 1) list returns no match
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    version_dto("99", "1.0.0", Some("2025-01-01"), true, false),
+                ]));
+            });
+            // 2) POST /version creates
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/version")
+                    .body_includes("\"name\":\"3.18.0\"")
+                    .body_includes("\"project\":\"PROJ\"")
+                    .body_includes("\"description\":\"Release notes draft\"");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10500",
+                    "name": "3.18.0",
+                    "project": "PROJ",
+                    "description": "Release notes draft",
+                    "released": false,
+                    "archived": false,
+                }));
+            });
+
+            let client = create_client(&server);
+            let v = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "3.18.0".into(),
+                    description: Some("Release notes draft".into()),
+                    start_date: None,
+                    release_date: None,
+                    released: None,
+                    archived: None,
+                })
+                .await
+                .unwrap();
+            assert_eq!(v.id, "10500");
+            assert_eq!(v.name, "3.18.0");
+            assert_eq!(v.description.as_deref(), Some("Release notes draft"));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_updates_when_present() {
+            let server = MockServer::start();
+            // 1) list returns match
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    version_dto("777", "3.18.0", None, false, false),
+                ]));
+            });
+            // 2) PUT /version/{id}
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/version/777")
+                    .body_includes("\"description\":\"final notes\"")
+                    .body_includes("\"released\":true")
+                    .body_includes("\"releaseDate\":\"2026-05-01\"");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "777",
+                    "name": "3.18.0",
+                    "project": "PROJ",
+                    "description": "final notes",
+                    "releaseDate": "2026-05-01",
+                    "released": true,
+                    "archived": false,
+                }));
+            });
+
+            let client = create_client(&server);
+            let v = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "3.18.0".into(),
+                    description: Some("final notes".into()),
+                    start_date: None,
+                    release_date: Some("2026-05-01".into()),
+                    released: Some(true),
+                    archived: None,
+                })
+                .await
+                .unwrap();
+            assert_eq!(v.id, "777");
+            assert!(v.released);
+            assert_eq!(v.release_date.as_deref(), Some("2026-05-01"));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_partial_update_sends_only_description() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    version_dto("42", "2.0.0", Some("2026-01-01"), false, false),
+                ]));
+            });
+            // PUT body should include description; `name`, `released`,
+            // `archived`, and date fields stay out (serde skip_if = None).
+            let put_mock = server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/version/42")
+                    .body_includes("\"description\":\"draft\"")
+                    .body_excludes("\"name\":")
+                    .body_excludes("\"released\":")
+                    .body_excludes("\"archived\":")
+                    .body_excludes("\"releaseDate\":");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "42",
+                    "name": "2.0.0",
+                    "project": "PROJ",
+                    "description": "draft",
+                    "releaseDate": "2026-01-01",
+                    "released": false,
+                    "archived": false,
+                }));
+            });
+
+            let client = create_client(&server);
+            client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "2.0.0".into(),
+                    description: Some("draft".into()),
+                    start_date: None,
+                    release_date: None,
+                    released: None,
+                    archived: None,
+                })
+                .await
+                .unwrap();
+            put_mock.assert();
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_rejects_empty_name() {
+            let server = MockServer::start();
+            let client = create_client(&server);
+            let err = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "  ".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert!(matches!(err, devboy_core::Error::InvalidData(_)));
+        }
+    }
 }

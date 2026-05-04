@@ -1529,6 +1529,77 @@ mod tests {
         assert_eq!(result, "No users found.");
     }
 
+    // --- Project versions formatting (issue #238) ---
+
+    fn sample_project_version(name: &str) -> devboy_core::ProjectVersion {
+        devboy_core::ProjectVersion {
+            id: "1".into(),
+            project: "PROJ".into(),
+            name: name.into(),
+            description: Some("Initial release".into()),
+            start_date: Some("2025-01-01".into()),
+            release_date: Some("2025-02-01".into()),
+            released: true,
+            archived: false,
+            overdue: Some(false),
+            issue_count: Some(7),
+            source: "jira".into(),
+        }
+    }
+
+    #[test]
+    fn format_project_versions_empty_returns_canonical_message() {
+        let output = ToolOutput::ProjectVersions(vec![], None);
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert_eq!(result, "No project versions found.");
+    }
+
+    #[test]
+    fn format_project_versions_renders_table_with_counts_and_dates() {
+        let output =
+            ToolOutput::ProjectVersions(vec![sample_project_version("3.18.0")], None);
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(result.contains("# Project Versions (1)"), "{result}");
+        assert!(result.contains("| Name |"), "{result}");
+        assert!(result.contains("| 3.18.0 |"), "{result}");
+        assert!(result.contains("| yes |"), "{result}");
+        assert!(result.contains("2025-02-01"), "{result}");
+        assert!(result.contains("Initial release"), "{result}");
+    }
+
+    #[test]
+    fn format_project_versions_marks_archived_inline() {
+        let mut v = sample_project_version("0.9.0");
+        v.archived = true;
+        let output = ToolOutput::ProjectVersions(vec![v], None);
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(
+            result.contains("0.9.0 (archived)"),
+            "expected archived marker, got {result}"
+        );
+    }
+
+    #[test]
+    fn format_project_versions_truncates_long_descriptions() {
+        let mut v = sample_project_version("1.0.0");
+        v.description = Some("x".repeat(200));
+        let output = ToolOutput::ProjectVersions(vec![v], None);
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(result.contains('…'), "expected ellipsis, got {result}");
+    }
+
+    #[test]
+    fn format_single_project_version_renders_detail_block() {
+        let v = sample_project_version("3.18.0");
+        let output = ToolOutput::SingleProjectVersion(Box::new(v));
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(result.contains("# 3.18.0 (project PROJ)"), "{result}");
+        assert!(result.contains("- **id:** 1"), "{result}");
+        assert!(result.contains("- **released:** yes"), "{result}");
+        assert!(result.contains("## Description"), "{result}");
+        assert!(result.contains("Initial release"), "{result}");
+    }
+
     // --- JobLog without total_lines ---
 
     #[test]
