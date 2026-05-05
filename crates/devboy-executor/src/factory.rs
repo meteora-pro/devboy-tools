@@ -5,7 +5,7 @@ use devboy_core::{
 
 use crate::context::{
     ClickUpScope, ConfluenceAuthConfig, ConfluenceScope, GitHubScope, GitLabScope, JiraScope,
-    ProviderConfig, ProviderMetadata, ProxyConfig, SlackScope,
+    ProviderConfig, ProviderMetadata, ProxyConfig, SlackScope, TelegramScope,
 };
 
 /// Create a provider instance from a typed `ProviderConfig`.
@@ -143,6 +143,11 @@ pub fn create_provider(
             operation: "Slack is a MessengerProvider, not a Provider. Use create_messenger_provider() instead.".into(),
         }),
 
+        ProviderConfig::Telegram { .. } => Err(Error::ProviderUnsupported {
+            provider: "telegram".into(),
+            operation: "Telegram is a MessengerProvider, not a Provider. Use create_messenger_provider() instead.".into(),
+        }),
+
         ProviderConfig::Custom { name, .. } => Err(Error::ProviderNotFound(format!(
             "custom provider '{name}' not yet supported"
         ))),
@@ -228,6 +233,13 @@ pub fn create_messenger_provider(config: &ProviderConfig) -> Result<Box<dyn Mess
                 .with_base_url(base_url)
                 .with_required_scopes(required_scopes.clone()),
         )),
+        ProviderConfig::Telegram {
+            scope: TelegramScope::Bot { .. },
+            ..
+        } => Err(Error::ProviderUnsupported {
+            provider: "telegram".into(),
+            operation: "telegram messenger provider implementation not yet available".into(),
+        }),
         other => Err(Error::ProviderUnsupported {
             provider: other.provider_name().into(),
             operation: "not a messenger provider".into(),
@@ -267,6 +279,7 @@ pub fn create_enricher(
             Some(Box::new(devboy_fireflies::FirefliesSchemaEnricher))
         }
         ProviderConfig::Slack { .. } => None,
+        ProviderConfig::Telegram { .. } => None,
         ProviderConfig::Custom { .. } => None,
     }
 }

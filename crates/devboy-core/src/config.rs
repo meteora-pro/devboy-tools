@@ -72,6 +72,10 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slack: Option<SlackConfig>,
 
+    /// Telegram configuration (messenger)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram: Option<TelegramConfig>,
+
     /// Named contexts (profiles) configuration.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub contexts: BTreeMap<String, ContextConfig>,
@@ -172,6 +176,10 @@ pub struct ContextConfig {
     /// Slack configuration (messenger)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slack: Option<SlackConfig>,
+
+    /// Telegram configuration (messenger)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram: Option<TelegramConfig>,
 }
 
 /// GitHub provider configuration.
@@ -276,6 +284,17 @@ impl Default for SlackConfig {
             required_scopes: default_slack_required_scopes(),
         }
     }
+}
+
+/// Telegram provider configuration (messenger).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelegramConfig {
+    /// Optional Telegram API base URL override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// Optional bot username for diagnostics and UX.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_username: Option<String>,
 }
 
 pub fn default_slack_required_scopes() -> Vec<String> {
@@ -968,6 +987,7 @@ impl Config {
             || self.fireflies.is_some()
             || self.confluence.is_some()
             || self.slack.is_some()
+            || self.telegram.is_some()
             || self.contexts.values().any(ContextConfig::has_any_provider)
     }
 
@@ -991,6 +1011,9 @@ impl Config {
         }
         if self.slack.is_some() {
             providers.push("slack");
+        }
+        if self.telegram.is_some() {
+            providers.push("telegram");
         }
         providers
     }
@@ -1054,6 +1077,7 @@ impl Config {
             fireflies: self.fireflies.clone(),
             confluence: self.confluence.clone(),
             slack: self.slack.clone(),
+            telegram: self.telegram.clone(),
         };
 
         if ctx.has_any_provider() {
@@ -1192,6 +1216,21 @@ impl Config {
                     }
                 }
             }
+            "telegram" => {
+                let config = self.telegram.get_or_insert_with(TelegramConfig::default);
+                match field {
+                    "base_url" | "url" => config.base_url = Some(value.to_string()),
+                    "bot_username" | "bot" | "username" => {
+                        config.bot_username = Some(value.to_string())
+                    }
+                    _ => {
+                        return Err(Error::Config(format!(
+                            "Unknown Telegram config field: {}",
+                            field
+                        )));
+                    }
+                }
+            }
             _ => {
                 return Err(Error::Config(format!("Unknown provider: {}", provider)));
             }
@@ -1303,6 +1342,19 @@ impl Config {
                     "redirect_uri" => Ok(config.redirect_uri.clone()),
                     _ => Err(Error::Config(format!(
                         "Unknown Slack config field: {}",
+                        field
+                    ))),
+                }
+            }
+            "telegram" => {
+                let Some(config) = &self.telegram else {
+                    return Ok(None);
+                };
+                match field {
+                    "base_url" | "url" => Ok(config.base_url.clone()),
+                    "bot_username" | "bot" | "username" => Ok(config.bot_username.clone()),
+                    _ => Err(Error::Config(format!(
+                        "Unknown Telegram config field: {}",
                         field
                     ))),
                 }
@@ -1530,6 +1582,7 @@ impl ContextConfig {
             || self.fireflies.is_some()
             || self.confluence.is_some()
             || self.slack.is_some()
+            || self.telegram.is_some()
     }
 
     /// Return configured provider names for this context.
@@ -1552,6 +1605,9 @@ impl ContextConfig {
         }
         if self.slack.is_some() {
             providers.push("slack");
+        }
+        if self.telegram.is_some() {
+            providers.push("telegram");
         }
         providers
     }
@@ -1942,6 +1998,7 @@ mod tests {
             fireflies: None,
             confluence: None,
             slack: None,
+            telegram: None,
             contexts: BTreeMap::new(),
             active_context: None,
             proxy_mcp_servers: Vec::new(),
@@ -2026,6 +2083,7 @@ mod tests {
             fireflies: None,
             confluence: None,
             slack: None,
+            telegram: None,
             contexts: BTreeMap::new(),
             active_context: None,
             proxy_mcp_servers: Vec::new(),

@@ -88,6 +88,12 @@ pub fn known_providers() -> Vec<ProviderInfo> {
             default_categories: &[ToolCategory::Messenger],
             conditional_categories: &[],
         },
+        ProviderInfo {
+            display_name: "Telegram",
+            key: "telegram",
+            default_categories: &[ToolCategory::Messenger],
+            conditional_categories: &[],
+        },
     ]
 }
 
@@ -507,7 +513,7 @@ mod tests {
     use super::*;
     use crate::context::{
         ClickUpScope, ConfluenceAuthConfig, ConfluenceScope, GitHubScope, GitLabScope, JiraScope,
-        ProviderConfig, SlackScope,
+        ProviderConfig, SlackScope, TelegramScope,
     };
     use devboy_core::ToolEnricher;
     use std::collections::HashMap;
@@ -519,6 +525,7 @@ mod tests {
         assert!(md.contains("## Provider Support Matrix"));
         assert!(md.contains("| **GitHub** |"));
         assert!(md.contains("| **Slack** |"));
+        assert!(md.contains("| **Telegram** |"));
     }
 
     #[test]
@@ -699,6 +706,12 @@ mod tests {
                 required_scopes: Vec::new(),
                 extra: HashMap::new(),
             },
+            ProviderConfig::Telegram {
+                base_url: "https://api.telegram.org".into(),
+                access_token: "x".into(),
+                scope: TelegramScope::Bot { bot_username: None },
+                extra: HashMap::new(),
+            },
             ProviderConfig::Custom {
                 name: "custom".into(),
                 config: HashMap::new(),
@@ -717,6 +730,7 @@ mod tests {
                 ProviderConfig::Confluence { .. } => Some("confluence"),
                 ProviderConfig::Fireflies { .. } => Some("fireflies"),
                 ProviderConfig::Slack { .. } => Some("slack"),
+                ProviderConfig::Telegram { .. } => Some("telegram"),
                 ProviderConfig::Custom { .. } => None,
             }
         }

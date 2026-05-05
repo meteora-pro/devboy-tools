@@ -1790,6 +1790,7 @@ fn build_config(options: &InitOptions) -> Config {
             fireflies: None,
             confluence: None,
             slack: options.slack.clone(),
+            telegram: None,
         };
         config.contexts.insert(context_name, context);
     }
@@ -3811,6 +3812,7 @@ impl EnvContextBuilder {
             } else {
                 None
             },
+            telegram: None,
         };
 
         if context.has_any_provider() {

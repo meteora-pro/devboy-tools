@@ -54,6 +54,13 @@ pub enum SlackScope {
     Workspace { team_id: Option<String> },
 }
 
+/// Scope for Telegram API calls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TelegramScope {
+    /// Single Telegram bot identity.
+    Bot { bot_username: Option<String> },
+}
+
 /// Authentication configuration for Confluence self-hosted.
 ///
 /// **Note:** intentionally not `Serialize`/`Deserialize` — Confluence credentials
@@ -129,6 +136,13 @@ pub enum ProviderConfig {
         required_scopes: Vec<String>,
         extra: HashMap<String, serde_json::Value>,
     },
+    /// Telegram messenger provider.
+    Telegram {
+        base_url: String,
+        access_token: SecretString,
+        scope: TelegramScope,
+        extra: HashMap<String, serde_json::Value>,
+    },
     /// Fully dynamic variant for community/custom provider plugins.
     Custom {
         name: String,
@@ -147,6 +161,7 @@ impl ProviderConfig {
             Self::Confluence { .. } => "confluence",
             Self::Fireflies { .. } => "fireflies",
             Self::Slack { .. } => "slack",
+            Self::Telegram { .. } => "telegram",
             Self::Custom { name, .. } => name,
         }
     }
@@ -285,6 +300,17 @@ mod tests {
             extra: HashMap::new(),
         };
         assert_eq!(config.provider_name(), "jira");
+    }
+
+    #[test]
+    fn test_provider_name_telegram() {
+        let config = ProviderConfig::Telegram {
+            base_url: "https://api.telegram.org".into(),
+            access_token: token("bot-token"),
+            scope: TelegramScope::Bot { bot_username: None },
+            extra: HashMap::new(),
+        };
+        assert_eq!(config.provider_name(), "telegram");
     }
 
     #[test]
