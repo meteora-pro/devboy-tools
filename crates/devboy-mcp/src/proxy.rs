@@ -358,12 +358,12 @@ impl McpProxyClient {
             tracing::debug!("Response is SSE stream, parsing events...");
             self.parse_sse_response(response, id).await?
         } else {
-            // Direct JSON response
+            // Direct JSON response — read via bytes_stream to handle
+            // servers that keep the connection open after sending the body
+            // (e.g. streamable-http holding for notifications).
+            // On read error (broken pipe, timeout), parse whatever was read.
             tracing::debug!("Response is JSON (content-type: {})", content_type);
-            response
-                .json::<JsonRpcResponse>()
-                .await
-                .map_err(|e| devboy_core::Error::Http(format!("Failed to parse response: {}", e)))?
+            self.read_json_response(response).await?
         };
 
         // Verify response ID matches request ID
@@ -376,6 +376,53 @@ impl McpProxyClient {
         }
 
         Ok(resp)
+    }
+
+    /// Read a JSON response body using streaming, gracefully handling
+    /// connection drops (broken pipe, timeout) mid-transfer.
+    ///
+    /// Streamable-HTTP servers may keep the connection open after sending the
+    /// JSON body (e.g. to push notifications). `response.json()` waits for the
+    /// connection to close, which causes "error decoding response body" when the
+    /// server or an intermediate proxy eventually drops it.
+    async fn read_json_response(
+        &self,
+        response: reqwest::Response,
+    ) -> devboy_core::Result<JsonRpcResponse> {
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result {
+                Ok(bytes) => body.extend_from_slice(&bytes),
+                Err(e) => {
+                    tracing::debug!(
+                        "Stream ended with error ({} bytes read): {}",
+                        body.len(),
+                        e
+                    );
+                    break;
+                }
+            }
+        }
+
+        if body.is_empty() {
+            return Err(devboy_core::Error::Http(
+                "Empty response body from upstream".to_string(),
+            ));
+        }
+
+        tracing::debug!("Read {} bytes from upstream response", body.len());
+
+        serde_json::from_slice::<JsonRpcResponse>(&body).map_err(|e| {
+            let preview = String::from_utf8_lossy(&body[..body.len().min(200)]);
+            devboy_core::Error::Http(format!(
+                "Failed to parse JSON ({} bytes, starts with: {}): {}",
+                body.len(),
+                preview,
+                e
+            ))
+        })
     }
 
     /// Parse an SSE event stream response to extract the JSON-RPC response.
