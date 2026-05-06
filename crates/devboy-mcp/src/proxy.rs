@@ -1842,4 +1842,171 @@ mod tests {
         let err = result.expect_err("should be error");
         assert!(err.to_string().contains("Mismatched JSON-RPC id"));
     }
+
+    // =========================================================================
+    // McpProxyClient — read_json_response edge cases
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_tools_list_with_empty_body_returns_error() {
+        let server = MockServer::start();
+
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"initialize""#);
+            then.status(200)
+                .header("mcp-session-id", "sess-empty")
+                .json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "protocolVersion": "2025-11-25",
+                        "capabilities": {},
+                        "serverInfo": { "name": "mock", "version": "1.0" }
+                    }
+                }));
+        });
+
+        // tools/list returns 200 with empty body
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"tools/list""#);
+            then.status(200).body("");
+        });
+
+        let url = format!("{}/mcp", server.base_url());
+        let mut client = McpProxyClient::connect(
+            "test-server",
+            &url,
+            None,
+            None,
+            "none",
+            ProxyTransport::StreamableHttp,
+        )
+        .await
+        .unwrap();
+
+        let result = client.fetch_tools().await;
+        let err = result.expect_err("empty body should fail");
+        assert!(
+            err.to_string().contains("Empty response body"),
+            "expected empty body error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tools_list_with_invalid_json_returns_parse_error() {
+        let server = MockServer::start();
+
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"initialize""#);
+            then.status(200)
+                .header("mcp-session-id", "sess-badjson")
+                .json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "protocolVersion": "2025-11-25",
+                        "capabilities": {},
+                        "serverInfo": { "name": "mock", "version": "1.0" }
+                    }
+                }));
+        });
+
+        // tools/list returns 200 with invalid JSON
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"tools/list""#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("this is not json");
+        });
+
+        let url = format!("{}/mcp", server.base_url());
+        let mut client = McpProxyClient::connect(
+            "test-server",
+            &url,
+            None,
+            None,
+            "none",
+            ProxyTransport::StreamableHttp,
+        )
+        .await
+        .unwrap();
+
+        let result = client.fetch_tools().await;
+        let err = result.expect_err("invalid JSON should fail");
+        assert!(
+            err.to_string().contains("Failed to parse JSON"),
+            "expected parse error, got: {err}"
+        );
+        assert!(
+            err.to_string().contains("this is not json"),
+            "error should include body preview"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tools_list_with_large_valid_response() {
+        let server = MockServer::start();
+
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"initialize""#);
+            then.status(200)
+                .header("mcp-session-id", "sess-large")
+                .json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "protocolVersion": "2025-11-25",
+                        "capabilities": {},
+                        "serverInfo": { "name": "mock", "version": "1.0" }
+                    }
+                }));
+        });
+
+        // Build a tools/list response with 50 tools to exercise streaming
+        let tools: Vec<serde_json::Value> = (0..50)
+            .map(|i| {
+                serde_json::json!({
+                    "name": format!("tool_{i}"),
+                    "description": format!("Tool number {i} with a longer description to make the response body larger"),
+                    "inputSchema": { "type": "object", "properties": {} }
+                })
+            })
+            .collect();
+
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"tools/list""#);
+            then.status(200).json_body(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": { "tools": tools }
+            }));
+        });
+
+        let url = format!("{}/mcp", server.base_url());
+        let mut client = McpProxyClient::connect(
+            "test-server",
+            &url,
+            None,
+            None,
+            "none",
+            ProxyTransport::StreamableHttp,
+        )
+        .await
+        .unwrap();
+
+        client.fetch_tools().await.unwrap();
+        assert_eq!(client.upstream_tools.len(), 50);
+    }
 }
