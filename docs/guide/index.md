@@ -195,7 +195,7 @@ Seven provider plugins ship today — each with a dedicated client + schema enri
 |----------|-------|--------------|
 | **GitHub** | [`devboy-github`](https://github.com/meteora-pro/devboy-tools/blob/main/crates/plugins/api/github/) | Issues, pull requests, comments, branches, repos |
 | **GitLab** | [`devboy-gitlab`](https://github.com/meteora-pro/devboy-tools/blob/main/crates/plugins/api/gitlab/) | Issues, merge requests, discussions, pipelines, MR diffs |
-| **Jira** | [`devboy-jira`](https://github.com/meteora-pro/devboy-tools/blob/main/crates/plugins/api/jira/) | Issues with custom-field metadata, sprints, transitions |
+| **Jira** | [`devboy-jira`](https://github.com/meteora-pro/devboy-tools/blob/main/crates/plugins/api/jira/) | Issues with custom-field metadata, sprints, transitions, project versions (releases) |
 | **ClickUp** | [`devboy-clickup`](https://github.com/meteora-pro/devboy-tools/blob/main/crates/plugins/api/clickup/) | Tasks, custom fields, lists, custom task IDs |
 | **Confluence** | [`devboy-confluence`](https://github.com/meteora-pro/devboy-tools/blob/main/crates/plugins/api/confluence/) | Knowledge-base pages, search, spaces, create / update with labels (Server / Data Center, v1 + v2 API) |
 | **Slack** | [`devboy-slack`](https://github.com/meteora-pro/devboy-tools/blob/main/crates/plugins/api/slack/) | Chat search, channel summary, post message |
