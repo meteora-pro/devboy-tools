@@ -25,6 +25,9 @@ pub const KNOWN_BUILTIN_TOOLS: &[&str] = &[
     "upload_asset",
     "download_asset",
     "delete_asset",
+    // Project versions (issue #238)
+    "list_project_versions",
+    "upsert_project_version",
     // Git repository tools (MR/PR, pipeline)
     "get_merge_requests",
     "get_merge_request",
