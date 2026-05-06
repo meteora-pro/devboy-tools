@@ -4,10 +4,11 @@ use devboy_core::{
     CreatePageParams, CreateStructureInput, Error, GetChatsParams, GetForestOptions,
     GetMessagesParams, GetPipelineInput, GetStructureValuesInput, GetUsersOptions, IssueFilter,
     IssueProvider, JobLogMode, JobLogOptions, KnowledgeBaseProvider, ListPagesParams,
-    MeetingFilter, MeetingNotesProvider, MergeRequestProvider, MessengerProvider,
-    MoveStructureRowsInput, MrFilter, PipelineProvider, Result, SaveStructureViewInput,
-    SearchKbParams, SearchMessagesParams, SendMessageParams, StructureRowItem, StructureViewColumn,
-    ToolCategory, UpdateIssueInput, UpdatePageParams,
+    ListProjectVersionsParams, MeetingFilter, MeetingNotesProvider, MergeRequestProvider,
+    MessengerProvider, MoveStructureRowsInput, MrFilter, PipelineProvider, Result,
+    SaveStructureViewInput, SearchKbParams, SearchMessagesParams, SendMessageParams,
+    StructureRowItem, StructureViewColumn, ToolCategory, UpdateIssueInput, UpdatePageParams,
+    UpsertProjectVersionInput,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -658,6 +659,10 @@ async fn dispatch_tool(
         "get_structure_views" => execute_get_structure_views(provider, args).await,
         "save_structure_view" => execute_save_structure_view(provider, args).await,
         "create_structure" => execute_create_structure(provider, args).await,
+
+        // Project versions / fixVersion (issue #238)
+        "list_project_versions" => execute_list_project_versions(provider, args).await,
+        "upsert_project_version" => execute_upsert_project_version(provider, args).await,
 
         _ => Err(Error::NotFound(format!("unknown tool: {tool}"))),
     }
@@ -2302,6 +2307,148 @@ async fn execute_create_structure(
     Ok(ToolOutput::Structures(vec![structure], None))
 }
 
+// =============================================================================
+// Project versions / fixVersion handlers (issue #238)
+// =============================================================================
+
+/// Tri-state filter for `released` / `archived` — accepts the strings
+/// `"true"`, `"false"`, `"all"` (default `"all"` → no filter).
+fn parse_tri_filter(s: Option<&str>) -> Result<Option<bool>> {
+    match s.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        None | Some("") | Some("all") | Some("any") => Ok(None),
+        Some("true") | Some("yes") | Some("1") => Ok(Some(true)),
+        Some("false") | Some("no") | Some("0") => Ok(Some(false)),
+        Some(other) => Err(Error::InvalidData(format!(
+            "expected 'true' | 'false' | 'all', got '{other}'"
+        ))),
+    }
+}
+
+/// Validate that a string is an ISO 8601 calendar date in `YYYY-MM-DD`
+/// form. Jira accepts that exact shape on `releaseDate`/`startDate`
+/// payloads; anything else (timestamps, slashes, locale formats) gets
+/// rejected with a 400 by the server, so catch it client-side with a
+/// clear error pointing at the offending field.
+fn validate_iso_date(field: &str, value: &str) -> Result<()> {
+    let bytes = value.as_bytes();
+    let shape_ok = bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[8..].iter().all(u8::is_ascii_digit);
+    if !shape_ok {
+        return Err(Error::InvalidData(format!(
+            "{field} must be an ISO 8601 calendar date (YYYY-MM-DD), got '{value}'"
+        )));
+    }
+    let month: u32 = value[5..7].parse().unwrap();
+    let day: u32 = value[8..10].parse().unwrap();
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return Err(Error::InvalidData(format!(
+            "{field} = '{value}' is not a valid calendar date"
+        )));
+    }
+    Ok(())
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ListProjectVersionsArgs {
+    project: Option<String>,
+    released: Option<String>,
+    archived: Option<String>,
+    limit: Option<u32>,
+    include_issue_count: Option<bool>,
+}
+
+async fn execute_list_project_versions(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: ListProjectVersionsArgs = parse_tool_params(args, "list_project_versions")?;
+
+    // Paper 1 / TrimTree defaults: hide archived noise + cap at 20 most
+    // recent. Defaults only apply when the caller omits the field —
+    // explicit `"all"` must round-trip as `None` (no filter).
+    let archived = match params.archived.as_deref() {
+        None => Some(false),
+        Some(s) => parse_tri_filter(Some(s))?,
+    };
+    let released = match params.released.as_deref() {
+        None => None,
+        Some(s) => parse_tri_filter(Some(s))?,
+    };
+    // `limit: 0` would round-trip to a useless empty list — reject up
+    // front instead of letting the schema's `min: 1` get bypassed by a
+    // raw call site (Codex review on PR #239).
+    if let Some(0) = params.limit {
+        return Err(Error::InvalidData(
+            "limit must be at least 1 (use the default by omitting the field)".into(),
+        ));
+    }
+    let limit = params.limit.unwrap_or(20).min(200);
+
+    let result = provider
+        .list_project_versions(ListProjectVersionsParams {
+            project: params.project.unwrap_or_default(),
+            released,
+            archived,
+            limit: Some(limit),
+            include_issue_count: params.include_issue_count.unwrap_or(false),
+        })
+        .await?;
+
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::ProjectVersions(result.items, Some(meta)))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpsertProjectVersionArgs {
+    project: Option<String>,
+    name: String,
+    description: Option<String>,
+    start_date: Option<String>,
+    release_date: Option<String>,
+    released: Option<bool>,
+    archived: Option<bool>,
+}
+
+async fn execute_upsert_project_version(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: UpsertProjectVersionArgs = serde_json::from_value(args.clone())
+        .map_err(|e| Error::InvalidData(format!("invalid upsert_project_version params: {e}")))?;
+
+    // Codex review on PR #239 — validate inputs before they cross the
+    // wire so the failure points at the parameter, not at "Jira said 400".
+    if let Some(ref d) = params.start_date {
+        validate_iso_date("startDate", d)?;
+    }
+    if let Some(ref d) = params.release_date {
+        validate_iso_date("releaseDate", d)?;
+    }
+
+    let version = provider
+        .upsert_project_version(UpsertProjectVersionInput {
+            project: params.project.unwrap_or_default(),
+            name: params.name,
+            description: params.description,
+            start_date: params.start_date,
+            release_date: params.release_date,
+            released: params.released,
+            archived: params.archived,
+        })
+        .await?;
+
+    Ok(ToolOutput::SingleProjectVersion(Box::new(version)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2536,6 +2683,62 @@ mod tests {
                 id: 42,
                 name: input.name,
                 description: input.description,
+            })
+        }
+        async fn list_project_versions(
+            &self,
+            params: devboy_core::ListProjectVersionsParams,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<devboy_core::ProjectVersion>> {
+            // Echo applied filters back through the data so dispatch
+            // tests can pin behaviour without sniffing call args.
+            let mut name = format!(
+                "v-released={:?}-archived={:?}-limit={:?}-expand={}",
+                params.released, params.archived, params.limit, params.include_issue_count
+            );
+            if !params.project.is_empty() {
+                name.push_str(&format!("-project={}", params.project));
+            }
+            Ok(vec![devboy_core::ProjectVersion {
+                id: "1".into(),
+                project: if params.project.is_empty() {
+                    "MOCK".into()
+                } else {
+                    params.project
+                },
+                name,
+                description: Some("desc".into()),
+                start_date: None,
+                release_date: Some("2026-01-01".into()),
+                released: false,
+                archived: false,
+                overdue: None,
+                issue_count: Some(0),
+                unresolved_issue_count: None,
+                source: "mock".into(),
+            }]
+            .into())
+        }
+        async fn upsert_project_version(
+            &self,
+            input: devboy_core::UpsertProjectVersionInput,
+        ) -> devboy_core::Result<devboy_core::ProjectVersion> {
+            Ok(devboy_core::ProjectVersion {
+                id: "777".into(),
+                project: if input.project.is_empty() {
+                    "MOCK".into()
+                } else {
+                    input.project
+                },
+                name: input.name,
+                description: input.description,
+                start_date: input.start_date,
+                release_date: input.release_date,
+                released: input.released.unwrap_or(false),
+                archived: input.archived.unwrap_or(false),
+                overdue: None,
+                issue_count: None,
+                unresolved_issue_count: None,
+                source: "mock".into(),
             })
         }
         fn provider_name(&self) -> &'static str {
@@ -3555,6 +3758,180 @@ mod tests {
             }
             _ => panic!("expected Structures"),
         }
+    }
+
+    // -------------------------------------------------------------------
+    // Project versions / fixVersion (issue #238)
+    // -------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_dispatch_list_project_versions_applies_paper_defaults() {
+        // No filter args → archived defaults to false, limit to 20.
+        let provider = MockProvider;
+        let result = dispatch_tool(
+            "list_project_versions",
+            &serde_json::json!({}),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap();
+        match result {
+            ToolOutput::ProjectVersions(items, _) => {
+                let echoed = &items[0].name;
+                assert!(echoed.contains("released=None"), "got {echoed}");
+                assert!(echoed.contains("archived=Some(false)"), "got {echoed}");
+                assert!(echoed.contains("limit=Some(20)"), "got {echoed}");
+                assert!(echoed.contains("expand=false"), "got {echoed}");
+            }
+            other => panic!("expected ProjectVersions, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_list_project_versions_explicit_filters_override_defaults() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "project": "PROJ",
+            "released": "true",
+            "archived": "all",
+            "limit": 5,
+            "includeIssueCount": true,
+        });
+        let result = dispatch_tool("list_project_versions", &args, &provider, None)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::ProjectVersions(items, _) => {
+                let echoed = &items[0].name;
+                assert!(echoed.contains("released=Some(true)"), "got {echoed}");
+                assert!(echoed.contains("archived=None"), "got {echoed}");
+                assert!(echoed.contains("limit=Some(5)"), "got {echoed}");
+                assert!(echoed.contains("expand=true"), "got {echoed}");
+                assert_eq!(items[0].project, "PROJ");
+            }
+            other => panic!("expected ProjectVersions, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_list_project_versions_rejects_unknown_filter() {
+        let provider = MockProvider;
+        let err = dispatch_tool(
+            "list_project_versions",
+            &serde_json::json!({"released": "maybe"}),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, devboy_core::Error::InvalidData(ref m) if m.contains("'maybe'")),
+            "expected InvalidData about 'maybe', got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_upsert_project_version_returns_single() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "project": "PROJ",
+            "name": "3.18.0",
+            "description": "release notes",
+            "released": true,
+            "releaseDate": "2026-05-01",
+        });
+        let result = dispatch_tool("upsert_project_version", &args, &provider, None)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::SingleProjectVersion(v) => {
+                assert_eq!(v.name, "3.18.0");
+                assert_eq!(v.project, "PROJ");
+                assert!(v.released);
+                assert_eq!(v.release_date.as_deref(), Some("2026-05-01"));
+                assert_eq!(v.description.as_deref(), Some("release notes"));
+            }
+            other => panic!("expected SingleProjectVersion, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_upsert_project_version_requires_name() {
+        let provider = MockProvider;
+        let err = dispatch_tool(
+            "upsert_project_version",
+            &serde_json::json!({"project": "PROJ"}),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, devboy_core::Error::InvalidData(_)));
+    }
+
+    #[test]
+    fn parse_tri_filter_accepts_canonical_strings() {
+        assert_eq!(parse_tri_filter(None).unwrap(), None);
+        assert_eq!(parse_tri_filter(Some("all")).unwrap(), None);
+        assert_eq!(parse_tri_filter(Some("True")).unwrap(), Some(true));
+        assert_eq!(parse_tri_filter(Some("false")).unwrap(), Some(false));
+        assert_eq!(parse_tri_filter(Some("yes")).unwrap(), Some(true));
+        assert_eq!(parse_tri_filter(Some("0")).unwrap(), Some(false));
+        assert!(parse_tri_filter(Some("maybe")).is_err());
+    }
+
+    #[test]
+    fn validate_iso_date_accepts_yyyy_mm_dd() {
+        assert!(validate_iso_date("releaseDate", "2026-05-04").is_ok());
+        assert!(validate_iso_date("releaseDate", "2026-12-31").is_ok());
+    }
+
+    #[test]
+    fn validate_iso_date_rejects_other_shapes() {
+        // Wrong shape
+        assert!(validate_iso_date("releaseDate", "2026/05/04").is_err());
+        assert!(validate_iso_date("releaseDate", "2026-5-4").is_err());
+        assert!(validate_iso_date("releaseDate", "2026-05-04T00:00:00Z").is_err());
+        assert!(validate_iso_date("releaseDate", "tomorrow").is_err());
+        // Out-of-range month / day
+        assert!(validate_iso_date("releaseDate", "2026-13-01").is_err());
+        assert!(validate_iso_date("releaseDate", "2026-00-15").is_err());
+        assert!(validate_iso_date("releaseDate", "2026-05-32").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_upsert_project_version_rejects_bad_date() {
+        let provider = MockProvider;
+        let err = dispatch_tool(
+            "upsert_project_version",
+            &serde_json::json!({"name": "3.18.0", "releaseDate": "next friday"}),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, devboy_core::Error::InvalidData(ref m) if m.contains("releaseDate")),
+            "expected InvalidData about releaseDate, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_list_project_versions_rejects_zero_limit() {
+        let provider = MockProvider;
+        let err = dispatch_tool(
+            "list_project_versions",
+            &serde_json::json!({"limit": 0}),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, devboy_core::Error::InvalidData(ref m) if m.contains("limit")),
+            "expected InvalidData about limit, got {err:?}"
+        );
     }
 
     // -------------------------------------------------------------------

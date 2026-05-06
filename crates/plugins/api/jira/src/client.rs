@@ -20,23 +20,24 @@ use devboy_core::{
     AddStructureRowsInput, AssetCapabilities, AssetMeta, Comment, ContextCapabilities,
     CreateIssueInput, CreateStructureInput, Error, ForestModifyResult, GetForestOptions,
     GetStructureValuesInput, GetUsersOptions, Issue, IssueFilter, IssueLink, IssueProvider,
-    IssueRelations, IssueStatus, MergeRequestProvider, MoveStructureRowsInput, PipelineProvider,
-    Provider, ProviderResult, Result, SaveStructureViewInput, Structure, StructureColumnValue,
-    StructureForest, StructureNode, StructureRowValues, StructureValues, StructureView,
-    StructureViewColumn, UpdateIssueInput, User,
+    IssueRelations, IssueStatus, ListProjectVersionsParams, MergeRequestProvider,
+    MoveStructureRowsInput, PipelineProvider, ProjectVersion, Provider, ProviderResult, Result,
+    SaveStructureViewInput, Structure, StructureColumnValue, StructureForest, StructureNode,
+    StructureRowValues, StructureValues, StructureView, StructureViewColumn, UpdateIssueInput,
+    UpsertProjectVersionInput, User,
 };
 use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, warn};
 
 use crate::types::{
     AddCommentPayload, CreateIssueFields, CreateIssueLinkPayload, CreateIssuePayload,
-    CreateIssueResponse, IssueKeyRef, IssueLinkTypeName, IssueType, JiraAttachment,
-    JiraCloudSearchResponse, JiraComment, JiraCommentsResponse, JiraForestModifyResponse,
-    JiraForestResponse, JiraIssue, JiraIssueTypeStatuses, JiraPriority, JiraProjectStatus,
-    JiraSearchResponse, JiraStatus, JiraStructure, JiraStructureListResponse,
+    CreateIssueResponse, CreateVersionPayload, IssueKeyRef, IssueLinkTypeName, IssueType,
+    JiraAttachment, JiraCloudSearchResponse, JiraComment, JiraCommentsResponse,
+    JiraForestModifyResponse, JiraForestResponse, JiraIssue, JiraIssueTypeStatuses, JiraPriority,
+    JiraProjectStatus, JiraSearchResponse, JiraStatus, JiraStructure, JiraStructureListResponse,
     JiraStructureValuesResponse, JiraStructureView, JiraStructureViewListResponse, JiraTransition,
-    JiraTransitionsResponse, JiraUser, PriorityName, ProjectKey, TransitionId, TransitionPayload,
-    UpdateIssueFields, UpdateIssuePayload,
+    JiraTransitionsResponse, JiraUser, JiraVersionDto, PriorityName, ProjectKey, TransitionId,
+    TransitionPayload, UpdateIssueFields, UpdateIssuePayload, UpdateVersionPayload,
 };
 
 /// Jira deployment flavor.
@@ -244,6 +245,28 @@ impl JiraClient {
         }
 
         Ok(())
+    }
+
+    /// Make an authenticated PUT request that parses a JSON response body.
+    ///
+    /// Jira's `PUT /version/{id}` (issue #238) — unlike `PUT /issue/{key}` —
+    /// returns the updated entity, so we need a typed variant alongside the
+    /// `put` helper that discards the body.
+    async fn put_with_response<T: serde::de::DeserializeOwned, B: serde::Serialize>(
+        &self,
+        url: &str,
+        body: &B,
+    ) -> Result<T> {
+        debug!(url = url, "Jira PUT request (typed response)");
+
+        let response = self
+            .request(reqwest::Method::PUT, url)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        self.handle_response(response).await
     }
 
     /// Make an authenticated PUT request (Jira PUT returns 204 No Content).
@@ -2560,8 +2583,314 @@ impl IssueProvider for JiraClient {
             .await
     }
 
+    // --- Project versions / fixVersion (issue #238) --------------------
+
+    async fn list_project_versions(
+        &self,
+        params: ListProjectVersionsParams,
+    ) -> Result<ProviderResult<ProjectVersion>> {
+        let project_key = if params.project.is_empty() {
+            self.project_key.clone()
+        } else {
+            params.project
+        };
+
+        // Both Cloud v3 and Server/DC v2 expose
+        // `GET /project/{key}/versions` as an unpaginated list of all
+        // versions. The paginated `/version/page` endpoint exists on
+        // Cloud only and isn't worth the flavor split — projects with
+        // O(10²) versions still fit in one round-trip; we trim the
+        // response in-memory below to honour Paper 1's 8k-token cap.
+        //
+        // `?expand=issuesstatus` is a Cloud-only payload extension —
+        // Server/DC ignores it but we still skip the param there so we
+        // don't bake hidden flavor-quirk dependencies into the URL.
+        let mut url = format!("{}/project/{}/versions", self.base_url, project_key);
+        if params.include_issue_count && self.flavor == JiraFlavor::Cloud {
+            url.push_str("?expand=issuesstatus");
+        }
+
+        let dtos: Vec<JiraVersionDto> = self.get(&url).await?;
+
+        let mut versions: Vec<ProjectVersion> = dtos
+            .into_iter()
+            .map(|dto| jira_version_to_project_version(dto, &project_key))
+            .collect();
+
+        if let Some(want_released) = params.released {
+            versions.retain(|v| v.released == want_released);
+        }
+        if let Some(want_archived) = params.archived {
+            versions.retain(|v| v.archived == want_archived);
+        }
+
+        // Order (Paper 1 — keep the *current* release at the top, not the
+        // most recently shipped one):
+        //   1. unreleased before released — work-in-flight beats history;
+        //   2. release_date placement depends on the group:
+        //      - unreleased: undated *first* (undated == "planned, no
+        //        date yet" → still in flight), then dated desc;
+        //      - released: dated desc, undated *last* ("released without
+        //        a date" usually means unspecified history);
+        //   3. semver-numeric tiebreak on name so "10.0.0" beats "9.10.0".
+        versions.sort_by(|a, b| {
+            use std::cmp::Ordering;
+            let group = a.released.cmp(&b.released);
+            if group != Ordering::Equal {
+                return group;
+            }
+            // Both `a` and `b` are in the same released/unreleased group,
+            // so checking one is enough.
+            let undated_first = !a.released;
+            let date = match (&a.release_date, &b.release_date) {
+                (Some(a_d), Some(b_d)) => b_d.cmp(a_d),
+                (None, None) => Ordering::Equal,
+                (None, Some(_)) if undated_first => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (Some(_), None) if undated_first => Ordering::Greater,
+                (Some(_), None) => Ordering::Less,
+            };
+            date.then_with(|| compare_version_names(&b.name, &a.name))
+        });
+
+        let total_after_filter = versions.len() as u32;
+        let limit_applied = params.limit.unwrap_or(total_after_filter);
+        if (limit_applied as usize) < versions.len() {
+            versions.truncate(limit_applied as usize);
+        }
+
+        // Pagination carries total + has_more so the formatter can render
+        // a "[+N more …]" hint when truncation hid items (Paper 1 §Chunk
+        // Index). We start at offset 0 — the list endpoint is unpaginated
+        // server-side, all chunking is client-side trimming.
+        let pagination = devboy_core::Pagination {
+            offset: 0,
+            limit: limit_applied,
+            total: Some(total_after_filter),
+            has_more: (versions.len() as u32) < total_after_filter,
+            next_cursor: None,
+        };
+
+        Ok(ProviderResult::new(versions).with_pagination(pagination))
+    }
+
+    async fn upsert_project_version(
+        &self,
+        input: UpsertProjectVersionInput,
+    ) -> Result<ProjectVersion> {
+        let trimmed_name = input.name.trim().to_string();
+        if trimmed_name.is_empty() {
+            return Err(Error::InvalidData(
+                "upsert_project_version: name must not be empty".into(),
+            ));
+        }
+        // Jira limits version names to 255 characters; rejecting client-side
+        // gives a clearer error than a late 400 from the server.
+        if trimmed_name.chars().count() > 255 {
+            return Err(Error::InvalidData(
+                "upsert_project_version: name must be ≤ 255 characters".into(),
+            ));
+        }
+        let project_key = if input.project.is_empty() {
+            self.project_key.clone()
+        } else {
+            input.project.clone()
+        };
+
+        let update_payload = UpdateVersionPayload {
+            name: None,
+            description: input.description.clone(),
+            start_date: input.start_date.clone(),
+            release_date: input.release_date.clone(),
+            released: input.released,
+            archived: input.archived,
+        };
+        let create_payload = CreateVersionPayload {
+            name: trimmed_name.clone(),
+            project: Some(project_key.clone()),
+            project_id: None,
+            description: input.description,
+            start_date: input.start_date,
+            release_date: input.release_date,
+            released: input.released,
+            archived: input.archived,
+        };
+
+        // Resolve `(project, name)` → existing id. We list all versions
+        // in the project rather than filtering server-side — Jira has no
+        // exact-name lookup, and a single project rarely has more than a
+        // few hundred versions.
+        let list_url = format!("{}/project/{}/versions", self.base_url, project_key);
+        let dtos: Vec<JiraVersionDto> = self.get(&list_url).await?;
+        let existing = dtos.into_iter().find(|d| d.name == trimmed_name);
+
+        let dto: JiraVersionDto = match existing {
+            Some(existing) => {
+                self.put_with_response(
+                    &format!("{}/version/{}", self.base_url, existing.id),
+                    &update_payload,
+                )
+                .await?
+            }
+            None => {
+                // Create path. Two callers can race here: both miss the
+                // version on the initial list and both POST. Jira rejects
+                // the loser with a 400 + "already exists" message; we
+                // re-list, find the winner's id, and apply the update so
+                // the loser still observes a consistent post-condition.
+                match self
+                    .post::<JiraVersionDto, _>(
+                        &format!("{}/version", self.base_url),
+                        &create_payload,
+                    )
+                    .await
+                {
+                    Ok(dto) => dto,
+                    Err(e) if is_duplicate_version_error(&e) => {
+                        let dtos: Vec<JiraVersionDto> = self.get(&list_url).await?;
+                        let recovered = dtos
+                            .into_iter()
+                            .find(|d| d.name == trimmed_name)
+                            .ok_or_else(|| {
+                                Error::InvalidData(format!(
+                                    "upsert_project_version: create rejected as duplicate but version '{trimmed_name}' is not in the project list"
+                                ))
+                            })?;
+                        self.put_with_response(
+                            &format!("{}/version/{}", self.base_url, recovered.id),
+                            &update_payload,
+                        )
+                        .await?
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        };
+
+        Ok(jira_version_to_project_version(dto, &project_key))
+    }
+
     fn provider_name(&self) -> &'static str {
         "jira"
+    }
+}
+
+/// Map the raw Jira version DTO to the provider-agnostic [`ProjectVersion`].
+///
+/// `project_fallback` covers DTOs returned by `POST /version` on some
+/// Server/DC builds where the `project` key is omitted — we fall back to
+/// the key the caller addressed.
+/// True when the error returned by `POST /version` indicates Jira
+/// rejected the create because a version with that name already exists
+/// in the project. Both Cloud v3 and Server/DC v2 surface this as a 400
+/// with the phrase "already exists" in the response body.
+fn is_duplicate_version_error(e: &Error) -> bool {
+    let lowered = e.to_string().to_lowercase();
+    lowered.contains("already exists") || lowered.contains("already used")
+}
+
+/// Compare two Jira version *names* with semver-aware ordering.
+///
+/// Splits each name into runs of digits and runs of non-digits and
+/// compares them piecewise — digit runs numerically (so `10` > `9`),
+/// non-digit runs lexicographically (so `1.0.0-rc1` < `1.0.0`). Falls
+/// back to plain string compare when either side has no digits, which
+/// keeps non-semver release names (e.g. `"Sprint 42 cleanup"`) stable.
+fn compare_version_names(a: &str, b: &str) -> std::cmp::Ordering {
+    fn tokens(s: &str) -> Vec<(bool, &str)> {
+        let mut out = Vec::new();
+        let mut start = 0;
+        let mut last_digit: Option<bool> = None;
+        for (i, ch) in s.char_indices() {
+            let is_digit = ch.is_ascii_digit();
+            match last_digit {
+                Some(prev) if prev != is_digit => {
+                    out.push((prev, &s[start..i]));
+                    start = i;
+                }
+                _ => {}
+            }
+            last_digit = Some(is_digit);
+        }
+        if let Some(prev) = last_digit {
+            out.push((prev, &s[start..]));
+        }
+        out
+    }
+
+    let a_toks = tokens(a);
+    let b_toks = tokens(b);
+    for (ax, bx) in a_toks.iter().zip(b_toks.iter()) {
+        let cmp = match (ax, bx) {
+            ((true, ad), (true, bd)) => {
+                // Numeric token compare — strip leading zeros, then by
+                // length, then lexicographically as a tiebreak.
+                let an = ad.trim_start_matches('0');
+                let bn = bd.trim_start_matches('0');
+                an.len().cmp(&bn.len()).then_with(|| an.cmp(bn))
+            }
+            ((false, at), (false, bt)) => at.cmp(bt),
+            // Numeric runs sort *after* alpha runs at the same position
+            // — this matches semver's rule that `1.0.0-rc1 < 1.0.0`.
+            ((true, _), (false, _)) => std::cmp::Ordering::Greater,
+            ((false, _), (true, _)) => std::cmp::Ordering::Less,
+        };
+        if cmp != std::cmp::Ordering::Equal {
+            return cmp;
+        }
+    }
+    // Equal token-by-token up to the shorter side. SemVer treats a
+    // pre-release suffix as *lower* than the bare version, so when one
+    // side has more tokens *and* the next token starts with `-` (or
+    // `+` build metadata), the longer side is considered smaller.
+    match a_toks.len().cmp(&b_toks.len()) {
+        std::cmp::Ordering::Equal => std::cmp::Ordering::Equal,
+        std::cmp::Ordering::Greater => {
+            let next = a_toks[b_toks.len()].1;
+            if next.starts_with('-') || next.starts_with('+') {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            }
+        }
+        std::cmp::Ordering::Less => {
+            let next = b_toks[a_toks.len()].1;
+            if next.starts_with('-') || next.starts_with('+') {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Less
+            }
+        }
+    }
+}
+
+fn jira_version_to_project_version(dto: JiraVersionDto, project_fallback: &str) -> ProjectVersion {
+    // Cloud `?expand=issuesstatus` returns a per-category breakdown we
+    // sum into a true `issue_count` total. Server/DC inlines
+    // `issuesUnresolvedCount` on the base payload but *not* a total, so
+    // we route that into `unresolved_issue_count` and leave
+    // `issue_count` unset there — conflating the two would let callers
+    // compare a Cloud total against a Server unresolved count and not
+    // notice the categorical mismatch.
+    let issue_count = dto
+        .issues_status_for_fix_version
+        .as_ref()
+        .map(|c| c.total());
+    let unresolved_issue_count = dto.issues_unresolved_count;
+
+    ProjectVersion {
+        id: dto.id,
+        project: dto.project.unwrap_or_else(|| project_fallback.to_string()),
+        name: dto.name,
+        description: dto.description.filter(|d| !d.is_empty()),
+        start_date: dto.start_date.filter(|d| !d.is_empty()),
+        release_date: dto.release_date.filter(|d| !d.is_empty()),
+        released: dto.released,
+        archived: dto.archived,
+        overdue: dto.overdue,
+        issue_count,
+        unresolved_issue_count,
+        source: "jira".to_string(),
     }
 }
 
@@ -6761,6 +7090,631 @@ mod tests {
                 })
                 .await
                 .unwrap();
+        }
+    }
+
+    // =====================================================================
+    // Project Versions / fixVersion — issue #238
+    // =====================================================================
+    mod versions_integration {
+        use super::*;
+        use devboy_core::{ListProjectVersionsParams, UpsertProjectVersionInput};
+        use httpmock::prelude::*;
+
+        fn token(s: &str) -> SecretString {
+            SecretString::from(s.to_string())
+        }
+
+        fn create_client(server: &MockServer) -> JiraClient {
+            JiraClient::with_base_url(
+                server.base_url(),
+                "PROJ",
+                "user@example.com",
+                token("pat-token"),
+                false,
+            )
+        }
+
+        fn create_cloud_client(server: &MockServer) -> JiraClient {
+            JiraClient::with_base_url(
+                server.base_url(),
+                "PROJ",
+                "user@example.com",
+                token("api-token"),
+                true,
+            )
+        }
+
+        fn version_dto(
+            id: &str,
+            name: &str,
+            release_date: Option<&str>,
+            released: bool,
+            archived: bool,
+        ) -> serde_json::Value {
+            let mut v = serde_json::json!({
+                "id": id,
+                "name": name,
+                "project": "PROJ",
+                "released": released,
+                "archived": archived,
+            });
+            if let Some(d) = release_date {
+                v["releaseDate"] = serde_json::json!(d);
+            }
+            v
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_returns_rich_payload() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    {
+                        "id": "10001",
+                        "name": "1.0.0",
+                        "project": "PROJ",
+                        "description": "Initial release",
+                        "startDate": "2025-01-01",
+                        "releaseDate": "2025-02-01",
+                        "released": true,
+                        "archived": false,
+                        "overdue": false,
+                    },
+                    version_dto("10002", "2.0.0", Some("2026-04-01"), false, false),
+                    version_dto("10003", "0.9.0", Some("2024-06-01"), true, true),
+                ]));
+            });
+
+            let client = create_client(&server);
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: None,
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(result.items.len(), 3);
+            // Sorted by release_date desc
+            assert_eq!(result.items[0].name, "2.0.0");
+            assert_eq!(result.items[1].name, "1.0.0");
+            assert_eq!(result.items[2].name, "0.9.0");
+            assert_eq!(
+                result.items[1].description.as_deref(),
+                Some("Initial release")
+            );
+            assert_eq!(result.items[1].source, "jira");
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_filters_archived_and_released() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    version_dto("1", "current", Some("2026-04-01"), false, false),
+                    version_dto("2", "shipped", Some("2025-12-01"), true, false),
+                    version_dto("3", "old", Some("2024-01-01"), true, true),
+                ]));
+            });
+
+            let client = create_client(&server);
+
+            let unreleased_only = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: Some(false),
+                    archived: Some(false),
+                    limit: None,
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+            assert_eq!(unreleased_only.items.len(), 1);
+            assert_eq!(unreleased_only.items[0].name, "current");
+
+            // Re-mock for the second call (httpmock mocks are per-server,
+            // and the previous mock matches all GETs to that path).
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_applies_limit_and_keeps_most_recent() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    version_dto("1", "v1", Some("2024-01-01"), true, false),
+                    version_dto("2", "v2", Some("2025-01-01"), true, false),
+                    version_dto("3", "v3", Some("2026-01-01"), true, false),
+                    version_dto("4", "v4", Some("2026-02-01"), false, false),
+                ]));
+            });
+
+            let client = create_client(&server);
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: Some(2),
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+            assert_eq!(result.items.len(), 2);
+            assert_eq!(result.items[0].name, "v4");
+            assert_eq!(result.items[1].name, "v3");
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_passes_expand_query_on_cloud() {
+            // Cloud responds to `?expand=issuesstatus` with a per-status
+            // breakdown we can sum into `issue_count`. Server/DC ignores
+            // the param, so the gate applies only to Cloud — see the
+            // sibling `omits_expand_on_self_hosted` test below.
+            let server = MockServer::start();
+            let mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/project/PROJ/versions")
+                    .query_param("expand", "issuesstatus");
+                then.status(200).json_body(serde_json::json!([
+                    {
+                        "id": "1",
+                        "name": "v1",
+                        "released": false,
+                        "archived": false,
+                        "issuesStatusForFixVersion": {
+                            "unmapped": 0,
+                            "toDo": 5,
+                            "inProgress": 3,
+                            "done": 2
+                        }
+                    }
+                ]));
+            });
+
+            let client = create_cloud_client(&server);
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: None,
+                    include_issue_count: true,
+                })
+                .await
+                .unwrap();
+            mock.assert();
+            assert_eq!(result.items.len(), 1);
+            assert_eq!(result.items[0].issue_count, Some(10));
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_omits_expand_on_self_hosted() {
+            // Copilot review on PR #239 — the expand parameter is a Cloud
+            // payload extension. We don't want to bake "Server/DC silently
+            // ignores Cloud query params" into the URL contract, so on
+            // Self-Hosted the client must not append `?expand=...` even
+            // when the caller asks for issue counts.
+            let server = MockServer::start();
+            let bare_mock = server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([{
+                    "id": "1",
+                    "name": "v1",
+                    "released": false,
+                    "archived": false,
+                    "issuesUnresolvedCount": 4,
+                }]));
+            });
+            let expanded_mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/project/PROJ/versions")
+                    .query_param("expand", "issuesstatus");
+                then.status(500); // would fail the test if we hit it
+            });
+
+            let client = create_client(&server); // self-hosted
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: None,
+                    include_issue_count: true,
+                })
+                .await
+                .unwrap();
+            bare_mock.assert();
+            expanded_mock.assert_calls(0);
+            // On Self-Hosted we don't have a true total — it goes into
+            // `unresolved_issue_count` rather than `issue_count` to keep
+            // the two flavors comparable (Codex review on PR #239).
+            assert_eq!(result.items[0].issue_count, None);
+            assert_eq!(result.items[0].unresolved_issue_count, Some(4));
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_orders_unreleased_first_then_recent() {
+            // Copilot review #3 on PR #239 — unreleased versions are the
+            // ones the agent is actually working on, they must surface
+            // before history regardless of date.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    version_dto("1", "9.10.0", Some("2026-04-01"), true, false),
+                    version_dto("2", "10.0.0", Some("2026-04-02"), false, false),
+                    version_dto("3", "next", None, false, false),
+                    version_dto("4", "1.0.0", Some("2024-01-01"), true, true),
+                ]));
+            });
+
+            let client = create_client(&server);
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: None,
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+            // Unreleased first: undated `next` then dated `10.0.0`.
+            // Released after: `9.10.0` (newer date) then `1.0.0` (older).
+            let names: Vec<_> = result.items.iter().map(|v| v.name.as_str()).collect();
+            assert_eq!(names, vec!["next", "10.0.0", "9.10.0", "1.0.0"]);
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_pagination_reflects_truncation() {
+            // Copilot review #4 on PR #239 — without total/has_more the
+            // formatter can't render a "+N more" hint.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    version_dto("1", "v1", Some("2024-01-01"), true, false),
+                    version_dto("2", "v2", Some("2025-01-01"), true, false),
+                    version_dto("3", "v3", Some("2026-01-01"), true, false),
+                ]));
+            });
+
+            let client = create_client(&server);
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: Some(2),
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+            let p = result.pagination.expect("pagination must be set");
+            assert_eq!(p.total, Some(3));
+            assert_eq!(p.limit, 2);
+            assert!(p.has_more);
+
+            // No truncation → has_more is false.
+            let server2 = MockServer::start();
+            server2.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([version_dto(
+                    "1",
+                    "v1",
+                    Some("2024-01-01"),
+                    true,
+                    false
+                ),]));
+            });
+            let client2 = create_client(&server2);
+            let result2 = client2
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: Some(20),
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+            let p2 = result2.pagination.unwrap();
+            assert_eq!(p2.total, Some(1));
+            assert!(!p2.has_more);
+        }
+
+        #[test]
+        fn compare_version_names_handles_semver_and_alpha() {
+            use std::cmp::Ordering;
+            assert_eq!(compare_version_names("10.0.0", "9.10.0"), Ordering::Greater);
+            assert_eq!(compare_version_names("1.0.0", "1.0.0"), Ordering::Equal);
+            assert_eq!(compare_version_names("1.0.10", "1.0.2"), Ordering::Greater);
+            // Pre-release < release at the same numeric prefix.
+            assert_eq!(compare_version_names("1.0.0-rc1", "1.0.0"), Ordering::Less);
+            // Non-semver names fall back to lexicographic / token compare,
+            // but at minimum they must be a total order.
+            let _ = compare_version_names("Sprint 42 cleanup", "Sprint 9 cleanup");
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_creates_when_missing() {
+            let server = MockServer::start();
+            // 1) list returns no match
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([version_dto(
+                    "99",
+                    "1.0.0",
+                    Some("2025-01-01"),
+                    true,
+                    false
+                ),]));
+            });
+            // 2) POST /version creates
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/version")
+                    .body_includes("\"name\":\"3.18.0\"")
+                    .body_includes("\"project\":\"PROJ\"")
+                    .body_includes("\"description\":\"Release notes draft\"");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10500",
+                    "name": "3.18.0",
+                    "project": "PROJ",
+                    "description": "Release notes draft",
+                    "released": false,
+                    "archived": false,
+                }));
+            });
+
+            let client = create_client(&server);
+            let v = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "3.18.0".into(),
+                    description: Some("Release notes draft".into()),
+                    start_date: None,
+                    release_date: None,
+                    released: None,
+                    archived: None,
+                })
+                .await
+                .unwrap();
+            assert_eq!(v.id, "10500");
+            assert_eq!(v.name, "3.18.0");
+            assert_eq!(v.description.as_deref(), Some("Release notes draft"));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_updates_when_present() {
+            let server = MockServer::start();
+            // 1) list returns match
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([version_dto(
+                    "777", "3.18.0", None, false, false
+                ),]));
+            });
+            // 2) PUT /version/{id}
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/version/777")
+                    .body_includes("\"description\":\"final notes\"")
+                    .body_includes("\"released\":true")
+                    .body_includes("\"releaseDate\":\"2026-05-01\"");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "777",
+                    "name": "3.18.0",
+                    "project": "PROJ",
+                    "description": "final notes",
+                    "releaseDate": "2026-05-01",
+                    "released": true,
+                    "archived": false,
+                }));
+            });
+
+            let client = create_client(&server);
+            let v = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "3.18.0".into(),
+                    description: Some("final notes".into()),
+                    start_date: None,
+                    release_date: Some("2026-05-01".into()),
+                    released: Some(true),
+                    archived: None,
+                })
+                .await
+                .unwrap();
+            assert_eq!(v.id, "777");
+            assert!(v.released);
+            assert_eq!(v.release_date.as_deref(), Some("2026-05-01"));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_partial_update_sends_only_description() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([version_dto(
+                    "42",
+                    "2.0.0",
+                    Some("2026-01-01"),
+                    false,
+                    false
+                ),]));
+            });
+            // PUT body should include description; `name`, `released`,
+            // `archived`, and date fields stay out (serde skip_if = None).
+            let put_mock = server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/version/42")
+                    .body_includes("\"description\":\"draft\"")
+                    .body_excludes("\"name\":")
+                    .body_excludes("\"released\":")
+                    .body_excludes("\"archived\":")
+                    .body_excludes("\"releaseDate\":");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "42",
+                    "name": "2.0.0",
+                    "project": "PROJ",
+                    "description": "draft",
+                    "releaseDate": "2026-01-01",
+                    "released": false,
+                    "archived": false,
+                }));
+            });
+
+            let client = create_client(&server);
+            client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "2.0.0".into(),
+                    description: Some("draft".into()),
+                    start_date: None,
+                    release_date: None,
+                    released: None,
+                    archived: None,
+                })
+                .await
+                .unwrap();
+            put_mock.assert();
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_rejects_empty_name() {
+            let server = MockServer::start();
+            let client = create_client(&server);
+            let err = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "  ".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert!(matches!(err, devboy_core::Error::InvalidData(_)));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_rejects_overlong_name() {
+            // Codex review on PR #239 — Jira caps version names at 255
+            // chars; failing client-side gives a clearer error than
+            // letting the server return a 400.
+            let server = MockServer::start();
+            let client = create_client(&server);
+            let err = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "x".repeat(256),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert!(matches!(err, devboy_core::Error::InvalidData(_)));
+        }
+
+        #[test]
+        fn duplicate_version_error_classifier_matches_jira_phrasing() {
+            // Codex review on PR #239 — race recovery hangs on this
+            // classifier. Pin the strings Jira actually returns so a
+            // copy-paste regression in the wording table doesn't
+            // silently turn duplicate errors into hard failures.
+            let dup1 = devboy_core::Error::Api {
+                status: 400,
+                message: "A version with this name already exists in this project.".into(),
+            };
+            let dup2 = devboy_core::Error::Api {
+                status: 400,
+                message: "Name is already used by another version in this project.".into(),
+            };
+            let unrelated = devboy_core::Error::Api {
+                status: 400,
+                message: "releaseDate is in the wrong format.".into(),
+            };
+            assert!(is_duplicate_version_error(&dup1));
+            assert!(is_duplicate_version_error(&dup2));
+            assert!(!is_duplicate_version_error(&unrelated));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_propagates_non_duplicate_400() {
+            // Make sure the duplicate-recovery path doesn't swallow
+            // unrelated 400s — only "already exists" is retried.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            server.mock(|when, then| {
+                when.method(POST).path("/version");
+                then.status(400).json_body(serde_json::json!({
+                    "errorMessages": ["releaseDate is in the wrong format."]
+                }));
+            });
+            let client = create_client(&server);
+            let err = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "3.18.0".into(),
+                    release_date: Some("not-a-date".into()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            // 400 → Error::Api (see Error::from_status).
+            assert!(matches!(err, devboy_core::Error::Api { .. }));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_works_on_cloud_flavor() {
+            // Codex review on PR #239 — coverage gap: every upsert test
+            // ran against self-hosted. Pin Cloud insert path to make
+            // sure the same code works against Cloud's response shape.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/CLOUDPROJ/versions");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            let post_mock = server.mock(|when, then| {
+                when.method(POST)
+                    .path("/version")
+                    .body_includes("\"name\":\"4.0.0\"")
+                    .body_includes("\"project\":\"CLOUDPROJ\"");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "30001",
+                    "name": "4.0.0",
+                    "project": "CLOUDPROJ",
+                    "description": "Cloud release",
+                    "released": false,
+                    "archived": false,
+                    // Cloud-shaped issuesStatusForFixVersion would normally
+                    // not appear on the create response — the field
+                    // surfaces via list_project_versions(includeIssueCount).
+                }));
+            });
+
+            let client = create_cloud_client(&server);
+            let v = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "CLOUDPROJ".into(),
+                    name: "4.0.0".into(),
+                    description: Some("Cloud release".into()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            post_mock.assert();
+            assert_eq!(v.id, "30001");
+            assert_eq!(v.project, "CLOUDPROJ");
+            assert_eq!(v.description.as_deref(), Some("Cloud release"));
         }
     }
 }
