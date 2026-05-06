@@ -396,11 +396,7 @@ impl McpProxyClient {
             match chunk_result {
                 Ok(bytes) => body.extend_from_slice(&bytes),
                 Err(e) => {
-                    tracing::debug!(
-                        "Stream ended with error ({} bytes read): {}",
-                        body.len(),
-                        e
-                    );
+                    tracing::debug!("Stream ended with error ({} bytes read): {}", body.len(), e);
                     break;
                 }
             }
