@@ -89,8 +89,9 @@ impl Sanitizer {
 
             // Apply in reverse order so byte offsets stay valid.
             for (start, end, matched) in matches.into_iter().rev() {
-                // Validity filter — skip false-positive matches.
-                if !validity::is_likely_secret(&matched) {
+                // Validity filter — skip false-positive matches, unless
+                // the rule explicitly opts out (PEM/SSH/Auth markers).
+                if !rule.skip_validity && !validity::is_likely_secret(&matched) {
                     continue;
                 }
                 match strategies::apply(&rule.strategy, &current, (start, end)) {
@@ -124,7 +125,7 @@ impl Sanitizer {
             let rule = &self.rules[rule_idx];
             for m in regex.find_iter(input) {
                 let matched = m.as_str();
-                if !validity::is_likely_secret(matched) {
+                if !rule.skip_validity && !validity::is_likely_secret(matched) {
                     continue;
                 }
                 out.push(Finding {
@@ -181,6 +182,7 @@ mod tests {
             severity: Severity::High,
             category: "cloud_credential".into(),
             applies_to: vec![RuleScope::SpanAttribute],
+            skip_validity: false,
             strategy: Strategy::Mask {
                 replacement: Some("[AWS_KEY_REDACTED]".into()),
             },
@@ -249,6 +251,7 @@ mod tests {
             severity: Severity::Low,
             category: "test".into(),
             applies_to: vec![],
+            skip_validity: false,
             strategy: Strategy::Mask { replacement: None },
         };
         let s = Sanitizer::new(vec![rule]).unwrap();

@@ -56,6 +56,13 @@ pub struct Rule {
     #[serde(default)]
     pub applies_to: Vec<RuleScope>,
 
+    /// If `true`, skip validity filters (dictionary / repeats / entropy)
+    /// for this rule's matches. Use for rules whose pattern is itself
+    /// the signature (PEM markers, SSH keys, Auth headers) where the
+    /// matched substring is naturally low-entropy formatting text.
+    #[serde(default)]
+    pub skip_validity: bool,
+
     /// Redaction strategy when the rule matches.
     pub strategy: Strategy,
 }

@@ -95,10 +95,12 @@ pub fn has_obvious_pattern(value: &str) -> bool {
         return false;
     }
 
-    // Repeated chars: 4 in a row.
+    // Repeated alphanumeric chars: 4 in a row. Punctuation runs (e.g.
+    // `-----` in PEM markers) are intentionally allowed — they are
+    // formatting artefacts, not placeholder values.
     let mut run = 1usize;
     for window in bytes.windows(2) {
-        if window[0] == window[1] {
+        if window[0] == window[1] && window[0].is_ascii_alphanumeric() {
             run += 1;
             if run >= 4 {
                 return true;
@@ -224,6 +226,15 @@ mod tests {
         // Random-looking value with high entropy, no obvious pattern,
         // not in dictionary — mimics a real AWS access key id.
         assert!(is_likely_secret("AKIAQ7K3MN9PV2BX5LZA"));
+    }
+
+    #[test]
+    fn pem_marker_dashes_are_allowed_runs() {
+        // PEM markers contain runs of `-` (non-alphanumeric punctuation,
+        // formatting artefact, not a placeholder pattern). The `is_likely_secret`
+        // function may still reject due to low entropy, which is why
+        // PEM rules use `skip_validity = true` instead.
+        assert!(!has_obvious_pattern("-----BEGIN RSA PRIVATE KEY-----"));
     }
 
     #[test]

@@ -1,0 +1,811 @@
+# devboy-otel-sanitizer — default rule set
+#
+# Bundled into the crate via `include_str!` and parsed at startup.
+# Loaded by `devboy_otel_sanitizer::load_default_rules()`.
+#
+# Conventions:
+#   - id          stable identifier; surfaces in scan reports
+#   - severity    "high" / "medium" / "low" (CI gate fails on high findings)
+#   - category    free-form; useful for filtering reports
+#   - pattern     Rust regex (no backreferences). Anchor as needed.
+#   - applies_to  optional; empty = all OTLP scopes
+#   - strategy    kind + parameters; see src/strategy.rs
+#
+# Validity filters (dictionary, sequential/repeated chars, entropy) run
+# before strategy application — false-positive guard against fixtures.
+#
+# This is a starter set (~80 rules). Full coverage (~150) lands in
+# follow-up commits within issue #240.
+
+# ---------------------------------------------------------------------------
+# AWS
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "aws_access_key_id"
+description = "AWS access key id"
+pattern = 'AKIA[0-9A-Z]{16}'
+severity = "high"
+category = "cloud_credential.aws"
+[rules.strategy]
+kind = "mask"
+replacement = "[AWS_ACCESS_KEY_REDACTED]"
+
+[[rules]]
+id = "aws_temporary_access_key"
+description = "AWS temporary access key (STS / role chaining)"
+pattern = 'ASIA[0-9A-Z]{16}'
+severity = "high"
+category = "cloud_credential.aws"
+[rules.strategy]
+kind = "mask"
+replacement = "[AWS_TEMP_KEY_REDACTED]"
+
+[[rules]]
+id = "aws_secret_access_key"
+description = "AWS secret access key (40 chars base64)"
+pattern = '''(?i)aws[_\-]?secret[_\-]?(access[_\-]?)?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}'''
+severity = "high"
+category = "cloud_credential.aws"
+[rules.strategy]
+kind = "mask"
+replacement = "[AWS_SECRET_REDACTED]"
+
+[[rules]]
+id = "aws_session_token"
+description = "AWS session token (STS)"
+pattern = 'FwoG[A-Za-z0-9+/=]{100,}'
+severity = "high"
+category = "cloud_credential.aws"
+[rules.strategy]
+kind = "mask"
+replacement = "[AWS_SESSION_TOKEN_REDACTED]"
+
+[[rules]]
+id = "aws_arn"
+description = "AWS ARN containing account id"
+pattern = 'arn:aws:[a-z0-9\-]+:[a-z0-9\-]*:\d{12}:[A-Za-z0-9_\-/:.*]+'
+severity = "low"
+category = "cloud_metadata.aws"
+[rules.strategy]
+kind = "mask"
+replacement = "[AWS_ARN_REDACTED]"
+
+# ---------------------------------------------------------------------------
+# Google Cloud
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "gcp_api_key"
+description = "Google Cloud API key"
+pattern = 'AIza[0-9A-Za-z_\-]{35}'
+severity = "high"
+category = "cloud_credential.gcp"
+[rules.strategy]
+kind = "mask"
+replacement = "[GCP_API_KEY_REDACTED]"
+
+[[rules]]
+id = "gcp_oauth_client_secret"
+description = "Google OAuth client secret (older format)"
+pattern = 'GOCSPX-[A-Za-z0-9_\-]{28}'
+severity = "high"
+category = "cloud_credential.gcp"
+[rules.strategy]
+kind = "mask"
+replacement = "[GCP_OAUTH_REDACTED]"
+
+[[rules]]
+id = "gcp_service_account_pem_marker"
+description = "GCP service account JSON private_key field"
+pattern = '"private_key"\s*:\s*"-----BEGIN PRIVATE KEY-----'
+severity = "high"
+category = "cloud_credential.gcp"
+[rules.strategy]
+kind = "mask"
+replacement = "[GCP_SA_KEY_PEM]"
+
+# ---------------------------------------------------------------------------
+# Azure
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "azure_storage_account_key"
+description = "Azure storage account key (88 chars base64)"
+pattern = '(?i)accountkey\s*=\s*[A-Za-z0-9+/=]{88}'
+severity = "high"
+category = "cloud_credential.azure"
+[rules.strategy]
+kind = "mask"
+replacement = "[AZURE_STORAGE_KEY_REDACTED]"
+
+[[rules]]
+id = "azure_subscription_id"
+description = "Azure subscription id (UUID)"
+pattern = '''(?i)subscription[_\-]?id\s*[:=]\s*["']?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'''
+severity = "low"
+category = "cloud_metadata.azure"
+[rules.strategy]
+kind = "mask"
+replacement = "[AZURE_SUB_ID_REDACTED]"
+
+[[rules]]
+id = "azure_jwt"
+description = "Azure AD JWT token"
+pattern = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1Ni[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+'
+severity = "high"
+category = "auth_token.azure"
+[rules.strategy]
+kind = "mask"
+replacement = "[AZURE_JWT_REDACTED]"
+
+# ---------------------------------------------------------------------------
+# OAuth tokens — Git providers
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "github_pat_classic"
+description = "GitHub personal access token (classic)"
+pattern = 'ghp_[A-Za-z0-9]{36}'
+severity = "high"
+category = "oauth_token.github"
+[rules.strategy]
+kind = "mask"
+replacement = "[GITHUB_PAT_REDACTED]"
+
+[[rules]]
+id = "github_pat_fine_grained"
+description = "GitHub fine-grained personal access token"
+pattern = 'github_pat_[A-Za-z0-9_]{82}'
+severity = "high"
+category = "oauth_token.github"
+[rules.strategy]
+kind = "mask"
+replacement = "[GITHUB_FINE_PAT_REDACTED]"
+
+[[rules]]
+id = "github_oauth_user_token"
+description = "GitHub user-to-server OAuth token"
+pattern = 'gho_[A-Za-z0-9]{36}'
+severity = "high"
+category = "oauth_token.github"
+[rules.strategy]
+kind = "mask"
+replacement = "[GITHUB_OAUTH_REDACTED]"
+
+[[rules]]
+id = "github_app_user_token"
+description = "GitHub user access token for an app"
+pattern = 'ghu_[A-Za-z0-9]{36}'
+severity = "high"
+category = "oauth_token.github"
+[rules.strategy]
+kind = "mask"
+replacement = "[GITHUB_APP_USER_REDACTED]"
+
+[[rules]]
+id = "github_server_to_server_token"
+description = "GitHub server-to-server token"
+pattern = 'ghs_[A-Za-z0-9]{36}'
+severity = "high"
+category = "oauth_token.github"
+[rules.strategy]
+kind = "mask"
+replacement = "[GITHUB_S2S_REDACTED]"
+
+[[rules]]
+id = "github_refresh_token"
+description = "GitHub refresh token"
+pattern = 'ghr_[A-Za-z0-9]{36,255}'
+severity = "high"
+category = "oauth_token.github"
+[rules.strategy]
+kind = "mask"
+replacement = "[GITHUB_REFRESH_REDACTED]"
+
+[[rules]]
+id = "gitlab_pat"
+description = "GitLab personal access token"
+pattern = 'glpat-[A-Za-z0-9_\-]{20}'
+severity = "high"
+category = "oauth_token.gitlab"
+[rules.strategy]
+kind = "mask"
+replacement = "[GITLAB_PAT_REDACTED]"
+
+[[rules]]
+id = "gitlab_oauth_token"
+description = "GitLab OAuth access token"
+pattern = 'gloas-[A-Za-z0-9_\-]{20}'
+severity = "high"
+category = "oauth_token.gitlab"
+[rules.strategy]
+kind = "mask"
+replacement = "[GITLAB_OAUTH_REDACTED]"
+
+[[rules]]
+id = "gitlab_runner_token"
+description = "GitLab runner registration token"
+pattern = 'glrt-[A-Za-z0-9_\-]{20}'
+severity = "high"
+category = "oauth_token.gitlab"
+[rules.strategy]
+kind = "mask"
+replacement = "[GITLAB_RUNNER_REDACTED]"
+
+# ---------------------------------------------------------------------------
+# OAuth tokens — Slack / Atlassian / Notion
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "slack_bot_token"
+description = "Slack bot token"
+pattern = 'xoxb-[0-9]+-[0-9]+-[A-Za-z0-9]+'
+severity = "high"
+category = "oauth_token.slack"
+[rules.strategy]
+kind = "mask"
+replacement = "[SLACK_BOT_REDACTED]"
+
+[[rules]]
+id = "slack_user_token"
+description = "Slack user token"
+pattern = 'xoxp-[0-9]+-[0-9]+-[0-9]+-[A-Za-z0-9]+'
+severity = "high"
+category = "oauth_token.slack"
+[rules.strategy]
+kind = "mask"
+replacement = "[SLACK_USER_REDACTED]"
+
+[[rules]]
+id = "slack_workspace_token"
+description = "Slack workspace token"
+pattern = 'xoxs-[0-9]+-[0-9]+-[0-9]+-[A-Za-z0-9]+'
+severity = "high"
+category = "oauth_token.slack"
+[rules.strategy]
+kind = "mask"
+replacement = "[SLACK_WS_REDACTED]"
+
+[[rules]]
+id = "slack_app_token"
+description = "Slack app-level token"
+pattern = 'xapp-[0-9]+-[A-Z0-9]+-[0-9]+-[A-Za-z0-9]+'
+severity = "high"
+category = "oauth_token.slack"
+[rules.strategy]
+kind = "mask"
+replacement = "[SLACK_APP_REDACTED]"
+
+[[rules]]
+id = "atlassian_api_token"
+description = "Atlassian (Jira/Confluence) API token"
+pattern = 'ATATT3[A-Za-z0-9_\-]{180,}'
+severity = "high"
+category = "oauth_token.atlassian"
+[rules.strategy]
+kind = "mask"
+replacement = "[ATLASSIAN_TOKEN_REDACTED]"
+
+[[rules]]
+id = "notion_secret"
+description = "Notion integration secret"
+pattern = 'secret_[A-Za-z0-9]{43}'
+severity = "high"
+category = "oauth_token.notion"
+[rules.strategy]
+kind = "mask"
+replacement = "[NOTION_SECRET_REDACTED]"
+
+# ---------------------------------------------------------------------------
+# LLM credentials
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "anthropic_api_key"
+description = "Anthropic API key"
+pattern = 'sk-ant-api03-[A-Za-z0-9_\-]{93}'
+severity = "high"
+category = "llm_credential.anthropic"
+[rules.strategy]
+kind = "mask"
+replacement = "[ANTHROPIC_KEY_REDACTED]"
+
+[[rules]]
+id = "anthropic_legacy_key"
+description = "Anthropic legacy API key"
+pattern = 'sk-ant-[a-z]{2,10}-[A-Za-z0-9_\-]{86,108}'
+severity = "high"
+category = "llm_credential.anthropic"
+[rules.strategy]
+kind = "mask"
+replacement = "[ANTHROPIC_LEGACY_KEY_REDACTED]"
+
+[[rules]]
+id = "openai_api_key"
+description = "OpenAI API key (sk-proj-)"
+pattern = 'sk-proj-[A-Za-z0-9_\-]{40,200}'
+severity = "high"
+category = "llm_credential.openai"
+[rules.strategy]
+kind = "mask"
+replacement = "[OPENAI_PROJ_KEY_REDACTED]"
+
+[[rules]]
+id = "openai_legacy_api_key"
+description = "OpenAI legacy API key"
+pattern = 'sk-[A-Za-z0-9]{48}'
+severity = "high"
+category = "llm_credential.openai"
+[rules.strategy]
+kind = "mask"
+replacement = "[OPENAI_KEY_REDACTED]"
+
+[[rules]]
+id = "openai_org_id"
+description = "OpenAI organization id"
+pattern = 'org-[A-Za-z0-9]{24}'
+severity = "low"
+category = "llm_metadata.openai"
+[rules.strategy]
+kind = "mask"
+replacement = "[OPENAI_ORG_ID_REDACTED]"
+
+[[rules]]
+id = "huggingface_token"
+description = "Hugging Face access token"
+pattern = 'hf_[A-Za-z0-9]{34,40}'
+severity = "high"
+category = "llm_credential.huggingface"
+[rules.strategy]
+kind = "mask"
+replacement = "[HF_TOKEN_REDACTED]"
+
+[[rules]]
+id = "cohere_api_key"
+description = "Cohere API key"
+pattern = '''(?i)cohere[_\-]?api[_\-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9]{40}'''
+severity = "high"
+category = "llm_credential.cohere"
+[rules.strategy]
+kind = "mask"
+replacement = "[COHERE_KEY_REDACTED]"
+
+[[rules]]
+id = "google_gemini_api_key"
+description = "Google Gemini / Generative AI API key"
+pattern = 'AIzaSy[A-Za-z0-9_\-]{33}'
+severity = "high"
+category = "llm_credential.google"
+[rules.strategy]
+kind = "mask"
+replacement = "[GEMINI_KEY_REDACTED]"
+
+# ---------------------------------------------------------------------------
+# Cloud DBs / connection strings
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "mongodb_connection_string"
+description = "MongoDB connection string with credentials"
+pattern = 'mongodb(\+srv)?://[^:\s]+:[^@\s]+@[^\s/]+'
+severity = "high"
+category = "db_credential.mongodb"
+[rules.strategy]
+kind = "mask"
+replacement = "[MONGO_DSN_REDACTED]"
+
+[[rules]]
+id = "postgres_connection_string"
+description = "PostgreSQL connection string with credentials"
+pattern = 'postgres(ql)?://[^:\s]+:[^@\s]+@[^\s/]+'
+severity = "high"
+category = "db_credential.postgres"
+[rules.strategy]
+kind = "mask"
+replacement = "[POSTGRES_DSN_REDACTED]"
+
+[[rules]]
+id = "mysql_connection_string"
+description = "MySQL connection string with credentials"
+pattern = 'mysql(x)?://[^:\s]+:[^@\s]+@[^\s/]+'
+severity = "high"
+category = "db_credential.mysql"
+[rules.strategy]
+kind = "mask"
+replacement = "[MYSQL_DSN_REDACTED]"
+
+[[rules]]
+id = "redis_connection_string"
+description = "Redis connection string with auth"
+pattern = 'redis(s)?://[^:\s]*:[^@\s]+@[^\s/]+'
+severity = "high"
+category = "db_credential.redis"
+[rules.strategy]
+kind = "mask"
+replacement = "[REDIS_DSN_REDACTED]"
+
+[[rules]]
+id = "amqp_connection_string"
+description = "AMQP / RabbitMQ connection string with credentials"
+pattern = 'amqps?://[^:\s]+:[^@\s]+@[^\s/]+'
+severity = "high"
+category = "db_credential.amqp"
+[rules.strategy]
+kind = "mask"
+replacement = "[AMQP_DSN_REDACTED]"
+
+# ---------------------------------------------------------------------------
+# Stripe
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "stripe_secret_live"
+description = "Stripe live secret key"
+pattern = 'sk_live_[A-Za-z0-9]{24,}'
+severity = "high"
+category = "payment_credential.stripe"
+[rules.strategy]
+kind = "mask"
+replacement = "[STRIPE_LIVE_SECRET_REDACTED]"
+
+[[rules]]
+id = "stripe_secret_test"
+description = "Stripe test secret key"
+pattern = 'sk_test_[A-Za-z0-9]{24,}'
+severity = "medium"
+category = "payment_credential.stripe"
+[rules.strategy]
+kind = "mask"
+replacement = "[STRIPE_TEST_SECRET_REDACTED]"
+
+[[rules]]
+id = "stripe_restricted_key"
+description = "Stripe restricted API key"
+pattern = 'rk_(live|test)_[A-Za-z0-9]{24,}'
+severity = "high"
+category = "payment_credential.stripe"
+[rules.strategy]
+kind = "mask"
+replacement = "[STRIPE_RK_REDACTED]"
+
+[[rules]]
+id = "stripe_webhook_secret"
+description = "Stripe webhook signing secret"
+pattern = 'whsec_[A-Za-z0-9]{32,}'
+severity = "high"
+category = "payment_credential.stripe"
+[rules.strategy]
+kind = "mask"
+replacement = "[STRIPE_WHSEC_REDACTED]"
+
+# ---------------------------------------------------------------------------
+# Generic — common formats
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "jwt_token"
+description = "JSON Web Token (3-part base64url)"
+pattern = 'eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}'
+severity = "high"
+category = "auth_token.jwt"
+[rules.strategy]
+kind = "mask"
+replacement = "[JWT_REDACTED]"
+
+[[rules]]
+id = "private_key_pem_block"
+description = "PEM-encoded private key marker"
+pattern = '-----BEGIN ((RSA|DSA|EC|OPENSSH|PGP) )?PRIVATE KEY-----'
+severity = "high"
+category = "credential.pem"
+skip_validity = true
+[rules.strategy]
+kind = "mask"
+replacement = "[PRIVATE_KEY_REDACTED]"
+
+[[rules]]
+id = "ssh_authorized_key_marker"
+description = "SSH authorized_keys entry"
+pattern = '(ssh-rsa|ssh-ed25519|ecdsa-sha2-nistp256) [A-Za-z0-9+/=]{100,}'
+severity = "medium"
+category = "credential.ssh"
+skip_validity = true
+[rules.strategy]
+kind = "mask"
+replacement = "[SSH_PUBKEY_REDACTED]"
+
+[[rules]]
+id = "basic_auth_header"
+description = "HTTP Basic auth header value"
+pattern = '(?i)authorization:\s*basic\s+[A-Za-z0-9+/=]{8,}'
+severity = "high"
+category = "auth_header.basic"
+skip_validity = true
+[rules.strategy]
+kind = "mask"
+replacement = "Authorization: Basic [REDACTED]"
+
+[[rules]]
+id = "bearer_auth_header"
+description = "HTTP Bearer auth header (catch-all)"
+pattern = '(?i)authorization:\s*bearer\s+[A-Za-z0-9_\-\.~+/=]{16,}'
+severity = "high"
+category = "auth_header.bearer"
+skip_validity = true
+[rules.strategy]
+kind = "mask"
+replacement = "Authorization: Bearer [REDACTED]"
+
+[[rules]]
+id = "credit_card_visa_mastercard"
+description = "Credit card number (Visa/MC/Amex/Discover, basic shape)"
+pattern = '\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b'
+severity = "high"
+category = "pii.credit_card"
+[rules.strategy]
+kind = "mask"
+replacement = "[CC_REDACTED]"
+
+[[rules]]
+id = "ssn_us"
+description = "US SSN (basic shape — no strict area-code validation)"
+pattern = '\b\d{3}-\d{2}-\d{4}\b'
+severity = "high"
+category = "pii.ssn"
+[rules.strategy]
+kind = "mask"
+replacement = "[SSN_REDACTED]"
+
+[[rules]]
+id = "email_address"
+description = "Email address (PII, low severity by default)"
+pattern = '\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b'
+severity = "low"
+category = "pii.email"
+[rules.strategy]
+kind = "mask"
+replacement = "[EMAIL_REDACTED]"
+
+[[rules]]
+id = "ipv4_address"
+description = "IPv4 address (informational)"
+pattern = '\b(?:\d{1,3}\.){3}\d{1,3}\b'
+severity = "low"
+category = "pii.network"
+[rules.strategy]
+kind = "mask"
+replacement = "[IPV4_REDACTED]"
+
+# ---------------------------------------------------------------------------
+# DigitalOcean / Heroku / Vercel / Cloudflare
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "digitalocean_pat"
+description = "DigitalOcean personal access token"
+pattern = 'dop_v1_[A-Za-z0-9]{64}'
+severity = "high"
+category = "cloud_credential.digitalocean"
+[rules.strategy]
+kind = "mask"
+replacement = "[DO_PAT_REDACTED]"
+
+[[rules]]
+id = "heroku_api_key"
+description = "Heroku API key (UUID)"
+pattern = '''(?i)heroku[_\-]?api[_\-]?key["']?\s*[:=]\s*["']?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'''
+severity = "high"
+category = "cloud_credential.heroku"
+[rules.strategy]
+kind = "mask"
+replacement = "[HEROKU_KEY_REDACTED]"
+
+[[rules]]
+id = "vercel_token"
+description = "Vercel access token"
+pattern = '''(?i)vercel[_\-]?(api[_\-]?)?token["']?\s*[:=]\s*["']?[A-Za-z0-9]{24}'''
+severity = "high"
+category = "cloud_credential.vercel"
+[rules.strategy]
+kind = "mask"
+replacement = "[VERCEL_TOKEN_REDACTED]"
+
+[[rules]]
+id = "cloudflare_api_token"
+description = "Cloudflare API token"
+pattern = '''(?i)cloudflare[_\-]?(api[_\-]?)?token["']?\s*[:=]\s*["']?[A-Za-z0-9_\-]{40}'''
+severity = "high"
+category = "cloud_credential.cloudflare"
+[rules.strategy]
+kind = "mask"
+replacement = "[CF_TOKEN_REDACTED]"
+
+# ---------------------------------------------------------------------------
+# CI / package registries
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "npm_token"
+description = "npm access token"
+pattern = 'npm_[A-Za-z0-9]{36}'
+severity = "high"
+category = "registry_credential.npm"
+[rules.strategy]
+kind = "mask"
+replacement = "[NPM_TOKEN_REDACTED]"
+
+[[rules]]
+id = "pypi_token"
+description = "PyPI API token"
+pattern = 'pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_\-]{50,}'
+severity = "high"
+category = "registry_credential.pypi"
+[rules.strategy]
+kind = "mask"
+replacement = "[PYPI_TOKEN_REDACTED]"
+
+[[rules]]
+id = "rubygems_token"
+description = "RubyGems API token"
+pattern = 'rubygems_[a-f0-9]{48}'
+severity = "high"
+category = "registry_credential.rubygems"
+[rules.strategy]
+kind = "mask"
+replacement = "[RUBYGEMS_TOKEN_REDACTED]"
+
+[[rules]]
+id = "circleci_token"
+description = "CircleCI personal token"
+pattern = '''(?i)circle[-_]?ci[_\-]?token["']?\s*[:=]\s*["']?[a-f0-9]{40}'''
+severity = "high"
+category = "ci_credential.circleci"
+[rules.strategy]
+kind = "mask"
+replacement = "[CIRCLECI_TOKEN_REDACTED]"
+
+# ---------------------------------------------------------------------------
+# Other SaaS
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "twilio_account_sid"
+description = "Twilio account SID"
+pattern = 'AC[a-f0-9]{32}'
+severity = "medium"
+category = "saas_credential.twilio"
+[rules.strategy]
+kind = "mask"
+replacement = "[TWILIO_SID_REDACTED]"
+
+[[rules]]
+id = "twilio_auth_token"
+description = "Twilio auth token"
+pattern = 'SK[a-f0-9]{32}'
+severity = "high"
+category = "saas_credential.twilio"
+[rules.strategy]
+kind = "mask"
+replacement = "[TWILIO_AUTH_REDACTED]"
+
+[[rules]]
+id = "sendgrid_api_key"
+description = "SendGrid API key"
+pattern = 'SG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}'
+severity = "high"
+category = "saas_credential.sendgrid"
+[rules.strategy]
+kind = "mask"
+replacement = "[SENDGRID_KEY_REDACTED]"
+
+[[rules]]
+id = "mailgun_api_key"
+description = "Mailgun API key"
+pattern = 'key-[a-f0-9]{32}'
+severity = "high"
+category = "saas_credential.mailgun"
+[rules.strategy]
+kind = "mask"
+replacement = "[MAILGUN_KEY_REDACTED]"
+
+[[rules]]
+id = "datadog_api_key"
+description = "Datadog API key"
+pattern = '''(?i)dd[_\-]?api[_\-]?key["']?\s*[:=]\s*["']?[a-f0-9]{32}'''
+severity = "high"
+category = "saas_credential.datadog"
+[rules.strategy]
+kind = "mask"
+replacement = "[DD_API_KEY_REDACTED]"
+
+[[rules]]
+id = "linear_api_key"
+description = "Linear API key"
+pattern = 'lin_api_[A-Za-z0-9]{40}'
+severity = "high"
+category = "saas_credential.linear"
+[rules.strategy]
+kind = "mask"
+replacement = "[LINEAR_KEY_REDACTED]"
+
+[[rules]]
+id = "supabase_service_role_jwt"
+description = "Supabase service role JWT"
+pattern = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+'
+severity = "high"
+category = "saas_credential.supabase"
+[rules.strategy]
+kind = "mask"
+replacement = "[SUPABASE_JWT_REDACTED]"
+
+[[rules]]
+id = "shopify_access_token"
+description = "Shopify access token (shpat_)"
+pattern = 'shpat_[a-f0-9]{32}'
+severity = "high"
+category = "saas_credential.shopify"
+[rules.strategy]
+kind = "mask"
+replacement = "[SHOPIFY_TOKEN_REDACTED]"
+
+# ---------------------------------------------------------------------------
+# Agent / OTEL — Claude Code specifics
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "claude_code_otel_user_email_attr"
+description = "Claude Code OTEL resource attribute user.email"
+pattern = '''(?i)\buser\.email["']?\s*[:=]\s*["']?[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}'''
+severity = "medium"
+category = "agent_otel.claude_code"
+[rules.strategy]
+kind = "mask"
+replacement = "user.email=[REDACTED]"
+
+[[rules]]
+id = "mcp_bearer_token_env"
+description = "MCP bearer token in env-style assignment"
+pattern = '''(?i)(MCP|DEVBOY)[_\-]?(API[_\-]?)?TOKEN["']?\s*[:=]\s*["']?[A-Za-z0-9_\-]{20,}'''
+severity = "high"
+category = "agent_otel.mcp"
+[rules.strategy]
+kind = "mask"
+replacement = "[MCP_TOKEN_ENV_REDACTED]"
+
+[[rules]]
+id = "anthropic_api_key_env"
+description = "Anthropic API key as env-var assignment"
+pattern = '''(?i)ANTHROPIC[_\-]?API[_\-]?KEY["']?\s*[:=]\s*["']?sk-ant-[A-Za-z0-9_\-]{60,}'''
+severity = "high"
+category = "agent_otel.claude_code"
+[rules.strategy]
+kind = "mask"
+replacement = "ANTHROPIC_API_KEY=[REDACTED]"
+
+# ---------------------------------------------------------------------------
+# High-entropy fallback — last resort generic detection
+# ---------------------------------------------------------------------------
+# These rely on the entropy_filter strategy to reduce false positives.
+# Length-anchored to skip short identifiers; entropy threshold tightens
+# the match further.
+
+[[rules]]
+id = "generic_high_entropy_hex_40_64"
+description = "Generic high-entropy hex string (40-64 chars) — likely a token / hash"
+pattern = '\b[a-f0-9]{40,64}\b'
+severity = "low"
+category = "generic.high_entropy"
+[rules.strategy]
+kind = "entropy_filter"
+min_entropy = 0.0  # use encoding default (Hex = 3.0)
+
+[[rules]]
+id = "generic_high_entropy_base64_32_plus"
+description = "Generic high-entropy base64 string (32+ chars) — likely a token"
+pattern = '\b[A-Za-z0-9+/]{32,}={0,2}\b'
+severity = "low"
+category = "generic.high_entropy"
+[rules.strategy]
+kind = "entropy_filter"
+min_entropy = 0.0  # use encoding default (Base64 = 3.5)
