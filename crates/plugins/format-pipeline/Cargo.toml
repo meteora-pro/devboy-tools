@@ -1,13 +1,23 @@
 [package]
 name = "devboy-format-pipeline"
-description = "Format pipeline for devboy-tools - TOON encoding, tree-based budget trimming, cursor pagination"
+description = "Format pipeline for devboy-tools — TOON encoding, MCKP tree-budget trimming, cursor pagination, deduplication; the output stage shared by every devboy provider."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme.workspace = true
+keywords = ["devboy", "ai-agents", "tokenizer", "pagination", "compression"]
+categories = ["development-tools", "encoding", "compression"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-devboy-core = { path = "../../devboy-core" }
+devboy-core = { workspace = true }
 toon-format = { version = "0.4", default-features = false }
 anyhow.workspace = true
 base64 = "0.22"
