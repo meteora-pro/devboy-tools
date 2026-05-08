@@ -1,18 +1,27 @@
 [package]
 name = "devboy-mcp"
-description = "MCP (Model Context Protocol) server for devboy-tools"
+description = "MCP (Model Context Protocol) server for devboy-tools — JSON-RPC 2.0 over stdio, exposing every devboy provider as MCP tools to AI agents."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
+readme.workspace = true
+keywords = ["devboy", "mcp", "ai-agents", "json-rpc", "claude"]
+categories = ["development-tools", "api-bindings"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-devboy-core = { path = "../devboy-core" }
-devboy-assets = { path = "../devboy-assets" }
-devboy-executor = { path = "../devboy-executor" }
-devboy-confluence = { path = "../plugins/api/confluence" }
-devboy-format-pipeline = { path = "../plugins/format-pipeline" }
+devboy-core = { workspace = true }
+devboy-assets = { workspace = true }
+devboy-executor = { workspace = true }
+devboy-confluence = { workspace = true }
+devboy-format-pipeline = { workspace = true }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

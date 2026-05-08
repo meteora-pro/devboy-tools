@@ -1,11 +1,20 @@
 [package]
 name = "devboy-core"
-description = "Core traits, types, and error handling for devboy-tools"
+description = "Core traits, types, and error handling for devboy-tools — Provider, IssueProvider, MergeRequestProvider, configuration model."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
+readme.workspace = true
+keywords = ["devboy", "ai-agents", "mcp", "providers", "developer-tools"]
+categories = ["development-tools", "api-bindings"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = []
