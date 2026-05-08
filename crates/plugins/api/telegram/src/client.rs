@@ -10,7 +10,7 @@ use devboy_core::{
 };
 use reqwest::StatusCode;
 use secrecy::{ExposeSecret, SecretString};
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 
 use crate::DEFAULT_TELEGRAM_API_URL;
 
@@ -161,16 +161,25 @@ impl TelegramClient {
     }
 
     async fn get_updates(&self, offset: Option<i64>, limit: u32) -> Result<Vec<TelegramUpdate>> {
-        let url = format!(
-            "{}/bot{}/getUpdates",
-            self.base_url.trim_end_matches('/'),
-            self.token.expose_secret()
-        );
-        let mut query = vec![("timeout".to_string(), "0".to_string())];
-        query.push(("limit".to_string(), limit.min(100).to_string()));
+        let mut query = vec![("timeout", "0".to_string())];
+        query.push(("limit", limit.min(100).to_string()));
         if let Some(offset) = offset {
-            query.push(("offset".to_string(), offset.to_string()));
+            query.push(("offset", offset.to_string()));
         }
+
+        self.get_api("getUpdates", &query).await
+    }
+
+    async fn get_api<T>(&self, method: &str, query: &[(&str, String)]) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        let url = format!(
+            "{}/bot{}/{}",
+            self.base_url.trim_end_matches('/'),
+            self.token.expose_secret(),
+            method
+        );
 
         let response = self
             .http
@@ -182,29 +191,62 @@ impl TelegramClient {
 
         let status = response.status();
         let body = response.text().await.map_err(map_reqwest_error)?;
-        if !status.is_success() {
-            return Err(map_http_error(status, &body));
-        }
+        map_telegram_api_payload(status, &body)
+    }
 
-        let payload: TelegramApiResponse<Vec<TelegramUpdate>> = serde_json::from_str(&body)?;
-        if payload.ok {
-            Ok(payload.result.unwrap_or_default())
-        } else if let Some(retry_after) = payload
-            .parameters
-            .as_ref()
-            .and_then(|parameters| parameters.retry_after)
-        {
-            Err(Error::RateLimited {
-                retry_after: Some(retry_after),
-            })
-        } else {
-            Err(Error::from_status(
-                payload.error_code.unwrap_or(400),
-                payload
-                    .description
-                    .unwrap_or_else(|| "Telegram API request failed".to_string()),
-            ))
-        }
+    async fn post_api<T>(&self, method: &str, form: &[(&str, String)]) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        let url = format!(
+            "{}/bot{}/{}",
+            self.base_url.trim_end_matches('/'),
+            self.token.expose_secret(),
+            method
+        );
+
+        let response = self
+            .http
+            .post(url)
+            .form(form)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+
+        let status = response.status();
+        let body = response.text().await.map_err(map_reqwest_error)?;
+        map_telegram_api_payload(status, &body)
+    }
+}
+
+fn map_telegram_api_payload<T>(status: StatusCode, body: &str) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    if !status.is_success() {
+        return Err(map_http_error(status, body));
+    }
+
+    let payload: TelegramApiResponse<T> = serde_json::from_str(body)?;
+    if payload.ok {
+        payload.result.ok_or_else(|| {
+            Error::InvalidData("Telegram API response missing result payload".to_string())
+        })
+    } else if let Some(retry_after) = payload
+        .parameters
+        .as_ref()
+        .and_then(|parameters| parameters.retry_after)
+    {
+        Err(Error::RateLimited {
+            retry_after: Some(retry_after),
+        })
+    } else {
+        Err(Error::from_status(
+            payload.error_code.unwrap_or(400),
+            payload
+                .description
+                .unwrap_or_else(|| "Telegram API request failed".to_string()),
+        ))
     }
 }
 
@@ -356,11 +398,31 @@ impl MessengerProvider for TelegramClient {
         })
     }
 
-    async fn send_message(&self, _params: SendMessageParams) -> Result<MessengerMessage> {
-        Err(Error::ProviderUnsupported {
-            provider: self.provider_name().to_string(),
-            operation: "send_message".to_string(),
-        })
+    async fn send_message(&self, params: SendMessageParams) -> Result<MessengerMessage> {
+        if !params.attachments.is_empty() {
+            return Err(Error::ProviderUnsupported {
+                provider: self.provider_name().to_string(),
+                operation: "send_message attachments".to_string(),
+            });
+        }
+
+        let mut form = vec![
+            ("chat_id", params.chat_id.clone()),
+            ("text", params.text.clone()),
+            ("parse_mode", "Markdown".to_string()),
+            ("disable_web_page_preview", "true".to_string()),
+        ];
+
+        if let Some(thread_id) = parse_optional_i64("thread_id", params.thread_id.as_deref())? {
+            form.push(("message_thread_id", thread_id.to_string()));
+        }
+        if let Some(reply_to_id) = parse_optional_i64("reply_to_id", params.reply_to_id.as_deref())?
+        {
+            form.push(("reply_to_message_id", reply_to_id.to_string()));
+        }
+
+        let message: TelegramMessage = self.post_api("sendMessage", &form).await?;
+        Ok(map_message(message, false))
     }
 }
 
@@ -634,7 +696,7 @@ fn matches_thread(message: &TelegramMessage, thread_id: Option<i64>) -> bool {
 mod tests {
     use super::*;
 
-    use httpmock::Method::GET;
+    use httpmock::Method::{GET, POST};
     use httpmock::MockServer;
 
     fn token(value: &str) -> SecretString {
@@ -762,5 +824,103 @@ mod tests {
         assert_eq!(result.items[1].reply_to_id.as_deref(), Some("7"));
         assert_eq!(result.items[1].thread_id.as_deref(), Some("7"));
         assert!(result.items[1].is_edited);
+    }
+
+    #[tokio::test]
+    async fn send_message_maps_response() {
+        let server = MockServer::start();
+        let send_message = server.mock(|when, then| {
+            when.method(POST).path("/botbot-token/sendMessage");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "ok": true,
+                "result": {
+                    "message_id": 30,
+                    "date": 1710000500,
+                    "chat": { "id": -200, "type": "supergroup", "title": "Eng" },
+                    "from": { "id": 99, "first_name": "Devboy", "username": "devboy_bot" },
+                    "text": "hello *team*"
+                }
+            }));
+        });
+
+        let result = TelegramClient::new(token("bot-token"))
+            .with_base_url(server.base_url())
+            .send_message(SendMessageParams {
+                chat_id: "-200".to_string(),
+                text: "hello *team*".to_string(),
+                thread_id: None,
+                reply_to_id: None,
+                attachments: vec![],
+            })
+            .await
+            .unwrap();
+
+        send_message.assert_calls(1);
+        assert_eq!(result.chat_id, "-200");
+        assert_eq!(result.text, "hello *team*");
+        assert_eq!(result.author.name, "Devboy");
+        assert!(!result.is_edited);
+    }
+
+    #[tokio::test]
+    async fn send_message_includes_thread_and_reply_ids() {
+        let server = MockServer::start();
+        let send_message = server.mock(|when, then| {
+            when.method(POST).path("/botbot-token/sendMessage");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "ok": true,
+                "result": {
+                    "message_id": 31,
+                    "date": 1710000600,
+                    "chat": { "id": -200, "type": "supergroup", "title": "Eng" },
+                    "from": { "id": 99, "first_name": "Devboy", "username": "devboy_bot" },
+                    "text": "reply",
+                    "message_thread_id": 123,
+                    "reply_to_message": { "message_id": 7 }
+                }
+            }));
+        });
+
+        let result = TelegramClient::new(token("bot-token"))
+            .with_base_url(server.base_url())
+            .send_message(SendMessageParams {
+                chat_id: "-200".to_string(),
+                text: "reply".to_string(),
+                thread_id: Some("123".to_string()),
+                reply_to_id: Some("7".to_string()),
+                attachments: vec![],
+            })
+            .await
+            .unwrap();
+
+        send_message.assert_calls(1);
+        assert_eq!(result.thread_id.as_deref(), Some("123"));
+        assert_eq!(result.reply_to_id.as_deref(), Some("7"));
+    }
+
+    #[tokio::test]
+    async fn send_message_rejects_attachments() {
+        let err = TelegramClient::new(token("bot-token"))
+            .send_message(SendMessageParams {
+                chat_id: "-200".to_string(),
+                text: "reply".to_string(),
+                thread_id: None,
+                reply_to_id: None,
+                attachments: vec![MessageAttachment {
+                    id: Some("att-1".to_string()),
+                    name: Some("report.txt".to_string()),
+                    attachment_type: None,
+                    url: None,
+                    mime_type: None,
+                }],
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::ProviderUnsupported { provider, operation }
+            if provider == "telegram" && operation == "send_message attachments"
+        ));
     }
 }
