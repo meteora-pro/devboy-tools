@@ -30,10 +30,10 @@ license = "Apache-2.0"
 repository = "https://github.com/meteora-pro/devboy-tools"
 homepage = "https://devboy.pro"
 authors = ["Meteora <dev@meteora.pro>"]
-readme = "README.md"
-# Defaults applied when a crate does not override them. Each publishable
-# crate's `Cargo.toml` may add `keywords`/`categories` of its own — Cargo
-# silently overrides workspace defaults at the crate level when present.
+# `readme` is intentionally NOT inherited workspace-wide: each publishable
+# crate has its own `README.md` and declares it explicitly. A workspace-level
+# `readme = "README.md"` resolves relative to the workspace root and produces
+# a misleading "path outside of the package" warning at `cargo publish` time.
 # `rust-version` is workspace-wide so that publish-time MSRV is consistent.
 rust-version = "1.85"
 

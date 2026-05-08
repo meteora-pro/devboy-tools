@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
-readme.workspace = true
+readme = "README.md"
 keywords = ["devboy", "github", "issues", "pull-requests", "ai-agents"]
 categories = ["api-bindings", "development-tools"]
 

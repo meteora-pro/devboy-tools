@@ -2,8 +2,8 @@
 //!
 //! Detects which AI agent the user actively uses (`devboy_core::agents`),
 //! resolves a curated skill bundle for the requested profile
-//! (`skills/bundles/<profile>.toml`), and installs the resulting skill
-//! set to the agent's canonical directory.
+//! (`crates/devboy-core/bundles/<profile>.toml`, embedded at build time),
+//! and installs the resulting skill set to the agent's canonical directory.
 //!
 //! Four of the seven detector ids currently map onto a `devboy_skills::Agent`
 //! install target (Claude, Codex, Cursor, Kimi). For the other three
