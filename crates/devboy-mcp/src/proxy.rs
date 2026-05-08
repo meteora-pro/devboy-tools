@@ -389,35 +389,66 @@ impl McpProxyClient {
         &self,
         response: reqwest::Response,
     ) -> devboy_core::Result<JsonRpcResponse> {
+        let stream = response
+            .bytes_stream()
+            .map(|r| r.map_err(|e| e.to_string()));
+        Self::parse_json_stream(stream).await
+    }
+
+    /// Drain a chunked body stream into a `Vec<u8>` and parse it as
+    /// `JsonRpcResponse`. If the stream ends with an error after a complete
+    /// body has already been received, the parse still succeeds — that is the
+    /// production scenario that motivated the streaming read in the first
+    /// place. If the stream ends with an error and the accumulated bytes do
+    /// not parse, the original stream error is preserved in the resulting
+    /// message so callers can distinguish a truncated body from a malformed
+    /// one.
+    ///
+    /// Generic over chunk type and error type so unit tests can drive this
+    /// path with `futures::stream::iter` without constructing a real
+    /// `reqwest::Response`.
+    async fn parse_json_stream<S, B>(mut stream: S) -> devboy_core::Result<JsonRpcResponse>
+    where
+        S: futures::Stream<Item = std::result::Result<B, String>> + Unpin,
+        B: AsRef<[u8]>,
+    {
         let mut body = Vec::new();
-        let mut stream = response.bytes_stream();
+        let mut stream_error: Option<String> = None;
 
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
-                Ok(bytes) => body.extend_from_slice(&bytes),
+                Ok(chunk) => body.extend_from_slice(chunk.as_ref()),
                 Err(e) => {
                     tracing::debug!("Stream ended with error ({} bytes read): {}", body.len(), e);
+                    stream_error = Some(e);
                     break;
                 }
             }
         }
 
         if body.is_empty() {
-            return Err(devboy_core::Error::Http(
-                "Empty response body from upstream".to_string(),
-            ));
+            return Err(devboy_core::Error::Http(match stream_error {
+                Some(e) => format!("Empty response body from upstream (stream error: {e})"),
+                None => "Empty response body from upstream".to_string(),
+            }));
         }
 
         tracing::debug!("Read {} bytes from upstream response", body.len());
 
-        serde_json::from_slice::<JsonRpcResponse>(&body).map_err(|e| {
+        serde_json::from_slice::<JsonRpcResponse>(&body).map_err(|json_err| {
             let preview = String::from_utf8_lossy(&body[..body.len().min(200)]);
-            devboy_core::Error::Http(format!(
+            let base = format!(
                 "Failed to parse JSON ({} bytes, starts with: {}): {}",
                 body.len(),
                 preview,
-                e
-            ))
+                json_err
+            );
+            devboy_core::Error::Http(match stream_error {
+                Some(stream_err) => {
+                    format!("{base} (stream ended with error: {stream_err})")
+                }
+                None => base,
+            })
         })
     }
 
@@ -2008,5 +2039,87 @@ mod tests {
 
         client.fetch_tools().await.unwrap();
         assert_eq!(client.upstream_tools.len(), 50);
+    }
+
+    // =========================================================================
+    // McpProxyClient::parse_json_stream — direct unit coverage
+    //
+    // The httpmock-based tests above can't drive the parse-on-stream-error
+    // branch: httpmock always closes connections cleanly so `bytes_stream()`
+    // never yields `Err(_)`. These tests feed a synthetic stream straight into
+    // `parse_json_stream` to cover the production scenario (body delivered,
+    // then stream errors before clean EOF) and the truncated-body case where
+    // the original stream error must be preserved in the parse failure
+    // message.
+    // =========================================================================
+
+    #[tokio::test]
+    async fn parse_json_stream_succeeds_when_stream_errors_after_complete_body() {
+        use futures::stream;
+
+        let body: Vec<u8> = serde_json::to_vec(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "result": { "tools": [] }
+        }))
+        .unwrap();
+
+        let chunks: Vec<std::result::Result<Vec<u8>, String>> = vec![
+            Ok(body),
+            Err("simulated broken pipe after body".to_string()),
+        ];
+        let s = stream::iter(chunks);
+
+        let resp = McpProxyClient::parse_json_stream(s)
+            .await
+            .expect("complete body before stream error must still parse");
+        assert!(matches!(resp.id, RequestId::Number(7)));
+    }
+
+    #[tokio::test]
+    async fn parse_json_stream_partial_body_preserves_stream_error_in_message() {
+        use futures::stream;
+
+        // First chunk is a syntactically truncated JSON body — `from_slice`
+        // will fail.
+        let truncated = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"resu".to_vec();
+        let chunks: Vec<std::result::Result<Vec<u8>, String>> =
+            vec![Ok(truncated), Err("connection reset by peer".to_string())];
+        let s = stream::iter(chunks);
+
+        let err = McpProxyClient::parse_json_stream(s)
+            .await
+            .expect_err("truncated body must fail to parse");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Failed to parse JSON"),
+            "expected parse error preface, got: {msg}"
+        );
+        assert!(
+            msg.contains("connection reset by peer"),
+            "stream error must be preserved in message, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn parse_json_stream_empty_body_with_stream_error_reports_both() {
+        use futures::stream;
+
+        let chunks: Vec<std::result::Result<Vec<u8>, String>> =
+            vec![Err("immediate disconnect".to_string())];
+        let s = stream::iter(chunks);
+
+        let err = McpProxyClient::parse_json_stream(s)
+            .await
+            .expect_err("empty body must error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Empty response body"),
+            "expected empty-body marker, got: {msg}"
+        );
+        assert!(
+            msg.contains("immediate disconnect"),
+            "stream error must be preserved, got: {msg}"
+        );
     }
 }
