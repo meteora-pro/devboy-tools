@@ -55,8 +55,8 @@ We want to change that without disturbing the npm distribution channel.
 | `devboy-slack` | `crates/plugins/api/slack` | library | `true` | Depends on `devboy-core`. |
 | `devboy-executor` | `crates/devboy-executor` | library | `true` | Depends on `devboy-core`, `devboy-assets`, all API plugins, format-pipeline. |
 | `devboy-mcp` | `crates/devboy-mcp` | library | `true` | Depends on `devboy-core`, `devboy-assets`, `devboy-executor`, `devboy-confluence`, format-pipeline. |
-| `devboy-skills` | `crates/devboy-skills` | library | `true` | Depends on `devboy-core`. |
-| `devboy-cli` | `crates/devboy-cli` | binary | `true` | Secondary: `cargo install devboy-cli` works alongside the npm channel. |
+| `devboy-skills` | `crates/devboy-skills` | library | `true` (second wave) | Depends on `devboy-core`. Embeds the `skills/` tree from the workspace root via `rust-embed` — first wave requires moving the tree inside the crate (or a build.rs sync) to satisfy `cargo publish`'s "no files outside crate root" rule. Tracked separately from this PR. |
+| `devboy-cli` | `crates/devboy-cli` | binary | `true` (second wave) | Secondary: `cargo install devboy-cli` works alongside the npm channel. Blocked on `devboy-skills` second-wave landing. |
 | `llm-eval` | `crates/llm-eval` | binary | `false` | Internal research tool. Not for public consumption. |
 
 ### Versioning
@@ -65,22 +65,24 @@ We want to change that without disturbing the npm distribution channel.
 - First wave ships from the current `0.26.x` line — pre-1.0 semver permits breaking changes when needed.
 - Internal dependencies are pinned through `[workspace.dependencies]` with both a `version =` and a `path =`. Local builds resolve via path; crates.io builds resolve via version.
 
-### Release order
+### Release waves
 
-Topological order from leaves of the internal dep graph:
+**First wave** — 13 library crates, ordered topologically from leaves up:
 
 1. `devboy-core` (no internal deps)
 2. `devboy-storage`, `devboy-assets`, `devboy-format-pipeline`, all 7 API plugins (depend only on `devboy-core`)
 3. `devboy-executor` (depends on core + assets + plugins + format-pipeline)
 4. `devboy-mcp` (depends on core + assets + executor + confluence + format-pipeline)
-5. `devboy-skills` (depends on core)
-6. `devboy-cli` (depends on everything)
+
+**Second wave** — `devboy-skills` and `devboy-cli`. Blocked on a workspace-layout change: `devboy-skills` currently `rust-embed`s the workspace-root `skills/` tree, and `cargo publish` rejects files outside the crate. The fix (move `skills/` inside the crate, or add a build.rs sync) ripples into plugin symlinks, release scripts, and several ADRs — large enough to warrant its own PR.
 
 The release procedure lives under [`docs/guide/contributing/release.mdx`](../../guide/contributing/release.mdx).
 
 ### CI guard
 
 A `publish-dry-run` job runs `cargo publish --dry-run -p <crate>` for every publishable crate on PRs that touch a `Cargo.toml` or sources beneath `crates/`. Drift surfaces before a release attempt, not during one.
+
+There is a structural caveat: `cargo publish --dry-run` resolves dependencies through the **registry**, not through workspace paths. Until `devboy-core` is published, the dry-run for crates that depend on it cannot complete the packaging step (Cargo errors with `no matching package named devboy-core found`). The CI guard therefore runs the **full** dry-run only for `devboy-core` (the dep-graph leaf). The other crates rely on the staged release procedure: once `devboy-core` is on crates.io, the next release tag's dry-run covers everything that depends on it, and so on up the topological order.
 
 ### Documentation
 
