@@ -234,12 +234,15 @@ pub fn create_messenger_provider(config: &ProviderConfig) -> Result<Box<dyn Mess
                 .with_required_scopes(required_scopes.clone()),
         )),
         ProviderConfig::Telegram {
-            scope: TelegramScope::Bot { .. },
+            base_url,
+            access_token,
+            scope: TelegramScope::Bot { bot_username },
             ..
-        } => Err(Error::ProviderUnsupported {
-            provider: "telegram".into(),
-            operation: "telegram messenger provider implementation not yet available".into(),
-        }),
+        } => Ok(Box::new(
+            devboy_telegram::TelegramClient::new(access_token.clone())
+                .with_base_url(base_url)
+                .with_bot_username(bot_username.clone()),
+        )),
         other => Err(Error::ProviderUnsupported {
             provider: other.provider_name().into(),
             operation: "not a messenger provider".into(),

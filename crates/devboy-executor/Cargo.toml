@@ -17,6 +17,7 @@ devboy-jira = { path = "../plugins/api/jira" }
 devboy-confluence = { path = "../plugins/api/confluence" }
 devboy-fireflies = { path = "../plugins/api/fireflies" }
 devboy-slack = { path = "../plugins/api/slack" }
+devboy-telegram = { path = "../plugins/api/telegram" }
 devboy-format-pipeline = { path = "../plugins/format-pipeline" }
 
 tokio.workspace = true

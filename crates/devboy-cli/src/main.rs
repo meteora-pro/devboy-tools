@@ -34,6 +34,7 @@ use devboy_mcp::{
 };
 use devboy_slack::SlackClient;
 use devboy_storage::{ChainStore, CredentialStore, wrap_with_cache};
+use devboy_telegram::TelegramClient;
 use dialoguer::{Confirm, Input, MultiSelect, Password};
 use doctor::{DoctorOptions, OutputFormat};
 use secrecy::{ExposeSecret, SecretString};
@@ -3696,6 +3697,9 @@ struct EnvContextBuilder {
     slack_base_url: Option<String>,
     slack_client_id: Option<String>,
     slack_redirect_uri: Option<String>,
+    // Telegram
+    telegram_base_url: Option<String>,
+    telegram_bot_username: Option<String>,
 }
 
 impl EnvContextBuilder {
@@ -3730,6 +3734,11 @@ impl EnvContextBuilder {
             ("SLACK", "BASE_URL") | ("SLACK", "URL") => self.slack_base_url = Some(value),
             ("SLACK", "CLIENT_ID") => self.slack_client_id = Some(value),
             ("SLACK", "REDIRECT_URI") => self.slack_redirect_uri = Some(value),
+            // Telegram
+            ("TELEGRAM", "BASE_URL") | ("TELEGRAM", "URL") => self.telegram_base_url = Some(value),
+            ("TELEGRAM", "BOT_USERNAME") | ("TELEGRAM", "BOT") | ("TELEGRAM", "USERNAME") => {
+                self.telegram_bot_username = Some(value)
+            }
             // Unknown fields are silently ignored
             _ => {
                 tracing::debug!(
@@ -3812,7 +3821,14 @@ impl EnvContextBuilder {
             } else {
                 None
             },
-            telegram: None,
+            telegram: if self.telegram_base_url.is_some() || self.telegram_bot_username.is_some() {
+                Some(devboy_core::config::TelegramConfig {
+                    base_url: self.telegram_base_url.clone(),
+                    bot_username: self.telegram_bot_username.clone(),
+                })
+            } else {
+                None
+            },
         };
 
         if context.has_any_provider() {
@@ -3967,6 +3983,24 @@ fn add_context_providers_from_env(
         } else {
             tracing::warn!(
                 "Slack configured for context '{}' but no bot token found",
+                context_name
+            );
+        }
+    }
+
+    if let Some(telegram) = &context.telegram {
+        if let Some(token) = get_token_for_context(store, context_name, "telegram") {
+            let mut client =
+                TelegramClient::new(token).with_bot_username(telegram.bot_username.clone());
+            if let Some(base_url) = &telegram.base_url {
+                client = client.with_base_url(base_url);
+            }
+            server.add_messenger_provider_to_context(context_name, Arc::new(client));
+            tracing::info!("Added Telegram provider to context '{}'", context_name);
+            added = true;
+        } else {
+            tracing::warn!(
+                "Telegram configured for context '{}' but no bot token found",
                 context_name
             );
         }
@@ -4201,6 +4235,25 @@ fn add_context_providers(
         } else {
             tracing::warn!(
                 "Slack configured in context '{}' but no token found (tried contexts.{}.slack.token then slack.token)",
+                context_name,
+                context_name
+            );
+        }
+    }
+
+    if let Some(telegram) = &context.telegram {
+        if let Some(token) = get_token_for_context(store, context_name, "telegram") {
+            let mut client =
+                TelegramClient::new(token).with_bot_username(telegram.bot_username.clone());
+            if let Some(base_url) = &telegram.base_url {
+                client = client.with_base_url(base_url);
+            }
+            server.add_messenger_provider_to_context(context_name, Arc::new(client));
+            tracing::info!("Added Telegram provider to context '{}'", context_name);
+            added = true;
+        } else {
+            tracing::warn!(
+                "Telegram configured in context '{}' but no token found (tried contexts.{}.telegram.token then telegram.token)",
                 context_name,
                 context_name
             );
