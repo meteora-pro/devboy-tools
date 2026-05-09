@@ -783,6 +783,7 @@ impl McpServer {
             "secrets_list" => Some(self.handle_secrets_list(params)),
             "secrets_describe" => Some(self.handle_secrets_describe(params)),
             "secrets_request_provision" => Some(self.handle_secrets_request_provision(params)),
+            "secrets_request_rotation" => Some(self.handle_secrets_request_rotation(params)),
             "secrets_poll_status" => Some(self.handle_secrets_poll_status(params)),
             _ => None,
         }
@@ -893,6 +894,45 @@ impl McpServer {
                 Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
             },
             Err(e) => ToolCallResult::error(format!("secrets_request_provision failed: {e}")),
+        }
+    }
+
+    fn handle_secrets_request_rotation(&self, params: &ToolCallParams) -> ToolCallResult {
+        use crate::secrets_provision::ProvisionMode;
+        use devboy_storage::SecretPath;
+
+        #[derive(Deserialize)]
+        struct RotateParams {
+            path: String,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<RotateParams>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => return ToolCallResult::error("missing required parameter: path".to_string()),
+        };
+
+        let path = match SecretPath::parse(&args.path) {
+            Ok(p) => p,
+            Err(e) => {
+                return ToolCallResult::error(format!(
+                    "`{}` is not a valid ADR-020 path: {e}",
+                    args.path
+                ));
+            }
+        };
+
+        match self
+            .secrets_provision
+            .request_provision(path, ProvisionMode::Rotation)
+        {
+            Ok(id) => match serde_json::to_value(serde_json::json!({ "request_id": id.0 })) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            Err(e) => ToolCallResult::error(format!("secrets_request_rotation failed: {e}")),
         }
     }
 
@@ -1113,6 +1153,7 @@ impl McpServer {
                 | "secrets_list"
                 | "secrets_describe"
                 | "secrets_request_provision"
+                | "secrets_request_rotation"
                 | "secrets_poll_status"
         )
     }
@@ -1823,6 +1864,59 @@ mod tests {
 
         let resp = server.handle_request(req).await;
         assert!(resp.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn secrets_request_rotation_dispatches_with_rotation_mode() {
+        use crate::secrets_provision::{FakeUiLauncher, ProvisionMode, ProvisionRegistry};
+
+        let fake = Arc::new(FakeUiLauncher::new());
+        let registry = Arc::new(ProvisionRegistry::with_launcher(fake.clone()));
+        let mut server = McpServer::new();
+        server.set_secrets_provision_registry(registry);
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "secrets_request_rotation",
+                "arguments": { "path": "team/jira/api-key" }
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        assert!(
+            resp.error.is_none(),
+            "secrets_request_rotation must succeed; got error {:?}",
+            resp.error
+        );
+
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 1, "fake launcher must record one call");
+        assert_eq!(
+            calls[0].2,
+            ProvisionMode::Rotation,
+            "request_rotation must always invoke the dialog with mode=Rotation"
+        );
+    }
+
+    #[tokio::test]
+    async fn secrets_request_rotation_rejects_invalid_path() {
+        let mut server = McpServer::new();
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "secrets_request_rotation",
+                "arguments": { "path": "not a path" }
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        // Tool-level error (not protocol error) — `result` is set
+        // with `is_error: true`.
+        assert!(resp.result.is_some(), "result should still be set");
     }
 
     #[test]

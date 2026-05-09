@@ -41,7 +41,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use devboy_storage::SecretPath;
@@ -180,7 +180,7 @@ struct Entry {
 #[derive(Debug)]
 pub struct ProvisionRegistry {
     inner: Mutex<RegistryState>,
-    launcher: Box<dyn UiDialogLauncher>,
+    launcher: Arc<dyn UiDialogLauncher>,
     ttl: Duration,
 }
 
@@ -194,10 +194,10 @@ impl ProvisionRegistry {
     /// Build a registry that uses [`NoopUiLauncher`] and the
     /// default 5-minute TTL.
     pub fn new() -> Self {
-        Self::with_launcher(Box::new(NoopUiLauncher))
+        Self::with_launcher(Arc::new(NoopUiLauncher))
     }
 
-    pub fn with_launcher(launcher: Box<dyn UiDialogLauncher>) -> Self {
+    pub fn with_launcher(launcher: Arc<dyn UiDialogLauncher>) -> Self {
         Self {
             inner: Mutex::new(RegistryState::default()),
             launcher,
@@ -398,7 +398,7 @@ mod tests {
 
     #[test]
     fn request_provision_calls_launcher_and_returns_pending_id() {
-        let launcher = Box::new(FakeUiLauncher::new());
+        let launcher = Arc::new(FakeUiLauncher::new());
         let registry = ProvisionRegistry::with_launcher(launcher);
         let id = registry
             .request_provision(path(), ProvisionMode::Provision)
@@ -414,7 +414,7 @@ mod tests {
     fn request_provision_records_call_on_fake_launcher() {
         let fake = FakeUiLauncher::new();
         // Move into the registry, but inspect via a separate handle.
-        let registry = ProvisionRegistry::with_launcher(Box::new(FakeUiLauncher::new()));
+        let registry = ProvisionRegistry::with_launcher(Arc::new(FakeUiLauncher::new()));
         let _ = registry
             .request_provision(path(), ProvisionMode::Rotation)
             .unwrap();
@@ -440,7 +440,7 @@ mod tests {
     fn launcher_failure_records_failed_status_and_propagates_error() {
         let launcher = FakeUiLauncher::new();
         launcher.fail_next_with("daemon unreachable");
-        let registry = ProvisionRegistry::with_launcher(Box::new(launcher));
+        let registry = ProvisionRegistry::with_launcher(Arc::new(launcher));
         let err = registry
             .request_provision(path(), ProvisionMode::Provision)
             .unwrap_err();
@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn resolve_advances_pending_request_to_ok() {
-        let registry = ProvisionRegistry::with_launcher(Box::new(FakeUiLauncher::new()));
+        let registry = ProvisionRegistry::with_launcher(Arc::new(FakeUiLauncher::new()));
         let id = registry
             .request_provision(path(), ProvisionMode::Provision)
             .unwrap();
@@ -462,7 +462,7 @@ mod tests {
 
     #[test]
     fn resolve_advances_pending_request_to_cancelled() {
-        let registry = ProvisionRegistry::with_launcher(Box::new(FakeUiLauncher::new()));
+        let registry = ProvisionRegistry::with_launcher(Arc::new(FakeUiLauncher::new()));
         let id = registry
             .request_provision(path(), ProvisionMode::Provision)
             .unwrap();
@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn resolve_does_not_overwrite_a_settled_request() {
-        let registry = ProvisionRegistry::with_launcher(Box::new(FakeUiLauncher::new()));
+        let registry = ProvisionRegistry::with_launcher(Arc::new(FakeUiLauncher::new()));
         let id = registry
             .request_provision(path(), ProvisionMode::Provision)
             .unwrap();
@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn pending_request_past_ttl_is_marked_expired_on_poll() {
-        let registry = ProvisionRegistry::with_launcher(Box::new(FakeUiLauncher::new()))
+        let registry = ProvisionRegistry::with_launcher(Arc::new(FakeUiLauncher::new()))
             .with_ttl(Duration::from_millis(50));
         let id = registry
             .request_provision(path(), ProvisionMode::Provision)
@@ -512,7 +512,7 @@ mod tests {
 
     #[test]
     fn settled_request_past_ttl_keeps_its_terminal_status() {
-        let registry = ProvisionRegistry::with_launcher(Box::new(FakeUiLauncher::new()))
+        let registry = ProvisionRegistry::with_launcher(Arc::new(FakeUiLauncher::new()))
             .with_ttl(Duration::from_millis(50));
         let id = registry
             .request_provision(path(), ProvisionMode::Provision)
@@ -536,7 +536,7 @@ mod tests {
 
     #[test]
     fn sweep_settled_drops_old_terminal_entries_only() {
-        let registry = ProvisionRegistry::with_launcher(Box::new(FakeUiLauncher::new()));
+        let registry = ProvisionRegistry::with_launcher(Arc::new(FakeUiLauncher::new()));
         let id_ok = registry
             .request_provision(path(), ProvisionMode::Provision)
             .unwrap();

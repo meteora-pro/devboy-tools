@@ -909,18 +909,39 @@ pub fn mcp_only_tools() -> Vec<McpOnlyTool> {
         },
         McpOnlyTool {
             name: "secrets_poll_status".into(),
-            description: "Poll a provisioning request issued by \
-                `secrets_request_provision`. Returns one of pending / ok / \
-                cancelled / expired / failed plus the request's age in seconds \
-                and the path it was opened for."
+            description: "Poll a provisioning or rotation request issued by \
+                `secrets_request_provision` / `secrets_request_rotation`. Returns \
+                one of pending / ok / cancelled / expired / failed plus the \
+                request's age in seconds and the path it was opened for."
                 .into(),
             input_schema: {
                 let mut s = ToolSchema::new();
                 s.add_property(
                     "request_id",
-                    PropertySchema::string("Opaque id returned by request_provision."),
+                    PropertySchema::string(
+                        "Opaque id returned by request_provision / request_rotation.",
+                    ),
                 );
                 s.set_required("request_id", true);
+                s
+            },
+        },
+        McpOnlyTool {
+            name: "secrets_request_rotation".into(),
+            description: "Open the rotation UI dialog for the given ADR-020 \
+                path. Same lifecycle as `secrets_request_provision` but the \
+                dialog surfaces the destructive-confirm checkbox so the user \
+                explicitly acknowledges that the existing value is being \
+                overwritten. Reuses `secrets_poll_status` for status. Pending \
+                requests expire 5 minutes after issuance."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "path",
+                    PropertySchema::string("Full ADR-020 path to rotate."),
+                );
+                s.set_required("path", true);
                 s
             },
         },
