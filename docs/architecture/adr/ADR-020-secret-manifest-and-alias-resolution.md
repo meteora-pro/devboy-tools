@@ -72,7 +72,7 @@ skill) is the subject of [ADR-023](./ADR-023-secret-store-ux-layer.md).
 ### Differences from the 2026-05-06 draft
 
 The previous draft of this ADR insisted that a secret's metadata
-(`description`, `retrieval_hint`, …) lives **only** in the global index
+(`description`, `retrieval_url`, …) lives **only** in the global index
 and that the per-project manifest carries only references and behavioural
 overrides. Design review surfaced two reasons that rule was too strict:
 
@@ -194,7 +194,7 @@ carries:
 ```toml
 [secret."team/gitlab/token-deploy"]
 description       = "Deploy token for the team GitLab; used by CI mirrors and devboy plugins"
-retrieval_hint    = "https://gitlab.example.internal/-/profile/personal_access_tokens"
+retrieval_url    = "https://gitlab.example.internal/-/profile/personal_access_tokens"
 format_regex      = "^glpat-[A-Za-z0-9_-]{20,}$"
 default_gate      = "auto"        # auto | confirm | touchid
 expires_at        = "2026-08-01"  # optional, populated by validation if upstream exposes it
@@ -208,7 +208,7 @@ pattern_id        = "gitlab-pat"  # optional, reference into devboy-secret-patte
 `pattern_id` is a new field that links the entry to a built-in pattern
 in the `devboy-secret-patterns` crate (see [ADR-023](./ADR-023-secret-store-ux-layer.md)
 section 3.6). When set, the pattern supplies sensible defaults for
-`format_regex`, `retrieval_hint`, `rotation_method`, and `default_expiry_days`
+`format_regex`, `retrieval_url`, `rotation_method`, and `default_expiry_days`
 that the entry inherits unless explicitly overridden.
 
 No secret value is ever written to the index. The credential store from
@@ -235,7 +235,7 @@ optional = [
 ]
 
 # Per-secret overrides — behavioural fields and project-local description.
-# Other metadata (retrieval_hint, format_regex, rotation_method) is read
+# Other metadata (retrieval_url, format_regex, rotation_method) is read
 # from the global index only.
 
 [overrides."team/gitlab/token-deploy"]
@@ -249,7 +249,7 @@ description       = "Used by the staging deploy pipeline; contact ops before rot
 
 [secret."sandbox/example-provider/token"]
 description    = "Token for the example-provider sandbox account used only by this repo"
-retrieval_hint = "https://example-provider.dev/account/api-tokens"
+retrieval_url = "https://example-provider.dev/account/api-tokens"
 pattern_id     = "generic-bearer"
 ```
 

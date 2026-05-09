@@ -148,12 +148,18 @@ two new flags are descriptive — they let `doctor` and the agent
 provisioning surface (see [ADR-023](./ADR-023-secret-store-ux-layer.md)
 section 3.7) reason about UX trade-offs:
 
-- `BIOMETRIC_PROMPT` — the source prompts for biometric or PIN
-  unlock on every read in its default configuration. The router
-  surfaces this as a `cost` hint to agents so that an agent loop
+- `BIOMETRIC_PROMPT` — the source **may** require user-presence
+  confirmation (biometric unlock or a PIN/passphrase prompt) on at
+  least one of its operations in its default configuration. The
+  flag is a single bit on the source as a whole — it does not
+  encode "prompts only on writes" or "prompts only on reads", and
+  the router does not infer per-operation cost from it. Sources
+  whose reads are usually cached but whose writes always prompt
+  (e.g. the local-vault, see §8) still set the flag. The router
+  surfaces it as a `cost` hint to agents so that an agent loop
   doing twelve reads per minute does not blindly trigger twelve
-  TouchID prompts; the agent should batch through a high-level
-  provider tool instead.
+  prompts; the agent should batch through a high-level provider
+  tool instead.
 - `AUDIT_LOGGED` — every read is durably logged on the upstream
   (Vault audit log, 1Password account activity). `doctor` shows
   this in the source-status section so the user knows their
@@ -443,10 +449,13 @@ or a BIP39 recovery phrase. Crypto, daemon protocol, and UI flows are
 the subject of [ADR-023](./ADR-023-secret-store-ux-layer.md).
 
 `reference` is the ADR-020 path itself. Capabilities:
-`READ | LIST | VALIDATE | WRITE | ROTATE | BIOMETRIC_PROMPT` (the
-biometric flag is set when the unlock method is the Touch-ID
-envelope; with a passphrase envelope only, the flag is absent on
-read but set on write/rotate where the passphrase is required again).
+`READ | LIST | VALIDATE | WRITE | ROTATE | BIOMETRIC_PROMPT`. The
+`BIOMETRIC_PROMPT` flag is always set because at least one operation
+of the source can prompt for user presence — write/rotate always
+require a fresh passphrase or biometric confirmation regardless of
+the daemon's unlocked state, and reads can prompt when the unlocked
+session has expired. Per the §1.1 contract, the bit reflects the
+source as a whole and does not vary by operation.
 
 The `local-vault` source is intended primarily for two scenarios:
 headless Linux machines without a Secret Service daemon (where it is
