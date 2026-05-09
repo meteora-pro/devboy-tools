@@ -3,9 +3,10 @@
 # Verify (and where missing, restore) the symlink-based plugin skill tree.
 #
 # We do NOT copy or transform skill files. The plugin tree is just a
-# directory of symlinks pointing at the real source under /skills/:
+# directory of symlinks pointing at the real source under
+# /crates/devboy-skills/skills/:
 #
-#   plugins/claude/skills/<source-name>  -> ../../../skills/<category>/<source-name>
+#   plugins/claude/skills/<source-name>  -> ../../../crates/devboy-skills/skills/<category>/<source-name>
 #   plugins/codex/skills                 -> ../claude/skills            (single link)
 #   plugins/codex/bin/devboy-shim.sh     -> ../../claude/bin/devboy-shim.sh
 #
@@ -17,7 +18,7 @@
 # the `devboy-` prefix, which is a deferred refactor (history.json
 # migration, bundles update, embedded loader, existing user installs).
 #
-# Source of truth: skills/<category>/<name>/SKILL.md.
+# Source of truth: crates/devboy-skills/skills/<category>/<name>/SKILL.md.
 #
 # This script has two responsibilities:
 #   1. Detect drift: any source skill that does not have a matching link,
@@ -42,7 +43,7 @@ case "${1:-}" in
 esac
 
 ROOT="$(git rev-parse --show-toplevel)"
-SKILLS_SRC="$ROOT/skills"
+SKILLS_SRC="$ROOT/crates/devboy-skills/skills"
 CLAUDE_DST="$ROOT/plugins/claude/skills"
 CODEX_LINK="$ROOT/plugins/codex/skills"
 CODEX_BIN_LINK="$ROOT/plugins/codex/bin/devboy-shim.sh"
@@ -57,7 +58,7 @@ discover_skills() {
     src_dir="$(dirname "$skill_md")"
     src_name="$(basename "$src_dir")"
     cat="$(basename "$(dirname "$src_dir")")"
-    printf '%s\t../../../skills/%s/%s\n' "$src_name" "$cat" "$src_name"
+    printf '%s\t../../../crates/devboy-skills/skills/%s/%s\n' "$src_name" "$cat" "$src_name"
   done < <(find "$SKILLS_SRC" -mindepth 3 -maxdepth 3 -name SKILL.md -type f | sort)
 }
 
@@ -123,7 +124,7 @@ drift_check() {
     echo "Run scripts/release/build-skills.sh and commit the result." >&2
     exit 1
   fi
-  echo "OK: plugin skill links match /skills/."
+  echo "OK: plugin skill links match /crates/devboy-skills/skills/."
 }
 
 case "$MODE" in
