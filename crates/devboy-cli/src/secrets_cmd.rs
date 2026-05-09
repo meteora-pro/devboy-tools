@@ -58,6 +58,10 @@ pub enum SecretsCommands {
     /// Linux and the OS on macOS / Windows; override with `--tui`
     /// or `--gui`. See ADR-023 §3.4.
     Ui(crate::secrets_ui::UiArgs),
+    /// Rotate a secret: open the provider URL in the browser,
+    /// destructive-confirm, read the new value, format-validate,
+    /// and record `last_rotated_at`. See ADR-023 §3.4.
+    Rotate(crate::secrets_rotate::RotateArgs),
 }
 
 /// `devboy secrets agent <subcommand>` family.
@@ -164,6 +168,7 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
             AgentCommands::Uninstall(args) => agent_uninstall(args),
         },
         SecretsCommands::Ui(args) => crate::secrets_ui::handle(args).await,
+        SecretsCommands::Rotate(args) => crate::secrets_rotate::handle(args).await,
     }
 }
 

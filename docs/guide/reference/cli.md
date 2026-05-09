@@ -56,6 +56,7 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets agent install`↴](#devboy-secrets-agent-install)
 * [`devboy secrets agent uninstall`↴](#devboy-secrets-agent-uninstall)
 * [`devboy secrets ui`↴](#devboy-secrets-ui)
+* [`devboy secrets rotate`↴](#devboy-secrets-rotate)
 * [`devboy hooks`↴](#devboy-hooks)
 * [`devboy hooks install`↴](#devboy-hooks-install)
 * [`devboy hooks check`↴](#devboy-hooks-check)
@@ -714,6 +715,7 @@ Discover and inspect declared secrets (metadata only — values are never shown)
 * `migrate` — Move a legacy keychain entry under the ADR-020 path convention. See `doctor` "Legacy keychain entries" (P10.1) for what's eligible
 * `agent` — Manage the local secret-store agent daemon (ADR-023 §3.3)
 * `ui` — Open the native UI (TUI in a terminal, GUI in a window). Backend autodetected from `$DISPLAY` / `$WAYLAND_DISPLAY` on Linux and the OS on macOS / Windows; override with `--tui` or `--gui`. See ADR-023 §3.4
+* `rotate` — Rotate a secret: open the provider URL in the browser, destructive-confirm, read the new value, format-validate, and record `last_rotated_at`. See ADR-023 §3.4
 
 
 
@@ -862,6 +864,25 @@ Open the native UI (TUI in a terminal, GUI in a window). Backend autodetected fr
 
 * `--tui` — Force the terminal renderer (ratatui)
 * `--gui` — Force the windowed renderer (egui). Currently prints a "windowing not yet wired from the CLI" message and exits non-zero — the egui view-models exist, but launching them requires an event-loop integration that ships in a follow-up
+
+
+
+## `devboy secrets rotate`
+
+Rotate a secret: open the provider URL in the browser, destructive-confirm, read the new value, format-validate, and record `last_rotated_at`. See ADR-023 §3.4
+
+**Usage:** `devboy secrets rotate [OPTIONS] <PATH>`
+
+###### **Arguments:**
+
+* `<PATH>` — ADR-020 path of the secret to rotate (e.g. `team/jira/api-key`)
+
+###### **Options:**
+
+* `--no-browser` — Skip the OS-browser hand-off. Useful in CI / scripts that rotate values fetched out-of-band
+* `--yes` — Skip the destructive-confirm prompt. Required when stdin isn't a TTY (the prompt would have nothing to read)
+* `--from-stdin` — Read the new value from stdin (one line, no echo) instead of the interactive prompt. Useful for `vault read` / `op read` shell pipelines and for tests
+* `--index <INDEX>` — Override the path the global index is loaded from / saved to. Defaults to the platform's config dir
 
 
 
