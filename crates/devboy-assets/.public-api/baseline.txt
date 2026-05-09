@@ -1,0 +1,674 @@
+pub mod devboy_assets
+pub mod devboy_assets::cache
+pub struct devboy_assets::cache::CacheManager
+impl devboy_assets::cache::CacheManager
+pub fn devboy_assets::cache::CacheManager::delete(&self, absolute: &std::path::Path) -> devboy_assets::error::Result<()>
+pub fn devboy_assets::cache::CacheManager::dir_for(&self, context: &devboy_core::asset::AssetContext) -> std::path::PathBuf
+pub fn devboy_assets::cache::CacheManager::exists(&self, absolute: &std::path::Path) -> bool
+pub fn devboy_assets::cache::CacheManager::load(&self, absolute: &std::path::Path) -> devboy_assets::error::Result<alloc::vec::Vec<u8>>
+pub fn devboy_assets::cache::CacheManager::new(root: std::path::PathBuf) -> devboy_assets::error::Result<Self>
+pub fn devboy_assets::cache::CacheManager::path_for(&self, context: &devboy_core::asset::AssetContext, asset_id: &str, filename: &str) -> std::path::PathBuf
+pub fn devboy_assets::cache::CacheManager::root(&self) -> &std::path::Path
+pub fn devboy_assets::cache::CacheManager::store(&self, context: &devboy_core::asset::AssetContext, asset_id: &str, filename: &str, data: &[u8]) -> devboy_assets::error::Result<devboy_assets::cache::StoredFile>
+impl core::clone::Clone for devboy_assets::cache::CacheManager
+pub fn devboy_assets::cache::CacheManager::clone(&self) -> devboy_assets::cache::CacheManager
+impl core::fmt::Debug for devboy_assets::cache::CacheManager
+pub fn devboy_assets::cache::CacheManager::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_assets::cache::CacheManager
+impl core::marker::Send for devboy_assets::cache::CacheManager
+impl core::marker::Sync for devboy_assets::cache::CacheManager
+impl core::marker::Unpin for devboy_assets::cache::CacheManager
+impl core::marker::UnsafeUnpin for devboy_assets::cache::CacheManager
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::cache::CacheManager
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::cache::CacheManager
+pub struct devboy_assets::cache::StoredFile
+pub devboy_assets::cache::StoredFile::checksum_sha256: alloc::string::String
+pub devboy_assets::cache::StoredFile::path: std::path::PathBuf
+pub devboy_assets::cache::StoredFile::size: u64
+impl core::clone::Clone for devboy_assets::cache::StoredFile
+pub fn devboy_assets::cache::StoredFile::clone(&self) -> devboy_assets::cache::StoredFile
+impl core::cmp::Eq for devboy_assets::cache::StoredFile
+impl core::cmp::PartialEq for devboy_assets::cache::StoredFile
+pub fn devboy_assets::cache::StoredFile::eq(&self, other: &devboy_assets::cache::StoredFile) -> bool
+impl core::fmt::Debug for devboy_assets::cache::StoredFile
+pub fn devboy_assets::cache::StoredFile::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_assets::cache::StoredFile
+impl core::marker::Freeze for devboy_assets::cache::StoredFile
+impl core::marker::Send for devboy_assets::cache::StoredFile
+impl core::marker::Sync for devboy_assets::cache::StoredFile
+impl core::marker::Unpin for devboy_assets::cache::StoredFile
+impl core::marker::UnsafeUnpin for devboy_assets::cache::StoredFile
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::cache::StoredFile
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::cache::StoredFile
+pub const devboy_assets::cache::DIR_CHATS: &str
+pub const devboy_assets::cache::DIR_ISSUES: &str
+pub const devboy_assets::cache::DIR_ISSUE_COMMENTS: &str
+pub const devboy_assets::cache::DIR_KB: &str
+pub const devboy_assets::cache::DIR_MERGE_REQUESTS: &str
+pub const devboy_assets::cache::DIR_MR_COMMENTS: &str
+pub fn devboy_assets::cache::resolve_under_root(root: &std::path::Path, relative: &std::path::Path) -> core::option::Option<std::path::PathBuf>
+pub fn devboy_assets::cache::sha256_hex(data: &[u8]) -> alloc::string::String
+pub mod devboy_assets::config
+pub enum devboy_assets::config::EvictionPolicy
+pub devboy_assets::config::EvictionPolicy::Fifo
+pub devboy_assets::config::EvictionPolicy::Lru
+pub devboy_assets::config::EvictionPolicy::None
+impl core::clone::Clone for devboy_assets::config::EvictionPolicy
+pub fn devboy_assets::config::EvictionPolicy::clone(&self) -> devboy_assets::config::EvictionPolicy
+impl core::cmp::Eq for devboy_assets::config::EvictionPolicy
+impl core::cmp::PartialEq for devboy_assets::config::EvictionPolicy
+pub fn devboy_assets::config::EvictionPolicy::eq(&self, other: &devboy_assets::config::EvictionPolicy) -> bool
+impl core::default::Default for devboy_assets::config::EvictionPolicy
+pub fn devboy_assets::config::EvictionPolicy::default() -> devboy_assets::config::EvictionPolicy
+impl core::fmt::Debug for devboy_assets::config::EvictionPolicy
+pub fn devboy_assets::config::EvictionPolicy::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_assets::config::EvictionPolicy
+impl core::marker::StructuralPartialEq for devboy_assets::config::EvictionPolicy
+impl serde_core::ser::Serialize for devboy_assets::config::EvictionPolicy
+pub fn devboy_assets::config::EvictionPolicy::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_assets::config::EvictionPolicy
+pub fn devboy_assets::config::EvictionPolicy::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_assets::config::EvictionPolicy
+impl core::marker::Send for devboy_assets::config::EvictionPolicy
+impl core::marker::Sync for devboy_assets::config::EvictionPolicy
+impl core::marker::Unpin for devboy_assets::config::EvictionPolicy
+impl core::marker::UnsafeUnpin for devboy_assets::config::EvictionPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::config::EvictionPolicy
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::config::EvictionPolicy
+pub struct devboy_assets::config::AssetConfig
+pub devboy_assets::config::AssetConfig::cache_dir: core::option::Option<alloc::string::String>
+pub devboy_assets::config::AssetConfig::eviction_policy: core::option::Option<devboy_assets::config::EvictionPolicy>
+pub devboy_assets::config::AssetConfig::max_cache_size: core::option::Option<alloc::string::String>
+pub devboy_assets::config::AssetConfig::max_file_age: core::option::Option<alloc::string::String>
+impl devboy_assets::config::AssetConfig
+pub fn devboy_assets::config::AssetConfig::resolve(&self) -> devboy_assets::error::Result<devboy_assets::config::ResolvedAssetConfig>
+impl core::clone::Clone for devboy_assets::config::AssetConfig
+pub fn devboy_assets::config::AssetConfig::clone(&self) -> devboy_assets::config::AssetConfig
+impl core::cmp::PartialEq for devboy_assets::config::AssetConfig
+pub fn devboy_assets::config::AssetConfig::eq(&self, other: &devboy_assets::config::AssetConfig) -> bool
+impl core::default::Default for devboy_assets::config::AssetConfig
+pub fn devboy_assets::config::AssetConfig::default() -> devboy_assets::config::AssetConfig
+impl core::fmt::Debug for devboy_assets::config::AssetConfig
+pub fn devboy_assets::config::AssetConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_assets::config::AssetConfig
+impl serde_core::ser::Serialize for devboy_assets::config::AssetConfig
+pub fn devboy_assets::config::AssetConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_assets::config::AssetConfig
+pub fn devboy_assets::config::AssetConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_assets::config::AssetConfig
+impl core::marker::Send for devboy_assets::config::AssetConfig
+impl core::marker::Sync for devboy_assets::config::AssetConfig
+impl core::marker::Unpin for devboy_assets::config::AssetConfig
+impl core::marker::UnsafeUnpin for devboy_assets::config::AssetConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::config::AssetConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::config::AssetConfig
+pub struct devboy_assets::config::ResolvedAssetConfig
+pub devboy_assets::config::ResolvedAssetConfig::cache_dir: std::path::PathBuf
+pub devboy_assets::config::ResolvedAssetConfig::eviction_policy: devboy_assets::config::EvictionPolicy
+pub devboy_assets::config::ResolvedAssetConfig::max_cache_size: u64
+pub devboy_assets::config::ResolvedAssetConfig::max_file_age: core::time::Duration
+impl core::clone::Clone for devboy_assets::config::ResolvedAssetConfig
+pub fn devboy_assets::config::ResolvedAssetConfig::clone(&self) -> devboy_assets::config::ResolvedAssetConfig
+impl core::cmp::Eq for devboy_assets::config::ResolvedAssetConfig
+impl core::cmp::PartialEq for devboy_assets::config::ResolvedAssetConfig
+pub fn devboy_assets::config::ResolvedAssetConfig::eq(&self, other: &devboy_assets::config::ResolvedAssetConfig) -> bool
+impl core::fmt::Debug for devboy_assets::config::ResolvedAssetConfig
+pub fn devboy_assets::config::ResolvedAssetConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_assets::config::ResolvedAssetConfig
+impl core::marker::Freeze for devboy_assets::config::ResolvedAssetConfig
+impl core::marker::Send for devboy_assets::config::ResolvedAssetConfig
+impl core::marker::Sync for devboy_assets::config::ResolvedAssetConfig
+impl core::marker::Unpin for devboy_assets::config::ResolvedAssetConfig
+impl core::marker::UnsafeUnpin for devboy_assets::config::ResolvedAssetConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::config::ResolvedAssetConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::config::ResolvedAssetConfig
+pub const devboy_assets::config::DEFAULT_MAX_CACHE_SIZE: &str
+pub const devboy_assets::config::DEFAULT_MAX_FILE_AGE: &str
+pub fn devboy_assets::config::default_cache_dir() -> devboy_assets::error::Result<std::path::PathBuf>
+pub fn devboy_assets::config::expand_path(input: &str) -> std::path::PathBuf
+pub fn devboy_assets::config::parse_duration(input: &str) -> devboy_assets::error::Result<core::time::Duration>
+pub fn devboy_assets::config::parse_size(input: &str) -> devboy_assets::error::Result<u64>
+pub mod devboy_assets::error
+pub enum devboy_assets::error::AssetError
+pub devboy_assets::error::AssetError::CacheDir(alloc::string::String)
+pub devboy_assets::error::AssetError::Config(alloc::string::String)
+pub devboy_assets::error::AssetError::Core(devboy_core::error::Error)
+pub devboy_assets::error::AssetError::Io(std::io::error::Error)
+pub devboy_assets::error::AssetError::NotFound(alloc::string::String)
+pub devboy_assets::error::AssetError::Poisoned(alloc::string::String)
+pub devboy_assets::error::AssetError::Serialization(serde_json::error::Error)
+impl devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::cache_dir(msg: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_assets::error::AssetError::config(msg: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_assets::error::AssetError::not_found(id: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_assets::error::AssetError::poisoned(msg: impl core::convert::Into<alloc::string::String>) -> Self
+impl core::convert::From<devboy_core::error::Error> for devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::from(source: devboy_core::error::Error) -> Self
+impl core::convert::From<serde_json::error::Error> for devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::from(source: serde_json::error::Error) -> Self
+impl core::convert::From<std::io::error::Error> for devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::from(source: std::io::error::Error) -> Self
+impl core::error::Error for devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::fmt(&self, __formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_assets::error::AssetError
+impl core::marker::Send for devboy_assets::error::AssetError
+impl core::marker::Sync for devboy_assets::error::AssetError
+impl core::marker::Unpin for devboy_assets::error::AssetError
+impl core::marker::UnsafeUnpin for devboy_assets::error::AssetError
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_assets::error::AssetError
+impl !core::panic::unwind_safe::UnwindSafe for devboy_assets::error::AssetError
+pub type devboy_assets::error::Result<T> = core::result::Result<T, devboy_assets::error::AssetError>
+pub mod devboy_assets::index
+pub struct devboy_assets::index::AssetIndex
+pub devboy_assets::index::AssetIndex::assets: std::collections::hash::map::HashMap<alloc::string::String, devboy_assets::index::CachedAsset>
+pub devboy_assets::index::AssetIndex::version: u32
+impl devboy_assets::index::AssetIndex
+pub fn devboy_assets::index::AssetIndex::empty() -> Self
+pub fn devboy_assets::index::AssetIndex::get(&self, id: &str) -> core::option::Option<&devboy_assets::index::CachedAsset>
+pub fn devboy_assets::index::AssetIndex::get_mut(&mut self, id: &str) -> core::option::Option<&mut devboy_assets::index::CachedAsset>
+pub fn devboy_assets::index::AssetIndex::is_empty(&self) -> bool
+pub fn devboy_assets::index::AssetIndex::len(&self) -> usize
+pub fn devboy_assets::index::AssetIndex::load(cache_dir: &std::path::Path) -> devboy_assets::error::Result<Self>
+pub fn devboy_assets::index::AssetIndex::remove(&mut self, id: &str) -> core::option::Option<devboy_assets::index::CachedAsset>
+pub fn devboy_assets::index::AssetIndex::save(&self, cache_dir: &std::path::Path) -> devboy_assets::error::Result<()>
+pub fn devboy_assets::index::AssetIndex::total_size(&self) -> u64
+pub fn devboy_assets::index::AssetIndex::touch(&mut self, id: &str) -> bool
+pub fn devboy_assets::index::AssetIndex::upsert(&mut self, asset: devboy_assets::index::CachedAsset)
+impl core::clone::Clone for devboy_assets::index::AssetIndex
+pub fn devboy_assets::index::AssetIndex::clone(&self) -> devboy_assets::index::AssetIndex
+impl core::default::Default for devboy_assets::index::AssetIndex
+pub fn devboy_assets::index::AssetIndex::default() -> Self
+impl core::fmt::Debug for devboy_assets::index::AssetIndex
+pub fn devboy_assets::index::AssetIndex::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_assets::index::AssetIndex
+pub fn devboy_assets::index::AssetIndex::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_assets::index::AssetIndex
+pub fn devboy_assets::index::AssetIndex::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_assets::index::AssetIndex
+impl core::marker::Send for devboy_assets::index::AssetIndex
+impl core::marker::Sync for devboy_assets::index::AssetIndex
+impl core::marker::Unpin for devboy_assets::index::AssetIndex
+impl core::marker::UnsafeUnpin for devboy_assets::index::AssetIndex
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::index::AssetIndex
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::index::AssetIndex
+pub struct devboy_assets::index::CachedAsset
+pub devboy_assets::index::CachedAsset::checksum_sha256: alloc::string::String
+pub devboy_assets::index::CachedAsset::context: devboy_core::asset::AssetContext
+pub devboy_assets::index::CachedAsset::downloaded_at_ms: u64
+pub devboy_assets::index::CachedAsset::filename: alloc::string::String
+pub devboy_assets::index::CachedAsset::id: alloc::string::String
+pub devboy_assets::index::CachedAsset::last_accessed_ms: u64
+pub devboy_assets::index::CachedAsset::local_path: std::path::PathBuf
+pub devboy_assets::index::CachedAsset::mime_type: core::option::Option<alloc::string::String>
+pub devboy_assets::index::CachedAsset::remote_url: core::option::Option<alloc::string::String>
+pub devboy_assets::index::CachedAsset::size: u64
+impl devboy_assets::index::CachedAsset
+pub fn devboy_assets::index::CachedAsset::new(params: devboy_assets::index::NewCachedAsset) -> Self
+impl core::clone::Clone for devboy_assets::index::CachedAsset
+pub fn devboy_assets::index::CachedAsset::clone(&self) -> devboy_assets::index::CachedAsset
+impl core::cmp::PartialEq for devboy_assets::index::CachedAsset
+pub fn devboy_assets::index::CachedAsset::eq(&self, other: &devboy_assets::index::CachedAsset) -> bool
+impl core::fmt::Debug for devboy_assets::index::CachedAsset
+pub fn devboy_assets::index::CachedAsset::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_assets::index::CachedAsset
+impl serde_core::ser::Serialize for devboy_assets::index::CachedAsset
+pub fn devboy_assets::index::CachedAsset::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_assets::index::CachedAsset
+pub fn devboy_assets::index::CachedAsset::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_assets::index::CachedAsset
+impl core::marker::Send for devboy_assets::index::CachedAsset
+impl core::marker::Sync for devboy_assets::index::CachedAsset
+impl core::marker::Unpin for devboy_assets::index::CachedAsset
+impl core::marker::UnsafeUnpin for devboy_assets::index::CachedAsset
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::index::CachedAsset
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::index::CachedAsset
+pub struct devboy_assets::index::NewCachedAsset
+pub devboy_assets::index::NewCachedAsset::checksum_sha256: alloc::string::String
+pub devboy_assets::index::NewCachedAsset::context: devboy_core::asset::AssetContext
+pub devboy_assets::index::NewCachedAsset::filename: alloc::string::String
+pub devboy_assets::index::NewCachedAsset::id: alloc::string::String
+pub devboy_assets::index::NewCachedAsset::local_path: std::path::PathBuf
+pub devboy_assets::index::NewCachedAsset::mime_type: core::option::Option<alloc::string::String>
+pub devboy_assets::index::NewCachedAsset::remote_url: core::option::Option<alloc::string::String>
+pub devboy_assets::index::NewCachedAsset::size: u64
+impl core::clone::Clone for devboy_assets::index::NewCachedAsset
+pub fn devboy_assets::index::NewCachedAsset::clone(&self) -> devboy_assets::index::NewCachedAsset
+impl core::fmt::Debug for devboy_assets::index::NewCachedAsset
+pub fn devboy_assets::index::NewCachedAsset::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_assets::index::NewCachedAsset
+impl core::marker::Send for devboy_assets::index::NewCachedAsset
+impl core::marker::Sync for devboy_assets::index::NewCachedAsset
+impl core::marker::Unpin for devboy_assets::index::NewCachedAsset
+impl core::marker::UnsafeUnpin for devboy_assets::index::NewCachedAsset
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::index::NewCachedAsset
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::index::NewCachedAsset
+pub const devboy_assets::index::INDEX_FILENAME: &str
+pub const devboy_assets::index::INDEX_VERSION: u32
+pub fn devboy_assets::index::now_ms() -> u64
+pub mod devboy_assets::manager
+pub struct devboy_assets::manager::AssetManager
+impl devboy_assets::manager::AssetManager
+pub fn devboy_assets::manager::AssetManager::cache_dir(&self) -> &std::path::Path
+pub fn devboy_assets::manager::AssetManager::config(&self) -> &devboy_assets::config::ResolvedAssetConfig
+pub fn devboy_assets::manager::AssetManager::content_id(data: &[u8]) -> alloc::string::String
+pub fn devboy_assets::manager::AssetManager::delete(&self, asset_id: &str) -> devboy_assets::error::Result<bool>
+pub fn devboy_assets::manager::AssetManager::from_config(config: devboy_assets::config::AssetConfig) -> devboy_assets::error::Result<Self>
+pub fn devboy_assets::manager::AssetManager::from_resolved(config: devboy_assets::config::ResolvedAssetConfig) -> devboy_assets::error::Result<Self>
+pub fn devboy_assets::manager::AssetManager::get(&self, asset_id: &str) -> devboy_assets::error::Result<core::option::Option<devboy_assets::manager::ResolvedAsset>>
+pub fn devboy_assets::manager::AssetManager::index_path(&self) -> std::path::PathBuf
+pub fn devboy_assets::manager::AssetManager::integrity_check(&self) -> devboy_assets::error::Result<usize>
+pub fn devboy_assets::manager::AssetManager::list(&self) -> devboy_assets::error::Result<alloc::vec::Vec<devboy_assets::index::CachedAsset>>
+pub fn devboy_assets::manager::AssetManager::rotate_now(&self) -> devboy_assets::error::Result<devboy_assets::rotation::RotationStats>
+pub fn devboy_assets::manager::AssetManager::store(&self, request: devboy_assets::manager::StoreRequest<'_>) -> devboy_assets::error::Result<devboy_assets::index::CachedAsset>
+pub fn devboy_assets::manager::AssetManager::total_size(&self) -> devboy_assets::error::Result<u64>
+pub fn devboy_assets::manager::AssetManager::with_root(root: std::path::PathBuf) -> devboy_assets::error::Result<Self>
+impl core::clone::Clone for devboy_assets::manager::AssetManager
+pub fn devboy_assets::manager::AssetManager::clone(&self) -> devboy_assets::manager::AssetManager
+impl core::fmt::Debug for devboy_assets::manager::AssetManager
+pub fn devboy_assets::manager::AssetManager::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_assets::manager::AssetManager
+impl core::marker::Send for devboy_assets::manager::AssetManager
+impl core::marker::Sync for devboy_assets::manager::AssetManager
+impl core::marker::Unpin for devboy_assets::manager::AssetManager
+impl core::marker::UnsafeUnpin for devboy_assets::manager::AssetManager
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::manager::AssetManager
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::manager::AssetManager
+pub struct devboy_assets::manager::ResolvedAsset
+pub devboy_assets::manager::ResolvedAsset::absolute_path: std::path::PathBuf
+pub devboy_assets::manager::ResolvedAsset::asset: devboy_assets::index::CachedAsset
+impl core::clone::Clone for devboy_assets::manager::ResolvedAsset
+pub fn devboy_assets::manager::ResolvedAsset::clone(&self) -> devboy_assets::manager::ResolvedAsset
+impl core::fmt::Debug for devboy_assets::manager::ResolvedAsset
+pub fn devboy_assets::manager::ResolvedAsset::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_assets::manager::ResolvedAsset
+impl core::marker::Send for devboy_assets::manager::ResolvedAsset
+impl core::marker::Sync for devboy_assets::manager::ResolvedAsset
+impl core::marker::Unpin for devboy_assets::manager::ResolvedAsset
+impl core::marker::UnsafeUnpin for devboy_assets::manager::ResolvedAsset
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::manager::ResolvedAsset
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::manager::ResolvedAsset
+pub struct devboy_assets::manager::StoreRequest<'a>
+pub devboy_assets::manager::StoreRequest::asset_id: core::option::Option<&'a str>
+pub devboy_assets::manager::StoreRequest::context: devboy_core::asset::AssetContext
+pub devboy_assets::manager::StoreRequest::data: &'a [u8]
+pub devboy_assets::manager::StoreRequest::filename: &'a str
+pub devboy_assets::manager::StoreRequest::mime_type: core::option::Option<alloc::string::String>
+pub devboy_assets::manager::StoreRequest::remote_url: core::option::Option<alloc::string::String>
+impl<'a> core::fmt::Debug for devboy_assets::manager::StoreRequest<'a>
+pub fn devboy_assets::manager::StoreRequest<'a>::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Freeze for devboy_assets::manager::StoreRequest<'a>
+impl<'a> core::marker::Send for devboy_assets::manager::StoreRequest<'a>
+impl<'a> core::marker::Sync for devboy_assets::manager::StoreRequest<'a>
+impl<'a> core::marker::Unpin for devboy_assets::manager::StoreRequest<'a>
+impl<'a> core::marker::UnsafeUnpin for devboy_assets::manager::StoreRequest<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for devboy_assets::manager::StoreRequest<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for devboy_assets::manager::StoreRequest<'a>
+pub mod devboy_assets::rotation
+pub struct devboy_assets::rotation::RotationStats
+pub devboy_assets::rotation::RotationStats::aged_out: usize
+pub devboy_assets::rotation::RotationStats::bytes_freed: u64
+pub devboy_assets::rotation::RotationStats::size_evicted: usize
+impl devboy_assets::rotation::RotationStats
+pub fn devboy_assets::rotation::RotationStats::removed(&self) -> usize
+impl core::clone::Clone for devboy_assets::rotation::RotationStats
+pub fn devboy_assets::rotation::RotationStats::clone(&self) -> devboy_assets::rotation::RotationStats
+impl core::cmp::Eq for devboy_assets::rotation::RotationStats
+impl core::cmp::PartialEq for devboy_assets::rotation::RotationStats
+pub fn devboy_assets::rotation::RotationStats::eq(&self, other: &devboy_assets::rotation::RotationStats) -> bool
+impl core::default::Default for devboy_assets::rotation::RotationStats
+pub fn devboy_assets::rotation::RotationStats::default() -> devboy_assets::rotation::RotationStats
+impl core::fmt::Debug for devboy_assets::rotation::RotationStats
+pub fn devboy_assets::rotation::RotationStats::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_assets::rotation::RotationStats
+impl core::marker::Freeze for devboy_assets::rotation::RotationStats
+impl core::marker::Send for devboy_assets::rotation::RotationStats
+impl core::marker::Sync for devboy_assets::rotation::RotationStats
+impl core::marker::Unpin for devboy_assets::rotation::RotationStats
+impl core::marker::UnsafeUnpin for devboy_assets::rotation::RotationStats
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::rotation::RotationStats
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::rotation::RotationStats
+pub struct devboy_assets::rotation::Rotator
+impl devboy_assets::rotation::Rotator
+pub fn devboy_assets::rotation::Rotator::new(config: &devboy_assets::config::ResolvedAssetConfig) -> Self
+pub fn devboy_assets::rotation::Rotator::rotate(&self, index: &mut devboy_assets::index::AssetIndex, cache: &devboy_assets::cache::CacheManager) -> devboy_assets::error::Result<devboy_assets::rotation::RotationStats>
+pub fn devboy_assets::rotation::Rotator::within_budget(&self, index: &devboy_assets::index::AssetIndex) -> bool
+impl core::clone::Clone for devboy_assets::rotation::Rotator
+pub fn devboy_assets::rotation::Rotator::clone(&self) -> devboy_assets::rotation::Rotator
+impl core::fmt::Debug for devboy_assets::rotation::Rotator
+pub fn devboy_assets::rotation::Rotator::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_assets::rotation::Rotator
+impl core::marker::Send for devboy_assets::rotation::Rotator
+impl core::marker::Sync for devboy_assets::rotation::Rotator
+impl core::marker::Unpin for devboy_assets::rotation::Rotator
+impl core::marker::UnsafeUnpin for devboy_assets::rotation::Rotator
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::rotation::Rotator
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::rotation::Rotator
+pub enum devboy_assets::AssetError
+pub devboy_assets::AssetError::CacheDir(alloc::string::String)
+pub devboy_assets::AssetError::Config(alloc::string::String)
+pub devboy_assets::AssetError::Core(devboy_core::error::Error)
+pub devboy_assets::AssetError::Io(std::io::error::Error)
+pub devboy_assets::AssetError::NotFound(alloc::string::String)
+pub devboy_assets::AssetError::Poisoned(alloc::string::String)
+pub devboy_assets::AssetError::Serialization(serde_json::error::Error)
+impl devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::cache_dir(msg: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_assets::error::AssetError::config(msg: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_assets::error::AssetError::not_found(id: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_assets::error::AssetError::poisoned(msg: impl core::convert::Into<alloc::string::String>) -> Self
+impl core::convert::From<devboy_core::error::Error> for devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::from(source: devboy_core::error::Error) -> Self
+impl core::convert::From<serde_json::error::Error> for devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::from(source: serde_json::error::Error) -> Self
+impl core::convert::From<std::io::error::Error> for devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::from(source: std::io::error::Error) -> Self
+impl core::error::Error for devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::fmt(&self, __formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_assets::error::AssetError
+impl core::marker::Send for devboy_assets::error::AssetError
+impl core::marker::Sync for devboy_assets::error::AssetError
+impl core::marker::Unpin for devboy_assets::error::AssetError
+impl core::marker::UnsafeUnpin for devboy_assets::error::AssetError
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_assets::error::AssetError
+impl !core::panic::unwind_safe::UnwindSafe for devboy_assets::error::AssetError
+pub enum devboy_assets::EvictionPolicy
+pub devboy_assets::EvictionPolicy::Fifo
+pub devboy_assets::EvictionPolicy::Lru
+pub devboy_assets::EvictionPolicy::None
+impl core::clone::Clone for devboy_assets::config::EvictionPolicy
+pub fn devboy_assets::config::EvictionPolicy::clone(&self) -> devboy_assets::config::EvictionPolicy
+impl core::cmp::Eq for devboy_assets::config::EvictionPolicy
+impl core::cmp::PartialEq for devboy_assets::config::EvictionPolicy
+pub fn devboy_assets::config::EvictionPolicy::eq(&self, other: &devboy_assets::config::EvictionPolicy) -> bool
+impl core::default::Default for devboy_assets::config::EvictionPolicy
+pub fn devboy_assets::config::EvictionPolicy::default() -> devboy_assets::config::EvictionPolicy
+impl core::fmt::Debug for devboy_assets::config::EvictionPolicy
+pub fn devboy_assets::config::EvictionPolicy::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_assets::config::EvictionPolicy
+impl core::marker::StructuralPartialEq for devboy_assets::config::EvictionPolicy
+impl serde_core::ser::Serialize for devboy_assets::config::EvictionPolicy
+pub fn devboy_assets::config::EvictionPolicy::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_assets::config::EvictionPolicy
+pub fn devboy_assets::config::EvictionPolicy::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_assets::config::EvictionPolicy
+impl core::marker::Send for devboy_assets::config::EvictionPolicy
+impl core::marker::Sync for devboy_assets::config::EvictionPolicy
+impl core::marker::Unpin for devboy_assets::config::EvictionPolicy
+impl core::marker::UnsafeUnpin for devboy_assets::config::EvictionPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::config::EvictionPolicy
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::config::EvictionPolicy
+pub struct devboy_assets::AssetConfig
+pub devboy_assets::AssetConfig::cache_dir: core::option::Option<alloc::string::String>
+pub devboy_assets::AssetConfig::eviction_policy: core::option::Option<devboy_assets::config::EvictionPolicy>
+pub devboy_assets::AssetConfig::max_cache_size: core::option::Option<alloc::string::String>
+pub devboy_assets::AssetConfig::max_file_age: core::option::Option<alloc::string::String>
+impl devboy_assets::config::AssetConfig
+pub fn devboy_assets::config::AssetConfig::resolve(&self) -> devboy_assets::error::Result<devboy_assets::config::ResolvedAssetConfig>
+impl core::clone::Clone for devboy_assets::config::AssetConfig
+pub fn devboy_assets::config::AssetConfig::clone(&self) -> devboy_assets::config::AssetConfig
+impl core::cmp::PartialEq for devboy_assets::config::AssetConfig
+pub fn devboy_assets::config::AssetConfig::eq(&self, other: &devboy_assets::config::AssetConfig) -> bool
+impl core::default::Default for devboy_assets::config::AssetConfig
+pub fn devboy_assets::config::AssetConfig::default() -> devboy_assets::config::AssetConfig
+impl core::fmt::Debug for devboy_assets::config::AssetConfig
+pub fn devboy_assets::config::AssetConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_assets::config::AssetConfig
+impl serde_core::ser::Serialize for devboy_assets::config::AssetConfig
+pub fn devboy_assets::config::AssetConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_assets::config::AssetConfig
+pub fn devboy_assets::config::AssetConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_assets::config::AssetConfig
+impl core::marker::Send for devboy_assets::config::AssetConfig
+impl core::marker::Sync for devboy_assets::config::AssetConfig
+impl core::marker::Unpin for devboy_assets::config::AssetConfig
+impl core::marker::UnsafeUnpin for devboy_assets::config::AssetConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::config::AssetConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::config::AssetConfig
+pub struct devboy_assets::AssetIndex
+pub devboy_assets::AssetIndex::assets: std::collections::hash::map::HashMap<alloc::string::String, devboy_assets::index::CachedAsset>
+pub devboy_assets::AssetIndex::version: u32
+impl devboy_assets::index::AssetIndex
+pub fn devboy_assets::index::AssetIndex::empty() -> Self
+pub fn devboy_assets::index::AssetIndex::get(&self, id: &str) -> core::option::Option<&devboy_assets::index::CachedAsset>
+pub fn devboy_assets::index::AssetIndex::get_mut(&mut self, id: &str) -> core::option::Option<&mut devboy_assets::index::CachedAsset>
+pub fn devboy_assets::index::AssetIndex::is_empty(&self) -> bool
+pub fn devboy_assets::index::AssetIndex::len(&self) -> usize
+pub fn devboy_assets::index::AssetIndex::load(cache_dir: &std::path::Path) -> devboy_assets::error::Result<Self>
+pub fn devboy_assets::index::AssetIndex::remove(&mut self, id: &str) -> core::option::Option<devboy_assets::index::CachedAsset>
+pub fn devboy_assets::index::AssetIndex::save(&self, cache_dir: &std::path::Path) -> devboy_assets::error::Result<()>
+pub fn devboy_assets::index::AssetIndex::total_size(&self) -> u64
+pub fn devboy_assets::index::AssetIndex::touch(&mut self, id: &str) -> bool
+pub fn devboy_assets::index::AssetIndex::upsert(&mut self, asset: devboy_assets::index::CachedAsset)
+impl core::clone::Clone for devboy_assets::index::AssetIndex
+pub fn devboy_assets::index::AssetIndex::clone(&self) -> devboy_assets::index::AssetIndex
+impl core::default::Default for devboy_assets::index::AssetIndex
+pub fn devboy_assets::index::AssetIndex::default() -> Self
+impl core::fmt::Debug for devboy_assets::index::AssetIndex
+pub fn devboy_assets::index::AssetIndex::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_assets::index::AssetIndex
+pub fn devboy_assets::index::AssetIndex::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_assets::index::AssetIndex
+pub fn devboy_assets::index::AssetIndex::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_assets::index::AssetIndex
+impl core::marker::Send for devboy_assets::index::AssetIndex
+impl core::marker::Sync for devboy_assets::index::AssetIndex
+impl core::marker::Unpin for devboy_assets::index::AssetIndex
+impl core::marker::UnsafeUnpin for devboy_assets::index::AssetIndex
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::index::AssetIndex
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::index::AssetIndex
+pub struct devboy_assets::AssetManager
+impl devboy_assets::manager::AssetManager
+pub fn devboy_assets::manager::AssetManager::cache_dir(&self) -> &std::path::Path
+pub fn devboy_assets::manager::AssetManager::config(&self) -> &devboy_assets::config::ResolvedAssetConfig
+pub fn devboy_assets::manager::AssetManager::content_id(data: &[u8]) -> alloc::string::String
+pub fn devboy_assets::manager::AssetManager::delete(&self, asset_id: &str) -> devboy_assets::error::Result<bool>
+pub fn devboy_assets::manager::AssetManager::from_config(config: devboy_assets::config::AssetConfig) -> devboy_assets::error::Result<Self>
+pub fn devboy_assets::manager::AssetManager::from_resolved(config: devboy_assets::config::ResolvedAssetConfig) -> devboy_assets::error::Result<Self>
+pub fn devboy_assets::manager::AssetManager::get(&self, asset_id: &str) -> devboy_assets::error::Result<core::option::Option<devboy_assets::manager::ResolvedAsset>>
+pub fn devboy_assets::manager::AssetManager::index_path(&self) -> std::path::PathBuf
+pub fn devboy_assets::manager::AssetManager::integrity_check(&self) -> devboy_assets::error::Result<usize>
+pub fn devboy_assets::manager::AssetManager::list(&self) -> devboy_assets::error::Result<alloc::vec::Vec<devboy_assets::index::CachedAsset>>
+pub fn devboy_assets::manager::AssetManager::rotate_now(&self) -> devboy_assets::error::Result<devboy_assets::rotation::RotationStats>
+pub fn devboy_assets::manager::AssetManager::store(&self, request: devboy_assets::manager::StoreRequest<'_>) -> devboy_assets::error::Result<devboy_assets::index::CachedAsset>
+pub fn devboy_assets::manager::AssetManager::total_size(&self) -> devboy_assets::error::Result<u64>
+pub fn devboy_assets::manager::AssetManager::with_root(root: std::path::PathBuf) -> devboy_assets::error::Result<Self>
+impl core::clone::Clone for devboy_assets::manager::AssetManager
+pub fn devboy_assets::manager::AssetManager::clone(&self) -> devboy_assets::manager::AssetManager
+impl core::fmt::Debug for devboy_assets::manager::AssetManager
+pub fn devboy_assets::manager::AssetManager::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_assets::manager::AssetManager
+impl core::marker::Send for devboy_assets::manager::AssetManager
+impl core::marker::Sync for devboy_assets::manager::AssetManager
+impl core::marker::Unpin for devboy_assets::manager::AssetManager
+impl core::marker::UnsafeUnpin for devboy_assets::manager::AssetManager
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::manager::AssetManager
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::manager::AssetManager
+pub struct devboy_assets::CacheManager
+impl devboy_assets::cache::CacheManager
+pub fn devboy_assets::cache::CacheManager::delete(&self, absolute: &std::path::Path) -> devboy_assets::error::Result<()>
+pub fn devboy_assets::cache::CacheManager::dir_for(&self, context: &devboy_core::asset::AssetContext) -> std::path::PathBuf
+pub fn devboy_assets::cache::CacheManager::exists(&self, absolute: &std::path::Path) -> bool
+pub fn devboy_assets::cache::CacheManager::load(&self, absolute: &std::path::Path) -> devboy_assets::error::Result<alloc::vec::Vec<u8>>
+pub fn devboy_assets::cache::CacheManager::new(root: std::path::PathBuf) -> devboy_assets::error::Result<Self>
+pub fn devboy_assets::cache::CacheManager::path_for(&self, context: &devboy_core::asset::AssetContext, asset_id: &str, filename: &str) -> std::path::PathBuf
+pub fn devboy_assets::cache::CacheManager::root(&self) -> &std::path::Path
+pub fn devboy_assets::cache::CacheManager::store(&self, context: &devboy_core::asset::AssetContext, asset_id: &str, filename: &str, data: &[u8]) -> devboy_assets::error::Result<devboy_assets::cache::StoredFile>
+impl core::clone::Clone for devboy_assets::cache::CacheManager
+pub fn devboy_assets::cache::CacheManager::clone(&self) -> devboy_assets::cache::CacheManager
+impl core::fmt::Debug for devboy_assets::cache::CacheManager
+pub fn devboy_assets::cache::CacheManager::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_assets::cache::CacheManager
+impl core::marker::Send for devboy_assets::cache::CacheManager
+impl core::marker::Sync for devboy_assets::cache::CacheManager
+impl core::marker::Unpin for devboy_assets::cache::CacheManager
+impl core::marker::UnsafeUnpin for devboy_assets::cache::CacheManager
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::cache::CacheManager
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::cache::CacheManager
+pub struct devboy_assets::CachedAsset
+pub devboy_assets::CachedAsset::checksum_sha256: alloc::string::String
+pub devboy_assets::CachedAsset::context: devboy_core::asset::AssetContext
+pub devboy_assets::CachedAsset::downloaded_at_ms: u64
+pub devboy_assets::CachedAsset::filename: alloc::string::String
+pub devboy_assets::CachedAsset::id: alloc::string::String
+pub devboy_assets::CachedAsset::last_accessed_ms: u64
+pub devboy_assets::CachedAsset::local_path: std::path::PathBuf
+pub devboy_assets::CachedAsset::mime_type: core::option::Option<alloc::string::String>
+pub devboy_assets::CachedAsset::remote_url: core::option::Option<alloc::string::String>
+pub devboy_assets::CachedAsset::size: u64
+impl devboy_assets::index::CachedAsset
+pub fn devboy_assets::index::CachedAsset::new(params: devboy_assets::index::NewCachedAsset) -> Self
+impl core::clone::Clone for devboy_assets::index::CachedAsset
+pub fn devboy_assets::index::CachedAsset::clone(&self) -> devboy_assets::index::CachedAsset
+impl core::cmp::PartialEq for devboy_assets::index::CachedAsset
+pub fn devboy_assets::index::CachedAsset::eq(&self, other: &devboy_assets::index::CachedAsset) -> bool
+impl core::fmt::Debug for devboy_assets::index::CachedAsset
+pub fn devboy_assets::index::CachedAsset::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_assets::index::CachedAsset
+impl serde_core::ser::Serialize for devboy_assets::index::CachedAsset
+pub fn devboy_assets::index::CachedAsset::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_assets::index::CachedAsset
+pub fn devboy_assets::index::CachedAsset::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_assets::index::CachedAsset
+impl core::marker::Send for devboy_assets::index::CachedAsset
+impl core::marker::Sync for devboy_assets::index::CachedAsset
+impl core::marker::Unpin for devboy_assets::index::CachedAsset
+impl core::marker::UnsafeUnpin for devboy_assets::index::CachedAsset
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::index::CachedAsset
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::index::CachedAsset
+pub struct devboy_assets::NewCachedAsset
+pub devboy_assets::NewCachedAsset::checksum_sha256: alloc::string::String
+pub devboy_assets::NewCachedAsset::context: devboy_core::asset::AssetContext
+pub devboy_assets::NewCachedAsset::filename: alloc::string::String
+pub devboy_assets::NewCachedAsset::id: alloc::string::String
+pub devboy_assets::NewCachedAsset::local_path: std::path::PathBuf
+pub devboy_assets::NewCachedAsset::mime_type: core::option::Option<alloc::string::String>
+pub devboy_assets::NewCachedAsset::remote_url: core::option::Option<alloc::string::String>
+pub devboy_assets::NewCachedAsset::size: u64
+impl core::clone::Clone for devboy_assets::index::NewCachedAsset
+pub fn devboy_assets::index::NewCachedAsset::clone(&self) -> devboy_assets::index::NewCachedAsset
+impl core::fmt::Debug for devboy_assets::index::NewCachedAsset
+pub fn devboy_assets::index::NewCachedAsset::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_assets::index::NewCachedAsset
+impl core::marker::Send for devboy_assets::index::NewCachedAsset
+impl core::marker::Sync for devboy_assets::index::NewCachedAsset
+impl core::marker::Unpin for devboy_assets::index::NewCachedAsset
+impl core::marker::UnsafeUnpin for devboy_assets::index::NewCachedAsset
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::index::NewCachedAsset
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::index::NewCachedAsset
+pub struct devboy_assets::ResolvedAsset
+pub devboy_assets::ResolvedAsset::absolute_path: std::path::PathBuf
+pub devboy_assets::ResolvedAsset::asset: devboy_assets::index::CachedAsset
+impl core::clone::Clone for devboy_assets::manager::ResolvedAsset
+pub fn devboy_assets::manager::ResolvedAsset::clone(&self) -> devboy_assets::manager::ResolvedAsset
+impl core::fmt::Debug for devboy_assets::manager::ResolvedAsset
+pub fn devboy_assets::manager::ResolvedAsset::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_assets::manager::ResolvedAsset
+impl core::marker::Send for devboy_assets::manager::ResolvedAsset
+impl core::marker::Sync for devboy_assets::manager::ResolvedAsset
+impl core::marker::Unpin for devboy_assets::manager::ResolvedAsset
+impl core::marker::UnsafeUnpin for devboy_assets::manager::ResolvedAsset
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::manager::ResolvedAsset
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::manager::ResolvedAsset
+pub struct devboy_assets::ResolvedAssetConfig
+pub devboy_assets::ResolvedAssetConfig::cache_dir: std::path::PathBuf
+pub devboy_assets::ResolvedAssetConfig::eviction_policy: devboy_assets::config::EvictionPolicy
+pub devboy_assets::ResolvedAssetConfig::max_cache_size: u64
+pub devboy_assets::ResolvedAssetConfig::max_file_age: core::time::Duration
+impl core::clone::Clone for devboy_assets::config::ResolvedAssetConfig
+pub fn devboy_assets::config::ResolvedAssetConfig::clone(&self) -> devboy_assets::config::ResolvedAssetConfig
+impl core::cmp::Eq for devboy_assets::config::ResolvedAssetConfig
+impl core::cmp::PartialEq for devboy_assets::config::ResolvedAssetConfig
+pub fn devboy_assets::config::ResolvedAssetConfig::eq(&self, other: &devboy_assets::config::ResolvedAssetConfig) -> bool
+impl core::fmt::Debug for devboy_assets::config::ResolvedAssetConfig
+pub fn devboy_assets::config::ResolvedAssetConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_assets::config::ResolvedAssetConfig
+impl core::marker::Freeze for devboy_assets::config::ResolvedAssetConfig
+impl core::marker::Send for devboy_assets::config::ResolvedAssetConfig
+impl core::marker::Sync for devboy_assets::config::ResolvedAssetConfig
+impl core::marker::Unpin for devboy_assets::config::ResolvedAssetConfig
+impl core::marker::UnsafeUnpin for devboy_assets::config::ResolvedAssetConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::config::ResolvedAssetConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::config::ResolvedAssetConfig
+pub struct devboy_assets::RotationStats
+pub devboy_assets::RotationStats::aged_out: usize
+pub devboy_assets::RotationStats::bytes_freed: u64
+pub devboy_assets::RotationStats::size_evicted: usize
+impl devboy_assets::rotation::RotationStats
+pub fn devboy_assets::rotation::RotationStats::removed(&self) -> usize
+impl core::clone::Clone for devboy_assets::rotation::RotationStats
+pub fn devboy_assets::rotation::RotationStats::clone(&self) -> devboy_assets::rotation::RotationStats
+impl core::cmp::Eq for devboy_assets::rotation::RotationStats
+impl core::cmp::PartialEq for devboy_assets::rotation::RotationStats
+pub fn devboy_assets::rotation::RotationStats::eq(&self, other: &devboy_assets::rotation::RotationStats) -> bool
+impl core::default::Default for devboy_assets::rotation::RotationStats
+pub fn devboy_assets::rotation::RotationStats::default() -> devboy_assets::rotation::RotationStats
+impl core::fmt::Debug for devboy_assets::rotation::RotationStats
+pub fn devboy_assets::rotation::RotationStats::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_assets::rotation::RotationStats
+impl core::marker::Freeze for devboy_assets::rotation::RotationStats
+impl core::marker::Send for devboy_assets::rotation::RotationStats
+impl core::marker::Sync for devboy_assets::rotation::RotationStats
+impl core::marker::Unpin for devboy_assets::rotation::RotationStats
+impl core::marker::UnsafeUnpin for devboy_assets::rotation::RotationStats
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::rotation::RotationStats
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::rotation::RotationStats
+pub struct devboy_assets::Rotator
+impl devboy_assets::rotation::Rotator
+pub fn devboy_assets::rotation::Rotator::new(config: &devboy_assets::config::ResolvedAssetConfig) -> Self
+pub fn devboy_assets::rotation::Rotator::rotate(&self, index: &mut devboy_assets::index::AssetIndex, cache: &devboy_assets::cache::CacheManager) -> devboy_assets::error::Result<devboy_assets::rotation::RotationStats>
+pub fn devboy_assets::rotation::Rotator::within_budget(&self, index: &devboy_assets::index::AssetIndex) -> bool
+impl core::clone::Clone for devboy_assets::rotation::Rotator
+pub fn devboy_assets::rotation::Rotator::clone(&self) -> devboy_assets::rotation::Rotator
+impl core::fmt::Debug for devboy_assets::rotation::Rotator
+pub fn devboy_assets::rotation::Rotator::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_assets::rotation::Rotator
+impl core::marker::Send for devboy_assets::rotation::Rotator
+impl core::marker::Sync for devboy_assets::rotation::Rotator
+impl core::marker::Unpin for devboy_assets::rotation::Rotator
+impl core::marker::UnsafeUnpin for devboy_assets::rotation::Rotator
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::rotation::Rotator
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::rotation::Rotator
+pub struct devboy_assets::StoreRequest<'a>
+pub devboy_assets::StoreRequest::asset_id: core::option::Option<&'a str>
+pub devboy_assets::StoreRequest::context: devboy_core::asset::AssetContext
+pub devboy_assets::StoreRequest::data: &'a [u8]
+pub devboy_assets::StoreRequest::filename: &'a str
+pub devboy_assets::StoreRequest::mime_type: core::option::Option<alloc::string::String>
+pub devboy_assets::StoreRequest::remote_url: core::option::Option<alloc::string::String>
+impl<'a> core::fmt::Debug for devboy_assets::manager::StoreRequest<'a>
+pub fn devboy_assets::manager::StoreRequest<'a>::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Freeze for devboy_assets::manager::StoreRequest<'a>
+impl<'a> core::marker::Send for devboy_assets::manager::StoreRequest<'a>
+impl<'a> core::marker::Sync for devboy_assets::manager::StoreRequest<'a>
+impl<'a> core::marker::Unpin for devboy_assets::manager::StoreRequest<'a>
+impl<'a> core::marker::UnsafeUnpin for devboy_assets::manager::StoreRequest<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for devboy_assets::manager::StoreRequest<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for devboy_assets::manager::StoreRequest<'a>
+pub struct devboy_assets::StoredFile
+pub devboy_assets::StoredFile::checksum_sha256: alloc::string::String
+pub devboy_assets::StoredFile::path: std::path::PathBuf
+pub devboy_assets::StoredFile::size: u64
+impl core::clone::Clone for devboy_assets::cache::StoredFile
+pub fn devboy_assets::cache::StoredFile::clone(&self) -> devboy_assets::cache::StoredFile
+impl core::cmp::Eq for devboy_assets::cache::StoredFile
+impl core::cmp::PartialEq for devboy_assets::cache::StoredFile
+pub fn devboy_assets::cache::StoredFile::eq(&self, other: &devboy_assets::cache::StoredFile) -> bool
+impl core::fmt::Debug for devboy_assets::cache::StoredFile
+pub fn devboy_assets::cache::StoredFile::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_assets::cache::StoredFile
+impl core::marker::Freeze for devboy_assets::cache::StoredFile
+impl core::marker::Send for devboy_assets::cache::StoredFile
+impl core::marker::Sync for devboy_assets::cache::StoredFile
+impl core::marker::Unpin for devboy_assets::cache::StoredFile
+impl core::marker::UnsafeUnpin for devboy_assets::cache::StoredFile
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_assets::cache::StoredFile
+impl core::panic::unwind_safe::UnwindSafe for devboy_assets::cache::StoredFile
+pub type devboy_assets::Result<T> = core::result::Result<T, devboy_assets::error::AssetError>
