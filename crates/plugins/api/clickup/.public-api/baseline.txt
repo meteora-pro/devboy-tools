@@ -1,0 +1,541 @@
+pub mod devboy_clickup
+pub mod devboy_clickup::enricher
+pub struct devboy_clickup::enricher::ClickUpSchemaEnricher
+impl devboy_clickup::enricher::ClickUpSchemaEnricher
+pub fn devboy_clickup::enricher::ClickUpSchemaEnricher::new(metadata: devboy_clickup::metadata::ClickUpMetadata) -> Self
+impl devboy_core::enricher::ToolEnricher for devboy_clickup::enricher::ClickUpSchemaEnricher
+pub fn devboy_clickup::enricher::ClickUpSchemaEnricher::enrich_schema(&self, tool_name: &str, schema: &mut devboy_core::enricher::ToolSchema)
+pub fn devboy_clickup::enricher::ClickUpSchemaEnricher::rate_limit_host(&self, _tool_name: &str, _args: &serde_json::value::Value) -> core::option::Option<alloc::string::String>
+pub fn devboy_clickup::enricher::ClickUpSchemaEnricher::supported_categories(&self) -> &[devboy_core::tool_category::ToolCategory]
+pub fn devboy_clickup::enricher::ClickUpSchemaEnricher::transform_args(&self, tool_name: &str, args: &mut serde_json::value::Value)
+pub fn devboy_clickup::enricher::ClickUpSchemaEnricher::value_model(&self, tool_name: &str) -> core::option::Option<devboy_core::tool_value_model::ToolValueModel>
+impl core::marker::Freeze for devboy_clickup::enricher::ClickUpSchemaEnricher
+impl core::marker::Send for devboy_clickup::enricher::ClickUpSchemaEnricher
+impl core::marker::Sync for devboy_clickup::enricher::ClickUpSchemaEnricher
+impl core::marker::Unpin for devboy_clickup::enricher::ClickUpSchemaEnricher
+impl core::marker::UnsafeUnpin for devboy_clickup::enricher::ClickUpSchemaEnricher
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::enricher::ClickUpSchemaEnricher
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::enricher::ClickUpSchemaEnricher
+pub mod devboy_clickup::metadata
+pub enum devboy_clickup::metadata::ClickUpFieldType
+pub devboy_clickup::metadata::ClickUpFieldType::Checkbox
+pub devboy_clickup::metadata::ClickUpFieldType::Currency
+pub devboy_clickup::metadata::ClickUpFieldType::Date
+pub devboy_clickup::metadata::ClickUpFieldType::Dropdown
+pub devboy_clickup::metadata::ClickUpFieldType::Email
+pub devboy_clickup::metadata::ClickUpFieldType::Labels
+pub devboy_clickup::metadata::ClickUpFieldType::Number
+pub devboy_clickup::metadata::ClickUpFieldType::Phone
+pub devboy_clickup::metadata::ClickUpFieldType::Text
+pub devboy_clickup::metadata::ClickUpFieldType::Unknown
+pub devboy_clickup::metadata::ClickUpFieldType::Url
+impl core::clone::Clone for devboy_clickup::metadata::ClickUpFieldType
+pub fn devboy_clickup::metadata::ClickUpFieldType::clone(&self) -> devboy_clickup::metadata::ClickUpFieldType
+impl core::cmp::PartialEq for devboy_clickup::metadata::ClickUpFieldType
+pub fn devboy_clickup::metadata::ClickUpFieldType::eq(&self, other: &devboy_clickup::metadata::ClickUpFieldType) -> bool
+impl core::fmt::Debug for devboy_clickup::metadata::ClickUpFieldType
+pub fn devboy_clickup::metadata::ClickUpFieldType::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_clickup::metadata::ClickUpFieldType
+impl serde_core::ser::Serialize for devboy_clickup::metadata::ClickUpFieldType
+pub fn devboy_clickup::metadata::ClickUpFieldType::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::metadata::ClickUpFieldType
+pub fn devboy_clickup::metadata::ClickUpFieldType::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::metadata::ClickUpFieldType
+impl core::marker::Send for devboy_clickup::metadata::ClickUpFieldType
+impl core::marker::Sync for devboy_clickup::metadata::ClickUpFieldType
+impl core::marker::Unpin for devboy_clickup::metadata::ClickUpFieldType
+impl core::marker::UnsafeUnpin for devboy_clickup::metadata::ClickUpFieldType
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::metadata::ClickUpFieldType
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::metadata::ClickUpFieldType
+pub struct devboy_clickup::metadata::ClickUpCustomField
+pub devboy_clickup::metadata::ClickUpCustomField::field_type: devboy_clickup::metadata::ClickUpFieldType
+pub devboy_clickup::metadata::ClickUpCustomField::id: alloc::string::String
+pub devboy_clickup::metadata::ClickUpCustomField::name: alloc::string::String
+pub devboy_clickup::metadata::ClickUpCustomField::options: alloc::vec::Vec<devboy_clickup::metadata::ClickUpFieldOption>
+pub devboy_clickup::metadata::ClickUpCustomField::required: bool
+impl devboy_clickup::metadata::ClickUpCustomField
+pub fn devboy_clickup::metadata::ClickUpCustomField::transform_value(&self, value: &serde_json::value::Value) -> serde_json::value::Value
+impl core::clone::Clone for devboy_clickup::metadata::ClickUpCustomField
+pub fn devboy_clickup::metadata::ClickUpCustomField::clone(&self) -> devboy_clickup::metadata::ClickUpCustomField
+impl core::fmt::Debug for devboy_clickup::metadata::ClickUpCustomField
+pub fn devboy_clickup::metadata::ClickUpCustomField::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::metadata::ClickUpCustomField
+pub fn devboy_clickup::metadata::ClickUpCustomField::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::metadata::ClickUpCustomField
+pub fn devboy_clickup::metadata::ClickUpCustomField::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::metadata::ClickUpCustomField
+impl core::marker::Send for devboy_clickup::metadata::ClickUpCustomField
+impl core::marker::Sync for devboy_clickup::metadata::ClickUpCustomField
+impl core::marker::Unpin for devboy_clickup::metadata::ClickUpCustomField
+impl core::marker::UnsafeUnpin for devboy_clickup::metadata::ClickUpCustomField
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::metadata::ClickUpCustomField
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::metadata::ClickUpCustomField
+pub struct devboy_clickup::metadata::ClickUpFieldOption
+pub devboy_clickup::metadata::ClickUpFieldOption::id: alloc::string::String
+pub devboy_clickup::metadata::ClickUpFieldOption::name: alloc::string::String
+pub devboy_clickup::metadata::ClickUpFieldOption::orderindex: core::option::Option<u32>
+impl core::clone::Clone for devboy_clickup::metadata::ClickUpFieldOption
+pub fn devboy_clickup::metadata::ClickUpFieldOption::clone(&self) -> devboy_clickup::metadata::ClickUpFieldOption
+impl core::fmt::Debug for devboy_clickup::metadata::ClickUpFieldOption
+pub fn devboy_clickup::metadata::ClickUpFieldOption::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::metadata::ClickUpFieldOption
+pub fn devboy_clickup::metadata::ClickUpFieldOption::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::metadata::ClickUpFieldOption
+pub fn devboy_clickup::metadata::ClickUpFieldOption::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::metadata::ClickUpFieldOption
+impl core::marker::Send for devboy_clickup::metadata::ClickUpFieldOption
+impl core::marker::Sync for devboy_clickup::metadata::ClickUpFieldOption
+impl core::marker::Unpin for devboy_clickup::metadata::ClickUpFieldOption
+impl core::marker::UnsafeUnpin for devboy_clickup::metadata::ClickUpFieldOption
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::metadata::ClickUpFieldOption
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::metadata::ClickUpFieldOption
+pub struct devboy_clickup::metadata::ClickUpMetadata
+pub devboy_clickup::metadata::ClickUpMetadata::custom_fields: alloc::vec::Vec<devboy_clickup::metadata::ClickUpCustomField>
+pub devboy_clickup::metadata::ClickUpMetadata::statuses: alloc::vec::Vec<devboy_clickup::metadata::ClickUpStatus>
+impl core::clone::Clone for devboy_clickup::metadata::ClickUpMetadata
+pub fn devboy_clickup::metadata::ClickUpMetadata::clone(&self) -> devboy_clickup::metadata::ClickUpMetadata
+impl core::fmt::Debug for devboy_clickup::metadata::ClickUpMetadata
+pub fn devboy_clickup::metadata::ClickUpMetadata::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::metadata::ClickUpMetadata
+pub fn devboy_clickup::metadata::ClickUpMetadata::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::metadata::ClickUpMetadata
+pub fn devboy_clickup::metadata::ClickUpMetadata::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::metadata::ClickUpMetadata
+impl core::marker::Send for devboy_clickup::metadata::ClickUpMetadata
+impl core::marker::Sync for devboy_clickup::metadata::ClickUpMetadata
+impl core::marker::Unpin for devboy_clickup::metadata::ClickUpMetadata
+impl core::marker::UnsafeUnpin for devboy_clickup::metadata::ClickUpMetadata
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::metadata::ClickUpMetadata
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::metadata::ClickUpMetadata
+pub struct devboy_clickup::metadata::ClickUpStatus
+pub devboy_clickup::metadata::ClickUpStatus::name: alloc::string::String
+pub devboy_clickup::metadata::ClickUpStatus::type: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_clickup::metadata::ClickUpStatus
+pub fn devboy_clickup::metadata::ClickUpStatus::clone(&self) -> devboy_clickup::metadata::ClickUpStatus
+impl core::fmt::Debug for devboy_clickup::metadata::ClickUpStatus
+pub fn devboy_clickup::metadata::ClickUpStatus::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::metadata::ClickUpStatus
+pub fn devboy_clickup::metadata::ClickUpStatus::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::metadata::ClickUpStatus
+pub fn devboy_clickup::metadata::ClickUpStatus::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::metadata::ClickUpStatus
+impl core::marker::Send for devboy_clickup::metadata::ClickUpStatus
+impl core::marker::Sync for devboy_clickup::metadata::ClickUpStatus
+impl core::marker::Unpin for devboy_clickup::metadata::ClickUpStatus
+impl core::marker::UnsafeUnpin for devboy_clickup::metadata::ClickUpStatus
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::metadata::ClickUpStatus
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::metadata::ClickUpStatus
+pub struct devboy_clickup::ClickUpAttachment
+pub devboy_clickup::ClickUpAttachment::date: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpAttachment::extension: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpAttachment::id: alloc::string::String
+pub devboy_clickup::ClickUpAttachment::mimetype: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpAttachment::size: core::option::Option<serde_json::value::Value>
+pub devboy_clickup::ClickUpAttachment::title: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpAttachment::url: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpAttachment::user: core::option::Option<devboy_clickup::ClickUpUser>
+impl core::clone::Clone for devboy_clickup::ClickUpAttachment
+pub fn devboy_clickup::ClickUpAttachment::clone(&self) -> devboy_clickup::ClickUpAttachment
+impl core::fmt::Debug for devboy_clickup::ClickUpAttachment
+pub fn devboy_clickup::ClickUpAttachment::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::ClickUpAttachment
+pub fn devboy_clickup::ClickUpAttachment::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::ClickUpAttachment
+pub fn devboy_clickup::ClickUpAttachment::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::ClickUpAttachment
+impl core::marker::Send for devboy_clickup::ClickUpAttachment
+impl core::marker::Sync for devboy_clickup::ClickUpAttachment
+impl core::marker::Unpin for devboy_clickup::ClickUpAttachment
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpAttachment
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpAttachment
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpAttachment
+pub struct devboy_clickup::ClickUpClient
+impl devboy_clickup::ClickUpClient
+pub fn devboy_clickup::ClickUpClient::new(list_id: impl core::convert::Into<alloc::string::String>, token: secrecy::SecretString) -> Self
+pub fn devboy_clickup::ClickUpClient::with_base_url(base_url: impl core::convert::Into<alloc::string::String>, list_id: impl core::convert::Into<alloc::string::String>, token: secrecy::SecretString) -> Self
+pub fn devboy_clickup::ClickUpClient::with_team_id(self, team_id: impl core::convert::Into<alloc::string::String>) -> Self
+impl devboy_core::provider::IssueProvider for devboy_clickup::ClickUpClient
+pub fn devboy_clickup::ClickUpClient::add_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, issue_key: &'life1 str, body: &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Comment>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn devboy_clickup::ClickUpClient::asset_capabilities(&self) -> devboy_core::asset::AssetCapabilities
+pub fn devboy_clickup::ClickUpClient::create_issue<'life0, 'async_trait>(&'life0 self, input: devboy_core::types::CreateIssueInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_clickup::ClickUpClient::download_attachment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, issue_key: &'life1 str, asset_id: &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<alloc::vec::Vec<u8>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn devboy_clickup::ClickUpClient::get_comments<'life0, 'life1, 'async_trait>(&'life0 self, issue_key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::Comment>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_clickup::ClickUpClient::get_issue<'life0, 'life1, 'async_trait>(&'life0 self, key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_clickup::ClickUpClient::get_issue_attachments<'life0, 'life1, 'async_trait>(&'life0 self, issue_key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<alloc::vec::Vec<devboy_core::asset::AssetMeta>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_clickup::ClickUpClient::get_issue_relations<'life0, 'life1, 'async_trait>(&'life0 self, issue_key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::IssueRelations>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_clickup::ClickUpClient::get_issues<'life0, 'async_trait>(&'life0 self, filter: devboy_core::types::IssueFilter) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_clickup::ClickUpClient::get_statuses<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::IssueStatus>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_clickup::ClickUpClient::link_issues<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, source_key: &'life1 str, target_key: &'life2 str, link_type: &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn devboy_clickup::ClickUpClient::provider_name(&self) -> &'static str
+pub fn devboy_clickup::ClickUpClient::set_custom_fields<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, issue_key: &'life1 str, fields: &'life2 [serde_json::value::Value]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn devboy_clickup::ClickUpClient::unlink_issues<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, source_key: &'life1 str, target_key: &'life2 str, link_type: &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn devboy_clickup::ClickUpClient::update_issue<'life0, 'life1, 'async_trait>(&'life0 self, key: &'life1 str, input: devboy_core::types::UpdateIssueInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_clickup::ClickUpClient::upload_attachment<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, issue_key: &'life1 str, filename: &'life2 str, data: &'life3 [u8]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+impl devboy_core::provider::MergeRequestProvider for devboy_clickup::ClickUpClient
+pub fn devboy_clickup::ClickUpClient::provider_name(&self) -> &'static str
+impl devboy_core::provider::PipelineProvider for devboy_clickup::ClickUpClient
+pub fn devboy_clickup::ClickUpClient::provider_name(&self) -> &'static str
+impl devboy_core::provider::Provider for devboy_clickup::ClickUpClient
+pub fn devboy_clickup::ClickUpClient::get_current_user<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::User>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+impl core::marker::Freeze for devboy_clickup::ClickUpClient
+impl core::marker::Send for devboy_clickup::ClickUpClient
+impl core::marker::Sync for devboy_clickup::ClickUpClient
+impl core::marker::Unpin for devboy_clickup::ClickUpClient
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpClient
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpClient
+impl !core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpClient
+pub struct devboy_clickup::ClickUpComment
+pub devboy_clickup::ClickUpComment::comment_text: alloc::string::String
+pub devboy_clickup::ClickUpComment::date: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpComment::id: alloc::string::String
+pub devboy_clickup::ClickUpComment::user: core::option::Option<devboy_clickup::ClickUpUser>
+impl core::clone::Clone for devboy_clickup::ClickUpComment
+pub fn devboy_clickup::ClickUpComment::clone(&self) -> devboy_clickup::ClickUpComment
+impl core::fmt::Debug for devboy_clickup::ClickUpComment
+pub fn devboy_clickup::ClickUpComment::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::ClickUpComment
+pub fn devboy_clickup::ClickUpComment::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::ClickUpComment
+pub fn devboy_clickup::ClickUpComment::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::ClickUpComment
+impl core::marker::Send for devboy_clickup::ClickUpComment
+impl core::marker::Sync for devboy_clickup::ClickUpComment
+impl core::marker::Unpin for devboy_clickup::ClickUpComment
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpComment
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpComment
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpComment
+pub struct devboy_clickup::ClickUpCommentList
+pub devboy_clickup::ClickUpCommentList::comments: alloc::vec::Vec<devboy_clickup::ClickUpComment>
+impl core::clone::Clone for devboy_clickup::ClickUpCommentList
+pub fn devboy_clickup::ClickUpCommentList::clone(&self) -> devboy_clickup::ClickUpCommentList
+impl core::fmt::Debug for devboy_clickup::ClickUpCommentList
+pub fn devboy_clickup::ClickUpCommentList::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::ClickUpCommentList
+pub fn devboy_clickup::ClickUpCommentList::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::ClickUpCommentList
+pub fn devboy_clickup::ClickUpCommentList::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::ClickUpCommentList
+impl core::marker::Send for devboy_clickup::ClickUpCommentList
+impl core::marker::Sync for devboy_clickup::ClickUpCommentList
+impl core::marker::Unpin for devboy_clickup::ClickUpCommentList
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpCommentList
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpCommentList
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpCommentList
+pub struct devboy_clickup::ClickUpDependencyResponse
+pub devboy_clickup::ClickUpDependencyResponse::dependency: core::option::Option<serde_json::value::Value>
+impl core::clone::Clone for devboy_clickup::ClickUpDependencyResponse
+pub fn devboy_clickup::ClickUpDependencyResponse::clone(&self) -> devboy_clickup::ClickUpDependencyResponse
+impl core::fmt::Debug for devboy_clickup::ClickUpDependencyResponse
+pub fn devboy_clickup::ClickUpDependencyResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::ClickUpDependencyResponse
+pub fn devboy_clickup::ClickUpDependencyResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::ClickUpDependencyResponse
+impl core::marker::Send for devboy_clickup::ClickUpDependencyResponse
+impl core::marker::Sync for devboy_clickup::ClickUpDependencyResponse
+impl core::marker::Unpin for devboy_clickup::ClickUpDependencyResponse
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpDependencyResponse
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpDependencyResponse
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpDependencyResponse
+pub struct devboy_clickup::ClickUpLinkResponse
+pub devboy_clickup::ClickUpLinkResponse::link: core::option::Option<serde_json::value::Value>
+impl core::clone::Clone for devboy_clickup::ClickUpLinkResponse
+pub fn devboy_clickup::ClickUpLinkResponse::clone(&self) -> devboy_clickup::ClickUpLinkResponse
+impl core::fmt::Debug for devboy_clickup::ClickUpLinkResponse
+pub fn devboy_clickup::ClickUpLinkResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::ClickUpLinkResponse
+pub fn devboy_clickup::ClickUpLinkResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::ClickUpLinkResponse
+impl core::marker::Send for devboy_clickup::ClickUpLinkResponse
+impl core::marker::Sync for devboy_clickup::ClickUpLinkResponse
+impl core::marker::Unpin for devboy_clickup::ClickUpLinkResponse
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpLinkResponse
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpLinkResponse
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpLinkResponse
+pub struct devboy_clickup::ClickUpLinkedTask
+pub devboy_clickup::ClickUpLinkedTask::link_id: alloc::string::String
+pub devboy_clickup::ClickUpLinkedTask::link_type: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpLinkedTask::task_id: alloc::string::String
+impl core::clone::Clone for devboy_clickup::ClickUpLinkedTask
+pub fn devboy_clickup::ClickUpLinkedTask::clone(&self) -> devboy_clickup::ClickUpLinkedTask
+impl core::fmt::Debug for devboy_clickup::ClickUpLinkedTask
+pub fn devboy_clickup::ClickUpLinkedTask::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::ClickUpLinkedTask
+pub fn devboy_clickup::ClickUpLinkedTask::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::ClickUpLinkedTask
+pub fn devboy_clickup::ClickUpLinkedTask::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::ClickUpLinkedTask
+impl core::marker::Send for devboy_clickup::ClickUpLinkedTask
+impl core::marker::Sync for devboy_clickup::ClickUpLinkedTask
+impl core::marker::Unpin for devboy_clickup::ClickUpLinkedTask
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpLinkedTask
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpLinkedTask
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpLinkedTask
+pub struct devboy_clickup::ClickUpListInfo
+pub devboy_clickup::ClickUpListInfo::statuses: alloc::vec::Vec<devboy_clickup::ClickUpListStatus>
+impl core::clone::Clone for devboy_clickup::ClickUpListInfo
+pub fn devboy_clickup::ClickUpListInfo::clone(&self) -> devboy_clickup::ClickUpListInfo
+impl core::fmt::Debug for devboy_clickup::ClickUpListInfo
+pub fn devboy_clickup::ClickUpListInfo::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::ClickUpListInfo
+pub fn devboy_clickup::ClickUpListInfo::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::ClickUpListInfo
+impl core::marker::Send for devboy_clickup::ClickUpListInfo
+impl core::marker::Sync for devboy_clickup::ClickUpListInfo
+impl core::marker::Unpin for devboy_clickup::ClickUpListInfo
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpListInfo
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpListInfo
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpListInfo
+pub struct devboy_clickup::ClickUpListStatus
+pub devboy_clickup::ClickUpListStatus::color: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpListStatus::orderindex: core::option::Option<u32>
+pub devboy_clickup::ClickUpListStatus::status: alloc::string::String
+pub devboy_clickup::ClickUpListStatus::status_type: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_clickup::ClickUpListStatus
+pub fn devboy_clickup::ClickUpListStatus::clone(&self) -> devboy_clickup::ClickUpListStatus
+impl core::fmt::Debug for devboy_clickup::ClickUpListStatus
+pub fn devboy_clickup::ClickUpListStatus::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::ClickUpListStatus
+pub fn devboy_clickup::ClickUpListStatus::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::ClickUpListStatus
+impl core::marker::Send for devboy_clickup::ClickUpListStatus
+impl core::marker::Sync for devboy_clickup::ClickUpListStatus
+impl core::marker::Unpin for devboy_clickup::ClickUpListStatus
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpListStatus
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpListStatus
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpListStatus
+pub struct devboy_clickup::ClickUpMetadata
+pub devboy_clickup::ClickUpMetadata::custom_fields: alloc::vec::Vec<devboy_clickup::metadata::ClickUpCustomField>
+pub devboy_clickup::ClickUpMetadata::statuses: alloc::vec::Vec<devboy_clickup::metadata::ClickUpStatus>
+impl core::clone::Clone for devboy_clickup::metadata::ClickUpMetadata
+pub fn devboy_clickup::metadata::ClickUpMetadata::clone(&self) -> devboy_clickup::metadata::ClickUpMetadata
+impl core::fmt::Debug for devboy_clickup::metadata::ClickUpMetadata
+pub fn devboy_clickup::metadata::ClickUpMetadata::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::metadata::ClickUpMetadata
+pub fn devboy_clickup::metadata::ClickUpMetadata::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::metadata::ClickUpMetadata
+pub fn devboy_clickup::metadata::ClickUpMetadata::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::metadata::ClickUpMetadata
+impl core::marker::Send for devboy_clickup::metadata::ClickUpMetadata
+impl core::marker::Sync for devboy_clickup::metadata::ClickUpMetadata
+impl core::marker::Unpin for devboy_clickup::metadata::ClickUpMetadata
+impl core::marker::UnsafeUnpin for devboy_clickup::metadata::ClickUpMetadata
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::metadata::ClickUpMetadata
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::metadata::ClickUpMetadata
+pub struct devboy_clickup::ClickUpPriority
+pub devboy_clickup::ClickUpPriority::color: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpPriority::id: alloc::string::String
+pub devboy_clickup::ClickUpPriority::priority: alloc::string::String
+impl core::clone::Clone for devboy_clickup::ClickUpPriority
+pub fn devboy_clickup::ClickUpPriority::clone(&self) -> devboy_clickup::ClickUpPriority
+impl core::fmt::Debug for devboy_clickup::ClickUpPriority
+pub fn devboy_clickup::ClickUpPriority::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::ClickUpPriority
+pub fn devboy_clickup::ClickUpPriority::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::ClickUpPriority
+pub fn devboy_clickup::ClickUpPriority::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::ClickUpPriority
+impl core::marker::Send for devboy_clickup::ClickUpPriority
+impl core::marker::Sync for devboy_clickup::ClickUpPriority
+impl core::marker::Unpin for devboy_clickup::ClickUpPriority
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpPriority
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpPriority
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpPriority
+pub struct devboy_clickup::ClickUpSchemaEnricher
+impl devboy_clickup::enricher::ClickUpSchemaEnricher
+pub fn devboy_clickup::enricher::ClickUpSchemaEnricher::new(metadata: devboy_clickup::metadata::ClickUpMetadata) -> Self
+impl devboy_core::enricher::ToolEnricher for devboy_clickup::enricher::ClickUpSchemaEnricher
+pub fn devboy_clickup::enricher::ClickUpSchemaEnricher::enrich_schema(&self, tool_name: &str, schema: &mut devboy_core::enricher::ToolSchema)
+pub fn devboy_clickup::enricher::ClickUpSchemaEnricher::rate_limit_host(&self, _tool_name: &str, _args: &serde_json::value::Value) -> core::option::Option<alloc::string::String>
+pub fn devboy_clickup::enricher::ClickUpSchemaEnricher::supported_categories(&self) -> &[devboy_core::tool_category::ToolCategory]
+pub fn devboy_clickup::enricher::ClickUpSchemaEnricher::transform_args(&self, tool_name: &str, args: &mut serde_json::value::Value)
+pub fn devboy_clickup::enricher::ClickUpSchemaEnricher::value_model(&self, tool_name: &str) -> core::option::Option<devboy_core::tool_value_model::ToolValueModel>
+impl core::marker::Freeze for devboy_clickup::enricher::ClickUpSchemaEnricher
+impl core::marker::Send for devboy_clickup::enricher::ClickUpSchemaEnricher
+impl core::marker::Sync for devboy_clickup::enricher::ClickUpSchemaEnricher
+impl core::marker::Unpin for devboy_clickup::enricher::ClickUpSchemaEnricher
+impl core::marker::UnsafeUnpin for devboy_clickup::enricher::ClickUpSchemaEnricher
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::enricher::ClickUpSchemaEnricher
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::enricher::ClickUpSchemaEnricher
+pub struct devboy_clickup::ClickUpStatus
+pub devboy_clickup::ClickUpStatus::status: alloc::string::String
+pub devboy_clickup::ClickUpStatus::status_type: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_clickup::ClickUpStatus
+pub fn devboy_clickup::ClickUpStatus::clone(&self) -> devboy_clickup::ClickUpStatus
+impl core::fmt::Debug for devboy_clickup::ClickUpStatus
+pub fn devboy_clickup::ClickUpStatus::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::ClickUpStatus
+pub fn devboy_clickup::ClickUpStatus::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::ClickUpStatus
+pub fn devboy_clickup::ClickUpStatus::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::ClickUpStatus
+impl core::marker::Send for devboy_clickup::ClickUpStatus
+impl core::marker::Sync for devboy_clickup::ClickUpStatus
+impl core::marker::Unpin for devboy_clickup::ClickUpStatus
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpStatus
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpStatus
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpStatus
+pub struct devboy_clickup::ClickUpTag
+pub devboy_clickup::ClickUpTag::name: alloc::string::String
+impl core::clone::Clone for devboy_clickup::ClickUpTag
+pub fn devboy_clickup::ClickUpTag::clone(&self) -> devboy_clickup::ClickUpTag
+impl core::fmt::Debug for devboy_clickup::ClickUpTag
+pub fn devboy_clickup::ClickUpTag::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::ClickUpTag
+pub fn devboy_clickup::ClickUpTag::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::ClickUpTag
+pub fn devboy_clickup::ClickUpTag::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::ClickUpTag
+impl core::marker::Send for devboy_clickup::ClickUpTag
+impl core::marker::Sync for devboy_clickup::ClickUpTag
+impl core::marker::Unpin for devboy_clickup::ClickUpTag
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpTag
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpTag
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpTag
+pub struct devboy_clickup::ClickUpTask
+pub devboy_clickup::ClickUpTask::assignees: alloc::vec::Vec<devboy_clickup::ClickUpUser>
+pub devboy_clickup::ClickUpTask::attachments: alloc::vec::Vec<devboy_clickup::ClickUpAttachment>
+pub devboy_clickup::ClickUpTask::creator: core::option::Option<devboy_clickup::ClickUpUser>
+pub devboy_clickup::ClickUpTask::custom_id: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpTask::date_created: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpTask::date_updated: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpTask::dependencies: core::option::Option<alloc::vec::Vec<serde_json::value::Value>>
+pub devboy_clickup::ClickUpTask::description: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpTask::id: alloc::string::String
+pub devboy_clickup::ClickUpTask::linked_tasks: core::option::Option<alloc::vec::Vec<devboy_clickup::ClickUpLinkedTask>>
+pub devboy_clickup::ClickUpTask::name: alloc::string::String
+pub devboy_clickup::ClickUpTask::parent: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpTask::priority: core::option::Option<devboy_clickup::ClickUpPriority>
+pub devboy_clickup::ClickUpTask::status: devboy_clickup::ClickUpStatus
+pub devboy_clickup::ClickUpTask::subtasks: core::option::Option<alloc::vec::Vec<devboy_clickup::ClickUpTask>>
+pub devboy_clickup::ClickUpTask::tags: alloc::vec::Vec<devboy_clickup::ClickUpTag>
+pub devboy_clickup::ClickUpTask::text_content: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpTask::url: alloc::string::String
+impl core::clone::Clone for devboy_clickup::ClickUpTask
+pub fn devboy_clickup::ClickUpTask::clone(&self) -> devboy_clickup::ClickUpTask
+impl core::fmt::Debug for devboy_clickup::ClickUpTask
+pub fn devboy_clickup::ClickUpTask::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::ClickUpTask
+pub fn devboy_clickup::ClickUpTask::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::ClickUpTask
+pub fn devboy_clickup::ClickUpTask::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::ClickUpTask
+impl core::marker::Send for devboy_clickup::ClickUpTask
+impl core::marker::Sync for devboy_clickup::ClickUpTask
+impl core::marker::Unpin for devboy_clickup::ClickUpTask
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpTask
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpTask
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpTask
+pub struct devboy_clickup::ClickUpTaskList
+pub devboy_clickup::ClickUpTaskList::tasks: alloc::vec::Vec<devboy_clickup::ClickUpTask>
+impl core::clone::Clone for devboy_clickup::ClickUpTaskList
+pub fn devboy_clickup::ClickUpTaskList::clone(&self) -> devboy_clickup::ClickUpTaskList
+impl core::fmt::Debug for devboy_clickup::ClickUpTaskList
+pub fn devboy_clickup::ClickUpTaskList::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::ClickUpTaskList
+pub fn devboy_clickup::ClickUpTaskList::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::ClickUpTaskList
+pub fn devboy_clickup::ClickUpTaskList::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::ClickUpTaskList
+impl core::marker::Send for devboy_clickup::ClickUpTaskList
+impl core::marker::Sync for devboy_clickup::ClickUpTaskList
+impl core::marker::Unpin for devboy_clickup::ClickUpTaskList
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpTaskList
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpTaskList
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpTaskList
+pub struct devboy_clickup::ClickUpUser
+pub devboy_clickup::ClickUpUser::email: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpUser::id: u64
+pub devboy_clickup::ClickUpUser::profile_picture: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpUser::username: alloc::string::String
+impl core::clone::Clone for devboy_clickup::ClickUpUser
+pub fn devboy_clickup::ClickUpUser::clone(&self) -> devboy_clickup::ClickUpUser
+impl core::fmt::Debug for devboy_clickup::ClickUpUser
+pub fn devboy_clickup::ClickUpUser::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::ClickUpUser
+pub fn devboy_clickup::ClickUpUser::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::ClickUpUser
+pub fn devboy_clickup::ClickUpUser::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::ClickUpUser
+impl core::marker::Send for devboy_clickup::ClickUpUser
+impl core::marker::Sync for devboy_clickup::ClickUpUser
+impl core::marker::Unpin for devboy_clickup::ClickUpUser
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpUser
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpUser
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpUser
+pub struct devboy_clickup::CreateCommentRequest
+pub devboy_clickup::CreateCommentRequest::comment_text: alloc::string::String
+impl core::clone::Clone for devboy_clickup::CreateCommentRequest
+pub fn devboy_clickup::CreateCommentRequest::clone(&self) -> devboy_clickup::CreateCommentRequest
+impl core::fmt::Debug for devboy_clickup::CreateCommentRequest
+pub fn devboy_clickup::CreateCommentRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::CreateCommentRequest
+pub fn devboy_clickup::CreateCommentRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_clickup::CreateCommentRequest
+impl core::marker::Send for devboy_clickup::CreateCommentRequest
+impl core::marker::Sync for devboy_clickup::CreateCommentRequest
+impl core::marker::Unpin for devboy_clickup::CreateCommentRequest
+impl core::marker::UnsafeUnpin for devboy_clickup::CreateCommentRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::CreateCommentRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::CreateCommentRequest
+pub struct devboy_clickup::CreateCommentResponse
+pub devboy_clickup::CreateCommentResponse::date: core::option::Option<alloc::string::String>
+pub devboy_clickup::CreateCommentResponse::id: alloc::string::String
+impl core::clone::Clone for devboy_clickup::CreateCommentResponse
+pub fn devboy_clickup::CreateCommentResponse::clone(&self) -> devboy_clickup::CreateCommentResponse
+impl core::fmt::Debug for devboy_clickup::CreateCommentResponse
+pub fn devboy_clickup::CreateCommentResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::CreateCommentResponse
+pub fn devboy_clickup::CreateCommentResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::CreateCommentResponse
+impl core::marker::Send for devboy_clickup::CreateCommentResponse
+impl core::marker::Sync for devboy_clickup::CreateCommentResponse
+impl core::marker::Unpin for devboy_clickup::CreateCommentResponse
+impl core::marker::UnsafeUnpin for devboy_clickup::CreateCommentResponse
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::CreateCommentResponse
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::CreateCommentResponse
+pub struct devboy_clickup::CreateTaskRequest
+pub devboy_clickup::CreateTaskRequest::assignees: core::option::Option<alloc::vec::Vec<u64>>
+pub devboy_clickup::CreateTaskRequest::description: core::option::Option<alloc::string::String>
+pub devboy_clickup::CreateTaskRequest::markdown_content: core::option::Option<alloc::string::String>
+pub devboy_clickup::CreateTaskRequest::name: alloc::string::String
+pub devboy_clickup::CreateTaskRequest::parent: core::option::Option<alloc::string::String>
+pub devboy_clickup::CreateTaskRequest::priority: core::option::Option<u8>
+pub devboy_clickup::CreateTaskRequest::status: core::option::Option<alloc::string::String>
+pub devboy_clickup::CreateTaskRequest::tags: core::option::Option<alloc::vec::Vec<alloc::string::String>>
+impl core::clone::Clone for devboy_clickup::CreateTaskRequest
+pub fn devboy_clickup::CreateTaskRequest::clone(&self) -> devboy_clickup::CreateTaskRequest
+impl core::fmt::Debug for devboy_clickup::CreateTaskRequest
+pub fn devboy_clickup::CreateTaskRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::CreateTaskRequest
+pub fn devboy_clickup::CreateTaskRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_clickup::CreateTaskRequest
+impl core::marker::Send for devboy_clickup::CreateTaskRequest
+impl core::marker::Sync for devboy_clickup::CreateTaskRequest
+impl core::marker::Unpin for devboy_clickup::CreateTaskRequest
+impl core::marker::UnsafeUnpin for devboy_clickup::CreateTaskRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::CreateTaskRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::CreateTaskRequest
+pub struct devboy_clickup::UpdateTaskRequest
+pub devboy_clickup::UpdateTaskRequest::description: core::option::Option<alloc::string::String>
+pub devboy_clickup::UpdateTaskRequest::markdown_content: core::option::Option<alloc::string::String>
+pub devboy_clickup::UpdateTaskRequest::name: core::option::Option<alloc::string::String>
+pub devboy_clickup::UpdateTaskRequest::parent: core::option::Option<alloc::string::String>
+pub devboy_clickup::UpdateTaskRequest::priority: core::option::Option<u8>
+pub devboy_clickup::UpdateTaskRequest::status: core::option::Option<alloc::string::String>
+pub devboy_clickup::UpdateTaskRequest::tags: core::option::Option<alloc::vec::Vec<alloc::string::String>>
+impl core::clone::Clone for devboy_clickup::UpdateTaskRequest
+pub fn devboy_clickup::UpdateTaskRequest::clone(&self) -> devboy_clickup::UpdateTaskRequest
+impl core::default::Default for devboy_clickup::UpdateTaskRequest
+pub fn devboy_clickup::UpdateTaskRequest::default() -> devboy_clickup::UpdateTaskRequest
+impl core::fmt::Debug for devboy_clickup::UpdateTaskRequest
+pub fn devboy_clickup::UpdateTaskRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::UpdateTaskRequest
+pub fn devboy_clickup::UpdateTaskRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_clickup::UpdateTaskRequest
+impl core::marker::Send for devboy_clickup::UpdateTaskRequest
+impl core::marker::Sync for devboy_clickup::UpdateTaskRequest
+impl core::marker::Unpin for devboy_clickup::UpdateTaskRequest
+impl core::marker::UnsafeUnpin for devboy_clickup::UpdateTaskRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::UpdateTaskRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::UpdateTaskRequest
+pub const devboy_clickup::DEFAULT_CLICKUP_URL: &str

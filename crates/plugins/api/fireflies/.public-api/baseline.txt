@@ -1,0 +1,31 @@
+pub mod devboy_fireflies
+pub struct devboy_fireflies::FirefliesClient
+impl devboy_fireflies::FirefliesClient
+pub fn devboy_fireflies::FirefliesClient::new(api_key: secrecy::SecretString) -> Self
+pub fn devboy_fireflies::FirefliesClient::with_api_url(self, url: impl core::convert::Into<alloc::string::String>) -> Self
+impl devboy_core::provider::MeetingNotesProvider for devboy_fireflies::FirefliesClient
+pub fn devboy_fireflies::FirefliesClient::get_meetings<'life0, 'async_trait>(&'life0 self, filter: devboy_core::types::MeetingFilter) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::MeetingNote>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_fireflies::FirefliesClient::get_transcript<'life0, 'life1, 'async_trait>(&'life0 self, meeting_id: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::MeetingTranscript>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_fireflies::FirefliesClient::provider_name(&self) -> &'static str
+pub fn devboy_fireflies::FirefliesClient::search_meetings<'life0, 'life1, 'async_trait>(&'life0 self, query: &'life1 str, filter: devboy_core::types::MeetingFilter) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::MeetingNote>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+impl core::marker::Freeze for devboy_fireflies::FirefliesClient
+impl core::marker::Send for devboy_fireflies::FirefliesClient
+impl core::marker::Sync for devboy_fireflies::FirefliesClient
+impl core::marker::Unpin for devboy_fireflies::FirefliesClient
+impl core::marker::UnsafeUnpin for devboy_fireflies::FirefliesClient
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_fireflies::FirefliesClient
+impl !core::panic::unwind_safe::UnwindSafe for devboy_fireflies::FirefliesClient
+pub struct devboy_fireflies::FirefliesSchemaEnricher
+impl devboy_core::enricher::ToolEnricher for devboy_fireflies::FirefliesSchemaEnricher
+pub fn devboy_fireflies::FirefliesSchemaEnricher::enrich_schema(&self, _tool_name: &str, _schema: &mut devboy_core::enricher::ToolSchema)
+pub fn devboy_fireflies::FirefliesSchemaEnricher::rate_limit_host(&self, _tool_name: &str, _args: &serde_json::value::Value) -> core::option::Option<alloc::string::String>
+pub fn devboy_fireflies::FirefliesSchemaEnricher::supported_categories(&self) -> &[devboy_core::tool_category::ToolCategory]
+pub fn devboy_fireflies::FirefliesSchemaEnricher::transform_args(&self, _tool_name: &str, _args: &mut serde_json::value::Value)
+pub fn devboy_fireflies::FirefliesSchemaEnricher::value_model(&self, tool_name: &str) -> core::option::Option<devboy_core::tool_value_model::ToolValueModel>
+impl core::marker::Freeze for devboy_fireflies::FirefliesSchemaEnricher
+impl core::marker::Send for devboy_fireflies::FirefliesSchemaEnricher
+impl core::marker::Sync for devboy_fireflies::FirefliesSchemaEnricher
+impl core::marker::Unpin for devboy_fireflies::FirefliesSchemaEnricher
+impl core::marker::UnsafeUnpin for devboy_fireflies::FirefliesSchemaEnricher
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_fireflies::FirefliesSchemaEnricher
+impl core::panic::unwind_safe::UnwindSafe for devboy_fireflies::FirefliesSchemaEnricher

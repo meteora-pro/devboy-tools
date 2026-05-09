@@ -1,0 +1,55 @@
+pub mod devboy_slack
+pub struct devboy_slack::SlackAuthInfo
+pub devboy_slack::SlackAuthInfo::bot_id: core::option::Option<alloc::string::String>
+pub devboy_slack::SlackAuthInfo::missing_scopes: alloc::vec::Vec<alloc::string::String>
+pub devboy_slack::SlackAuthInfo::scopes: alloc::vec::Vec<alloc::string::String>
+pub devboy_slack::SlackAuthInfo::team_id: alloc::string::String
+pub devboy_slack::SlackAuthInfo::team_name: alloc::string::String
+pub devboy_slack::SlackAuthInfo::url: core::option::Option<alloc::string::String>
+pub devboy_slack::SlackAuthInfo::user_id: alloc::string::String
+pub devboy_slack::SlackAuthInfo::user_name: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_slack::SlackAuthInfo
+pub fn devboy_slack::SlackAuthInfo::clone(&self) -> devboy_slack::SlackAuthInfo
+impl core::cmp::Eq for devboy_slack::SlackAuthInfo
+impl core::cmp::PartialEq for devboy_slack::SlackAuthInfo
+pub fn devboy_slack::SlackAuthInfo::eq(&self, other: &devboy_slack::SlackAuthInfo) -> bool
+impl core::fmt::Debug for devboy_slack::SlackAuthInfo
+pub fn devboy_slack::SlackAuthInfo::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_slack::SlackAuthInfo
+impl core::marker::Freeze for devboy_slack::SlackAuthInfo
+impl core::marker::Send for devboy_slack::SlackAuthInfo
+impl core::marker::Sync for devboy_slack::SlackAuthInfo
+impl core::marker::Unpin for devboy_slack::SlackAuthInfo
+impl core::marker::UnsafeUnpin for devboy_slack::SlackAuthInfo
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_slack::SlackAuthInfo
+impl core::panic::unwind_safe::UnwindSafe for devboy_slack::SlackAuthInfo
+pub struct devboy_slack::SlackClient
+impl devboy_slack::SlackClient
+pub async fn devboy_slack::SlackClient::auth_info(&self) -> devboy_core::error::Result<devboy_slack::SlackAuthInfo>
+pub async fn devboy_slack::SlackClient::ensure_healthy(&self) -> devboy_core::error::Result<devboy_slack::SlackAuthInfo>
+pub fn devboy_slack::SlackClient::new(token: secrecy::SecretString) -> Self
+pub fn devboy_slack::SlackClient::required_scopes(&self) -> &[alloc::string::String]
+pub fn devboy_slack::SlackClient::with_base_url(self, base_url: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_slack::SlackClient::with_required_scopes(self, required_scopes: alloc::vec::Vec<alloc::string::String>) -> Self
+impl core::clone::Clone for devboy_slack::SlackClient
+pub fn devboy_slack::SlackClient::clone(&self) -> devboy_slack::SlackClient
+impl core::fmt::Debug for devboy_slack::SlackClient
+pub fn devboy_slack::SlackClient::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl devboy_core::provider::MessengerProvider for devboy_slack::SlackClient
+pub fn devboy_slack::SlackClient::get_chats<'life0, 'async_trait>(&'life0 self, params: devboy_core::types::GetChatsParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::MessengerChat>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_slack::SlackClient::get_messages<'life0, 'async_trait>(&'life0 self, params: devboy_core::types::GetMessagesParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::MessengerMessage>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_slack::SlackClient::provider_name(&self) -> &'static str
+pub fn devboy_slack::SlackClient::search_messages<'life0, 'async_trait>(&'life0 self, params: devboy_core::types::SearchMessagesParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::MessengerMessage>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_slack::SlackClient::send_message<'life0, 'async_trait>(&'life0 self, params: devboy_core::types::SendMessageParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::MessengerMessage>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+impl devboy_core::provider::UserProvider for devboy_slack::SlackClient
+pub fn devboy_slack::SlackClient::get_user_profile<'life0, 'life1, 'async_trait>(&'life0 self, user_id: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::User>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_slack::SlackClient::lookup_user_by_email<'life0, 'life1, 'async_trait>(&'life0 self, email: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<core::option::Option<devboy_core::types::User>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_slack::SlackClient::provider_name(&self) -> &'static str
+impl core::marker::Freeze for devboy_slack::SlackClient
+impl core::marker::Send for devboy_slack::SlackClient
+impl core::marker::Sync for devboy_slack::SlackClient
+impl core::marker::Unpin for devboy_slack::SlackClient
+impl core::marker::UnsafeUnpin for devboy_slack::SlackClient
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_slack::SlackClient
+impl !core::panic::unwind_safe::UnwindSafe for devboy_slack::SlackClient
+pub const devboy_slack::DEFAULT_SLACK_API_URL: &str
