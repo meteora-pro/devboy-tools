@@ -3,6 +3,7 @@
 mod agents_cmd;
 mod doctor;
 mod onboard_cmd;
+mod secrets_cmd;
 mod skills_cmd;
 mod update_check;
 mod upgrade;
@@ -291,6 +292,12 @@ enum Commands {
 
     /// First-run setup: detect your AI agent and install the right skills bundle
     Onboard(onboard_cmd::OnboardArgs),
+
+    /// Discover and inspect declared secrets (metadata only — values are never shown)
+    Secrets {
+        #[command(subcommand)]
+        command: secrets_cmd::SecretsCommands,
+    },
 
     /// Write to a skill's self-feedback session trace (ADR-015)
     Trace {
@@ -946,6 +953,9 @@ async fn main() -> Result<()> {
 
             Some(Commands::Skills { command }) => {
                 skills_cmd::handle(command).await?;
+            }
+            Some(Commands::Secrets { command }) => {
+                secrets_cmd::handle(command)?;
             }
 
             Some(Commands::Agents { command }) => {

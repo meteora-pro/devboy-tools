@@ -49,6 +49,7 @@
 
 use std::collections::BTreeMap;
 
+use serde::Serialize;
 use thiserror::Error;
 
 use crate::index::{GlobalIndex, IndexEntry};
@@ -57,7 +58,8 @@ use crate::secret_path::SecretPath;
 
 /// Which behavioural field of a global entry was replaced by the
 /// project's `[overrides]` block.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OverrideField {
     /// The `gate` field.
     Gate,
@@ -112,7 +114,7 @@ pub struct MergeOutput {
 ///
 /// Warnings do not fail the merge; they are surfaced through `doctor`
 /// to nudge the user toward fixing manifest hygiene issues.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MergeWarning {
     /// What the warning is about.
     pub kind: MergeWarningKind,
@@ -122,7 +124,8 @@ pub struct MergeWarning {
 
 /// Categories of advisory warnings — see the module-level doc for
 /// detailed descriptions.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MergeWarningKind {
     /// An `[overrides]` field carries the same value as the global
     /// index. The override is a no-op; recommend removing it so the

@@ -45,6 +45,9 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy agents`↴](#devboy-agents)
 * [`devboy agents list`↴](#devboy-agents-list)
 * [`devboy onboard`↴](#devboy-onboard)
+* [`devboy secrets`↴](#devboy-secrets)
+* [`devboy secrets list`↴](#devboy-secrets-list)
+* [`devboy secrets describe`↴](#devboy-secrets-describe)
 * [`devboy trace`↴](#devboy-trace)
 * [`devboy trace begin`↴](#devboy-trace-begin)
 * [`devboy trace event`↴](#devboy-trace-event)
@@ -75,6 +78,7 @@ DevBoy - AI-powered development tools
 * `skills` — Manage skills — procedural recipes installed alongside the tool bundle
 * `agents` — Inspect AI coding agents installed on this machine
 * `onboard` — First-run setup: detect your AI agent and install the right skills bundle
+* `secrets` — Discover and inspect declared secrets (metadata only — values are never shown)
 * `trace` — Write to a skill's self-feedback session trace (ADR-015)
 * `doctor` — Run diagnostic checks for the local DevBoy setup
 * `upgrade` — Upgrade devboy to the latest version
@@ -679,6 +683,48 @@ First-run setup: detect your AI agent and install the right skills bundle
   Default value: `dev`
 * `-y`, `--yes` — Skip confirmation — install without asking. Required in non-TTY
 * `--dry-run` — Show the plan without writing anything
+
+
+
+## `devboy secrets`
+
+Discover and inspect declared secrets (metadata only — values are never shown)
+
+**Usage:** `devboy secrets <COMMAND>`
+
+###### **Subcommands:**
+
+* `list` — List every path the active project's manifest declares, merged with the global index. Values are never shown
+* `describe` — Print the resolved metadata card for a single secret path
+
+
+
+## `devboy secrets list`
+
+List every path the active project's manifest declares, merged with the global index. Values are never shown
+
+**Usage:** `devboy secrets list [OPTIONS]`
+
+###### **Options:**
+
+* `--internal` — Include framework-internal paths (`__*`) in the output. Hidden by default per ADR-021 §5
+* `--json` — Print as JSON instead of a human-readable table
+
+
+
+## `devboy secrets describe`
+
+Print the resolved metadata card for a single secret path
+
+**Usage:** `devboy secrets describe [OPTIONS] <PATH>`
+
+###### **Arguments:**
+
+* `<PATH>` — The secret path (e.g. `team/gitlab/token-deploy`)
+
+###### **Options:**
+
+* `--json` — Print as JSON instead of a human-readable card
 
 
 
