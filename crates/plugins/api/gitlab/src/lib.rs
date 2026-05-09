@@ -14,5 +14,4 @@ pub use client::GitLabClient;
 pub use enricher::GitLabSchemaEnricher;
 pub use types::*;
 
-/// Default GitLab API URL.
 pub const DEFAULT_GITLAB_URL: &str = "https://gitlab.com";

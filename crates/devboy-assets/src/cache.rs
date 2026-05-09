@@ -181,7 +181,6 @@ impl CacheManager {
 pub struct StoredFile {
     /// Absolute path where the file was written.
     pub path: PathBuf,
-    /// Size in bytes.
     pub size: u64,
     /// SHA-256 checksum in lower-case hex.
     pub checksum_sha256: String,

@@ -28,7 +28,6 @@ pub enum AssetContext {
     },
     /// Attachment on a comment under an issue.
     IssueComment {
-        /// Issue key.
         key: String,
         /// Comment identifier within the issue.
         comment_id: String,
@@ -42,21 +41,16 @@ pub enum AssetContext {
     },
     /// Attachment on a comment/note of a merge request.
     MrComment {
-        /// MR / PR identifier.
         mr_id: String,
-        /// Note / comment identifier.
         note_id: String,
     },
     /// Attachment from a messenger chat (Slack, Telegram, etc.).
     Chat {
-        /// Chat identifier.
         chat_id: String,
-        /// Message identifier.
         message_id: String,
     },
     /// Attachment from a knowledge base page (Confluence, etc.).
     KbPage {
-        /// Page identifier.
         page_id: String,
     },
 }
@@ -107,7 +101,6 @@ impl AssetContext {
 pub enum AssetContextKind {
     /// Issue body / description.
     Issue,
-    /// Comment on an issue.
     IssueComment,
     /// Merge request / pull request body.
     MergeRequest,
@@ -131,7 +124,6 @@ pub enum AssetContextKind {
 pub struct AssetMeta {
     /// Stable identifier for the asset within devboy (UUID or provider id).
     pub id: String,
-    /// Original filename.
     pub filename: String,
     /// MIME type (best-effort; may be `None` for unknown binaries).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -212,13 +204,11 @@ pub struct AssetCapabilities {
     /// Capabilities for issue bodies.
     #[serde(default)]
     pub issue: ContextCapabilities,
-    /// Capabilities for issue comments.
     #[serde(default)]
     pub issue_comment: ContextCapabilities,
     /// Capabilities for merge request bodies.
     #[serde(default)]
     pub merge_request: ContextCapabilities,
-    /// Capabilities for merge request notes/comments.
     #[serde(default)]
     pub mr_comment: ContextCapabilities,
 }
@@ -306,7 +296,6 @@ impl ContextCapabilities {
 pub struct AssetAnalysis {
     /// Short human-readable summary for the agent (1-3 sentences).
     pub summary: String,
-    /// Category of the content.
     pub content_kind: ContentKind,
     /// Text extracted from the file if applicable (logs, configs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -347,7 +336,6 @@ pub enum ContentKind {
     Text,
     /// Raster or vector image.
     Image,
-    /// Video file.
     Video,
     /// Document file (PDF, DOCX, ...).
     Document,

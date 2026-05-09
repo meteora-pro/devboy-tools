@@ -17,5 +17,4 @@ pub use enricher::ClickUpSchemaEnricher;
 pub use metadata::ClickUpMetadata;
 pub use types::*;
 
-/// Default ClickUp API URL.
 pub const DEFAULT_CLICKUP_URL: &str = "https://api.clickup.com/api/v2";

@@ -45,16 +45,12 @@ pub struct JiraProjectMetadata {
     /// Available issue types (filter out subtask types for create_issue).
     #[serde(default)]
     pub issue_types: Vec<JiraIssueType>,
-    /// Available components.
     #[serde(default)]
     pub components: Vec<JiraComponent>,
-    /// Available priorities.
     #[serde(default)]
     pub priorities: Vec<JiraPriority>,
-    /// Available issue link types.
     #[serde(default)]
     pub link_types: Vec<JiraLinkType>,
-    /// Custom fields for this project.
     #[serde(default)]
     pub custom_fields: Vec<JiraCustomField>,
 }
@@ -80,7 +76,6 @@ pub struct JiraPriority {
     pub name: String,
 }
 
-/// Jira issue link type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraLinkType {
     pub id: String,
@@ -109,7 +104,6 @@ pub struct JiraCustomField {
     pub options: Vec<JiraFieldOption>,
 }
 
-/// Jira custom field types.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum JiraFieldType {

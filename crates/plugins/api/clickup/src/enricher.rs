@@ -36,7 +36,6 @@ impl ClickUpSchemaEnricher {
 /// Parameters to remove from ClickUp issue tools.
 const REMOVE_PARAMS: &[&str] = &["issueType", "components", "projectId"];
 
-/// Parameters to remove from get_issues.
 const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery"];
 
 impl ToolEnricher for ClickUpSchemaEnricher {

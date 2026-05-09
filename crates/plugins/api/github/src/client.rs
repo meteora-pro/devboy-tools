@@ -20,7 +20,6 @@ use crate::types::{
     GitHubReviewComment, GitHubUser, UpdateIssueRequest, UpdatePullRequestRequest,
 };
 
-/// GitHub API client.
 pub struct GitHubClient {
     base_url: String,
     owner: String,

@@ -33,9 +33,7 @@ pub struct User {
 pub struct Issue {
     /// Unique key (e.g., "gitlab#123", "gh#456", "CU-abc", "PROJ-123")
     pub key: String,
-    /// Issue title
     pub title: String,
-    /// Issue description / body
     pub description: Option<String>,
     /// State (e.g., "opened", "closed")
     pub state: String,
@@ -135,9 +133,7 @@ pub struct IssueFilter {
 /// Input for creating a new issue.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateIssueInput {
-    /// Issue title
     pub title: String,
-    /// Issue description / body
     pub description: Option<String>,
     /// Labels to add
     pub labels: Vec<String>,
@@ -255,9 +251,7 @@ impl Default for UpdateIssueInput {
 pub struct MergeRequest {
     /// Unique key (e.g., "mr#123", "pr#456")
     pub key: String,
-    /// MR title
     pub title: String,
-    /// MR description / body
     pub description: Option<String>,
     /// State (e.g., "opened", "closed", "merged")
     pub state: String,
@@ -280,12 +274,9 @@ pub struct MergeRequest {
     pub updated_at: Option<String>,
 }
 
-/// Input for creating a merge request / pull request.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateMergeRequestInput {
-    /// Title of the merge request
     pub title: String,
-    /// Description / body
     pub description: Option<String>,
     /// Source branch (head)
     pub source_branch: String,
@@ -359,7 +350,6 @@ pub struct Discussion {
 /// Represents a comment on an issue or merge request.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Comment {
-    /// Comment ID
     pub id: String,
     /// Comment body / text
     pub body: String,
@@ -376,14 +366,12 @@ pub struct Comment {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct CodePosition {
     pub file_path: String,
-    /// Line number
     pub line: u32,
     /// Line type ("old" for deleted, "new" for added)
     pub line_type: String,
     pub commit_sha: Option<String>,
 }
 
-/// Input for creating a comment.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateCommentInput {
     /// Comment body / text
@@ -405,11 +393,8 @@ pub struct FileDiff {
     pub file_path: String,
     /// Old file path (if renamed)
     pub old_path: Option<String>,
-    /// Is new file
     pub new_file: bool,
-    /// Is deleted file
     pub deleted_file: bool,
-    /// Is renamed file
     pub renamed_file: bool,
     /// Diff content (unified diff format)
     pub diff: String,
@@ -712,7 +697,6 @@ pub struct IssueStatus {
     pub order: Option<u32>,
 }
 
-/// Options for get_users.
 #[derive(Debug, Clone, Default)]
 pub struct GetUsersOptions {
     pub user_id: Option<String>,
@@ -948,10 +932,8 @@ pub struct FailedJob {
     pub error_snippet: Option<String>,
 }
 
-/// Input for get_pipeline.
 #[derive(Debug, Clone, Default)]
 pub struct GetPipelineInput {
-    /// Branch name (e.g., "main", "feat/DEV-123").
     pub branch: Option<String>,
     /// MR/PR key (e.g., "mr#123", "pr#456"). Takes priority over branch.
     pub mr_key: Option<String>,
@@ -1005,7 +987,6 @@ pub struct MeetingNote {
     pub title: String,
     /// Meeting date (ISO 8601)
     pub meeting_date: Option<String>,
-    /// Duration in seconds
     pub duration_seconds: Option<u64>,
     pub host_email: Option<String>,
     pub organizer_email: Option<String>,
@@ -1031,11 +1012,9 @@ pub struct MeetingNote {
     pub meeting_link: Option<String>,
 }
 
-/// A speaker in a meeting.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct MeetingSpeaker {
     pub id: String,
-    /// Pub.
     pub name: String,
 }
 
@@ -1072,7 +1051,6 @@ pub struct MeetingFilter {
     pub keyword: Option<String>,
     /// Filter from date (ISO 8601)
     pub from_date: Option<String>,
-    /// Filter to date (ISO 8601)
     pub to_date: Option<String>,
     /// Filter by participant emails
     pub participants: Option<Vec<String>>,
@@ -1116,13 +1094,11 @@ pub struct KbPage {
     pub title: String,
     /// Owning space key when available.
     pub space_key: Option<String>,
-    /// Canonical web URL.
     pub url: Option<String>,
     /// Current page version.
     pub version: Option<u32>,
     /// Last modification timestamp.
     pub last_modified: Option<String>,
-    /// Human-readable author name.
     pub author: Option<String>,
     /// Short excerpt / snippet.
     pub excerpt: Option<String>,
@@ -1137,7 +1113,6 @@ pub struct KbPageContent {
     pub content: String,
     /// Content representation: e.g. "markdown", "html", "storage".
     pub content_type: String,
-    /// Ancestor page chain from root to parent.
     pub ancestors: Vec<KbPage>,
     /// Page labels/tags.
     pub labels: Vec<String>,
@@ -1173,7 +1148,6 @@ pub struct ListPagesParams {
     pub cursor: Option<String>,
     /// Optional free-text title/content filter.
     pub search: Option<String>,
-    /// Optional ancestor/parent page ID to scope the listing.
     pub parent_id: Option<String>,
 }
 
@@ -1186,9 +1160,7 @@ pub struct CreatePageParams {
     pub title: String,
     /// Page body content.
     pub content: String,
-    /// Content representation supplied by the caller.
     pub content_type: Option<String>,
-    /// Optional parent page ID.
     pub parent_id: Option<String>,
     /// Labels to set on the page.
     pub labels: Vec<String>,
@@ -1201,7 +1173,6 @@ pub struct UpdatePageParams {
     pub page_id: String,
     /// New title, if changing.
     pub title: Option<String>,
-    /// New body content, if changing.
     pub content: Option<String>,
     /// Content representation supplied by the caller.
     pub content_type: Option<String>,
@@ -1224,7 +1195,6 @@ pub struct SearchKbParams {
     pub cursor: Option<String>,
     /// Maximum number of matches to return.
     pub limit: Option<u32>,
-    /// Whether `query` should be treated as raw provider-native syntax.
     #[serde(default)]
     pub raw_query: bool,
 }
@@ -1259,7 +1229,6 @@ pub struct MessengerChat {
     pub chat_type: ChatType,
     /// Source provider name (e.g. "slack").
     pub source: String,
-    /// Number of members when available.
     pub member_count: Option<u32>,
     /// Optional chat/topic description.
     pub description: Option<String>,
@@ -1294,7 +1263,6 @@ pub struct MessageAttachment {
     pub mime_type: Option<String>,
 }
 
-/// Unified messenger message representation.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct MessengerMessage {
     /// Provider-specific message ID.
@@ -1305,9 +1273,7 @@ pub struct MessengerMessage {
     pub text: String,
     /// Message author.
     pub author: MessageAuthor,
-    /// Source provider name (e.g. "slack").
     pub source: String,
-    /// Message timestamp (ISO 8601 or provider timestamp string).
     pub timestamp: String,
     /// Parent thread identifier when this message is in a thread.
     pub thread_id: Option<String>,
@@ -1345,7 +1311,6 @@ pub struct GetMessagesParams {
     pub cursor: Option<String>,
     /// Optional thread identifier to fetch replies for a thread.
     pub thread_id: Option<String>,
-    /// Only include messages after this provider timestamp string.
     pub since: Option<String>,
     /// Only include messages before this provider timestamp string.
     pub until: Option<String>,
@@ -1364,7 +1329,6 @@ pub struct SearchMessagesParams {
     pub cursor: Option<String>,
     /// Only include messages after this provider timestamp string.
     pub since: Option<String>,
-    /// Only include messages before this provider timestamp string.
     pub until: Option<String>,
 }
 
@@ -1377,7 +1341,6 @@ pub struct SendMessageParams {
     pub text: String,
     /// Optional thread identifier to post as a threaded reply.
     pub thread_id: Option<String>,
-    /// Optional direct parent message ID when supported.
     pub reply_to_id: Option<String>,
     /// Optional attachments to include or reference.
     pub attachments: Vec<MessageAttachment>,
@@ -1463,7 +1426,6 @@ pub struct StructureView {
     pub filter: Option<String>,
 }
 
-/// A column in a Structure view.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct StructureViewColumn {
     /// Column ID
@@ -1575,7 +1537,6 @@ pub struct SaveStructureViewInput {
     pub group_by: Option<String>,
     /// Sort by field
     pub sort_by: Option<String>,
-    /// JQL filter
     pub filter: Option<String>,
 }
 

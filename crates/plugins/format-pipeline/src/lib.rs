@@ -174,7 +174,6 @@ pub struct PipelineConfig {
     pub max_chars_per_item: usize,
     /// Maximum description/body length before truncation (only outliers get truncated)
     pub max_description_len: usize,
-    /// Output format
     pub format: OutputFormat,
     /// Whether to include agent hints about truncation
     pub include_hints: bool,

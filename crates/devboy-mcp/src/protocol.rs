@@ -15,7 +15,6 @@ pub const JSONRPC_VERSION: &str = "2.0";
 /// (e.g., "2025-11-25") should still be compatible with this version.
 pub const MCP_VERSION: &str = "2025-11-25";
 
-/// JSON-RPC request message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
@@ -25,7 +24,6 @@ pub struct JsonRpcRequest {
     pub params: Option<Value>,
 }
 
-/// JSON-RPC response message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcResponse {
     pub jsonrpc: String,
@@ -215,7 +213,6 @@ pub struct ServerInfo {
     pub version: String,
 }
 
-/// Tool definition for tools/list response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolDefinition {
@@ -227,13 +224,11 @@ pub struct ToolDefinition {
     pub category: Option<devboy_core::ToolCategory>,
 }
 
-/// Tools list response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolsListResult {
     pub tools: Vec<ToolDefinition>,
 }
 
-/// Tool call request params.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallParams {
     pub name: String,
@@ -249,7 +244,6 @@ pub struct ToolCallResult {
     pub is_error: Option<bool>,
 }
 
-/// Content in tool result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ToolResultContent {

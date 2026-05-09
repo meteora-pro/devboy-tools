@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 // User
 // =============================================================================
 
-/// GitLab user representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabUser {
     pub id: u64,
@@ -26,7 +25,6 @@ pub struct GitLabUser {
 // Issue
 // =============================================================================
 
-/// GitLab issue representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabIssue {
     pub id: u64,
@@ -50,7 +48,6 @@ pub struct GitLabIssue {
 // Merge Request
 // =============================================================================
 
-/// GitLab merge request representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabMergeRequest {
     pub id: u64,
@@ -96,7 +93,6 @@ pub struct GitLabDiffRefs {
 // Notes and Discussions
 // =============================================================================
 
-/// GitLab note (comment) representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabNote {
     pub id: u64,
@@ -144,7 +140,6 @@ pub struct GitLabNotePosition {
 // Diffs
 // =============================================================================
 
-/// GitLab diff representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabDiff {
     pub old_path: String,
@@ -170,7 +165,6 @@ pub struct GitLabMergeRequestChanges {
 // Request types
 // =============================================================================
 
-/// Request body for creating an issue.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateIssueRequest {
     pub title: String,
@@ -183,7 +177,6 @@ pub struct CreateIssueRequest {
     pub assignee_ids: Option<Vec<u64>>,
 }
 
-/// Request body for updating an issue.
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct UpdateIssueRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -200,7 +193,6 @@ pub struct UpdateIssueRequest {
     pub assignee_ids: Option<Vec<u64>>,
 }
 
-/// Request body for updating a merge request.
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateMergeRequestRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -215,7 +207,6 @@ pub struct UpdateMergeRequestRequest {
     pub labels: Option<String>,
 }
 
-/// Request body for creating a merge request.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateMergeRequestRequest {
     pub source_branch: String,
@@ -230,13 +221,11 @@ pub struct CreateMergeRequestRequest {
     pub reviewer_ids: Option<Vec<u64>>,
 }
 
-/// Request body for creating a note (comment).
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateNoteRequest {
     pub body: String,
 }
 
-/// Request body for creating a discussion on a merge request.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateDiscussionRequest {
     pub body: String,

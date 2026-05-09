@@ -238,7 +238,6 @@ const ISSUE_TOOLS: &[&str] = &[
     "add_issue_comment",
 ];
 
-/// Merge request tools.
 const MR_TOOLS: &[&str] = &[
     "get_merge_requests",
     "get_merge_request",

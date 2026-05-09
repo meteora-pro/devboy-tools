@@ -125,7 +125,6 @@ pub struct InstallTarget {
 /// tests can inject their own without touching the real filesystem.
 #[derive(Debug, Clone)]
 pub struct Environment {
-    /// Current working directory.
     pub cwd: PathBuf,
     /// User's home directory (typically `dirs::home_dir()`).
     pub home: PathBuf,
