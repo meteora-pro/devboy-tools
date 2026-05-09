@@ -302,7 +302,7 @@ Architecture details: [executor](docs/guide/architecture/executor.md), [enricher
 
 ## Use as a library
 
-Beyond the CLI, the workspace ships **library crates** on crates.io — embed devboy components directly in a Rust project. The first wave covers the foundation, the format pipeline, every API provider, and the MCP server.
+Beyond the CLI, the workspace ships **library crates** on crates.io — embed devboy components directly in a Rust project. The catalogue covers the foundation, credential storage, the format pipeline, every API provider, the MCP server, the skills subsystem, and the CLI binary.
 
 | Crate | Description | Crates.io | Docs |
 |---|---|---|---|
@@ -319,6 +319,8 @@ Beyond the CLI, the workspace ships **library crates** on crates.io — embed de
 | [`devboy-slack`](crates/plugins/api/slack) | Slack provider | [![Crates.io](https://img.shields.io/crates/v/devboy-slack.svg)](https://crates.io/crates/devboy-slack) | [![Docs](https://docs.rs/devboy-slack/badge.svg)](https://docs.rs/devboy-slack) |
 | [`devboy-executor`](crates/devboy-executor) | Tool execution engine + provider factory | [![Crates.io](https://img.shields.io/crates/v/devboy-executor.svg)](https://crates.io/crates/devboy-executor) | [![Docs](https://docs.rs/devboy-executor/badge.svg)](https://docs.rs/devboy-executor) |
 | [`devboy-mcp`](crates/devboy-mcp) | MCP server (JSON-RPC 2.0 over stdio) | [![Crates.io](https://img.shields.io/crates/v/devboy-mcp.svg)](https://crates.io/crates/devboy-mcp) | [![Docs](https://docs.rs/devboy-mcp/badge.svg)](https://docs.rs/devboy-mcp) |
+| [`devboy-skills`](crates/devboy-skills) | Skills subsystem (SKILL.md parser, install lifecycle) | [![Crates.io](https://img.shields.io/crates/v/devboy-skills.svg)](https://crates.io/crates/devboy-skills) | [![Docs](https://docs.rs/devboy-skills/badge.svg)](https://docs.rs/devboy-skills) |
+| [`devboy-cli`](crates/devboy-cli) | The `devboy` CLI binary (npm is the primary channel) | [![Crates.io](https://img.shields.io/crates/v/devboy-cli.svg)](https://crates.io/crates/devboy-cli) | [![Docs](https://docs.rs/devboy-cli/badge.svg)](https://docs.rs/devboy-cli) |
 
 Example — embed a single provider:
 
@@ -337,9 +339,7 @@ let jira = JiraProvider::from_config(&cfg.jira)?;
 let issues = jira.get_issues(/* params */).await?;
 ```
 
-`devboy-skills` and `devboy-cli` ship in a **second wave** — see [ADR-022](docs/architecture/adr/ADR-022-crates-io-publishing.md) for the layout work that gates them.
-
-The release procedure is documented in [`docs/guide/contributing/release.md`](docs/guide/contributing/release.md).
+The release procedure is documented in [`docs/guide/contributing/release.md`](docs/guide/contributing/release.md). See [ADR-022](docs/architecture/adr/ADR-022-crates-io-publishing.md) for the architectural decision behind the dual npm + crates.io distribution.
 
 ---
 
