@@ -4,6 +4,7 @@ pub mod environment;
 pub mod mcp;
 pub mod providers;
 pub mod proxy;
+pub mod sources;
 
 use crate::doctor::DiagnosticContext;
 use devboy_core::{Config, ContextConfig};

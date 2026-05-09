@@ -13,6 +13,7 @@ use self::checks::providers::{
     SlackApiCheck,
 };
 use self::checks::proxy::ProxyServersCheck;
+use self::checks::sources::SourcesCheck;
 use self::output::console::{print_check_list, print_report, summarize};
 use self::output::json::print_json_report;
 use crate::get_credential_store;
@@ -163,6 +164,7 @@ impl CheckRegistry {
         registry.register(Box::new(SlackApiCheck));
         registry.register(Box::new(McpToolsCheck));
         registry.register(Box::new(ProxyServersCheck));
+        registry.register(Box::new(SourcesCheck));
         registry
     }
 
