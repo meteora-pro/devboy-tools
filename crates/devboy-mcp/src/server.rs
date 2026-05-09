@@ -784,6 +784,8 @@ impl McpServer {
             "secrets_describe" => Some(self.handle_secrets_describe(params)),
             "secrets_request_provision" => Some(self.handle_secrets_request_provision(params)),
             "secrets_request_rotation" => Some(self.handle_secrets_request_rotation(params)),
+            "secrets_propose_metadata" => Some(self.handle_secrets_propose_metadata(params)),
+            "secrets_propose_new_path" => Some(self.handle_secrets_propose_new_path(params)),
             "secrets_poll_status" => Some(self.handle_secrets_poll_status(params)),
             _ => None,
         }
@@ -933,6 +935,96 @@ impl McpServer {
                 Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
             },
             Err(e) => ToolCallResult::error(format!("secrets_request_rotation failed: {e}")),
+        }
+    }
+
+    fn handle_secrets_propose_metadata(&self, params: &ToolCallParams) -> ToolCallResult {
+        use crate::secrets_provision::ProposedMetadata;
+        use devboy_storage::SecretPath;
+
+        #[derive(Deserialize)]
+        struct ProposeParams {
+            path: String,
+            #[serde(default)]
+            fields: ProposedMetadata,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<ProposeParams>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => {
+                return ToolCallResult::error(
+                    "missing required parameters: path, fields".to_string(),
+                );
+            }
+        };
+
+        let path = match SecretPath::parse(&args.path) {
+            Ok(p) => p,
+            Err(e) => {
+                return ToolCallResult::error(format!(
+                    "`{}` is not a valid ADR-020 path: {e}",
+                    args.path
+                ));
+            }
+        };
+
+        match self
+            .secrets_provision
+            .request_metadata_proposal(path, args.fields)
+        {
+            Ok(id) => match serde_json::to_value(serde_json::json!({ "request_id": id.0 })) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            Err(e) => ToolCallResult::error(format!("secrets_propose_metadata failed: {e}")),
+        }
+    }
+
+    fn handle_secrets_propose_new_path(&self, params: &ToolCallParams) -> ToolCallResult {
+        use crate::secrets_provision::ProposedMetadata;
+        use devboy_storage::SecretPath;
+
+        #[derive(Deserialize)]
+        struct ProposeParams {
+            suggested_path: String,
+            #[serde(default)]
+            metadata: ProposedMetadata,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<ProposeParams>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => {
+                return ToolCallResult::error(
+                    "missing required parameters: suggested_path, metadata".to_string(),
+                );
+            }
+        };
+
+        let suggested = match SecretPath::parse(&args.suggested_path) {
+            Ok(p) => p,
+            Err(e) => {
+                return ToolCallResult::error(format!(
+                    "`{}` is not a valid ADR-020 path: {e}",
+                    args.suggested_path
+                ));
+            }
+        };
+
+        match self
+            .secrets_provision
+            .request_new_path_proposal(suggested, args.metadata)
+        {
+            Ok(id) => match serde_json::to_value(serde_json::json!({ "request_id": id.0 })) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            Err(e) => ToolCallResult::error(format!("secrets_propose_new_path failed: {e}")),
         }
     }
 
@@ -1154,6 +1246,8 @@ impl McpServer {
                 | "secrets_describe"
                 | "secrets_request_provision"
                 | "secrets_request_rotation"
+                | "secrets_propose_metadata"
+                | "secrets_propose_new_path"
                 | "secrets_poll_status"
         )
     }
@@ -1864,6 +1958,75 @@ mod tests {
 
         let resp = server.handle_request(req).await;
         assert!(resp.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn secrets_propose_metadata_dispatches_to_metadata_proposal_launcher() {
+        use crate::secrets_provision::{FakeUiLauncher, ProvisionRegistry};
+
+        let fake = Arc::new(FakeUiLauncher::new());
+        let registry = Arc::new(ProvisionRegistry::with_launcher(fake.clone()));
+        let mut server = McpServer::new();
+        server.set_secrets_provision_registry(registry);
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "secrets_propose_metadata",
+                "arguments": {
+                    "path": "team/jira/api-key",
+                    "fields": {
+                        "description": "Jira API token (proposed)",
+                        "rotate_every_days": 90
+                    }
+                }
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none(), "got error {:?}", resp.error);
+
+        let calls = fake.metadata_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].2.description.as_deref(),
+            Some("Jira API token (proposed)")
+        );
+        assert_eq!(calls[0].2.rotate_every_days, Some(90));
+    }
+
+    #[tokio::test]
+    async fn secrets_propose_new_path_dispatches_to_new_path_launcher() {
+        use crate::secrets_provision::{FakeUiLauncher, ProvisionRegistry};
+
+        let fake = Arc::new(FakeUiLauncher::new());
+        let registry = Arc::new(ProvisionRegistry::with_launcher(fake.clone()));
+        let mut server = McpServer::new();
+        server.set_secrets_provision_registry(registry);
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "secrets_propose_new_path",
+                "arguments": {
+                    "suggested_path": "team/openai/api-key",
+                    "metadata": {
+                        "description": "OpenAI API key",
+                        "pattern_id": "openai-api-key"
+                    }
+                }
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none(), "got error {:?}", resp.error);
+
+        let calls = fake.new_path_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1.as_str(), "team/openai/api-key");
+        assert_eq!(calls[0].2.pattern_id.as_deref(), Some("openai-api-key"));
     }
 
     #[tokio::test]
