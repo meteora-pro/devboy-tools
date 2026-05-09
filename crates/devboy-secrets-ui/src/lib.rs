@@ -6,6 +6,7 @@
 //!
 //! [ADR-023]: https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md
 
+pub mod discovery_import;
 pub mod inventory;
 pub mod metadata_editor;
 pub mod provision_dialog;
@@ -27,4 +28,11 @@ pub use metadata_editor::render as render_metadata_editor;
 pub use metadata_editor::{
     EditorFocus, EditorMode, EditorState, EditorStatus, EditorSubmission, FieldDiff, MetadataDraft,
     MetadataField,
+};
+
+#[cfg(feature = "tui")]
+pub use discovery_import::render as render_discovery_import;
+pub use discovery_import::{
+    DiscoveryItem, ImportFocus, ImportRow, ImportRowStatus, ImportState, ImportSubmission,
+    suggest_path,
 };
