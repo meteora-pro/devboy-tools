@@ -95,7 +95,7 @@ Specifically:
 
 ### 8. Codex plugin in the same repo, separate manifest
 
-- `.codex-plugin/plugin.json` references the same `/skills/` master.
+- `.codex-plugin/plugin.json` references the same `/crates/devboy-skills/skills/` master.
 - Existing files under `agents/codex/*.md` are converted mechanically to TOML at the `.codex-plugin/agents/*.toml` location during build.
 - Codex CLI auto-discovers the same `.claude-plugin/marketplace.json` we ship for Claude Code (per [Codex plugin marketplace docs](https://developers.openai.com/codex/plugins/build)), so users install with `codex plugin marketplace add meteora-pro/devboy-tools && codex plugin install devboy@meteora-devboy` — no separate registration. OpenAI's official Plugin Directory submission flow ("coming soon" at time of writing) will be a future follow-up once it opens.
 
@@ -119,7 +119,7 @@ Specifically:
 
 ### Risks
 
-- ⚠️ **Source-of-truth drift between `/skills/`, embedded Rust skills, and the plugin tree.** Largely mitigated by the symlink layout — the plugin tree references the same files; the only thing that can drift is a new skill being added to `/skills/` without the matching symlink under `plugins/claude/skills/`. `scripts/release/build-skills.sh --check` catches that in CI; the embedded copy is regenerated from `/skills/` at compile time by `rust-embed`.
+- ⚠️ **Source-of-truth drift between `/crates/devboy-skills/skills/`, embedded Rust skills, and the plugin tree.** Largely mitigated by the symlink layout — the plugin tree references the same files; the only thing that can drift is a new skill being added to `/crates/devboy-skills/skills/` without the matching symlink under `plugins/claude/skills/`. `scripts/release/build-skills.sh --check` catches that in CI; the embedded copy is regenerated from `/crates/devboy-skills/skills/` at compile time by `rust-embed`.
 - ⚠️ **Marketplace plugin cache TTL** — Claude Code keeps orphaned plugin versions for 7 days, so dev iterations could pick up stale code. Mitigation: use `claude --plugin-dir .` against the working tree during development, only test the marketplace path on tag releases.
 - ⚠️ **Codex plugin format is new and may change.** Mitigation: keep `.codex-plugin/` and `.claude-plugin/` decoupled; if the Codex format breaks, the Claude side keeps shipping.
 - ⚠️ **`npm install -g` permission failures** on machines without sudo / with restrictive global npm prefix. Mitigation: `setup` falls back to the GitHub Release binary (unsigned today; users can verify against `sha256sums.txt` if needed) in `${CLAUDE_PLUGIN_DATA}/bin/`, which does not require root.
@@ -141,7 +141,7 @@ Specifically:
 
 ### Alternative 3: Separate `devboy-claude-plugin` repository
 
-**Description:** Keep the Cargo workspace in `meteora-pro/devboy-tools` and create a thin `meteora-pro/devboy-claude-plugin` that mirrors `/skills/` and ships only the manifest.
+**Description:** Keep the Cargo workspace in `meteora-pro/devboy-tools` and create a thin `meteora-pro/devboy-claude-plugin` that mirrors `/crates/devboy-skills/skills/` and ships only the manifest.
 
 **Why rejected:** Two repos in lock-step is more drift surface, more CI to maintain, and forces every contributor who adds a skill to coordinate two PRs. Marketplaces are happy to host plugins from sub-paths of a repo via the `source.path` field, so a single repo works.
 

@@ -13,6 +13,16 @@ cargo public-api --simplified -p devboy-core \
   > crates/devboy-core/.public-api/baseline.txt
 ```
 
+`--simplified` (a.k.a. `-s`) drops generic-parameter clutter from
+generated `impl` blocks but **keeps** auto-derived trait impls
+(`Clone`, `Debug`, `PartialEq`, …) in the snapshot. That is
+deliberate: those impls are part of the observable public surface
+and a `derive` change should show up as a baseline diff. If a
+particular crate's baseline is dominated by derive churn and the
+trade-off no longer pays its way, switch that crate to `-sss`
+(everything `--simplified` does + collapse auto-trait impls) and
+note the choice here.
+
 ## Diff against the baseline
 
 ```bash
