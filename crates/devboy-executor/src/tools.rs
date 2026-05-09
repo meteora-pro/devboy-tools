@@ -945,6 +945,65 @@ pub fn mcp_only_tools() -> Vec<McpOnlyTool> {
                 s
             },
         },
+        McpOnlyTool {
+            name: "secrets_propose_metadata".into(),
+            description: "Suggest metadata edits for an existing ADR-020 \
+                path. The dialog renders the manifest's current values as the \
+                diff baseline (read straight from the index — agent strings \
+                never replace trusted fields, mitigating prompt-injection). \
+                The user picks which proposed fields to accept. Reuses \
+                `secrets_poll_status` for status. Pending requests expire 5 \
+                minutes after issuance."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("path", PropertySchema::string("Full ADR-020 path to edit."));
+                s.add_property(
+                    "fields",
+                    PropertySchema {
+                        schema_type: "object".into(),
+                        description: Some(
+                            "Proposed field overrides (description, retrieval_url, \
+                             rotate_every_days, expires_at, pattern_id). Omitted \
+                             fields are not proposed for change."
+                                .into(),
+                        ),
+                        ..Default::default()
+                    },
+                );
+                s.set_required("path", true);
+                s.set_required("fields", true);
+                s
+            },
+        },
+        McpOnlyTool {
+            name: "secrets_propose_new_path".into(),
+            description: "Suggest registering a new secret at the given path. \
+                The dialog opens with the suggested path editable and the \
+                proposed metadata visible in a diff column for review. The \
+                user has the final say on the path and the metadata that \
+                lands in the manifest. Reuses `secrets_poll_status` for status. \
+                Pending requests expire 5 minutes after issuance."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "suggested_path",
+                    PropertySchema::string("Suggested ADR-020 path; user may edit."),
+                );
+                s.add_property(
+                    "metadata",
+                    PropertySchema {
+                        schema_type: "object".into(),
+                        description: Some("Proposed metadata fields for the new entry.".into()),
+                        ..Default::default()
+                    },
+                );
+                s.set_required("suggested_path", true);
+                s.set_required("metadata", true);
+                s
+            },
+        },
     ]
 }
 

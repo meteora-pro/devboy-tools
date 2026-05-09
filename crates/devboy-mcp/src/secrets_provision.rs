@@ -126,21 +126,98 @@ impl RequestId {
 // UI launcher
 // =============================================================================
 
+/// Plain-data payload an agent sends as part of `propose_metadata`
+/// or `propose_new_path`. The dialog renders these strings in
+/// the **proposed** column only — the **current** column is
+/// pulled from the trusted manifest. That separation is the
+/// prompt-injection mitigation called out in ADR-023 §3.7:
+/// agent-supplied text never replaces the user's record-of-truth.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProposedMetadata {
+    pub description: Option<String>,
+    pub retrieval_url: Option<String>,
+    pub rotate_every_days: Option<u32>,
+    /// ISO-8601 (`yyyy-mm-dd`).
+    pub expires_at: Option<String>,
+    pub pattern_id: Option<String>,
+}
+
+/// What kind of request a registry entry tracks. Reflected in
+/// `poll_status` so the agent can confirm the dialog actually
+/// matched what it asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RequestKind {
+    Provision,
+    Rotation,
+    MetadataProposal,
+    NewPathProposal,
+}
+
+impl RequestKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Provision => "provision",
+            Self::Rotation => "rotation",
+            Self::MetadataProposal => "metadata-proposal",
+            Self::NewPathProposal => "new-path-proposal",
+        }
+    }
+
+    fn from_provision_mode(mode: ProvisionMode) -> Self {
+        match mode {
+            ProvisionMode::Provision => Self::Provision,
+            ProvisionMode::Rotation => Self::Rotation,
+        }
+    }
+}
+
 /// Hands the dialog off to whatever surface the user has
 /// configured. The production wiring talks to the daemon's
 /// `dialog.open` JSON-RPC method (P4.2); tests use
 /// [`FakeUiLauncher`].
 pub trait UiDialogLauncher: Send + Sync + fmt::Debug {
-    /// Spawn the dialog. Returning `Ok(())` only means the
-    /// dialog was launched, not that the user has acted on it.
-    /// Status updates flow back through
-    /// [`ProvisionRegistry::resolve`] from the dialog code.
+    /// Spawn the provision / rotation dialog (per ADR-023 §3.4).
+    /// Returning `Ok(())` only means the dialog was launched,
+    /// not that the user has acted on it. Status updates flow
+    /// back through [`ProvisionRegistry::resolve`] from the
+    /// dialog code.
     fn open(
         &self,
         request_id: &RequestId,
         path: &SecretPath,
         mode: ProvisionMode,
     ) -> Result<(), String>;
+
+    /// Open the edit-metadata dialog with a diff preview. The
+    /// dialog renders the manifest's current values in the
+    /// `current` column and the agent's `proposed` payload in
+    /// the `proposed` column — agent strings never replace the
+    /// trusted manifest fields. Default impl returns Failed so
+    /// embedders that haven't wired this yet get a precise
+    /// error rather than a stuck pending request.
+    fn open_metadata_proposal(
+        &self,
+        _request_id: &RequestId,
+        _path: &SecretPath,
+        _proposed: &ProposedMetadata,
+    ) -> Result<(), String> {
+        Err("metadata-proposal launcher is not wired into this MCP server build".to_owned())
+    }
+
+    /// Open the new-path registration dialog. Same contract as
+    /// `open_metadata_proposal` — the suggested path becomes the
+    /// editable starting value, the proposed metadata appears in
+    /// the diff column, and the user has the final say.
+    fn open_new_path_proposal(
+        &self,
+        _request_id: &RequestId,
+        _suggested_path: &SecretPath,
+        _proposed: &ProposedMetadata,
+    ) -> Result<(), String> {
+        Err("new-path-proposal launcher is not wired into this MCP server build".to_owned())
+    }
 }
 
 /// No-op launcher used as the default until the daemon socket
@@ -169,7 +246,7 @@ impl UiDialogLauncher for NoopUiLauncher {
 #[derive(Debug, Clone)]
 struct Entry {
     path: SecretPath,
-    mode: ProvisionMode,
+    kind: RequestKind,
     status: ProvisionStatus,
     created_at: Instant,
 }
@@ -227,36 +304,109 @@ impl ProvisionRegistry {
             RequestId::fresh(state.seq)
         };
 
+        let kind = RequestKind::from_provision_mode(mode);
         match self.launcher.open(&id, &path, mode) {
             Ok(()) => {
-                let mut state = self.inner.lock().expect("registry poisoned");
-                state.entries.insert(
-                    id.clone(),
-                    Entry {
-                        path,
-                        mode,
-                        status: ProvisionStatus::Pending,
-                        created_at: Instant::now(),
-                    },
-                );
+                self.record(&id, path, kind, ProvisionStatus::Pending);
                 Ok(id)
             }
             Err(e) => {
-                // Record the Failed entry too — `poll_status`
-                // should be able to report the reason.
-                let mut state = self.inner.lock().expect("registry poisoned");
-                state.entries.insert(
-                    id.clone(),
-                    Entry {
-                        path,
-                        mode,
-                        status: ProvisionStatus::Failed { reason: e.clone() },
-                        created_at: Instant::now(),
-                    },
+                self.record(
+                    &id,
+                    path,
+                    kind,
+                    ProvisionStatus::Failed { reason: e.clone() },
                 );
                 Err(e)
             }
         }
+    }
+
+    /// Open the edit-metadata dialog with a diff preview. The
+    /// agent passes its `proposed` payload; the dialog reads the
+    /// manifest's current fields straight from the index and
+    /// renders them as the diff baseline — the agent's strings
+    /// never replace the trusted record (ADR-023 §3.7).
+    pub fn request_metadata_proposal(
+        &self,
+        path: SecretPath,
+        proposed: ProposedMetadata,
+    ) -> Result<RequestId, String> {
+        let id = self.next_id();
+        match self.launcher.open_metadata_proposal(&id, &path, &proposed) {
+            Ok(()) => {
+                self.record(
+                    &id,
+                    path,
+                    RequestKind::MetadataProposal,
+                    ProvisionStatus::Pending,
+                );
+                Ok(id)
+            }
+            Err(e) => {
+                self.record(
+                    &id,
+                    path,
+                    RequestKind::MetadataProposal,
+                    ProvisionStatus::Failed { reason: e.clone() },
+                );
+                Err(e)
+            }
+        }
+    }
+
+    /// Open the new-path registration dialog. Identical
+    /// semantics to `request_metadata_proposal` but the path
+    /// argument is editable and starts at the agent's
+    /// suggestion.
+    pub fn request_new_path_proposal(
+        &self,
+        suggested_path: SecretPath,
+        proposed: ProposedMetadata,
+    ) -> Result<RequestId, String> {
+        let id = self.next_id();
+        match self
+            .launcher
+            .open_new_path_proposal(&id, &suggested_path, &proposed)
+        {
+            Ok(()) => {
+                self.record(
+                    &id,
+                    suggested_path,
+                    RequestKind::NewPathProposal,
+                    ProvisionStatus::Pending,
+                );
+                Ok(id)
+            }
+            Err(e) => {
+                self.record(
+                    &id,
+                    suggested_path,
+                    RequestKind::NewPathProposal,
+                    ProvisionStatus::Failed { reason: e.clone() },
+                );
+                Err(e)
+            }
+        }
+    }
+
+    fn next_id(&self) -> RequestId {
+        let mut state = self.inner.lock().expect("registry poisoned");
+        state.seq = state.seq.wrapping_add(1);
+        RequestId::fresh(state.seq)
+    }
+
+    fn record(&self, id: &RequestId, path: SecretPath, kind: RequestKind, status: ProvisionStatus) {
+        let mut state = self.inner.lock().expect("registry poisoned");
+        state.entries.insert(
+            id.clone(),
+            Entry {
+                path,
+                kind,
+                status,
+                created_at: Instant::now(),
+            },
+        );
     }
 
     /// Push a status update from the dialog code. Used by the
@@ -289,7 +439,7 @@ impl ProvisionRegistry {
         Some(ProvisionStatusReply {
             request_id: id.clone(),
             path: entry.path.to_string(),
-            mode: entry.mode,
+            kind: entry.kind,
             status: entry.status.clone(),
             age_seconds: entry.created_at.elapsed().as_secs(),
         })
@@ -318,12 +468,15 @@ impl Default for ProvisionRegistry {
     }
 }
 
-/// Wire-format reply returned by `secrets_poll_status`.
+/// Wire-format reply returned by `secrets_poll_status`. The
+/// `kind` field reports which entry-point produced the
+/// request — `provision`, `rotation`, `metadata-proposal`, or
+/// `new-path-proposal`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProvisionStatusReply {
     pub request_id: RequestId,
     pub path: String,
-    pub mode: ProvisionMode,
+    pub kind: RequestKind,
     pub status: ProvisionStatus,
     pub age_seconds: u64,
 }
@@ -344,6 +497,8 @@ pub struct FakeUiLauncher {
 #[derive(Debug, Default)]
 struct FakeInner {
     calls: Vec<(RequestId, SecretPath, ProvisionMode)>,
+    metadata_calls: Vec<(RequestId, SecretPath, ProposedMetadata)>,
+    new_path_calls: Vec<(RequestId, SecretPath, ProposedMetadata)>,
     next_error: Option<String>,
 }
 
@@ -363,6 +518,14 @@ impl FakeUiLauncher {
     pub fn calls(&self) -> Vec<(RequestId, SecretPath, ProvisionMode)> {
         self.inner.lock().unwrap().calls.clone()
     }
+
+    pub fn metadata_calls(&self) -> Vec<(RequestId, SecretPath, ProposedMetadata)> {
+        self.inner.lock().unwrap().metadata_calls.clone()
+    }
+
+    pub fn new_path_calls(&self) -> Vec<(RequestId, SecretPath, ProposedMetadata)> {
+        self.inner.lock().unwrap().new_path_calls.clone()
+    }
 }
 
 impl UiDialogLauncher for FakeUiLauncher {
@@ -377,6 +540,38 @@ impl UiDialogLauncher for FakeUiLauncher {
             return Err(e);
         }
         state.calls.push((request_id.clone(), path.clone(), mode));
+        Ok(())
+    }
+
+    fn open_metadata_proposal(
+        &self,
+        request_id: &RequestId,
+        path: &SecretPath,
+        proposed: &ProposedMetadata,
+    ) -> Result<(), String> {
+        let mut state = self.inner.lock().unwrap();
+        if let Some(e) = state.next_error.take() {
+            return Err(e);
+        }
+        state
+            .metadata_calls
+            .push((request_id.clone(), path.clone(), proposed.clone()));
+        Ok(())
+    }
+
+    fn open_new_path_proposal(
+        &self,
+        request_id: &RequestId,
+        suggested_path: &SecretPath,
+        proposed: &ProposedMetadata,
+    ) -> Result<(), String> {
+        let mut state = self.inner.lock().unwrap();
+        if let Some(e) = state.next_error.take() {
+            return Err(e);
+        }
+        state
+            .new_path_calls
+            .push((request_id.clone(), suggested_path.clone(), proposed.clone()));
         Ok(())
     }
 }
@@ -407,7 +602,7 @@ mod tests {
         let reply = registry.poll_status(&id).unwrap();
         assert_eq!(reply.status, ProvisionStatus::Pending);
         assert_eq!(reply.path, "team/jira/api-key");
-        assert_eq!(reply.mode, ProvisionMode::Provision);
+        assert_eq!(reply.kind, RequestKind::Provision);
     }
 
     #[test]
@@ -425,8 +620,8 @@ mod tests {
             .request_provision(path(), ProvisionMode::Provision)
             .unwrap();
         assert_eq!(
-            registry.poll_status(&id).unwrap().mode,
-            ProvisionMode::Provision
+            registry.poll_status(&id).unwrap().kind,
+            RequestKind::Provision
         );
         // Direct fake test:
         let id2 = RequestId("fixed".into());
@@ -574,5 +769,123 @@ mod tests {
             ProvisionStatus::Failed { reason: "x".into() }.label(),
             "failed"
         );
+    }
+
+    #[test]
+    fn request_kind_labels_pinned_for_wire_format() {
+        assert_eq!(RequestKind::Provision.label(), "provision");
+        assert_eq!(RequestKind::Rotation.label(), "rotation");
+        assert_eq!(RequestKind::MetadataProposal.label(), "metadata-proposal");
+        assert_eq!(RequestKind::NewPathProposal.label(), "new-path-proposal");
+    }
+
+    // -- Metadata proposal -------------------------------------
+
+    fn proposed() -> ProposedMetadata {
+        ProposedMetadata {
+            description: Some("Jira API token (proposed)".into()),
+            retrieval_url: Some("https://example.invalid/jira/tokens".into()),
+            rotate_every_days: Some(90),
+            expires_at: Some("2026-12-01".into()),
+            pattern_id: Some("jira-api-token".into()),
+        }
+    }
+
+    #[test]
+    fn request_metadata_proposal_records_pending_with_kind() {
+        let fake = Arc::new(FakeUiLauncher::new());
+        let registry = ProvisionRegistry::with_launcher(fake.clone());
+        let id = registry
+            .request_metadata_proposal(path(), proposed())
+            .unwrap();
+        let reply = registry.poll_status(&id).unwrap();
+        assert_eq!(reply.kind, RequestKind::MetadataProposal);
+        assert_eq!(reply.status, ProvisionStatus::Pending);
+        assert_eq!(reply.path, "team/jira/api-key");
+
+        let calls = fake.metadata_calls();
+        assert_eq!(calls.len(), 1);
+        // The proposed payload reaches the launcher unchanged.
+        assert_eq!(calls[0].2, proposed());
+    }
+
+    #[test]
+    fn request_metadata_proposal_records_failed_on_launcher_error() {
+        let fake = Arc::new(FakeUiLauncher::new());
+        fake.fail_next_with("daemon unreachable");
+        let registry = ProvisionRegistry::with_launcher(fake);
+        let err = registry
+            .request_metadata_proposal(path(), proposed())
+            .unwrap_err();
+        assert_eq!(err, "daemon unreachable");
+    }
+
+    #[test]
+    fn metadata_proposal_resolve_advances_status() {
+        let fake = Arc::new(FakeUiLauncher::new());
+        let registry = ProvisionRegistry::with_launcher(fake);
+        let id = registry
+            .request_metadata_proposal(path(), proposed())
+            .unwrap();
+        registry.resolve(&id, ProvisionStatus::Ok);
+        assert_eq!(
+            registry.poll_status(&id).unwrap().status,
+            ProvisionStatus::Ok
+        );
+    }
+
+    // -- New-path proposal -------------------------------------
+
+    #[test]
+    fn request_new_path_proposal_records_pending_with_kind() {
+        let fake = Arc::new(FakeUiLauncher::new());
+        let registry = ProvisionRegistry::with_launcher(fake.clone());
+        let suggested = SecretPath::parse("team/openai/api-key").unwrap();
+        let id = registry
+            .request_new_path_proposal(suggested, proposed())
+            .unwrap();
+        let reply = registry.poll_status(&id).unwrap();
+        assert_eq!(reply.kind, RequestKind::NewPathProposal);
+        assert_eq!(reply.status, ProvisionStatus::Pending);
+        assert_eq!(reply.path, "team/openai/api-key");
+
+        let calls = fake.new_path_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].2, proposed());
+    }
+
+    #[test]
+    fn new_path_proposal_resolve_advances_status() {
+        let fake = Arc::new(FakeUiLauncher::new());
+        let registry = ProvisionRegistry::with_launcher(fake);
+        let suggested = SecretPath::parse("team/openai/api-key").unwrap();
+        let id = registry
+            .request_new_path_proposal(suggested, proposed())
+            .unwrap();
+        registry.resolve(&id, ProvisionStatus::Cancelled);
+        assert_eq!(
+            registry.poll_status(&id).unwrap().status,
+            ProvisionStatus::Cancelled
+        );
+    }
+
+    // -- Default launcher returns Failed for proposal kinds ----
+
+    #[test]
+    fn default_launcher_rejects_metadata_proposal() {
+        let registry = ProvisionRegistry::new();
+        let err = registry
+            .request_metadata_proposal(path(), ProposedMetadata::default())
+            .unwrap_err();
+        assert!(err.contains("metadata-proposal launcher"));
+    }
+
+    #[test]
+    fn default_launcher_rejects_new_path_proposal() {
+        let registry = ProvisionRegistry::new();
+        let err = registry
+            .request_new_path_proposal(path(), ProposedMetadata::default())
+            .unwrap_err();
+        assert!(err.contains("new-path-proposal launcher"));
     }
 }
