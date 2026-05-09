@@ -7,6 +7,7 @@ mod onboard_cmd;
 mod secrets_agent;
 mod secrets_agent_service;
 mod secrets_cmd;
+mod secrets_validate;
 mod skills_cmd;
 mod update_check;
 mod upgrade;

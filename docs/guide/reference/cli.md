@@ -48,6 +48,7 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets`↴](#devboy-secrets)
 * [`devboy secrets list`↴](#devboy-secrets-list)
 * [`devboy secrets describe`↴](#devboy-secrets-describe)
+* [`devboy secrets validate`↴](#devboy-secrets-validate)
 * [`devboy secrets agent`↴](#devboy-secrets-agent)
 * [`devboy secrets agent status`↴](#devboy-secrets-agent-status)
 * [`devboy secrets agent start`↴](#devboy-secrets-agent-start)
@@ -707,6 +708,7 @@ Discover and inspect declared secrets (metadata only — values are never shown)
 
 * `list` — List every path the active project's manifest declares, merged with the global index. Values are never shown
 * `describe` — Print the resolved metadata card for a single secret path
+* `validate` — Validate manifest paths' format / liveness as a CI gate. Format-only by default; pass `--liveness` to also probe upstreams (github + gitlab). See ADR-021 §6
 * `agent` — Manage the local secret-store agent daemon (ADR-023 §3.3)
 
 
@@ -737,6 +739,25 @@ Print the resolved metadata card for a single secret path
 ###### **Options:**
 
 * `--json` — Print as JSON instead of a human-readable card
+
+
+
+## `devboy secrets validate`
+
+Validate manifest paths' format / liveness as a CI gate. Format-only by default; pass `--liveness` to also probe upstreams (github + gitlab). See ADR-021 §6
+
+**Usage:** `devboy secrets validate [OPTIONS] [PATH]`
+
+###### **Arguments:**
+
+* `<PATH>` — Validate just one path. Defaults to all manifest paths
+
+###### **Options:**
+
+* `--format-only` — Format check only — skip the upstream liveness probe. This is the implied default; pass `--format-only` to be explicit (e.g. when `--liveness` is set in a CI variable you want to override locally)
+* `--liveness` — Run upstream liveness probes (github, gitlab) in addition to the format check
+* `--all` — Print every path, including ones that pass cleanly. By default the command shows only failures, warnings, and skipped rows
+* `--json` — Print as JSON (one object per path) instead of a human-readable table
 
 
 

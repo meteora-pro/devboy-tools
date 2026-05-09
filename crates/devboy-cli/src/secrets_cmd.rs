@@ -39,6 +39,10 @@ pub enum SecretsCommands {
     List(ListArgs),
     /// Print the resolved metadata card for a single secret path.
     Describe(DescribeArgs),
+    /// Validate manifest paths' format / liveness as a CI gate.
+    /// Format-only by default; pass `--liveness` to also probe
+    /// upstreams (github + gitlab). See ADR-021 §6.
+    Validate(crate::secrets_validate::ValidateArgs),
     /// Manage the local secret-store agent daemon (ADR-023 §3.3).
     Agent {
         /// What to do with the agent.
@@ -142,6 +146,7 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
     match command {
         SecretsCommands::List(args) => list(args),
         SecretsCommands::Describe(args) => describe(args),
+        SecretsCommands::Validate(args) => crate::secrets_validate::handle(args).await,
         SecretsCommands::Agent { command } => match command {
             AgentCommands::Status => agent_status().await,
             AgentCommands::Start(args) => agent_start(args).await,
