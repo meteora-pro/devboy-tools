@@ -436,10 +436,14 @@ impl RawConfig {
         }
 
         // 4) Per-secret overrides: paths must parse, sources must
-        //    be defined.
+        //    be defined. `parse_internal` is used (not `parse`) so
+        //    users can explicitly route source-credentials living
+        //    under `__sources/` (per ADR-021 §5) — the recursion
+        //    check (P5.5) ultimately enforces those land on a
+        //    credential-free source.
         let mut secret_overrides = BTreeMap::new();
         for (path_str, raw) in self.secret {
-            let parsed = SecretPath::parse(&path_str).map_err(|source| {
+            let parsed = SecretPath::parse_internal(&path_str).map_err(|source| {
                 RouterConfigError::BadSecretPath {
                     path: path_str.clone(),
                     source,

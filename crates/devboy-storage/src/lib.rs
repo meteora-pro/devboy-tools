@@ -45,6 +45,7 @@ pub mod merge;
 pub mod pattern_resolution;
 pub mod router_cache;
 pub mod router_config;
+pub mod router_credentials;
 pub mod router_resolve;
 pub mod secret_path;
 pub mod source;
@@ -65,6 +66,9 @@ pub use router_cache::{AdaptiveCache, CacheClock, DEFAULT_BASE_TTL, ManualClock,
 pub use router_config::{
     DefaultRoute, RouteRule, RouterConfig, RouterConfigError, SOURCES_FILENAME, SecretOverride,
     SourceDefinition,
+};
+pub use router_credentials::{
+    CredentialGraphError, SOURCE_CREDENTIALS_PREFIX, validate_source_credentials,
 };
 pub use router_resolve::{PathResolver, ResolveError, RouteDecision};
 pub use secret_path::{PathError, SecretPath};
