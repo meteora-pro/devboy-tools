@@ -23,6 +23,7 @@
 //! ```
 
 pub mod agents;
+pub mod alias;
 pub mod asset;
 pub mod config;
 pub mod enricher;
