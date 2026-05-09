@@ -3,7 +3,7 @@
 Authoritative checklist for cutting a `devboy-tools` release. Reflects [ADR-022](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-022-crates-io-publishing.md) — the workspace ships through **two** channels:
 
 - **npm** — `@devboy-tools/cli` and per-platform binary subpackages. Primary user-facing channel; this is what `devboy onboard` and the agent plugins assume.
-- **crates.io** — every workspace library plus the `devboy-cli` binary. Secondary channel: lets downstream Rust projects embed devboy components and lets people install the CLI through `cargo install` without Node.
+- **crates.io** — every workspace **library** crate (the first wave covered by ADR-022). Secondary channel that lets downstream Rust projects embed devboy components without vendoring source. Publishing the `devboy-cli` binary through `cargo install` is part of the **second wave** and lands together with the `devboy-skills` packaging fix; until then, `cargo install` is not yet a supported install path for the CLI.
 
 Both channels publish from the **same git tag**.
 
@@ -14,7 +14,7 @@ Both channels publish from the **same git tag**.
 - Confirm you have:
   - A crates.io API token with publish permission on every `devboy-*` crate. `cargo login` once per machine.
   - Push access to the `meteora-pro/devboy-tools` git remote (the npm release pipeline triggers from a `v*` tag).
-  - The local toolchain matches CI (`rustup show` → stable, `rust-version = 1.85`).
+  - The local toolchain matches CI (`rustup show` → stable, satisfying `rust-version = 1.87` from the workspace `Cargo.toml`).
 
 ## Step 1 — Bump the version
 
@@ -77,7 +77,7 @@ Each `cargo publish` call:
 2. Re-builds it from the tarball (verify step) — this is what catches "files outside the package" issues.
 3. Uploads to crates.io and waits for the registry to acknowledge.
 
-If a step fails, **stop**. Investigate, fix on `main`, cut a patch tag (`vX.Y.Z+1`), and resume from the failed crate.
+If a step fails, **stop**. Investigate, fix on `main`, bump the patch version to `X.Y.(Z+1)` in `[workspace.package].version` (and the corresponding `[workspace.dependencies]` entries), retag as `vX.Y.(Z+1)`, push the tag, and resume publishing from the crate that failed. Re-running with the original `vX.Y.Z` tag won't work — crates.io rejects re-uploads of an already-published version, so a fresh patch number is required.
 
 > **Settling delay.** crates.io's index sometimes needs a few seconds before a freshly-published crate becomes resolvable as a dependency. If the next `cargo publish` errors with `no matching package named …`, wait 30 seconds and retry.
 
