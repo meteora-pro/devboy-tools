@@ -19,6 +19,7 @@ use serde_json::Value;
 pub struct ConfluenceSchemaEnricher;
 
 impl ConfluenceSchemaEnricher {
+    /// Build a default Confluence schema enricher.
     pub fn new() -> Self {
         Self
     }

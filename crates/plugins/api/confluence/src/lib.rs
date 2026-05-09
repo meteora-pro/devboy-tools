@@ -4,6 +4,9 @@
 //! provider implementation, including API client logic plus page/space/search
 //! operations exposed through the shared `KnowledgeBaseProvider` trait.
 
+#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![deny(rustdoc::invalid_html_tags)]
 mod client;
 mod enricher;
 

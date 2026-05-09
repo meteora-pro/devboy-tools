@@ -30,7 +30,6 @@ pub struct RotationStats {
     /// Number of assets removed by cache-size enforcement (LRU or FIFO,
     /// depending on the configured [`EvictionPolicy`]).
     pub size_evicted: usize,
-    /// Total bytes freed.
     pub bytes_freed: u64,
 }
 

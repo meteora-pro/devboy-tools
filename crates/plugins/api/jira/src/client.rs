@@ -50,7 +50,6 @@ pub enum JiraFlavor {
     SelfHosted,
 }
 
-/// Jira API client.
 pub struct JiraClient {
     base_url: String,
     /// Original Jira instance URL for generating browse links.

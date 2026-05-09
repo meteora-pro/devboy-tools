@@ -1806,9 +1806,7 @@ async fn execute_get_assets(
 struct UploadAssetParams {
     /// "issue" or "mr"
     context_type: String,
-    /// Issue key or MR key
     key: String,
-    /// Original filename
     filename: String,
     /// Base64-encoded file data
     #[serde(rename = "fileData")]
@@ -1856,7 +1854,6 @@ async fn execute_upload_asset(
 struct DownloadAssetParams {
     /// "issue" or "mr"
     context_type: String,
-    /// Issue key or MR key
     key: String,
     /// Asset identifier (provider-specific)
     asset_id: String,
@@ -1955,9 +1952,7 @@ async fn execute_download_asset(
 
 #[derive(Deserialize)]
 struct DeleteAssetParams {
-    /// Issue key
     key: String,
-    /// Asset identifier
     asset_id: String,
 }
 

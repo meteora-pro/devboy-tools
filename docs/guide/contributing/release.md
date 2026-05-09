@@ -40,7 +40,7 @@ Wait for the workflow to finish. Verify on:
 - [crates page on npm](https://www.npmjs.com/package/@devboy-tools/cli) — new version visible
 - GitHub Releases — new tag with platform binaries attached
 
-## Step 3 — Publish to crates.io (first wave)
+## Step 3 — Publish to crates.io
 
 Order matters: each crate's deps must already be on crates.io before its own `cargo publish` runs. Publish in topological order from leaves up.
 
@@ -69,6 +69,12 @@ cargo publish -p devboy-executor
 
 # Layer 4 — depends on layer 3
 cargo publish -p devboy-mcp
+
+# Layer 5 — depends on devboy-core (independent of the executor/mcp chain)
+cargo publish -p devboy-skills
+
+# Layer 6 — binary, depends on everything above
+cargo publish -p devboy-cli
 ```
 
 Each `cargo publish` call:
@@ -95,12 +101,6 @@ If a docs.rs build is red, fix the docs and publish a **patch** version (you can
 - Update the "Use as a library" section of the root `README.md` if new crates joined the wave.
 - Close the release issue if there is one.
 - Open a milestone for the next version.
-
-## Second wave: `devboy-skills` and `devboy-cli`
-
-`devboy-skills` embeds the workspace-root `skills/` tree via `rust-embed`, and `cargo publish` rejects files outside the crate root. The fix (move `skills/` inside `devboy-skills` or wire a `build.rs` sync) ripples into plugin symlinks, release scripts, and several ADRs — large enough to warrant its own PR. `devboy-cli` is blocked behind it because it depends on `devboy-skills`.
-
-When the second wave lands, this document grows two more `cargo publish` invocations at the bottom of step 3.
 
 ## Smoke-test snippets
 

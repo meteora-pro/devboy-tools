@@ -12,7 +12,6 @@ publish = false
 [dependencies]
 devboy-format-pipeline = { workspace = true }
 anyhow.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 secrecy.workspace = true

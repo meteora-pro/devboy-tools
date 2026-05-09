@@ -22,6 +22,9 @@
 //! println!("{}", output.to_string_with_hints());
 //! ```
 
+#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![deny(rustdoc::invalid_html_tags)]
 pub mod adaptive_config;
 pub mod budget;
 pub mod dedup;
@@ -171,7 +174,6 @@ pub struct PipelineConfig {
     pub max_chars_per_item: usize,
     /// Maximum description/body length before truncation (only outliers get truncated)
     pub max_description_len: usize,
-    /// Output format
     pub format: OutputFormat,
     /// Whether to include agent hints about truncation
     pub include_hints: bool,

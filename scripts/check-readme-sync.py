@@ -69,8 +69,13 @@ def render_from_readme(readme_text: str) -> str:
     # .claude/* → absolute GitHub (analyze-usage backend lives here)
     text = re.sub(r"\]\(\./\.claude/", f"]({GH_BASE}/.claude/", text)
     text = re.sub(r"\]\(\.claude/", f"]({GH_BASE}/.claude/", text)
-    # skills/* → absolute GitHub
-    text = re.sub(r"\]\(skills/", f"]({GH_BASE}/skills/", text)
+    # skills/* → absolute GitHub. The tree lives inside devboy-skills now;
+    # any legacy links in README to skills/ get rewritten to the new path.
+    text = re.sub(
+        r"\]\(skills/",
+        f"]({GH_BASE}/crates/devboy-skills/skills/",
+        text,
+    )
     return FRONTMATTER + text
 
 

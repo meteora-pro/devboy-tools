@@ -15,7 +15,6 @@ use crate::tree::TrimNode;
 use crate::trim;
 use crate::truncation;
 
-/// Budget pipeline configuration.
 #[derive(Debug, Clone)]
 pub struct BudgetConfig {
     /// Maximum token budget for output (default: 8000).

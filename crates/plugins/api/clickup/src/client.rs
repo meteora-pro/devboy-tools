@@ -25,7 +25,6 @@ fn encode_tag(tag: &str) -> String {
     urlencoding::encode(tag).into_owned()
 }
 
-/// ClickUp API client.
 pub struct ClickUpClient {
     base_url: String,
     list_id: String,

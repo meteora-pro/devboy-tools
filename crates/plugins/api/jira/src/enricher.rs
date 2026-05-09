@@ -27,6 +27,8 @@ pub struct JiraSchemaEnricher {
 }
 
 impl JiraSchemaEnricher {
+    /// Build an enricher from cached project metadata (custom fields,
+    /// structures, statuses) used to refine MCP tool schemas at runtime.
     pub fn new(metadata: JiraMetadata) -> Self {
         let mut supported_categories = vec![ToolCategory::IssueTracker];
         if !metadata.structures.is_empty() {

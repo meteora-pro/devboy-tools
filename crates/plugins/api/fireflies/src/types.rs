@@ -2,7 +2,6 @@
 
 use serde::Deserialize;
 
-/// GraphQL response wrapper.
 #[derive(Debug, Deserialize)]
 pub(crate) struct GraphQLResponse<T> {
     pub data: Option<T>,
@@ -26,7 +25,6 @@ pub(crate) struct TranscriptData {
     pub transcript: Option<FirefliesTranscript>,
 }
 
-/// A Fireflies transcript record.
 #[derive(Debug, Deserialize)]
 pub(crate) struct FirefliesTranscript {
     pub id: String,
