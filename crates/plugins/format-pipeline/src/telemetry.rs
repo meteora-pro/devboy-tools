@@ -58,13 +58,17 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+/// Telemetry Error.
 pub enum TelemetryError {
     #[error("telemetry I/O: {0}")]
+    /// Io.
     Io(#[from] io::Error),
     #[error("telemetry serialization: {0}")]
+    /// Serde.
     Serde(#[from] serde_json::Error),
 }
 
+/// Result.
 pub type Result<T> = std::result::Result<T, TelemetryError>;
 
 /// Structural classification of a tool response.
@@ -74,17 +78,28 @@ pub type Result<T> = std::result::Result<T, TelemetryError>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Shape {
+    /// Prose.
     Prose,
+    /// NumberedList.
     NumberedList,
+    /// BulletList.
     BulletList,
+    /// CodeBlock.
     CodeBlock,
+    /// MarkdownTable.
     MarkdownTable,
+    /// NestedObject.
     NestedObject,
+    /// FlatObject.
     FlatObject,
+    /// ArrayOfObjects.
     ArrayOfObjects,
+    /// ArrayOfPrimitives.
     ArrayOfPrimitives,
+    /// Empty.
     Empty,
     #[default]
+    /// Unknown.
     Unknown,
 }
 
@@ -216,18 +231,29 @@ fn default_sample_rate() -> f32 {
 /// tuner to read without re-scanning JSONL.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionSummary {
+    /// Session hash.
     pub session_hash: String,
+    /// Total events.
     pub total_events: u64,
     /// Fraction of events where L0 emitted a reference hint.
     pub dedup_hit_rate: f32,
+    /// L1 hit rate.
     pub l1_hit_rate: f32,
+    /// L2 hit rate.
     pub l2_hit_rate: f32,
+    /// Avg response chars.
     pub avg_response_chars: f32,
+    /// Compaction count.
     pub compaction_count: u32,
+    /// Total baseline tokens.
     pub total_baseline_tokens: u64,
+    /// Total final tokens.
     pub total_final_tokens: u64,
+    /// Savings pct.
     pub savings_pct: f32,
+    /// Duration sec.
     pub duration_sec: f32,
+    /// Ended at ms.
     pub ended_at_ms: i64,
     /// Fraction of events that were sampled (for scaling counts).
     pub sample_rate_applied: f32,
@@ -619,22 +645,27 @@ pub struct MemorySink {
 }
 
 impl MemorySink {
+    /// New.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Events.
     pub fn events(&self) -> Vec<PipelineEvent> {
         self.events.lock().unwrap().clone()
     }
 
+    /// Summaries.
     pub fn summaries(&self) -> Vec<SessionSummary> {
         self.summaries.lock().unwrap().clone()
     }
 
+    /// Len.
     pub fn len(&self) -> usize {
         self.events.lock().unwrap().len()
     }
 
+    /// Is empty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

@@ -98,6 +98,7 @@ impl PageCursor {
 #[derive(Debug, thiserror::Error)]
 pub enum PaginationError {
     #[error("Invalid cursor: {0}")]
+    /// InvalidCursor.
     InvalidCursor(String),
 }
 
