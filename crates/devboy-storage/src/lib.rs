@@ -39,8 +39,10 @@ use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, warn};
 
 pub mod cache;
+pub mod secret_path;
 
 pub use cache::CachedStore;
+pub use secret_path::{PathError, SecretPath};
 
 /// Service name used in OS keychain.
 const SERVICE_NAME: &str = "devboy-tools";
