@@ -22,3 +22,31 @@ cargo public-api --simplified -p devboy-core diff \
 
 Empty output = no surface change. Anything else is a candidate for the
 release notes (or a `pub(crate)` lockdown if it leaked unintentionally).
+
+## Audit log
+
+### 2026-05-09 — initial baseline (Phase 4, [#250](https://github.com/meteora-pro/devboy-tools/issues/250))
+
+Walked every `pub mod` and `pub use` in `lib.rs` and grepped the rest
+of the workspace for usage. **No items can be safely demoted to
+`pub(crate)`**:
+
+- `pub mod sentry_integration` — called from `devboy-cli/src/main.rs`
+  (`init_sentry` lifecycle).
+- `pub mod remote_config` — called from `devboy-cli/src/main.rs` and
+  `devboy-cli/src/doctor/checks/config.rs` (`resolve_url`,
+  `redact_url_for_display`, `fetch_and_merge`).
+- `pub mod asset` — used by `devboy-assets`, the API plugins, and
+  `devboy-executor` (asset metadata, markdown attachment parsing).
+- `pub mod agents` — used by `devboy-cli` (onboard / agent detection)
+  and `devboy-mcp` (bundle resolution).
+- `pub mod enricher` — used by `devboy-format-pipeline` (knapsack
+  planner) and every API plugin (custom-field hints).
+- Provider traits, types, config — primary public surface; consumed
+  by every plugin crate and the executor.
+
+Conclusion: the broad surface is load-bearing for the workspace. The
+baseline is the line; further demotion needs per-symbol justification
+and a downstream migration plan. Future PRs that add `pub` items will
+show up as a positive diff against `baseline.txt` and have to be
+either justified or shrunk before merge — that's the actual lockdown.
