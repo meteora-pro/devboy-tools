@@ -101,6 +101,11 @@ regex = "1"
 # Base64 encoding (used by the vault file format for binary payloads in TOML)
 base64 = "0.22"
 
+# AEAD primitives for the local vault (ADR-023 §3.1 — XChaCha20-Poly1305).
+# `getrandom` is the OS-level CSPRNG used to source per-entry nonces.
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }
+getrandom = { version = "0.2", features = ["std"] }
+
 # Observability (optional)
 sentry = { version = "0.35", default-features = false, features = ["rustls", "reqwest", "tracing", "panic", "backtrace", "contexts"] }
 sentry-tracing = "0.35"

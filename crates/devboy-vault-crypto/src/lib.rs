@@ -13,8 +13,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod aead;
 pub mod format;
 
+pub use aead::{
+    AeadError, EncryptedEntry, KEY_LEN, NONCE_LEN, TAG_LEN, decrypt_entry, encrypt_entry,
+    random_nonce,
+};
 pub use format::{
     EntryMeta, Envelope, EnvelopeKdfParams, FormatError, HEADER_LEN, Header, KdfParams, MAGIC,
     VERSION_V1, VaultFile, b64_decode, b64_encode,
