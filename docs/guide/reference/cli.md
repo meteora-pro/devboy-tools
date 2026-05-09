@@ -49,6 +49,7 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets list`↴](#devboy-secrets-list)
 * [`devboy secrets describe`↴](#devboy-secrets-describe)
 * [`devboy secrets validate`↴](#devboy-secrets-validate)
+* [`devboy secrets migrate`↴](#devboy-secrets-migrate)
 * [`devboy secrets agent`↴](#devboy-secrets-agent)
 * [`devboy secrets agent status`↴](#devboy-secrets-agent-status)
 * [`devboy secrets agent start`↴](#devboy-secrets-agent-start)
@@ -709,6 +710,7 @@ Discover and inspect declared secrets (metadata only — values are never shown)
 * `list` — List every path the active project's manifest declares, merged with the global index. Values are never shown
 * `describe` — Print the resolved metadata card for a single secret path
 * `validate` — Validate manifest paths' format / liveness as a CI gate. Format-only by default; pass `--liveness` to also probe upstreams (github + gitlab). See ADR-021 §6
+* `migrate` — Move a legacy keychain entry under the ADR-020 path convention. See `doctor` "Legacy keychain entries" (P10.1) for what's eligible
 * `agent` — Manage the local secret-store agent daemon (ADR-023 §3.3)
 
 
@@ -758,6 +760,26 @@ Validate manifest paths' format / liveness as a CI gate. Format-only by default;
 * `--liveness` — Run upstream liveness probes (github, gitlab) in addition to the format check
 * `--all` — Print every path, including ones that pass cleanly. By default the command shows only failures, warnings, and skipped rows
 * `--json` — Print as JSON (one object per path) instead of a human-readable table
+
+
+
+## `devboy secrets migrate`
+
+Move a legacy keychain entry under the ADR-020 path convention. See `doctor` "Legacy keychain entries" (P10.1) for what's eligible
+
+**Usage:** `devboy secrets migrate [OPTIONS] [LEGACY_KEY]`
+
+###### **Arguments:**
+
+* `<LEGACY_KEY>` — Legacy keychain key to migrate (e.g. `github/token`). Required unless `--all` is set
+
+###### **Options:**
+
+* `--all` — Migrate every present legacy entry in one go. Uses the suggested target path for each; pass `--keep-legacy` to also retain the source rows (the default in batch mode)
+* `--target <TARGET>` — Pre-supply the target path; bypasses the interactive prompt for the single-entry flow
+* `--keep-legacy` — Don't delete the legacy entry after a successful write. Defaults to `true` in `--all` mode (cautious)
+* `--dry-run` — Print the plan without writing anything
+* `-y`, `--yes` — Skip the prompts entirely. Equivalent to `--target <suggested>` and not deleting unless `--no-keep-legacy` is set
 
 
 

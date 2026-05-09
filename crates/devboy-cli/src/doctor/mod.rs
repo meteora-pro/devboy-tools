@@ -1,4 +1,9 @@
-mod checks;
+// `pub(crate)` so sibling modules (e.g. `crate::secrets_migrate`)
+// can reuse the `legacy_keys::{known_legacy_keys,
+// suggest_canonical_path}` helpers without re-implementing them.
+// The doctor surface itself is still private to the crate; this
+// only opens internal paths.
+pub(crate) mod checks;
 mod output;
 
 use self::checks::config::{ActiveContextCheck, ConfigExistsCheck, ConfigValidTomlCheck};

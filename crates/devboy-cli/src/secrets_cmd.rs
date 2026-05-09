@@ -43,6 +43,10 @@ pub enum SecretsCommands {
     /// Format-only by default; pass `--liveness` to also probe
     /// upstreams (github + gitlab). See ADR-021 §6.
     Validate(crate::secrets_validate::ValidateArgs),
+    /// Move a legacy keychain entry under the ADR-020 path
+    /// convention. See `doctor` "Legacy keychain entries" (P10.1)
+    /// for what's eligible.
+    Migrate(crate::secrets_migrate::MigrateArgs),
     /// Manage the local secret-store agent daemon (ADR-023 §3.3).
     Agent {
         /// What to do with the agent.
@@ -147,6 +151,7 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
         SecretsCommands::List(args) => list(args),
         SecretsCommands::Describe(args) => describe(args),
         SecretsCommands::Validate(args) => crate::secrets_validate::handle(args).await,
+        SecretsCommands::Migrate(args) => crate::secrets_migrate::handle(args).await,
         SecretsCommands::Agent { command } => match command {
             AgentCommands::Status => agent_status().await,
             AgentCommands::Start(args) => agent_start(args).await,
