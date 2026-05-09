@@ -90,8 +90,10 @@ values, and rotation happens on a cadence rather than on demand.
 > encrypted local vault, a single-purpose daemon, a native TUI/GUI,
 > an agent provisioning protocol over MCP, a manual-assisted
 > rotation flow, a shared pattern catalogue, and an onboarding skill.
-> The agent never sees secret values; the user never types secrets
-> through the agent.
+> The agent never sees secret values through the MCP surface; the user
+> never types secrets through the agent. (See §3.7 for the precise
+> scope of this property — it is an enforced invariant on the agent
+> tool surface, not a claim about a sandboxed agent.)
 
 The decision has eight parts.
 
@@ -149,7 +151,7 @@ ENTRIES_INDEX (plaintext TOML, metadata only):
 
 AEAD_BLOBS:
   contiguous concatenation of per-entry ciphertexts; each entry is
-    ChaCha20-Poly1305(
+    XChaCha20-Poly1305(
       plaintext     = value (utf-8 bytes),
       key           = vault_key,
       nonce         = entry.nonce,
@@ -186,10 +188,16 @@ Critical invariants:
 
 #### Algorithms
 
-- **AEAD:** ChaCha20-Poly1305 (RFC 8439). Picked over AES-GCM
-  because it does not require AES-NI and runs constant-time on all
-  targets (including ARM Linux); RustCrypto provides a vetted
-  pure-Rust implementation (`chacha20poly1305`).
+- **AEAD:** XChaCha20-Poly1305 (192-bit nonce; ChaCha20 from RFC
+  8439 extended with the XSalsa20-style HChaCha20 nonce derivation).
+  Picked over AES-GCM because it does not require AES-NI and runs
+  constant-time on all targets (including ARM Linux). Picked over
+  the IETF 12-byte-nonce ChaCha20-Poly1305 variant because each
+  per-entry nonce is generated randomly: a 12-byte random nonce has
+  birthday-collision risk after ~2³² writes per key, while the
+  24-byte random nonce makes collisions cryptographically negligible.
+  RustCrypto provides a vetted pure-Rust implementation
+  (`chacha20poly1305::XChaCha20Poly1305`).
 - **KDF:** Argon2id with `m_cost = 65536` (64 MiB), `t_cost = 3`,
   `p_cost = 1` for the passphrase envelope. Tuned to ≈250 ms on a
   2024-class laptop; tuneable per-vault if a host is too slow.
@@ -231,8 +239,9 @@ The vault accepts three independent unlock methods:
   creation; cannot be removed.
 - **Keychain (Touch ID)** — macOS only. The user runs
   `devboy secrets vault add-keychain-unlock`, the CLI generates a
-  random 32-byte key, stores it in the macOS keychain under
-  `kSecAttrAccessControlBiometryAny | kSecAttrAccessControlUserPresence`
+  random 32-byte key and stores it in the macOS keychain with a
+  `SecAccessControl` object created via `SecAccessControlCreateWithFlags`
+  using flags `kSecAccessControlBiometryAny | kSecAccessControlUserPresence`
   (Touch ID required, fallback to user password), and adds a
   `keychain` envelope. Future unlocks via Touch ID don't require
   the passphrase.
@@ -675,11 +684,13 @@ the agent. The skill and the manual flow share state through
 - ✅ **Headless Linux works without external infrastructure.**
   The local vault is a real, encrypted store; "no keychain, no
   Vault, no 1Password" is now a supported configuration.
-- ✅ **The agent never sees secret values.** The MCP surface is
-  designed around request/poll, the local-vault never hands out
-  `vault_key`, and the high-level provider tools resolve
-  credentials server-side. The `secrets.get` tool simply does
-  not exist on the agent surface.
+- ✅ **The agent never sees secret values through the MCP surface.**
+  The agent tool surface is designed around request/poll, the
+  local-vault never hands out `vault_key`, and the high-level
+  provider tools resolve credentials server-side. The `secrets.get`
+  tool simply does not exist on the agent surface. This is a
+  property of the surface, not isolation against a shell-capable
+  agent (see §3.7 and the threat-model alignment above).
 - ✅ **Rotation is a guided action, not a notification.** The
   rotation dialog opens the right URL, validates the new value,
   and records the rotation in one flow — the user does not have
