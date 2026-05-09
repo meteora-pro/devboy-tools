@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! Secure credential storage with multiple backends.
 //!
 //! This crate provides credential storage with support for:
@@ -343,6 +344,11 @@ fn read_env_var(key: &str) -> std::result::Result<String, std::env::VarError> {
     std::env::var(key)
 }
 
+/// Environment-variable-backed credential store.
+///
+/// Resolves secrets by name through `std::env::var` (or an injected
+/// reader, for testing). Used as the CI / Docker fallback when the OS
+/// keychain is unavailable.
 pub struct EnvVarStore {
     /// Prefix for environment variables (e.g., "DEVBOY").
     prefix: String,

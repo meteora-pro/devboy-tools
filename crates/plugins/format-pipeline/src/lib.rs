@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! Format pipeline for tool output transformation.
 //!
 //! Formats tool responses into an optimal format for LLM:
@@ -22,20 +23,32 @@
 //! println!("{}", output.to_string_with_hints());
 //! ```
 
+// Module-level escape hatches: the crate-wide `#![warn(missing_docs)]`
+// catches new pub items in covered modules, but ~130 pre-existing
+// pub items in the modules below predate the guard. Backfilling them
+// is a documentation-pass project (#250 / Phase 5 follow-up).
+#[allow(missing_docs)]
 pub mod adaptive_config;
 pub mod budget;
+#[allow(missing_docs)]
 pub mod dedup;
 pub(crate) mod dedup_util;
+#[allow(missing_docs)]
 pub mod enrichment;
 pub mod layered_pipeline;
 pub mod mckp_router;
+#[allow(missing_docs)]
 pub mod near_ref;
 pub mod page_index;
+#[allow(missing_docs)]
 pub mod pagination;
 pub mod projection;
+#[allow(missing_docs)]
 pub mod round_trip;
+#[allow(missing_docs)]
 pub mod shape;
 pub mod strategy;
+#[allow(missing_docs)]
 pub mod telemetry;
 pub mod templates;
 pub mod token_counter;
