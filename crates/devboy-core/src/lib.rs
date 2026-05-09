@@ -41,7 +41,6 @@ pub mod remote_config;
 pub mod sentry_integration;
 pub mod tool_category;
 pub mod tool_value_model;
-#[allow(missing_docs)]
 pub mod types;
 
 // Re-export error types
