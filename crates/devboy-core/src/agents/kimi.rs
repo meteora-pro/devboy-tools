@@ -21,6 +21,7 @@ const ID: &str = "kimi";
 const DISPLAY_NAME: &str = "Kimi Code CLI";
 const MAX_SESSIONS: usize = 50_000;
 
+/// Kimi Detector.
 pub struct KimiDetector;
 
 impl AgentDetector for KimiDetector {

@@ -14,6 +14,7 @@ const ID: &str = "claude";
 const DISPLAY_NAME: &str = "Claude Code";
 const MAX_FILES: usize = 20_000;
 
+/// Claude Detector.
 pub struct ClaudeDetector;
 
 impl AgentDetector for ClaudeDetector {
