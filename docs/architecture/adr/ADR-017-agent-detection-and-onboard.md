@@ -46,7 +46,7 @@ Specifically:
 - Score: `0.6 * freshness + 0.4 * volume` where `freshness = max(0, 1 - days_since_last_used / 14)` and `volume = min(1, log10(sessions+1) / 3)`.
 - Primary chosen automatically iff `score_top1 / score_top2 >= 1.5`, otherwise the user is asked.
 - Cross-platform paths via the `dirs` crate; binary lookups via `which::which`.
-- Skill bundles are TOML manifests under `skills/bundles/<profile>.toml` listing skill IDs.
+- Skill bundles are TOML manifests under `crates/devboy-core/bundles/<profile>.toml` listing skill IDs (embedded into the binary at build time so the bundle ships with `devboy-core`; see ADR-022).
 - `devboy onboard --agent <id> --yes` is the headless mode for CI / dotfiles / Docker.
 
 ## Consequences

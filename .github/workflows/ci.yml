@@ -131,6 +131,23 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features
 
+  publish-dry-run:
+    name: cargo publish --dry-run (devboy-core)
+    runs-on: ubuntu-latest
+    # `cargo publish --dry-run` resolves internal deps through the
+    # registry, not workspace paths — so until devboy-core is on
+    # crates.io, only the dep-graph leaf (devboy-core) can complete a
+    # full dry-run. Once the first wave is on crates.io, extend this
+    # job to cover the rest of the topological order. See ADR-022.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo publish --dry-run -p devboy-core
+        run: cargo publish --dry-run -p devboy-core
+
   test:
     name: Test
     runs-on: ${{ matrix.os }}
