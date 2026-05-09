@@ -135,11 +135,14 @@ jobs:
     name: Rustdoc (no deps, no warnings)
     runs-on: ubuntu-latest
     # Builds the rustdoc tree for every workspace crate and fails on
-    # any warning — covers missing_docs in `#![warn(missing_docs)]`
-    # surfaces (the legacy backlog is hidden behind module-level
-    # `#[allow(missing_docs)]`, so warns only fire on *new* leaks)
-    # plus broken intra-doc links. Mirrors what docs.rs renders for
-    # published crates (ADR-022).
+    # any warning — covers broken intra-doc links, private intra-doc
+    # links, and invalid HTML tags (the three rustdoc lints denied
+    # at the crate level in every publishable lib.rs). The
+    # `missing_docs` lint is intentionally *not* enabled — DTO field
+    # docs that just restate the field name add noise without value;
+    # contract / source / constraint docs are enforced by code review
+    # instead. Mirrors what docs.rs renders for published crates
+    # (ADR-022).
     env:
       RUSTDOCFLAGS: -Dwarnings
     steps:
