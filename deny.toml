@@ -1,0 +1,81 @@
+# cargo-deny configuration for devboy-tools.
+#
+# Goals:
+#   1. License hygiene — every transitive dep must carry a license that's
+#      compatible with our Apache-2.0 distribution (ADR-001) and that
+#      downstream consumers of our crates.io libraries (ADR-022) can
+#      legally redistribute.
+#   2. Advisory hygiene — fail CI on known-vulnerable / unmaintained /
+#      yanked crates so that we don't ship them.
+#
+# Run locally:   cargo deny check
+# Run in CI:     same. See .github/workflows/ci.yml `dependency-hygiene`.
+
+[graph]
+all-features = true
+
+[output]
+feature-depth = 1
+
+# ---------------------------------------------------------------------------
+# Advisories
+# ---------------------------------------------------------------------------
+
+[advisories]
+version = 2
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+ignore = []
+
+# ---------------------------------------------------------------------------
+# Licenses
+# ---------------------------------------------------------------------------
+
+[licenses]
+version = 2
+# Permissive licenses we accept across the dependency graph.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "0BSD",
+    "MPL-2.0",
+    # Permissive, fund-friendly licenses pulled in transitively
+    # (no copyleft, no patent encumbrance for distribution).
+    "bzip2-1.0.6",          # bzip2 itself — used by zip → libbz2
+    "CDLA-Permissive-2.0",  # webpki-roots ships CA bundle under CDLA
+]
+# Crate-level confidence threshold for license detection.
+confidence-threshold = 0.8
+exceptions = []
+
+# ---------------------------------------------------------------------------
+# Bans
+# ---------------------------------------------------------------------------
+
+[bans]
+multiple-versions = "warn"
+wildcards = "warn"
+highlight = "all"
+deny = []
+skip = []
+skip-tree = []
+
+# ---------------------------------------------------------------------------
+# Sources
+# ---------------------------------------------------------------------------
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
