@@ -2,6 +2,7 @@ pub mod config;
 pub mod context_secrets;
 pub mod credentials;
 pub mod environment;
+pub mod legacy_keys;
 pub mod mcp;
 pub mod providers;
 pub mod proxy;

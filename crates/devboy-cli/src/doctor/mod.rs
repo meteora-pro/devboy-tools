@@ -8,6 +8,7 @@ use self::checks::credentials::{
     SlackTokenCheck,
 };
 use self::checks::environment::{ConfigDirCheck, CredentialStoreCheck, OsSupportCheck};
+use self::checks::legacy_keys::LegacyKeysCheck;
 use self::checks::mcp::McpToolsCheck;
 use self::checks::providers::{
     ClickUpApiCheck, ConfluenceApiCheck, GitHubApiCheck, GitLabApiCheck, JiraApiCheck,
@@ -169,6 +170,7 @@ impl CheckRegistry {
         registry.register(Box::new(SourcesCheck));
         registry.register(Box::new(ContextSecretsCheck));
         registry.register(Box::new(RotationRemindersCheck));
+        registry.register(Box::new(LegacyKeysCheck));
         registry
     }
 

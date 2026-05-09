@@ -163,13 +163,6 @@ impl RowSeverity {
             Self::Error => 3,
         }
     }
-    fn worst(self, other: Self) -> Self {
-        if other.rank() > self.rank() {
-            other
-        } else {
-            self
-        }
-    }
 }
 
 // =============================================================================
@@ -610,22 +603,16 @@ mod tests {
         assert_eq!(s, RowSeverity::Pass);
     }
 
-    // -- worst -----------------------------------------------------
+    // -- rank ordering --------------------------------------------
 
     #[test]
-    fn worst_climbs_severity_only() {
-        assert_eq!(
-            RowSeverity::Pass.worst(RowSeverity::Warning),
-            RowSeverity::Warning
-        );
-        assert_eq!(
-            RowSeverity::Warning.worst(RowSeverity::Error),
-            RowSeverity::Error
-        );
-        assert_eq!(
-            RowSeverity::Error.worst(RowSeverity::Skipped),
-            RowSeverity::Error
-        );
+    fn rank_orders_skipped_below_pass_below_warning_below_error() {
+        // Document the rank ordering tests rely on; if this
+        // changes, fold_severity's max_by_key behaviour changes
+        // with it.
+        assert!(RowSeverity::Skipped.rank() < RowSeverity::Pass.rank());
+        assert!(RowSeverity::Pass.rank() < RowSeverity::Warning.rank());
+        assert!(RowSeverity::Warning.rank() < RowSeverity::Error.rank());
     }
 
     // -- Labels ----------------------------------------------------
