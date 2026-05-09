@@ -105,6 +105,45 @@ pub struct Config {
     /// Fetches TOML config from a URL on startup and merges with local config.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_config: Option<RemoteConfigSettings>,
+
+    /// Secret-framework knobs (ADR-020 / ADR-021 / ADR-023).
+    /// Currently the only field is `migration_complete`, which
+    /// the user flips on after walking through every legacy
+    /// keychain entry via `devboy secrets migrate`. Once set,
+    /// the doctor escalates any *remaining* legacy entries to a
+    /// stronger warning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secrets: Option<SecretsConfig>,
+}
+
+impl Config {
+    /// `true` when the user has flipped
+    /// `[secrets] migration_complete = true`. Defaults to `false`
+    /// for any config that doesn't carry the section at all.
+    pub fn is_secrets_migration_complete(&self) -> bool {
+        self.secrets
+            .as_ref()
+            .map(|s| s.migration_complete)
+            .unwrap_or(false)
+    }
+}
+
+/// `[secrets]` section per ADR-020 §7 (migration story) and
+/// ADR-021 §6 (validation framework). The struct is
+/// intentionally minimal — fields land here as the framework
+/// grows, not in [`Config`] directly, so the
+/// secret-framework-specific knobs travel together.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SecretsConfig {
+    /// `true` when the user has confirmed every legacy
+    /// pre-ADR-020 keychain entry has been migrated. Once set,
+    /// the doctor escalates any remaining legacy entries from
+    /// "migrate these" to "migration_complete is set but legacy
+    /// entries remain — clear the flag or finish the move." A
+    /// future router can read this flag to refuse the legacy
+    /// fallback reader entirely.
+    #[serde(default)]
+    pub migration_complete: bool,
 }
 
 /// Configuration for an upstream MCP server to proxy.
@@ -1645,6 +1684,41 @@ mod tests {
     }
 
     #[test]
+    fn is_secrets_migration_complete_defaults_to_false() {
+        let config = Config::default();
+        assert!(!config.is_secrets_migration_complete());
+    }
+
+    #[test]
+    fn is_secrets_migration_complete_reads_explicit_flag() {
+        let mut config = Config::default();
+        config.secrets = Some(SecretsConfig {
+            migration_complete: true,
+        });
+        assert!(config.is_secrets_migration_complete());
+    }
+
+    #[test]
+    fn secrets_section_round_trips_through_toml() {
+        let toml = "[secrets]\nmigration_complete = true\n";
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.is_secrets_migration_complete());
+        let serialized = toml::to_string(&config).unwrap();
+        assert!(serialized.contains("[secrets]"));
+        assert!(serialized.contains("migration_complete = true"));
+    }
+
+    #[test]
+    fn secrets_section_omitted_when_unset() {
+        let config = Config::default();
+        let serialized = toml::to_string(&config).unwrap();
+        assert!(
+            !serialized.contains("[secrets]"),
+            "default Config should not write a [secrets] section"
+        );
+    }
+
+    #[test]
     fn test_save_and_load() {
         let config = Config {
             github: Some(GitHubConfig {
@@ -1950,6 +2024,7 @@ mod tests {
             proxy: ProxyConfig::default(),
             sentry: None,
             remote_config: None,
+            secrets: None,
         };
 
         let providers = config.configured_providers();
@@ -2034,6 +2109,7 @@ mod tests {
             proxy: ProxyConfig::default(),
             sentry: None,
             remote_config: None,
+            secrets: None,
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();

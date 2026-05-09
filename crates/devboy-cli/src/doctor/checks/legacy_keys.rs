@@ -84,24 +84,59 @@ impl DiagnosticCheck for LegacyKeysCheck {
             }
         }
 
+        let migration_complete = ctx
+            .config
+            .as_ref()
+            .map(|c| c.is_secrets_migration_complete())
+            .unwrap_or(false);
+
         if findings.is_empty() {
+            // Two clean states: "we never had legacy entries"
+            // (default) and "the user has confirmed migration is
+            // done" (explicit). Both are `Pass`; the message
+            // tells them apart.
+            let message = if migration_complete {
+                "Migration confirmed complete; no pre-ADR-020 entries remain".to_string()
+            } else {
+                "No pre-ADR-020 keychain entries detected".to_string()
+            };
             return CheckResult {
                 id: self.id().to_string(),
                 category: self.category().to_string(),
                 name: self.name().to_string(),
                 status: CheckStatus::Pass,
-                message: "No pre-ADR-020 keychain entries detected".to_string(),
+                message,
                 details: None,
                 fix_command: None,
                 fix_url: None,
             };
         }
 
-        let summary = format!(
-            "{} legacy keychain entr{} need to migrate to the ADR-020 path convention",
-            findings.len(),
-            if findings.len() == 1 { "y" } else { "ies" }
-        );
+        // Findings + migration_complete=true is a strict failure
+        // — the user told us they were done, but legacy entries
+        // remain. Treat as Error so doctor's exit code flips and
+        // a CI gate catches it. Findings + migration_complete=false
+        // is the migration-not-finished-yet path: Warning, with a
+        // helpful fix_command.
+        let (status, summary) = if migration_complete {
+            (
+                CheckStatus::Error,
+                format!(
+                    "[secrets] migration_complete=true but {} legacy entr{} remain — finish migrating or clear the flag",
+                    findings.len(),
+                    if findings.len() == 1 { "y" } else { "ies" }
+                ),
+            )
+        } else {
+            (
+                CheckStatus::Warning,
+                format!(
+                    "{} legacy keychain entr{} need to migrate to the ADR-020 path convention",
+                    findings.len(),
+                    if findings.len() == 1 { "y" } else { "ies" }
+                ),
+            )
+        };
         // Surface the FIRST migration command in `fix_command` so
         // the renderer's "run this:" footer points users at a
         // concrete one-liner. The full list is in the JSON
@@ -111,7 +146,7 @@ impl DiagnosticCheck for LegacyKeysCheck {
             id: self.id().to_string(),
             category: self.category().to_string(),
             name: self.name().to_string(),
-            status: CheckStatus::Warning,
+            status,
             message: summary,
             details: Some(findings_to_json(&findings)),
             fix_command,
@@ -208,13 +243,21 @@ mod tests {
     use super::*;
     use crate::doctor::DiagnosticContext;
     use devboy_core::Config;
+    use devboy_core::config::SecretsConfig;
     use devboy_storage::{CredentialStore, MemoryStore};
     use std::path::PathBuf;
     use std::sync::Arc;
 
     fn ctx_with_store(store: Arc<dyn CredentialStore>) -> DiagnosticContext {
+        ctx_with_config_and_store(Config::default(), store)
+    }
+
+    fn ctx_with_config_and_store(
+        config: Config,
+        store: Arc<dyn CredentialStore>,
+    ) -> DiagnosticContext {
         DiagnosticContext {
-            config: Some(Config::default()),
+            config: Some(config),
             config_path: Some(PathBuf::from("config.toml")),
             config_exists: true,
             config_source: "test",
@@ -222,6 +265,15 @@ mod tests {
             config_load_error: None,
             credential_store: store,
             verbose: false,
+        }
+    }
+
+    fn config_with_migration_complete(complete: bool) -> Config {
+        Config {
+            secrets: Some(SecretsConfig {
+                migration_complete: complete,
+            }),
+            ..Config::default()
         }
     }
 
@@ -321,6 +373,38 @@ mod tests {
         let ctx = ctx_with_store(Arc::new(store));
         let r = LegacyKeysCheck.run(&ctx).await;
         assert_eq!(r.status, CheckStatus::Pass);
+    }
+
+    #[tokio::test]
+    async fn migration_complete_with_no_findings_passes_with_confirmation_message() {
+        let ctx = ctx_with_config_and_store(
+            config_with_migration_complete(true),
+            Arc::new(MemoryStore::new()),
+        );
+        let r = LegacyKeysCheck.run(&ctx).await;
+        assert_eq!(r.status, CheckStatus::Pass);
+        assert!(
+            r.message.contains("Migration confirmed complete"),
+            "expected explicit confirmation, got: {}",
+            r.message
+        );
+    }
+
+    #[tokio::test]
+    async fn migration_complete_with_findings_escalates_to_error() {
+        // The user told us they were done, but legacy entries
+        // remain — this is a strong inconsistency the doctor
+        // surfaces as Error so a CI gate catches it.
+        let store = MemoryStore::with_credentials([("github/token".into(), "ghp".into())]);
+        let ctx = ctx_with_config_and_store(config_with_migration_complete(true), Arc::new(store));
+        let r = LegacyKeysCheck.run(&ctx).await;
+        assert_eq!(r.status, CheckStatus::Error);
+        assert!(
+            r.message.contains("migration_complete=true"),
+            "error message must mention the offending flag, got: {}",
+            r.message
+        );
+        assert!(r.message.contains("1 legacy entry remain"));
     }
 
     #[tokio::test]
