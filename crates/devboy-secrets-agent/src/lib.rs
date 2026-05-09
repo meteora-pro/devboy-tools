@@ -26,7 +26,8 @@ pub use idle::{
 pub use rpc::{
     BAD_UNLOCK, ENTRY_NOT_FOUND, FramingError, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST,
     IO_ERROR, JSONRPC_VERSION, JsonRpcError, JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND,
-    NO_MATCHING_ENVELOPE, PARSE_ERROR, VAULT_LOCKED, read_request, write_response,
+    NO_MATCHING_ENVELOPE, PARSE_ERROR, VAULT_LOCKED, read_request, read_response, write_request,
+    write_response,
 };
 pub use server::VaultServer;
 pub use socket::{

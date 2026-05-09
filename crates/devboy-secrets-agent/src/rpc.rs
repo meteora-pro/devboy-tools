@@ -211,6 +211,41 @@ where
     Ok(())
 }
 
+/// Write one JSON-RPC request to `writer`, terminated by `\n`.
+///
+/// Symmetric to [`write_response`]; used by client-side code (the
+/// CLI's local-vault source plugin, future MCP proxy) that talks to
+/// the agent over the same newline-delimited framing.
+pub async fn write_request<W>(writer: &mut W, request: &JsonRpcRequest) -> Result<(), FramingError>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut bytes = serde_json::to_vec(request)?;
+    bytes.push(b'\n');
+    writer.write_all(&bytes).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+/// Read one newline-delimited JSON-RPC response from `reader`.
+///
+/// Symmetric to [`read_request`]. Returns [`FramingError::Eof`] when
+/// the peer closed the connection cleanly before sending a response
+/// (treated as a protocol error by clients — the daemon should
+/// always respond, even on error).
+pub async fn read_response<R>(reader: &mut BufReader<R>) -> Result<JsonRpcResponse, FramingError>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut line = String::new();
+    let n = reader.read_line(&mut line).await?;
+    if n == 0 {
+        return Err(FramingError::Eof);
+    }
+    let resp: JsonRpcResponse = serde_json::from_str(line.trim_end_matches('\n'))?;
+    Ok(resp)
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
