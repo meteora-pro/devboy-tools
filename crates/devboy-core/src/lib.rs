@@ -1,8 +1,4 @@
 #![warn(missing_docs)]
-// TODO: walk these two lints and fix the underlying refs (#250 follow-up).
-// They surface a couple of legacy intra-doc links to private items
-// (RECENCY_DOMINANCE_HOURS, PRIMARY_THRESHOLD in agents/score.rs).
-#![allow(rustdoc::private_intra_doc_links)]
 //! Core traits, types, and error handling for devboy-tools.
 //!
 //! This crate provides the foundational abstractions used across all devboy components:
