@@ -48,6 +48,9 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets`↴](#devboy-secrets)
 * [`devboy secrets list`↴](#devboy-secrets-list)
 * [`devboy secrets describe`↴](#devboy-secrets-describe)
+* [`devboy secrets agent`↴](#devboy-secrets-agent)
+* [`devboy secrets agent status`↴](#devboy-secrets-agent-status)
+* [`devboy secrets agent start`↴](#devboy-secrets-agent-start)
 * [`devboy trace`↴](#devboy-trace)
 * [`devboy trace begin`↴](#devboy-trace-begin)
 * [`devboy trace event`↴](#devboy-trace-event)
@@ -696,6 +699,7 @@ Discover and inspect declared secrets (metadata only — values are never shown)
 
 * `list` — List every path the active project's manifest declares, merged with the global index. Values are never shown
 * `describe` — Print the resolved metadata card for a single secret path
+* `agent` — Manage the local secret-store agent daemon (ADR-023 §3.3)
 
 
 
@@ -725,6 +729,40 @@ Print the resolved metadata card for a single secret path
 ###### **Options:**
 
 * `--json` — Print as JSON instead of a human-readable card
+
+
+
+## `devboy secrets agent`
+
+Manage the local secret-store agent daemon (ADR-023 §3.3)
+
+**Usage:** `devboy secrets agent <COMMAND>`
+
+###### **Subcommands:**
+
+* `status` — Report the agent socket path and whether the daemon is currently accepting connections
+* `start` — Spawn the agent if it isn't already running. Idempotent — no-op when the socket is already live
+
+
+
+## `devboy secrets agent status`
+
+Report the agent socket path and whether the daemon is currently accepting connections
+
+**Usage:** `devboy secrets agent status`
+
+
+
+## `devboy secrets agent start`
+
+Spawn the agent if it isn't already running. Idempotent — no-op when the socket is already live
+
+**Usage:** `devboy secrets agent start [OPTIONS]`
+
+###### **Options:**
+
+* `--vault <VAULT>` — Override the vault file the daemon will operate on. Defaults to `<config_dir>/devboy-tools/secrets/vault.dvb`
+* `--timeout-secs <TIMEOUT_SECS>` — Cap on the wait-for-socket loop, in seconds. Defaults to [`secrets_agent::DEFAULT_SPAWN_TIMEOUT`]
 
 
 

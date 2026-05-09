@@ -17,6 +17,9 @@
 //!
 //! [ADR-020]: https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-020-secret-manifest-and-alias-resolution.md
 
+use std::path::PathBuf;
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use devboy_storage::{
@@ -24,6 +27,8 @@ use devboy_storage::{
     SecretOrigin, SecretPath, merge_manifest,
 };
 use serde::Serialize;
+
+use crate::secrets_agent;
 
 /// `devboy secrets <subcommand>` subcommand family.
 #[derive(Subcommand, Debug)]
@@ -33,6 +38,36 @@ pub enum SecretsCommands {
     List(ListArgs),
     /// Print the resolved metadata card for a single secret path.
     Describe(DescribeArgs),
+    /// Manage the local secret-store agent daemon (ADR-023 §3.3).
+    Agent {
+        /// What to do with the agent.
+        #[command(subcommand)]
+        command: AgentCommands,
+    },
+}
+
+/// `devboy secrets agent <subcommand>` family.
+#[derive(Subcommand, Debug)]
+pub enum AgentCommands {
+    /// Report the agent socket path and whether the daemon is
+    /// currently accepting connections.
+    Status,
+    /// Spawn the agent if it isn't already running. Idempotent —
+    /// no-op when the socket is already live.
+    Start(AgentStartArgs),
+}
+
+/// Flags for `devboy secrets agent start`.
+#[derive(Args, Debug, Default)]
+pub struct AgentStartArgs {
+    /// Override the vault file the daemon will operate on. Defaults
+    /// to `<config_dir>/devboy-tools/secrets/vault.dvb`.
+    #[arg(long)]
+    pub vault: Option<PathBuf>,
+    /// Cap on the wait-for-socket loop, in seconds. Defaults to
+    /// [`secrets_agent::DEFAULT_SPAWN_TIMEOUT`].
+    #[arg(long)]
+    pub timeout_secs: Option<u64>,
 }
 
 /// Flags for `devboy secrets list`.
@@ -58,11 +93,48 @@ pub struct DescribeArgs {
 }
 
 /// Dispatch a `devboy secrets` subcommand.
-pub fn handle(command: SecretsCommands) -> Result<()> {
+pub async fn handle(command: SecretsCommands) -> Result<()> {
     match command {
         SecretsCommands::List(args) => list(args),
         SecretsCommands::Describe(args) => describe(args),
+        SecretsCommands::Agent { command } => match command {
+            AgentCommands::Status => agent_status().await,
+            AgentCommands::Start(args) => agent_start(args).await,
+        },
     }
+}
+
+// =============================================================================
+// agent
+// =============================================================================
+
+async fn agent_status() -> Result<()> {
+    let socket_path = devboy_secrets_agent::default_socket_path()
+        .context("could not resolve the default agent socket path")?;
+    let live = secrets_agent::is_socket_live(&socket_path).await;
+    println!("socket path:  {}", socket_path.display());
+    println!("status:       {}", if live { "live" } else { "down" });
+    match secrets_agent::find_agent_binary() {
+        Ok(p) => println!("binary:       {}", p.display()),
+        Err(e) => println!("binary:       <not found> ({e})"),
+    }
+    Ok(())
+}
+
+async fn agent_start(args: AgentStartArgs) -> Result<()> {
+    let socket_path = devboy_secrets_agent::default_socket_path()
+        .context("could not resolve the default agent socket path")?;
+    let timeout = match args.timeout_secs {
+        Some(s) => Duration::from_secs(s),
+        None => secrets_agent::DEFAULT_SPAWN_TIMEOUT,
+    };
+    secrets_agent::ensure_agent_running(&socket_path, args.vault.as_deref(), timeout).await?;
+    println!(
+        "agent is running on {} (waited up to {:?})",
+        socket_path.display(),
+        timeout
+    );
+    Ok(())
 }
 
 // =============================================================================

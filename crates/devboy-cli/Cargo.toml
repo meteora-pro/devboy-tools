@@ -29,6 +29,7 @@ devboy-core = { workspace = true }
 devboy-executor = { workspace = true }
 devboy-mcp = { workspace = true }
 devboy-storage = { workspace = true }
+devboy-secrets-agent = { workspace = true }
 devboy-github = { workspace = true }
 devboy-gitlab = { workspace = true }
 devboy-clickup = { workspace = true }

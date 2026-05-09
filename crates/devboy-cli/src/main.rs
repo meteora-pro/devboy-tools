@@ -3,6 +3,7 @@
 mod agents_cmd;
 mod doctor;
 mod onboard_cmd;
+mod secrets_agent;
 mod secrets_cmd;
 mod skills_cmd;
 mod update_check;
@@ -955,7 +956,7 @@ async fn main() -> Result<()> {
                 skills_cmd::handle(command).await?;
             }
             Some(Commands::Secrets { command }) => {
-                secrets_cmd::handle(command)?;
+                secrets_cmd::handle(command).await?;
             }
 
             Some(Commands::Agents { command }) => {

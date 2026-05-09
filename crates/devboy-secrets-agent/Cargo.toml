@@ -37,7 +37,7 @@ dirs.workspace = true
 
 # Unix-only deps for socket creation, file permissions, and peer credential checks.
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.30", default-features = false, features = ["user"] }
+nix = { version = "0.30", default-features = false, features = ["user", "process"] }
 
 [dev-dependencies]
 tempfile.workspace = true
