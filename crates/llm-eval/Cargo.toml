@@ -1,13 +1,16 @@
 [package]
 name = "llm-eval"
-description = "LLM comprehension eval for TrimTree strategy ablation"
+description = "LLM comprehension eval for TrimTree strategy ablation — internal research tool, not for public consumption."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+# Internal research binary — kept off crates.io. See ADR-022.
+publish = false
 
 [dependencies]
-devboy-format-pipeline = { path = "../plugins/format-pipeline" }
+devboy-format-pipeline = { workspace = true }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
