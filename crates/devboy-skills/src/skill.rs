@@ -9,7 +9,7 @@ use serde_json::Value as JsonValue;
 use crate::error::{Result, SkillError};
 
 /// One of the six baseline skill categories. Keep in sync with the
-/// on-disk `skills/<NN-category>/` layout and with [`Self::from_str`].
+/// on-disk `skills/<NN-category>/` layout and with [`Self::parse`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Category {

@@ -131,6 +131,26 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features
 
+  rustdoc:
+    name: Rustdoc (no deps, no warnings)
+    runs-on: ubuntu-latest
+    # Builds the rustdoc tree for every workspace crate and fails on
+    # any warning — covers missing_docs in `#![warn(missing_docs)]`
+    # surfaces (the legacy backlog is hidden behind module-level
+    # `#[allow(missing_docs)]`, so warns only fire on *new* leaks)
+    # plus broken intra-doc links. Mirrors what docs.rs renders for
+    # published crates (ADR-022).
+    env:
+      RUSTDOCFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo doc --no-deps --workspace --all-features
+        run: cargo doc --no-deps --workspace --all-features
+
   publish-dry-run:
     name: cargo publish --dry-run (devboy-core)
     runs-on: ubuntu-latest

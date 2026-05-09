@@ -132,8 +132,8 @@ pub trait IssueProvider: Send + Sync {
     ///
     /// Not all providers expose a delete endpoint for attachments (ClickUp
     /// doesn't, GitLab file uploads are immutable) — the default returns
-    /// `ProviderUnsupported` and callers can consult [`asset_capabilities`]
-    /// beforehand.
+    /// `ProviderUnsupported` and callers can consult
+    /// [`asset_capabilities`](Self::asset_capabilities) beforehand.
     async fn delete_attachment(&self, _issue_key: &str, _asset_id: &str) -> Result<()> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
@@ -149,7 +149,7 @@ pub trait IssueProvider: Send + Sync {
         AssetCapabilities::default()
     }
 
-    /// Set custom fields on an issue. Each entry: {"id": "field_id", "value": <value>}.
+    /// Set custom fields on an issue. Each entry: `{"id": "field_id", "value": <value>}`.
     /// Default is no-op — override in providers that support custom fields (e.g., ClickUp).
     async fn set_custom_fields(
         &self,
