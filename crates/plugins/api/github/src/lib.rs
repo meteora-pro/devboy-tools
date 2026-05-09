@@ -4,10 +4,8 @@
 //! This crate provides integration with GitHub API for issues,
 //! pull requests, and other GitHub-specific functionality.
 
-#[allow(missing_docs)]
 mod client;
 pub mod enricher;
-#[allow(missing_docs)]
 mod types;
 
 pub use client::GitHubClient;
