@@ -45,6 +45,8 @@ pub mod index;
 pub mod manifest;
 pub mod merge;
 pub mod pattern_resolution;
+pub mod plugin_manifest;
+pub mod plugin_protocol;
 pub mod router_cache;
 pub mod router_config;
 pub mod router_credentials;

@@ -31,6 +31,8 @@ async-trait.workspace = true
 bitflags = "2.6"
 regex.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std"] }
+sha2.workspace = true
+hex = "0.4"
 
 # Keychain access (platform-specific features)
 [target.'cfg(target_os = "macos")'.dependencies]
