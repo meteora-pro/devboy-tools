@@ -28,6 +28,7 @@
 //! [ADR-023]: https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use devboy_vault_crypto::{
     EntryMetadata, RecoveryPhrase, UnlockMethod, Vault, VaultError, parse_recovery_phrase,
@@ -37,6 +38,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 
+use crate::idle::{IdleClock, IdleTracker};
 use crate::rpc::{
     BAD_UNLOCK, ENTRY_NOT_FOUND, FramingError, INVALID_PARAMS, IO_ERROR, JsonRpcError,
     JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND, NO_MATCHING_ENVELOPE, VAULT_LOCKED,
@@ -49,21 +51,56 @@ use crate::rpc::{
 /// after `vault.lock` (or before the first unlock). The on-disk path
 /// is captured at construction time so unlock attempts can find the
 /// file again.
+///
+/// `idle` carries the ADR-023 §3.3 idle-timeout policy: every
+/// successful "real" operation (`secret.get`, `.list`, `.put`,
+/// `.rotate`, `metadata.update`) bumps `last_activity`; the next
+/// dispatched request observes the elapsed time and, if it exceeds
+/// `idle_timeout`, drops the cached `Vault` (zeroizing the wrap key)
+/// before running the handler.
 pub struct VaultServer {
     /// Path of the vault file on disk.
     vault_path: PathBuf,
     /// Currently-unlocked vault, or `None` when locked.
     vault: Option<Vault>,
+    /// Idle-timeout state. See ADR-023 §3.3.
+    idle: IdleTracker,
 }
 
 impl VaultServer {
-    /// Build a new server around `vault_path`. The vault starts
-    /// **locked** — call `vault.unlock` (via JSON-RPC) before any
-    /// `secret.*` method.
+    /// Build a new server around `vault_path` with the ADR-023 §3.3
+    /// default 15-minute idle timeout. The vault starts **locked** —
+    /// call `vault.unlock` (via JSON-RPC) before any `secret.*`
+    /// method.
     pub fn new(vault_path: PathBuf) -> Self {
         Self {
             vault_path,
             vault: None,
+            idle: IdleTracker::new(),
+        }
+    }
+
+    /// Build a server with a custom idle-timeout duration. Honours
+    /// `~/.devboy/config.toml`-driven configuration when wired up.
+    pub fn with_idle_timeout(vault_path: PathBuf, idle_timeout: Duration) -> Self {
+        Self {
+            vault_path,
+            vault: None,
+            idle: IdleTracker::with_timeout(idle_timeout),
+        }
+    }
+
+    /// Build a server with a caller-supplied clock. Used by tests
+    /// that want to fast-forward the idle timer without sleeping.
+    pub fn with_clock(
+        vault_path: PathBuf,
+        idle_timeout: Duration,
+        clock: std::sync::Arc<dyn IdleClock>,
+    ) -> Self {
+        Self {
+            vault_path,
+            vault: None,
+            idle: IdleTracker::with_clock(idle_timeout, clock),
         }
     }
 
@@ -75,6 +112,31 @@ impl VaultServer {
     /// Path of the vault file the server operates on.
     pub fn vault_path(&self) -> &std::path::Path {
         &self.vault_path
+    }
+
+    /// Borrow the idle tracker. Useful for `doctor`-style
+    /// diagnostics and tests that want to inspect the timer state.
+    pub fn idle(&self) -> &IdleTracker {
+        &self.idle
+    }
+
+    /// Drop the in-memory `Vault` (zeroizes the vault key) and reset
+    /// the idle tracker. Idempotent — safe to call when already
+    /// locked. Used both by `vault.lock` and by the auto-lock check
+    /// before each request.
+    fn lock_now(&mut self) {
+        self.vault = None;
+        self.idle.record_lock();
+    }
+
+    /// Run the auto-lock check before dispatching a request. Drops
+    /// the cached `Vault` if the idle window has elapsed; subsequent
+    /// `secret.*` operations then return `VAULT_LOCKED` without any
+    /// extra plumbing.
+    fn check_auto_lock(&mut self) {
+        if self.idle.should_auto_lock() {
+            self.lock_now();
+        }
     }
 
     /// Serve a single connection: read requests, dispatch, write
@@ -113,8 +175,16 @@ impl VaultServer {
     /// Public for testing; the connection loop in
     /// [`serve_connection`](Self::serve_connection) calls this
     /// internally per request.
+    ///
+    /// Runs the auto-lock check before dispatching so a request that
+    /// arrives after the idle window has elapsed sees the locked
+    /// state. "Real" operations (`secret.*`, `metadata.update`) bump
+    /// the activity timestamp on success so the timer resets per
+    /// ADR-023 §3.3.
     pub async fn handle_request(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
-        match req.method.as_str() {
+        self.check_auto_lock();
+        let method = req.method.clone();
+        let response = match method.as_str() {
             "vault.unlock" => self.handle_vault_unlock(req).await,
             "vault.lock" => self.handle_vault_lock(req),
             "vault.status" => self.handle_vault_status(req),
@@ -127,7 +197,16 @@ impl VaultServer {
                 req.id,
                 JsonRpcError::new(METHOD_NOT_FOUND, format!("unknown method: {other}")),
             ),
+        };
+        // Bump the activity timestamp when a "real" op succeeded.
+        // `vault.unlock`/`vault.lock`/`vault.status` are not real
+        // ops — the unlock handler bumps via `record_unlock`, the
+        // lock handler clears via `record_lock`, and `vault.status`
+        // is a free probe that should not extend the window.
+        if response.error.is_none() && is_user_activity(&method) {
+            self.idle.record_activity();
         }
+        response
     }
 
     // -- vault.* handlers --------------------------------------------------
@@ -145,6 +224,7 @@ impl VaultServer {
         match Vault::open(&self.vault_path, unlock) {
             Ok(vault) => {
                 self.vault = Some(vault);
+                self.idle.record_unlock();
                 JsonRpcResponse::ok(id, json!({"state": "unlocked"}))
             }
             Err(e) => JsonRpcResponse::err(id, vault_error_to_rpc(&e)),
@@ -154,7 +234,7 @@ impl VaultServer {
     fn handle_vault_lock(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
         // `vault` is dropped here, which zeroizes the SecretBox per
         // ADR-023 §3.3 "eager re-lock".
-        self.vault = None;
+        self.lock_now();
         JsonRpcResponse::ok(req.id, json!({"locked": true}))
     }
 
@@ -413,6 +493,18 @@ fn locked_response(id: Value) -> JsonRpcResponse {
     JsonRpcResponse::err(
         id,
         JsonRpcError::new(VAULT_LOCKED, "vault is locked; call vault.unlock first"),
+    )
+}
+
+/// Whether a method counts as "user activity" for the ADR-023 §3.3
+/// idle-timeout. `vault.status` and `vault.lock` are free probes /
+/// shutdown signals; they do not extend the unlock window.
+/// `vault.unlock` resets the window through `record_unlock`, not via
+/// this helper.
+fn is_user_activity(method: &str) -> bool {
+    matches!(
+        method,
+        "secret.get" | "secret.list" | "secret.put" | "secret.rotate" | "metadata.update"
     )
 }
 
@@ -799,5 +891,151 @@ mod tests {
         assert_eq!(resp.result.unwrap()["state"], "locked");
 
         server_handle.await.unwrap();
+    }
+
+    // -- Idle-timeout integration -----------------------------------------
+
+    /// Build a server bound to `vault_path` with a 10-second idle
+    /// timeout and a [`ManualClock`] so the timer can be raced past
+    /// without sleeping.
+    fn server_with_manual_clock(
+        vault_path: PathBuf,
+        clock: crate::idle::ManualClock,
+    ) -> VaultServer {
+        VaultServer::with_clock(
+            vault_path,
+            std::time::Duration::from_secs(10),
+            std::sync::Arc::new(clock),
+        )
+    }
+
+    #[tokio::test]
+    async fn auto_lock_after_idle_timeout_returns_vault_locked() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("vault.dvb");
+        let _outcome = Vault::create(&path, fast_init("p")).unwrap();
+        let clock = crate::idle::ManualClock::new(std::time::Instant::now());
+        let mut server = server_with_manual_clock(path, clock.clone());
+
+        // Unlock + put.
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+        server
+            .handle_request(req(
+                2,
+                "secret.put",
+                json!({
+                    "path": "a/b/c",
+                    "value": "v",
+                    "fresh_unlock": {"kind": "passphrase", "secret": "p"}
+                }),
+            ))
+            .await;
+
+        // Sanity: get works while inside the window.
+        let r = server
+            .handle_request(req(3, "secret.get", json!({"path": "a/b/c"})))
+            .await;
+        assert_eq!(r.result.unwrap()["value"], "v");
+
+        // Race the clock past the 10-second timeout.
+        clock.advance(std::time::Duration::from_secs(11));
+
+        // Next get must observe the auto-lock and return VAULT_LOCKED.
+        let r = server
+            .handle_request(req(4, "secret.get", json!({"path": "a/b/c"})))
+            .await;
+        assert_eq!(r.error.unwrap().code, VAULT_LOCKED);
+        assert!(!server.is_unlocked());
+    }
+
+    #[tokio::test]
+    async fn activity_resets_idle_window() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("vault.dvb");
+        let _outcome = Vault::create(&path, fast_init("p")).unwrap();
+        let clock = crate::idle::ManualClock::new(std::time::Instant::now());
+        let mut server = server_with_manual_clock(path, clock.clone());
+
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+        server
+            .handle_request(req(
+                2,
+                "secret.put",
+                json!({
+                    "path": "a/b/c",
+                    "value": "v",
+                    "fresh_unlock": {"kind": "passphrase", "secret": "p"}
+                }),
+            ))
+            .await;
+
+        // Two get calls, separated by 8 seconds each. Without the
+        // activity reset the cumulative 16 seconds would auto-lock;
+        // with the reset, only the 8 seconds since the last bump
+        // count.
+        clock.advance(std::time::Duration::from_secs(8));
+        let r1 = server
+            .handle_request(req(3, "secret.get", json!({"path": "a/b/c"})))
+            .await;
+        assert!(r1.result.is_some(), "first get inside the window");
+        clock.advance(std::time::Duration::from_secs(8));
+        let r2 = server
+            .handle_request(req(4, "secret.get", json!({"path": "a/b/c"})))
+            .await;
+        assert!(
+            r2.result.is_some(),
+            "second get must succeed because the first bumped the timer"
+        );
+        assert!(server.is_unlocked());
+    }
+
+    #[tokio::test]
+    async fn vault_status_does_not_extend_idle_window() {
+        // ADR-023 §3.3: only `secret.*` and `metadata.update` count
+        // as activity. `vault.status` is a free probe and must not
+        // keep the daemon awake past its idle timeout.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("vault.dvb");
+        let _outcome = Vault::create(&path, fast_init("p")).unwrap();
+        let clock = crate::idle::ManualClock::new(std::time::Instant::now());
+        let mut server = server_with_manual_clock(path, clock.clone());
+
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+
+        // Walk the clock forward in 4-second steps, calling
+        // vault.status each time. Total elapsed = 12 seconds (>10s
+        // timeout).
+        for step in 0..3 {
+            clock.advance(std::time::Duration::from_secs(4));
+            let r = server
+                .handle_request(req(100 + step as i64, "vault.status", Value::Null))
+                .await;
+            assert!(r.error.is_none(), "vault.status itself never errors");
+        }
+
+        // The next "real" call must observe the auto-lock —
+        // vault.status didn't bump the timer.
+        let r = server
+            .handle_request(req(2, "secret.list", Value::Null))
+            .await;
+        assert_eq!(r.error.unwrap().code, VAULT_LOCKED);
     }
 }

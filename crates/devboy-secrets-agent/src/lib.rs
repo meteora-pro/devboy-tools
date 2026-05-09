@@ -14,10 +14,15 @@
 
 #![forbid(unsafe_code)]
 
+pub mod idle;
 pub mod rpc;
 pub mod server;
 pub mod socket;
 
+pub use idle::{
+    DEFAULT_IDLE_TIMEOUT, IdleClock, IdleTracker, ManualClock, SIGTERM_GRACE, SystemClock,
+    install_sigterm_handler,
+};
 pub use rpc::{
     BAD_UNLOCK, ENTRY_NOT_FOUND, FramingError, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST,
     IO_ERROR, JSONRPC_VERSION, JsonRpcError, JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND,
