@@ -8,7 +8,9 @@ use devboy_core::{
 /// Metadata from provider result (pagination + sort info).
 #[derive(Debug, Clone, Default)]
 pub struct ResultMeta {
+    /// Pagination.
     pub pagination: Option<Pagination>,
+    /// Sort info.
     pub sort_info: Option<SortInfo>,
 }
 

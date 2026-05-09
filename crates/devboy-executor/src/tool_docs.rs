@@ -22,15 +22,20 @@ use crate::tools::{McpOnlyTool, ToolDefinition, base_tool_definitions, mcp_only_
 /// rendered with a footnote so users know they may not be available.
 #[derive(Debug, Clone)]
 pub struct ProviderInfo {
+    /// Display name.
     pub display_name: &'static str,
+    /// Key.
     pub key: &'static str,
+    /// Default categories.
     pub default_categories: &'static [ToolCategory],
+    /// Conditional categories.
     pub conditional_categories: &'static [ConditionalCategory],
 }
 
 /// A category that a provider only supports under specific conditions.
 #[derive(Debug, Clone, Copy)]
 pub struct ConditionalCategory {
+    /// Category.
     pub category: ToolCategory,
     /// Short note rendered next to the matrix cell.
     pub note: &'static str,
@@ -94,7 +99,9 @@ pub fn known_providers() -> Vec<ProviderInfo> {
 /// Output format for the docs renderer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocsFormat {
+    /// Markdown.
     Markdown,
+    /// Json.
     Json,
 }
 

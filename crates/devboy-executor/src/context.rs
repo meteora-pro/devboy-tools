@@ -6,9 +6,15 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GitLabScope {
     /// Single project: `/api/v4/projects/{id}/...`
-    Project { id: String },
+    Project {
+        /// Project id (numeric or `group/project` slug).
+        id: String,
+    },
     /// Group-level: `/api/v4/groups/{id}/...`
-    Group { id: String },
+    Group {
+        /// Group id (numeric or path).
+        id: String,
+    },
     /// Global: `/api/v4/...`
     Global,
 }
@@ -17,9 +23,17 @@ pub enum GitLabScope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GitHubScope {
     /// Single repository: `/repos/{owner}/{repo}/...`
-    Repository { owner: String, repo: String },
+    Repository {
+        /// Owner (user or org).
+        owner: String,
+        /// Repo name.
+        repo: String,
+    },
     /// Organization-level: search with `org:` qualifier
-    Organization { name: String },
+    Organization {
+        /// Organization login.
+        name: String,
+    },
     /// Global: search across all accessible resources
     Global,
 }
@@ -28,30 +42,47 @@ pub enum GitHubScope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClickUpScope {
     /// Single list (with optional team_id for custom task ID resolution)
-    List { id: String, team_id: Option<String> },
+    List {
+        /// List id.
+        id: String,
+        /// Optional team id (workspace) for custom task ID resolution.
+        team_id: Option<String>,
+    },
 }
 
 /// Scope for Jira API calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum JiraScope {
     /// Single Jira project
-    Project { key: String },
+    Project {
+        /// Project key (e.g. `DEV`).
+        key: String,
+    },
     /// Multiple Jira projects (union of results)
-    MultiProject { keys: Vec<String> },
+    MultiProject {
+        /// Project keys.
+        keys: Vec<String>,
+    },
 }
 
 /// Scope for Confluence API calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConfluenceScope {
     /// Single Confluence instance, optionally scoped by a default space key.
-    Space { key: Option<String> },
+    Space {
+        /// Default space key (optional).
+        key: Option<String>,
+    },
 }
 
 /// Scope for Slack API calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SlackScope {
     /// Single Slack workspace/team.
-    Workspace { team_id: Option<String> },
+    Workspace {
+        /// Team id (workspace id).
+        team_id: Option<String>,
+    },
 }
 
 /// Authentication configuration for Confluence self-hosted.
@@ -61,11 +92,16 @@ pub enum SlackScope {
 /// expose `password` / `token` via the wire format.
 #[derive(Debug, Clone)]
 pub enum ConfluenceAuthConfig {
+    /// BearerToken.
     BearerToken {
+        /// Token.
         token: SecretString,
     },
+    /// Basic.
     Basic {
+        /// Username.
         username: String,
+        /// Password.
         password: SecretString,
     },
 }
@@ -82,56 +118,91 @@ pub enum ConfluenceAuthConfig {
 /// `Config` + `CredentialStore` instead of round-tripping through transport.
 #[derive(Debug, Clone)]
 pub enum ProviderConfig {
+    /// GitLab.
     GitLab {
+        /// Base url.
         base_url: String,
+        /// Access token.
         access_token: SecretString,
+        /// Scope.
         scope: GitLabScope,
+        /// Extra.
         extra: HashMap<String, serde_json::Value>,
     },
+    /// GitHub.
     GitHub {
+        /// Base url.
         base_url: String,
+        /// Access token.
         access_token: SecretString,
+        /// Scope.
         scope: GitHubScope,
+        /// Extra.
         extra: HashMap<String, serde_json::Value>,
     },
+    /// ClickUp.
     ClickUp {
+        /// Access token.
         access_token: SecretString,
+        /// Scope.
         scope: ClickUpScope,
+        /// Extra.
         extra: HashMap<String, serde_json::Value>,
     },
+    /// Jira.
     Jira {
+        /// Base url.
         base_url: String,
+        /// Access token.
         access_token: SecretString,
+        /// Email.
         email: String,
+        /// Scope.
         scope: JiraScope,
         /// Explicit flavor override. When set, skips auto-detection from URL.
         /// Important for proxy scenarios where URL doesn't reflect actual Jira deployment.
         flavor: Option<devboy_jira::JiraFlavor>,
+        /// Extra.
         extra: HashMap<String, serde_json::Value>,
     },
+    /// Confluence.
     Confluence {
+        /// Base url.
         base_url: String,
+        /// Auth.
         auth: ConfluenceAuthConfig,
+        /// Scope.
         scope: ConfluenceScope,
+        /// Api version.
         api_version: Option<String>,
+        /// Extra.
         extra: HashMap<String, serde_json::Value>,
     },
     /// Fireflies.ai meeting notes provider.
     Fireflies {
+        /// Api key.
         api_key: SecretString,
+        /// Extra.
         extra: HashMap<String, serde_json::Value>,
     },
     /// Slack messenger provider.
     Slack {
+        /// Base url.
         base_url: String,
+        /// Access token.
         access_token: SecretString,
+        /// Scope.
         scope: SlackScope,
+        /// Required scopes.
         required_scopes: Vec<String>,
+        /// Extra.
         extra: HashMap<String, serde_json::Value>,
     },
     /// Fully dynamic variant for community/custom provider plugins.
     Custom {
+        /// Name.
         name: String,
+        /// Config.
         config: HashMap<String, serde_json::Value>,
     },
 }
@@ -159,8 +230,10 @@ impl ProviderConfig {
 /// The provider's own auth headers are suppressed — proxy handles authentication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
+    /// Url.
     pub url: String,
     #[serde(default)]
+    /// Headers.
     pub headers: HashMap<String, String>,
 }
 
@@ -179,6 +252,7 @@ pub struct ProviderMetadata {
 }
 
 impl ProviderMetadata {
+    /// New.
     pub fn new(data: serde_json::Value) -> Self {
         Self { data }
     }
@@ -196,9 +270,13 @@ impl ProviderMetadata {
 /// `SecretString` access tokens that must not leak through wire formats.
 #[derive(Debug, Clone)]
 pub struct AdditionalContext {
+    /// Provider.
     pub provider: ProviderConfig,
+    /// Proxy.
     pub proxy: Option<ProxyConfig>,
+    /// Metadata.
     pub metadata: Option<ProviderMetadata>,
+    /// Extra.
     pub extra: HashMap<String, serde_json::Value>,
 }
 

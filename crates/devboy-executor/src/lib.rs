@@ -42,19 +42,17 @@
 
 #![warn(missing_docs)]
 
-#[allow(missing_docs)]
+/// Typed runtime context: provider configs, scopes, additional metadata.
 pub mod context;
 pub mod enricher;
-#[allow(missing_docs)]
+/// Tool execution engine.
 pub mod executor;
-#[allow(missing_docs)]
+/// Provider factory — builds concrete `Provider` instances from `ProviderConfig`.
 pub mod factory;
 pub mod format;
-#[allow(missing_docs)]
+/// Typed `ToolOutput` returned from tool execution.
 pub mod output;
-#[allow(missing_docs)]
 pub mod tool_docs;
-#[allow(missing_docs)]
 pub mod tools;
 
 // Re-export main types at crate root
