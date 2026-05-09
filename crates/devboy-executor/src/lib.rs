@@ -40,11 +40,17 @@
 //! # }
 //! ```
 
+#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![deny(rustdoc::invalid_html_tags)]
+/// Typed runtime context: provider configs, scopes, additional metadata.
 pub mod context;
 pub mod enricher;
 pub mod executor;
+/// Provider factory — builds concrete `Provider` instances from `ProviderConfig`.
 pub mod factory;
 pub mod format;
+/// Typed `ToolOutput` returned from tool execution.
 pub mod output;
 pub mod tool_docs;
 pub mod tools;

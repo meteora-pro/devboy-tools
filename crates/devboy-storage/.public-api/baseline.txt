@@ -1,0 +1,180 @@
+pub mod devboy_storage
+pub mod devboy_storage::cache
+pub struct devboy_storage::cache::CachedStore<S: devboy_storage::CredentialStore>
+impl<S: devboy_storage::CredentialStore> devboy_storage::cache::CachedStore<S>
+pub fn devboy_storage::cache::CachedStore<S>::invalidate(&self, key: &str)
+pub fn devboy_storage::cache::CachedStore<S>::invalidate_all(&self)
+pub fn devboy_storage::cache::CachedStore<S>::new(inner: S, ttl: core::time::Duration) -> Self
+impl<S: devboy_storage::CredentialStore> core::fmt::Debug for devboy_storage::cache::CachedStore<S>
+pub fn devboy_storage::cache::CachedStore<S>::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<S: devboy_storage::CredentialStore> devboy_storage::CredentialStore for devboy_storage::cache::CachedStore<S>
+pub fn devboy_storage::cache::CachedStore<S>::delete(&self, key: &str) -> devboy_core::error::Result<()>
+pub fn devboy_storage::cache::CachedStore<S>::exists(&self, key: &str) -> bool
+pub fn devboy_storage::cache::CachedStore<S>::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
+pub fn devboy_storage::cache::CachedStore<S>::is_available(&self) -> bool
+pub fn devboy_storage::cache::CachedStore<S>::is_writable(&self) -> bool
+pub fn devboy_storage::cache::CachedStore<S>::store(&self, key: &str, value: &secrecy::SecretString) -> devboy_core::error::Result<()>
+impl<S> !core::marker::Freeze for devboy_storage::cache::CachedStore<S>
+impl<S> core::marker::Send for devboy_storage::cache::CachedStore<S>
+impl<S> core::marker::Sync for devboy_storage::cache::CachedStore<S>
+impl<S> core::marker::Unpin for devboy_storage::cache::CachedStore<S> where S: core::marker::Unpin
+impl<S> core::marker::UnsafeUnpin for devboy_storage::cache::CachedStore<S> where S: core::marker::UnsafeUnpin
+impl<S> core::panic::unwind_safe::RefUnwindSafe for devboy_storage::cache::CachedStore<S> where S: core::panic::unwind_safe::RefUnwindSafe
+impl<S> core::panic::unwind_safe::UnwindSafe for devboy_storage::cache::CachedStore<S> where S: core::panic::unwind_safe::UnwindSafe
+pub struct devboy_storage::CachedStore<S: devboy_storage::CredentialStore>
+impl<S: devboy_storage::CredentialStore> devboy_storage::cache::CachedStore<S>
+pub fn devboy_storage::cache::CachedStore<S>::invalidate(&self, key: &str)
+pub fn devboy_storage::cache::CachedStore<S>::invalidate_all(&self)
+pub fn devboy_storage::cache::CachedStore<S>::new(inner: S, ttl: core::time::Duration) -> Self
+impl<S: devboy_storage::CredentialStore> core::fmt::Debug for devboy_storage::cache::CachedStore<S>
+pub fn devboy_storage::cache::CachedStore<S>::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<S: devboy_storage::CredentialStore> devboy_storage::CredentialStore for devboy_storage::cache::CachedStore<S>
+pub fn devboy_storage::cache::CachedStore<S>::delete(&self, key: &str) -> devboy_core::error::Result<()>
+pub fn devboy_storage::cache::CachedStore<S>::exists(&self, key: &str) -> bool
+pub fn devboy_storage::cache::CachedStore<S>::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
+pub fn devboy_storage::cache::CachedStore<S>::is_available(&self) -> bool
+pub fn devboy_storage::cache::CachedStore<S>::is_writable(&self) -> bool
+pub fn devboy_storage::cache::CachedStore<S>::store(&self, key: &str, value: &secrecy::SecretString) -> devboy_core::error::Result<()>
+impl<S> !core::marker::Freeze for devboy_storage::cache::CachedStore<S>
+impl<S> core::marker::Send for devboy_storage::cache::CachedStore<S>
+impl<S> core::marker::Sync for devboy_storage::cache::CachedStore<S>
+impl<S> core::marker::Unpin for devboy_storage::cache::CachedStore<S> where S: core::marker::Unpin
+impl<S> core::marker::UnsafeUnpin for devboy_storage::cache::CachedStore<S> where S: core::marker::UnsafeUnpin
+impl<S> core::panic::unwind_safe::RefUnwindSafe for devboy_storage::cache::CachedStore<S> where S: core::panic::unwind_safe::RefUnwindSafe
+impl<S> core::panic::unwind_safe::UnwindSafe for devboy_storage::cache::CachedStore<S> where S: core::panic::unwind_safe::UnwindSafe
+pub struct devboy_storage::ChainStore
+impl devboy_storage::ChainStore
+pub fn devboy_storage::ChainStore::ci_chain() -> Self
+pub fn devboy_storage::ChainStore::default_chain() -> Self
+pub fn devboy_storage::ChainStore::is_empty(&self) -> bool
+pub fn devboy_storage::ChainStore::len(&self) -> usize
+pub fn devboy_storage::ChainStore::new(stores: alloc::vec::Vec<alloc::boxed::Box<dyn devboy_storage::CredentialStore>>) -> Self
+impl core::fmt::Debug for devboy_storage::ChainStore
+pub fn devboy_storage::ChainStore::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl devboy_storage::CredentialStore for devboy_storage::ChainStore
+pub fn devboy_storage::ChainStore::delete(&self, key: &str) -> devboy_core::error::Result<()>
+pub fn devboy_storage::ChainStore::exists(&self, key: &str) -> bool
+pub fn devboy_storage::ChainStore::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
+pub fn devboy_storage::ChainStore::is_available(&self) -> bool
+pub fn devboy_storage::ChainStore::is_writable(&self) -> bool
+pub fn devboy_storage::ChainStore::store(&self, key: &str, value: &secrecy::SecretString) -> devboy_core::error::Result<()>
+impl core::marker::Freeze for devboy_storage::ChainStore
+impl core::marker::Send for devboy_storage::ChainStore
+impl core::marker::Sync for devboy_storage::ChainStore
+impl core::marker::Unpin for devboy_storage::ChainStore
+impl core::marker::UnsafeUnpin for devboy_storage::ChainStore
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_storage::ChainStore
+impl !core::panic::unwind_safe::UnwindSafe for devboy_storage::ChainStore
+pub struct devboy_storage::EnvVarStore
+impl devboy_storage::EnvVarStore
+pub fn devboy_storage::EnvVarStore::new() -> Self
+pub fn devboy_storage::EnvVarStore::with_prefix(prefix: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_storage::EnvVarStore::without_fallback(self) -> Self
+impl core::default::Default for devboy_storage::EnvVarStore
+pub fn devboy_storage::EnvVarStore::default() -> Self
+impl core::fmt::Debug for devboy_storage::EnvVarStore
+pub fn devboy_storage::EnvVarStore::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl devboy_storage::CredentialStore for devboy_storage::EnvVarStore
+pub fn devboy_storage::EnvVarStore::delete(&self, _key: &str) -> devboy_core::error::Result<()>
+pub fn devboy_storage::EnvVarStore::exists(&self, key: &str) -> bool
+pub fn devboy_storage::EnvVarStore::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
+pub fn devboy_storage::EnvVarStore::is_available(&self) -> bool
+pub fn devboy_storage::EnvVarStore::is_writable(&self) -> bool
+pub fn devboy_storage::EnvVarStore::store(&self, _key: &str, _value: &secrecy::SecretString) -> devboy_core::error::Result<()>
+impl core::marker::Freeze for devboy_storage::EnvVarStore
+impl core::marker::Send for devboy_storage::EnvVarStore
+impl core::marker::Sync for devboy_storage::EnvVarStore
+impl core::marker::Unpin for devboy_storage::EnvVarStore
+impl core::marker::UnsafeUnpin for devboy_storage::EnvVarStore
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::EnvVarStore
+impl core::panic::unwind_safe::UnwindSafe for devboy_storage::EnvVarStore
+pub struct devboy_storage::KeychainStore
+impl devboy_storage::KeychainStore
+pub fn devboy_storage::KeychainStore::new() -> Self
+pub fn devboy_storage::KeychainStore::with_service_name(service_name: impl core::convert::Into<alloc::string::String>) -> Self
+impl core::default::Default for devboy_storage::KeychainStore
+pub fn devboy_storage::KeychainStore::default() -> Self
+impl core::fmt::Debug for devboy_storage::KeychainStore
+pub fn devboy_storage::KeychainStore::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl devboy_storage::CredentialStore for devboy_storage::KeychainStore
+pub fn devboy_storage::KeychainStore::delete(&self, key: &str) -> devboy_core::error::Result<()>
+pub fn devboy_storage::KeychainStore::exists(&self, key: &str) -> bool
+pub fn devboy_storage::KeychainStore::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
+pub fn devboy_storage::KeychainStore::is_available(&self) -> bool
+pub fn devboy_storage::KeychainStore::is_writable(&self) -> bool
+pub fn devboy_storage::KeychainStore::store(&self, key: &str, value: &secrecy::SecretString) -> devboy_core::error::Result<()>
+impl core::marker::Freeze for devboy_storage::KeychainStore
+impl core::marker::Send for devboy_storage::KeychainStore
+impl core::marker::Sync for devboy_storage::KeychainStore
+impl core::marker::Unpin for devboy_storage::KeychainStore
+impl core::marker::UnsafeUnpin for devboy_storage::KeychainStore
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::KeychainStore
+impl core::panic::unwind_safe::UnwindSafe for devboy_storage::KeychainStore
+pub struct devboy_storage::MemoryStore
+impl devboy_storage::MemoryStore
+pub fn devboy_storage::MemoryStore::new() -> Self
+pub fn devboy_storage::MemoryStore::with_credentials(credentials: impl core::iter::traits::collect::IntoIterator<Item = (alloc::string::String, alloc::string::String)>) -> Self
+impl core::default::Default for devboy_storage::MemoryStore
+pub fn devboy_storage::MemoryStore::default() -> devboy_storage::MemoryStore
+impl core::fmt::Debug for devboy_storage::MemoryStore
+pub fn devboy_storage::MemoryStore::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl devboy_storage::CredentialStore for devboy_storage::MemoryStore
+pub fn devboy_storage::MemoryStore::delete(&self, key: &str) -> devboy_core::error::Result<()>
+pub fn devboy_storage::MemoryStore::exists(&self, key: &str) -> bool
+pub fn devboy_storage::MemoryStore::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
+pub fn devboy_storage::MemoryStore::is_available(&self) -> bool
+pub fn devboy_storage::MemoryStore::is_writable(&self) -> bool
+pub fn devboy_storage::MemoryStore::store(&self, key: &str, value: &secrecy::SecretString) -> devboy_core::error::Result<()>
+impl !core::marker::Freeze for devboy_storage::MemoryStore
+impl core::marker::Send for devboy_storage::MemoryStore
+impl core::marker::Sync for devboy_storage::MemoryStore
+impl core::marker::Unpin for devboy_storage::MemoryStore
+impl core::marker::UnsafeUnpin for devboy_storage::MemoryStore
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::MemoryStore
+impl core::panic::unwind_safe::UnwindSafe for devboy_storage::MemoryStore
+pub trait devboy_storage::CredentialStore: core::marker::Send + core::marker::Sync
+pub fn devboy_storage::CredentialStore::delete(&self, key: &str) -> devboy_core::error::Result<()>
+pub fn devboy_storage::CredentialStore::exists(&self, key: &str) -> bool
+pub fn devboy_storage::CredentialStore::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
+pub fn devboy_storage::CredentialStore::is_available(&self) -> bool
+pub fn devboy_storage::CredentialStore::is_writable(&self) -> bool
+pub fn devboy_storage::CredentialStore::store(&self, key: &str, value: &secrecy::SecretString) -> devboy_core::error::Result<()>
+impl devboy_storage::CredentialStore for devboy_storage::ChainStore
+pub fn devboy_storage::ChainStore::delete(&self, key: &str) -> devboy_core::error::Result<()>
+pub fn devboy_storage::ChainStore::exists(&self, key: &str) -> bool
+pub fn devboy_storage::ChainStore::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
+pub fn devboy_storage::ChainStore::is_available(&self) -> bool
+pub fn devboy_storage::ChainStore::is_writable(&self) -> bool
+pub fn devboy_storage::ChainStore::store(&self, key: &str, value: &secrecy::SecretString) -> devboy_core::error::Result<()>
+impl devboy_storage::CredentialStore for devboy_storage::EnvVarStore
+pub fn devboy_storage::EnvVarStore::delete(&self, _key: &str) -> devboy_core::error::Result<()>
+pub fn devboy_storage::EnvVarStore::exists(&self, key: &str) -> bool
+pub fn devboy_storage::EnvVarStore::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
+pub fn devboy_storage::EnvVarStore::is_available(&self) -> bool
+pub fn devboy_storage::EnvVarStore::is_writable(&self) -> bool
+pub fn devboy_storage::EnvVarStore::store(&self, _key: &str, _value: &secrecy::SecretString) -> devboy_core::error::Result<()>
+impl devboy_storage::CredentialStore for devboy_storage::KeychainStore
+pub fn devboy_storage::KeychainStore::delete(&self, key: &str) -> devboy_core::error::Result<()>
+pub fn devboy_storage::KeychainStore::exists(&self, key: &str) -> bool
+pub fn devboy_storage::KeychainStore::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
+pub fn devboy_storage::KeychainStore::is_available(&self) -> bool
+pub fn devboy_storage::KeychainStore::is_writable(&self) -> bool
+pub fn devboy_storage::KeychainStore::store(&self, key: &str, value: &secrecy::SecretString) -> devboy_core::error::Result<()>
+impl devboy_storage::CredentialStore for devboy_storage::MemoryStore
+pub fn devboy_storage::MemoryStore::delete(&self, key: &str) -> devboy_core::error::Result<()>
+pub fn devboy_storage::MemoryStore::exists(&self, key: &str) -> bool
+pub fn devboy_storage::MemoryStore::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
+pub fn devboy_storage::MemoryStore::is_available(&self) -> bool
+pub fn devboy_storage::MemoryStore::is_writable(&self) -> bool
+pub fn devboy_storage::MemoryStore::store(&self, key: &str, value: &secrecy::SecretString) -> devboy_core::error::Result<()>
+impl<S: devboy_storage::CredentialStore> devboy_storage::CredentialStore for devboy_storage::cache::CachedStore<S>
+pub fn devboy_storage::cache::CachedStore<S>::delete(&self, key: &str) -> devboy_core::error::Result<()>
+pub fn devboy_storage::cache::CachedStore<S>::exists(&self, key: &str) -> bool
+pub fn devboy_storage::cache::CachedStore<S>::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
+pub fn devboy_storage::cache::CachedStore<S>::is_available(&self) -> bool
+pub fn devboy_storage::cache::CachedStore<S>::is_writable(&self) -> bool
+pub fn devboy_storage::cache::CachedStore<S>::store(&self, key: &str, value: &secrecy::SecretString) -> devboy_core::error::Result<()>
+pub fn devboy_storage::build_default_store(cache_ttl_secs: u64) -> alloc::boxed::Box<dyn devboy_storage::CredentialStore>
+pub fn devboy_storage::email_key(provider: &str) -> alloc::string::String
+pub fn devboy_storage::token_key(provider: &str) -> alloc::string::String
+pub fn devboy_storage::wrap_with_cache<S: devboy_storage::CredentialStore + 'static>(inner: S, cache_ttl_secs: u64) -> alloc::boxed::Box<dyn devboy_storage::CredentialStore>

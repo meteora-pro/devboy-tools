@@ -1,0 +1,400 @@
+pub mod devboy_github
+pub mod devboy_github::enricher
+pub struct devboy_github::enricher::GitHubSchemaEnricher
+impl devboy_core::enricher::ToolEnricher for devboy_github::enricher::GitHubSchemaEnricher
+pub fn devboy_github::enricher::GitHubSchemaEnricher::enrich_schema(&self, tool_name: &str, schema: &mut devboy_core::enricher::ToolSchema)
+pub fn devboy_github::enricher::GitHubSchemaEnricher::rate_limit_host(&self, _tool_name: &str, _args: &serde_json::value::Value) -> core::option::Option<alloc::string::String>
+pub fn devboy_github::enricher::GitHubSchemaEnricher::supported_categories(&self) -> &[devboy_core::tool_category::ToolCategory]
+pub fn devboy_github::enricher::GitHubSchemaEnricher::transform_args(&self, tool_name: &str, args: &mut serde_json::value::Value)
+pub fn devboy_github::enricher::GitHubSchemaEnricher::value_model(&self, tool_name: &str) -> core::option::Option<devboy_core::tool_value_model::ToolValueModel>
+impl core::marker::Freeze for devboy_github::enricher::GitHubSchemaEnricher
+impl core::marker::Send for devboy_github::enricher::GitHubSchemaEnricher
+impl core::marker::Sync for devboy_github::enricher::GitHubSchemaEnricher
+impl core::marker::Unpin for devboy_github::enricher::GitHubSchemaEnricher
+impl core::marker::UnsafeUnpin for devboy_github::enricher::GitHubSchemaEnricher
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::enricher::GitHubSchemaEnricher
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::enricher::GitHubSchemaEnricher
+pub struct devboy_github::CreateCommentRequest
+pub devboy_github::CreateCommentRequest::body: alloc::string::String
+impl core::clone::Clone for devboy_github::CreateCommentRequest
+pub fn devboy_github::CreateCommentRequest::clone(&self) -> devboy_github::CreateCommentRequest
+impl core::fmt::Debug for devboy_github::CreateCommentRequest
+pub fn devboy_github::CreateCommentRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_github::CreateCommentRequest
+pub fn devboy_github::CreateCommentRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_github::CreateCommentRequest
+impl core::marker::Send for devboy_github::CreateCommentRequest
+impl core::marker::Sync for devboy_github::CreateCommentRequest
+impl core::marker::Unpin for devboy_github::CreateCommentRequest
+impl core::marker::UnsafeUnpin for devboy_github::CreateCommentRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::CreateCommentRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::CreateCommentRequest
+pub struct devboy_github::CreateIssueRequest
+pub devboy_github::CreateIssueRequest::assignees: alloc::vec::Vec<alloc::string::String>
+pub devboy_github::CreateIssueRequest::body: core::option::Option<alloc::string::String>
+pub devboy_github::CreateIssueRequest::labels: alloc::vec::Vec<alloc::string::String>
+pub devboy_github::CreateIssueRequest::title: alloc::string::String
+impl core::clone::Clone for devboy_github::CreateIssueRequest
+pub fn devboy_github::CreateIssueRequest::clone(&self) -> devboy_github::CreateIssueRequest
+impl core::fmt::Debug for devboy_github::CreateIssueRequest
+pub fn devboy_github::CreateIssueRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_github::CreateIssueRequest
+pub fn devboy_github::CreateIssueRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_github::CreateIssueRequest
+impl core::marker::Send for devboy_github::CreateIssueRequest
+impl core::marker::Sync for devboy_github::CreateIssueRequest
+impl core::marker::Unpin for devboy_github::CreateIssueRequest
+impl core::marker::UnsafeUnpin for devboy_github::CreateIssueRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::CreateIssueRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::CreateIssueRequest
+pub struct devboy_github::CreatePullRequestRequest
+pub devboy_github::CreatePullRequestRequest::base: alloc::string::String
+pub devboy_github::CreatePullRequestRequest::body: core::option::Option<alloc::string::String>
+pub devboy_github::CreatePullRequestRequest::draft: core::option::Option<bool>
+pub devboy_github::CreatePullRequestRequest::head: alloc::string::String
+pub devboy_github::CreatePullRequestRequest::title: alloc::string::String
+impl core::clone::Clone for devboy_github::CreatePullRequestRequest
+pub fn devboy_github::CreatePullRequestRequest::clone(&self) -> devboy_github::CreatePullRequestRequest
+impl core::fmt::Debug for devboy_github::CreatePullRequestRequest
+pub fn devboy_github::CreatePullRequestRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_github::CreatePullRequestRequest
+pub fn devboy_github::CreatePullRequestRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_github::CreatePullRequestRequest
+impl core::marker::Send for devboy_github::CreatePullRequestRequest
+impl core::marker::Sync for devboy_github::CreatePullRequestRequest
+impl core::marker::Unpin for devboy_github::CreatePullRequestRequest
+impl core::marker::UnsafeUnpin for devboy_github::CreatePullRequestRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::CreatePullRequestRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::CreatePullRequestRequest
+pub struct devboy_github::CreateReviewCommentRequest
+pub devboy_github::CreateReviewCommentRequest::body: alloc::string::String
+pub devboy_github::CreateReviewCommentRequest::commit_id: alloc::string::String
+pub devboy_github::CreateReviewCommentRequest::in_reply_to: core::option::Option<u64>
+pub devboy_github::CreateReviewCommentRequest::line: core::option::Option<u32>
+pub devboy_github::CreateReviewCommentRequest::path: alloc::string::String
+pub devboy_github::CreateReviewCommentRequest::side: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_github::CreateReviewCommentRequest
+pub fn devboy_github::CreateReviewCommentRequest::clone(&self) -> devboy_github::CreateReviewCommentRequest
+impl core::fmt::Debug for devboy_github::CreateReviewCommentRequest
+pub fn devboy_github::CreateReviewCommentRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_github::CreateReviewCommentRequest
+pub fn devboy_github::CreateReviewCommentRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_github::CreateReviewCommentRequest
+impl core::marker::Send for devboy_github::CreateReviewCommentRequest
+impl core::marker::Sync for devboy_github::CreateReviewCommentRequest
+impl core::marker::Unpin for devboy_github::CreateReviewCommentRequest
+impl core::marker::UnsafeUnpin for devboy_github::CreateReviewCommentRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::CreateReviewCommentRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::CreateReviewCommentRequest
+pub struct devboy_github::GitHubBranchRef
+pub devboy_github::GitHubBranchRef::ref_name: alloc::string::String
+pub devboy_github::GitHubBranchRef::sha: alloc::string::String
+impl core::clone::Clone for devboy_github::GitHubBranchRef
+pub fn devboy_github::GitHubBranchRef::clone(&self) -> devboy_github::GitHubBranchRef
+impl core::fmt::Debug for devboy_github::GitHubBranchRef
+pub fn devboy_github::GitHubBranchRef::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_github::GitHubBranchRef
+pub fn devboy_github::GitHubBranchRef::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_github::GitHubBranchRef
+pub fn devboy_github::GitHubBranchRef::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_github::GitHubBranchRef
+impl core::marker::Send for devboy_github::GitHubBranchRef
+impl core::marker::Sync for devboy_github::GitHubBranchRef
+impl core::marker::Unpin for devboy_github::GitHubBranchRef
+impl core::marker::UnsafeUnpin for devboy_github::GitHubBranchRef
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::GitHubBranchRef
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::GitHubBranchRef
+pub struct devboy_github::GitHubClient
+impl devboy_github::GitHubClient
+pub fn devboy_github::GitHubClient::new(owner: impl core::convert::Into<alloc::string::String>, repo: impl core::convert::Into<alloc::string::String>, token: secrecy::SecretString) -> Self
+pub fn devboy_github::GitHubClient::with_base_url(base_url: impl core::convert::Into<alloc::string::String>, owner: impl core::convert::Into<alloc::string::String>, repo: impl core::convert::Into<alloc::string::String>, token: secrecy::SecretString) -> Self
+impl devboy_core::provider::IssueProvider for devboy_github::GitHubClient
+pub fn devboy_github::GitHubClient::add_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, issue_key: &'life1 str, body: &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Comment>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn devboy_github::GitHubClient::asset_capabilities(&self) -> devboy_core::asset::AssetCapabilities
+pub fn devboy_github::GitHubClient::create_issue<'life0, 'async_trait>(&'life0 self, input: devboy_core::types::CreateIssueInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_github::GitHubClient::download_attachment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, _issue_key: &'life1 str, asset_id: &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<alloc::vec::Vec<u8>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn devboy_github::GitHubClient::get_comments<'life0, 'life1, 'async_trait>(&'life0 self, issue_key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::Comment>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_github::GitHubClient::get_issue<'life0, 'life1, 'async_trait>(&'life0 self, key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_github::GitHubClient::get_issue_attachments<'life0, 'life1, 'async_trait>(&'life0 self, issue_key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<alloc::vec::Vec<devboy_core::asset::AssetMeta>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_github::GitHubClient::get_issues<'life0, 'async_trait>(&'life0 self, filter: devboy_core::types::IssueFilter) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_github::GitHubClient::provider_name(&self) -> &'static str
+pub fn devboy_github::GitHubClient::update_issue<'life0, 'life1, 'async_trait>(&'life0 self, key: &'life1 str, input: devboy_core::types::UpdateIssueInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+impl devboy_core::provider::MergeRequestProvider for devboy_github::GitHubClient
+pub fn devboy_github::GitHubClient::add_comment<'life0, 'life1, 'async_trait>(&'life0 self, mr_key: &'life1 str, input: devboy_core::types::CreateCommentInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Comment>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_github::GitHubClient::create_merge_request<'life0, 'async_trait>(&'life0 self, input: devboy_core::types::CreateMergeRequestInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::MergeRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_github::GitHubClient::download_mr_attachment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, _mr_key: &'life1 str, asset_id: &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<alloc::vec::Vec<u8>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn devboy_github::GitHubClient::get_diffs<'life0, 'life1, 'async_trait>(&'life0 self, mr_key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::FileDiff>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_github::GitHubClient::get_discussions<'life0, 'life1, 'async_trait>(&'life0 self, mr_key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::Discussion>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_github::GitHubClient::get_merge_request<'life0, 'life1, 'async_trait>(&'life0 self, key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::MergeRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_github::GitHubClient::get_merge_requests<'life0, 'async_trait>(&'life0 self, filter: devboy_core::types::MrFilter) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::MergeRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_github::GitHubClient::get_mr_attachments<'life0, 'life1, 'async_trait>(&'life0 self, mr_key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<alloc::vec::Vec<devboy_core::asset::AssetMeta>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_github::GitHubClient::provider_name(&self) -> &'static str
+pub fn devboy_github::GitHubClient::update_merge_request<'life0, 'life1, 'async_trait>(&'life0 self, key: &'life1 str, input: devboy_core::types::UpdateMergeRequestInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::MergeRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+impl devboy_core::provider::PipelineProvider for devboy_github::GitHubClient
+pub fn devboy_github::GitHubClient::get_job_logs<'life0, 'life1, 'async_trait>(&'life0 self, job_id: &'life1 str, options: devboy_core::types::JobLogOptions) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::JobLogOutput>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_github::GitHubClient::get_pipeline<'life0, 'async_trait>(&'life0 self, input: devboy_core::types::GetPipelineInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::PipelineInfo>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_github::GitHubClient::provider_name(&self) -> &'static str
+impl devboy_core::provider::Provider for devboy_github::GitHubClient
+pub fn devboy_github::GitHubClient::get_current_user<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::User>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+impl core::marker::Freeze for devboy_github::GitHubClient
+impl core::marker::Send for devboy_github::GitHubClient
+impl core::marker::Sync for devboy_github::GitHubClient
+impl core::marker::Unpin for devboy_github::GitHubClient
+impl core::marker::UnsafeUnpin for devboy_github::GitHubClient
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_github::GitHubClient
+impl !core::panic::unwind_safe::UnwindSafe for devboy_github::GitHubClient
+pub struct devboy_github::GitHubComment
+pub devboy_github::GitHubComment::body: alloc::string::String
+pub devboy_github::GitHubComment::created_at: alloc::string::String
+pub devboy_github::GitHubComment::id: u64
+pub devboy_github::GitHubComment::updated_at: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubComment::user: core::option::Option<devboy_github::GitHubUser>
+impl core::clone::Clone for devboy_github::GitHubComment
+pub fn devboy_github::GitHubComment::clone(&self) -> devboy_github::GitHubComment
+impl core::fmt::Debug for devboy_github::GitHubComment
+pub fn devboy_github::GitHubComment::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_github::GitHubComment
+pub fn devboy_github::GitHubComment::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_github::GitHubComment
+pub fn devboy_github::GitHubComment::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_github::GitHubComment
+impl core::marker::Send for devboy_github::GitHubComment
+impl core::marker::Sync for devboy_github::GitHubComment
+impl core::marker::Unpin for devboy_github::GitHubComment
+impl core::marker::UnsafeUnpin for devboy_github::GitHubComment
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::GitHubComment
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::GitHubComment
+pub struct devboy_github::GitHubFile
+pub devboy_github::GitHubFile::additions: u32
+pub devboy_github::GitHubFile::changes: u32
+pub devboy_github::GitHubFile::deletions: u32
+pub devboy_github::GitHubFile::filename: alloc::string::String
+pub devboy_github::GitHubFile::patch: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubFile::previous_filename: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubFile::sha: alloc::string::String
+pub devboy_github::GitHubFile::status: alloc::string::String
+impl core::clone::Clone for devboy_github::GitHubFile
+pub fn devboy_github::GitHubFile::clone(&self) -> devboy_github::GitHubFile
+impl core::fmt::Debug for devboy_github::GitHubFile
+pub fn devboy_github::GitHubFile::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_github::GitHubFile
+pub fn devboy_github::GitHubFile::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_github::GitHubFile
+pub fn devboy_github::GitHubFile::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_github::GitHubFile
+impl core::marker::Send for devboy_github::GitHubFile
+impl core::marker::Sync for devboy_github::GitHubFile
+impl core::marker::Unpin for devboy_github::GitHubFile
+impl core::marker::UnsafeUnpin for devboy_github::GitHubFile
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::GitHubFile
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::GitHubFile
+pub struct devboy_github::GitHubIssue
+pub devboy_github::GitHubIssue::assignees: alloc::vec::Vec<devboy_github::GitHubUser>
+pub devboy_github::GitHubIssue::body: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubIssue::closed_at: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubIssue::created_at: alloc::string::String
+pub devboy_github::GitHubIssue::html_url: alloc::string::String
+pub devboy_github::GitHubIssue::id: u64
+pub devboy_github::GitHubIssue::labels: alloc::vec::Vec<devboy_github::GitHubLabel>
+pub devboy_github::GitHubIssue::number: u64
+pub devboy_github::GitHubIssue::pull_request: core::option::Option<serde_json::value::Value>
+pub devboy_github::GitHubIssue::state: alloc::string::String
+pub devboy_github::GitHubIssue::title: alloc::string::String
+pub devboy_github::GitHubIssue::updated_at: alloc::string::String
+pub devboy_github::GitHubIssue::user: core::option::Option<devboy_github::GitHubUser>
+impl core::clone::Clone for devboy_github::GitHubIssue
+pub fn devboy_github::GitHubIssue::clone(&self) -> devboy_github::GitHubIssue
+impl core::fmt::Debug for devboy_github::GitHubIssue
+pub fn devboy_github::GitHubIssue::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_github::GitHubIssue
+pub fn devboy_github::GitHubIssue::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_github::GitHubIssue
+pub fn devboy_github::GitHubIssue::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_github::GitHubIssue
+impl core::marker::Send for devboy_github::GitHubIssue
+impl core::marker::Sync for devboy_github::GitHubIssue
+impl core::marker::Unpin for devboy_github::GitHubIssue
+impl core::marker::UnsafeUnpin for devboy_github::GitHubIssue
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::GitHubIssue
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::GitHubIssue
+pub struct devboy_github::GitHubLabel
+pub devboy_github::GitHubLabel::color: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubLabel::description: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubLabel::id: u64
+pub devboy_github::GitHubLabel::name: alloc::string::String
+impl core::clone::Clone for devboy_github::GitHubLabel
+pub fn devboy_github::GitHubLabel::clone(&self) -> devboy_github::GitHubLabel
+impl core::fmt::Debug for devboy_github::GitHubLabel
+pub fn devboy_github::GitHubLabel::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_github::GitHubLabel
+pub fn devboy_github::GitHubLabel::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_github::GitHubLabel
+pub fn devboy_github::GitHubLabel::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_github::GitHubLabel
+impl core::marker::Send for devboy_github::GitHubLabel
+impl core::marker::Sync for devboy_github::GitHubLabel
+impl core::marker::Unpin for devboy_github::GitHubLabel
+impl core::marker::UnsafeUnpin for devboy_github::GitHubLabel
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::GitHubLabel
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::GitHubLabel
+pub struct devboy_github::GitHubPullRequest
+pub devboy_github::GitHubPullRequest::assignees: alloc::vec::Vec<devboy_github::GitHubUser>
+pub devboy_github::GitHubPullRequest::base: devboy_github::GitHubBranchRef
+pub devboy_github::GitHubPullRequest::body: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubPullRequest::created_at: alloc::string::String
+pub devboy_github::GitHubPullRequest::draft: bool
+pub devboy_github::GitHubPullRequest::head: devboy_github::GitHubBranchRef
+pub devboy_github::GitHubPullRequest::html_url: alloc::string::String
+pub devboy_github::GitHubPullRequest::id: u64
+pub devboy_github::GitHubPullRequest::labels: alloc::vec::Vec<devboy_github::GitHubLabel>
+pub devboy_github::GitHubPullRequest::merged: bool
+pub devboy_github::GitHubPullRequest::merged_at: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubPullRequest::number: u64
+pub devboy_github::GitHubPullRequest::requested_reviewers: alloc::vec::Vec<devboy_github::GitHubUser>
+pub devboy_github::GitHubPullRequest::state: alloc::string::String
+pub devboy_github::GitHubPullRequest::title: alloc::string::String
+pub devboy_github::GitHubPullRequest::updated_at: alloc::string::String
+pub devboy_github::GitHubPullRequest::user: core::option::Option<devboy_github::GitHubUser>
+impl core::clone::Clone for devboy_github::GitHubPullRequest
+pub fn devboy_github::GitHubPullRequest::clone(&self) -> devboy_github::GitHubPullRequest
+impl core::fmt::Debug for devboy_github::GitHubPullRequest
+pub fn devboy_github::GitHubPullRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_github::GitHubPullRequest
+pub fn devboy_github::GitHubPullRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_github::GitHubPullRequest
+pub fn devboy_github::GitHubPullRequest::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_github::GitHubPullRequest
+impl core::marker::Send for devboy_github::GitHubPullRequest
+impl core::marker::Sync for devboy_github::GitHubPullRequest
+impl core::marker::Unpin for devboy_github::GitHubPullRequest
+impl core::marker::UnsafeUnpin for devboy_github::GitHubPullRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::GitHubPullRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::GitHubPullRequest
+pub struct devboy_github::GitHubReview
+pub devboy_github::GitHubReview::body: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubReview::id: u64
+pub devboy_github::GitHubReview::state: alloc::string::String
+pub devboy_github::GitHubReview::submitted_at: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubReview::user: core::option::Option<devboy_github::GitHubUser>
+impl core::clone::Clone for devboy_github::GitHubReview
+pub fn devboy_github::GitHubReview::clone(&self) -> devboy_github::GitHubReview
+impl core::fmt::Debug for devboy_github::GitHubReview
+pub fn devboy_github::GitHubReview::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_github::GitHubReview
+pub fn devboy_github::GitHubReview::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_github::GitHubReview
+pub fn devboy_github::GitHubReview::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_github::GitHubReview
+impl core::marker::Send for devboy_github::GitHubReview
+impl core::marker::Sync for devboy_github::GitHubReview
+impl core::marker::Unpin for devboy_github::GitHubReview
+impl core::marker::UnsafeUnpin for devboy_github::GitHubReview
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::GitHubReview
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::GitHubReview
+pub struct devboy_github::GitHubReviewComment
+pub devboy_github::GitHubReviewComment::body: alloc::string::String
+pub devboy_github::GitHubReviewComment::commit_id: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubReviewComment::created_at: alloc::string::String
+pub devboy_github::GitHubReviewComment::diff_hunk: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubReviewComment::id: u64
+pub devboy_github::GitHubReviewComment::in_reply_to_id: core::option::Option<u64>
+pub devboy_github::GitHubReviewComment::line: core::option::Option<u32>
+pub devboy_github::GitHubReviewComment::original_commit_id: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubReviewComment::original_line: core::option::Option<u32>
+pub devboy_github::GitHubReviewComment::path: alloc::string::String
+pub devboy_github::GitHubReviewComment::position: core::option::Option<u32>
+pub devboy_github::GitHubReviewComment::side: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubReviewComment::updated_at: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubReviewComment::user: core::option::Option<devboy_github::GitHubUser>
+impl core::clone::Clone for devboy_github::GitHubReviewComment
+pub fn devboy_github::GitHubReviewComment::clone(&self) -> devboy_github::GitHubReviewComment
+impl core::fmt::Debug for devboy_github::GitHubReviewComment
+pub fn devboy_github::GitHubReviewComment::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_github::GitHubReviewComment
+pub fn devboy_github::GitHubReviewComment::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_github::GitHubReviewComment
+pub fn devboy_github::GitHubReviewComment::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_github::GitHubReviewComment
+impl core::marker::Send for devboy_github::GitHubReviewComment
+impl core::marker::Sync for devboy_github::GitHubReviewComment
+impl core::marker::Unpin for devboy_github::GitHubReviewComment
+impl core::marker::UnsafeUnpin for devboy_github::GitHubReviewComment
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::GitHubReviewComment
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::GitHubReviewComment
+pub struct devboy_github::GitHubSchemaEnricher
+impl devboy_core::enricher::ToolEnricher for devboy_github::enricher::GitHubSchemaEnricher
+pub fn devboy_github::enricher::GitHubSchemaEnricher::enrich_schema(&self, tool_name: &str, schema: &mut devboy_core::enricher::ToolSchema)
+pub fn devboy_github::enricher::GitHubSchemaEnricher::rate_limit_host(&self, _tool_name: &str, _args: &serde_json::value::Value) -> core::option::Option<alloc::string::String>
+pub fn devboy_github::enricher::GitHubSchemaEnricher::supported_categories(&self) -> &[devboy_core::tool_category::ToolCategory]
+pub fn devboy_github::enricher::GitHubSchemaEnricher::transform_args(&self, tool_name: &str, args: &mut serde_json::value::Value)
+pub fn devboy_github::enricher::GitHubSchemaEnricher::value_model(&self, tool_name: &str) -> core::option::Option<devboy_core::tool_value_model::ToolValueModel>
+impl core::marker::Freeze for devboy_github::enricher::GitHubSchemaEnricher
+impl core::marker::Send for devboy_github::enricher::GitHubSchemaEnricher
+impl core::marker::Sync for devboy_github::enricher::GitHubSchemaEnricher
+impl core::marker::Unpin for devboy_github::enricher::GitHubSchemaEnricher
+impl core::marker::UnsafeUnpin for devboy_github::enricher::GitHubSchemaEnricher
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::enricher::GitHubSchemaEnricher
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::enricher::GitHubSchemaEnricher
+pub struct devboy_github::GitHubUser
+pub devboy_github::GitHubUser::avatar_url: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubUser::email: core::option::Option<alloc::string::String>
+pub devboy_github::GitHubUser::id: u64
+pub devboy_github::GitHubUser::login: alloc::string::String
+pub devboy_github::GitHubUser::name: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_github::GitHubUser
+pub fn devboy_github::GitHubUser::clone(&self) -> devboy_github::GitHubUser
+impl core::fmt::Debug for devboy_github::GitHubUser
+pub fn devboy_github::GitHubUser::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_github::GitHubUser
+pub fn devboy_github::GitHubUser::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_github::GitHubUser
+pub fn devboy_github::GitHubUser::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_github::GitHubUser
+impl core::marker::Send for devboy_github::GitHubUser
+impl core::marker::Sync for devboy_github::GitHubUser
+impl core::marker::Unpin for devboy_github::GitHubUser
+impl core::marker::UnsafeUnpin for devboy_github::GitHubUser
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::GitHubUser
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::GitHubUser
+pub struct devboy_github::UpdateIssueRequest
+pub devboy_github::UpdateIssueRequest::assignees: core::option::Option<alloc::vec::Vec<alloc::string::String>>
+pub devboy_github::UpdateIssueRequest::body: core::option::Option<alloc::string::String>
+pub devboy_github::UpdateIssueRequest::labels: core::option::Option<alloc::vec::Vec<alloc::string::String>>
+pub devboy_github::UpdateIssueRequest::state: core::option::Option<alloc::string::String>
+pub devboy_github::UpdateIssueRequest::title: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_github::UpdateIssueRequest
+pub fn devboy_github::UpdateIssueRequest::clone(&self) -> devboy_github::UpdateIssueRequest
+impl core::default::Default for devboy_github::UpdateIssueRequest
+pub fn devboy_github::UpdateIssueRequest::default() -> devboy_github::UpdateIssueRequest
+impl core::fmt::Debug for devboy_github::UpdateIssueRequest
+pub fn devboy_github::UpdateIssueRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_github::UpdateIssueRequest
+pub fn devboy_github::UpdateIssueRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_github::UpdateIssueRequest
+impl core::marker::Send for devboy_github::UpdateIssueRequest
+impl core::marker::Sync for devboy_github::UpdateIssueRequest
+impl core::marker::Unpin for devboy_github::UpdateIssueRequest
+impl core::marker::UnsafeUnpin for devboy_github::UpdateIssueRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::UpdateIssueRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::UpdateIssueRequest
+pub struct devboy_github::UpdatePullRequestRequest
+pub devboy_github::UpdatePullRequestRequest::body: core::option::Option<alloc::string::String>
+pub devboy_github::UpdatePullRequestRequest::draft: core::option::Option<bool>
+pub devboy_github::UpdatePullRequestRequest::state: core::option::Option<alloc::string::String>
+pub devboy_github::UpdatePullRequestRequest::title: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_github::UpdatePullRequestRequest
+pub fn devboy_github::UpdatePullRequestRequest::clone(&self) -> devboy_github::UpdatePullRequestRequest
+impl core::default::Default for devboy_github::UpdatePullRequestRequest
+pub fn devboy_github::UpdatePullRequestRequest::default() -> devboy_github::UpdatePullRequestRequest
+impl core::fmt::Debug for devboy_github::UpdatePullRequestRequest
+pub fn devboy_github::UpdatePullRequestRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_github::UpdatePullRequestRequest
+pub fn devboy_github::UpdatePullRequestRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_github::UpdatePullRequestRequest
+impl core::marker::Send for devboy_github::UpdatePullRequestRequest
+impl core::marker::Sync for devboy_github::UpdatePullRequestRequest
+impl core::marker::Unpin for devboy_github::UpdatePullRequestRequest
+impl core::marker::UnsafeUnpin for devboy_github::UpdatePullRequestRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::UpdatePullRequestRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_github::UpdatePullRequestRequest
+pub const devboy_github::DEFAULT_GITHUB_URL: &str

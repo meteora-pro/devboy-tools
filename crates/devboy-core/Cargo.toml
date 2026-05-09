@@ -33,7 +33,6 @@ reqwest.workspace = true
 sentry = { workspace = true, optional = true }
 chrono = { version = "0.4", features = ["serde"] }
 which = "8.0"
-md-5 = "0.10"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

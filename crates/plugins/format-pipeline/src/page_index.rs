@@ -13,9 +13,7 @@ pub struct PageDescriptor {
     pub page: usize,
     /// Human-readable summary of page contents
     pub summary: String,
-    /// Number of items on this page
     pub item_count: usize,
-    /// Offset to request this page
     pub offset: usize,
 }
 
@@ -30,7 +28,6 @@ pub struct PageIndex {
     pub total_items: usize,
     /// Items shown (selected by budget trimming, may span multiple pages)
     pub shown_items: usize,
-    /// Total number of pages
     pub total_pages: usize,
     /// Page descriptors
     pub pages: Vec<PageDescriptor>,
@@ -87,7 +84,6 @@ fn compute_page_size(total_items: usize, included_items: usize) -> usize {
 // Type-specific page index builders
 // =============================================================================
 
-/// Build page index for issues.
 pub fn build_issues_index(issues: &[Issue], included_count: usize) -> PageIndex {
     let total = issues.len();
     let page_size = compute_page_size(total, included_count);
@@ -132,7 +128,6 @@ pub fn build_issues_index(issues: &[Issue], included_count: usize) -> PageIndex 
     }
 }
 
-/// Build page index for merge requests.
 pub fn build_merge_requests_index(mrs: &[MergeRequest], included_count: usize) -> PageIndex {
     let total = mrs.len();
     let page_size = compute_page_size(total, included_count);

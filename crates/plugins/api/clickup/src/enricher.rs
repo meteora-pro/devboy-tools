@@ -26,6 +26,8 @@ pub struct ClickUpSchemaEnricher {
 }
 
 impl ClickUpSchemaEnricher {
+    /// Build an enricher from cached workspace metadata (custom fields,
+    /// statuses) used to refine MCP tool schemas at runtime.
     pub fn new(metadata: ClickUpMetadata) -> Self {
         Self { metadata }
     }
@@ -34,7 +36,6 @@ impl ClickUpSchemaEnricher {
 /// Parameters to remove from ClickUp issue tools.
 const REMOVE_PARAMS: &[&str] = &["issueType", "components", "projectId"];
 
-/// Parameters to remove from get_issues.
 const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery"];
 
 impl ToolEnricher for ClickUpSchemaEnricher {

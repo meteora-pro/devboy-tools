@@ -1,0 +1,1497 @@
+pub mod devboy_mcp
+pub use devboy_mcp::AdditionalContext
+pub use devboy_mcp::Executor
+pub use devboy_mcp::GitHubScope
+pub use devboy_mcp::GitLabScope
+pub use devboy_mcp::PipelineFormatEnricher
+pub use devboy_mcp::ProviderConfig
+pub use devboy_mcp::SUPPORTED_TOOLS
+pub use devboy_mcp::ToolEnricher
+pub use devboy_mcp::ToolOutput
+pub use devboy_mcp::ToolSchema
+pub mod devboy_mcp::handlers
+pub const devboy_mcp::handlers::KNOWN_BUILTIN_TOOLS: &[&str]
+pub mod devboy_mcp::layered
+pub struct devboy_mcp::layered::SessionPipeline
+impl devboy_mcp::layered::SessionPipeline
+pub fn devboy_mcp::layered::SessionPipeline::enrichment_snapshot(&self) -> devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+pub fn devboy_mcp::layered::SessionPipeline::new(config: devboy_format_pipeline::adaptive_config::AdaptiveConfig) -> Self
+pub fn devboy_mcp::layered::SessionPipeline::recent_tools_snapshot(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn devboy_mcp::layered::SessionPipeline::record_fail_fast_skip(&self, predicted_cost_tokens: u32)
+pub fn devboy_mcp::layered::SessionPipeline::should_skip(&self, tool_name: &str) -> bool
+pub async fn devboy_mcp::layered::SessionPipeline::shutdown(&self)
+pub async fn devboy_mcp::layered::SessionPipeline::speculate_after(&self, tool_name: &str, prev_response_json: &serde_json::value::Value) -> alloc::string::String
+pub async fn devboy_mcp::layered::SessionPipeline::with_speculation(self, dispatcher: alloc::sync::Arc<dyn devboy_mcp::speculation::PrefetchDispatcher>) -> Self
+impl devboy_mcp::layered::SessionPipeline
+pub fn devboy_mcp::layered::SessionPipeline::invalidate_file(&self, file_path: &str)
+pub fn devboy_mcp::layered::SessionPipeline::on_compaction_boundary(&self)
+pub fn devboy_mcp::layered::SessionPipeline::process(&self, request_id: &str, params: &devboy_mcp::protocol::ToolCallParams, result: devboy_mcp::protocol::ToolCallResult, ts_ms: i64) -> devboy_mcp::protocol::ToolCallResult
+impl core::clone::Clone for devboy_mcp::layered::SessionPipeline
+pub fn devboy_mcp::layered::SessionPipeline::clone(&self) -> devboy_mcp::layered::SessionPipeline
+impl core::marker::Freeze for devboy_mcp::layered::SessionPipeline
+impl core::marker::Send for devboy_mcp::layered::SessionPipeline
+impl core::marker::Sync for devboy_mcp::layered::SessionPipeline
+impl core::marker::Unpin for devboy_mcp::layered::SessionPipeline
+impl core::marker::UnsafeUnpin for devboy_mcp::layered::SessionPipeline
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::layered::SessionPipeline
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::layered::SessionPipeline
+pub fn devboy_mcp::layered::extract_file_path(args: core::option::Option<&serde_json::value::Value>) -> core::option::Option<alloc::string::String>
+pub fn devboy_mcp::layered::is_mutating_tool(name: &str) -> bool
+pub mod devboy_mcp::prefetch_adapter
+pub struct devboy_mcp::prefetch_adapter::McpPrefetchDispatcher
+impl devboy_mcp::prefetch_adapter::McpPrefetchDispatcher
+pub fn devboy_mcp::prefetch_adapter::McpPrefetchDispatcher::new(server: alloc::sync::Arc<devboy_mcp::server::McpServer>) -> Self
+impl devboy_mcp::speculation::PrefetchDispatcher for devboy_mcp::prefetch_adapter::McpPrefetchDispatcher
+pub fn devboy_mcp::prefetch_adapter::McpPrefetchDispatcher::dispatch<'life0, 'life1, 'async_trait>(&'life0 self, tool_name: &'life1 str, args: serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::string::String, devboy_mcp::speculation::PrefetchError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+impl core::marker::Freeze for devboy_mcp::prefetch_adapter::McpPrefetchDispatcher
+impl core::marker::Send for devboy_mcp::prefetch_adapter::McpPrefetchDispatcher
+impl core::marker::Sync for devboy_mcp::prefetch_adapter::McpPrefetchDispatcher
+impl core::marker::Unpin for devboy_mcp::prefetch_adapter::McpPrefetchDispatcher
+impl core::marker::UnsafeUnpin for devboy_mcp::prefetch_adapter::McpPrefetchDispatcher
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::prefetch_adapter::McpPrefetchDispatcher
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::prefetch_adapter::McpPrefetchDispatcher
+pub mod devboy_mcp::protocol
+pub enum devboy_mcp::protocol::RequestId
+pub devboy_mcp::protocol::RequestId::Null
+pub devboy_mcp::protocol::RequestId::Number(i64)
+pub devboy_mcp::protocol::RequestId::String(alloc::string::String)
+impl core::clone::Clone for devboy_mcp::protocol::RequestId
+pub fn devboy_mcp::protocol::RequestId::clone(&self) -> devboy_mcp::protocol::RequestId
+impl core::cmp::PartialEq for devboy_mcp::protocol::RequestId
+pub fn devboy_mcp::protocol::RequestId::eq(&self, other: &devboy_mcp::protocol::RequestId) -> bool
+impl core::fmt::Debug for devboy_mcp::protocol::RequestId
+pub fn devboy_mcp::protocol::RequestId::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::protocol::RequestId
+impl serde_core::ser::Serialize for devboy_mcp::protocol::RequestId
+pub fn devboy_mcp::protocol::RequestId::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::RequestId
+pub fn devboy_mcp::protocol::RequestId::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::RequestId
+impl core::marker::Send for devboy_mcp::protocol::RequestId
+impl core::marker::Sync for devboy_mcp::protocol::RequestId
+impl core::marker::Unpin for devboy_mcp::protocol::RequestId
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::RequestId
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::RequestId
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::RequestId
+pub enum devboy_mcp::protocol::ToolResultContent
+pub devboy_mcp::protocol::ToolResultContent::Text
+pub devboy_mcp::protocol::ToolResultContent::Text::text: alloc::string::String
+impl core::clone::Clone for devboy_mcp::protocol::ToolResultContent
+pub fn devboy_mcp::protocol::ToolResultContent::clone(&self) -> devboy_mcp::protocol::ToolResultContent
+impl core::fmt::Debug for devboy_mcp::protocol::ToolResultContent
+pub fn devboy_mcp::protocol::ToolResultContent::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::ToolResultContent
+pub fn devboy_mcp::protocol::ToolResultContent::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::ToolResultContent
+pub fn devboy_mcp::protocol::ToolResultContent::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::ToolResultContent
+impl core::marker::Send for devboy_mcp::protocol::ToolResultContent
+impl core::marker::Sync for devboy_mcp::protocol::ToolResultContent
+impl core::marker::Unpin for devboy_mcp::protocol::ToolResultContent
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::ToolResultContent
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::ToolResultContent
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::ToolResultContent
+pub struct devboy_mcp::protocol::ClientCapabilities
+pub devboy_mcp::protocol::ClientCapabilities::roots: core::option::Option<devboy_mcp::protocol::RootsCapability>
+pub devboy_mcp::protocol::ClientCapabilities::sampling: core::option::Option<devboy_mcp::protocol::SamplingCapability>
+impl core::clone::Clone for devboy_mcp::protocol::ClientCapabilities
+pub fn devboy_mcp::protocol::ClientCapabilities::clone(&self) -> devboy_mcp::protocol::ClientCapabilities
+impl core::default::Default for devboy_mcp::protocol::ClientCapabilities
+pub fn devboy_mcp::protocol::ClientCapabilities::default() -> devboy_mcp::protocol::ClientCapabilities
+impl core::fmt::Debug for devboy_mcp::protocol::ClientCapabilities
+pub fn devboy_mcp::protocol::ClientCapabilities::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::ClientCapabilities
+pub fn devboy_mcp::protocol::ClientCapabilities::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::ClientCapabilities
+pub fn devboy_mcp::protocol::ClientCapabilities::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::ClientCapabilities
+impl core::marker::Send for devboy_mcp::protocol::ClientCapabilities
+impl core::marker::Sync for devboy_mcp::protocol::ClientCapabilities
+impl core::marker::Unpin for devboy_mcp::protocol::ClientCapabilities
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::ClientCapabilities
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::ClientCapabilities
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::ClientCapabilities
+pub struct devboy_mcp::protocol::ClientInfo
+pub devboy_mcp::protocol::ClientInfo::name: alloc::string::String
+pub devboy_mcp::protocol::ClientInfo::version: alloc::string::String
+impl core::clone::Clone for devboy_mcp::protocol::ClientInfo
+pub fn devboy_mcp::protocol::ClientInfo::clone(&self) -> devboy_mcp::protocol::ClientInfo
+impl core::fmt::Debug for devboy_mcp::protocol::ClientInfo
+pub fn devboy_mcp::protocol::ClientInfo::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::ClientInfo
+pub fn devboy_mcp::protocol::ClientInfo::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::ClientInfo
+pub fn devboy_mcp::protocol::ClientInfo::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::ClientInfo
+impl core::marker::Send for devboy_mcp::protocol::ClientInfo
+impl core::marker::Sync for devboy_mcp::protocol::ClientInfo
+impl core::marker::Unpin for devboy_mcp::protocol::ClientInfo
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::ClientInfo
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::ClientInfo
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::ClientInfo
+pub struct devboy_mcp::protocol::InitializeParams
+pub devboy_mcp::protocol::InitializeParams::capabilities: devboy_mcp::protocol::ClientCapabilities
+pub devboy_mcp::protocol::InitializeParams::client_info: devboy_mcp::protocol::ClientInfo
+pub devboy_mcp::protocol::InitializeParams::protocol_version: alloc::string::String
+impl core::clone::Clone for devboy_mcp::protocol::InitializeParams
+pub fn devboy_mcp::protocol::InitializeParams::clone(&self) -> devboy_mcp::protocol::InitializeParams
+impl core::fmt::Debug for devboy_mcp::protocol::InitializeParams
+pub fn devboy_mcp::protocol::InitializeParams::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::InitializeParams
+pub fn devboy_mcp::protocol::InitializeParams::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::InitializeParams
+pub fn devboy_mcp::protocol::InitializeParams::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::InitializeParams
+impl core::marker::Send for devboy_mcp::protocol::InitializeParams
+impl core::marker::Sync for devboy_mcp::protocol::InitializeParams
+impl core::marker::Unpin for devboy_mcp::protocol::InitializeParams
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::InitializeParams
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::InitializeParams
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::InitializeParams
+pub struct devboy_mcp::protocol::InitializeResult
+pub devboy_mcp::protocol::InitializeResult::capabilities: devboy_mcp::protocol::ServerCapabilities
+pub devboy_mcp::protocol::InitializeResult::protocol_version: alloc::string::String
+pub devboy_mcp::protocol::InitializeResult::server_info: devboy_mcp::protocol::ServerInfo
+impl core::clone::Clone for devboy_mcp::protocol::InitializeResult
+pub fn devboy_mcp::protocol::InitializeResult::clone(&self) -> devboy_mcp::protocol::InitializeResult
+impl core::fmt::Debug for devboy_mcp::protocol::InitializeResult
+pub fn devboy_mcp::protocol::InitializeResult::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::InitializeResult
+pub fn devboy_mcp::protocol::InitializeResult::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::InitializeResult
+pub fn devboy_mcp::protocol::InitializeResult::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::InitializeResult
+impl core::marker::Send for devboy_mcp::protocol::InitializeResult
+impl core::marker::Sync for devboy_mcp::protocol::InitializeResult
+impl core::marker::Unpin for devboy_mcp::protocol::InitializeResult
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::InitializeResult
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::InitializeResult
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::InitializeResult
+pub struct devboy_mcp::protocol::JsonRpcError
+pub devboy_mcp::protocol::JsonRpcError::code: i32
+pub devboy_mcp::protocol::JsonRpcError::data: core::option::Option<serde_json::value::Value>
+pub devboy_mcp::protocol::JsonRpcError::message: alloc::string::String
+impl devboy_mcp::protocol::JsonRpcError
+pub const devboy_mcp::protocol::JsonRpcError::INTERNAL_ERROR: i32
+pub const devboy_mcp::protocol::JsonRpcError::INVALID_PARAMS: i32
+pub const devboy_mcp::protocol::JsonRpcError::INVALID_REQUEST: i32
+pub const devboy_mcp::protocol::JsonRpcError::METHOD_NOT_FOUND: i32
+pub const devboy_mcp::protocol::JsonRpcError::PARSE_ERROR: i32
+pub fn devboy_mcp::protocol::JsonRpcError::internal_error(msg: &str) -> Self
+pub fn devboy_mcp::protocol::JsonRpcError::invalid_params(msg: &str) -> Self
+pub fn devboy_mcp::protocol::JsonRpcError::invalid_request(msg: &str) -> Self
+pub fn devboy_mcp::protocol::JsonRpcError::method_not_found(method: &str) -> Self
+pub fn devboy_mcp::protocol::JsonRpcError::parse_error(msg: &str) -> Self
+impl core::clone::Clone for devboy_mcp::protocol::JsonRpcError
+pub fn devboy_mcp::protocol::JsonRpcError::clone(&self) -> devboy_mcp::protocol::JsonRpcError
+impl core::fmt::Debug for devboy_mcp::protocol::JsonRpcError
+pub fn devboy_mcp::protocol::JsonRpcError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::JsonRpcError
+pub fn devboy_mcp::protocol::JsonRpcError::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::JsonRpcError
+pub fn devboy_mcp::protocol::JsonRpcError::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::JsonRpcError
+impl core::marker::Send for devboy_mcp::protocol::JsonRpcError
+impl core::marker::Sync for devboy_mcp::protocol::JsonRpcError
+impl core::marker::Unpin for devboy_mcp::protocol::JsonRpcError
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::JsonRpcError
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::JsonRpcError
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::JsonRpcError
+pub struct devboy_mcp::protocol::JsonRpcNotification
+pub devboy_mcp::protocol::JsonRpcNotification::jsonrpc: alloc::string::String
+pub devboy_mcp::protocol::JsonRpcNotification::method: alloc::string::String
+pub devboy_mcp::protocol::JsonRpcNotification::params: core::option::Option<serde_json::value::Value>
+impl core::clone::Clone for devboy_mcp::protocol::JsonRpcNotification
+pub fn devboy_mcp::protocol::JsonRpcNotification::clone(&self) -> devboy_mcp::protocol::JsonRpcNotification
+impl core::fmt::Debug for devboy_mcp::protocol::JsonRpcNotification
+pub fn devboy_mcp::protocol::JsonRpcNotification::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::JsonRpcNotification
+pub fn devboy_mcp::protocol::JsonRpcNotification::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::JsonRpcNotification
+pub fn devboy_mcp::protocol::JsonRpcNotification::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::JsonRpcNotification
+impl core::marker::Send for devboy_mcp::protocol::JsonRpcNotification
+impl core::marker::Sync for devboy_mcp::protocol::JsonRpcNotification
+impl core::marker::Unpin for devboy_mcp::protocol::JsonRpcNotification
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::JsonRpcNotification
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::JsonRpcNotification
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::JsonRpcNotification
+pub struct devboy_mcp::protocol::JsonRpcRequest
+pub devboy_mcp::protocol::JsonRpcRequest::id: devboy_mcp::protocol::RequestId
+pub devboy_mcp::protocol::JsonRpcRequest::jsonrpc: alloc::string::String
+pub devboy_mcp::protocol::JsonRpcRequest::method: alloc::string::String
+pub devboy_mcp::protocol::JsonRpcRequest::params: core::option::Option<serde_json::value::Value>
+impl core::clone::Clone for devboy_mcp::protocol::JsonRpcRequest
+pub fn devboy_mcp::protocol::JsonRpcRequest::clone(&self) -> devboy_mcp::protocol::JsonRpcRequest
+impl core::fmt::Debug for devboy_mcp::protocol::JsonRpcRequest
+pub fn devboy_mcp::protocol::JsonRpcRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::JsonRpcRequest
+pub fn devboy_mcp::protocol::JsonRpcRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::JsonRpcRequest
+pub fn devboy_mcp::protocol::JsonRpcRequest::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::JsonRpcRequest
+impl core::marker::Send for devboy_mcp::protocol::JsonRpcRequest
+impl core::marker::Sync for devboy_mcp::protocol::JsonRpcRequest
+impl core::marker::Unpin for devboy_mcp::protocol::JsonRpcRequest
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::JsonRpcRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::JsonRpcRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::JsonRpcRequest
+pub struct devboy_mcp::protocol::JsonRpcResponse
+pub devboy_mcp::protocol::JsonRpcResponse::error: core::option::Option<devboy_mcp::protocol::JsonRpcError>
+pub devboy_mcp::protocol::JsonRpcResponse::id: devboy_mcp::protocol::RequestId
+pub devboy_mcp::protocol::JsonRpcResponse::jsonrpc: alloc::string::String
+pub devboy_mcp::protocol::JsonRpcResponse::result: core::option::Option<serde_json::value::Value>
+impl devboy_mcp::protocol::JsonRpcResponse
+pub fn devboy_mcp::protocol::JsonRpcResponse::error(id: devboy_mcp::protocol::RequestId, error: devboy_mcp::protocol::JsonRpcError) -> Self
+pub fn devboy_mcp::protocol::JsonRpcResponse::success(id: devboy_mcp::protocol::RequestId, result: serde_json::value::Value) -> Self
+impl core::clone::Clone for devboy_mcp::protocol::JsonRpcResponse
+pub fn devboy_mcp::protocol::JsonRpcResponse::clone(&self) -> devboy_mcp::protocol::JsonRpcResponse
+impl core::fmt::Debug for devboy_mcp::protocol::JsonRpcResponse
+pub fn devboy_mcp::protocol::JsonRpcResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::JsonRpcResponse
+pub fn devboy_mcp::protocol::JsonRpcResponse::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::JsonRpcResponse
+pub fn devboy_mcp::protocol::JsonRpcResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::JsonRpcResponse
+impl core::marker::Send for devboy_mcp::protocol::JsonRpcResponse
+impl core::marker::Sync for devboy_mcp::protocol::JsonRpcResponse
+impl core::marker::Unpin for devboy_mcp::protocol::JsonRpcResponse
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::JsonRpcResponse
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::JsonRpcResponse
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::JsonRpcResponse
+pub struct devboy_mcp::protocol::PromptsCapability
+pub devboy_mcp::protocol::PromptsCapability::list_changed: bool
+impl core::clone::Clone for devboy_mcp::protocol::PromptsCapability
+pub fn devboy_mcp::protocol::PromptsCapability::clone(&self) -> devboy_mcp::protocol::PromptsCapability
+impl core::fmt::Debug for devboy_mcp::protocol::PromptsCapability
+pub fn devboy_mcp::protocol::PromptsCapability::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::PromptsCapability
+pub fn devboy_mcp::protocol::PromptsCapability::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::PromptsCapability
+pub fn devboy_mcp::protocol::PromptsCapability::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::PromptsCapability
+impl core::marker::Send for devboy_mcp::protocol::PromptsCapability
+impl core::marker::Sync for devboy_mcp::protocol::PromptsCapability
+impl core::marker::Unpin for devboy_mcp::protocol::PromptsCapability
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::PromptsCapability
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::PromptsCapability
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::PromptsCapability
+pub struct devboy_mcp::protocol::ResourcesCapability
+pub devboy_mcp::protocol::ResourcesCapability::list_changed: bool
+pub devboy_mcp::protocol::ResourcesCapability::subscribe: bool
+impl core::clone::Clone for devboy_mcp::protocol::ResourcesCapability
+pub fn devboy_mcp::protocol::ResourcesCapability::clone(&self) -> devboy_mcp::protocol::ResourcesCapability
+impl core::fmt::Debug for devboy_mcp::protocol::ResourcesCapability
+pub fn devboy_mcp::protocol::ResourcesCapability::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::ResourcesCapability
+pub fn devboy_mcp::protocol::ResourcesCapability::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::ResourcesCapability
+pub fn devboy_mcp::protocol::ResourcesCapability::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::ResourcesCapability
+impl core::marker::Send for devboy_mcp::protocol::ResourcesCapability
+impl core::marker::Sync for devboy_mcp::protocol::ResourcesCapability
+impl core::marker::Unpin for devboy_mcp::protocol::ResourcesCapability
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::ResourcesCapability
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::ResourcesCapability
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::ResourcesCapability
+pub struct devboy_mcp::protocol::RootsCapability
+pub devboy_mcp::protocol::RootsCapability::list_changed: bool
+impl core::clone::Clone for devboy_mcp::protocol::RootsCapability
+pub fn devboy_mcp::protocol::RootsCapability::clone(&self) -> devboy_mcp::protocol::RootsCapability
+impl core::fmt::Debug for devboy_mcp::protocol::RootsCapability
+pub fn devboy_mcp::protocol::RootsCapability::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::RootsCapability
+pub fn devboy_mcp::protocol::RootsCapability::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::RootsCapability
+pub fn devboy_mcp::protocol::RootsCapability::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::RootsCapability
+impl core::marker::Send for devboy_mcp::protocol::RootsCapability
+impl core::marker::Sync for devboy_mcp::protocol::RootsCapability
+impl core::marker::Unpin for devboy_mcp::protocol::RootsCapability
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::RootsCapability
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::RootsCapability
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::RootsCapability
+pub struct devboy_mcp::protocol::SamplingCapability
+impl core::clone::Clone for devboy_mcp::protocol::SamplingCapability
+pub fn devboy_mcp::protocol::SamplingCapability::clone(&self) -> devboy_mcp::protocol::SamplingCapability
+impl core::fmt::Debug for devboy_mcp::protocol::SamplingCapability
+pub fn devboy_mcp::protocol::SamplingCapability::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::SamplingCapability
+pub fn devboy_mcp::protocol::SamplingCapability::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::SamplingCapability
+pub fn devboy_mcp::protocol::SamplingCapability::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::SamplingCapability
+impl core::marker::Send for devboy_mcp::protocol::SamplingCapability
+impl core::marker::Sync for devboy_mcp::protocol::SamplingCapability
+impl core::marker::Unpin for devboy_mcp::protocol::SamplingCapability
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::SamplingCapability
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::SamplingCapability
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::SamplingCapability
+pub struct devboy_mcp::protocol::ServerCapabilities
+pub devboy_mcp::protocol::ServerCapabilities::prompts: core::option::Option<devboy_mcp::protocol::PromptsCapability>
+pub devboy_mcp::protocol::ServerCapabilities::resources: core::option::Option<devboy_mcp::protocol::ResourcesCapability>
+pub devboy_mcp::protocol::ServerCapabilities::tools: core::option::Option<devboy_mcp::protocol::ToolsCapability>
+impl core::clone::Clone for devboy_mcp::protocol::ServerCapabilities
+pub fn devboy_mcp::protocol::ServerCapabilities::clone(&self) -> devboy_mcp::protocol::ServerCapabilities
+impl core::fmt::Debug for devboy_mcp::protocol::ServerCapabilities
+pub fn devboy_mcp::protocol::ServerCapabilities::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::ServerCapabilities
+pub fn devboy_mcp::protocol::ServerCapabilities::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::ServerCapabilities
+pub fn devboy_mcp::protocol::ServerCapabilities::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::ServerCapabilities
+impl core::marker::Send for devboy_mcp::protocol::ServerCapabilities
+impl core::marker::Sync for devboy_mcp::protocol::ServerCapabilities
+impl core::marker::Unpin for devboy_mcp::protocol::ServerCapabilities
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::ServerCapabilities
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::ServerCapabilities
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::ServerCapabilities
+pub struct devboy_mcp::protocol::ServerInfo
+pub devboy_mcp::protocol::ServerInfo::name: alloc::string::String
+pub devboy_mcp::protocol::ServerInfo::version: alloc::string::String
+impl core::clone::Clone for devboy_mcp::protocol::ServerInfo
+pub fn devboy_mcp::protocol::ServerInfo::clone(&self) -> devboy_mcp::protocol::ServerInfo
+impl core::fmt::Debug for devboy_mcp::protocol::ServerInfo
+pub fn devboy_mcp::protocol::ServerInfo::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::ServerInfo
+pub fn devboy_mcp::protocol::ServerInfo::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::ServerInfo
+pub fn devboy_mcp::protocol::ServerInfo::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::ServerInfo
+impl core::marker::Send for devboy_mcp::protocol::ServerInfo
+impl core::marker::Sync for devboy_mcp::protocol::ServerInfo
+impl core::marker::Unpin for devboy_mcp::protocol::ServerInfo
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::ServerInfo
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::ServerInfo
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::ServerInfo
+pub struct devboy_mcp::protocol::ToolCallParams
+pub devboy_mcp::protocol::ToolCallParams::arguments: core::option::Option<serde_json::value::Value>
+pub devboy_mcp::protocol::ToolCallParams::name: alloc::string::String
+impl core::clone::Clone for devboy_mcp::protocol::ToolCallParams
+pub fn devboy_mcp::protocol::ToolCallParams::clone(&self) -> devboy_mcp::protocol::ToolCallParams
+impl core::fmt::Debug for devboy_mcp::protocol::ToolCallParams
+pub fn devboy_mcp::protocol::ToolCallParams::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::ToolCallParams
+pub fn devboy_mcp::protocol::ToolCallParams::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::ToolCallParams
+pub fn devboy_mcp::protocol::ToolCallParams::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::ToolCallParams
+impl core::marker::Send for devboy_mcp::protocol::ToolCallParams
+impl core::marker::Sync for devboy_mcp::protocol::ToolCallParams
+impl core::marker::Unpin for devboy_mcp::protocol::ToolCallParams
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::ToolCallParams
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::ToolCallParams
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::ToolCallParams
+pub struct devboy_mcp::protocol::ToolCallResult
+pub devboy_mcp::protocol::ToolCallResult::content: alloc::vec::Vec<devboy_mcp::protocol::ToolResultContent>
+pub devboy_mcp::protocol::ToolCallResult::is_error: core::option::Option<bool>
+impl devboy_mcp::protocol::ToolCallResult
+pub fn devboy_mcp::protocol::ToolCallResult::error(message: alloc::string::String) -> Self
+pub fn devboy_mcp::protocol::ToolCallResult::text(content: alloc::string::String) -> Self
+impl core::clone::Clone for devboy_mcp::protocol::ToolCallResult
+pub fn devboy_mcp::protocol::ToolCallResult::clone(&self) -> devboy_mcp::protocol::ToolCallResult
+impl core::fmt::Debug for devboy_mcp::protocol::ToolCallResult
+pub fn devboy_mcp::protocol::ToolCallResult::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::ToolCallResult
+pub fn devboy_mcp::protocol::ToolCallResult::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::ToolCallResult
+pub fn devboy_mcp::protocol::ToolCallResult::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::ToolCallResult
+impl core::marker::Send for devboy_mcp::protocol::ToolCallResult
+impl core::marker::Sync for devboy_mcp::protocol::ToolCallResult
+impl core::marker::Unpin for devboy_mcp::protocol::ToolCallResult
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::ToolCallResult
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::ToolCallResult
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::ToolCallResult
+pub struct devboy_mcp::protocol::ToolDefinition
+pub devboy_mcp::protocol::ToolDefinition::category: core::option::Option<devboy_core::tool_category::ToolCategory>
+pub devboy_mcp::protocol::ToolDefinition::description: alloc::string::String
+pub devboy_mcp::protocol::ToolDefinition::input_schema: serde_json::value::Value
+pub devboy_mcp::protocol::ToolDefinition::name: alloc::string::String
+impl core::clone::Clone for devboy_mcp::protocol::ToolDefinition
+pub fn devboy_mcp::protocol::ToolDefinition::clone(&self) -> devboy_mcp::protocol::ToolDefinition
+impl core::fmt::Debug for devboy_mcp::protocol::ToolDefinition
+pub fn devboy_mcp::protocol::ToolDefinition::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::ToolDefinition
+pub fn devboy_mcp::protocol::ToolDefinition::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::ToolDefinition
+pub fn devboy_mcp::protocol::ToolDefinition::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::ToolDefinition
+impl core::marker::Send for devboy_mcp::protocol::ToolDefinition
+impl core::marker::Sync for devboy_mcp::protocol::ToolDefinition
+impl core::marker::Unpin for devboy_mcp::protocol::ToolDefinition
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::ToolDefinition
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::ToolDefinition
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::ToolDefinition
+pub struct devboy_mcp::protocol::ToolsCapability
+pub devboy_mcp::protocol::ToolsCapability::list_changed: bool
+impl core::clone::Clone for devboy_mcp::protocol::ToolsCapability
+pub fn devboy_mcp::protocol::ToolsCapability::clone(&self) -> devboy_mcp::protocol::ToolsCapability
+impl core::fmt::Debug for devboy_mcp::protocol::ToolsCapability
+pub fn devboy_mcp::protocol::ToolsCapability::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::ToolsCapability
+pub fn devboy_mcp::protocol::ToolsCapability::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::ToolsCapability
+pub fn devboy_mcp::protocol::ToolsCapability::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::ToolsCapability
+impl core::marker::Send for devboy_mcp::protocol::ToolsCapability
+impl core::marker::Sync for devboy_mcp::protocol::ToolsCapability
+impl core::marker::Unpin for devboy_mcp::protocol::ToolsCapability
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::ToolsCapability
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::ToolsCapability
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::ToolsCapability
+pub struct devboy_mcp::protocol::ToolsListResult
+pub devboy_mcp::protocol::ToolsListResult::tools: alloc::vec::Vec<devboy_mcp::protocol::ToolDefinition>
+impl core::clone::Clone for devboy_mcp::protocol::ToolsListResult
+pub fn devboy_mcp::protocol::ToolsListResult::clone(&self) -> devboy_mcp::protocol::ToolsListResult
+impl core::fmt::Debug for devboy_mcp::protocol::ToolsListResult
+pub fn devboy_mcp::protocol::ToolsListResult::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::ToolsListResult
+pub fn devboy_mcp::protocol::ToolsListResult::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::ToolsListResult
+pub fn devboy_mcp::protocol::ToolsListResult::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::ToolsListResult
+impl core::marker::Send for devboy_mcp::protocol::ToolsListResult
+impl core::marker::Sync for devboy_mcp::protocol::ToolsListResult
+impl core::marker::Unpin for devboy_mcp::protocol::ToolsListResult
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::ToolsListResult
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::ToolsListResult
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::ToolsListResult
+pub const devboy_mcp::protocol::JSONRPC_VERSION: &str
+pub const devboy_mcp::protocol::MCP_VERSION: &str
+pub mod devboy_mcp::proxy
+pub enum devboy_mcp::proxy::ProxyTransport
+pub devboy_mcp::proxy::ProxyTransport::Sse
+pub devboy_mcp::proxy::ProxyTransport::StreamableHttp
+impl devboy_mcp::proxy::ProxyTransport
+pub fn devboy_mcp::proxy::ProxyTransport::parse(s: &str) -> Self
+impl core::clone::Clone for devboy_mcp::proxy::ProxyTransport
+pub fn devboy_mcp::proxy::ProxyTransport::clone(&self) -> devboy_mcp::proxy::ProxyTransport
+impl core::cmp::Eq for devboy_mcp::proxy::ProxyTransport
+impl core::cmp::PartialEq for devboy_mcp::proxy::ProxyTransport
+pub fn devboy_mcp::proxy::ProxyTransport::eq(&self, other: &devboy_mcp::proxy::ProxyTransport) -> bool
+impl core::fmt::Debug for devboy_mcp::proxy::ProxyTransport
+pub fn devboy_mcp::proxy::ProxyTransport::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_mcp::proxy::ProxyTransport
+impl core::marker::StructuralPartialEq for devboy_mcp::proxy::ProxyTransport
+impl core::marker::Freeze for devboy_mcp::proxy::ProxyTransport
+impl core::marker::Send for devboy_mcp::proxy::ProxyTransport
+impl core::marker::Sync for devboy_mcp::proxy::ProxyTransport
+impl core::marker::Unpin for devboy_mcp::proxy::ProxyTransport
+impl core::marker::UnsafeUnpin for devboy_mcp::proxy::ProxyTransport
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::proxy::ProxyTransport
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::proxy::ProxyTransport
+pub struct devboy_mcp::proxy::McpProxyClient
+impl devboy_mcp::proxy::McpProxyClient
+pub async fn devboy_mcp::proxy::McpProxyClient::call_tool(&self, original_name: &str, arguments: core::option::Option<serde_json::value::Value>) -> devboy_core::error::Result<devboy_mcp::protocol::ToolCallResult>
+pub async fn devboy_mcp::proxy::McpProxyClient::connect(name: &str, url: &str, tool_prefix: core::option::Option<&str>, token: core::option::Option<&secrecy::SecretString>, auth_type: &str, transport: devboy_mcp::proxy::ProxyTransport) -> devboy_core::error::Result<Self>
+pub async fn devboy_mcp::proxy::McpProxyClient::fetch_tools(&mut self) -> devboy_core::error::Result<()>
+pub fn devboy_mcp::proxy::McpProxyClient::prefix(&self) -> &str
+pub fn devboy_mcp::proxy::McpProxyClient::prefixed_tools(&self) -> alloc::vec::Vec<devboy_mcp::protocol::ToolDefinition>
+pub fn devboy_mcp::proxy::McpProxyClient::raw_upstream_tools(&self) -> &[devboy_mcp::protocol::ToolDefinition]
+impl !core::marker::Freeze for devboy_mcp::proxy::McpProxyClient
+impl core::marker::Send for devboy_mcp::proxy::McpProxyClient
+impl core::marker::Sync for devboy_mcp::proxy::McpProxyClient
+impl core::marker::Unpin for devboy_mcp::proxy::McpProxyClient
+impl core::marker::UnsafeUnpin for devboy_mcp::proxy::McpProxyClient
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::proxy::McpProxyClient
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::proxy::McpProxyClient
+pub struct devboy_mcp::proxy::ProxyManager
+impl devboy_mcp::proxy::ProxyManager
+pub fn devboy_mcp::proxy::ProxyManager::add_client(&mut self, client: devboy_mcp::proxy::McpProxyClient)
+pub fn devboy_mcp::proxy::ProxyManager::all_tools(&self) -> alloc::vec::Vec<devboy_mcp::protocol::ToolDefinition>
+pub async fn devboy_mcp::proxy::ProxyManager::call_by_prefix(&self, prefix: &str, unprefixed_tool_name: &str, arguments: core::option::Option<serde_json::value::Value>) -> core::option::Option<devboy_mcp::protocol::ToolCallResult>
+pub async fn devboy_mcp::proxy::ProxyManager::fetch_all_tools(&mut self) -> devboy_core::error::Result<()>
+pub fn devboy_mcp::proxy::ProxyManager::has_tool(&self, tool_name: &str) -> bool
+pub fn devboy_mcp::proxy::ProxyManager::is_empty(&self) -> bool
+pub fn devboy_mcp::proxy::ProxyManager::new() -> Self
+pub fn devboy_mcp::proxy::ProxyManager::raw_upstream_catalogue(&self) -> alloc::vec::Vec<(alloc::string::String, &[devboy_mcp::protocol::ToolDefinition])>
+pub async fn devboy_mcp::proxy::ProxyManager::try_call(&self, tool_name: &str, arguments: core::option::Option<serde_json::value::Value>) -> core::option::Option<devboy_mcp::protocol::ToolCallResult>
+impl core::default::Default for devboy_mcp::proxy::ProxyManager
+pub fn devboy_mcp::proxy::ProxyManager::default() -> Self
+impl core::marker::Freeze for devboy_mcp::proxy::ProxyManager
+impl core::marker::Send for devboy_mcp::proxy::ProxyManager
+impl core::marker::Sync for devboy_mcp::proxy::ProxyManager
+impl core::marker::Unpin for devboy_mcp::proxy::ProxyManager
+impl core::marker::UnsafeUnpin for devboy_mcp::proxy::ProxyManager
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::proxy::ProxyManager
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::proxy::ProxyManager
+pub mod devboy_mcp::routing
+pub enum devboy_mcp::routing::RoutingReason
+pub devboy_mcp::routing::RoutingReason::ExplicitPrefix
+pub devboy_mcp::routing::RoutingReason::LocalOnly
+pub devboy_mcp::routing::RoutingReason::OverrideRule(alloc::string::String)
+pub devboy_mcp::routing::RoutingReason::RemoteOnly
+pub devboy_mcp::routing::RoutingReason::SchemaIncompatible
+pub devboy_mcp::routing::RoutingReason::StrategyLocal
+pub devboy_mcp::routing::RoutingReason::StrategyLocalFirst
+pub devboy_mcp::routing::RoutingReason::StrategyRemote
+pub devboy_mcp::routing::RoutingReason::StrategyRemoteFirst
+pub devboy_mcp::routing::RoutingReason::Unknown
+impl devboy_mcp::routing::RoutingReason
+pub fn devboy_mcp::routing::RoutingReason::as_label(&self) -> &str
+pub fn devboy_mcp::routing::RoutingReason::detail(&self) -> core::option::Option<&str>
+impl core::clone::Clone for devboy_mcp::routing::RoutingReason
+pub fn devboy_mcp::routing::RoutingReason::clone(&self) -> devboy_mcp::routing::RoutingReason
+impl core::cmp::Eq for devboy_mcp::routing::RoutingReason
+impl core::cmp::PartialEq for devboy_mcp::routing::RoutingReason
+pub fn devboy_mcp::routing::RoutingReason::eq(&self, other: &devboy_mcp::routing::RoutingReason) -> bool
+impl core::fmt::Debug for devboy_mcp::routing::RoutingReason
+pub fn devboy_mcp::routing::RoutingReason::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::routing::RoutingReason
+impl core::marker::Freeze for devboy_mcp::routing::RoutingReason
+impl core::marker::Send for devboy_mcp::routing::RoutingReason
+impl core::marker::Sync for devboy_mcp::routing::RoutingReason
+impl core::marker::Unpin for devboy_mcp::routing::RoutingReason
+impl core::marker::UnsafeUnpin for devboy_mcp::routing::RoutingReason
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::routing::RoutingReason
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::routing::RoutingReason
+pub enum devboy_mcp::routing::RoutingTarget
+pub devboy_mcp::routing::RoutingTarget::Local
+pub devboy_mcp::routing::RoutingTarget::Reject
+pub devboy_mcp::routing::RoutingTarget::Remote
+pub devboy_mcp::routing::RoutingTarget::Remote::original_name: alloc::string::String
+pub devboy_mcp::routing::RoutingTarget::Remote::prefix: alloc::string::String
+impl core::clone::Clone for devboy_mcp::routing::RoutingTarget
+pub fn devboy_mcp::routing::RoutingTarget::clone(&self) -> devboy_mcp::routing::RoutingTarget
+impl core::cmp::Eq for devboy_mcp::routing::RoutingTarget
+impl core::cmp::PartialEq for devboy_mcp::routing::RoutingTarget
+pub fn devboy_mcp::routing::RoutingTarget::eq(&self, other: &devboy_mcp::routing::RoutingTarget) -> bool
+impl core::fmt::Debug for devboy_mcp::routing::RoutingTarget
+pub fn devboy_mcp::routing::RoutingTarget::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::routing::RoutingTarget
+impl core::marker::Freeze for devboy_mcp::routing::RoutingTarget
+impl core::marker::Send for devboy_mcp::routing::RoutingTarget
+impl core::marker::Sync for devboy_mcp::routing::RoutingTarget
+impl core::marker::Unpin for devboy_mcp::routing::RoutingTarget
+impl core::marker::UnsafeUnpin for devboy_mcp::routing::RoutingTarget
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::routing::RoutingTarget
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::routing::RoutingTarget
+pub struct devboy_mcp::routing::IncompatibleTool
+pub devboy_mcp::routing::IncompatibleTool::reason: core::option::Option<alloc::string::String>
+pub devboy_mcp::routing::IncompatibleTool::tool: alloc::string::String
+pub devboy_mcp::routing::IncompatibleTool::upstream_prefix: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_mcp::routing::IncompatibleTool
+pub fn devboy_mcp::routing::IncompatibleTool::clone(&self) -> devboy_mcp::routing::IncompatibleTool
+impl core::fmt::Debug for devboy_mcp::routing::IncompatibleTool
+pub fn devboy_mcp::routing::IncompatibleTool::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::routing::IncompatibleTool
+impl core::marker::Send for devboy_mcp::routing::IncompatibleTool
+impl core::marker::Sync for devboy_mcp::routing::IncompatibleTool
+impl core::marker::Unpin for devboy_mcp::routing::IncompatibleTool
+impl core::marker::UnsafeUnpin for devboy_mcp::routing::IncompatibleTool
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::routing::IncompatibleTool
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::routing::IncompatibleTool
+pub struct devboy_mcp::routing::ProxyStatus
+pub devboy_mcp::routing::ProxyStatus::fallback_on_error: bool
+pub devboy_mcp::routing::ProxyStatus::incompatible: alloc::vec::Vec<devboy_mcp::routing::IncompatibleTool>
+pub devboy_mcp::routing::ProxyStatus::local_only: alloc::vec::Vec<alloc::string::String>
+pub devboy_mcp::routing::ProxyStatus::override_rules: alloc::vec::Vec<(alloc::string::String, devboy_core::config::RoutingStrategy)>
+pub devboy_mcp::routing::ProxyStatus::remote_only: alloc::vec::Vec<alloc::string::String>
+pub devboy_mcp::routing::ProxyStatus::routable_locally: alloc::vec::Vec<alloc::string::String>
+pub devboy_mcp::routing::ProxyStatus::strategy: devboy_core::config::RoutingStrategy
+pub devboy_mcp::routing::ProxyStatus::total_tools: usize
+impl devboy_mcp::routing::ProxyStatus
+pub fn devboy_mcp::routing::ProxyStatus::from_engine(engine: &devboy_mcp::routing::RoutingEngine) -> Self
+pub fn devboy_mcp::routing::ProxyStatus::to_json(&self) -> serde_json::value::Value
+pub fn devboy_mcp::routing::ProxyStatus::to_text_report(&self) -> alloc::string::String
+impl core::clone::Clone for devboy_mcp::routing::ProxyStatus
+pub fn devboy_mcp::routing::ProxyStatus::clone(&self) -> devboy_mcp::routing::ProxyStatus
+impl core::fmt::Debug for devboy_mcp::routing::ProxyStatus
+pub fn devboy_mcp::routing::ProxyStatus::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::routing::ProxyStatus
+impl core::marker::Send for devboy_mcp::routing::ProxyStatus
+impl core::marker::Sync for devboy_mcp::routing::ProxyStatus
+impl core::marker::Unpin for devboy_mcp::routing::ProxyStatus
+impl core::marker::UnsafeUnpin for devboy_mcp::routing::ProxyStatus
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::routing::ProxyStatus
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::routing::ProxyStatus
+pub struct devboy_mcp::routing::RoutingDecision
+pub devboy_mcp::routing::RoutingDecision::decided_at: std::time::Instant
+pub devboy_mcp::routing::RoutingDecision::fallback: core::option::Option<devboy_mcp::routing::RoutingTarget>
+pub devboy_mcp::routing::RoutingDecision::primary: devboy_mcp::routing::RoutingTarget
+pub devboy_mcp::routing::RoutingDecision::reason: devboy_mcp::routing::RoutingReason
+pub devboy_mcp::routing::RoutingDecision::resolved_name: alloc::string::String
+impl devboy_mcp::routing::RoutingDecision
+pub fn devboy_mcp::routing::RoutingDecision::emit_tracing(&self, requested_name: &str)
+pub fn devboy_mcp::routing::RoutingDecision::local(name: impl core::convert::Into<alloc::string::String>, reason: devboy_mcp::routing::RoutingReason) -> Self
+pub fn devboy_mcp::routing::RoutingDecision::reject(name: impl core::convert::Into<alloc::string::String>, reason: devboy_mcp::routing::RoutingReason) -> Self
+pub fn devboy_mcp::routing::RoutingDecision::remote(prefix: impl core::convert::Into<alloc::string::String>, original_name: impl core::convert::Into<alloc::string::String>, reason: devboy_mcp::routing::RoutingReason) -> Self
+pub fn devboy_mcp::routing::RoutingDecision::to_meta_json(&self) -> serde_json::value::Value
+pub fn devboy_mcp::routing::RoutingDecision::with_fallback(self, fallback: devboy_mcp::routing::RoutingTarget) -> Self
+impl core::clone::Clone for devboy_mcp::routing::RoutingDecision
+pub fn devboy_mcp::routing::RoutingDecision::clone(&self) -> devboy_mcp::routing::RoutingDecision
+impl core::fmt::Debug for devboy_mcp::routing::RoutingDecision
+pub fn devboy_mcp::routing::RoutingDecision::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::routing::RoutingDecision
+impl core::marker::Send for devboy_mcp::routing::RoutingDecision
+impl core::marker::Sync for devboy_mcp::routing::RoutingDecision
+impl core::marker::Unpin for devboy_mcp::routing::RoutingDecision
+impl core::marker::UnsafeUnpin for devboy_mcp::routing::RoutingDecision
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::routing::RoutingDecision
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::routing::RoutingDecision
+pub struct devboy_mcp::routing::RoutingEngine
+impl devboy_mcp::routing::RoutingEngine
+pub fn devboy_mcp::routing::RoutingEngine::config(&self) -> &devboy_core::config::ProxyRoutingConfig
+pub fn devboy_mcp::routing::RoutingEngine::decide(&self, requested_name: &str) -> devboy_mcp::routing::RoutingDecision
+pub fn devboy_mcp::routing::RoutingEngine::decide_quiet(&self, requested_name: &str) -> devboy_mcp::routing::RoutingDecision
+pub fn devboy_mcp::routing::RoutingEngine::new(config: devboy_core::config::ProxyRoutingConfig, report: devboy_mcp::signature_match::MatchReport) -> Self
+pub fn devboy_mcp::routing::RoutingEngine::report(&self) -> &devboy_mcp::signature_match::MatchReport
+impl core::marker::Freeze for devboy_mcp::routing::RoutingEngine
+impl core::marker::Send for devboy_mcp::routing::RoutingEngine
+impl core::marker::Sync for devboy_mcp::routing::RoutingEngine
+impl core::marker::Unpin for devboy_mcp::routing::RoutingEngine
+impl core::marker::UnsafeUnpin for devboy_mcp::routing::RoutingEngine
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::routing::RoutingEngine
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::routing::RoutingEngine
+pub mod devboy_mcp::server
+pub struct devboy_mcp::server::DeferredInit
+pub devboy_mcp::server::DeferredInit::builtin_tools_config: core::option::Option<devboy_core::config::BuiltinToolsConfig>
+pub devboy_mcp::server::DeferredInit::proxy_manager: devboy_mcp::proxy::ProxyManager
+pub devboy_mcp::server::DeferredInit::routing_engine: core::option::Option<alloc::sync::Arc<devboy_mcp::routing::RoutingEngine>>
+impl core::marker::Freeze for devboy_mcp::server::DeferredInit
+impl core::marker::Send for devboy_mcp::server::DeferredInit
+impl core::marker::Sync for devboy_mcp::server::DeferredInit
+impl core::marker::Unpin for devboy_mcp::server::DeferredInit
+impl core::marker::UnsafeUnpin for devboy_mcp::server::DeferredInit
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::server::DeferredInit
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::server::DeferredInit
+pub struct devboy_mcp::server::McpServer
+impl devboy_mcp::server::McpServer
+pub fn devboy_mcp::server::McpServer::active_context_name(&self) -> alloc::string::String
+pub fn devboy_mcp::server::McpServer::active_knowledge_base_providers(&self) -> alloc::vec::Vec<alloc::sync::Arc<dyn devboy_core::provider::KnowledgeBaseProvider>>
+pub fn devboy_mcp::server::McpServer::active_messenger_providers(&self) -> alloc::vec::Vec<alloc::sync::Arc<dyn devboy_core::provider::MessengerProvider>>
+pub fn devboy_mcp::server::McpServer::active_providers(&self) -> alloc::vec::Vec<alloc::sync::Arc<dyn devboy_core::provider::Provider>>
+pub fn devboy_mcp::server::McpServer::add_knowledge_base_provider(&mut self, provider: alloc::sync::Arc<dyn devboy_core::provider::KnowledgeBaseProvider>)
+pub fn devboy_mcp::server::McpServer::add_knowledge_base_provider_to_context(&mut self, context: &str, provider: alloc::sync::Arc<dyn devboy_core::provider::KnowledgeBaseProvider>)
+pub fn devboy_mcp::server::McpServer::add_meeting_provider(&mut self, provider: alloc::sync::Arc<dyn devboy_core::provider::MeetingNotesProvider>)
+pub fn devboy_mcp::server::McpServer::add_messenger_provider(&mut self, provider: alloc::sync::Arc<dyn devboy_core::provider::MessengerProvider>)
+pub fn devboy_mcp::server::McpServer::add_messenger_provider_to_context(&mut self, context: &str, provider: alloc::sync::Arc<dyn devboy_core::provider::MessengerProvider>)
+pub fn devboy_mcp::server::McpServer::add_provider(&mut self, provider: alloc::sync::Arc<dyn devboy_core::provider::Provider>)
+pub fn devboy_mcp::server::McpServer::add_provider_to_context(&mut self, context: &str, provider: alloc::sync::Arc<dyn devboy_core::provider::Provider>)
+pub fn devboy_mcp::server::McpServer::context_names(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn devboy_mcp::server::McpServer::enable_layered_pipeline(&mut self, pipeline: devboy_mcp::layered::SessionPipeline)
+pub fn devboy_mcp::server::McpServer::ensure_context(&mut self, context: &str)
+pub async fn devboy_mcp::server::McpServer::execute_for_prefetch(&self, name: &str, arguments: core::option::Option<serde_json::value::Value>) -> devboy_mcp::protocol::ToolCallResult
+pub async fn devboy_mcp::server::McpServer::handle_request(&mut self, req: devboy_mcp::protocol::JsonRpcRequest) -> devboy_mcp::protocol::JsonRpcResponse
+pub fn devboy_mcp::server::McpServer::handle_tools_list(&self, id: devboy_mcp::protocol::RequestId) -> devboy_mcp::protocol::JsonRpcResponse
+pub fn devboy_mcp::server::McpServer::new() -> Self
+pub fn devboy_mcp::server::McpServer::on_compaction_boundary(&self)
+pub fn devboy_mcp::server::McpServer::providers(&self) -> &[alloc::sync::Arc<dyn devboy_core::provider::Provider>]
+pub async fn devboy_mcp::server::McpServer::run(&mut self) -> devboy_core::error::Result<()>
+pub fn devboy_mcp::server::McpServer::set_active_context(&self, context: &str) -> devboy_core::error::Result<()>
+pub fn devboy_mcp::server::McpServer::set_builtin_tools_config(&mut self, config: devboy_core::config::BuiltinToolsConfig) -> devboy_core::error::Result<()>
+pub fn devboy_mcp::server::McpServer::set_deferred_init(&mut self, receiver: tokio::sync::oneshot::Receiver<devboy_mcp::server::DeferredInit>)
+pub fn devboy_mcp::server::McpServer::set_proxy_manager(&mut self, proxy_manager: devboy_mcp::proxy::ProxyManager)
+pub fn devboy_mcp::server::McpServer::set_routing_engine(&mut self, engine: alloc::sync::Arc<devboy_mcp::routing::RoutingEngine>)
+pub fn devboy_mcp::server::McpServer::set_telemetry(&mut self, buffer: devboy_mcp::telemetry::TelemetryBuffer)
+impl core::default::Default for devboy_mcp::server::McpServer
+pub fn devboy_mcp::server::McpServer::default() -> Self
+impl !core::marker::Freeze for devboy_mcp::server::McpServer
+impl core::marker::Send for devboy_mcp::server::McpServer
+impl core::marker::Sync for devboy_mcp::server::McpServer
+impl core::marker::Unpin for devboy_mcp::server::McpServer
+impl core::marker::UnsafeUnpin for devboy_mcp::server::McpServer
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::server::McpServer
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::server::McpServer
+pub mod devboy_mcp::signature_match
+pub struct devboy_mcp::signature_match::MatchReport
+pub devboy_mcp::signature_match::MatchReport::matches: std::collections::hash::map::HashMap<alloc::string::String, devboy_mcp::signature_match::ToolMatch>
+impl devboy_mcp::signature_match::MatchReport
+pub fn devboy_mcp::signature_match::MatchReport::get(&self, tool_name: &str) -> core::option::Option<&devboy_mcp::signature_match::ToolMatch>
+pub fn devboy_mcp::signature_match::MatchReport::incompatible_pairs(&self) -> alloc::vec::Vec<&devboy_mcp::signature_match::ToolMatch>
+pub fn devboy_mcp::signature_match::MatchReport::is_empty(&self) -> bool
+pub fn devboy_mcp::signature_match::MatchReport::len(&self) -> usize
+pub fn devboy_mcp::signature_match::MatchReport::local_only(&self) -> alloc::vec::Vec<&devboy_mcp::signature_match::ToolMatch>
+pub fn devboy_mcp::signature_match::MatchReport::remote_only(&self) -> alloc::vec::Vec<&devboy_mcp::signature_match::ToolMatch>
+pub fn devboy_mcp::signature_match::MatchReport::routable_locally(&self) -> alloc::vec::Vec<&devboy_mcp::signature_match::ToolMatch>
+impl core::clone::Clone for devboy_mcp::signature_match::MatchReport
+pub fn devboy_mcp::signature_match::MatchReport::clone(&self) -> devboy_mcp::signature_match::MatchReport
+impl core::default::Default for devboy_mcp::signature_match::MatchReport
+pub fn devboy_mcp::signature_match::MatchReport::default() -> devboy_mcp::signature_match::MatchReport
+impl core::fmt::Debug for devboy_mcp::signature_match::MatchReport
+pub fn devboy_mcp::signature_match::MatchReport::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::signature_match::MatchReport
+impl core::marker::Send for devboy_mcp::signature_match::MatchReport
+impl core::marker::Sync for devboy_mcp::signature_match::MatchReport
+impl core::marker::Unpin for devboy_mcp::signature_match::MatchReport
+impl core::marker::UnsafeUnpin for devboy_mcp::signature_match::MatchReport
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::signature_match::MatchReport
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::signature_match::MatchReport
+pub struct devboy_mcp::signature_match::ToolCatalogue<'a>
+pub devboy_mcp::signature_match::ToolCatalogue::local: &'a [devboy_mcp::protocol::ToolDefinition]
+pub devboy_mcp::signature_match::ToolCatalogue::upstream: alloc::vec::Vec<(alloc::string::String, &'a [devboy_mcp::protocol::ToolDefinition])>
+impl<'a> core::marker::Freeze for devboy_mcp::signature_match::ToolCatalogue<'a>
+impl<'a> core::marker::Send for devboy_mcp::signature_match::ToolCatalogue<'a>
+impl<'a> core::marker::Sync for devboy_mcp::signature_match::ToolCatalogue<'a>
+impl<'a> core::marker::Unpin for devboy_mcp::signature_match::ToolCatalogue<'a>
+impl<'a> core::marker::UnsafeUnpin for devboy_mcp::signature_match::ToolCatalogue<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::signature_match::ToolCatalogue<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for devboy_mcp::signature_match::ToolCatalogue<'a>
+pub struct devboy_mcp::signature_match::ToolMatch
+pub devboy_mcp::signature_match::ToolMatch::local_present: bool
+pub devboy_mcp::signature_match::ToolMatch::remote_present: bool
+pub devboy_mcp::signature_match::ToolMatch::schema_compatible: core::option::Option<bool>
+pub devboy_mcp::signature_match::ToolMatch::schema_mismatch: core::option::Option<alloc::string::String>
+pub devboy_mcp::signature_match::ToolMatch::tool_name: alloc::string::String
+pub devboy_mcp::signature_match::ToolMatch::upstream_prefix: core::option::Option<alloc::string::String>
+impl devboy_mcp::signature_match::ToolMatch
+pub fn devboy_mcp::signature_match::ToolMatch::is_matched(&self) -> bool
+pub fn devboy_mcp::signature_match::ToolMatch::is_routable_local(&self) -> bool
+pub fn devboy_mcp::signature_match::ToolMatch::prefixed_remote_name(&self) -> core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_mcp::signature_match::ToolMatch
+pub fn devboy_mcp::signature_match::ToolMatch::clone(&self) -> devboy_mcp::signature_match::ToolMatch
+impl core::fmt::Debug for devboy_mcp::signature_match::ToolMatch
+pub fn devboy_mcp::signature_match::ToolMatch::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::signature_match::ToolMatch
+impl core::marker::Send for devboy_mcp::signature_match::ToolMatch
+impl core::marker::Sync for devboy_mcp::signature_match::ToolMatch
+impl core::marker::Unpin for devboy_mcp::signature_match::ToolMatch
+impl core::marker::UnsafeUnpin for devboy_mcp::signature_match::ToolMatch
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::signature_match::ToolMatch
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::signature_match::ToolMatch
+pub fn devboy_mcp::signature_match::build_report(catalogue: devboy_mcp::signature_match::ToolCatalogue<'_>) -> devboy_mcp::signature_match::MatchReport
+pub mod devboy_mcp::speculation
+pub enum devboy_mcp::speculation::PrefetchError
+pub devboy_mcp::speculation::PrefetchError::HostTimeout
+pub devboy_mcp::speculation::PrefetchError::Io(alloc::string::String)
+pub devboy_mcp::speculation::PrefetchError::Rejected(alloc::string::String)
+impl core::error::Error for devboy_mcp::speculation::PrefetchError
+impl core::fmt::Debug for devboy_mcp::speculation::PrefetchError
+pub fn devboy_mcp::speculation::PrefetchError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_mcp::speculation::PrefetchError
+pub fn devboy_mcp::speculation::PrefetchError::fmt(&self, __formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::speculation::PrefetchError
+impl core::marker::Send for devboy_mcp::speculation::PrefetchError
+impl core::marker::Sync for devboy_mcp::speculation::PrefetchError
+impl core::marker::Unpin for devboy_mcp::speculation::PrefetchError
+impl core::marker::UnsafeUnpin for devboy_mcp::speculation::PrefetchError
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::speculation::PrefetchError
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::speculation::PrefetchError
+pub enum devboy_mcp::speculation::PrefetchOutcome
+pub devboy_mcp::speculation::PrefetchOutcome::Failed
+pub devboy_mcp::speculation::PrefetchOutcome::Failed::error: devboy_mcp::speculation::PrefetchError
+pub devboy_mcp::speculation::PrefetchOutcome::Failed::tool: alloc::string::String
+pub devboy_mcp::speculation::PrefetchOutcome::Settled
+pub devboy_mcp::speculation::PrefetchOutcome::Settled::args: serde_json::value::Value
+pub devboy_mcp::speculation::PrefetchOutcome::Settled::body: alloc::string::String
+pub devboy_mcp::speculation::PrefetchOutcome::Settled::predicted_cost_tokens: u32
+pub devboy_mcp::speculation::PrefetchOutcome::Settled::tool: alloc::string::String
+pub devboy_mcp::speculation::PrefetchOutcome::Skipped
+pub devboy_mcp::speculation::PrefetchOutcome::Skipped::reason: devboy_mcp::speculation::SkipReason
+pub devboy_mcp::speculation::PrefetchOutcome::Skipped::tool: alloc::string::String
+impl core::fmt::Debug for devboy_mcp::speculation::PrefetchOutcome
+pub fn devboy_mcp::speculation::PrefetchOutcome::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::speculation::PrefetchOutcome
+impl core::marker::Send for devboy_mcp::speculation::PrefetchOutcome
+impl core::marker::Sync for devboy_mcp::speculation::PrefetchOutcome
+impl core::marker::Unpin for devboy_mcp::speculation::PrefetchOutcome
+impl core::marker::UnsafeUnpin for devboy_mcp::speculation::PrefetchOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::speculation::PrefetchOutcome
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::speculation::PrefetchOutcome
+pub enum devboy_mcp::speculation::SkipReason
+pub devboy_mcp::speculation::SkipReason::HostSaturated
+pub devboy_mcp::speculation::SkipReason::MaxParallelReached
+pub devboy_mcp::speculation::SkipReason::NotSpeculatable
+impl core::clone::Clone for devboy_mcp::speculation::SkipReason
+pub fn devboy_mcp::speculation::SkipReason::clone(&self) -> devboy_mcp::speculation::SkipReason
+impl core::cmp::Eq for devboy_mcp::speculation::SkipReason
+impl core::cmp::PartialEq for devboy_mcp::speculation::SkipReason
+pub fn devboy_mcp::speculation::SkipReason::eq(&self, other: &devboy_mcp::speculation::SkipReason) -> bool
+impl core::fmt::Debug for devboy_mcp::speculation::SkipReason
+pub fn devboy_mcp::speculation::SkipReason::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_mcp::speculation::SkipReason
+impl core::marker::StructuralPartialEq for devboy_mcp::speculation::SkipReason
+impl core::marker::Freeze for devboy_mcp::speculation::SkipReason
+impl core::marker::Send for devboy_mcp::speculation::SkipReason
+impl core::marker::Sync for devboy_mcp::speculation::SkipReason
+impl core::marker::Unpin for devboy_mcp::speculation::SkipReason
+impl core::marker::UnsafeUnpin for devboy_mcp::speculation::SkipReason
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::speculation::SkipReason
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::speculation::SkipReason
+pub struct devboy_mcp::speculation::HostBudget
+impl devboy_mcp::speculation::HostBudget
+pub fn devboy_mcp::speculation::HostBudget::new() -> Self
+pub async fn devboy_mcp::speculation::HostBudget::release(&self, host: &str)
+pub async fn devboy_mcp::speculation::HostBudget::snapshot(&self) -> std::collections::hash::map::HashMap<alloc::string::String, u32>
+pub async fn devboy_mcp::speculation::HostBudget::try_acquire(&self, host: &str, cap: u32) -> bool
+impl core::clone::Clone for devboy_mcp::speculation::HostBudget
+pub fn devboy_mcp::speculation::HostBudget::clone(&self) -> devboy_mcp::speculation::HostBudget
+impl core::default::Default for devboy_mcp::speculation::HostBudget
+pub fn devboy_mcp::speculation::HostBudget::default() -> devboy_mcp::speculation::HostBudget
+impl core::marker::Freeze for devboy_mcp::speculation::HostBudget
+impl core::marker::Send for devboy_mcp::speculation::HostBudget
+impl core::marker::Sync for devboy_mcp::speculation::HostBudget
+impl core::marker::Unpin for devboy_mcp::speculation::HostBudget
+impl core::marker::UnsafeUnpin for devboy_mcp::speculation::HostBudget
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::speculation::HostBudget
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::speculation::HostBudget
+pub struct devboy_mcp::speculation::PrefetchRequest
+pub devboy_mcp::speculation::PrefetchRequest::args: serde_json::value::Value
+pub devboy_mcp::speculation::PrefetchRequest::call: devboy_format_pipeline::enrichment::PlannedCall
+pub devboy_mcp::speculation::PrefetchRequest::rate_limit_host: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_mcp::speculation::PrefetchRequest
+pub fn devboy_mcp::speculation::PrefetchRequest::clone(&self) -> devboy_mcp::speculation::PrefetchRequest
+impl core::fmt::Debug for devboy_mcp::speculation::PrefetchRequest
+pub fn devboy_mcp::speculation::PrefetchRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::speculation::PrefetchRequest
+impl core::marker::Send for devboy_mcp::speculation::PrefetchRequest
+impl core::marker::Sync for devboy_mcp::speculation::PrefetchRequest
+impl core::marker::Unpin for devboy_mcp::speculation::PrefetchRequest
+impl core::marker::UnsafeUnpin for devboy_mcp::speculation::PrefetchRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::speculation::PrefetchRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::speculation::PrefetchRequest
+pub struct devboy_mcp::speculation::SpeculationEngine
+impl devboy_mcp::speculation::SpeculationEngine
+pub async fn devboy_mcp::speculation::SpeculationEngine::dispatch(&mut self, requests: alloc::vec::Vec<devboy_mcp::speculation::PrefetchRequest>) -> alloc::vec::Vec<devboy_mcp::speculation::PrefetchOutcome>
+pub async fn devboy_mcp::speculation::SpeculationEngine::drain_pending(&mut self) -> alloc::vec::Vec<devboy_mcp::speculation::PrefetchOutcome>
+pub fn devboy_mcp::speculation::SpeculationEngine::is_enabled(&self) -> bool
+pub fn devboy_mcp::speculation::SpeculationEngine::new(config: devboy_format_pipeline::adaptive_config::EnrichmentConfig, dispatcher: alloc::sync::Arc<dyn devboy_mcp::speculation::PrefetchDispatcher>) -> Self
+pub fn devboy_mcp::speculation::SpeculationEngine::pending(&self) -> usize
+pub async fn devboy_mcp::speculation::SpeculationEngine::shutdown(&mut self)
+pub fn devboy_mcp::speculation::SpeculationEngine::timeout(&self) -> core::time::Duration
+pub async fn devboy_mcp::speculation::SpeculationEngine::wait_within(&mut self) -> alloc::vec::Vec<devboy_mcp::speculation::PrefetchOutcome>
+pub fn devboy_mcp::speculation::SpeculationEngine::with_per_host_cap(self, cap: u32) -> Self
+impl core::ops::drop::Drop for devboy_mcp::speculation::SpeculationEngine
+pub fn devboy_mcp::speculation::SpeculationEngine::drop(&mut self)
+impl core::marker::Freeze for devboy_mcp::speculation::SpeculationEngine
+impl core::marker::Send for devboy_mcp::speculation::SpeculationEngine
+impl core::marker::Sync for devboy_mcp::speculation::SpeculationEngine
+impl core::marker::Unpin for devboy_mcp::speculation::SpeculationEngine
+impl core::marker::UnsafeUnpin for devboy_mcp::speculation::SpeculationEngine
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::speculation::SpeculationEngine
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::speculation::SpeculationEngine
+pub trait devboy_mcp::speculation::PrefetchDispatcher: core::marker::Send + core::marker::Sync
+pub fn devboy_mcp::speculation::PrefetchDispatcher::dispatch<'life0, 'life1, 'async_trait>(&'life0 self, tool_name: &'life1 str, args: serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::string::String, devboy_mcp::speculation::PrefetchError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+impl devboy_mcp::speculation::PrefetchDispatcher for devboy_mcp::prefetch_adapter::McpPrefetchDispatcher
+pub fn devboy_mcp::prefetch_adapter::McpPrefetchDispatcher::dispatch<'life0, 'life1, 'async_trait>(&'life0 self, tool_name: &'life1 str, args: serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::string::String, devboy_mcp::speculation::PrefetchError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub mod devboy_mcp::telemetry
+pub enum devboy_mcp::telemetry::TelemetryStatus
+pub devboy_mcp::telemetry::TelemetryStatus::Error
+pub devboy_mcp::telemetry::TelemetryStatus::Success
+impl core::clone::Clone for devboy_mcp::telemetry::TelemetryStatus
+pub fn devboy_mcp::telemetry::TelemetryStatus::clone(&self) -> devboy_mcp::telemetry::TelemetryStatus
+impl core::cmp::Eq for devboy_mcp::telemetry::TelemetryStatus
+impl core::cmp::PartialEq for devboy_mcp::telemetry::TelemetryStatus
+pub fn devboy_mcp::telemetry::TelemetryStatus::eq(&self, other: &devboy_mcp::telemetry::TelemetryStatus) -> bool
+impl core::fmt::Debug for devboy_mcp::telemetry::TelemetryStatus
+pub fn devboy_mcp::telemetry::TelemetryStatus::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::telemetry::TelemetryStatus
+impl serde_core::ser::Serialize for devboy_mcp::telemetry::TelemetryStatus
+pub fn devboy_mcp::telemetry::TelemetryStatus::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::telemetry::TelemetryStatus
+pub fn devboy_mcp::telemetry::TelemetryStatus::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::telemetry::TelemetryStatus
+impl core::marker::Send for devboy_mcp::telemetry::TelemetryStatus
+impl core::marker::Sync for devboy_mcp::telemetry::TelemetryStatus
+impl core::marker::Unpin for devboy_mcp::telemetry::TelemetryStatus
+impl core::marker::UnsafeUnpin for devboy_mcp::telemetry::TelemetryStatus
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::telemetry::TelemetryStatus
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::telemetry::TelemetryStatus
+pub struct devboy_mcp::telemetry::TelemetryAuth
+pub devboy_mcp::telemetry::TelemetryAuth::bearer_token: core::option::Option<secrecy::SecretString>
+impl core::clone::Clone for devboy_mcp::telemetry::TelemetryAuth
+pub fn devboy_mcp::telemetry::TelemetryAuth::clone(&self) -> devboy_mcp::telemetry::TelemetryAuth
+impl core::default::Default for devboy_mcp::telemetry::TelemetryAuth
+pub fn devboy_mcp::telemetry::TelemetryAuth::default() -> devboy_mcp::telemetry::TelemetryAuth
+impl core::marker::Freeze for devboy_mcp::telemetry::TelemetryAuth
+impl core::marker::Send for devboy_mcp::telemetry::TelemetryAuth
+impl core::marker::Sync for devboy_mcp::telemetry::TelemetryAuth
+impl core::marker::Unpin for devboy_mcp::telemetry::TelemetryAuth
+impl core::marker::UnsafeUnpin for devboy_mcp::telemetry::TelemetryAuth
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::telemetry::TelemetryAuth
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::telemetry::TelemetryAuth
+pub struct devboy_mcp::telemetry::TelemetryBatch
+pub devboy_mcp::telemetry::TelemetryBatch::events: alloc::vec::Vec<devboy_mcp::telemetry::TelemetryEvent>
+impl core::clone::Clone for devboy_mcp::telemetry::TelemetryBatch
+pub fn devboy_mcp::telemetry::TelemetryBatch::clone(&self) -> devboy_mcp::telemetry::TelemetryBatch
+impl core::fmt::Debug for devboy_mcp::telemetry::TelemetryBatch
+pub fn devboy_mcp::telemetry::TelemetryBatch::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::telemetry::TelemetryBatch
+pub fn devboy_mcp::telemetry::TelemetryBatch::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::telemetry::TelemetryBatch
+pub fn devboy_mcp::telemetry::TelemetryBatch::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::telemetry::TelemetryBatch
+impl core::marker::Send for devboy_mcp::telemetry::TelemetryBatch
+impl core::marker::Sync for devboy_mcp::telemetry::TelemetryBatch
+impl core::marker::Unpin for devboy_mcp::telemetry::TelemetryBatch
+impl core::marker::UnsafeUnpin for devboy_mcp::telemetry::TelemetryBatch
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::telemetry::TelemetryBatch
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::telemetry::TelemetryBatch
+pub struct devboy_mcp::telemetry::TelemetryBuffer
+impl devboy_mcp::telemetry::TelemetryBuffer
+pub async fn devboy_mcp::telemetry::TelemetryBuffer::drain(&self, max: usize) -> alloc::vec::Vec<devboy_mcp::telemetry::TelemetryEvent>
+pub async fn devboy_mcp::telemetry::TelemetryBuffer::is_empty(&self) -> bool
+pub async fn devboy_mcp::telemetry::TelemetryBuffer::len(&self) -> usize
+pub fn devboy_mcp::telemetry::TelemetryBuffer::new(capacity: usize) -> Self
+pub async fn devboy_mcp::telemetry::TelemetryBuffer::record(&self, event: devboy_mcp::telemetry::TelemetryEvent)
+pub async fn devboy_mcp::telemetry::TelemetryBuffer::requeue_front(&self, events: alloc::vec::Vec<devboy_mcp::telemetry::TelemetryEvent>)
+pub fn devboy_mcp::telemetry::TelemetryBuffer::set_flush_threshold(&self, threshold: usize)
+pub fn devboy_mcp::telemetry::TelemetryBuffer::size_trigger(&self) -> alloc::sync::Arc<tokio::sync::notify::Notify>
+impl core::clone::Clone for devboy_mcp::telemetry::TelemetryBuffer
+pub fn devboy_mcp::telemetry::TelemetryBuffer::clone(&self) -> devboy_mcp::telemetry::TelemetryBuffer
+impl core::marker::Freeze for devboy_mcp::telemetry::TelemetryBuffer
+impl core::marker::Send for devboy_mcp::telemetry::TelemetryBuffer
+impl core::marker::Sync for devboy_mcp::telemetry::TelemetryBuffer
+impl core::marker::Unpin for devboy_mcp::telemetry::TelemetryBuffer
+impl core::marker::UnsafeUnpin for devboy_mcp::telemetry::TelemetryBuffer
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::telemetry::TelemetryBuffer
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::telemetry::TelemetryBuffer
+pub struct devboy_mcp::telemetry::TelemetryEvent
+pub devboy_mcp::telemetry::TelemetryEvent::latency_ms: u64
+pub devboy_mcp::telemetry::TelemetryEvent::routing_decision: alloc::string::String
+pub devboy_mcp::telemetry::TelemetryEvent::routing_detail: core::option::Option<alloc::string::String>
+pub devboy_mcp::telemetry::TelemetryEvent::status: devboy_mcp::telemetry::TelemetryStatus
+pub devboy_mcp::telemetry::TelemetryEvent::timestamp_secs: u64
+pub devboy_mcp::telemetry::TelemetryEvent::tool: alloc::string::String
+pub devboy_mcp::telemetry::TelemetryEvent::upstream: core::option::Option<alloc::string::String>
+pub devboy_mcp::telemetry::TelemetryEvent::was_fallback: bool
+impl devboy_mcp::telemetry::TelemetryEvent
+pub fn devboy_mcp::telemetry::TelemetryEvent::now(tool: impl core::convert::Into<alloc::string::String>, routing_decision: impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for devboy_mcp::telemetry::TelemetryEvent
+pub fn devboy_mcp::telemetry::TelemetryEvent::clone(&self) -> devboy_mcp::telemetry::TelemetryEvent
+impl core::fmt::Debug for devboy_mcp::telemetry::TelemetryEvent
+pub fn devboy_mcp::telemetry::TelemetryEvent::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::telemetry::TelemetryEvent
+pub fn devboy_mcp::telemetry::TelemetryEvent::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::telemetry::TelemetryEvent
+pub fn devboy_mcp::telemetry::TelemetryEvent::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::telemetry::TelemetryEvent
+impl core::marker::Send for devboy_mcp::telemetry::TelemetryEvent
+impl core::marker::Sync for devboy_mcp::telemetry::TelemetryEvent
+impl core::marker::Unpin for devboy_mcp::telemetry::TelemetryEvent
+impl core::marker::UnsafeUnpin for devboy_mcp::telemetry::TelemetryEvent
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::telemetry::TelemetryEvent
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::telemetry::TelemetryEvent
+pub struct devboy_mcp::telemetry::TelemetryPipeline
+impl devboy_mcp::telemetry::TelemetryPipeline
+pub fn devboy_mcp::telemetry::TelemetryPipeline::buffer(&self) -> devboy_mcp::telemetry::TelemetryBuffer
+pub fn devboy_mcp::telemetry::TelemetryPipeline::config(&self) -> &devboy_core::config::ProxyTelemetryConfig
+pub async fn devboy_mcp::telemetry::TelemetryPipeline::flush(&self) -> devboy_core::error::Result<usize>
+pub fn devboy_mcp::telemetry::TelemetryPipeline::new(config: devboy_core::config::ProxyTelemetryConfig) -> Self
+pub async fn devboy_mcp::telemetry::TelemetryPipeline::shutdown(&mut self)
+pub fn devboy_mcp::telemetry::TelemetryPipeline::start(&mut self, auth: devboy_mcp::telemetry::TelemetryAuth) -> devboy_core::error::Result<()>
+impl core::marker::Freeze for devboy_mcp::telemetry::TelemetryPipeline
+impl core::marker::Send for devboy_mcp::telemetry::TelemetryPipeline
+impl core::marker::Sync for devboy_mcp::telemetry::TelemetryPipeline
+impl core::marker::Unpin for devboy_mcp::telemetry::TelemetryPipeline
+impl core::marker::UnsafeUnpin for devboy_mcp::telemetry::TelemetryPipeline
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::telemetry::TelemetryPipeline
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::telemetry::TelemetryPipeline
+pub struct devboy_mcp::telemetry::TelemetryUploader
+impl devboy_mcp::telemetry::TelemetryUploader
+pub fn devboy_mcp::telemetry::TelemetryUploader::new(endpoint: alloc::string::String, auth: devboy_mcp::telemetry::TelemetryAuth) -> devboy_core::error::Result<Self>
+pub async fn devboy_mcp::telemetry::TelemetryUploader::upload(&self, batch: &devboy_mcp::telemetry::TelemetryBatch) -> devboy_core::error::Result<()>
+impl core::clone::Clone for devboy_mcp::telemetry::TelemetryUploader
+pub fn devboy_mcp::telemetry::TelemetryUploader::clone(&self) -> devboy_mcp::telemetry::TelemetryUploader
+impl core::marker::Freeze for devboy_mcp::telemetry::TelemetryUploader
+impl core::marker::Send for devboy_mcp::telemetry::TelemetryUploader
+impl core::marker::Sync for devboy_mcp::telemetry::TelemetryUploader
+impl core::marker::Unpin for devboy_mcp::telemetry::TelemetryUploader
+impl core::marker::UnsafeUnpin for devboy_mcp::telemetry::TelemetryUploader
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::telemetry::TelemetryUploader
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::telemetry::TelemetryUploader
+pub mod devboy_mcp::tools
+pub struct devboy_mcp::tools::Tool
+pub devboy_mcp::tools::Tool::description: alloc::string::String
+pub devboy_mcp::tools::Tool::name: alloc::string::String
+pub devboy_mcp::tools::Tool::parameters: serde_json::value::Value
+impl core::clone::Clone for devboy_mcp::tools::Tool
+pub fn devboy_mcp::tools::Tool::clone(&self) -> devboy_mcp::tools::Tool
+impl core::fmt::Debug for devboy_mcp::tools::Tool
+pub fn devboy_mcp::tools::Tool::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::tools::Tool
+pub fn devboy_mcp::tools::Tool::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::tools::Tool
+pub fn devboy_mcp::tools::Tool::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::tools::Tool
+impl core::marker::Send for devboy_mcp::tools::Tool
+impl core::marker::Sync for devboy_mcp::tools::Tool
+impl core::marker::Unpin for devboy_mcp::tools::Tool
+impl core::marker::UnsafeUnpin for devboy_mcp::tools::Tool
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::tools::Tool
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::tools::Tool
+pub fn devboy_mcp::tools::available_tools() -> alloc::vec::Vec<devboy_mcp::tools::Tool>
+pub mod devboy_mcp::transport
+pub enum devboy_mcp::transport::IncomingMessage
+pub devboy_mcp::transport::IncomingMessage::Notification(devboy_mcp::protocol::JsonRpcNotification)
+pub devboy_mcp::transport::IncomingMessage::Request(devboy_mcp::protocol::JsonRpcRequest)
+impl core::fmt::Debug for devboy_mcp::transport::IncomingMessage
+pub fn devboy_mcp::transport::IncomingMessage::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::transport::IncomingMessage
+impl core::marker::Send for devboy_mcp::transport::IncomingMessage
+impl core::marker::Sync for devboy_mcp::transport::IncomingMessage
+impl core::marker::Unpin for devboy_mcp::transport::IncomingMessage
+impl core::marker::UnsafeUnpin for devboy_mcp::transport::IncomingMessage
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::transport::IncomingMessage
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::transport::IncomingMessage
+pub struct devboy_mcp::transport::StdioTransport
+impl devboy_mcp::transport::StdioTransport
+pub fn devboy_mcp::transport::StdioTransport::read_message(&mut self) -> std::io::error::Result<core::option::Option<devboy_mcp::transport::IncomingMessage>>
+pub fn devboy_mcp::transport::StdioTransport::stdio() -> Self
+pub fn devboy_mcp::transport::StdioTransport::write_notification(&mut self, notification: &devboy_mcp::protocol::JsonRpcNotification) -> std::io::error::Result<()>
+pub fn devboy_mcp::transport::StdioTransport::write_response(&mut self, response: &devboy_mcp::protocol::JsonRpcResponse) -> std::io::error::Result<()>
+impl core::marker::Freeze for devboy_mcp::transport::StdioTransport
+impl core::marker::Send for devboy_mcp::transport::StdioTransport
+impl !core::marker::Sync for devboy_mcp::transport::StdioTransport
+impl core::marker::Unpin for devboy_mcp::transport::StdioTransport
+impl core::marker::UnsafeUnpin for devboy_mcp::transport::StdioTransport
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::transport::StdioTransport
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::transport::StdioTransport
+pub enum devboy_mcp::ProxyTransport
+pub devboy_mcp::ProxyTransport::Sse
+pub devboy_mcp::ProxyTransport::StreamableHttp
+impl devboy_mcp::proxy::ProxyTransport
+pub fn devboy_mcp::proxy::ProxyTransport::parse(s: &str) -> Self
+impl core::clone::Clone for devboy_mcp::proxy::ProxyTransport
+pub fn devboy_mcp::proxy::ProxyTransport::clone(&self) -> devboy_mcp::proxy::ProxyTransport
+impl core::cmp::Eq for devboy_mcp::proxy::ProxyTransport
+impl core::cmp::PartialEq for devboy_mcp::proxy::ProxyTransport
+pub fn devboy_mcp::proxy::ProxyTransport::eq(&self, other: &devboy_mcp::proxy::ProxyTransport) -> bool
+impl core::fmt::Debug for devboy_mcp::proxy::ProxyTransport
+pub fn devboy_mcp::proxy::ProxyTransport::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_mcp::proxy::ProxyTransport
+impl core::marker::StructuralPartialEq for devboy_mcp::proxy::ProxyTransport
+impl core::marker::Freeze for devboy_mcp::proxy::ProxyTransport
+impl core::marker::Send for devboy_mcp::proxy::ProxyTransport
+impl core::marker::Sync for devboy_mcp::proxy::ProxyTransport
+impl core::marker::Unpin for devboy_mcp::proxy::ProxyTransport
+impl core::marker::UnsafeUnpin for devboy_mcp::proxy::ProxyTransport
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::proxy::ProxyTransport
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::proxy::ProxyTransport
+pub enum devboy_mcp::RequestId
+pub devboy_mcp::RequestId::Null
+pub devboy_mcp::RequestId::Number(i64)
+pub devboy_mcp::RequestId::String(alloc::string::String)
+impl core::clone::Clone for devboy_mcp::protocol::RequestId
+pub fn devboy_mcp::protocol::RequestId::clone(&self) -> devboy_mcp::protocol::RequestId
+impl core::cmp::PartialEq for devboy_mcp::protocol::RequestId
+pub fn devboy_mcp::protocol::RequestId::eq(&self, other: &devboy_mcp::protocol::RequestId) -> bool
+impl core::fmt::Debug for devboy_mcp::protocol::RequestId
+pub fn devboy_mcp::protocol::RequestId::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::protocol::RequestId
+impl serde_core::ser::Serialize for devboy_mcp::protocol::RequestId
+pub fn devboy_mcp::protocol::RequestId::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::RequestId
+pub fn devboy_mcp::protocol::RequestId::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::RequestId
+impl core::marker::Send for devboy_mcp::protocol::RequestId
+impl core::marker::Sync for devboy_mcp::protocol::RequestId
+impl core::marker::Unpin for devboy_mcp::protocol::RequestId
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::RequestId
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::RequestId
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::RequestId
+pub enum devboy_mcp::RoutingReason
+pub devboy_mcp::RoutingReason::ExplicitPrefix
+pub devboy_mcp::RoutingReason::LocalOnly
+pub devboy_mcp::RoutingReason::OverrideRule(alloc::string::String)
+pub devboy_mcp::RoutingReason::RemoteOnly
+pub devboy_mcp::RoutingReason::SchemaIncompatible
+pub devboy_mcp::RoutingReason::StrategyLocal
+pub devboy_mcp::RoutingReason::StrategyLocalFirst
+pub devboy_mcp::RoutingReason::StrategyRemote
+pub devboy_mcp::RoutingReason::StrategyRemoteFirst
+pub devboy_mcp::RoutingReason::Unknown
+impl devboy_mcp::routing::RoutingReason
+pub fn devboy_mcp::routing::RoutingReason::as_label(&self) -> &str
+pub fn devboy_mcp::routing::RoutingReason::detail(&self) -> core::option::Option<&str>
+impl core::clone::Clone for devboy_mcp::routing::RoutingReason
+pub fn devboy_mcp::routing::RoutingReason::clone(&self) -> devboy_mcp::routing::RoutingReason
+impl core::cmp::Eq for devboy_mcp::routing::RoutingReason
+impl core::cmp::PartialEq for devboy_mcp::routing::RoutingReason
+pub fn devboy_mcp::routing::RoutingReason::eq(&self, other: &devboy_mcp::routing::RoutingReason) -> bool
+impl core::fmt::Debug for devboy_mcp::routing::RoutingReason
+pub fn devboy_mcp::routing::RoutingReason::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::routing::RoutingReason
+impl core::marker::Freeze for devboy_mcp::routing::RoutingReason
+impl core::marker::Send for devboy_mcp::routing::RoutingReason
+impl core::marker::Sync for devboy_mcp::routing::RoutingReason
+impl core::marker::Unpin for devboy_mcp::routing::RoutingReason
+impl core::marker::UnsafeUnpin for devboy_mcp::routing::RoutingReason
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::routing::RoutingReason
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::routing::RoutingReason
+pub enum devboy_mcp::RoutingTarget
+pub devboy_mcp::RoutingTarget::Local
+pub devboy_mcp::RoutingTarget::Reject
+pub devboy_mcp::RoutingTarget::Remote
+pub devboy_mcp::RoutingTarget::Remote::original_name: alloc::string::String
+pub devboy_mcp::RoutingTarget::Remote::prefix: alloc::string::String
+impl core::clone::Clone for devboy_mcp::routing::RoutingTarget
+pub fn devboy_mcp::routing::RoutingTarget::clone(&self) -> devboy_mcp::routing::RoutingTarget
+impl core::cmp::Eq for devboy_mcp::routing::RoutingTarget
+impl core::cmp::PartialEq for devboy_mcp::routing::RoutingTarget
+pub fn devboy_mcp::routing::RoutingTarget::eq(&self, other: &devboy_mcp::routing::RoutingTarget) -> bool
+impl core::fmt::Debug for devboy_mcp::routing::RoutingTarget
+pub fn devboy_mcp::routing::RoutingTarget::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::routing::RoutingTarget
+impl core::marker::Freeze for devboy_mcp::routing::RoutingTarget
+impl core::marker::Send for devboy_mcp::routing::RoutingTarget
+impl core::marker::Sync for devboy_mcp::routing::RoutingTarget
+impl core::marker::Unpin for devboy_mcp::routing::RoutingTarget
+impl core::marker::UnsafeUnpin for devboy_mcp::routing::RoutingTarget
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::routing::RoutingTarget
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::routing::RoutingTarget
+pub enum devboy_mcp::TelemetryStatus
+pub devboy_mcp::TelemetryStatus::Error
+pub devboy_mcp::TelemetryStatus::Success
+impl core::clone::Clone for devboy_mcp::telemetry::TelemetryStatus
+pub fn devboy_mcp::telemetry::TelemetryStatus::clone(&self) -> devboy_mcp::telemetry::TelemetryStatus
+impl core::cmp::Eq for devboy_mcp::telemetry::TelemetryStatus
+impl core::cmp::PartialEq for devboy_mcp::telemetry::TelemetryStatus
+pub fn devboy_mcp::telemetry::TelemetryStatus::eq(&self, other: &devboy_mcp::telemetry::TelemetryStatus) -> bool
+impl core::fmt::Debug for devboy_mcp::telemetry::TelemetryStatus
+pub fn devboy_mcp::telemetry::TelemetryStatus::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::telemetry::TelemetryStatus
+impl serde_core::ser::Serialize for devboy_mcp::telemetry::TelemetryStatus
+pub fn devboy_mcp::telemetry::TelemetryStatus::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::telemetry::TelemetryStatus
+pub fn devboy_mcp::telemetry::TelemetryStatus::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::telemetry::TelemetryStatus
+impl core::marker::Send for devboy_mcp::telemetry::TelemetryStatus
+impl core::marker::Sync for devboy_mcp::telemetry::TelemetryStatus
+impl core::marker::Unpin for devboy_mcp::telemetry::TelemetryStatus
+impl core::marker::UnsafeUnpin for devboy_mcp::telemetry::TelemetryStatus
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::telemetry::TelemetryStatus
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::telemetry::TelemetryStatus
+pub struct devboy_mcp::DeferredInit
+pub devboy_mcp::DeferredInit::builtin_tools_config: core::option::Option<devboy_core::config::BuiltinToolsConfig>
+pub devboy_mcp::DeferredInit::proxy_manager: devboy_mcp::proxy::ProxyManager
+pub devboy_mcp::DeferredInit::routing_engine: core::option::Option<alloc::sync::Arc<devboy_mcp::routing::RoutingEngine>>
+impl core::marker::Freeze for devboy_mcp::server::DeferredInit
+impl core::marker::Send for devboy_mcp::server::DeferredInit
+impl core::marker::Sync for devboy_mcp::server::DeferredInit
+impl core::marker::Unpin for devboy_mcp::server::DeferredInit
+impl core::marker::UnsafeUnpin for devboy_mcp::server::DeferredInit
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::server::DeferredInit
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::server::DeferredInit
+pub struct devboy_mcp::IncompatibleTool
+pub devboy_mcp::IncompatibleTool::reason: core::option::Option<alloc::string::String>
+pub devboy_mcp::IncompatibleTool::tool: alloc::string::String
+pub devboy_mcp::IncompatibleTool::upstream_prefix: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_mcp::routing::IncompatibleTool
+pub fn devboy_mcp::routing::IncompatibleTool::clone(&self) -> devboy_mcp::routing::IncompatibleTool
+impl core::fmt::Debug for devboy_mcp::routing::IncompatibleTool
+pub fn devboy_mcp::routing::IncompatibleTool::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::routing::IncompatibleTool
+impl core::marker::Send for devboy_mcp::routing::IncompatibleTool
+impl core::marker::Sync for devboy_mcp::routing::IncompatibleTool
+impl core::marker::Unpin for devboy_mcp::routing::IncompatibleTool
+impl core::marker::UnsafeUnpin for devboy_mcp::routing::IncompatibleTool
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::routing::IncompatibleTool
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::routing::IncompatibleTool
+pub struct devboy_mcp::JsonRpcRequest
+pub devboy_mcp::JsonRpcRequest::id: devboy_mcp::protocol::RequestId
+pub devboy_mcp::JsonRpcRequest::jsonrpc: alloc::string::String
+pub devboy_mcp::JsonRpcRequest::method: alloc::string::String
+pub devboy_mcp::JsonRpcRequest::params: core::option::Option<serde_json::value::Value>
+impl core::clone::Clone for devboy_mcp::protocol::JsonRpcRequest
+pub fn devboy_mcp::protocol::JsonRpcRequest::clone(&self) -> devboy_mcp::protocol::JsonRpcRequest
+impl core::fmt::Debug for devboy_mcp::protocol::JsonRpcRequest
+pub fn devboy_mcp::protocol::JsonRpcRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::protocol::JsonRpcRequest
+pub fn devboy_mcp::protocol::JsonRpcRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::protocol::JsonRpcRequest
+pub fn devboy_mcp::protocol::JsonRpcRequest::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::protocol::JsonRpcRequest
+impl core::marker::Send for devboy_mcp::protocol::JsonRpcRequest
+impl core::marker::Sync for devboy_mcp::protocol::JsonRpcRequest
+impl core::marker::Unpin for devboy_mcp::protocol::JsonRpcRequest
+impl core::marker::UnsafeUnpin for devboy_mcp::protocol::JsonRpcRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::protocol::JsonRpcRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::protocol::JsonRpcRequest
+pub struct devboy_mcp::MatchReport
+pub devboy_mcp::MatchReport::matches: std::collections::hash::map::HashMap<alloc::string::String, devboy_mcp::signature_match::ToolMatch>
+impl devboy_mcp::signature_match::MatchReport
+pub fn devboy_mcp::signature_match::MatchReport::get(&self, tool_name: &str) -> core::option::Option<&devboy_mcp::signature_match::ToolMatch>
+pub fn devboy_mcp::signature_match::MatchReport::incompatible_pairs(&self) -> alloc::vec::Vec<&devboy_mcp::signature_match::ToolMatch>
+pub fn devboy_mcp::signature_match::MatchReport::is_empty(&self) -> bool
+pub fn devboy_mcp::signature_match::MatchReport::len(&self) -> usize
+pub fn devboy_mcp::signature_match::MatchReport::local_only(&self) -> alloc::vec::Vec<&devboy_mcp::signature_match::ToolMatch>
+pub fn devboy_mcp::signature_match::MatchReport::remote_only(&self) -> alloc::vec::Vec<&devboy_mcp::signature_match::ToolMatch>
+pub fn devboy_mcp::signature_match::MatchReport::routable_locally(&self) -> alloc::vec::Vec<&devboy_mcp::signature_match::ToolMatch>
+impl core::clone::Clone for devboy_mcp::signature_match::MatchReport
+pub fn devboy_mcp::signature_match::MatchReport::clone(&self) -> devboy_mcp::signature_match::MatchReport
+impl core::default::Default for devboy_mcp::signature_match::MatchReport
+pub fn devboy_mcp::signature_match::MatchReport::default() -> devboy_mcp::signature_match::MatchReport
+impl core::fmt::Debug for devboy_mcp::signature_match::MatchReport
+pub fn devboy_mcp::signature_match::MatchReport::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::signature_match::MatchReport
+impl core::marker::Send for devboy_mcp::signature_match::MatchReport
+impl core::marker::Sync for devboy_mcp::signature_match::MatchReport
+impl core::marker::Unpin for devboy_mcp::signature_match::MatchReport
+impl core::marker::UnsafeUnpin for devboy_mcp::signature_match::MatchReport
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::signature_match::MatchReport
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::signature_match::MatchReport
+pub struct devboy_mcp::McpProxyClient
+impl devboy_mcp::proxy::McpProxyClient
+pub async fn devboy_mcp::proxy::McpProxyClient::call_tool(&self, original_name: &str, arguments: core::option::Option<serde_json::value::Value>) -> devboy_core::error::Result<devboy_mcp::protocol::ToolCallResult>
+pub async fn devboy_mcp::proxy::McpProxyClient::connect(name: &str, url: &str, tool_prefix: core::option::Option<&str>, token: core::option::Option<&secrecy::SecretString>, auth_type: &str, transport: devboy_mcp::proxy::ProxyTransport) -> devboy_core::error::Result<Self>
+pub async fn devboy_mcp::proxy::McpProxyClient::fetch_tools(&mut self) -> devboy_core::error::Result<()>
+pub fn devboy_mcp::proxy::McpProxyClient::prefix(&self) -> &str
+pub fn devboy_mcp::proxy::McpProxyClient::prefixed_tools(&self) -> alloc::vec::Vec<devboy_mcp::protocol::ToolDefinition>
+pub fn devboy_mcp::proxy::McpProxyClient::raw_upstream_tools(&self) -> &[devboy_mcp::protocol::ToolDefinition]
+impl !core::marker::Freeze for devboy_mcp::proxy::McpProxyClient
+impl core::marker::Send for devboy_mcp::proxy::McpProxyClient
+impl core::marker::Sync for devboy_mcp::proxy::McpProxyClient
+impl core::marker::Unpin for devboy_mcp::proxy::McpProxyClient
+impl core::marker::UnsafeUnpin for devboy_mcp::proxy::McpProxyClient
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::proxy::McpProxyClient
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::proxy::McpProxyClient
+pub struct devboy_mcp::McpServer
+impl devboy_mcp::server::McpServer
+pub fn devboy_mcp::server::McpServer::active_context_name(&self) -> alloc::string::String
+pub fn devboy_mcp::server::McpServer::active_knowledge_base_providers(&self) -> alloc::vec::Vec<alloc::sync::Arc<dyn devboy_core::provider::KnowledgeBaseProvider>>
+pub fn devboy_mcp::server::McpServer::active_messenger_providers(&self) -> alloc::vec::Vec<alloc::sync::Arc<dyn devboy_core::provider::MessengerProvider>>
+pub fn devboy_mcp::server::McpServer::active_providers(&self) -> alloc::vec::Vec<alloc::sync::Arc<dyn devboy_core::provider::Provider>>
+pub fn devboy_mcp::server::McpServer::add_knowledge_base_provider(&mut self, provider: alloc::sync::Arc<dyn devboy_core::provider::KnowledgeBaseProvider>)
+pub fn devboy_mcp::server::McpServer::add_knowledge_base_provider_to_context(&mut self, context: &str, provider: alloc::sync::Arc<dyn devboy_core::provider::KnowledgeBaseProvider>)
+pub fn devboy_mcp::server::McpServer::add_meeting_provider(&mut self, provider: alloc::sync::Arc<dyn devboy_core::provider::MeetingNotesProvider>)
+pub fn devboy_mcp::server::McpServer::add_messenger_provider(&mut self, provider: alloc::sync::Arc<dyn devboy_core::provider::MessengerProvider>)
+pub fn devboy_mcp::server::McpServer::add_messenger_provider_to_context(&mut self, context: &str, provider: alloc::sync::Arc<dyn devboy_core::provider::MessengerProvider>)
+pub fn devboy_mcp::server::McpServer::add_provider(&mut self, provider: alloc::sync::Arc<dyn devboy_core::provider::Provider>)
+pub fn devboy_mcp::server::McpServer::add_provider_to_context(&mut self, context: &str, provider: alloc::sync::Arc<dyn devboy_core::provider::Provider>)
+pub fn devboy_mcp::server::McpServer::context_names(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn devboy_mcp::server::McpServer::enable_layered_pipeline(&mut self, pipeline: devboy_mcp::layered::SessionPipeline)
+pub fn devboy_mcp::server::McpServer::ensure_context(&mut self, context: &str)
+pub async fn devboy_mcp::server::McpServer::execute_for_prefetch(&self, name: &str, arguments: core::option::Option<serde_json::value::Value>) -> devboy_mcp::protocol::ToolCallResult
+pub async fn devboy_mcp::server::McpServer::handle_request(&mut self, req: devboy_mcp::protocol::JsonRpcRequest) -> devboy_mcp::protocol::JsonRpcResponse
+pub fn devboy_mcp::server::McpServer::handle_tools_list(&self, id: devboy_mcp::protocol::RequestId) -> devboy_mcp::protocol::JsonRpcResponse
+pub fn devboy_mcp::server::McpServer::new() -> Self
+pub fn devboy_mcp::server::McpServer::on_compaction_boundary(&self)
+pub fn devboy_mcp::server::McpServer::providers(&self) -> &[alloc::sync::Arc<dyn devboy_core::provider::Provider>]
+pub async fn devboy_mcp::server::McpServer::run(&mut self) -> devboy_core::error::Result<()>
+pub fn devboy_mcp::server::McpServer::set_active_context(&self, context: &str) -> devboy_core::error::Result<()>
+pub fn devboy_mcp::server::McpServer::set_builtin_tools_config(&mut self, config: devboy_core::config::BuiltinToolsConfig) -> devboy_core::error::Result<()>
+pub fn devboy_mcp::server::McpServer::set_deferred_init(&mut self, receiver: tokio::sync::oneshot::Receiver<devboy_mcp::server::DeferredInit>)
+pub fn devboy_mcp::server::McpServer::set_proxy_manager(&mut self, proxy_manager: devboy_mcp::proxy::ProxyManager)
+pub fn devboy_mcp::server::McpServer::set_routing_engine(&mut self, engine: alloc::sync::Arc<devboy_mcp::routing::RoutingEngine>)
+pub fn devboy_mcp::server::McpServer::set_telemetry(&mut self, buffer: devboy_mcp::telemetry::TelemetryBuffer)
+impl core::default::Default for devboy_mcp::server::McpServer
+pub fn devboy_mcp::server::McpServer::default() -> Self
+impl !core::marker::Freeze for devboy_mcp::server::McpServer
+impl core::marker::Send for devboy_mcp::server::McpServer
+impl core::marker::Sync for devboy_mcp::server::McpServer
+impl core::marker::Unpin for devboy_mcp::server::McpServer
+impl core::marker::UnsafeUnpin for devboy_mcp::server::McpServer
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::server::McpServer
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::server::McpServer
+pub struct devboy_mcp::ProxyManager
+impl devboy_mcp::proxy::ProxyManager
+pub fn devboy_mcp::proxy::ProxyManager::add_client(&mut self, client: devboy_mcp::proxy::McpProxyClient)
+pub fn devboy_mcp::proxy::ProxyManager::all_tools(&self) -> alloc::vec::Vec<devboy_mcp::protocol::ToolDefinition>
+pub async fn devboy_mcp::proxy::ProxyManager::call_by_prefix(&self, prefix: &str, unprefixed_tool_name: &str, arguments: core::option::Option<serde_json::value::Value>) -> core::option::Option<devboy_mcp::protocol::ToolCallResult>
+pub async fn devboy_mcp::proxy::ProxyManager::fetch_all_tools(&mut self) -> devboy_core::error::Result<()>
+pub fn devboy_mcp::proxy::ProxyManager::has_tool(&self, tool_name: &str) -> bool
+pub fn devboy_mcp::proxy::ProxyManager::is_empty(&self) -> bool
+pub fn devboy_mcp::proxy::ProxyManager::new() -> Self
+pub fn devboy_mcp::proxy::ProxyManager::raw_upstream_catalogue(&self) -> alloc::vec::Vec<(alloc::string::String, &[devboy_mcp::protocol::ToolDefinition])>
+pub async fn devboy_mcp::proxy::ProxyManager::try_call(&self, tool_name: &str, arguments: core::option::Option<serde_json::value::Value>) -> core::option::Option<devboy_mcp::protocol::ToolCallResult>
+impl core::default::Default for devboy_mcp::proxy::ProxyManager
+pub fn devboy_mcp::proxy::ProxyManager::default() -> Self
+impl core::marker::Freeze for devboy_mcp::proxy::ProxyManager
+impl core::marker::Send for devboy_mcp::proxy::ProxyManager
+impl core::marker::Sync for devboy_mcp::proxy::ProxyManager
+impl core::marker::Unpin for devboy_mcp::proxy::ProxyManager
+impl core::marker::UnsafeUnpin for devboy_mcp::proxy::ProxyManager
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::proxy::ProxyManager
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::proxy::ProxyManager
+pub struct devboy_mcp::ProxyStatus
+pub devboy_mcp::ProxyStatus::fallback_on_error: bool
+pub devboy_mcp::ProxyStatus::incompatible: alloc::vec::Vec<devboy_mcp::routing::IncompatibleTool>
+pub devboy_mcp::ProxyStatus::local_only: alloc::vec::Vec<alloc::string::String>
+pub devboy_mcp::ProxyStatus::override_rules: alloc::vec::Vec<(alloc::string::String, devboy_core::config::RoutingStrategy)>
+pub devboy_mcp::ProxyStatus::remote_only: alloc::vec::Vec<alloc::string::String>
+pub devboy_mcp::ProxyStatus::routable_locally: alloc::vec::Vec<alloc::string::String>
+pub devboy_mcp::ProxyStatus::strategy: devboy_core::config::RoutingStrategy
+pub devboy_mcp::ProxyStatus::total_tools: usize
+impl devboy_mcp::routing::ProxyStatus
+pub fn devboy_mcp::routing::ProxyStatus::from_engine(engine: &devboy_mcp::routing::RoutingEngine) -> Self
+pub fn devboy_mcp::routing::ProxyStatus::to_json(&self) -> serde_json::value::Value
+pub fn devboy_mcp::routing::ProxyStatus::to_text_report(&self) -> alloc::string::String
+impl core::clone::Clone for devboy_mcp::routing::ProxyStatus
+pub fn devboy_mcp::routing::ProxyStatus::clone(&self) -> devboy_mcp::routing::ProxyStatus
+impl core::fmt::Debug for devboy_mcp::routing::ProxyStatus
+pub fn devboy_mcp::routing::ProxyStatus::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::routing::ProxyStatus
+impl core::marker::Send for devboy_mcp::routing::ProxyStatus
+impl core::marker::Sync for devboy_mcp::routing::ProxyStatus
+impl core::marker::Unpin for devboy_mcp::routing::ProxyStatus
+impl core::marker::UnsafeUnpin for devboy_mcp::routing::ProxyStatus
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::routing::ProxyStatus
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::routing::ProxyStatus
+pub struct devboy_mcp::RoutingDecision
+pub devboy_mcp::RoutingDecision::decided_at: std::time::Instant
+pub devboy_mcp::RoutingDecision::fallback: core::option::Option<devboy_mcp::routing::RoutingTarget>
+pub devboy_mcp::RoutingDecision::primary: devboy_mcp::routing::RoutingTarget
+pub devboy_mcp::RoutingDecision::reason: devboy_mcp::routing::RoutingReason
+pub devboy_mcp::RoutingDecision::resolved_name: alloc::string::String
+impl devboy_mcp::routing::RoutingDecision
+pub fn devboy_mcp::routing::RoutingDecision::emit_tracing(&self, requested_name: &str)
+pub fn devboy_mcp::routing::RoutingDecision::local(name: impl core::convert::Into<alloc::string::String>, reason: devboy_mcp::routing::RoutingReason) -> Self
+pub fn devboy_mcp::routing::RoutingDecision::reject(name: impl core::convert::Into<alloc::string::String>, reason: devboy_mcp::routing::RoutingReason) -> Self
+pub fn devboy_mcp::routing::RoutingDecision::remote(prefix: impl core::convert::Into<alloc::string::String>, original_name: impl core::convert::Into<alloc::string::String>, reason: devboy_mcp::routing::RoutingReason) -> Self
+pub fn devboy_mcp::routing::RoutingDecision::to_meta_json(&self) -> serde_json::value::Value
+pub fn devboy_mcp::routing::RoutingDecision::with_fallback(self, fallback: devboy_mcp::routing::RoutingTarget) -> Self
+impl core::clone::Clone for devboy_mcp::routing::RoutingDecision
+pub fn devboy_mcp::routing::RoutingDecision::clone(&self) -> devboy_mcp::routing::RoutingDecision
+impl core::fmt::Debug for devboy_mcp::routing::RoutingDecision
+pub fn devboy_mcp::routing::RoutingDecision::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::routing::RoutingDecision
+impl core::marker::Send for devboy_mcp::routing::RoutingDecision
+impl core::marker::Sync for devboy_mcp::routing::RoutingDecision
+impl core::marker::Unpin for devboy_mcp::routing::RoutingDecision
+impl core::marker::UnsafeUnpin for devboy_mcp::routing::RoutingDecision
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::routing::RoutingDecision
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::routing::RoutingDecision
+pub struct devboy_mcp::RoutingEngine
+impl devboy_mcp::routing::RoutingEngine
+pub fn devboy_mcp::routing::RoutingEngine::config(&self) -> &devboy_core::config::ProxyRoutingConfig
+pub fn devboy_mcp::routing::RoutingEngine::decide(&self, requested_name: &str) -> devboy_mcp::routing::RoutingDecision
+pub fn devboy_mcp::routing::RoutingEngine::decide_quiet(&self, requested_name: &str) -> devboy_mcp::routing::RoutingDecision
+pub fn devboy_mcp::routing::RoutingEngine::new(config: devboy_core::config::ProxyRoutingConfig, report: devboy_mcp::signature_match::MatchReport) -> Self
+pub fn devboy_mcp::routing::RoutingEngine::report(&self) -> &devboy_mcp::signature_match::MatchReport
+impl core::marker::Freeze for devboy_mcp::routing::RoutingEngine
+impl core::marker::Send for devboy_mcp::routing::RoutingEngine
+impl core::marker::Sync for devboy_mcp::routing::RoutingEngine
+impl core::marker::Unpin for devboy_mcp::routing::RoutingEngine
+impl core::marker::UnsafeUnpin for devboy_mcp::routing::RoutingEngine
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::routing::RoutingEngine
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::routing::RoutingEngine
+pub struct devboy_mcp::TelemetryAuth
+pub devboy_mcp::TelemetryAuth::bearer_token: core::option::Option<secrecy::SecretString>
+impl core::clone::Clone for devboy_mcp::telemetry::TelemetryAuth
+pub fn devboy_mcp::telemetry::TelemetryAuth::clone(&self) -> devboy_mcp::telemetry::TelemetryAuth
+impl core::default::Default for devboy_mcp::telemetry::TelemetryAuth
+pub fn devboy_mcp::telemetry::TelemetryAuth::default() -> devboy_mcp::telemetry::TelemetryAuth
+impl core::marker::Freeze for devboy_mcp::telemetry::TelemetryAuth
+impl core::marker::Send for devboy_mcp::telemetry::TelemetryAuth
+impl core::marker::Sync for devboy_mcp::telemetry::TelemetryAuth
+impl core::marker::Unpin for devboy_mcp::telemetry::TelemetryAuth
+impl core::marker::UnsafeUnpin for devboy_mcp::telemetry::TelemetryAuth
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::telemetry::TelemetryAuth
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::telemetry::TelemetryAuth
+pub struct devboy_mcp::TelemetryBatch
+pub devboy_mcp::TelemetryBatch::events: alloc::vec::Vec<devboy_mcp::telemetry::TelemetryEvent>
+impl core::clone::Clone for devboy_mcp::telemetry::TelemetryBatch
+pub fn devboy_mcp::telemetry::TelemetryBatch::clone(&self) -> devboy_mcp::telemetry::TelemetryBatch
+impl core::fmt::Debug for devboy_mcp::telemetry::TelemetryBatch
+pub fn devboy_mcp::telemetry::TelemetryBatch::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::telemetry::TelemetryBatch
+pub fn devboy_mcp::telemetry::TelemetryBatch::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::telemetry::TelemetryBatch
+pub fn devboy_mcp::telemetry::TelemetryBatch::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::telemetry::TelemetryBatch
+impl core::marker::Send for devboy_mcp::telemetry::TelemetryBatch
+impl core::marker::Sync for devboy_mcp::telemetry::TelemetryBatch
+impl core::marker::Unpin for devboy_mcp::telemetry::TelemetryBatch
+impl core::marker::UnsafeUnpin for devboy_mcp::telemetry::TelemetryBatch
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::telemetry::TelemetryBatch
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::telemetry::TelemetryBatch
+pub struct devboy_mcp::TelemetryBuffer
+impl devboy_mcp::telemetry::TelemetryBuffer
+pub async fn devboy_mcp::telemetry::TelemetryBuffer::drain(&self, max: usize) -> alloc::vec::Vec<devboy_mcp::telemetry::TelemetryEvent>
+pub async fn devboy_mcp::telemetry::TelemetryBuffer::is_empty(&self) -> bool
+pub async fn devboy_mcp::telemetry::TelemetryBuffer::len(&self) -> usize
+pub fn devboy_mcp::telemetry::TelemetryBuffer::new(capacity: usize) -> Self
+pub async fn devboy_mcp::telemetry::TelemetryBuffer::record(&self, event: devboy_mcp::telemetry::TelemetryEvent)
+pub async fn devboy_mcp::telemetry::TelemetryBuffer::requeue_front(&self, events: alloc::vec::Vec<devboy_mcp::telemetry::TelemetryEvent>)
+pub fn devboy_mcp::telemetry::TelemetryBuffer::set_flush_threshold(&self, threshold: usize)
+pub fn devboy_mcp::telemetry::TelemetryBuffer::size_trigger(&self) -> alloc::sync::Arc<tokio::sync::notify::Notify>
+impl core::clone::Clone for devboy_mcp::telemetry::TelemetryBuffer
+pub fn devboy_mcp::telemetry::TelemetryBuffer::clone(&self) -> devboy_mcp::telemetry::TelemetryBuffer
+impl core::marker::Freeze for devboy_mcp::telemetry::TelemetryBuffer
+impl core::marker::Send for devboy_mcp::telemetry::TelemetryBuffer
+impl core::marker::Sync for devboy_mcp::telemetry::TelemetryBuffer
+impl core::marker::Unpin for devboy_mcp::telemetry::TelemetryBuffer
+impl core::marker::UnsafeUnpin for devboy_mcp::telemetry::TelemetryBuffer
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::telemetry::TelemetryBuffer
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::telemetry::TelemetryBuffer
+pub struct devboy_mcp::TelemetryEvent
+pub devboy_mcp::TelemetryEvent::latency_ms: u64
+pub devboy_mcp::TelemetryEvent::routing_decision: alloc::string::String
+pub devboy_mcp::TelemetryEvent::routing_detail: core::option::Option<alloc::string::String>
+pub devboy_mcp::TelemetryEvent::status: devboy_mcp::telemetry::TelemetryStatus
+pub devboy_mcp::TelemetryEvent::timestamp_secs: u64
+pub devboy_mcp::TelemetryEvent::tool: alloc::string::String
+pub devboy_mcp::TelemetryEvent::upstream: core::option::Option<alloc::string::String>
+pub devboy_mcp::TelemetryEvent::was_fallback: bool
+impl devboy_mcp::telemetry::TelemetryEvent
+pub fn devboy_mcp::telemetry::TelemetryEvent::now(tool: impl core::convert::Into<alloc::string::String>, routing_decision: impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for devboy_mcp::telemetry::TelemetryEvent
+pub fn devboy_mcp::telemetry::TelemetryEvent::clone(&self) -> devboy_mcp::telemetry::TelemetryEvent
+impl core::fmt::Debug for devboy_mcp::telemetry::TelemetryEvent
+pub fn devboy_mcp::telemetry::TelemetryEvent::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::telemetry::TelemetryEvent
+pub fn devboy_mcp::telemetry::TelemetryEvent::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::telemetry::TelemetryEvent
+pub fn devboy_mcp::telemetry::TelemetryEvent::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::telemetry::TelemetryEvent
+impl core::marker::Send for devboy_mcp::telemetry::TelemetryEvent
+impl core::marker::Sync for devboy_mcp::telemetry::TelemetryEvent
+impl core::marker::Unpin for devboy_mcp::telemetry::TelemetryEvent
+impl core::marker::UnsafeUnpin for devboy_mcp::telemetry::TelemetryEvent
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::telemetry::TelemetryEvent
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::telemetry::TelemetryEvent
+pub struct devboy_mcp::TelemetryPipeline
+impl devboy_mcp::telemetry::TelemetryPipeline
+pub fn devboy_mcp::telemetry::TelemetryPipeline::buffer(&self) -> devboy_mcp::telemetry::TelemetryBuffer
+pub fn devboy_mcp::telemetry::TelemetryPipeline::config(&self) -> &devboy_core::config::ProxyTelemetryConfig
+pub async fn devboy_mcp::telemetry::TelemetryPipeline::flush(&self) -> devboy_core::error::Result<usize>
+pub fn devboy_mcp::telemetry::TelemetryPipeline::new(config: devboy_core::config::ProxyTelemetryConfig) -> Self
+pub async fn devboy_mcp::telemetry::TelemetryPipeline::shutdown(&mut self)
+pub fn devboy_mcp::telemetry::TelemetryPipeline::start(&mut self, auth: devboy_mcp::telemetry::TelemetryAuth) -> devboy_core::error::Result<()>
+impl core::marker::Freeze for devboy_mcp::telemetry::TelemetryPipeline
+impl core::marker::Send for devboy_mcp::telemetry::TelemetryPipeline
+impl core::marker::Sync for devboy_mcp::telemetry::TelemetryPipeline
+impl core::marker::Unpin for devboy_mcp::telemetry::TelemetryPipeline
+impl core::marker::UnsafeUnpin for devboy_mcp::telemetry::TelemetryPipeline
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::telemetry::TelemetryPipeline
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::telemetry::TelemetryPipeline
+pub struct devboy_mcp::TelemetryUploader
+impl devboy_mcp::telemetry::TelemetryUploader
+pub fn devboy_mcp::telemetry::TelemetryUploader::new(endpoint: alloc::string::String, auth: devboy_mcp::telemetry::TelemetryAuth) -> devboy_core::error::Result<Self>
+pub async fn devboy_mcp::telemetry::TelemetryUploader::upload(&self, batch: &devboy_mcp::telemetry::TelemetryBatch) -> devboy_core::error::Result<()>
+impl core::clone::Clone for devboy_mcp::telemetry::TelemetryUploader
+pub fn devboy_mcp::telemetry::TelemetryUploader::clone(&self) -> devboy_mcp::telemetry::TelemetryUploader
+impl core::marker::Freeze for devboy_mcp::telemetry::TelemetryUploader
+impl core::marker::Send for devboy_mcp::telemetry::TelemetryUploader
+impl core::marker::Sync for devboy_mcp::telemetry::TelemetryUploader
+impl core::marker::Unpin for devboy_mcp::telemetry::TelemetryUploader
+impl core::marker::UnsafeUnpin for devboy_mcp::telemetry::TelemetryUploader
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::telemetry::TelemetryUploader
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::telemetry::TelemetryUploader
+pub struct devboy_mcp::ToolCatalogue<'a>
+pub devboy_mcp::ToolCatalogue::local: &'a [devboy_mcp::protocol::ToolDefinition]
+pub devboy_mcp::ToolCatalogue::upstream: alloc::vec::Vec<(alloc::string::String, &'a [devboy_mcp::protocol::ToolDefinition])>
+impl<'a> core::marker::Freeze for devboy_mcp::signature_match::ToolCatalogue<'a>
+impl<'a> core::marker::Send for devboy_mcp::signature_match::ToolCatalogue<'a>
+impl<'a> core::marker::Sync for devboy_mcp::signature_match::ToolCatalogue<'a>
+impl<'a> core::marker::Unpin for devboy_mcp::signature_match::ToolCatalogue<'a>
+impl<'a> core::marker::UnsafeUnpin for devboy_mcp::signature_match::ToolCatalogue<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::signature_match::ToolCatalogue<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for devboy_mcp::signature_match::ToolCatalogue<'a>
+pub struct devboy_mcp::ToolMatch
+pub devboy_mcp::ToolMatch::local_present: bool
+pub devboy_mcp::ToolMatch::remote_present: bool
+pub devboy_mcp::ToolMatch::schema_compatible: core::option::Option<bool>
+pub devboy_mcp::ToolMatch::schema_mismatch: core::option::Option<alloc::string::String>
+pub devboy_mcp::ToolMatch::tool_name: alloc::string::String
+pub devboy_mcp::ToolMatch::upstream_prefix: core::option::Option<alloc::string::String>
+impl devboy_mcp::signature_match::ToolMatch
+pub fn devboy_mcp::signature_match::ToolMatch::is_matched(&self) -> bool
+pub fn devboy_mcp::signature_match::ToolMatch::is_routable_local(&self) -> bool
+pub fn devboy_mcp::signature_match::ToolMatch::prefixed_remote_name(&self) -> core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_mcp::signature_match::ToolMatch
+pub fn devboy_mcp::signature_match::ToolMatch::clone(&self) -> devboy_mcp::signature_match::ToolMatch
+impl core::fmt::Debug for devboy_mcp::signature_match::ToolMatch
+pub fn devboy_mcp::signature_match::ToolMatch::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::signature_match::ToolMatch
+impl core::marker::Send for devboy_mcp::signature_match::ToolMatch
+impl core::marker::Sync for devboy_mcp::signature_match::ToolMatch
+impl core::marker::Unpin for devboy_mcp::signature_match::ToolMatch
+impl core::marker::UnsafeUnpin for devboy_mcp::signature_match::ToolMatch
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::signature_match::ToolMatch
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::signature_match::ToolMatch
+pub const devboy_mcp::JSONRPC_VERSION: &str
+pub const devboy_mcp::KNOWN_BUILTIN_TOOLS: &[&str]
+pub fn devboy_mcp::build_report(catalogue: devboy_mcp::signature_match::ToolCatalogue<'_>) -> devboy_mcp::signature_match::MatchReport

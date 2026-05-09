@@ -1,0 +1,1886 @@
+pub mod devboy_format_pipeline
+pub mod devboy_format_pipeline::adaptive_config
+pub enum devboy_format_pipeline::adaptive_config::ConfigError
+pub devboy_format_pipeline::adaptive_config::ConfigError::Io(std::io::error::Error)
+pub devboy_format_pipeline::adaptive_config::ConfigError::Parse(toml::de::Error)
+pub devboy_format_pipeline::adaptive_config::ConfigError::Serialize(toml::ser::Error)
+pub devboy_format_pipeline::adaptive_config::ConfigError::UnsupportedSchemaVersion(u32)
+impl core::convert::From<std::io::error::Error> for devboy_format_pipeline::adaptive_config::ConfigError
+pub fn devboy_format_pipeline::adaptive_config::ConfigError::from(source: std::io::error::Error) -> Self
+impl core::convert::From<toml::de::Error> for devboy_format_pipeline::adaptive_config::ConfigError
+pub fn devboy_format_pipeline::adaptive_config::ConfigError::from(source: toml::de::Error) -> Self
+impl core::convert::From<toml::ser::Error> for devboy_format_pipeline::adaptive_config::ConfigError
+pub fn devboy_format_pipeline::adaptive_config::ConfigError::from(source: toml::ser::Error) -> Self
+impl core::error::Error for devboy_format_pipeline::adaptive_config::ConfigError
+pub fn devboy_format_pipeline::adaptive_config::ConfigError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::ConfigError
+pub fn devboy_format_pipeline::adaptive_config::ConfigError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_format_pipeline::adaptive_config::ConfigError
+pub fn devboy_format_pipeline::adaptive_config::ConfigError::fmt(&self, __formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::ConfigError
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::ConfigError
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::ConfigError
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::ConfigError
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::ConfigError
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::ConfigError
+impl !core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::ConfigError
+pub enum devboy_format_pipeline::adaptive_config::HintVerbosity
+pub devboy_format_pipeline::adaptive_config::HintVerbosity::Standard
+pub devboy_format_pipeline::adaptive_config::HintVerbosity::Terse
+pub devboy_format_pipeline::adaptive_config::HintVerbosity::Verbose
+impl devboy_format_pipeline::adaptive_config::HintVerbosity
+pub fn devboy_format_pipeline::adaptive_config::HintVerbosity::to_runtime(self) -> devboy_format_pipeline::dedup::HintVerbosity
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::HintVerbosity
+pub fn devboy_format_pipeline::adaptive_config::HintVerbosity::clone(&self) -> devboy_format_pipeline::adaptive_config::HintVerbosity
+impl core::cmp::Eq for devboy_format_pipeline::adaptive_config::HintVerbosity
+impl core::cmp::PartialEq for devboy_format_pipeline::adaptive_config::HintVerbosity
+pub fn devboy_format_pipeline::adaptive_config::HintVerbosity::eq(&self, other: &devboy_format_pipeline::adaptive_config::HintVerbosity) -> bool
+impl core::default::Default for devboy_format_pipeline::adaptive_config::HintVerbosity
+pub fn devboy_format_pipeline::adaptive_config::HintVerbosity::default() -> devboy_format_pipeline::adaptive_config::HintVerbosity
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::HintVerbosity
+pub fn devboy_format_pipeline::adaptive_config::HintVerbosity::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_format_pipeline::adaptive_config::HintVerbosity
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::adaptive_config::HintVerbosity
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::HintVerbosity
+pub fn devboy_format_pipeline::adaptive_config::HintVerbosity::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::HintVerbosity
+pub fn devboy_format_pipeline::adaptive_config::HintVerbosity::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::HintVerbosity
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::HintVerbosity
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::HintVerbosity
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::HintVerbosity
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::HintVerbosity
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::HintVerbosity
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::HintVerbosity
+pub enum devboy_format_pipeline::adaptive_config::Priority
+pub devboy_format_pipeline::adaptive_config::Priority::Accuracy
+pub devboy_format_pipeline::adaptive_config::Priority::Balanced
+pub devboy_format_pipeline::adaptive_config::Priority::Latency
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::Priority
+pub fn devboy_format_pipeline::adaptive_config::Priority::clone(&self) -> devboy_format_pipeline::adaptive_config::Priority
+impl core::cmp::Eq for devboy_format_pipeline::adaptive_config::Priority
+impl core::cmp::PartialEq for devboy_format_pipeline::adaptive_config::Priority
+pub fn devboy_format_pipeline::adaptive_config::Priority::eq(&self, other: &devboy_format_pipeline::adaptive_config::Priority) -> bool
+impl core::default::Default for devboy_format_pipeline::adaptive_config::Priority
+pub fn devboy_format_pipeline::adaptive_config::Priority::default() -> devboy_format_pipeline::adaptive_config::Priority
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::Priority
+pub fn devboy_format_pipeline::adaptive_config::Priority::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_format_pipeline::adaptive_config::Priority
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::adaptive_config::Priority
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::Priority
+pub fn devboy_format_pipeline::adaptive_config::Priority::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::Priority
+pub fn devboy_format_pipeline::adaptive_config::Priority::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::Priority
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::Priority
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::Priority
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::Priority
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::Priority
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::Priority
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::Priority
+pub struct devboy_format_pipeline::adaptive_config::AdaptiveConfig
+pub devboy_format_pipeline::adaptive_config::AdaptiveConfig::dedup: devboy_format_pipeline::adaptive_config::DedupConfig
+pub devboy_format_pipeline::adaptive_config::AdaptiveConfig::endpoint_overrides: alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_format_pipeline::adaptive_config::EndpointOverride>
+pub devboy_format_pipeline::adaptive_config::AdaptiveConfig::enrichment: devboy_format_pipeline::adaptive_config::EnrichmentConfig
+pub devboy_format_pipeline::adaptive_config::AdaptiveConfig::hints: devboy_format_pipeline::adaptive_config::HintsConfig
+pub devboy_format_pipeline::adaptive_config::AdaptiveConfig::mckp: devboy_format_pipeline::adaptive_config::MckpConfig
+pub devboy_format_pipeline::adaptive_config::AdaptiveConfig::profiles: devboy_format_pipeline::adaptive_config::ProfilesConfig
+pub devboy_format_pipeline::adaptive_config::AdaptiveConfig::schema_version: u32
+pub devboy_format_pipeline::adaptive_config::AdaptiveConfig::telemetry: devboy_format_pipeline::adaptive_config::TelemetryConfig
+pub devboy_format_pipeline::adaptive_config::AdaptiveConfig::templates: devboy_format_pipeline::adaptive_config::TemplatesConfig
+pub devboy_format_pipeline::adaptive_config::AdaptiveConfig::tools: alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_core::tool_value_model::ToolValueModel>
+impl devboy_format_pipeline::adaptive_config::AdaptiveConfig
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::effective_dedup_enabled(&self, endpoint: &str) -> bool
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::effective_lru_size(&self, endpoint: &str) -> usize
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::effective_min_body_chars(&self, endpoint: &str) -> usize
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::effective_template(&self, endpoint: &str) -> core::option::Option<&str>
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::effective_token_count(&self, text: &str) -> usize
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::effective_tokenizer_profile(&self) -> &devboy_format_pipeline::adaptive_config::TokenizerProfile
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::effective_tool_value_model(&self, tool_name: &str) -> core::option::Option<&devboy_core::tool_value_model::ToolValueModel>
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::load(path: impl core::convert::AsRef<std::path::Path>) -> devboy_format_pipeline::adaptive_config::Result<Self>
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::load_or_default(path: impl core::convert::AsRef<std::path::Path>) -> devboy_format_pipeline::adaptive_config::Result<Self>
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::max_lru_size(&self) -> usize
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::merge_right_wins(&mut self, other: devboy_format_pipeline::adaptive_config::AdaptiveConfig)
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::save(&self, path: impl core::convert::AsRef<std::path::Path>) -> devboy_format_pipeline::adaptive_config::Result<()>
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::AdaptiveConfig
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::clone(&self) -> devboy_format_pipeline::adaptive_config::AdaptiveConfig
+impl core::default::Default for devboy_format_pipeline::adaptive_config::AdaptiveConfig
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::AdaptiveConfig
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::AdaptiveConfig
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::AdaptiveConfig
+pub fn devboy_format_pipeline::adaptive_config::AdaptiveConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::AdaptiveConfig
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::AdaptiveConfig
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::AdaptiveConfig
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::AdaptiveConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::AdaptiveConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::AdaptiveConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::AdaptiveConfig
+pub struct devboy_format_pipeline::adaptive_config::AgentProfile
+pub devboy_format_pipeline::adaptive_config::AgentProfile::hint_aggressiveness: f32
+pub devboy_format_pipeline::adaptive_config::AgentProfile::mckp_recursion_depth: usize
+pub devboy_format_pipeline::adaptive_config::AgentProfile::near_ref_enabled: bool
+pub devboy_format_pipeline::adaptive_config::AgentProfile::priority: devboy_format_pipeline::adaptive_config::Priority
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::AgentProfile
+pub fn devboy_format_pipeline::adaptive_config::AgentProfile::clone(&self) -> devboy_format_pipeline::adaptive_config::AgentProfile
+impl core::default::Default for devboy_format_pipeline::adaptive_config::AgentProfile
+pub fn devboy_format_pipeline::adaptive_config::AgentProfile::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::AgentProfile
+pub fn devboy_format_pipeline::adaptive_config::AgentProfile::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::AgentProfile
+pub fn devboy_format_pipeline::adaptive_config::AgentProfile::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::AgentProfile
+pub fn devboy_format_pipeline::adaptive_config::AgentProfile::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::AgentProfile
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::AgentProfile
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::AgentProfile
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::AgentProfile
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::AgentProfile
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::AgentProfile
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::AgentProfile
+pub struct devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+pub devboy_format_pipeline::adaptive_config::AgentProfilesConfig::active: alloc::string::String
+pub devboy_format_pipeline::adaptive_config::AgentProfilesConfig::auto_detect_window: usize
+pub devboy_format_pipeline::adaptive_config::AgentProfilesConfig::variants: alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_format_pipeline::adaptive_config::AgentProfile>
+impl devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::AgentProfilesConfig::resolve<'a>(&'a self, stats: &devboy_format_pipeline::adaptive_config::SessionStats) -> &'a devboy_format_pipeline::adaptive_config::AgentProfile
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::AgentProfilesConfig::clone(&self) -> devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+impl core::default::Default for devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::AgentProfilesConfig::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::AgentProfilesConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::AgentProfilesConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::AgentProfilesConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+pub struct devboy_format_pipeline::adaptive_config::DataProfile
+pub devboy_format_pipeline::adaptive_config::DataProfile::endpoint_pattern: alloc::string::String
+pub devboy_format_pipeline::adaptive_config::DataProfile::hint_set: alloc::vec::Vec<alloc::string::String>
+pub devboy_format_pipeline::adaptive_config::DataProfile::preferred_format: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::DataProfile
+pub fn devboy_format_pipeline::adaptive_config::DataProfile::clone(&self) -> devboy_format_pipeline::adaptive_config::DataProfile
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::DataProfile
+pub fn devboy_format_pipeline::adaptive_config::DataProfile::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::DataProfile
+pub fn devboy_format_pipeline::adaptive_config::DataProfile::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::DataProfile
+pub fn devboy_format_pipeline::adaptive_config::DataProfile::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::DataProfile
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::DataProfile
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::DataProfile
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::DataProfile
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::DataProfile
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::DataProfile
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::DataProfile
+pub struct devboy_format_pipeline::adaptive_config::DataProfilesConfig
+pub devboy_format_pipeline::adaptive_config::DataProfilesConfig::active: alloc::string::String
+pub devboy_format_pipeline::adaptive_config::DataProfilesConfig::variants: alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_format_pipeline::adaptive_config::DataProfile>
+impl devboy_format_pipeline::adaptive_config::DataProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::DataProfilesConfig::match_endpoint(&self, endpoint: &str) -> core::option::Option<&devboy_format_pipeline::adaptive_config::DataProfile>
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::DataProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::DataProfilesConfig::clone(&self) -> devboy_format_pipeline::adaptive_config::DataProfilesConfig
+impl core::default::Default for devboy_format_pipeline::adaptive_config::DataProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::DataProfilesConfig::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::DataProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::DataProfilesConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::DataProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::DataProfilesConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::DataProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::DataProfilesConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::DataProfilesConfig
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::DataProfilesConfig
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::DataProfilesConfig
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::DataProfilesConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::DataProfilesConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::DataProfilesConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::DataProfilesConfig
+pub struct devboy_format_pipeline::adaptive_config::DedupConfig
+pub devboy_format_pipeline::adaptive_config::DedupConfig::enabled_per_endpoint: alloc::collections::btree::map::BTreeMap<alloc::string::String, bool>
+pub devboy_format_pipeline::adaptive_config::DedupConfig::hint_verbosity: devboy_format_pipeline::adaptive_config::HintVerbosity
+pub devboy_format_pipeline::adaptive_config::DedupConfig::lru_size: usize
+pub devboy_format_pipeline::adaptive_config::DedupConfig::min_body_chars: usize
+pub devboy_format_pipeline::adaptive_config::DedupConfig::near_ref_enabled: bool
+impl devboy_format_pipeline::adaptive_config::DedupConfig
+pub fn devboy_format_pipeline::adaptive_config::DedupConfig::enabled_for(&self, endpoint: &str) -> bool
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::DedupConfig
+pub fn devboy_format_pipeline::adaptive_config::DedupConfig::clone(&self) -> devboy_format_pipeline::adaptive_config::DedupConfig
+impl core::default::Default for devboy_format_pipeline::adaptive_config::DedupConfig
+pub fn devboy_format_pipeline::adaptive_config::DedupConfig::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::DedupConfig
+pub fn devboy_format_pipeline::adaptive_config::DedupConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::DedupConfig
+pub fn devboy_format_pipeline::adaptive_config::DedupConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::DedupConfig
+pub fn devboy_format_pipeline::adaptive_config::DedupConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::DedupConfig
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::DedupConfig
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::DedupConfig
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::DedupConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::DedupConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::DedupConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::DedupConfig
+pub struct devboy_format_pipeline::adaptive_config::EffectiveConfig
+pub devboy_format_pipeline::adaptive_config::EffectiveConfig::agent: devboy_format_pipeline::adaptive_config::AgentProfile
+pub devboy_format_pipeline::adaptive_config::EffectiveConfig::hints: devboy_format_pipeline::adaptive_config::HintsConfig
+pub devboy_format_pipeline::adaptive_config::EffectiveConfig::llm: devboy_format_pipeline::adaptive_config::LlmProfile
+pub devboy_format_pipeline::adaptive_config::EffectiveConfig::mckp: devboy_format_pipeline::adaptive_config::MckpConfig
+pub devboy_format_pipeline::adaptive_config::EffectiveConfig::tokenizer: devboy_format_pipeline::adaptive_config::TokenizerProfile
+impl devboy_format_pipeline::adaptive_config::EffectiveConfig
+pub fn devboy_format_pipeline::adaptive_config::EffectiveConfig::allow_hint(&self, type_id: &str) -> bool
+pub fn devboy_format_pipeline::adaptive_config::EffectiveConfig::preferred_format_for<'a>(&self, cfg: &'a devboy_format_pipeline::adaptive_config::AdaptiveConfig, endpoint: &str) -> core::option::Option<&'a str>
+pub fn devboy_format_pipeline::adaptive_config::EffectiveConfig::resolve(cfg: &devboy_format_pipeline::adaptive_config::AdaptiveConfig, ctx: &devboy_format_pipeline::adaptive_config::SessionContext) -> Self
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::EffectiveConfig
+pub fn devboy_format_pipeline::adaptive_config::EffectiveConfig::clone(&self) -> devboy_format_pipeline::adaptive_config::EffectiveConfig
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::EffectiveConfig
+pub fn devboy_format_pipeline::adaptive_config::EffectiveConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::EffectiveConfig
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::EffectiveConfig
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::EffectiveConfig
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::EffectiveConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::EffectiveConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::EffectiveConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::EffectiveConfig
+pub struct devboy_format_pipeline::adaptive_config::EndpointOverride
+pub devboy_format_pipeline::adaptive_config::EndpointOverride::dedup_enabled: core::option::Option<bool>
+pub devboy_format_pipeline::adaptive_config::EndpointOverride::lru_size: core::option::Option<usize>
+pub devboy_format_pipeline::adaptive_config::EndpointOverride::min_body_chars: core::option::Option<usize>
+pub devboy_format_pipeline::adaptive_config::EndpointOverride::template_id: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::EndpointOverride
+pub fn devboy_format_pipeline::adaptive_config::EndpointOverride::clone(&self) -> devboy_format_pipeline::adaptive_config::EndpointOverride
+impl core::default::Default for devboy_format_pipeline::adaptive_config::EndpointOverride
+pub fn devboy_format_pipeline::adaptive_config::EndpointOverride::default() -> devboy_format_pipeline::adaptive_config::EndpointOverride
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::EndpointOverride
+pub fn devboy_format_pipeline::adaptive_config::EndpointOverride::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::EndpointOverride
+pub fn devboy_format_pipeline::adaptive_config::EndpointOverride::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::EndpointOverride
+pub fn devboy_format_pipeline::adaptive_config::EndpointOverride::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::EndpointOverride
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::EndpointOverride
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::EndpointOverride
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::EndpointOverride
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::EndpointOverride
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::EndpointOverride
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::EndpointOverride
+pub struct devboy_format_pipeline::adaptive_config::EnrichmentConfig
+pub devboy_format_pipeline::adaptive_config::EnrichmentConfig::enabled: bool
+pub devboy_format_pipeline::adaptive_config::EnrichmentConfig::max_parallel_prefetches: u32
+pub devboy_format_pipeline::adaptive_config::EnrichmentConfig::prefetch_budget_tokens: u32
+pub devboy_format_pipeline::adaptive_config::EnrichmentConfig::prefetch_timeout_ms: u32
+pub devboy_format_pipeline::adaptive_config::EnrichmentConfig::respect_rate_limits: bool
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::EnrichmentConfig
+pub fn devboy_format_pipeline::adaptive_config::EnrichmentConfig::clone(&self) -> devboy_format_pipeline::adaptive_config::EnrichmentConfig
+impl core::default::Default for devboy_format_pipeline::adaptive_config::EnrichmentConfig
+pub fn devboy_format_pipeline::adaptive_config::EnrichmentConfig::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::EnrichmentConfig
+pub fn devboy_format_pipeline::adaptive_config::EnrichmentConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::EnrichmentConfig
+pub fn devboy_format_pipeline::adaptive_config::EnrichmentConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::EnrichmentConfig
+pub fn devboy_format_pipeline::adaptive_config::EnrichmentConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::EnrichmentConfig
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::EnrichmentConfig
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::EnrichmentConfig
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::EnrichmentConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::EnrichmentConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::EnrichmentConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::EnrichmentConfig
+pub struct devboy_format_pipeline::adaptive_config::HintTypeRule
+pub devboy_format_pipeline::adaptive_config::HintTypeRule::applies_to_models: alloc::vec::Vec<alloc::string::String>
+pub devboy_format_pipeline::adaptive_config::HintTypeRule::enabled: bool
+pub devboy_format_pipeline::adaptive_config::HintTypeRule::max_per_session: core::option::Option<u32>
+impl devboy_format_pipeline::adaptive_config::HintTypeRule
+pub fn devboy_format_pipeline::adaptive_config::HintTypeRule::applies_to(&self, model_id: &str) -> bool
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::HintTypeRule
+pub fn devboy_format_pipeline::adaptive_config::HintTypeRule::clone(&self) -> devboy_format_pipeline::adaptive_config::HintTypeRule
+impl core::default::Default for devboy_format_pipeline::adaptive_config::HintTypeRule
+pub fn devboy_format_pipeline::adaptive_config::HintTypeRule::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::HintTypeRule
+pub fn devboy_format_pipeline::adaptive_config::HintTypeRule::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::HintTypeRule
+pub fn devboy_format_pipeline::adaptive_config::HintTypeRule::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::HintTypeRule
+pub fn devboy_format_pipeline::adaptive_config::HintTypeRule::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::HintTypeRule
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::HintTypeRule
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::HintTypeRule
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::HintTypeRule
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::HintTypeRule
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::HintTypeRule
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::HintTypeRule
+pub struct devboy_format_pipeline::adaptive_config::HintsConfig
+pub devboy_format_pipeline::adaptive_config::HintsConfig::default_verbosity: devboy_format_pipeline::adaptive_config::HintVerbosity
+pub devboy_format_pipeline::adaptive_config::HintsConfig::types: alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_format_pipeline::adaptive_config::HintTypeRule>
+impl devboy_format_pipeline::adaptive_config::HintsConfig
+pub fn devboy_format_pipeline::adaptive_config::HintsConfig::allow(&self, type_id: &str, model_id: &str) -> bool
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::HintsConfig
+pub fn devboy_format_pipeline::adaptive_config::HintsConfig::clone(&self) -> devboy_format_pipeline::adaptive_config::HintsConfig
+impl core::default::Default for devboy_format_pipeline::adaptive_config::HintsConfig
+pub fn devboy_format_pipeline::adaptive_config::HintsConfig::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::HintsConfig
+pub fn devboy_format_pipeline::adaptive_config::HintsConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::HintsConfig
+pub fn devboy_format_pipeline::adaptive_config::HintsConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::HintsConfig
+pub fn devboy_format_pipeline::adaptive_config::HintsConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::HintsConfig
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::HintsConfig
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::HintsConfig
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::HintsConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::HintsConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::HintsConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::HintsConfig
+pub struct devboy_format_pipeline::adaptive_config::LlmProfile
+pub devboy_format_pipeline::adaptive_config::LlmProfile::context_window: u32
+pub devboy_format_pipeline::adaptive_config::LlmProfile::max_inline_nested: core::option::Option<u32>
+pub devboy_format_pipeline::adaptive_config::LlmProfile::prefer_explicit_keys: bool
+pub devboy_format_pipeline::adaptive_config::LlmProfile::tokenizer: alloc::string::String
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::LlmProfile
+pub fn devboy_format_pipeline::adaptive_config::LlmProfile::clone(&self) -> devboy_format_pipeline::adaptive_config::LlmProfile
+impl core::default::Default for devboy_format_pipeline::adaptive_config::LlmProfile
+pub fn devboy_format_pipeline::adaptive_config::LlmProfile::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::LlmProfile
+pub fn devboy_format_pipeline::adaptive_config::LlmProfile::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::LlmProfile
+pub fn devboy_format_pipeline::adaptive_config::LlmProfile::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::LlmProfile
+pub fn devboy_format_pipeline::adaptive_config::LlmProfile::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::LlmProfile
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::LlmProfile
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::LlmProfile
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::LlmProfile
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::LlmProfile
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::LlmProfile
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::LlmProfile
+pub struct devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+pub devboy_format_pipeline::adaptive_config::LlmProfilesConfig::active: alloc::string::String
+pub devboy_format_pipeline::adaptive_config::LlmProfilesConfig::variants: alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_format_pipeline::adaptive_config::LlmProfile>
+impl devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::LlmProfilesConfig::resolve<'a>(&'a self, session_model_id: core::option::Option<&str>) -> &'a devboy_format_pipeline::adaptive_config::LlmProfile
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::LlmProfilesConfig::clone(&self) -> devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+impl core::default::Default for devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::LlmProfilesConfig::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::LlmProfilesConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::LlmProfilesConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::LlmProfilesConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+pub struct devboy_format_pipeline::adaptive_config::MckpConfig
+pub devboy_format_pipeline::adaptive_config::MckpConfig::formats_enabled: alloc::vec::Vec<alloc::string::String>
+pub devboy_format_pipeline::adaptive_config::MckpConfig::recursion_depth: usize
+pub devboy_format_pipeline::adaptive_config::MckpConfig::shape_thresholds: devboy_format_pipeline::adaptive_config::ShapeThresholds
+impl devboy_format_pipeline::adaptive_config::MckpConfig
+pub fn devboy_format_pipeline::adaptive_config::MckpConfig::format_enabled(&self, id: &str) -> bool
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::MckpConfig
+pub fn devboy_format_pipeline::adaptive_config::MckpConfig::clone(&self) -> devboy_format_pipeline::adaptive_config::MckpConfig
+impl core::default::Default for devboy_format_pipeline::adaptive_config::MckpConfig
+pub fn devboy_format_pipeline::adaptive_config::MckpConfig::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::MckpConfig
+pub fn devboy_format_pipeline::adaptive_config::MckpConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::MckpConfig
+pub fn devboy_format_pipeline::adaptive_config::MckpConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::MckpConfig
+pub fn devboy_format_pipeline::adaptive_config::MckpConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::MckpConfig
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::MckpConfig
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::MckpConfig
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::MckpConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::MckpConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::MckpConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::MckpConfig
+pub struct devboy_format_pipeline::adaptive_config::ProfilesConfig
+pub devboy_format_pipeline::adaptive_config::ProfilesConfig::agent: devboy_format_pipeline::adaptive_config::AgentProfilesConfig
+pub devboy_format_pipeline::adaptive_config::ProfilesConfig::data: devboy_format_pipeline::adaptive_config::DataProfilesConfig
+pub devboy_format_pipeline::adaptive_config::ProfilesConfig::llm: devboy_format_pipeline::adaptive_config::LlmProfilesConfig
+pub devboy_format_pipeline::adaptive_config::ProfilesConfig::tokenizer: devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::ProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::ProfilesConfig::clone(&self) -> devboy_format_pipeline::adaptive_config::ProfilesConfig
+impl core::default::Default for devboy_format_pipeline::adaptive_config::ProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::ProfilesConfig::default() -> devboy_format_pipeline::adaptive_config::ProfilesConfig
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::ProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::ProfilesConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::ProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::ProfilesConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::ProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::ProfilesConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::ProfilesConfig
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::ProfilesConfig
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::ProfilesConfig
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::ProfilesConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::ProfilesConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::ProfilesConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::ProfilesConfig
+pub struct devboy_format_pipeline::adaptive_config::SessionContext
+pub devboy_format_pipeline::adaptive_config::SessionContext::model_id: core::option::Option<alloc::string::String>
+pub devboy_format_pipeline::adaptive_config::SessionContext::stats: devboy_format_pipeline::adaptive_config::SessionStats
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::SessionContext
+pub fn devboy_format_pipeline::adaptive_config::SessionContext::clone(&self) -> devboy_format_pipeline::adaptive_config::SessionContext
+impl core::default::Default for devboy_format_pipeline::adaptive_config::SessionContext
+pub fn devboy_format_pipeline::adaptive_config::SessionContext::default() -> devboy_format_pipeline::adaptive_config::SessionContext
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::SessionContext
+pub fn devboy_format_pipeline::adaptive_config::SessionContext::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::SessionContext
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::SessionContext
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::SessionContext
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::SessionContext
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::SessionContext
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::SessionContext
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::SessionContext
+pub struct devboy_format_pipeline::adaptive_config::SessionStats
+pub devboy_format_pipeline::adaptive_config::SessionStats::compaction_count: usize
+pub devboy_format_pipeline::adaptive_config::SessionStats::event_count: usize
+pub devboy_format_pipeline::adaptive_config::SessionStats::read_share: f32
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::SessionStats
+pub fn devboy_format_pipeline::adaptive_config::SessionStats::clone(&self) -> devboy_format_pipeline::adaptive_config::SessionStats
+impl core::default::Default for devboy_format_pipeline::adaptive_config::SessionStats
+pub fn devboy_format_pipeline::adaptive_config::SessionStats::default() -> devboy_format_pipeline::adaptive_config::SessionStats
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::SessionStats
+pub fn devboy_format_pipeline::adaptive_config::SessionStats::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::SessionStats
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::SessionStats
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::SessionStats
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::SessionStats
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::SessionStats
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::SessionStats
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::SessionStats
+pub struct devboy_format_pipeline::adaptive_config::ShapeThresholds
+pub devboy_format_pipeline::adaptive_config::ShapeThresholds::array_of_objects_min_items: usize
+pub devboy_format_pipeline::adaptive_config::ShapeThresholds::array_of_objects_min_key_stability: f32
+pub devboy_format_pipeline::adaptive_config::ShapeThresholds::flat_object_min_fields: usize
+pub devboy_format_pipeline::adaptive_config::ShapeThresholds::markdown_table_min_cols: usize
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::ShapeThresholds
+pub fn devboy_format_pipeline::adaptive_config::ShapeThresholds::clone(&self) -> devboy_format_pipeline::adaptive_config::ShapeThresholds
+impl core::default::Default for devboy_format_pipeline::adaptive_config::ShapeThresholds
+pub fn devboy_format_pipeline::adaptive_config::ShapeThresholds::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::ShapeThresholds
+pub fn devboy_format_pipeline::adaptive_config::ShapeThresholds::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::ShapeThresholds
+pub fn devboy_format_pipeline::adaptive_config::ShapeThresholds::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::ShapeThresholds
+pub fn devboy_format_pipeline::adaptive_config::ShapeThresholds::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::ShapeThresholds
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::ShapeThresholds
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::ShapeThresholds
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::ShapeThresholds
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::ShapeThresholds
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::ShapeThresholds
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::ShapeThresholds
+pub struct devboy_format_pipeline::adaptive_config::TelemetryConfig
+pub devboy_format_pipeline::adaptive_config::TelemetryConfig::enabled: bool
+pub devboy_format_pipeline::adaptive_config::TelemetryConfig::flush_every_n: usize
+pub devboy_format_pipeline::adaptive_config::TelemetryConfig::path: core::option::Option<alloc::string::String>
+pub devboy_format_pipeline::adaptive_config::TelemetryConfig::rotate_mib: u32
+pub devboy_format_pipeline::adaptive_config::TelemetryConfig::sample_rate: f32
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::TelemetryConfig
+pub fn devboy_format_pipeline::adaptive_config::TelemetryConfig::clone(&self) -> devboy_format_pipeline::adaptive_config::TelemetryConfig
+impl core::default::Default for devboy_format_pipeline::adaptive_config::TelemetryConfig
+pub fn devboy_format_pipeline::adaptive_config::TelemetryConfig::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::TelemetryConfig
+pub fn devboy_format_pipeline::adaptive_config::TelemetryConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::TelemetryConfig
+pub fn devboy_format_pipeline::adaptive_config::TelemetryConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::TelemetryConfig
+pub fn devboy_format_pipeline::adaptive_config::TelemetryConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::TelemetryConfig
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::TelemetryConfig
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::TelemetryConfig
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::TelemetryConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::TelemetryConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::TelemetryConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::TelemetryConfig
+pub struct devboy_format_pipeline::adaptive_config::TemplatesConfig
+pub devboy_format_pipeline::adaptive_config::TemplatesConfig::active: alloc::vec::Vec<alloc::string::String>
+pub devboy_format_pipeline::adaptive_config::TemplatesConfig::endpoint_overrides: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+impl devboy_format_pipeline::adaptive_config::TemplatesConfig
+pub fn devboy_format_pipeline::adaptive_config::TemplatesConfig::is_template_active(&self, id: &str) -> bool
+pub fn devboy_format_pipeline::adaptive_config::TemplatesConfig::template_for(&self, endpoint: &str) -> core::option::Option<&str>
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::TemplatesConfig
+pub fn devboy_format_pipeline::adaptive_config::TemplatesConfig::clone(&self) -> devboy_format_pipeline::adaptive_config::TemplatesConfig
+impl core::default::Default for devboy_format_pipeline::adaptive_config::TemplatesConfig
+pub fn devboy_format_pipeline::adaptive_config::TemplatesConfig::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::TemplatesConfig
+pub fn devboy_format_pipeline::adaptive_config::TemplatesConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::TemplatesConfig
+pub fn devboy_format_pipeline::adaptive_config::TemplatesConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::TemplatesConfig
+pub fn devboy_format_pipeline::adaptive_config::TemplatesConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::TemplatesConfig
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::TemplatesConfig
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::TemplatesConfig
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::TemplatesConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::TemplatesConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::TemplatesConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::TemplatesConfig
+pub struct devboy_format_pipeline::adaptive_config::TokenizerProfile
+pub devboy_format_pipeline::adaptive_config::TokenizerProfile::bpe: devboy_format_pipeline::token_counter::Tokenizer
+pub devboy_format_pipeline::adaptive_config::TokenizerProfile::chars_per_token: f32
+pub devboy_format_pipeline::adaptive_config::TokenizerProfile::format_factors: alloc::collections::btree::map::BTreeMap<alloc::string::String, f32>
+pub devboy_format_pipeline::adaptive_config::TokenizerProfile::inline_json_cost: f32
+pub devboy_format_pipeline::adaptive_config::TokenizerProfile::toon_overhead: f32
+impl devboy_format_pipeline::adaptive_config::TokenizerProfile
+pub fn devboy_format_pipeline::adaptive_config::TokenizerProfile::count_tokens(&self, text: &str) -> usize
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::TokenizerProfile
+pub fn devboy_format_pipeline::adaptive_config::TokenizerProfile::clone(&self) -> devboy_format_pipeline::adaptive_config::TokenizerProfile
+impl core::default::Default for devboy_format_pipeline::adaptive_config::TokenizerProfile
+pub fn devboy_format_pipeline::adaptive_config::TokenizerProfile::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::TokenizerProfile
+pub fn devboy_format_pipeline::adaptive_config::TokenizerProfile::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::TokenizerProfile
+pub fn devboy_format_pipeline::adaptive_config::TokenizerProfile::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::TokenizerProfile
+pub fn devboy_format_pipeline::adaptive_config::TokenizerProfile::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::TokenizerProfile
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::TokenizerProfile
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::TokenizerProfile
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::TokenizerProfile
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::TokenizerProfile
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::TokenizerProfile
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::TokenizerProfile
+pub struct devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+pub devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig::active: alloc::string::String
+pub devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig::variants: alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_format_pipeline::adaptive_config::TokenizerProfile>
+impl devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig::get(&self, id: &str) -> core::option::Option<&devboy_format_pipeline::adaptive_config::TokenizerProfile>
+impl core::clone::Clone for devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig::clone(&self) -> devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+impl core::default::Default for devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+pub fn devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+impl core::marker::Send for devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+impl core::marker::Sync for devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+impl core::marker::Unpin for devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::adaptive_config::TokenizerProfilesConfig
+pub const devboy_format_pipeline::adaptive_config::CURRENT_SCHEMA_VERSION: u32
+pub const devboy_format_pipeline::adaptive_config::MIN_SUPPORTED_SCHEMA_VERSION: u32
+pub type devboy_format_pipeline::adaptive_config::Result<T> = core::result::Result<T, devboy_format_pipeline::adaptive_config::ConfigError>
+pub mod devboy_format_pipeline::budget
+pub struct devboy_format_pipeline::budget::BudgetConfig
+pub devboy_format_pipeline::budget::BudgetConfig::budget_tokens: usize
+pub devboy_format_pipeline::budget::BudgetConfig::margin: f64
+pub devboy_format_pipeline::budget::BudgetConfig::max_iterations: usize
+impl core::clone::Clone for devboy_format_pipeline::budget::BudgetConfig
+pub fn devboy_format_pipeline::budget::BudgetConfig::clone(&self) -> devboy_format_pipeline::budget::BudgetConfig
+impl core::default::Default for devboy_format_pipeline::budget::BudgetConfig
+pub fn devboy_format_pipeline::budget::BudgetConfig::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::budget::BudgetConfig
+pub fn devboy_format_pipeline::budget::BudgetConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::budget::BudgetConfig
+impl core::marker::Send for devboy_format_pipeline::budget::BudgetConfig
+impl core::marker::Sync for devboy_format_pipeline::budget::BudgetConfig
+impl core::marker::Unpin for devboy_format_pipeline::budget::BudgetConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::budget::BudgetConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::budget::BudgetConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::budget::BudgetConfig
+pub struct devboy_format_pipeline::budget::BudgetResult
+pub devboy_format_pipeline::budget::BudgetResult::content: alloc::string::String
+pub devboy_format_pipeline::budget::BudgetResult::included_items: usize
+pub devboy_format_pipeline::budget::BudgetResult::overflow_indices: alloc::vec::Vec<usize>
+pub devboy_format_pipeline::budget::BudgetResult::tokens: usize
+pub devboy_format_pipeline::budget::BudgetResult::total_items: usize
+pub devboy_format_pipeline::budget::BudgetResult::trimmed: bool
+impl core::clone::Clone for devboy_format_pipeline::budget::BudgetResult
+pub fn devboy_format_pipeline::budget::BudgetResult::clone(&self) -> devboy_format_pipeline::budget::BudgetResult
+impl core::fmt::Debug for devboy_format_pipeline::budget::BudgetResult
+pub fn devboy_format_pipeline::budget::BudgetResult::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::budget::BudgetResult
+impl core::marker::Send for devboy_format_pipeline::budget::BudgetResult
+impl core::marker::Sync for devboy_format_pipeline::budget::BudgetResult
+impl core::marker::Unpin for devboy_format_pipeline::budget::BudgetResult
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::budget::BudgetResult
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::budget::BudgetResult
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::budget::BudgetResult
+pub fn devboy_format_pipeline::budget::process_comments(comments: &[devboy_core::types::Comment], strategy_kind: devboy_format_pipeline::strategy::TrimStrategyKind, config: &devboy_format_pipeline::budget::BudgetConfig) -> devboy_core::error::Result<devboy_format_pipeline::budget::BudgetResult>
+pub fn devboy_format_pipeline::budget::process_diffs(diffs: &[devboy_core::types::FileDiff], strategy_kind: devboy_format_pipeline::strategy::TrimStrategyKind, config: &devboy_format_pipeline::budget::BudgetConfig) -> devboy_core::error::Result<devboy_format_pipeline::budget::BudgetResult>
+pub fn devboy_format_pipeline::budget::process_discussions(discussions: &[devboy_core::types::Discussion], strategy_kind: devboy_format_pipeline::strategy::TrimStrategyKind, config: &devboy_format_pipeline::budget::BudgetConfig) -> devboy_core::error::Result<devboy_format_pipeline::budget::BudgetResult>
+pub fn devboy_format_pipeline::budget::process_issues(issues: &[devboy_core::types::Issue], strategy_kind: devboy_format_pipeline::strategy::TrimStrategyKind, config: &devboy_format_pipeline::budget::BudgetConfig) -> devboy_core::error::Result<devboy_format_pipeline::budget::BudgetResult>
+pub fn devboy_format_pipeline::budget::process_merge_requests(mrs: &[devboy_core::types::MergeRequest], strategy_kind: devboy_format_pipeline::strategy::TrimStrategyKind, config: &devboy_format_pipeline::budget::BudgetConfig) -> devboy_core::error::Result<devboy_format_pipeline::budget::BudgetResult>
+pub fn devboy_format_pipeline::budget::run(tree: &mut devboy_format_pipeline::tree::TrimNode, full_encoded: &str, config: &devboy_format_pipeline::budget::BudgetConfig) -> devboy_format_pipeline::budget::BudgetResult
+pub mod devboy_format_pipeline::dedup
+pub enum devboy_format_pipeline::dedup::DedupDecision
+pub devboy_format_pipeline::dedup::DedupDecision::Fresh
+pub devboy_format_pipeline::dedup::DedupDecision::Hint
+pub devboy_format_pipeline::dedup::DedupDecision::Hint::reference_tool_call_id: alloc::string::String
+impl core::clone::Clone for devboy_format_pipeline::dedup::DedupDecision
+pub fn devboy_format_pipeline::dedup::DedupDecision::clone(&self) -> devboy_format_pipeline::dedup::DedupDecision
+impl core::cmp::Eq for devboy_format_pipeline::dedup::DedupDecision
+impl core::cmp::PartialEq for devboy_format_pipeline::dedup::DedupDecision
+pub fn devboy_format_pipeline::dedup::DedupDecision::eq(&self, other: &devboy_format_pipeline::dedup::DedupDecision) -> bool
+impl core::fmt::Debug for devboy_format_pipeline::dedup::DedupDecision
+pub fn devboy_format_pipeline::dedup::DedupDecision::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::dedup::DedupDecision
+impl core::marker::Freeze for devboy_format_pipeline::dedup::DedupDecision
+impl core::marker::Send for devboy_format_pipeline::dedup::DedupDecision
+impl core::marker::Sync for devboy_format_pipeline::dedup::DedupDecision
+impl core::marker::Unpin for devboy_format_pipeline::dedup::DedupDecision
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::dedup::DedupDecision
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::dedup::DedupDecision
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::dedup::DedupDecision
+pub enum devboy_format_pipeline::dedup::HintVerbosity
+pub devboy_format_pipeline::dedup::HintVerbosity::Standard
+pub devboy_format_pipeline::dedup::HintVerbosity::Terse
+pub devboy_format_pipeline::dedup::HintVerbosity::Verbose
+impl core::clone::Clone for devboy_format_pipeline::dedup::HintVerbosity
+pub fn devboy_format_pipeline::dedup::HintVerbosity::clone(&self) -> devboy_format_pipeline::dedup::HintVerbosity
+impl core::cmp::Eq for devboy_format_pipeline::dedup::HintVerbosity
+impl core::cmp::PartialEq for devboy_format_pipeline::dedup::HintVerbosity
+pub fn devboy_format_pipeline::dedup::HintVerbosity::eq(&self, other: &devboy_format_pipeline::dedup::HintVerbosity) -> bool
+impl core::default::Default for devboy_format_pipeline::dedup::HintVerbosity
+pub fn devboy_format_pipeline::dedup::HintVerbosity::default() -> devboy_format_pipeline::dedup::HintVerbosity
+impl core::fmt::Debug for devboy_format_pipeline::dedup::HintVerbosity
+pub fn devboy_format_pipeline::dedup::HintVerbosity::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_format_pipeline::dedup::HintVerbosity
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::dedup::HintVerbosity
+impl core::marker::Freeze for devboy_format_pipeline::dedup::HintVerbosity
+impl core::marker::Send for devboy_format_pipeline::dedup::HintVerbosity
+impl core::marker::Sync for devboy_format_pipeline::dedup::HintVerbosity
+impl core::marker::Unpin for devboy_format_pipeline::dedup::HintVerbosity
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::dedup::HintVerbosity
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::dedup::HintVerbosity
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::dedup::HintVerbosity
+pub enum devboy_format_pipeline::dedup::ToolKind
+pub devboy_format_pipeline::dedup::ToolKind::FileMutate
+pub devboy_format_pipeline::dedup::ToolKind::FileRead
+pub devboy_format_pipeline::dedup::ToolKind::Other
+impl devboy_format_pipeline::dedup::ToolKind
+pub fn devboy_format_pipeline::dedup::ToolKind::from_tool_name(name: &str) -> Self
+impl core::clone::Clone for devboy_format_pipeline::dedup::ToolKind
+pub fn devboy_format_pipeline::dedup::ToolKind::clone(&self) -> devboy_format_pipeline::dedup::ToolKind
+impl core::cmp::Eq for devboy_format_pipeline::dedup::ToolKind
+impl core::cmp::PartialEq for devboy_format_pipeline::dedup::ToolKind
+pub fn devboy_format_pipeline::dedup::ToolKind::eq(&self, other: &devboy_format_pipeline::dedup::ToolKind) -> bool
+impl core::fmt::Debug for devboy_format_pipeline::dedup::ToolKind
+pub fn devboy_format_pipeline::dedup::ToolKind::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_format_pipeline::dedup::ToolKind
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::dedup::ToolKind
+impl core::marker::Freeze for devboy_format_pipeline::dedup::ToolKind
+impl core::marker::Send for devboy_format_pipeline::dedup::ToolKind
+impl core::marker::Sync for devboy_format_pipeline::dedup::ToolKind
+impl core::marker::Unpin for devboy_format_pipeline::dedup::ToolKind
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::dedup::ToolKind
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::dedup::ToolKind
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::dedup::ToolKind
+pub struct devboy_format_pipeline::dedup::DedupCache
+impl devboy_format_pipeline::dedup::DedupCache
+pub fn devboy_format_pipeline::dedup::DedupCache::check(&mut self, hash: &devboy_format_pipeline::dedup::ContentHash) -> devboy_format_pipeline::dedup::DedupDecision
+pub fn devboy_format_pipeline::dedup::DedupCache::find_near_ref(&self, new_body: &str, config: &devboy_format_pipeline::near_ref::NearRefConfig) -> core::option::Option<(alloc::string::String, alloc::vec::Vec<devboy_format_pipeline::near_ref::DeltaField>)>
+pub fn devboy_format_pipeline::dedup::DedupCache::insert(&mut self, hash: devboy_format_pipeline::dedup::ContentHash, tool_call_id: impl core::convert::Into<alloc::string::String>, tool_kind: devboy_format_pipeline::dedup::ToolKind, file_path_hash: core::option::Option<alloc::string::String>, tool_name: impl core::convert::Into<alloc::string::String>)
+pub fn devboy_format_pipeline::dedup::DedupCache::insert_with_body(&mut self, hash: devboy_format_pipeline::dedup::ContentHash, tool_call_id: impl core::convert::Into<alloc::string::String>, tool_kind: devboy_format_pipeline::dedup::ToolKind, file_path_hash: core::option::Option<alloc::string::String>, body: alloc::sync::Arc<alloc::string::String>, tool_name: impl core::convert::Into<alloc::string::String>)
+pub fn devboy_format_pipeline::dedup::DedupCache::invalidate_by_tool(&mut self, invalidates: &[alloc::string::String]) -> usize
+pub fn devboy_format_pipeline::dedup::DedupCache::invalidate_file(&mut self, file_path_hash: &str) -> usize
+pub fn devboy_format_pipeline::dedup::DedupCache::is_empty(&self) -> bool
+pub fn devboy_format_pipeline::dedup::DedupCache::len(&self) -> usize
+pub fn devboy_format_pipeline::dedup::DedupCache::on_compaction_boundary(&mut self)
+pub fn devboy_format_pipeline::dedup::DedupCache::partition(&self) -> u64
+pub fn devboy_format_pipeline::dedup::DedupCache::with_capacity(capacity: usize) -> Self
+impl core::default::Default for devboy_format_pipeline::dedup::DedupCache
+pub fn devboy_format_pipeline::dedup::DedupCache::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::dedup::DedupCache
+pub fn devboy_format_pipeline::dedup::DedupCache::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::dedup::DedupCache
+impl core::marker::Send for devboy_format_pipeline::dedup::DedupCache
+impl core::marker::Sync for devboy_format_pipeline::dedup::DedupCache
+impl core::marker::Unpin for devboy_format_pipeline::dedup::DedupCache
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::dedup::DedupCache
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::dedup::DedupCache
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::dedup::DedupCache
+pub fn devboy_format_pipeline::dedup::content_hash(content: &[u8]) -> devboy_format_pipeline::dedup::ContentHash
+pub fn devboy_format_pipeline::dedup::render_reference_hint(tool_call_id: &str) -> alloc::string::String
+pub fn devboy_format_pipeline::dedup::render_reference_hint_with(tool_call_id: &str, verbosity: devboy_format_pipeline::dedup::HintVerbosity, source_tool: core::option::Option<devboy_format_pipeline::dedup::ToolKind>) -> alloc::string::String
+pub type devboy_format_pipeline::dedup::ContentHash = [u8; 16]
+pub mod devboy_format_pipeline::enrichment
+#[non_exhaustive] pub enum devboy_format_pipeline::enrichment::DeclineKind
+pub devboy_format_pipeline::enrichment::DeclineKind::BudgetExceeded
+impl core::clone::Clone for devboy_format_pipeline::enrichment::DeclineKind
+pub fn devboy_format_pipeline::enrichment::DeclineKind::clone(&self) -> devboy_format_pipeline::enrichment::DeclineKind
+impl core::cmp::Eq for devboy_format_pipeline::enrichment::DeclineKind
+impl core::cmp::PartialEq for devboy_format_pipeline::enrichment::DeclineKind
+pub fn devboy_format_pipeline::enrichment::DeclineKind::eq(&self, other: &devboy_format_pipeline::enrichment::DeclineKind) -> bool
+impl core::fmt::Debug for devboy_format_pipeline::enrichment::DeclineKind
+pub fn devboy_format_pipeline::enrichment::DeclineKind::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_format_pipeline::enrichment::DeclineKind
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::enrichment::DeclineKind
+impl core::marker::Freeze for devboy_format_pipeline::enrichment::DeclineKind
+impl core::marker::Send for devboy_format_pipeline::enrichment::DeclineKind
+impl core::marker::Sync for devboy_format_pipeline::enrichment::DeclineKind
+impl core::marker::Unpin for devboy_format_pipeline::enrichment::DeclineKind
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::enrichment::DeclineKind
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::enrichment::DeclineKind
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::enrichment::DeclineKind
+pub struct devboy_format_pipeline::enrichment::DeclineReason
+pub devboy_format_pipeline::enrichment::DeclineReason::reason: devboy_format_pipeline::enrichment::DeclineKind
+pub devboy_format_pipeline::enrichment::DeclineReason::tool: alloc::string::String
+impl core::clone::Clone for devboy_format_pipeline::enrichment::DeclineReason
+pub fn devboy_format_pipeline::enrichment::DeclineReason::clone(&self) -> devboy_format_pipeline::enrichment::DeclineReason
+impl core::cmp::PartialEq for devboy_format_pipeline::enrichment::DeclineReason
+pub fn devboy_format_pipeline::enrichment::DeclineReason::eq(&self, other: &devboy_format_pipeline::enrichment::DeclineReason) -> bool
+impl core::fmt::Debug for devboy_format_pipeline::enrichment::DeclineReason
+pub fn devboy_format_pipeline::enrichment::DeclineReason::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::enrichment::DeclineReason
+impl core::marker::Freeze for devboy_format_pipeline::enrichment::DeclineReason
+impl core::marker::Send for devboy_format_pipeline::enrichment::DeclineReason
+impl core::marker::Sync for devboy_format_pipeline::enrichment::DeclineReason
+impl core::marker::Unpin for devboy_format_pipeline::enrichment::DeclineReason
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::enrichment::DeclineReason
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::enrichment::DeclineReason
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::enrichment::DeclineReason
+pub struct devboy_format_pipeline::enrichment::EnrichmentPlan
+pub devboy_format_pipeline::enrichment::EnrichmentPlan::calls: alloc::vec::Vec<devboy_format_pipeline::enrichment::PlannedCall>
+pub devboy_format_pipeline::enrichment::EnrichmentPlan::declined: alloc::vec::Vec<devboy_format_pipeline::enrichment::DeclineReason>
+pub devboy_format_pipeline::enrichment::EnrichmentPlan::remaining_budget_tokens: u32
+pub devboy_format_pipeline::enrichment::EnrichmentPlan::total_cost_tokens: u32
+impl core::clone::Clone for devboy_format_pipeline::enrichment::EnrichmentPlan
+pub fn devboy_format_pipeline::enrichment::EnrichmentPlan::clone(&self) -> devboy_format_pipeline::enrichment::EnrichmentPlan
+impl core::default::Default for devboy_format_pipeline::enrichment::EnrichmentPlan
+pub fn devboy_format_pipeline::enrichment::EnrichmentPlan::default() -> devboy_format_pipeline::enrichment::EnrichmentPlan
+impl core::fmt::Debug for devboy_format_pipeline::enrichment::EnrichmentPlan
+pub fn devboy_format_pipeline::enrichment::EnrichmentPlan::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::enrichment::EnrichmentPlan
+impl core::marker::Send for devboy_format_pipeline::enrichment::EnrichmentPlan
+impl core::marker::Sync for devboy_format_pipeline::enrichment::EnrichmentPlan
+impl core::marker::Unpin for devboy_format_pipeline::enrichment::EnrichmentPlan
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::enrichment::EnrichmentPlan
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::enrichment::EnrichmentPlan
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::enrichment::EnrichmentPlan
+pub struct devboy_format_pipeline::enrichment::PlannedCall
+pub devboy_format_pipeline::enrichment::PlannedCall::estimated_cost_bytes: u32
+pub devboy_format_pipeline::enrichment::PlannedCall::estimated_cost_tokens: u32
+pub devboy_format_pipeline::enrichment::PlannedCall::probability: f32
+pub devboy_format_pipeline::enrichment::PlannedCall::projection: core::option::Option<alloc::string::String>
+pub devboy_format_pipeline::enrichment::PlannedCall::tool: alloc::string::String
+pub devboy_format_pipeline::enrichment::PlannedCall::value_class: devboy_core::tool_value_model::ValueClass
+impl core::clone::Clone for devboy_format_pipeline::enrichment::PlannedCall
+pub fn devboy_format_pipeline::enrichment::PlannedCall::clone(&self) -> devboy_format_pipeline::enrichment::PlannedCall
+impl core::cmp::PartialEq for devboy_format_pipeline::enrichment::PlannedCall
+pub fn devboy_format_pipeline::enrichment::PlannedCall::eq(&self, other: &devboy_format_pipeline::enrichment::PlannedCall) -> bool
+impl core::fmt::Debug for devboy_format_pipeline::enrichment::PlannedCall
+pub fn devboy_format_pipeline::enrichment::PlannedCall::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::enrichment::PlannedCall
+impl core::marker::Freeze for devboy_format_pipeline::enrichment::PlannedCall
+impl core::marker::Send for devboy_format_pipeline::enrichment::PlannedCall
+impl core::marker::Sync for devboy_format_pipeline::enrichment::PlannedCall
+impl core::marker::Unpin for devboy_format_pipeline::enrichment::PlannedCall
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::enrichment::PlannedCall
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::enrichment::PlannedCall
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::enrichment::PlannedCall
+pub struct devboy_format_pipeline::enrichment::PlannerOptions
+pub devboy_format_pipeline::enrichment::PlannerOptions::bytes_per_token: u32
+pub devboy_format_pipeline::enrichment::PlannerOptions::dollar_penalty: core::option::Option<f32>
+pub devboy_format_pipeline::enrichment::PlannerOptions::latency_penalty_ms: core::option::Option<u32>
+pub devboy_format_pipeline::enrichment::PlannerOptions::min_followup_probability: f32
+impl devboy_format_pipeline::enrichment::PlannerOptions
+pub fn devboy_format_pipeline::enrichment::PlannerOptions::cost_aware() -> Self
+impl core::clone::Clone for devboy_format_pipeline::enrichment::PlannerOptions
+pub fn devboy_format_pipeline::enrichment::PlannerOptions::clone(&self) -> devboy_format_pipeline::enrichment::PlannerOptions
+impl core::default::Default for devboy_format_pipeline::enrichment::PlannerOptions
+pub fn devboy_format_pipeline::enrichment::PlannerOptions::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::enrichment::PlannerOptions
+pub fn devboy_format_pipeline::enrichment::PlannerOptions::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_format_pipeline::enrichment::PlannerOptions
+impl core::marker::Freeze for devboy_format_pipeline::enrichment::PlannerOptions
+impl core::marker::Send for devboy_format_pipeline::enrichment::PlannerOptions
+impl core::marker::Sync for devboy_format_pipeline::enrichment::PlannerOptions
+impl core::marker::Unpin for devboy_format_pipeline::enrichment::PlannerOptions
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::enrichment::PlannerOptions
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::enrichment::PlannerOptions
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::enrichment::PlannerOptions
+pub struct devboy_format_pipeline::enrichment::TurnContext<'a>
+pub devboy_format_pipeline::enrichment::TurnContext::budget_tokens: u32
+pub devboy_format_pipeline::enrichment::TurnContext::intent_keywords: alloc::vec::Vec<alloc::string::String>
+pub devboy_format_pipeline::enrichment::TurnContext::recent_tools: &'a [alloc::string::String]
+impl<'a> devboy_format_pipeline::enrichment::TurnContext<'a>
+pub fn devboy_format_pipeline::enrichment::TurnContext<'a>::new(recent_tools: &'a [alloc::string::String], budget_tokens: u32) -> Self
+impl<'a> core::clone::Clone for devboy_format_pipeline::enrichment::TurnContext<'a>
+pub fn devboy_format_pipeline::enrichment::TurnContext<'a>::clone(&self) -> devboy_format_pipeline::enrichment::TurnContext<'a>
+impl<'a> core::default::Default for devboy_format_pipeline::enrichment::TurnContext<'a>
+pub fn devboy_format_pipeline::enrichment::TurnContext<'a>::default() -> devboy_format_pipeline::enrichment::TurnContext<'a>
+impl<'a> core::fmt::Debug for devboy_format_pipeline::enrichment::TurnContext<'a>
+pub fn devboy_format_pipeline::enrichment::TurnContext<'a>::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Freeze for devboy_format_pipeline::enrichment::TurnContext<'a>
+impl<'a> core::marker::Send for devboy_format_pipeline::enrichment::TurnContext<'a>
+impl<'a> core::marker::Sync for devboy_format_pipeline::enrichment::TurnContext<'a>
+impl<'a> core::marker::Unpin for devboy_format_pipeline::enrichment::TurnContext<'a>
+impl<'a> core::marker::UnsafeUnpin for devboy_format_pipeline::enrichment::TurnContext<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::enrichment::TurnContext<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::enrichment::TurnContext<'a>
+pub fn devboy_format_pipeline::enrichment::build_plan(config: &devboy_format_pipeline::adaptive_config::AdaptiveConfig, context: &devboy_format_pipeline::enrichment::TurnContext<'_>, options: devboy_format_pipeline::enrichment::PlannerOptions) -> devboy_format_pipeline::enrichment::EnrichmentPlan
+pub mod devboy_format_pipeline::layered_pipeline
+pub struct devboy_format_pipeline::layered_pipeline::LayeredPipeline
+impl devboy_format_pipeline::layered_pipeline::LayeredPipeline
+pub fn devboy_format_pipeline::layered_pipeline::LayeredPipeline::invalidate_file(&mut self, file_path: &str) -> usize
+pub fn devboy_format_pipeline::layered_pipeline::LayeredPipeline::new(session_hash: alloc::string::String, config: devboy_format_pipeline::adaptive_config::AdaptiveConfig) -> Self
+pub fn devboy_format_pipeline::layered_pipeline::LayeredPipeline::on_compaction_boundary(&mut self)
+pub fn devboy_format_pipeline::layered_pipeline::LayeredPipeline::partition(&self) -> u64
+pub fn devboy_format_pipeline::layered_pipeline::LayeredPipeline::process(&mut self, input: devboy_format_pipeline::layered_pipeline::ToolResponseInput<'_>) -> devboy_format_pipeline::layered_pipeline::ProcessedResponse
+pub fn devboy_format_pipeline::layered_pipeline::LayeredPipeline::with_telemetry(self, sink: alloc::sync::Arc<dyn devboy_format_pipeline::telemetry::TelemetrySink>) -> Self
+impl core::marker::Freeze for devboy_format_pipeline::layered_pipeline::LayeredPipeline
+impl core::marker::Send for devboy_format_pipeline::layered_pipeline::LayeredPipeline
+impl core::marker::Sync for devboy_format_pipeline::layered_pipeline::LayeredPipeline
+impl core::marker::Unpin for devboy_format_pipeline::layered_pipeline::LayeredPipeline
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::layered_pipeline::LayeredPipeline
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::layered_pipeline::LayeredPipeline
+impl !core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::layered_pipeline::LayeredPipeline
+pub struct devboy_format_pipeline::layered_pipeline::ProcessedResponse
+pub devboy_format_pipeline::layered_pipeline::ProcessedResponse::format_or_template: core::option::Option<alloc::string::String>
+pub devboy_format_pipeline::layered_pipeline::ProcessedResponse::layer: devboy_format_pipeline::telemetry::Layer
+pub devboy_format_pipeline::layered_pipeline::ProcessedResponse::output: alloc::string::String
+pub devboy_format_pipeline::layered_pipeline::ProcessedResponse::tokens_final: u32
+pub devboy_format_pipeline::layered_pipeline::ProcessedResponse::tokens_saved: i64
+impl core::clone::Clone for devboy_format_pipeline::layered_pipeline::ProcessedResponse
+pub fn devboy_format_pipeline::layered_pipeline::ProcessedResponse::clone(&self) -> devboy_format_pipeline::layered_pipeline::ProcessedResponse
+impl core::fmt::Debug for devboy_format_pipeline::layered_pipeline::ProcessedResponse
+pub fn devboy_format_pipeline::layered_pipeline::ProcessedResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::layered_pipeline::ProcessedResponse
+impl core::marker::Send for devboy_format_pipeline::layered_pipeline::ProcessedResponse
+impl core::marker::Sync for devboy_format_pipeline::layered_pipeline::ProcessedResponse
+impl core::marker::Unpin for devboy_format_pipeline::layered_pipeline::ProcessedResponse
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::layered_pipeline::ProcessedResponse
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::layered_pipeline::ProcessedResponse
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::layered_pipeline::ProcessedResponse
+pub struct devboy_format_pipeline::layered_pipeline::ToolResponseInput<'a>
+pub devboy_format_pipeline::layered_pipeline::ToolResponseInput::content: &'a str
+pub devboy_format_pipeline::layered_pipeline::ToolResponseInput::enricher_predicted_cost_tokens: u32
+pub devboy_format_pipeline::layered_pipeline::ToolResponseInput::enricher_prefetched: bool
+pub devboy_format_pipeline::layered_pipeline::ToolResponseInput::file_path: core::option::Option<&'a str>
+pub devboy_format_pipeline::layered_pipeline::ToolResponseInput::is_sidechain: bool
+pub devboy_format_pipeline::layered_pipeline::ToolResponseInput::tool_call_id: &'a str
+pub devboy_format_pipeline::layered_pipeline::ToolResponseInput::tool_name: &'a str
+pub devboy_format_pipeline::layered_pipeline::ToolResponseInput::ts_ms: i64
+impl<'a> core::clone::Clone for devboy_format_pipeline::layered_pipeline::ToolResponseInput<'a>
+pub fn devboy_format_pipeline::layered_pipeline::ToolResponseInput<'a>::clone(&self) -> devboy_format_pipeline::layered_pipeline::ToolResponseInput<'a>
+impl<'a> core::fmt::Debug for devboy_format_pipeline::layered_pipeline::ToolResponseInput<'a>
+pub fn devboy_format_pipeline::layered_pipeline::ToolResponseInput<'a>::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for devboy_format_pipeline::layered_pipeline::ToolResponseInput<'a>
+impl<'a> core::marker::Freeze for devboy_format_pipeline::layered_pipeline::ToolResponseInput<'a>
+impl<'a> core::marker::Send for devboy_format_pipeline::layered_pipeline::ToolResponseInput<'a>
+impl<'a> core::marker::Sync for devboy_format_pipeline::layered_pipeline::ToolResponseInput<'a>
+impl<'a> core::marker::Unpin for devboy_format_pipeline::layered_pipeline::ToolResponseInput<'a>
+impl<'a> core::marker::UnsafeUnpin for devboy_format_pipeline::layered_pipeline::ToolResponseInput<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::layered_pipeline::ToolResponseInput<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::layered_pipeline::ToolResponseInput<'a>
+pub mod devboy_format_pipeline::mckp_router
+pub fn devboy_format_pipeline::mckp_router::route(config: &devboy_format_pipeline::adaptive_config::MckpConfig, raw: &str, cls: &devboy_format_pipeline::shape::ClassifiedResponse) -> core::option::Option<(&'static str, alloc::string::String)>
+pub mod devboy_format_pipeline::near_ref
+pub struct devboy_format_pipeline::near_ref::DeltaField
+pub devboy_format_pipeline::near_ref::DeltaField::key: alloc::string::String
+pub devboy_format_pipeline::near_ref::DeltaField::new: alloc::string::String
+pub devboy_format_pipeline::near_ref::DeltaField::old: alloc::string::String
+impl core::clone::Clone for devboy_format_pipeline::near_ref::DeltaField
+pub fn devboy_format_pipeline::near_ref::DeltaField::clone(&self) -> devboy_format_pipeline::near_ref::DeltaField
+impl core::cmp::Eq for devboy_format_pipeline::near_ref::DeltaField
+impl core::cmp::PartialEq for devboy_format_pipeline::near_ref::DeltaField
+pub fn devboy_format_pipeline::near_ref::DeltaField::eq(&self, other: &devboy_format_pipeline::near_ref::DeltaField) -> bool
+impl core::fmt::Debug for devboy_format_pipeline::near_ref::DeltaField
+pub fn devboy_format_pipeline::near_ref::DeltaField::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::near_ref::DeltaField
+impl core::marker::Freeze for devboy_format_pipeline::near_ref::DeltaField
+impl core::marker::Send for devboy_format_pipeline::near_ref::DeltaField
+impl core::marker::Sync for devboy_format_pipeline::near_ref::DeltaField
+impl core::marker::Unpin for devboy_format_pipeline::near_ref::DeltaField
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::near_ref::DeltaField
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::near_ref::DeltaField
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::near_ref::DeltaField
+pub struct devboy_format_pipeline::near_ref::NearRefConfig
+pub devboy_format_pipeline::near_ref::NearRefConfig::max_delta_bytes: usize
+pub devboy_format_pipeline::near_ref::NearRefConfig::min_body_bytes: usize
+impl core::clone::Clone for devboy_format_pipeline::near_ref::NearRefConfig
+pub fn devboy_format_pipeline::near_ref::NearRefConfig::clone(&self) -> devboy_format_pipeline::near_ref::NearRefConfig
+impl core::default::Default for devboy_format_pipeline::near_ref::NearRefConfig
+pub fn devboy_format_pipeline::near_ref::NearRefConfig::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::near_ref::NearRefConfig
+pub fn devboy_format_pipeline::near_ref::NearRefConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_format_pipeline::near_ref::NearRefConfig
+impl core::marker::Freeze for devboy_format_pipeline::near_ref::NearRefConfig
+impl core::marker::Send for devboy_format_pipeline::near_ref::NearRefConfig
+impl core::marker::Sync for devboy_format_pipeline::near_ref::NearRefConfig
+impl core::marker::Unpin for devboy_format_pipeline::near_ref::NearRefConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::near_ref::NearRefConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::near_ref::NearRefConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::near_ref::NearRefConfig
+pub fn devboy_format_pipeline::near_ref::extract_delta(old_body: &str, new_body: &str, config: &devboy_format_pipeline::near_ref::NearRefConfig) -> core::option::Option<alloc::vec::Vec<devboy_format_pipeline::near_ref::DeltaField>>
+pub fn devboy_format_pipeline::near_ref::render_near_ref_hint(reference_id: &str, deltas: &[devboy_format_pipeline::near_ref::DeltaField]) -> alloc::string::String
+pub mod devboy_format_pipeline::page_index
+pub struct devboy_format_pipeline::page_index::PageDescriptor
+pub devboy_format_pipeline::page_index::PageDescriptor::item_count: usize
+pub devboy_format_pipeline::page_index::PageDescriptor::offset: usize
+pub devboy_format_pipeline::page_index::PageDescriptor::page: usize
+pub devboy_format_pipeline::page_index::PageDescriptor::summary: alloc::string::String
+impl core::clone::Clone for devboy_format_pipeline::page_index::PageDescriptor
+pub fn devboy_format_pipeline::page_index::PageDescriptor::clone(&self) -> devboy_format_pipeline::page_index::PageDescriptor
+impl core::fmt::Debug for devboy_format_pipeline::page_index::PageDescriptor
+pub fn devboy_format_pipeline::page_index::PageDescriptor::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::page_index::PageDescriptor
+impl core::marker::Send for devboy_format_pipeline::page_index::PageDescriptor
+impl core::marker::Sync for devboy_format_pipeline::page_index::PageDescriptor
+impl core::marker::Unpin for devboy_format_pipeline::page_index::PageDescriptor
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::page_index::PageDescriptor
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::page_index::PageDescriptor
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::page_index::PageDescriptor
+pub struct devboy_format_pipeline::page_index::PageIndex
+pub devboy_format_pipeline::page_index::PageIndex::data_type: alloc::string::String
+pub devboy_format_pipeline::page_index::PageIndex::pages: alloc::vec::Vec<devboy_format_pipeline::page_index::PageDescriptor>
+pub devboy_format_pipeline::page_index::PageIndex::shown_items: usize
+pub devboy_format_pipeline::page_index::PageIndex::total_items: usize
+pub devboy_format_pipeline::page_index::PageIndex::total_pages: usize
+impl devboy_format_pipeline::page_index::PageIndex
+pub fn devboy_format_pipeline::page_index::PageIndex::to_toon(&self) -> alloc::string::String
+impl core::clone::Clone for devboy_format_pipeline::page_index::PageIndex
+pub fn devboy_format_pipeline::page_index::PageIndex::clone(&self) -> devboy_format_pipeline::page_index::PageIndex
+impl core::fmt::Debug for devboy_format_pipeline::page_index::PageIndex
+pub fn devboy_format_pipeline::page_index::PageIndex::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::page_index::PageIndex
+impl core::marker::Send for devboy_format_pipeline::page_index::PageIndex
+impl core::marker::Sync for devboy_format_pipeline::page_index::PageIndex
+impl core::marker::Unpin for devboy_format_pipeline::page_index::PageIndex
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::page_index::PageIndex
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::page_index::PageIndex
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::page_index::PageIndex
+pub fn devboy_format_pipeline::page_index::build_comments_index(comments: &[devboy_core::types::Comment], included_count: usize) -> devboy_format_pipeline::page_index::PageIndex
+pub fn devboy_format_pipeline::page_index::build_diffs_index(diffs: &[devboy_core::types::FileDiff], included_count: usize) -> devboy_format_pipeline::page_index::PageIndex
+pub fn devboy_format_pipeline::page_index::build_discussions_index(discussions: &[devboy_core::types::Discussion], included_count: usize) -> devboy_format_pipeline::page_index::PageIndex
+pub fn devboy_format_pipeline::page_index::build_issues_index(issues: &[devboy_core::types::Issue], included_count: usize) -> devboy_format_pipeline::page_index::PageIndex
+pub fn devboy_format_pipeline::page_index::build_merge_requests_index(mrs: &[devboy_core::types::MergeRequest], included_count: usize) -> devboy_format_pipeline::page_index::PageIndex
+pub mod devboy_format_pipeline::pagination
+pub enum devboy_format_pipeline::pagination::PaginationError
+pub devboy_format_pipeline::pagination::PaginationError::InvalidCursor(alloc::string::String)
+impl core::error::Error for devboy_format_pipeline::pagination::PaginationError
+impl core::fmt::Debug for devboy_format_pipeline::pagination::PaginationError
+pub fn devboy_format_pipeline::pagination::PaginationError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_format_pipeline::pagination::PaginationError
+pub fn devboy_format_pipeline::pagination::PaginationError::fmt(&self, __formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::pagination::PaginationError
+impl core::marker::Send for devboy_format_pipeline::pagination::PaginationError
+impl core::marker::Sync for devboy_format_pipeline::pagination::PaginationError
+impl core::marker::Unpin for devboy_format_pipeline::pagination::PaginationError
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::pagination::PaginationError
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::pagination::PaginationError
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::pagination::PaginationError
+pub struct devboy_format_pipeline::pagination::PageCursor
+pub devboy_format_pipeline::pagination::PageCursor::budget: usize
+pub devboy_format_pipeline::pagination::PageCursor::data_type: alloc::string::String
+pub devboy_format_pipeline::pagination::PageCursor::offset: usize
+pub devboy_format_pipeline::pagination::PageCursor::strategy: alloc::string::String
+pub devboy_format_pipeline::pagination::PageCursor::total: usize
+pub devboy_format_pipeline::pagination::PageCursor::v: u8
+impl devboy_format_pipeline::pagination::PageCursor
+pub fn devboy_format_pipeline::pagination::PageCursor::decode(encoded: &str) -> core::result::Result<Self, devboy_format_pipeline::pagination::PaginationError>
+pub fn devboy_format_pipeline::pagination::PageCursor::encode(&self) -> alloc::string::String
+pub fn devboy_format_pipeline::pagination::PageCursor::has_more(&self) -> bool
+pub fn devboy_format_pipeline::pagination::PageCursor::new(data_type: impl core::convert::Into<alloc::string::String>, offset: usize, total: usize, strategy: impl core::convert::Into<alloc::string::String>, budget: usize) -> Self
+pub fn devboy_format_pipeline::pagination::PageCursor::next_page(&self, items_in_current_page: usize) -> core::option::Option<Self>
+pub fn devboy_format_pipeline::pagination::PageCursor::remaining(&self) -> usize
+impl core::clone::Clone for devboy_format_pipeline::pagination::PageCursor
+pub fn devboy_format_pipeline::pagination::PageCursor::clone(&self) -> devboy_format_pipeline::pagination::PageCursor
+impl core::cmp::PartialEq for devboy_format_pipeline::pagination::PageCursor
+pub fn devboy_format_pipeline::pagination::PageCursor::eq(&self, other: &devboy_format_pipeline::pagination::PageCursor) -> bool
+impl core::fmt::Debug for devboy_format_pipeline::pagination::PageCursor
+pub fn devboy_format_pipeline::pagination::PageCursor::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::pagination::PageCursor
+impl serde_core::ser::Serialize for devboy_format_pipeline::pagination::PageCursor
+pub fn devboy_format_pipeline::pagination::PageCursor::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::pagination::PageCursor
+pub fn devboy_format_pipeline::pagination::PageCursor::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::pagination::PageCursor
+impl core::marker::Send for devboy_format_pipeline::pagination::PageCursor
+impl core::marker::Sync for devboy_format_pipeline::pagination::PageCursor
+impl core::marker::Unpin for devboy_format_pipeline::pagination::PageCursor
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::pagination::PageCursor
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::pagination::PageCursor
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::pagination::PageCursor
+pub fn devboy_format_pipeline::pagination::create_pagination_hint(cursor: &devboy_format_pipeline::pagination::PageCursor, items_shown: usize) -> alloc::string::String
+pub mod devboy_format_pipeline::projection
+pub const devboy_format_pipeline::projection::MAX_PROJECTIONS_PER_LINK: usize
+pub fn devboy_format_pipeline::projection::extract_args(prev_tool: &str, prev_result: &serde_json::value::Value, link: &devboy_core::tool_value_model::FollowUpLink) -> alloc::vec::Vec<serde_json::value::Value>
+pub fn devboy_format_pipeline::projection::extract_host(url: &str) -> core::option::Option<alloc::string::String>
+pub mod devboy_format_pipeline::round_trip
+pub enum devboy_format_pipeline::round_trip::DataLoss
+pub devboy_format_pipeline::round_trip::DataLoss::Nested
+pub devboy_format_pipeline::round_trip::DataLoss::None
+pub devboy_format_pipeline::round_trip::DataLoss::TopLevel
+impl core::clone::Clone for devboy_format_pipeline::round_trip::DataLoss
+pub fn devboy_format_pipeline::round_trip::DataLoss::clone(&self) -> devboy_format_pipeline::round_trip::DataLoss
+impl core::cmp::Eq for devboy_format_pipeline::round_trip::DataLoss
+impl core::cmp::PartialEq for devboy_format_pipeline::round_trip::DataLoss
+pub fn devboy_format_pipeline::round_trip::DataLoss::eq(&self, other: &devboy_format_pipeline::round_trip::DataLoss) -> bool
+impl core::fmt::Debug for devboy_format_pipeline::round_trip::DataLoss
+pub fn devboy_format_pipeline::round_trip::DataLoss::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_format_pipeline::round_trip::DataLoss
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::round_trip::DataLoss
+impl core::marker::Freeze for devboy_format_pipeline::round_trip::DataLoss
+impl core::marker::Send for devboy_format_pipeline::round_trip::DataLoss
+impl core::marker::Sync for devboy_format_pipeline::round_trip::DataLoss
+impl core::marker::Unpin for devboy_format_pipeline::round_trip::DataLoss
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::round_trip::DataLoss
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::round_trip::DataLoss
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::round_trip::DataLoss
+pub struct devboy_format_pipeline::round_trip::KeyComparison
+pub devboy_format_pipeline::round_trip::KeyComparison::added: alloc::vec::Vec<alloc::string::String>
+pub devboy_format_pipeline::round_trip::KeyComparison::allowed_loss: devboy_format_pipeline::round_trip::DataLoss
+pub devboy_format_pipeline::round_trip::KeyComparison::dropped: alloc::vec::Vec<alloc::string::String>
+pub devboy_format_pipeline::round_trip::KeyComparison::encoder_id: alloc::string::String
+pub devboy_format_pipeline::round_trip::KeyComparison::input_keys: alloc::collections::btree::set::BTreeSet<alloc::string::String>
+pub devboy_format_pipeline::round_trip::KeyComparison::output_keys: alloc::collections::btree::set::BTreeSet<alloc::string::String>
+impl devboy_format_pipeline::round_trip::KeyComparison
+pub fn devboy_format_pipeline::round_trip::KeyComparison::is_within_contract(&self) -> bool
+pub fn devboy_format_pipeline::round_trip::KeyComparison::report(&self) -> alloc::string::String
+impl core::clone::Clone for devboy_format_pipeline::round_trip::KeyComparison
+pub fn devboy_format_pipeline::round_trip::KeyComparison::clone(&self) -> devboy_format_pipeline::round_trip::KeyComparison
+impl core::fmt::Debug for devboy_format_pipeline::round_trip::KeyComparison
+pub fn devboy_format_pipeline::round_trip::KeyComparison::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::round_trip::KeyComparison
+impl core::marker::Send for devboy_format_pipeline::round_trip::KeyComparison
+impl core::marker::Sync for devboy_format_pipeline::round_trip::KeyComparison
+impl core::marker::Unpin for devboy_format_pipeline::round_trip::KeyComparison
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::round_trip::KeyComparison
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::round_trip::KeyComparison
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::round_trip::KeyComparison
+pub fn devboy_format_pipeline::round_trip::declared_loss(encoder_id: &str) -> core::option::Option<devboy_format_pipeline::round_trip::DataLoss>
+pub fn devboy_format_pipeline::round_trip::round_trip_keys(encoder_id: &str, raw_input: &str, encoded_output: &str) -> core::option::Option<devboy_format_pipeline::round_trip::KeyComparison>
+pub mod devboy_format_pipeline::shape
+pub enum devboy_format_pipeline::shape::InnerFormat
+pub devboy_format_pipeline::shape::InnerFormat::CodeFence
+pub devboy_format_pipeline::shape::InnerFormat::Diff
+pub devboy_format_pipeline::shape::InnerFormat::Hash
+pub devboy_format_pipeline::shape::InnerFormat::InlineJson
+pub devboy_format_pipeline::shape::InnerFormat::Log
+pub devboy_format_pipeline::shape::InnerFormat::Markdown
+pub devboy_format_pipeline::shape::InnerFormat::MarkdownTable
+pub devboy_format_pipeline::shape::InnerFormat::MarkdownWithCode
+pub devboy_format_pipeline::shape::InnerFormat::NumberedList
+pub devboy_format_pipeline::shape::InnerFormat::Prose
+pub devboy_format_pipeline::shape::InnerFormat::StackTrace
+pub devboy_format_pipeline::shape::InnerFormat::Url
+pub devboy_format_pipeline::shape::InnerFormat::XmlHtml
+pub devboy_format_pipeline::shape::InnerFormat::Yaml
+impl devboy_format_pipeline::shape::InnerFormat
+pub fn devboy_format_pipeline::shape::InnerFormat::as_tag(&self) -> &'static str
+impl core::clone::Clone for devboy_format_pipeline::shape::InnerFormat
+pub fn devboy_format_pipeline::shape::InnerFormat::clone(&self) -> devboy_format_pipeline::shape::InnerFormat
+impl core::cmp::Eq for devboy_format_pipeline::shape::InnerFormat
+impl core::cmp::PartialEq for devboy_format_pipeline::shape::InnerFormat
+pub fn devboy_format_pipeline::shape::InnerFormat::eq(&self, other: &devboy_format_pipeline::shape::InnerFormat) -> bool
+impl core::fmt::Debug for devboy_format_pipeline::shape::InnerFormat
+pub fn devboy_format_pipeline::shape::InnerFormat::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_format_pipeline::shape::InnerFormat
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::shape::InnerFormat
+impl core::marker::Freeze for devboy_format_pipeline::shape::InnerFormat
+impl core::marker::Send for devboy_format_pipeline::shape::InnerFormat
+impl core::marker::Sync for devboy_format_pipeline::shape::InnerFormat
+impl core::marker::Unpin for devboy_format_pipeline::shape::InnerFormat
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::shape::InnerFormat
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::shape::InnerFormat
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::shape::InnerFormat
+pub struct devboy_format_pipeline::shape::ClassifiedResponse
+pub devboy_format_pipeline::shape::ClassifiedResponse::depth_max: core::option::Option<usize>
+pub devboy_format_pipeline::shape::ClassifiedResponse::inner_formats: alloc::vec::Vec<devboy_format_pipeline::shape::InnerFormat>
+pub devboy_format_pipeline::shape::ClassifiedResponse::key_stability: core::option::Option<f32>
+pub devboy_format_pipeline::shape::ClassifiedResponse::md_n_cols: core::option::Option<usize>
+pub devboy_format_pipeline::shape::ClassifiedResponse::md_n_rows: core::option::Option<usize>
+pub devboy_format_pipeline::shape::ClassifiedResponse::n_fields: core::option::Option<usize>
+pub devboy_format_pipeline::shape::ClassifiedResponse::n_items: core::option::Option<usize>
+pub devboy_format_pipeline::shape::ClassifiedResponse::raw_chars: usize
+pub devboy_format_pipeline::shape::ClassifiedResponse::shape: devboy_format_pipeline::telemetry::Shape
+impl core::clone::Clone for devboy_format_pipeline::shape::ClassifiedResponse
+pub fn devboy_format_pipeline::shape::ClassifiedResponse::clone(&self) -> devboy_format_pipeline::shape::ClassifiedResponse
+impl core::fmt::Debug for devboy_format_pipeline::shape::ClassifiedResponse
+pub fn devboy_format_pipeline::shape::ClassifiedResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::shape::ClassifiedResponse
+impl core::marker::Send for devboy_format_pipeline::shape::ClassifiedResponse
+impl core::marker::Sync for devboy_format_pipeline::shape::ClassifiedResponse
+impl core::marker::Unpin for devboy_format_pipeline::shape::ClassifiedResponse
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::shape::ClassifiedResponse
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::shape::ClassifiedResponse
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::shape::ClassifiedResponse
+pub fn devboy_format_pipeline::shape::classify(content: &str) -> devboy_format_pipeline::shape::ClassifiedResponse
+pub mod devboy_format_pipeline::strategy
+pub enum devboy_format_pipeline::strategy::TrimStrategyKind
+pub devboy_format_pipeline::strategy::TrimStrategyKind::Cascading
+pub devboy_format_pipeline::strategy::TrimStrategyKind::Default
+pub devboy_format_pipeline::strategy::TrimStrategyKind::ElementCount
+pub devboy_format_pipeline::strategy::TrimStrategyKind::HeadTail
+pub devboy_format_pipeline::strategy::TrimStrategyKind::Priority
+pub devboy_format_pipeline::strategy::TrimStrategyKind::Random
+pub devboy_format_pipeline::strategy::TrimStrategyKind::Reversed
+pub devboy_format_pipeline::strategy::TrimStrategyKind::SizeProportional
+pub devboy_format_pipeline::strategy::TrimStrategyKind::ThreadLevel
+impl devboy_format_pipeline::strategy::TrimStrategyKind
+pub fn devboy_format_pipeline::strategy::TrimStrategyKind::as_str(&self) -> &'static str
+pub fn devboy_format_pipeline::strategy::TrimStrategyKind::parse(s: &str) -> core::option::Option<Self>
+impl core::clone::Clone for devboy_format_pipeline::strategy::TrimStrategyKind
+pub fn devboy_format_pipeline::strategy::TrimStrategyKind::clone(&self) -> devboy_format_pipeline::strategy::TrimStrategyKind
+impl core::cmp::Eq for devboy_format_pipeline::strategy::TrimStrategyKind
+impl core::cmp::PartialEq for devboy_format_pipeline::strategy::TrimStrategyKind
+pub fn devboy_format_pipeline::strategy::TrimStrategyKind::eq(&self, other: &devboy_format_pipeline::strategy::TrimStrategyKind) -> bool
+impl core::fmt::Debug for devboy_format_pipeline::strategy::TrimStrategyKind
+pub fn devboy_format_pipeline::strategy::TrimStrategyKind::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for devboy_format_pipeline::strategy::TrimStrategyKind
+pub fn devboy_format_pipeline::strategy::TrimStrategyKind::hash<__H: core::hash::Hasher>(&self, state: &mut __H)
+impl core::marker::Copy for devboy_format_pipeline::strategy::TrimStrategyKind
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::strategy::TrimStrategyKind
+impl core::marker::Freeze for devboy_format_pipeline::strategy::TrimStrategyKind
+impl core::marker::Send for devboy_format_pipeline::strategy::TrimStrategyKind
+impl core::marker::Sync for devboy_format_pipeline::strategy::TrimStrategyKind
+impl core::marker::Unpin for devboy_format_pipeline::strategy::TrimStrategyKind
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::strategy::TrimStrategyKind
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::strategy::TrimStrategyKind
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::strategy::TrimStrategyKind
+pub struct devboy_format_pipeline::strategy::CascadingStrategy
+pub devboy_format_pipeline::strategy::CascadingStrategy::beta: f64
+impl core::default::Default for devboy_format_pipeline::strategy::CascadingStrategy
+pub fn devboy_format_pipeline::strategy::CascadingStrategy::default() -> Self
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::CascadingStrategy
+pub fn devboy_format_pipeline::strategy::CascadingStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl core::marker::Freeze for devboy_format_pipeline::strategy::CascadingStrategy
+impl core::marker::Send for devboy_format_pipeline::strategy::CascadingStrategy
+impl core::marker::Sync for devboy_format_pipeline::strategy::CascadingStrategy
+impl core::marker::Unpin for devboy_format_pipeline::strategy::CascadingStrategy
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::strategy::CascadingStrategy
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::strategy::CascadingStrategy
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::strategy::CascadingStrategy
+pub struct devboy_format_pipeline::strategy::DefaultStrategy
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::DefaultStrategy
+pub fn devboy_format_pipeline::strategy::DefaultStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl core::marker::Freeze for devboy_format_pipeline::strategy::DefaultStrategy
+impl core::marker::Send for devboy_format_pipeline::strategy::DefaultStrategy
+impl core::marker::Sync for devboy_format_pipeline::strategy::DefaultStrategy
+impl core::marker::Unpin for devboy_format_pipeline::strategy::DefaultStrategy
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::strategy::DefaultStrategy
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::strategy::DefaultStrategy
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::strategy::DefaultStrategy
+pub struct devboy_format_pipeline::strategy::ElementCountStrategy
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::ElementCountStrategy
+pub fn devboy_format_pipeline::strategy::ElementCountStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl core::marker::Freeze for devboy_format_pipeline::strategy::ElementCountStrategy
+impl core::marker::Send for devboy_format_pipeline::strategy::ElementCountStrategy
+impl core::marker::Sync for devboy_format_pipeline::strategy::ElementCountStrategy
+impl core::marker::Unpin for devboy_format_pipeline::strategy::ElementCountStrategy
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::strategy::ElementCountStrategy
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::strategy::ElementCountStrategy
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::strategy::ElementCountStrategy
+pub struct devboy_format_pipeline::strategy::HeadTailStrategy
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::HeadTailStrategy
+pub fn devboy_format_pipeline::strategy::HeadTailStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl core::marker::Freeze for devboy_format_pipeline::strategy::HeadTailStrategy
+impl core::marker::Send for devboy_format_pipeline::strategy::HeadTailStrategy
+impl core::marker::Sync for devboy_format_pipeline::strategy::HeadTailStrategy
+impl core::marker::Unpin for devboy_format_pipeline::strategy::HeadTailStrategy
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::strategy::HeadTailStrategy
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::strategy::HeadTailStrategy
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::strategy::HeadTailStrategy
+pub struct devboy_format_pipeline::strategy::ItemMetadata
+pub devboy_format_pipeline::strategy::ItemMetadata::activity: core::option::Option<f64>
+pub devboy_format_pipeline::strategy::ItemMetadata::days_since_update: core::option::Option<f64>
+impl core::clone::Clone for devboy_format_pipeline::strategy::ItemMetadata
+pub fn devboy_format_pipeline::strategy::ItemMetadata::clone(&self) -> devboy_format_pipeline::strategy::ItemMetadata
+impl core::default::Default for devboy_format_pipeline::strategy::ItemMetadata
+pub fn devboy_format_pipeline::strategy::ItemMetadata::default() -> devboy_format_pipeline::strategy::ItemMetadata
+impl core::fmt::Debug for devboy_format_pipeline::strategy::ItemMetadata
+pub fn devboy_format_pipeline::strategy::ItemMetadata::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::strategy::ItemMetadata
+impl core::marker::Send for devboy_format_pipeline::strategy::ItemMetadata
+impl core::marker::Sync for devboy_format_pipeline::strategy::ItemMetadata
+impl core::marker::Unpin for devboy_format_pipeline::strategy::ItemMetadata
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::strategy::ItemMetadata
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::strategy::ItemMetadata
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::strategy::ItemMetadata
+pub struct devboy_format_pipeline::strategy::PriorityStrategy
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::PriorityStrategy
+pub fn devboy_format_pipeline::strategy::PriorityStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl core::marker::Freeze for devboy_format_pipeline::strategy::PriorityStrategy
+impl core::marker::Send for devboy_format_pipeline::strategy::PriorityStrategy
+impl core::marker::Sync for devboy_format_pipeline::strategy::PriorityStrategy
+impl core::marker::Unpin for devboy_format_pipeline::strategy::PriorityStrategy
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::strategy::PriorityStrategy
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::strategy::PriorityStrategy
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::strategy::PriorityStrategy
+pub struct devboy_format_pipeline::strategy::RandomStrategy
+pub devboy_format_pipeline::strategy::RandomStrategy::seed: u64
+impl core::default::Default for devboy_format_pipeline::strategy::RandomStrategy
+pub fn devboy_format_pipeline::strategy::RandomStrategy::default() -> Self
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::RandomStrategy
+pub fn devboy_format_pipeline::strategy::RandomStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl core::marker::Freeze for devboy_format_pipeline::strategy::RandomStrategy
+impl core::marker::Send for devboy_format_pipeline::strategy::RandomStrategy
+impl core::marker::Sync for devboy_format_pipeline::strategy::RandomStrategy
+impl core::marker::Unpin for devboy_format_pipeline::strategy::RandomStrategy
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::strategy::RandomStrategy
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::strategy::RandomStrategy
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::strategy::RandomStrategy
+pub struct devboy_format_pipeline::strategy::ReversedStrategy
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::ReversedStrategy
+pub fn devboy_format_pipeline::strategy::ReversedStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl core::marker::Freeze for devboy_format_pipeline::strategy::ReversedStrategy
+impl core::marker::Send for devboy_format_pipeline::strategy::ReversedStrategy
+impl core::marker::Sync for devboy_format_pipeline::strategy::ReversedStrategy
+impl core::marker::Unpin for devboy_format_pipeline::strategy::ReversedStrategy
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::strategy::ReversedStrategy
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::strategy::ReversedStrategy
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::strategy::ReversedStrategy
+pub struct devboy_format_pipeline::strategy::SizeProportionalStrategy
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::SizeProportionalStrategy
+pub fn devboy_format_pipeline::strategy::SizeProportionalStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl core::marker::Freeze for devboy_format_pipeline::strategy::SizeProportionalStrategy
+impl core::marker::Send for devboy_format_pipeline::strategy::SizeProportionalStrategy
+impl core::marker::Sync for devboy_format_pipeline::strategy::SizeProportionalStrategy
+impl core::marker::Unpin for devboy_format_pipeline::strategy::SizeProportionalStrategy
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::strategy::SizeProportionalStrategy
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::strategy::SizeProportionalStrategy
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::strategy::SizeProportionalStrategy
+pub struct devboy_format_pipeline::strategy::StrategyResolver
+impl devboy_format_pipeline::strategy::StrategyResolver
+pub fn devboy_format_pipeline::strategy::StrategyResolver::new() -> Self
+pub fn devboy_format_pipeline::strategy::StrategyResolver::resolve(&self, tool_name: &str) -> devboy_format_pipeline::strategy::TrimStrategyKind
+pub fn devboy_format_pipeline::strategy::StrategyResolver::set_proxy_strip(&mut self, enabled: bool)
+pub fn devboy_format_pipeline::strategy::StrategyResolver::with_overrides(overrides: std::collections::hash::map::HashMap<alloc::string::String, devboy_format_pipeline::strategy::TrimStrategyKind>) -> Self
+impl core::default::Default for devboy_format_pipeline::strategy::StrategyResolver
+pub fn devboy_format_pipeline::strategy::StrategyResolver::default() -> Self
+impl core::marker::Freeze for devboy_format_pipeline::strategy::StrategyResolver
+impl core::marker::Send for devboy_format_pipeline::strategy::StrategyResolver
+impl core::marker::Sync for devboy_format_pipeline::strategy::StrategyResolver
+impl core::marker::Unpin for devboy_format_pipeline::strategy::StrategyResolver
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::strategy::StrategyResolver
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::strategy::StrategyResolver
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::strategy::StrategyResolver
+pub struct devboy_format_pipeline::strategy::ThreadLevelStrategy
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::ThreadLevelStrategy
+pub fn devboy_format_pipeline::strategy::ThreadLevelStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl core::marker::Freeze for devboy_format_pipeline::strategy::ThreadLevelStrategy
+impl core::marker::Send for devboy_format_pipeline::strategy::ThreadLevelStrategy
+impl core::marker::Sync for devboy_format_pipeline::strategy::ThreadLevelStrategy
+impl core::marker::Unpin for devboy_format_pipeline::strategy::ThreadLevelStrategy
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::strategy::ThreadLevelStrategy
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::strategy::ThreadLevelStrategy
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::strategy::ThreadLevelStrategy
+pub trait devboy_format_pipeline::strategy::TrimStrategy
+pub fn devboy_format_pipeline::strategy::TrimStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::CascadingStrategy
+pub fn devboy_format_pipeline::strategy::CascadingStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::DefaultStrategy
+pub fn devboy_format_pipeline::strategy::DefaultStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::ElementCountStrategy
+pub fn devboy_format_pipeline::strategy::ElementCountStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::HeadTailStrategy
+pub fn devboy_format_pipeline::strategy::HeadTailStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::PriorityStrategy
+pub fn devboy_format_pipeline::strategy::PriorityStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::RandomStrategy
+pub fn devboy_format_pipeline::strategy::RandomStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::ReversedStrategy
+pub fn devboy_format_pipeline::strategy::ReversedStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::SizeProportionalStrategy
+pub fn devboy_format_pipeline::strategy::SizeProportionalStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+impl devboy_format_pipeline::strategy::TrimStrategy for devboy_format_pipeline::strategy::ThreadLevelStrategy
+pub fn devboy_format_pipeline::strategy::ThreadLevelStrategy::assign_values(&self, tree: &mut devboy_format_pipeline::tree::TrimNode)
+pub fn devboy_format_pipeline::strategy::assign_diff_values(tree: &mut devboy_format_pipeline::tree::TrimNode, file_paths: &[&str])
+pub fn devboy_format_pipeline::strategy::assign_discussion_values(tree: &mut devboy_format_pipeline::tree::TrimNode, resolved: &[bool])
+pub fn devboy_format_pipeline::strategy::assign_priority_values(tree: &mut devboy_format_pipeline::tree::TrimNode, metadata: &[devboy_format_pipeline::strategy::ItemMetadata])
+pub fn devboy_format_pipeline::strategy::create_strategy(kind: devboy_format_pipeline::strategy::TrimStrategyKind) -> alloc::boxed::Box<dyn devboy_format_pipeline::strategy::TrimStrategy>
+pub mod devboy_format_pipeline::telemetry
+pub enum devboy_format_pipeline::telemetry::Layer
+pub devboy_format_pipeline::telemetry::Layer::L0
+pub devboy_format_pipeline::telemetry::Layer::L1
+pub devboy_format_pipeline::telemetry::Layer::L2
+pub devboy_format_pipeline::telemetry::Layer::L3
+impl core::clone::Clone for devboy_format_pipeline::telemetry::Layer
+pub fn devboy_format_pipeline::telemetry::Layer::clone(&self) -> devboy_format_pipeline::telemetry::Layer
+impl core::cmp::Eq for devboy_format_pipeline::telemetry::Layer
+impl core::cmp::PartialEq for devboy_format_pipeline::telemetry::Layer
+pub fn devboy_format_pipeline::telemetry::Layer::eq(&self, other: &devboy_format_pipeline::telemetry::Layer) -> bool
+impl core::default::Default for devboy_format_pipeline::telemetry::Layer
+pub fn devboy_format_pipeline::telemetry::Layer::default() -> devboy_format_pipeline::telemetry::Layer
+impl core::fmt::Debug for devboy_format_pipeline::telemetry::Layer
+pub fn devboy_format_pipeline::telemetry::Layer::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_format_pipeline::telemetry::Layer
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::telemetry::Layer
+impl serde_core::ser::Serialize for devboy_format_pipeline::telemetry::Layer
+pub fn devboy_format_pipeline::telemetry::Layer::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::telemetry::Layer
+pub fn devboy_format_pipeline::telemetry::Layer::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::telemetry::Layer
+impl core::marker::Send for devboy_format_pipeline::telemetry::Layer
+impl core::marker::Sync for devboy_format_pipeline::telemetry::Layer
+impl core::marker::Unpin for devboy_format_pipeline::telemetry::Layer
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::telemetry::Layer
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::telemetry::Layer
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::telemetry::Layer
+pub enum devboy_format_pipeline::telemetry::Shape
+pub devboy_format_pipeline::telemetry::Shape::ArrayOfObjects
+pub devboy_format_pipeline::telemetry::Shape::ArrayOfPrimitives
+pub devboy_format_pipeline::telemetry::Shape::BulletList
+pub devboy_format_pipeline::telemetry::Shape::CodeBlock
+pub devboy_format_pipeline::telemetry::Shape::Empty
+pub devboy_format_pipeline::telemetry::Shape::FlatObject
+pub devboy_format_pipeline::telemetry::Shape::MarkdownTable
+pub devboy_format_pipeline::telemetry::Shape::NestedObject
+pub devboy_format_pipeline::telemetry::Shape::NumberedList
+pub devboy_format_pipeline::telemetry::Shape::Prose
+pub devboy_format_pipeline::telemetry::Shape::Unknown
+impl core::clone::Clone for devboy_format_pipeline::telemetry::Shape
+pub fn devboy_format_pipeline::telemetry::Shape::clone(&self) -> devboy_format_pipeline::telemetry::Shape
+impl core::cmp::Eq for devboy_format_pipeline::telemetry::Shape
+impl core::cmp::PartialEq for devboy_format_pipeline::telemetry::Shape
+pub fn devboy_format_pipeline::telemetry::Shape::eq(&self, other: &devboy_format_pipeline::telemetry::Shape) -> bool
+impl core::default::Default for devboy_format_pipeline::telemetry::Shape
+pub fn devboy_format_pipeline::telemetry::Shape::default() -> devboy_format_pipeline::telemetry::Shape
+impl core::fmt::Debug for devboy_format_pipeline::telemetry::Shape
+pub fn devboy_format_pipeline::telemetry::Shape::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_format_pipeline::telemetry::Shape
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::telemetry::Shape
+impl serde_core::ser::Serialize for devboy_format_pipeline::telemetry::Shape
+pub fn devboy_format_pipeline::telemetry::Shape::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::telemetry::Shape
+pub fn devboy_format_pipeline::telemetry::Shape::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::telemetry::Shape
+impl core::marker::Send for devboy_format_pipeline::telemetry::Shape
+impl core::marker::Sync for devboy_format_pipeline::telemetry::Shape
+impl core::marker::Unpin for devboy_format_pipeline::telemetry::Shape
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::telemetry::Shape
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::telemetry::Shape
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::telemetry::Shape
+pub enum devboy_format_pipeline::telemetry::TelemetryError
+pub devboy_format_pipeline::telemetry::TelemetryError::Io(std::io::error::Error)
+pub devboy_format_pipeline::telemetry::TelemetryError::Serde(serde_json::error::Error)
+impl core::convert::From<serde_json::error::Error> for devboy_format_pipeline::telemetry::TelemetryError
+pub fn devboy_format_pipeline::telemetry::TelemetryError::from(source: serde_json::error::Error) -> Self
+impl core::convert::From<std::io::error::Error> for devboy_format_pipeline::telemetry::TelemetryError
+pub fn devboy_format_pipeline::telemetry::TelemetryError::from(source: std::io::error::Error) -> Self
+impl core::error::Error for devboy_format_pipeline::telemetry::TelemetryError
+pub fn devboy_format_pipeline::telemetry::TelemetryError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for devboy_format_pipeline::telemetry::TelemetryError
+pub fn devboy_format_pipeline::telemetry::TelemetryError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_format_pipeline::telemetry::TelemetryError
+pub fn devboy_format_pipeline::telemetry::TelemetryError::fmt(&self, __formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::telemetry::TelemetryError
+impl core::marker::Send for devboy_format_pipeline::telemetry::TelemetryError
+impl core::marker::Sync for devboy_format_pipeline::telemetry::TelemetryError
+impl core::marker::Unpin for devboy_format_pipeline::telemetry::TelemetryError
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::telemetry::TelemetryError
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::telemetry::TelemetryError
+impl !core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::telemetry::TelemetryError
+pub struct devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+pub devboy_format_pipeline::telemetry::EnrichmentEffectiveness::cited_prefetches: u32
+pub devboy_format_pipeline::telemetry::EnrichmentEffectiveness::cost_overrun_count: u32
+pub devboy_format_pipeline::telemetry::EnrichmentEffectiveness::inference_calls_saved_dedup: u32
+pub devboy_format_pipeline::telemetry::EnrichmentEffectiveness::inference_calls_saved_fail_fast: u32
+pub devboy_format_pipeline::telemetry::EnrichmentEffectiveness::inference_calls_saved_prefetch: u32
+pub devboy_format_pipeline::telemetry::EnrichmentEffectiveness::inference_tokens_saved: u64
+pub devboy_format_pipeline::telemetry::EnrichmentEffectiveness::late_invoked_after_decline: u32
+pub devboy_format_pipeline::telemetry::EnrichmentEffectiveness::net_prediction_error_tokens: i64
+pub devboy_format_pipeline::telemetry::EnrichmentEffectiveness::prefetch_dispatched: u32
+pub devboy_format_pipeline::telemetry::EnrichmentEffectiveness::prefetch_wasted: u32
+pub devboy_format_pipeline::telemetry::EnrichmentEffectiveness::prefetch_won_race: u32
+pub devboy_format_pipeline::telemetry::EnrichmentEffectiveness::total_declines: u32
+pub devboy_format_pipeline::telemetry::EnrichmentEffectiveness::total_predictions: u32
+pub devboy_format_pipeline::telemetry::EnrichmentEffectiveness::total_prefetches: u32
+impl devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::accumulate(&mut self, ev: &devboy_format_pipeline::telemetry::PipelineEvent)
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::cost_overrun_rate(&self) -> core::option::Option<f32>
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::decline_recall_loss(&self) -> core::option::Option<f32>
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::prefetch_hit_rate(&self) -> core::option::Option<f32>
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::prefetch_race_win_rate(&self) -> core::option::Option<f32>
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::prefetch_waste_rate(&self) -> core::option::Option<f32>
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::record_fail_fast_skip(&mut self, predicted_cost_tokens: u32)
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::record_prefetch_dispatched(&mut self)
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::record_prefetch_wasted(&mut self)
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::record_prefetch_won_race(&mut self)
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::report(&self) -> alloc::string::String
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::total_calls_saved(&self) -> u32
+impl core::clone::Clone for devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::clone(&self) -> devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+impl core::cmp::PartialEq for devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::eq(&self, other: &devboy_format_pipeline::telemetry::EnrichmentEffectiveness) -> bool
+impl core::default::Default for devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::default() -> devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+impl core::fmt::Debug for devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+impl serde_core::ser::Serialize for devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+pub fn devboy_format_pipeline::telemetry::EnrichmentEffectiveness::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+impl core::marker::Send for devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+impl core::marker::Sync for devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+impl core::marker::Unpin for devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+pub struct devboy_format_pipeline::telemetry::JsonlSink
+impl devboy_format_pipeline::telemetry::JsonlSink
+pub fn devboy_format_pipeline::telemetry::JsonlSink::open(path: impl core::convert::AsRef<std::path::Path>) -> devboy_format_pipeline::telemetry::Result<Self>
+pub fn devboy_format_pipeline::telemetry::JsonlSink::path(&self) -> &std::path::Path
+impl devboy_format_pipeline::telemetry::TelemetrySink for devboy_format_pipeline::telemetry::JsonlSink
+pub fn devboy_format_pipeline::telemetry::JsonlSink::flush(&self) -> devboy_format_pipeline::telemetry::Result<()>
+pub fn devboy_format_pipeline::telemetry::JsonlSink::record(&self, event: &devboy_format_pipeline::telemetry::PipelineEvent) -> devboy_format_pipeline::telemetry::Result<()>
+pub fn devboy_format_pipeline::telemetry::JsonlSink::record_summary(&self, summary: &devboy_format_pipeline::telemetry::SessionSummary) -> devboy_format_pipeline::telemetry::Result<()>
+impl !core::marker::Freeze for devboy_format_pipeline::telemetry::JsonlSink
+impl core::marker::Send for devboy_format_pipeline::telemetry::JsonlSink
+impl core::marker::Sync for devboy_format_pipeline::telemetry::JsonlSink
+impl core::marker::Unpin for devboy_format_pipeline::telemetry::JsonlSink
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::telemetry::JsonlSink
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::telemetry::JsonlSink
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::telemetry::JsonlSink
+pub struct devboy_format_pipeline::telemetry::MemorySink
+impl devboy_format_pipeline::telemetry::MemorySink
+pub fn devboy_format_pipeline::telemetry::MemorySink::events(&self) -> alloc::vec::Vec<devboy_format_pipeline::telemetry::PipelineEvent>
+pub fn devboy_format_pipeline::telemetry::MemorySink::is_empty(&self) -> bool
+pub fn devboy_format_pipeline::telemetry::MemorySink::len(&self) -> usize
+pub fn devboy_format_pipeline::telemetry::MemorySink::new() -> Self
+pub fn devboy_format_pipeline::telemetry::MemorySink::summaries(&self) -> alloc::vec::Vec<devboy_format_pipeline::telemetry::SessionSummary>
+impl core::default::Default for devboy_format_pipeline::telemetry::MemorySink
+pub fn devboy_format_pipeline::telemetry::MemorySink::default() -> devboy_format_pipeline::telemetry::MemorySink
+impl devboy_format_pipeline::telemetry::TelemetrySink for devboy_format_pipeline::telemetry::MemorySink
+pub fn devboy_format_pipeline::telemetry::MemorySink::flush(&self) -> devboy_format_pipeline::telemetry::Result<()>
+pub fn devboy_format_pipeline::telemetry::MemorySink::record(&self, event: &devboy_format_pipeline::telemetry::PipelineEvent) -> devboy_format_pipeline::telemetry::Result<()>
+pub fn devboy_format_pipeline::telemetry::MemorySink::record_summary(&self, summary: &devboy_format_pipeline::telemetry::SessionSummary) -> devboy_format_pipeline::telemetry::Result<()>
+impl !core::marker::Freeze for devboy_format_pipeline::telemetry::MemorySink
+impl core::marker::Send for devboy_format_pipeline::telemetry::MemorySink
+impl core::marker::Sync for devboy_format_pipeline::telemetry::MemorySink
+impl core::marker::Unpin for devboy_format_pipeline::telemetry::MemorySink
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::telemetry::MemorySink
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::telemetry::MemorySink
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::telemetry::MemorySink
+pub struct devboy_format_pipeline::telemetry::NullSink
+impl core::default::Default for devboy_format_pipeline::telemetry::NullSink
+pub fn devboy_format_pipeline::telemetry::NullSink::default() -> devboy_format_pipeline::telemetry::NullSink
+impl devboy_format_pipeline::telemetry::TelemetrySink for devboy_format_pipeline::telemetry::NullSink
+pub fn devboy_format_pipeline::telemetry::NullSink::flush(&self) -> devboy_format_pipeline::telemetry::Result<()>
+pub fn devboy_format_pipeline::telemetry::NullSink::record(&self, _event: &devboy_format_pipeline::telemetry::PipelineEvent) -> devboy_format_pipeline::telemetry::Result<()>
+pub fn devboy_format_pipeline::telemetry::NullSink::record_summary(&self, _summary: &devboy_format_pipeline::telemetry::SessionSummary) -> devboy_format_pipeline::telemetry::Result<()>
+impl core::marker::Freeze for devboy_format_pipeline::telemetry::NullSink
+impl core::marker::Send for devboy_format_pipeline::telemetry::NullSink
+impl core::marker::Sync for devboy_format_pipeline::telemetry::NullSink
+impl core::marker::Unpin for devboy_format_pipeline::telemetry::NullSink
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::telemetry::NullSink
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::telemetry::NullSink
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::telemetry::NullSink
+#[non_exhaustive] pub struct devboy_format_pipeline::telemetry::PipelineEvent
+pub devboy_format_pipeline::telemetry::PipelineEvent::cited_in_next_n_turns: core::option::Option<bool>
+pub devboy_format_pipeline::telemetry::PipelineEvent::content_sha_prefix_hex: alloc::string::String
+pub devboy_format_pipeline::telemetry::PipelineEvent::context_partition: u32
+pub devboy_format_pipeline::telemetry::PipelineEvent::endpoint_class: alloc::string::String
+pub devboy_format_pipeline::telemetry::PipelineEvent::enricher_decline_reason: core::option::Option<alloc::string::String>
+pub devboy_format_pipeline::telemetry::PipelineEvent::enricher_predicted_cost_tokens: u32
+pub devboy_format_pipeline::telemetry::PipelineEvent::enricher_prefetched: bool
+pub devboy_format_pipeline::telemetry::PipelineEvent::file_path_hash: core::option::Option<alloc::string::String>
+pub devboy_format_pipeline::telemetry::PipelineEvent::inner_formats: alloc::vec::Vec<alloc::string::String>
+pub devboy_format_pipeline::telemetry::PipelineEvent::is_dedup_hit: bool
+pub devboy_format_pipeline::telemetry::PipelineEvent::is_sidechain: bool
+pub devboy_format_pipeline::telemetry::PipelineEvent::layer_used: devboy_format_pipeline::telemetry::Layer
+pub devboy_format_pipeline::telemetry::PipelineEvent::response_chars: u64
+pub devboy_format_pipeline::telemetry::PipelineEvent::sample_rate_applied: f32
+pub devboy_format_pipeline::telemetry::PipelineEvent::session_hash: alloc::string::String
+pub devboy_format_pipeline::telemetry::PipelineEvent::shape: devboy_format_pipeline::telemetry::Shape
+pub devboy_format_pipeline::telemetry::PipelineEvent::template_id: core::option::Option<alloc::string::String>
+pub devboy_format_pipeline::telemetry::PipelineEvent::tokens_baseline: u32
+pub devboy_format_pipeline::telemetry::PipelineEvent::tokens_final: u32
+pub devboy_format_pipeline::telemetry::PipelineEvent::tool_call_id_hash: alloc::string::String
+pub devboy_format_pipeline::telemetry::PipelineEvent::tool_name_anon: alloc::string::String
+pub devboy_format_pipeline::telemetry::PipelineEvent::ts_ms: i64
+impl core::clone::Clone for devboy_format_pipeline::telemetry::PipelineEvent
+pub fn devboy_format_pipeline::telemetry::PipelineEvent::clone(&self) -> devboy_format_pipeline::telemetry::PipelineEvent
+impl core::default::Default for devboy_format_pipeline::telemetry::PipelineEvent
+pub fn devboy_format_pipeline::telemetry::PipelineEvent::default() -> devboy_format_pipeline::telemetry::PipelineEvent
+impl core::fmt::Debug for devboy_format_pipeline::telemetry::PipelineEvent
+pub fn devboy_format_pipeline::telemetry::PipelineEvent::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::telemetry::PipelineEvent
+pub fn devboy_format_pipeline::telemetry::PipelineEvent::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::telemetry::PipelineEvent
+pub fn devboy_format_pipeline::telemetry::PipelineEvent::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::telemetry::PipelineEvent
+impl core::marker::Send for devboy_format_pipeline::telemetry::PipelineEvent
+impl core::marker::Sync for devboy_format_pipeline::telemetry::PipelineEvent
+impl core::marker::Unpin for devboy_format_pipeline::telemetry::PipelineEvent
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::telemetry::PipelineEvent
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::telemetry::PipelineEvent
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::telemetry::PipelineEvent
+pub struct devboy_format_pipeline::telemetry::SessionSummary
+pub devboy_format_pipeline::telemetry::SessionSummary::avg_response_chars: f32
+pub devboy_format_pipeline::telemetry::SessionSummary::compaction_count: u32
+pub devboy_format_pipeline::telemetry::SessionSummary::dedup_hit_rate: f32
+pub devboy_format_pipeline::telemetry::SessionSummary::duration_sec: f32
+pub devboy_format_pipeline::telemetry::SessionSummary::ended_at_ms: i64
+pub devboy_format_pipeline::telemetry::SessionSummary::enrichment: devboy_format_pipeline::telemetry::EnrichmentEffectiveness
+pub devboy_format_pipeline::telemetry::SessionSummary::l1_hit_rate: f32
+pub devboy_format_pipeline::telemetry::SessionSummary::l2_hit_rate: f32
+pub devboy_format_pipeline::telemetry::SessionSummary::sample_rate_applied: f32
+pub devboy_format_pipeline::telemetry::SessionSummary::savings_pct: f32
+pub devboy_format_pipeline::telemetry::SessionSummary::session_hash: alloc::string::String
+pub devboy_format_pipeline::telemetry::SessionSummary::total_baseline_tokens: u64
+pub devboy_format_pipeline::telemetry::SessionSummary::total_events: u64
+pub devboy_format_pipeline::telemetry::SessionSummary::total_final_tokens: u64
+impl core::clone::Clone for devboy_format_pipeline::telemetry::SessionSummary
+pub fn devboy_format_pipeline::telemetry::SessionSummary::clone(&self) -> devboy_format_pipeline::telemetry::SessionSummary
+impl core::default::Default for devboy_format_pipeline::telemetry::SessionSummary
+pub fn devboy_format_pipeline::telemetry::SessionSummary::default() -> devboy_format_pipeline::telemetry::SessionSummary
+impl core::fmt::Debug for devboy_format_pipeline::telemetry::SessionSummary
+pub fn devboy_format_pipeline::telemetry::SessionSummary::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_format_pipeline::telemetry::SessionSummary
+pub fn devboy_format_pipeline::telemetry::SessionSummary::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::telemetry::SessionSummary
+pub fn devboy_format_pipeline::telemetry::SessionSummary::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::telemetry::SessionSummary
+impl core::marker::Send for devboy_format_pipeline::telemetry::SessionSummary
+impl core::marker::Sync for devboy_format_pipeline::telemetry::SessionSummary
+impl core::marker::Unpin for devboy_format_pipeline::telemetry::SessionSummary
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::telemetry::SessionSummary
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::telemetry::SessionSummary
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::telemetry::SessionSummary
+pub trait devboy_format_pipeline::telemetry::TelemetrySink: core::marker::Send + core::marker::Sync
+pub fn devboy_format_pipeline::telemetry::TelemetrySink::flush(&self) -> devboy_format_pipeline::telemetry::Result<()>
+pub fn devboy_format_pipeline::telemetry::TelemetrySink::record(&self, event: &devboy_format_pipeline::telemetry::PipelineEvent) -> devboy_format_pipeline::telemetry::Result<()>
+pub fn devboy_format_pipeline::telemetry::TelemetrySink::record_summary(&self, _summary: &devboy_format_pipeline::telemetry::SessionSummary) -> devboy_format_pipeline::telemetry::Result<()>
+impl devboy_format_pipeline::telemetry::TelemetrySink for devboy_format_pipeline::telemetry::JsonlSink
+pub fn devboy_format_pipeline::telemetry::JsonlSink::flush(&self) -> devboy_format_pipeline::telemetry::Result<()>
+pub fn devboy_format_pipeline::telemetry::JsonlSink::record(&self, event: &devboy_format_pipeline::telemetry::PipelineEvent) -> devboy_format_pipeline::telemetry::Result<()>
+pub fn devboy_format_pipeline::telemetry::JsonlSink::record_summary(&self, summary: &devboy_format_pipeline::telemetry::SessionSummary) -> devboy_format_pipeline::telemetry::Result<()>
+impl devboy_format_pipeline::telemetry::TelemetrySink for devboy_format_pipeline::telemetry::MemorySink
+pub fn devboy_format_pipeline::telemetry::MemorySink::flush(&self) -> devboy_format_pipeline::telemetry::Result<()>
+pub fn devboy_format_pipeline::telemetry::MemorySink::record(&self, event: &devboy_format_pipeline::telemetry::PipelineEvent) -> devboy_format_pipeline::telemetry::Result<()>
+pub fn devboy_format_pipeline::telemetry::MemorySink::record_summary(&self, summary: &devboy_format_pipeline::telemetry::SessionSummary) -> devboy_format_pipeline::telemetry::Result<()>
+impl devboy_format_pipeline::telemetry::TelemetrySink for devboy_format_pipeline::telemetry::NullSink
+pub fn devboy_format_pipeline::telemetry::NullSink::flush(&self) -> devboy_format_pipeline::telemetry::Result<()>
+pub fn devboy_format_pipeline::telemetry::NullSink::record(&self, _event: &devboy_format_pipeline::telemetry::PipelineEvent) -> devboy_format_pipeline::telemetry::Result<()>
+pub fn devboy_format_pipeline::telemetry::NullSink::record_summary(&self, _summary: &devboy_format_pipeline::telemetry::SessionSummary) -> devboy_format_pipeline::telemetry::Result<()>
+pub type devboy_format_pipeline::telemetry::Result<T> = core::result::Result<T, devboy_format_pipeline::telemetry::TelemetryError>
+pub mod devboy_format_pipeline::templates
+pub fn devboy_format_pipeline::templates::apply_by_id(template_id: &str, raw: &str, cls: &devboy_format_pipeline::shape::ClassifiedResponse) -> core::option::Option<alloc::string::String>
+pub fn devboy_format_pipeline::templates::csv_from_md(raw: &str, cls: &devboy_format_pipeline::shape::ClassifiedResponse) -> core::option::Option<alloc::string::String>
+pub fn devboy_format_pipeline::templates::deep_mckp_with_inner_table(raw: &str, _cls: &devboy_format_pipeline::shape::ClassifiedResponse) -> core::option::Option<alloc::string::String>
+pub fn devboy_format_pipeline::templates::mr_diff_fence(raw: &str, _cls: &devboy_format_pipeline::shape::ClassifiedResponse) -> core::option::Option<alloc::string::String>
+pub fn devboy_format_pipeline::templates::pipeline_deep_mckp(raw: &str, cls: &devboy_format_pipeline::shape::ClassifiedResponse) -> core::option::Option<alloc::string::String>
+pub mod devboy_format_pipeline::token_counter
+pub enum devboy_format_pipeline::token_counter::Tokenizer
+pub devboy_format_pipeline::token_counter::Tokenizer::Cl100kBase
+pub devboy_format_pipeline::token_counter::Tokenizer::Heuristic
+pub devboy_format_pipeline::token_counter::Tokenizer::O200kBase
+impl devboy_format_pipeline::token_counter::Tokenizer
+pub fn devboy_format_pipeline::token_counter::Tokenizer::as_str(&self) -> &'static str
+pub fn devboy_format_pipeline::token_counter::Tokenizer::count(&self, text: &str) -> usize
+pub fn devboy_format_pipeline::token_counter::Tokenizer::from_str_lossy(s: &str) -> Self
+impl core::clone::Clone for devboy_format_pipeline::token_counter::Tokenizer
+pub fn devboy_format_pipeline::token_counter::Tokenizer::clone(&self) -> devboy_format_pipeline::token_counter::Tokenizer
+impl core::cmp::Eq for devboy_format_pipeline::token_counter::Tokenizer
+impl core::cmp::PartialEq for devboy_format_pipeline::token_counter::Tokenizer
+pub fn devboy_format_pipeline::token_counter::Tokenizer::eq(&self, other: &devboy_format_pipeline::token_counter::Tokenizer) -> bool
+impl core::default::Default for devboy_format_pipeline::token_counter::Tokenizer
+pub fn devboy_format_pipeline::token_counter::Tokenizer::default() -> devboy_format_pipeline::token_counter::Tokenizer
+impl core::fmt::Debug for devboy_format_pipeline::token_counter::Tokenizer
+pub fn devboy_format_pipeline::token_counter::Tokenizer::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_format_pipeline::token_counter::Tokenizer
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::token_counter::Tokenizer
+impl serde_core::ser::Serialize for devboy_format_pipeline::token_counter::Tokenizer
+pub fn devboy_format_pipeline::token_counter::Tokenizer::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::token_counter::Tokenizer
+pub fn devboy_format_pipeline::token_counter::Tokenizer::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::token_counter::Tokenizer
+impl core::marker::Send for devboy_format_pipeline::token_counter::Tokenizer
+impl core::marker::Sync for devboy_format_pipeline::token_counter::Tokenizer
+impl core::marker::Unpin for devboy_format_pipeline::token_counter::Tokenizer
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::token_counter::Tokenizer
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::token_counter::Tokenizer
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::token_counter::Tokenizer
+pub fn devboy_format_pipeline::token_counter::estimate_tokens(text: &str) -> usize
+pub fn devboy_format_pipeline::token_counter::tokens_to_chars(tokens: usize) -> usize
+pub mod devboy_format_pipeline::tool_defaults
+pub fn devboy_format_pipeline::tool_defaults::default_tool_value_models() -> alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_core::tool_value_model::ToolValueModel>
+pub mod devboy_format_pipeline::toon
+pub enum devboy_format_pipeline::toon::TrimLevel
+pub devboy_format_pipeline::toon::TrimLevel::Full
+pub devboy_format_pipeline::toon::TrimLevel::Minimal
+pub devboy_format_pipeline::toon::TrimLevel::Standard
+impl core::clone::Clone for devboy_format_pipeline::toon::TrimLevel
+pub fn devboy_format_pipeline::toon::TrimLevel::clone(&self) -> devboy_format_pipeline::toon::TrimLevel
+impl core::cmp::Eq for devboy_format_pipeline::toon::TrimLevel
+impl core::cmp::PartialEq for devboy_format_pipeline::toon::TrimLevel
+pub fn devboy_format_pipeline::toon::TrimLevel::eq(&self, other: &devboy_format_pipeline::toon::TrimLevel) -> bool
+impl core::fmt::Debug for devboy_format_pipeline::toon::TrimLevel
+pub fn devboy_format_pipeline::toon::TrimLevel::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_format_pipeline::toon::TrimLevel
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::toon::TrimLevel
+impl core::marker::Freeze for devboy_format_pipeline::toon::TrimLevel
+impl core::marker::Send for devboy_format_pipeline::toon::TrimLevel
+impl core::marker::Sync for devboy_format_pipeline::toon::TrimLevel
+impl core::marker::Unpin for devboy_format_pipeline::toon::TrimLevel
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::toon::TrimLevel
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::toon::TrimLevel
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::toon::TrimLevel
+pub fn devboy_format_pipeline::toon::encode_comments(comments: &[devboy_core::types::Comment]) -> devboy_core::error::Result<alloc::string::String>
+pub fn devboy_format_pipeline::toon::encode_diffs(diffs: &[devboy_core::types::FileDiff]) -> devboy_core::error::Result<alloc::string::String>
+pub fn devboy_format_pipeline::toon::encode_discussions(discussions: &[devboy_core::types::Discussion]) -> devboy_core::error::Result<alloc::string::String>
+pub fn devboy_format_pipeline::toon::encode_issues(issues: &[devboy_core::types::Issue], level: devboy_format_pipeline::toon::TrimLevel) -> devboy_core::error::Result<alloc::string::String>
+pub fn devboy_format_pipeline::toon::encode_merge_requests(mrs: &[devboy_core::types::MergeRequest], level: devboy_format_pipeline::toon::TrimLevel) -> devboy_core::error::Result<alloc::string::String>
+pub fn devboy_format_pipeline::toon::encode_value<T: serde_core::ser::Serialize>(value: &T) -> devboy_core::error::Result<alloc::string::String>
+pub mod devboy_format_pipeline::tree
+pub enum devboy_format_pipeline::tree::NodeKind
+pub devboy_format_pipeline::tree::NodeKind::Field
+pub devboy_format_pipeline::tree::NodeKind::Field::name: alloc::string::String
+pub devboy_format_pipeline::tree::NodeKind::Item
+pub devboy_format_pipeline::tree::NodeKind::Item::index: usize
+pub devboy_format_pipeline::tree::NodeKind::Root
+pub devboy_format_pipeline::tree::NodeKind::Text
+impl core::clone::Clone for devboy_format_pipeline::tree::NodeKind
+pub fn devboy_format_pipeline::tree::NodeKind::clone(&self) -> devboy_format_pipeline::tree::NodeKind
+impl core::cmp::PartialEq for devboy_format_pipeline::tree::NodeKind
+pub fn devboy_format_pipeline::tree::NodeKind::eq(&self, other: &devboy_format_pipeline::tree::NodeKind) -> bool
+impl core::fmt::Debug for devboy_format_pipeline::tree::NodeKind
+pub fn devboy_format_pipeline::tree::NodeKind::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::tree::NodeKind
+impl core::marker::Freeze for devboy_format_pipeline::tree::NodeKind
+impl core::marker::Send for devboy_format_pipeline::tree::NodeKind
+impl core::marker::Sync for devboy_format_pipeline::tree::NodeKind
+impl core::marker::Unpin for devboy_format_pipeline::tree::NodeKind
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::tree::NodeKind
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::tree::NodeKind
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::tree::NodeKind
+pub struct devboy_format_pipeline::tree::TrimNode
+pub devboy_format_pipeline::tree::TrimNode::children: alloc::vec::Vec<devboy_format_pipeline::tree::TrimNode>
+pub devboy_format_pipeline::tree::TrimNode::id: usize
+pub devboy_format_pipeline::tree::TrimNode::included: bool
+pub devboy_format_pipeline::tree::TrimNode::kind: devboy_format_pipeline::tree::NodeKind
+pub devboy_format_pipeline::tree::TrimNode::value: f64
+pub devboy_format_pipeline::tree::TrimNode::weight: usize
+impl devboy_format_pipeline::tree::TrimNode
+pub fn devboy_format_pipeline::tree::TrimNode::count_nodes(&self) -> usize
+pub fn devboy_format_pipeline::tree::TrimNode::density(&self) -> f64
+pub fn devboy_format_pipeline::tree::TrimNode::excluded_item_indices(&self) -> alloc::vec::Vec<usize>
+pub fn devboy_format_pipeline::tree::TrimNode::included_item_indices(&self) -> alloc::vec::Vec<usize>
+pub fn devboy_format_pipeline::tree::TrimNode::included_items_count(&self) -> usize
+pub fn devboy_format_pipeline::tree::TrimNode::new(id: usize, kind: devboy_format_pipeline::tree::NodeKind, weight: usize) -> Self
+pub fn devboy_format_pipeline::tree::TrimNode::total_value(&self) -> f64
+pub fn devboy_format_pipeline::tree::TrimNode::total_weight(&self) -> usize
+impl core::clone::Clone for devboy_format_pipeline::tree::TrimNode
+pub fn devboy_format_pipeline::tree::TrimNode::clone(&self) -> devboy_format_pipeline::tree::TrimNode
+impl core::fmt::Debug for devboy_format_pipeline::tree::TrimNode
+pub fn devboy_format_pipeline::tree::TrimNode::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::tree::TrimNode
+impl core::marker::Send for devboy_format_pipeline::tree::TrimNode
+impl core::marker::Sync for devboy_format_pipeline::tree::TrimNode
+impl core::marker::Unpin for devboy_format_pipeline::tree::TrimNode
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::tree::TrimNode
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::tree::TrimNode
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::tree::TrimNode
+pub fn devboy_format_pipeline::tree::build_comments_tree(comments: &[devboy_core::types::Comment]) -> devboy_format_pipeline::tree::TrimNode
+pub fn devboy_format_pipeline::tree::build_diffs_tree(diffs: &[devboy_core::types::FileDiff]) -> devboy_format_pipeline::tree::TrimNode
+pub fn devboy_format_pipeline::tree::build_discussions_tree(discussions: &[devboy_core::types::Discussion]) -> devboy_format_pipeline::tree::TrimNode
+pub fn devboy_format_pipeline::tree::build_issues_tree(issues: &[devboy_core::types::Issue]) -> devboy_format_pipeline::tree::TrimNode
+pub fn devboy_format_pipeline::tree::build_merge_requests_tree(mrs: &[devboy_core::types::MergeRequest]) -> devboy_format_pipeline::tree::TrimNode
+pub mod devboy_format_pipeline::trim
+pub mod devboy_format_pipeline::trim::greedy
+pub fn devboy_format_pipeline::trim::greedy::solve(tree: &mut devboy_format_pipeline::tree::TrimNode, budget: usize)
+pub mod devboy_format_pipeline::trim::head_tail
+pub fn devboy_format_pipeline::trim::head_tail::solve(tree: &mut devboy_format_pipeline::tree::TrimNode, budget: usize)
+pub mod devboy_format_pipeline::trim::knapsack
+pub fn devboy_format_pipeline::trim::knapsack::solve(tree: &mut devboy_format_pipeline::tree::TrimNode, budget: usize)
+pub mod devboy_format_pipeline::trim::wfq
+pub fn devboy_format_pipeline::trim::wfq::solve(tree: &mut devboy_format_pipeline::tree::TrimNode, budget: usize)
+pub fn devboy_format_pipeline::trim::trim(tree: &mut devboy_format_pipeline::tree::TrimNode, budget: usize)
+pub mod devboy_format_pipeline::truncation
+pub struct devboy_format_pipeline::truncation::TruncationConfig
+pub devboy_format_pipeline::truncation::TruncationConfig::max_item_chars: usize
+pub devboy_format_pipeline::truncation::TruncationConfig::max_items: usize
+pub devboy_format_pipeline::truncation::TruncationConfig::max_total_chars: usize
+pub devboy_format_pipeline::truncation::TruncationConfig::show_indicators: bool
+impl core::clone::Clone for devboy_format_pipeline::truncation::TruncationConfig
+pub fn devboy_format_pipeline::truncation::TruncationConfig::clone(&self) -> devboy_format_pipeline::truncation::TruncationConfig
+impl core::default::Default for devboy_format_pipeline::truncation::TruncationConfig
+pub fn devboy_format_pipeline::truncation::TruncationConfig::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::truncation::TruncationConfig
+pub fn devboy_format_pipeline::truncation::TruncationConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::truncation::TruncationConfig
+impl core::marker::Send for devboy_format_pipeline::truncation::TruncationConfig
+impl core::marker::Sync for devboy_format_pipeline::truncation::TruncationConfig
+impl core::marker::Unpin for devboy_format_pipeline::truncation::TruncationConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::truncation::TruncationConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::truncation::TruncationConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::truncation::TruncationConfig
+pub struct devboy_format_pipeline::truncation::TruncationPlugin
+impl devboy_format_pipeline::truncation::TruncationPlugin
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::create_summary(&self, total: usize, shown: usize, item_type: &str) -> alloc::string::String
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::max_item_chars(&self) -> usize
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::max_items(&self) -> usize
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::max_total_chars(&self) -> usize
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::new() -> Self
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::truncate(&self, s: &str) -> alloc::string::String
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::truncate_item(&self, s: &str) -> alloc::string::String
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::with_config(config: devboy_format_pipeline::truncation::TruncationConfig) -> Self
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::with_limits(max_items: usize, max_chars: usize) -> Self
+impl core::default::Default for devboy_format_pipeline::truncation::TruncationPlugin
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::default() -> Self
+impl core::marker::Freeze for devboy_format_pipeline::truncation::TruncationPlugin
+impl core::marker::Send for devboy_format_pipeline::truncation::TruncationPlugin
+impl core::marker::Sync for devboy_format_pipeline::truncation::TruncationPlugin
+impl core::marker::Unpin for devboy_format_pipeline::truncation::TruncationPlugin
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::truncation::TruncationPlugin
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::truncation::TruncationPlugin
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::truncation::TruncationPlugin
+pub fn devboy_format_pipeline::truncation::truncate_diff(diff: &str, max_chars: usize) -> alloc::string::String
+pub fn devboy_format_pipeline::truncation::truncate_string(s: &str, max_chars: usize) -> alloc::string::String
+pub enum devboy_format_pipeline::OutputFormat
+pub devboy_format_pipeline::OutputFormat::Json
+pub devboy_format_pipeline::OutputFormat::Mckp
+pub devboy_format_pipeline::OutputFormat::Toon
+impl core::clone::Clone for devboy_format_pipeline::OutputFormat
+pub fn devboy_format_pipeline::OutputFormat::clone(&self) -> devboy_format_pipeline::OutputFormat
+impl core::cmp::Eq for devboy_format_pipeline::OutputFormat
+impl core::cmp::PartialEq for devboy_format_pipeline::OutputFormat
+pub fn devboy_format_pipeline::OutputFormat::eq(&self, other: &devboy_format_pipeline::OutputFormat) -> bool
+impl core::fmt::Debug for devboy_format_pipeline::OutputFormat
+pub fn devboy_format_pipeline::OutputFormat::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_format_pipeline::OutputFormat
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::OutputFormat
+impl core::marker::Freeze for devboy_format_pipeline::OutputFormat
+impl core::marker::Send for devboy_format_pipeline::OutputFormat
+impl core::marker::Sync for devboy_format_pipeline::OutputFormat
+impl core::marker::Unpin for devboy_format_pipeline::OutputFormat
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::OutputFormat
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::OutputFormat
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::OutputFormat
+pub enum devboy_format_pipeline::Tokenizer
+pub devboy_format_pipeline::Tokenizer::Cl100kBase
+pub devboy_format_pipeline::Tokenizer::Heuristic
+pub devboy_format_pipeline::Tokenizer::O200kBase
+impl devboy_format_pipeline::token_counter::Tokenizer
+pub fn devboy_format_pipeline::token_counter::Tokenizer::as_str(&self) -> &'static str
+pub fn devboy_format_pipeline::token_counter::Tokenizer::count(&self, text: &str) -> usize
+pub fn devboy_format_pipeline::token_counter::Tokenizer::from_str_lossy(s: &str) -> Self
+impl core::clone::Clone for devboy_format_pipeline::token_counter::Tokenizer
+pub fn devboy_format_pipeline::token_counter::Tokenizer::clone(&self) -> devboy_format_pipeline::token_counter::Tokenizer
+impl core::cmp::Eq for devboy_format_pipeline::token_counter::Tokenizer
+impl core::cmp::PartialEq for devboy_format_pipeline::token_counter::Tokenizer
+pub fn devboy_format_pipeline::token_counter::Tokenizer::eq(&self, other: &devboy_format_pipeline::token_counter::Tokenizer) -> bool
+impl core::default::Default for devboy_format_pipeline::token_counter::Tokenizer
+pub fn devboy_format_pipeline::token_counter::Tokenizer::default() -> devboy_format_pipeline::token_counter::Tokenizer
+impl core::fmt::Debug for devboy_format_pipeline::token_counter::Tokenizer
+pub fn devboy_format_pipeline::token_counter::Tokenizer::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_format_pipeline::token_counter::Tokenizer
+impl core::marker::StructuralPartialEq for devboy_format_pipeline::token_counter::Tokenizer
+impl serde_core::ser::Serialize for devboy_format_pipeline::token_counter::Tokenizer
+pub fn devboy_format_pipeline::token_counter::Tokenizer::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_format_pipeline::token_counter::Tokenizer
+pub fn devboy_format_pipeline::token_counter::Tokenizer::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_format_pipeline::token_counter::Tokenizer
+impl core::marker::Send for devboy_format_pipeline::token_counter::Tokenizer
+impl core::marker::Sync for devboy_format_pipeline::token_counter::Tokenizer
+impl core::marker::Unpin for devboy_format_pipeline::token_counter::Tokenizer
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::token_counter::Tokenizer
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::token_counter::Tokenizer
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::token_counter::Tokenizer
+pub struct devboy_format_pipeline::Pipeline
+impl devboy_format_pipeline::Pipeline
+pub fn devboy_format_pipeline::Pipeline::new() -> Self
+pub fn devboy_format_pipeline::Pipeline::transform_comments(&self, comments: alloc::vec::Vec<devboy_core::types::Comment>) -> devboy_core::error::Result<devboy_format_pipeline::TransformOutput>
+pub fn devboy_format_pipeline::Pipeline::transform_diffs(&self, diffs: alloc::vec::Vec<devboy_core::types::FileDiff>) -> devboy_core::error::Result<devboy_format_pipeline::TransformOutput>
+pub fn devboy_format_pipeline::Pipeline::transform_discussions(&self, discussions: alloc::vec::Vec<devboy_core::types::Discussion>) -> devboy_core::error::Result<devboy_format_pipeline::TransformOutput>
+pub fn devboy_format_pipeline::Pipeline::transform_issues(&self, issues: alloc::vec::Vec<devboy_core::types::Issue>) -> devboy_core::error::Result<devboy_format_pipeline::TransformOutput>
+pub fn devboy_format_pipeline::Pipeline::transform_merge_requests(&self, mrs: alloc::vec::Vec<devboy_core::types::MergeRequest>) -> devboy_core::error::Result<devboy_format_pipeline::TransformOutput>
+pub fn devboy_format_pipeline::Pipeline::with_config(config: devboy_format_pipeline::PipelineConfig) -> Self
+impl core::default::Default for devboy_format_pipeline::Pipeline
+pub fn devboy_format_pipeline::Pipeline::default() -> Self
+impl core::marker::Freeze for devboy_format_pipeline::Pipeline
+impl core::marker::Send for devboy_format_pipeline::Pipeline
+impl core::marker::Sync for devboy_format_pipeline::Pipeline
+impl core::marker::Unpin for devboy_format_pipeline::Pipeline
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::Pipeline
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::Pipeline
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::Pipeline
+pub struct devboy_format_pipeline::PipelineConfig
+pub devboy_format_pipeline::PipelineConfig::chunk: core::option::Option<usize>
+pub devboy_format_pipeline::PipelineConfig::format: devboy_format_pipeline::OutputFormat
+pub devboy_format_pipeline::PipelineConfig::include_hints: bool
+pub devboy_format_pipeline::PipelineConfig::max_chars: usize
+pub devboy_format_pipeline::PipelineConfig::max_chars_per_item: usize
+pub devboy_format_pipeline::PipelineConfig::max_description_len: usize
+pub devboy_format_pipeline::PipelineConfig::page_cursor: core::option::Option<alloc::string::String>
+pub devboy_format_pipeline::PipelineConfig::tool_name: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_format_pipeline::PipelineConfig
+pub fn devboy_format_pipeline::PipelineConfig::clone(&self) -> devboy_format_pipeline::PipelineConfig
+impl core::default::Default for devboy_format_pipeline::PipelineConfig
+pub fn devboy_format_pipeline::PipelineConfig::default() -> Self
+impl core::fmt::Debug for devboy_format_pipeline::PipelineConfig
+pub fn devboy_format_pipeline::PipelineConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::PipelineConfig
+impl core::marker::Send for devboy_format_pipeline::PipelineConfig
+impl core::marker::Sync for devboy_format_pipeline::PipelineConfig
+impl core::marker::Unpin for devboy_format_pipeline::PipelineConfig
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::PipelineConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::PipelineConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::PipelineConfig
+pub struct devboy_format_pipeline::TransformOutput
+pub devboy_format_pipeline::TransformOutput::agent_hint: core::option::Option<alloc::string::String>
+pub devboy_format_pipeline::TransformOutput::content: alloc::string::String
+pub devboy_format_pipeline::TransformOutput::included_count: usize
+pub devboy_format_pipeline::TransformOutput::output_chars: usize
+pub devboy_format_pipeline::TransformOutput::page_cursor: core::option::Option<alloc::string::String>
+pub devboy_format_pipeline::TransformOutput::page_index: core::option::Option<devboy_format_pipeline::page_index::PageIndex>
+pub devboy_format_pipeline::TransformOutput::pre_trim_chars: usize
+pub devboy_format_pipeline::TransformOutput::provider_pagination: core::option::Option<devboy_core::types::Pagination>
+pub devboy_format_pipeline::TransformOutput::provider_sort: core::option::Option<devboy_core::types::SortInfo>
+pub devboy_format_pipeline::TransformOutput::raw_chars: usize
+pub devboy_format_pipeline::TransformOutput::total_count: core::option::Option<usize>
+pub devboy_format_pipeline::TransformOutput::truncated: bool
+impl devboy_format_pipeline::TransformOutput
+pub fn devboy_format_pipeline::TransformOutput::new(content: alloc::string::String) -> Self
+pub fn devboy_format_pipeline::TransformOutput::to_string_with_hints(&self) -> alloc::string::String
+pub fn devboy_format_pipeline::TransformOutput::with_raw_chars(self, raw_chars: usize) -> Self
+pub fn devboy_format_pipeline::TransformOutput::with_truncation(self, total: usize, included: usize, hint: alloc::string::String) -> Self
+impl core::clone::Clone for devboy_format_pipeline::TransformOutput
+pub fn devboy_format_pipeline::TransformOutput::clone(&self) -> devboy_format_pipeline::TransformOutput
+impl core::fmt::Debug for devboy_format_pipeline::TransformOutput
+pub fn devboy_format_pipeline::TransformOutput::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_format_pipeline::TransformOutput
+impl core::marker::Send for devboy_format_pipeline::TransformOutput
+impl core::marker::Sync for devboy_format_pipeline::TransformOutput
+impl core::marker::Unpin for devboy_format_pipeline::TransformOutput
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::TransformOutput
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::TransformOutput
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::TransformOutput
+pub struct devboy_format_pipeline::TruncationPlugin
+impl devboy_format_pipeline::truncation::TruncationPlugin
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::create_summary(&self, total: usize, shown: usize, item_type: &str) -> alloc::string::String
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::max_item_chars(&self) -> usize
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::max_items(&self) -> usize
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::max_total_chars(&self) -> usize
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::new() -> Self
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::truncate(&self, s: &str) -> alloc::string::String
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::truncate_item(&self, s: &str) -> alloc::string::String
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::with_config(config: devboy_format_pipeline::truncation::TruncationConfig) -> Self
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::with_limits(max_items: usize, max_chars: usize) -> Self
+impl core::default::Default for devboy_format_pipeline::truncation::TruncationPlugin
+pub fn devboy_format_pipeline::truncation::TruncationPlugin::default() -> Self
+impl core::marker::Freeze for devboy_format_pipeline::truncation::TruncationPlugin
+impl core::marker::Send for devboy_format_pipeline::truncation::TruncationPlugin
+impl core::marker::Sync for devboy_format_pipeline::truncation::TruncationPlugin
+impl core::marker::Unpin for devboy_format_pipeline::truncation::TruncationPlugin
+impl core::marker::UnsafeUnpin for devboy_format_pipeline::truncation::TruncationPlugin
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::truncation::TruncationPlugin
+impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::truncation::TruncationPlugin
+pub fn devboy_format_pipeline::estimate_tokens(text: &str) -> usize
+pub fn devboy_format_pipeline::tokens_to_chars(tokens: usize) -> usize

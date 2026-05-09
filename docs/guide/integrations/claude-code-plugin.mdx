@@ -32,18 +32,18 @@ After the binary is installed, **run `/reload-plugins`** so Claude Code picks up
 | Component | Path inside the plugin |
 |---|---|
 | Manifest | `plugins/claude/.claude-plugin/plugin.json` |
-| Skills (24, symlinks → `/skills/<category>/<name>`) | `plugins/claude/skills/<name>/` |
+| Skills (24, symlinks → `/crates/devboy-skills/skills/<category>/<name>`) | `plugins/claude/skills/<name>/` |
 | MCP server | `plugins/claude/.mcp.json` |
 | Binary locator | `plugins/claude/bin/devboy-shim.sh` |
 
-Skill names match the source filenames one-to-one — `plugins/claude/skills/<name>` is a symlink to `skills/<category>/<name>/`, so editing `/skills/00-self-bootstrap/setup/SKILL.md` updates the plugin in the same edit. Plugin namespacing prepends `devboy:`, so:
+Skill names match the source filenames one-to-one — `plugins/claude/skills/<name>` is a symlink to `crates/devboy-skills/skills/<category>/<name>/`, so editing `/crates/devboy-skills/skills/00-self-bootstrap/setup/SKILL.md` updates the plugin in the same edit. Plugin namespacing prepends `devboy:`, so:
 
 - `/devboy:setup` — bootstrap
 - `/devboy:get-issues` — fetch open / closed issues
 - `/devboy:review-mr` — review a merge / pull request
 - `/devboy:analyze-usage` — Claude Code session analytics
 
-See [PLUGIN_NAMING.md](https://github.com/meteora-pro/devboy-tools/blob/main/skills/PLUGIN_NAMING.md) for the full layout.
+See [PLUGIN_NAMING.md](https://github.com/meteora-pro/devboy-tools/blob/main/crates/devboy-skills/skills/PLUGIN_NAMING.md) for the full layout.
 
 ## Updating
 

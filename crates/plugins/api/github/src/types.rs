@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 // User
 // =============================================================================
 
-/// GitHub user representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitHubUser {
     pub id: u64,
@@ -26,7 +25,6 @@ pub struct GitHubUser {
 // Issue
 // =============================================================================
 
-/// GitHub issue representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitHubIssue {
     pub id: u64,
@@ -51,7 +49,6 @@ pub struct GitHubIssue {
     pub pull_request: Option<serde_json::Value>,
 }
 
-/// GitHub label representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitHubLabel {
     pub id: u64,
@@ -66,7 +63,6 @@ pub struct GitHubLabel {
 // Pull Request
 // =============================================================================
 
-/// GitHub pull request representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitHubPullRequest {
     pub id: u64,
@@ -96,7 +92,6 @@ pub struct GitHubPullRequest {
     pub updated_at: String,
 }
 
-/// GitHub branch reference.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitHubBranchRef {
     #[serde(rename = "ref")]
@@ -130,7 +125,6 @@ pub struct GitHubReviewComment {
     pub created_at: String,
     #[serde(default)]
     pub updated_at: Option<String>,
-    /// File path
     pub path: String,
     /// Line number (can be null for outdated comments)
     #[serde(default)]
@@ -144,7 +138,6 @@ pub struct GitHubReviewComment {
     /// Side: LEFT (old) or RIGHT (new)
     #[serde(default)]
     pub side: Option<String>,
-    /// Diff hunk context
     #[serde(default)]
     pub diff_hunk: Option<String>,
     /// Commit SHA
@@ -153,7 +146,6 @@ pub struct GitHubReviewComment {
     /// Original commit SHA
     #[serde(default)]
     pub original_commit_id: Option<String>,
-    /// ID of comment this is replying to
     #[serde(default)]
     pub in_reply_to_id: Option<u64>,
 }
@@ -162,7 +154,6 @@ pub struct GitHubReviewComment {
 // Reviews
 // =============================================================================
 
-/// GitHub pull request review.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitHubReview {
     pub id: u64,
@@ -200,7 +191,6 @@ pub struct GitHubFile {
 // Create/Update types
 // =============================================================================
 
-/// Request body for creating an issue.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateIssueRequest {
     pub title: String,
@@ -212,7 +202,6 @@ pub struct CreateIssueRequest {
     pub assignees: Vec<String>,
 }
 
-/// Request body for updating an issue.
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct UpdateIssueRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -227,7 +216,6 @@ pub struct UpdateIssueRequest {
     pub assignees: Option<Vec<String>>,
 }
 
-/// Request body for creating a pull request.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreatePullRequestRequest {
     pub title: String,
@@ -241,7 +229,6 @@ pub struct CreatePullRequestRequest {
     pub draft: Option<bool>,
 }
 
-/// Request body for updating a pull request.
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct UpdatePullRequestRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -254,13 +241,11 @@ pub struct UpdatePullRequestRequest {
     pub draft: Option<bool>,
 }
 
-/// Request body for creating a comment.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateCommentRequest {
     pub body: String,
 }
 
-/// Request body for creating a review comment.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateReviewCommentRequest {
     pub body: String,

@@ -98,7 +98,6 @@ pub struct PropertySchema {
     #[serde(rename = "enum", skip_serializing_if = "Option::is_none")]
     pub enum_values: Option<Vec<String>>,
 
-    /// Default value.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
 

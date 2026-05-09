@@ -30,7 +30,7 @@ pub const MANIFEST_VERSION: u32 = 1;
 /// Embedded history file. Ships in the binary; updated by the release
 /// tooling whenever a baseline skill's SKILL.md content changes.
 #[derive(RustEmbed)]
-#[folder = "../../skills/"]
+#[folder = "skills/"]
 #[include = "history.json"]
 struct HistoryAsset;
 
@@ -115,7 +115,6 @@ impl HistoricalHashes {
 pub struct InstalledFile {
     /// SHA256 of the file at install time.
     pub sha256: String,
-    /// Size in bytes.
     pub size: u64,
 }
 

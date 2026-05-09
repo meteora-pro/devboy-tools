@@ -310,8 +310,8 @@ jobs:
 
       # Bring plugin manifests in line with the just-released Cargo
       # workspace version, then regenerate plugin skill trees from
-      # /skills/ (in case anything was committed during the release
-      # window without the corresponding regen).
+      # /crates/devboy-skills/skills/ (in case anything was committed
+      # during the release window without the corresponding regen).
       - name: Sync plugin version into manifests
         run: scripts/release/sync-plugin-version.sh
 

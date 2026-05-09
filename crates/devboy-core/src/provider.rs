@@ -41,10 +41,8 @@ pub trait IssueProvider: Send + Sync {
     /// Update an existing issue.
     async fn update_issue(&self, key: &str, input: UpdateIssueInput) -> Result<Issue>;
 
-    /// Get comments for an issue.
     async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>>;
 
-    /// Add a comment to an issue.
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment>;
 
     /// Get available statuses for the issue tracker.
@@ -132,8 +130,8 @@ pub trait IssueProvider: Send + Sync {
     ///
     /// Not all providers expose a delete endpoint for attachments (ClickUp
     /// doesn't, GitLab file uploads are immutable) — the default returns
-    /// `ProviderUnsupported` and callers can consult [`asset_capabilities`]
-    /// beforehand.
+    /// `ProviderUnsupported` and callers can consult
+    /// [`asset_capabilities`](Self::asset_capabilities) beforehand.
     async fn delete_attachment(&self, _issue_key: &str, _asset_id: &str) -> Result<()> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
@@ -149,7 +147,7 @@ pub trait IssueProvider: Send + Sync {
         AssetCapabilities::default()
     }
 
-    /// Set custom fields on an issue. Each entry: {"id": "field_id", "value": <value>}.
+    /// Set custom fields on an issue. Each entry: `{"id": "field_id", "value": <value>}`.
     /// Default is no-op — override in providers that support custom fields (e.g., ClickUp).
     async fn set_custom_fields(
         &self,
@@ -451,7 +449,6 @@ pub trait MergeRequestProvider: Send + Sync {
         })
     }
 
-    /// Get file diffs for a merge request.
     async fn get_diffs(&self, _mr_key: &str) -> Result<ProviderResult<FileDiff>> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
@@ -459,7 +456,6 @@ pub trait MergeRequestProvider: Send + Sync {
         })
     }
 
-    /// Add a comment to a merge request.
     async fn add_comment(&self, _mr_key: &str, _input: CreateCommentInput) -> Result<Comment> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
@@ -503,7 +499,6 @@ pub trait MergeRequestProvider: Send + Sync {
         })
     }
 
-    /// Download an attachment from a merge request.
     async fn download_mr_attachment(&self, _mr_key: &str, _asset_id: &str) -> Result<Vec<u8>> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
@@ -511,7 +506,6 @@ pub trait MergeRequestProvider: Send + Sync {
         })
     }
 
-    /// Delete an attachment from a merge request.
     async fn delete_mr_attachment(&self, _mr_key: &str, _asset_id: &str) -> Result<()> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
@@ -529,7 +523,6 @@ pub trait PipelineProvider: Send + Sync {
     /// Get the provider name for logging.
     fn provider_name(&self) -> &'static str;
 
-    /// Get pipeline status for a branch or MR/PR.
     async fn get_pipeline(&self, _input: GetPipelineInput) -> Result<PipelineInfo> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),

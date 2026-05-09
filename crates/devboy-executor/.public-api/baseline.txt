@@ -1,0 +1,921 @@
+pub mod devboy_executor
+pub use devboy_executor::ToolEnricher
+pub use devboy_executor::ToolSchema
+pub use devboy_executor::sanitize_field_name
+pub mod devboy_executor::context
+pub enum devboy_executor::context::ClickUpScope
+pub devboy_executor::context::ClickUpScope::List
+pub devboy_executor::context::ClickUpScope::List::id: alloc::string::String
+pub devboy_executor::context::ClickUpScope::List::team_id: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_executor::context::ClickUpScope
+pub fn devboy_executor::context::ClickUpScope::clone(&self) -> devboy_executor::context::ClickUpScope
+impl core::fmt::Debug for devboy_executor::context::ClickUpScope
+pub fn devboy_executor::context::ClickUpScope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::ClickUpScope
+pub fn devboy_executor::context::ClickUpScope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::ClickUpScope
+pub fn devboy_executor::context::ClickUpScope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::ClickUpScope
+impl core::marker::Send for devboy_executor::context::ClickUpScope
+impl core::marker::Sync for devboy_executor::context::ClickUpScope
+impl core::marker::Unpin for devboy_executor::context::ClickUpScope
+impl core::marker::UnsafeUnpin for devboy_executor::context::ClickUpScope
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::ClickUpScope
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::ClickUpScope
+pub enum devboy_executor::context::ConfluenceAuthConfig
+pub devboy_executor::context::ConfluenceAuthConfig::Basic
+pub devboy_executor::context::ConfluenceAuthConfig::Basic::password: secrecy::SecretString
+pub devboy_executor::context::ConfluenceAuthConfig::Basic::username: alloc::string::String
+pub devboy_executor::context::ConfluenceAuthConfig::BearerToken
+pub devboy_executor::context::ConfluenceAuthConfig::BearerToken::token: secrecy::SecretString
+impl core::clone::Clone for devboy_executor::context::ConfluenceAuthConfig
+pub fn devboy_executor::context::ConfluenceAuthConfig::clone(&self) -> devboy_executor::context::ConfluenceAuthConfig
+impl core::fmt::Debug for devboy_executor::context::ConfluenceAuthConfig
+pub fn devboy_executor::context::ConfluenceAuthConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_executor::context::ConfluenceAuthConfig
+impl core::marker::Send for devboy_executor::context::ConfluenceAuthConfig
+impl core::marker::Sync for devboy_executor::context::ConfluenceAuthConfig
+impl core::marker::Unpin for devboy_executor::context::ConfluenceAuthConfig
+impl core::marker::UnsafeUnpin for devboy_executor::context::ConfluenceAuthConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::ConfluenceAuthConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::ConfluenceAuthConfig
+pub enum devboy_executor::context::ConfluenceScope
+pub devboy_executor::context::ConfluenceScope::Space
+pub devboy_executor::context::ConfluenceScope::Space::key: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_executor::context::ConfluenceScope
+pub fn devboy_executor::context::ConfluenceScope::clone(&self) -> devboy_executor::context::ConfluenceScope
+impl core::fmt::Debug for devboy_executor::context::ConfluenceScope
+pub fn devboy_executor::context::ConfluenceScope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::ConfluenceScope
+pub fn devboy_executor::context::ConfluenceScope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::ConfluenceScope
+pub fn devboy_executor::context::ConfluenceScope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::ConfluenceScope
+impl core::marker::Send for devboy_executor::context::ConfluenceScope
+impl core::marker::Sync for devboy_executor::context::ConfluenceScope
+impl core::marker::Unpin for devboy_executor::context::ConfluenceScope
+impl core::marker::UnsafeUnpin for devboy_executor::context::ConfluenceScope
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::ConfluenceScope
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::ConfluenceScope
+pub enum devboy_executor::context::GitHubScope
+pub devboy_executor::context::GitHubScope::Global
+pub devboy_executor::context::GitHubScope::Organization
+pub devboy_executor::context::GitHubScope::Organization::name: alloc::string::String
+pub devboy_executor::context::GitHubScope::Repository
+pub devboy_executor::context::GitHubScope::Repository::owner: alloc::string::String
+pub devboy_executor::context::GitHubScope::Repository::repo: alloc::string::String
+impl core::clone::Clone for devboy_executor::context::GitHubScope
+pub fn devboy_executor::context::GitHubScope::clone(&self) -> devboy_executor::context::GitHubScope
+impl core::fmt::Debug for devboy_executor::context::GitHubScope
+pub fn devboy_executor::context::GitHubScope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::GitHubScope
+pub fn devboy_executor::context::GitHubScope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::GitHubScope
+pub fn devboy_executor::context::GitHubScope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::GitHubScope
+impl core::marker::Send for devboy_executor::context::GitHubScope
+impl core::marker::Sync for devboy_executor::context::GitHubScope
+impl core::marker::Unpin for devboy_executor::context::GitHubScope
+impl core::marker::UnsafeUnpin for devboy_executor::context::GitHubScope
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::GitHubScope
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::GitHubScope
+pub enum devboy_executor::context::GitLabScope
+pub devboy_executor::context::GitLabScope::Global
+pub devboy_executor::context::GitLabScope::Group
+pub devboy_executor::context::GitLabScope::Group::id: alloc::string::String
+pub devboy_executor::context::GitLabScope::Project
+pub devboy_executor::context::GitLabScope::Project::id: alloc::string::String
+impl core::clone::Clone for devboy_executor::context::GitLabScope
+pub fn devboy_executor::context::GitLabScope::clone(&self) -> devboy_executor::context::GitLabScope
+impl core::fmt::Debug for devboy_executor::context::GitLabScope
+pub fn devboy_executor::context::GitLabScope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::GitLabScope
+pub fn devboy_executor::context::GitLabScope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::GitLabScope
+pub fn devboy_executor::context::GitLabScope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::GitLabScope
+impl core::marker::Send for devboy_executor::context::GitLabScope
+impl core::marker::Sync for devboy_executor::context::GitLabScope
+impl core::marker::Unpin for devboy_executor::context::GitLabScope
+impl core::marker::UnsafeUnpin for devboy_executor::context::GitLabScope
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::GitLabScope
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::GitLabScope
+pub enum devboy_executor::context::JiraScope
+pub devboy_executor::context::JiraScope::MultiProject
+pub devboy_executor::context::JiraScope::MultiProject::keys: alloc::vec::Vec<alloc::string::String>
+pub devboy_executor::context::JiraScope::Project
+pub devboy_executor::context::JiraScope::Project::key: alloc::string::String
+impl core::clone::Clone for devboy_executor::context::JiraScope
+pub fn devboy_executor::context::JiraScope::clone(&self) -> devboy_executor::context::JiraScope
+impl core::fmt::Debug for devboy_executor::context::JiraScope
+pub fn devboy_executor::context::JiraScope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::JiraScope
+pub fn devboy_executor::context::JiraScope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::JiraScope
+pub fn devboy_executor::context::JiraScope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::JiraScope
+impl core::marker::Send for devboy_executor::context::JiraScope
+impl core::marker::Sync for devboy_executor::context::JiraScope
+impl core::marker::Unpin for devboy_executor::context::JiraScope
+impl core::marker::UnsafeUnpin for devboy_executor::context::JiraScope
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::JiraScope
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::JiraScope
+pub enum devboy_executor::context::ProviderConfig
+pub devboy_executor::context::ProviderConfig::ClickUp
+pub devboy_executor::context::ProviderConfig::ClickUp::access_token: secrecy::SecretString
+pub devboy_executor::context::ProviderConfig::ClickUp::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::context::ProviderConfig::ClickUp::scope: devboy_executor::context::ClickUpScope
+pub devboy_executor::context::ProviderConfig::Confluence
+pub devboy_executor::context::ProviderConfig::Confluence::api_version: core::option::Option<alloc::string::String>
+pub devboy_executor::context::ProviderConfig::Confluence::auth: devboy_executor::context::ConfluenceAuthConfig
+pub devboy_executor::context::ProviderConfig::Confluence::base_url: alloc::string::String
+pub devboy_executor::context::ProviderConfig::Confluence::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::context::ProviderConfig::Confluence::scope: devboy_executor::context::ConfluenceScope
+pub devboy_executor::context::ProviderConfig::Custom
+pub devboy_executor::context::ProviderConfig::Custom::config: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::context::ProviderConfig::Custom::name: alloc::string::String
+pub devboy_executor::context::ProviderConfig::Fireflies
+pub devboy_executor::context::ProviderConfig::Fireflies::api_key: secrecy::SecretString
+pub devboy_executor::context::ProviderConfig::Fireflies::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::context::ProviderConfig::GitHub
+pub devboy_executor::context::ProviderConfig::GitHub::access_token: secrecy::SecretString
+pub devboy_executor::context::ProviderConfig::GitHub::base_url: alloc::string::String
+pub devboy_executor::context::ProviderConfig::GitHub::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::context::ProviderConfig::GitHub::scope: devboy_executor::context::GitHubScope
+pub devboy_executor::context::ProviderConfig::GitLab
+pub devboy_executor::context::ProviderConfig::GitLab::access_token: secrecy::SecretString
+pub devboy_executor::context::ProviderConfig::GitLab::base_url: alloc::string::String
+pub devboy_executor::context::ProviderConfig::GitLab::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::context::ProviderConfig::GitLab::scope: devboy_executor::context::GitLabScope
+pub devboy_executor::context::ProviderConfig::Jira
+pub devboy_executor::context::ProviderConfig::Jira::access_token: secrecy::SecretString
+pub devboy_executor::context::ProviderConfig::Jira::base_url: alloc::string::String
+pub devboy_executor::context::ProviderConfig::Jira::email: alloc::string::String
+pub devboy_executor::context::ProviderConfig::Jira::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::context::ProviderConfig::Jira::flavor: core::option::Option<devboy_jira::client::JiraFlavor>
+pub devboy_executor::context::ProviderConfig::Jira::scope: devboy_executor::context::JiraScope
+pub devboy_executor::context::ProviderConfig::Slack
+pub devboy_executor::context::ProviderConfig::Slack::access_token: secrecy::SecretString
+pub devboy_executor::context::ProviderConfig::Slack::base_url: alloc::string::String
+pub devboy_executor::context::ProviderConfig::Slack::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::context::ProviderConfig::Slack::required_scopes: alloc::vec::Vec<alloc::string::String>
+pub devboy_executor::context::ProviderConfig::Slack::scope: devboy_executor::context::SlackScope
+impl devboy_executor::context::ProviderConfig
+pub fn devboy_executor::context::ProviderConfig::provider_name(&self) -> &str
+impl core::clone::Clone for devboy_executor::context::ProviderConfig
+pub fn devboy_executor::context::ProviderConfig::clone(&self) -> devboy_executor::context::ProviderConfig
+impl core::fmt::Debug for devboy_executor::context::ProviderConfig
+pub fn devboy_executor::context::ProviderConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_executor::context::ProviderConfig
+impl core::marker::Send for devboy_executor::context::ProviderConfig
+impl core::marker::Sync for devboy_executor::context::ProviderConfig
+impl core::marker::Unpin for devboy_executor::context::ProviderConfig
+impl core::marker::UnsafeUnpin for devboy_executor::context::ProviderConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::ProviderConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::ProviderConfig
+pub enum devboy_executor::context::SlackScope
+pub devboy_executor::context::SlackScope::Workspace
+pub devboy_executor::context::SlackScope::Workspace::team_id: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_executor::context::SlackScope
+pub fn devboy_executor::context::SlackScope::clone(&self) -> devboy_executor::context::SlackScope
+impl core::fmt::Debug for devboy_executor::context::SlackScope
+pub fn devboy_executor::context::SlackScope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::SlackScope
+pub fn devboy_executor::context::SlackScope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::SlackScope
+pub fn devboy_executor::context::SlackScope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::SlackScope
+impl core::marker::Send for devboy_executor::context::SlackScope
+impl core::marker::Sync for devboy_executor::context::SlackScope
+impl core::marker::Unpin for devboy_executor::context::SlackScope
+impl core::marker::UnsafeUnpin for devboy_executor::context::SlackScope
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::SlackScope
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::SlackScope
+pub struct devboy_executor::context::AdditionalContext
+pub devboy_executor::context::AdditionalContext::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::context::AdditionalContext::metadata: core::option::Option<devboy_executor::context::ProviderMetadata>
+pub devboy_executor::context::AdditionalContext::provider: devboy_executor::context::ProviderConfig
+pub devboy_executor::context::AdditionalContext::proxy: core::option::Option<devboy_executor::context::ProxyConfig>
+impl core::clone::Clone for devboy_executor::context::AdditionalContext
+pub fn devboy_executor::context::AdditionalContext::clone(&self) -> devboy_executor::context::AdditionalContext
+impl core::fmt::Debug for devboy_executor::context::AdditionalContext
+pub fn devboy_executor::context::AdditionalContext::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_executor::context::AdditionalContext
+impl core::marker::Send for devboy_executor::context::AdditionalContext
+impl core::marker::Sync for devboy_executor::context::AdditionalContext
+impl core::marker::Unpin for devboy_executor::context::AdditionalContext
+impl core::marker::UnsafeUnpin for devboy_executor::context::AdditionalContext
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::AdditionalContext
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::AdditionalContext
+pub struct devboy_executor::context::ProviderMetadata
+pub devboy_executor::context::ProviderMetadata::data: serde_json::value::Value
+impl devboy_executor::context::ProviderMetadata
+pub fn devboy_executor::context::ProviderMetadata::new(data: serde_json::value::Value) -> Self
+impl core::clone::Clone for devboy_executor::context::ProviderMetadata
+pub fn devboy_executor::context::ProviderMetadata::clone(&self) -> devboy_executor::context::ProviderMetadata
+impl core::fmt::Debug for devboy_executor::context::ProviderMetadata
+pub fn devboy_executor::context::ProviderMetadata::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::ProviderMetadata
+pub fn devboy_executor::context::ProviderMetadata::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::ProviderMetadata
+pub fn devboy_executor::context::ProviderMetadata::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::ProviderMetadata
+impl core::marker::Send for devboy_executor::context::ProviderMetadata
+impl core::marker::Sync for devboy_executor::context::ProviderMetadata
+impl core::marker::Unpin for devboy_executor::context::ProviderMetadata
+impl core::marker::UnsafeUnpin for devboy_executor::context::ProviderMetadata
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::ProviderMetadata
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::ProviderMetadata
+pub struct devboy_executor::context::ProxyConfig
+pub devboy_executor::context::ProxyConfig::headers: std::collections::hash::map::HashMap<alloc::string::String, alloc::string::String>
+pub devboy_executor::context::ProxyConfig::url: alloc::string::String
+impl core::clone::Clone for devboy_executor::context::ProxyConfig
+pub fn devboy_executor::context::ProxyConfig::clone(&self) -> devboy_executor::context::ProxyConfig
+impl core::fmt::Debug for devboy_executor::context::ProxyConfig
+pub fn devboy_executor::context::ProxyConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::ProxyConfig
+pub fn devboy_executor::context::ProxyConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::ProxyConfig
+pub fn devboy_executor::context::ProxyConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::ProxyConfig
+impl core::marker::Send for devboy_executor::context::ProxyConfig
+impl core::marker::Sync for devboy_executor::context::ProxyConfig
+impl core::marker::Unpin for devboy_executor::context::ProxyConfig
+impl core::marker::UnsafeUnpin for devboy_executor::context::ProxyConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::ProxyConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::ProxyConfig
+pub mod devboy_executor::enricher
+pub use devboy_executor::enricher::Schema
+pub use devboy_executor::enricher::sanitize_field_name
+pub struct devboy_executor::enricher::FormatPipelineEnricher
+impl devboy_core::enricher::ToolEnricher for devboy_executor::enricher::FormatPipelineEnricher
+pub fn devboy_executor::enricher::FormatPipelineEnricher::enrich_schema(&self, tool_name: &str, schema: &mut devboy_core::enricher::ToolSchema)
+pub fn devboy_executor::enricher::FormatPipelineEnricher::supported_categories(&self) -> &[devboy_core::tool_category::ToolCategory]
+pub fn devboy_executor::enricher::FormatPipelineEnricher::transform_args(&self, _tool_name: &str, args: &mut serde_json::value::Value)
+impl core::marker::Freeze for devboy_executor::enricher::FormatPipelineEnricher
+impl core::marker::Send for devboy_executor::enricher::FormatPipelineEnricher
+impl core::marker::Sync for devboy_executor::enricher::FormatPipelineEnricher
+impl core::marker::Unpin for devboy_executor::enricher::FormatPipelineEnricher
+impl core::marker::UnsafeUnpin for devboy_executor::enricher::FormatPipelineEnricher
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::enricher::FormatPipelineEnricher
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::enricher::FormatPipelineEnricher
+pub type devboy_executor::enricher::PipelineFormatEnricher = devboy_executor::enricher::FormatPipelineEnricher
+pub mod devboy_executor::executor
+pub struct devboy_executor::executor::Executor
+impl devboy_executor::executor::Executor
+pub fn devboy_executor::executor::Executor::add_enricher(&mut self, enricher: alloc::boxed::Box<dyn devboy_core::enricher::ToolEnricher>)
+pub async fn devboy_executor::executor::Executor::execute(&self, tool: &str, args: serde_json::value::Value, ctx: &devboy_executor::context::AdditionalContext) -> devboy_core::error::Result<devboy_executor::output::ToolOutput>
+pub async fn devboy_executor::executor::Executor::execute_direct(&self, tool: &str, args: serde_json::value::Value, provider: &dyn devboy_core::provider::Provider) -> devboy_core::error::Result<devboy_executor::output::ToolOutput>
+pub async fn devboy_executor::executor::Executor::execute_direct_knowledge_base(&self, tool: &str, args: serde_json::value::Value, provider: &dyn devboy_core::provider::KnowledgeBaseProvider) -> devboy_core::error::Result<devboy_executor::output::ToolOutput>
+pub async fn devboy_executor::executor::Executor::execute_direct_meeting(&self, tool: &str, args: serde_json::value::Value, provider: &dyn devboy_core::provider::MeetingNotesProvider) -> devboy_core::error::Result<devboy_executor::output::ToolOutput>
+pub async fn devboy_executor::executor::Executor::execute_direct_messenger(&self, tool: &str, args: serde_json::value::Value, provider: &dyn devboy_core::provider::MessengerProvider) -> devboy_core::error::Result<devboy_executor::output::ToolOutput>
+pub fn devboy_executor::executor::Executor::list_tools(&self) -> alloc::vec::Vec<devboy_executor::tools::ToolDefinition>
+pub fn devboy_executor::executor::Executor::new() -> Self
+pub fn devboy_executor::executor::Executor::tool_category(tool: &str) -> core::option::Option<devboy_core::tool_category::ToolCategory>
+pub fn devboy_executor::executor::Executor::with_asset_manager(self, mgr: devboy_assets::manager::AssetManager) -> Self
+impl core::default::Default for devboy_executor::executor::Executor
+pub fn devboy_executor::executor::Executor::default() -> Self
+impl core::marker::Freeze for devboy_executor::executor::Executor
+impl core::marker::Send for devboy_executor::executor::Executor
+impl core::marker::Sync for devboy_executor::executor::Executor
+impl core::marker::Unpin for devboy_executor::executor::Executor
+impl core::marker::UnsafeUnpin for devboy_executor::executor::Executor
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_executor::executor::Executor
+impl !core::panic::unwind_safe::UnwindSafe for devboy_executor::executor::Executor
+pub const devboy_executor::executor::SUPPORTED_TOOLS: &[&str]
+pub mod devboy_executor::factory
+pub fn devboy_executor::factory::create_enricher(config: &devboy_executor::context::ProviderConfig, metadata: core::option::Option<&devboy_executor::context::ProviderMetadata>) -> core::option::Option<alloc::boxed::Box<dyn devboy_core::enricher::ToolEnricher>>
+pub fn devboy_executor::factory::create_knowledge_base_enricher(config: &devboy_executor::context::ProviderConfig) -> core::option::Option<alloc::boxed::Box<dyn devboy_core::enricher::ToolEnricher>>
+pub fn devboy_executor::factory::create_knowledge_base_provider(config: &devboy_executor::context::ProviderConfig, proxy: core::option::Option<&devboy_executor::context::ProxyConfig>) -> devboy_core::error::Result<alloc::boxed::Box<dyn devboy_core::provider::KnowledgeBaseProvider>>
+pub fn devboy_executor::factory::create_meeting_notes_provider(config: &devboy_executor::context::ProviderConfig) -> devboy_core::error::Result<alloc::boxed::Box<dyn devboy_core::provider::MeetingNotesProvider>>
+pub fn devboy_executor::factory::create_messenger_provider(config: &devboy_executor::context::ProviderConfig) -> devboy_core::error::Result<alloc::boxed::Box<dyn devboy_core::provider::MessengerProvider>>
+pub fn devboy_executor::factory::create_provider(config: &devboy_executor::context::ProviderConfig, proxy: core::option::Option<&devboy_executor::context::ProxyConfig>) -> devboy_core::error::Result<alloc::boxed::Box<dyn devboy_core::provider::Provider>>
+pub mod devboy_executor::format
+pub struct devboy_executor::format::FormatMetadata
+pub devboy_executor::format::FormatMetadata::baseline: alloc::string::String
+pub devboy_executor::format::FormatMetadata::chunk_number: usize
+pub devboy_executor::format::FormatMetadata::chunked: bool
+pub devboy_executor::format::FormatMetadata::combined_savings_pct: f32
+pub devboy_executor::format::FormatMetadata::compression_ratio: f32
+pub devboy_executor::format::FormatMetadata::dedup_savings_pct: f32
+pub devboy_executor::format::FormatMetadata::encoder_savings_pct: f32
+pub devboy_executor::format::FormatMetadata::estimated_tokens: usize
+pub devboy_executor::format::FormatMetadata::format: alloc::string::String
+pub devboy_executor::format::FormatMetadata::included_items: usize
+pub devboy_executor::format::FormatMetadata::output_chars: usize
+pub devboy_executor::format::FormatMetadata::pre_trim_chars: usize
+pub devboy_executor::format::FormatMetadata::provider_pagination: core::option::Option<devboy_core::types::Pagination>
+pub devboy_executor::format::FormatMetadata::provider_sort: core::option::Option<devboy_core::types::SortInfo>
+pub devboy_executor::format::FormatMetadata::raw_chars: usize
+pub devboy_executor::format::FormatMetadata::tokenizer: alloc::string::String
+pub devboy_executor::format::FormatMetadata::total_chunks: usize
+pub devboy_executor::format::FormatMetadata::total_items: core::option::Option<usize>
+pub devboy_executor::format::FormatMetadata::truncated: bool
+impl core::clone::Clone for devboy_executor::format::FormatMetadata
+pub fn devboy_executor::format::FormatMetadata::clone(&self) -> devboy_executor::format::FormatMetadata
+impl core::fmt::Debug for devboy_executor::format::FormatMetadata
+pub fn devboy_executor::format::FormatMetadata::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::format::FormatMetadata
+pub fn devboy_executor::format::FormatMetadata::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_executor::format::FormatMetadata
+impl core::marker::Send for devboy_executor::format::FormatMetadata
+impl core::marker::Sync for devboy_executor::format::FormatMetadata
+impl core::marker::Unpin for devboy_executor::format::FormatMetadata
+impl core::marker::UnsafeUnpin for devboy_executor::format::FormatMetadata
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::format::FormatMetadata
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::format::FormatMetadata
+pub struct devboy_executor::format::FormatResult
+pub devboy_executor::format::FormatResult::content: alloc::string::String
+pub devboy_executor::format::FormatResult::metadata: devboy_executor::format::FormatMetadata
+impl core::clone::Clone for devboy_executor::format::FormatResult
+pub fn devboy_executor::format::FormatResult::clone(&self) -> devboy_executor::format::FormatResult
+impl core::fmt::Debug for devboy_executor::format::FormatResult
+pub fn devboy_executor::format::FormatResult::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::format::FormatResult
+pub fn devboy_executor::format::FormatResult::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_executor::format::FormatResult
+impl core::marker::Send for devboy_executor::format::FormatResult
+impl core::marker::Sync for devboy_executor::format::FormatResult
+impl core::marker::Unpin for devboy_executor::format::FormatResult
+impl core::marker::UnsafeUnpin for devboy_executor::format::FormatResult
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::format::FormatResult
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::format::FormatResult
+pub async fn devboy_executor::format::execute_and_format(executor: &devboy_executor::executor::Executor, tool: &str, args: serde_json::value::Value, ctx: &devboy_executor::context::AdditionalContext, pipeline_config: core::option::Option<devboy_format_pipeline::PipelineConfig>) -> devboy_core::error::Result<devboy_executor::format::FormatResult>
+pub fn devboy_executor::format::format_output(output: devboy_executor::output::ToolOutput, format: core::option::Option<&str>, _tool_name: core::option::Option<&str>, config: core::option::Option<devboy_format_pipeline::PipelineConfig>) -> devboy_core::error::Result<devboy_executor::format::FormatResult>
+pub mod devboy_executor::output
+pub enum devboy_executor::output::ToolOutput
+pub devboy_executor::output::ToolOutput::AssetDeleted
+pub devboy_executor::output::ToolOutput::AssetDeleted::asset_id: alloc::string::String
+pub devboy_executor::output::ToolOutput::AssetDeleted::message: alloc::string::String
+pub devboy_executor::output::ToolOutput::AssetDownloaded
+pub devboy_executor::output::ToolOutput::AssetDownloaded::asset_id: alloc::string::String
+pub devboy_executor::output::ToolOutput::AssetDownloaded::cached: bool
+pub devboy_executor::output::ToolOutput::AssetDownloaded::data: core::option::Option<alloc::string::String>
+pub devboy_executor::output::ToolOutput::AssetDownloaded::local_path: core::option::Option<alloc::string::String>
+pub devboy_executor::output::ToolOutput::AssetDownloaded::size: usize
+pub devboy_executor::output::ToolOutput::AssetList
+pub devboy_executor::output::ToolOutput::AssetList::attachments: alloc::vec::Vec<serde_json::value::Value>
+pub devboy_executor::output::ToolOutput::AssetList::capabilities: serde_json::value::Value
+pub devboy_executor::output::ToolOutput::AssetList::count: usize
+pub devboy_executor::output::ToolOutput::AssetUploaded
+pub devboy_executor::output::ToolOutput::AssetUploaded::filename: alloc::string::String
+pub devboy_executor::output::ToolOutput::AssetUploaded::size: usize
+pub devboy_executor::output::ToolOutput::AssetUploaded::url: alloc::string::String
+pub devboy_executor::output::ToolOutput::Comments(alloc::vec::Vec<devboy_core::types::Comment>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::output::ToolOutput::Diffs(alloc::vec::Vec<devboy_core::types::FileDiff>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::output::ToolOutput::Discussions(alloc::vec::Vec<devboy_core::types::Discussion>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::output::ToolOutput::ForestModified(devboy_core::types::ForestModifyResult)
+pub devboy_executor::output::ToolOutput::Issues(alloc::vec::Vec<devboy_core::types::Issue>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::output::ToolOutput::JobLog(alloc::boxed::Box<devboy_core::types::JobLogOutput>)
+pub devboy_executor::output::ToolOutput::KnowledgeBasePage(alloc::boxed::Box<devboy_core::types::KbPageContent>)
+pub devboy_executor::output::ToolOutput::KnowledgeBasePageSummary(alloc::boxed::Box<devboy_core::types::KbPage>)
+pub devboy_executor::output::ToolOutput::KnowledgeBasePages(alloc::vec::Vec<devboy_core::types::KbPage>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::output::ToolOutput::KnowledgeBaseSpaces(alloc::vec::Vec<devboy_core::types::KbSpace>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::output::ToolOutput::MeetingNotes(alloc::vec::Vec<devboy_core::types::MeetingNote>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::output::ToolOutput::MeetingTranscript(alloc::boxed::Box<devboy_core::types::MeetingTranscript>)
+pub devboy_executor::output::ToolOutput::MergeRequests(alloc::vec::Vec<devboy_core::types::MergeRequest>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::output::ToolOutput::MessengerChats(alloc::vec::Vec<devboy_core::types::MessengerChat>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::output::ToolOutput::MessengerMessages(alloc::vec::Vec<devboy_core::types::MessengerMessage>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::output::ToolOutput::Pipeline(alloc::boxed::Box<devboy_core::types::PipelineInfo>)
+pub devboy_executor::output::ToolOutput::ProjectVersions(alloc::vec::Vec<devboy_core::types::ProjectVersion>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::output::ToolOutput::Relations(alloc::boxed::Box<devboy_core::types::IssueRelations>)
+pub devboy_executor::output::ToolOutput::SingleIssue(alloc::boxed::Box<devboy_core::types::Issue>)
+pub devboy_executor::output::ToolOutput::SingleMergeRequest(alloc::boxed::Box<devboy_core::types::MergeRequest>)
+pub devboy_executor::output::ToolOutput::SingleMessage(alloc::boxed::Box<devboy_core::types::MessengerMessage>)
+pub devboy_executor::output::ToolOutput::SingleProjectVersion(alloc::boxed::Box<devboy_core::types::ProjectVersion>)
+pub devboy_executor::output::ToolOutput::Statuses(alloc::vec::Vec<devboy_core::types::IssueStatus>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::output::ToolOutput::StructureForest(alloc::boxed::Box<devboy_core::types::StructureForest>)
+pub devboy_executor::output::ToolOutput::StructureValues(alloc::boxed::Box<devboy_core::types::StructureValues>)
+pub devboy_executor::output::ToolOutput::StructureViews(alloc::vec::Vec<devboy_core::types::StructureView>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::output::ToolOutput::Structures(alloc::vec::Vec<devboy_core::types::Structure>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::output::ToolOutput::Text(alloc::string::String)
+pub devboy_executor::output::ToolOutput::Users(alloc::vec::Vec<devboy_core::types::User>, core::option::Option<devboy_executor::output::ResultMeta>)
+impl devboy_executor::output::ToolOutput
+pub fn devboy_executor::output::ToolOutput::item_count(&self) -> usize
+pub fn devboy_executor::output::ToolOutput::result_meta(&self) -> core::option::Option<&devboy_executor::output::ResultMeta>
+pub fn devboy_executor::output::ToolOutput::type_name(&self) -> &'static str
+impl core::fmt::Debug for devboy_executor::output::ToolOutput
+pub fn devboy_executor::output::ToolOutput::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_executor::output::ToolOutput
+impl core::marker::Send for devboy_executor::output::ToolOutput
+impl core::marker::Sync for devboy_executor::output::ToolOutput
+impl core::marker::Unpin for devboy_executor::output::ToolOutput
+impl core::marker::UnsafeUnpin for devboy_executor::output::ToolOutput
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::output::ToolOutput
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::output::ToolOutput
+pub struct devboy_executor::output::ResultMeta
+pub devboy_executor::output::ResultMeta::pagination: core::option::Option<devboy_core::types::Pagination>
+pub devboy_executor::output::ResultMeta::sort_info: core::option::Option<devboy_core::types::SortInfo>
+impl core::clone::Clone for devboy_executor::output::ResultMeta
+pub fn devboy_executor::output::ResultMeta::clone(&self) -> devboy_executor::output::ResultMeta
+impl core::default::Default for devboy_executor::output::ResultMeta
+pub fn devboy_executor::output::ResultMeta::default() -> devboy_executor::output::ResultMeta
+impl core::fmt::Debug for devboy_executor::output::ResultMeta
+pub fn devboy_executor::output::ResultMeta::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_executor::output::ResultMeta
+impl core::marker::Send for devboy_executor::output::ResultMeta
+impl core::marker::Sync for devboy_executor::output::ResultMeta
+impl core::marker::Unpin for devboy_executor::output::ResultMeta
+impl core::marker::UnsafeUnpin for devboy_executor::output::ResultMeta
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::output::ResultMeta
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::output::ResultMeta
+pub mod devboy_executor::tool_docs
+pub enum devboy_executor::tool_docs::DocsFormat
+pub devboy_executor::tool_docs::DocsFormat::Json
+pub devboy_executor::tool_docs::DocsFormat::Markdown
+impl core::clone::Clone for devboy_executor::tool_docs::DocsFormat
+pub fn devboy_executor::tool_docs::DocsFormat::clone(&self) -> devboy_executor::tool_docs::DocsFormat
+impl core::cmp::Eq for devboy_executor::tool_docs::DocsFormat
+impl core::cmp::PartialEq for devboy_executor::tool_docs::DocsFormat
+pub fn devboy_executor::tool_docs::DocsFormat::eq(&self, other: &devboy_executor::tool_docs::DocsFormat) -> bool
+impl core::fmt::Debug for devboy_executor::tool_docs::DocsFormat
+pub fn devboy_executor::tool_docs::DocsFormat::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_executor::tool_docs::DocsFormat
+impl core::marker::StructuralPartialEq for devboy_executor::tool_docs::DocsFormat
+impl core::marker::Freeze for devboy_executor::tool_docs::DocsFormat
+impl core::marker::Send for devboy_executor::tool_docs::DocsFormat
+impl core::marker::Sync for devboy_executor::tool_docs::DocsFormat
+impl core::marker::Unpin for devboy_executor::tool_docs::DocsFormat
+impl core::marker::UnsafeUnpin for devboy_executor::tool_docs::DocsFormat
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::tool_docs::DocsFormat
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::tool_docs::DocsFormat
+pub struct devboy_executor::tool_docs::ConditionalCategory
+pub devboy_executor::tool_docs::ConditionalCategory::category: devboy_core::tool_category::ToolCategory
+pub devboy_executor::tool_docs::ConditionalCategory::note: &'static str
+impl core::clone::Clone for devboy_executor::tool_docs::ConditionalCategory
+pub fn devboy_executor::tool_docs::ConditionalCategory::clone(&self) -> devboy_executor::tool_docs::ConditionalCategory
+impl core::fmt::Debug for devboy_executor::tool_docs::ConditionalCategory
+pub fn devboy_executor::tool_docs::ConditionalCategory::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_executor::tool_docs::ConditionalCategory
+impl core::marker::Freeze for devboy_executor::tool_docs::ConditionalCategory
+impl core::marker::Send for devboy_executor::tool_docs::ConditionalCategory
+impl core::marker::Sync for devboy_executor::tool_docs::ConditionalCategory
+impl core::marker::Unpin for devboy_executor::tool_docs::ConditionalCategory
+impl core::marker::UnsafeUnpin for devboy_executor::tool_docs::ConditionalCategory
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::tool_docs::ConditionalCategory
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::tool_docs::ConditionalCategory
+pub struct devboy_executor::tool_docs::ProviderInfo
+pub devboy_executor::tool_docs::ProviderInfo::conditional_categories: &'static [devboy_executor::tool_docs::ConditionalCategory]
+pub devboy_executor::tool_docs::ProviderInfo::default_categories: &'static [devboy_core::tool_category::ToolCategory]
+pub devboy_executor::tool_docs::ProviderInfo::display_name: &'static str
+pub devboy_executor::tool_docs::ProviderInfo::key: &'static str
+impl core::clone::Clone for devboy_executor::tool_docs::ProviderInfo
+pub fn devboy_executor::tool_docs::ProviderInfo::clone(&self) -> devboy_executor::tool_docs::ProviderInfo
+impl core::fmt::Debug for devboy_executor::tool_docs::ProviderInfo
+pub fn devboy_executor::tool_docs::ProviderInfo::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_executor::tool_docs::ProviderInfo
+impl core::marker::Send for devboy_executor::tool_docs::ProviderInfo
+impl core::marker::Sync for devboy_executor::tool_docs::ProviderInfo
+impl core::marker::Unpin for devboy_executor::tool_docs::ProviderInfo
+impl core::marker::UnsafeUnpin for devboy_executor::tool_docs::ProviderInfo
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::tool_docs::ProviderInfo
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::tool_docs::ProviderInfo
+pub fn devboy_executor::tool_docs::known_providers() -> alloc::vec::Vec<devboy_executor::tool_docs::ProviderInfo>
+pub fn devboy_executor::tool_docs::render(format: devboy_executor::tool_docs::DocsFormat) -> alloc::string::String
+pub fn devboy_executor::tool_docs::render_json() -> serde_json::value::Value
+pub fn devboy_executor::tool_docs::render_markdown() -> alloc::string::String
+pub mod devboy_executor::tools
+pub struct devboy_executor::tools::McpOnlyTool
+pub devboy_executor::tools::McpOnlyTool::description: alloc::string::String
+pub devboy_executor::tools::McpOnlyTool::input_schema: devboy_core::enricher::ToolSchema
+pub devboy_executor::tools::McpOnlyTool::name: alloc::string::String
+impl core::clone::Clone for devboy_executor::tools::McpOnlyTool
+pub fn devboy_executor::tools::McpOnlyTool::clone(&self) -> devboy_executor::tools::McpOnlyTool
+impl core::fmt::Debug for devboy_executor::tools::McpOnlyTool
+pub fn devboy_executor::tools::McpOnlyTool::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_executor::tools::McpOnlyTool
+impl core::marker::Send for devboy_executor::tools::McpOnlyTool
+impl core::marker::Sync for devboy_executor::tools::McpOnlyTool
+impl core::marker::Unpin for devboy_executor::tools::McpOnlyTool
+impl core::marker::UnsafeUnpin for devboy_executor::tools::McpOnlyTool
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::tools::McpOnlyTool
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::tools::McpOnlyTool
+pub struct devboy_executor::tools::ToolDefinition
+pub devboy_executor::tools::ToolDefinition::category: devboy_core::tool_category::ToolCategory
+pub devboy_executor::tools::ToolDefinition::description: alloc::string::String
+pub devboy_executor::tools::ToolDefinition::input_schema: devboy_core::enricher::ToolSchema
+pub devboy_executor::tools::ToolDefinition::name: alloc::string::String
+impl core::clone::Clone for devboy_executor::tools::ToolDefinition
+pub fn devboy_executor::tools::ToolDefinition::clone(&self) -> devboy_executor::tools::ToolDefinition
+impl core::fmt::Debug for devboy_executor::tools::ToolDefinition
+pub fn devboy_executor::tools::ToolDefinition::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::tools::ToolDefinition
+pub fn devboy_executor::tools::ToolDefinition::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_executor::tools::ToolDefinition
+impl core::marker::Send for devboy_executor::tools::ToolDefinition
+impl core::marker::Sync for devboy_executor::tools::ToolDefinition
+impl core::marker::Unpin for devboy_executor::tools::ToolDefinition
+impl core::marker::UnsafeUnpin for devboy_executor::tools::ToolDefinition
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::tools::ToolDefinition
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::tools::ToolDefinition
+pub fn devboy_executor::tools::base_tool_definitions() -> alloc::vec::Vec<devboy_executor::tools::ToolDefinition>
+pub fn devboy_executor::tools::mcp_only_tools() -> alloc::vec::Vec<devboy_executor::tools::McpOnlyTool>
+pub enum devboy_executor::ClickUpScope
+pub devboy_executor::ClickUpScope::List
+pub devboy_executor::ClickUpScope::List::id: alloc::string::String
+pub devboy_executor::ClickUpScope::List::team_id: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_executor::context::ClickUpScope
+pub fn devboy_executor::context::ClickUpScope::clone(&self) -> devboy_executor::context::ClickUpScope
+impl core::fmt::Debug for devboy_executor::context::ClickUpScope
+pub fn devboy_executor::context::ClickUpScope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::ClickUpScope
+pub fn devboy_executor::context::ClickUpScope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::ClickUpScope
+pub fn devboy_executor::context::ClickUpScope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::ClickUpScope
+impl core::marker::Send for devboy_executor::context::ClickUpScope
+impl core::marker::Sync for devboy_executor::context::ClickUpScope
+impl core::marker::Unpin for devboy_executor::context::ClickUpScope
+impl core::marker::UnsafeUnpin for devboy_executor::context::ClickUpScope
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::ClickUpScope
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::ClickUpScope
+pub enum devboy_executor::ConfluenceAuthConfig
+pub devboy_executor::ConfluenceAuthConfig::Basic
+pub devboy_executor::ConfluenceAuthConfig::Basic::password: secrecy::SecretString
+pub devboy_executor::ConfluenceAuthConfig::Basic::username: alloc::string::String
+pub devboy_executor::ConfluenceAuthConfig::BearerToken
+pub devboy_executor::ConfluenceAuthConfig::BearerToken::token: secrecy::SecretString
+impl core::clone::Clone for devboy_executor::context::ConfluenceAuthConfig
+pub fn devboy_executor::context::ConfluenceAuthConfig::clone(&self) -> devboy_executor::context::ConfluenceAuthConfig
+impl core::fmt::Debug for devboy_executor::context::ConfluenceAuthConfig
+pub fn devboy_executor::context::ConfluenceAuthConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_executor::context::ConfluenceAuthConfig
+impl core::marker::Send for devboy_executor::context::ConfluenceAuthConfig
+impl core::marker::Sync for devboy_executor::context::ConfluenceAuthConfig
+impl core::marker::Unpin for devboy_executor::context::ConfluenceAuthConfig
+impl core::marker::UnsafeUnpin for devboy_executor::context::ConfluenceAuthConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::ConfluenceAuthConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::ConfluenceAuthConfig
+pub enum devboy_executor::ConfluenceScope
+pub devboy_executor::ConfluenceScope::Space
+pub devboy_executor::ConfluenceScope::Space::key: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_executor::context::ConfluenceScope
+pub fn devboy_executor::context::ConfluenceScope::clone(&self) -> devboy_executor::context::ConfluenceScope
+impl core::fmt::Debug for devboy_executor::context::ConfluenceScope
+pub fn devboy_executor::context::ConfluenceScope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::ConfluenceScope
+pub fn devboy_executor::context::ConfluenceScope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::ConfluenceScope
+pub fn devboy_executor::context::ConfluenceScope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::ConfluenceScope
+impl core::marker::Send for devboy_executor::context::ConfluenceScope
+impl core::marker::Sync for devboy_executor::context::ConfluenceScope
+impl core::marker::Unpin for devboy_executor::context::ConfluenceScope
+impl core::marker::UnsafeUnpin for devboy_executor::context::ConfluenceScope
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::ConfluenceScope
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::ConfluenceScope
+pub enum devboy_executor::GitHubScope
+pub devboy_executor::GitHubScope::Global
+pub devboy_executor::GitHubScope::Organization
+pub devboy_executor::GitHubScope::Organization::name: alloc::string::String
+pub devboy_executor::GitHubScope::Repository
+pub devboy_executor::GitHubScope::Repository::owner: alloc::string::String
+pub devboy_executor::GitHubScope::Repository::repo: alloc::string::String
+impl core::clone::Clone for devboy_executor::context::GitHubScope
+pub fn devboy_executor::context::GitHubScope::clone(&self) -> devboy_executor::context::GitHubScope
+impl core::fmt::Debug for devboy_executor::context::GitHubScope
+pub fn devboy_executor::context::GitHubScope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::GitHubScope
+pub fn devboy_executor::context::GitHubScope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::GitHubScope
+pub fn devboy_executor::context::GitHubScope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::GitHubScope
+impl core::marker::Send for devboy_executor::context::GitHubScope
+impl core::marker::Sync for devboy_executor::context::GitHubScope
+impl core::marker::Unpin for devboy_executor::context::GitHubScope
+impl core::marker::UnsafeUnpin for devboy_executor::context::GitHubScope
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::GitHubScope
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::GitHubScope
+pub enum devboy_executor::GitLabScope
+pub devboy_executor::GitLabScope::Global
+pub devboy_executor::GitLabScope::Group
+pub devboy_executor::GitLabScope::Group::id: alloc::string::String
+pub devboy_executor::GitLabScope::Project
+pub devboy_executor::GitLabScope::Project::id: alloc::string::String
+impl core::clone::Clone for devboy_executor::context::GitLabScope
+pub fn devboy_executor::context::GitLabScope::clone(&self) -> devboy_executor::context::GitLabScope
+impl core::fmt::Debug for devboy_executor::context::GitLabScope
+pub fn devboy_executor::context::GitLabScope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::GitLabScope
+pub fn devboy_executor::context::GitLabScope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::GitLabScope
+pub fn devboy_executor::context::GitLabScope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::GitLabScope
+impl core::marker::Send for devboy_executor::context::GitLabScope
+impl core::marker::Sync for devboy_executor::context::GitLabScope
+impl core::marker::Unpin for devboy_executor::context::GitLabScope
+impl core::marker::UnsafeUnpin for devboy_executor::context::GitLabScope
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::GitLabScope
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::GitLabScope
+pub enum devboy_executor::JiraScope
+pub devboy_executor::JiraScope::MultiProject
+pub devboy_executor::JiraScope::MultiProject::keys: alloc::vec::Vec<alloc::string::String>
+pub devboy_executor::JiraScope::Project
+pub devboy_executor::JiraScope::Project::key: alloc::string::String
+impl core::clone::Clone for devboy_executor::context::JiraScope
+pub fn devboy_executor::context::JiraScope::clone(&self) -> devboy_executor::context::JiraScope
+impl core::fmt::Debug for devboy_executor::context::JiraScope
+pub fn devboy_executor::context::JiraScope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::JiraScope
+pub fn devboy_executor::context::JiraScope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::JiraScope
+pub fn devboy_executor::context::JiraScope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::JiraScope
+impl core::marker::Send for devboy_executor::context::JiraScope
+impl core::marker::Sync for devboy_executor::context::JiraScope
+impl core::marker::Unpin for devboy_executor::context::JiraScope
+impl core::marker::UnsafeUnpin for devboy_executor::context::JiraScope
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::JiraScope
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::JiraScope
+pub enum devboy_executor::ProviderConfig
+pub devboy_executor::ProviderConfig::ClickUp
+pub devboy_executor::ProviderConfig::ClickUp::access_token: secrecy::SecretString
+pub devboy_executor::ProviderConfig::ClickUp::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::ProviderConfig::ClickUp::scope: devboy_executor::context::ClickUpScope
+pub devboy_executor::ProviderConfig::Confluence
+pub devboy_executor::ProviderConfig::Confluence::api_version: core::option::Option<alloc::string::String>
+pub devboy_executor::ProviderConfig::Confluence::auth: devboy_executor::context::ConfluenceAuthConfig
+pub devboy_executor::ProviderConfig::Confluence::base_url: alloc::string::String
+pub devboy_executor::ProviderConfig::Confluence::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::ProviderConfig::Confluence::scope: devboy_executor::context::ConfluenceScope
+pub devboy_executor::ProviderConfig::Custom
+pub devboy_executor::ProviderConfig::Custom::config: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::ProviderConfig::Custom::name: alloc::string::String
+pub devboy_executor::ProviderConfig::Fireflies
+pub devboy_executor::ProviderConfig::Fireflies::api_key: secrecy::SecretString
+pub devboy_executor::ProviderConfig::Fireflies::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::ProviderConfig::GitHub
+pub devboy_executor::ProviderConfig::GitHub::access_token: secrecy::SecretString
+pub devboy_executor::ProviderConfig::GitHub::base_url: alloc::string::String
+pub devboy_executor::ProviderConfig::GitHub::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::ProviderConfig::GitHub::scope: devboy_executor::context::GitHubScope
+pub devboy_executor::ProviderConfig::GitLab
+pub devboy_executor::ProviderConfig::GitLab::access_token: secrecy::SecretString
+pub devboy_executor::ProviderConfig::GitLab::base_url: alloc::string::String
+pub devboy_executor::ProviderConfig::GitLab::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::ProviderConfig::GitLab::scope: devboy_executor::context::GitLabScope
+pub devboy_executor::ProviderConfig::Jira
+pub devboy_executor::ProviderConfig::Jira::access_token: secrecy::SecretString
+pub devboy_executor::ProviderConfig::Jira::base_url: alloc::string::String
+pub devboy_executor::ProviderConfig::Jira::email: alloc::string::String
+pub devboy_executor::ProviderConfig::Jira::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::ProviderConfig::Jira::flavor: core::option::Option<devboy_jira::client::JiraFlavor>
+pub devboy_executor::ProviderConfig::Jira::scope: devboy_executor::context::JiraScope
+pub devboy_executor::ProviderConfig::Slack
+pub devboy_executor::ProviderConfig::Slack::access_token: secrecy::SecretString
+pub devboy_executor::ProviderConfig::Slack::base_url: alloc::string::String
+pub devboy_executor::ProviderConfig::Slack::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::ProviderConfig::Slack::required_scopes: alloc::vec::Vec<alloc::string::String>
+pub devboy_executor::ProviderConfig::Slack::scope: devboy_executor::context::SlackScope
+impl devboy_executor::context::ProviderConfig
+pub fn devboy_executor::context::ProviderConfig::provider_name(&self) -> &str
+impl core::clone::Clone for devboy_executor::context::ProviderConfig
+pub fn devboy_executor::context::ProviderConfig::clone(&self) -> devboy_executor::context::ProviderConfig
+impl core::fmt::Debug for devboy_executor::context::ProviderConfig
+pub fn devboy_executor::context::ProviderConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_executor::context::ProviderConfig
+impl core::marker::Send for devboy_executor::context::ProviderConfig
+impl core::marker::Sync for devboy_executor::context::ProviderConfig
+impl core::marker::Unpin for devboy_executor::context::ProviderConfig
+impl core::marker::UnsafeUnpin for devboy_executor::context::ProviderConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::ProviderConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::ProviderConfig
+pub enum devboy_executor::ToolOutput
+pub devboy_executor::ToolOutput::AssetDeleted
+pub devboy_executor::ToolOutput::AssetDeleted::asset_id: alloc::string::String
+pub devboy_executor::ToolOutput::AssetDeleted::message: alloc::string::String
+pub devboy_executor::ToolOutput::AssetDownloaded
+pub devboy_executor::ToolOutput::AssetDownloaded::asset_id: alloc::string::String
+pub devboy_executor::ToolOutput::AssetDownloaded::cached: bool
+pub devboy_executor::ToolOutput::AssetDownloaded::data: core::option::Option<alloc::string::String>
+pub devboy_executor::ToolOutput::AssetDownloaded::local_path: core::option::Option<alloc::string::String>
+pub devboy_executor::ToolOutput::AssetDownloaded::size: usize
+pub devboy_executor::ToolOutput::AssetList
+pub devboy_executor::ToolOutput::AssetList::attachments: alloc::vec::Vec<serde_json::value::Value>
+pub devboy_executor::ToolOutput::AssetList::capabilities: serde_json::value::Value
+pub devboy_executor::ToolOutput::AssetList::count: usize
+pub devboy_executor::ToolOutput::AssetUploaded
+pub devboy_executor::ToolOutput::AssetUploaded::filename: alloc::string::String
+pub devboy_executor::ToolOutput::AssetUploaded::size: usize
+pub devboy_executor::ToolOutput::AssetUploaded::url: alloc::string::String
+pub devboy_executor::ToolOutput::Comments(alloc::vec::Vec<devboy_core::types::Comment>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::ToolOutput::Diffs(alloc::vec::Vec<devboy_core::types::FileDiff>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::ToolOutput::Discussions(alloc::vec::Vec<devboy_core::types::Discussion>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::ToolOutput::ForestModified(devboy_core::types::ForestModifyResult)
+pub devboy_executor::ToolOutput::Issues(alloc::vec::Vec<devboy_core::types::Issue>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::ToolOutput::JobLog(alloc::boxed::Box<devboy_core::types::JobLogOutput>)
+pub devboy_executor::ToolOutput::KnowledgeBasePage(alloc::boxed::Box<devboy_core::types::KbPageContent>)
+pub devboy_executor::ToolOutput::KnowledgeBasePageSummary(alloc::boxed::Box<devboy_core::types::KbPage>)
+pub devboy_executor::ToolOutput::KnowledgeBasePages(alloc::vec::Vec<devboy_core::types::KbPage>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::ToolOutput::KnowledgeBaseSpaces(alloc::vec::Vec<devboy_core::types::KbSpace>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::ToolOutput::MeetingNotes(alloc::vec::Vec<devboy_core::types::MeetingNote>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::ToolOutput::MeetingTranscript(alloc::boxed::Box<devboy_core::types::MeetingTranscript>)
+pub devboy_executor::ToolOutput::MergeRequests(alloc::vec::Vec<devboy_core::types::MergeRequest>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::ToolOutput::MessengerChats(alloc::vec::Vec<devboy_core::types::MessengerChat>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::ToolOutput::MessengerMessages(alloc::vec::Vec<devboy_core::types::MessengerMessage>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::ToolOutput::Pipeline(alloc::boxed::Box<devboy_core::types::PipelineInfo>)
+pub devboy_executor::ToolOutput::ProjectVersions(alloc::vec::Vec<devboy_core::types::ProjectVersion>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::ToolOutput::Relations(alloc::boxed::Box<devboy_core::types::IssueRelations>)
+pub devboy_executor::ToolOutput::SingleIssue(alloc::boxed::Box<devboy_core::types::Issue>)
+pub devboy_executor::ToolOutput::SingleMergeRequest(alloc::boxed::Box<devboy_core::types::MergeRequest>)
+pub devboy_executor::ToolOutput::SingleMessage(alloc::boxed::Box<devboy_core::types::MessengerMessage>)
+pub devboy_executor::ToolOutput::SingleProjectVersion(alloc::boxed::Box<devboy_core::types::ProjectVersion>)
+pub devboy_executor::ToolOutput::Statuses(alloc::vec::Vec<devboy_core::types::IssueStatus>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::ToolOutput::StructureForest(alloc::boxed::Box<devboy_core::types::StructureForest>)
+pub devboy_executor::ToolOutput::StructureValues(alloc::boxed::Box<devboy_core::types::StructureValues>)
+pub devboy_executor::ToolOutput::StructureViews(alloc::vec::Vec<devboy_core::types::StructureView>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::ToolOutput::Structures(alloc::vec::Vec<devboy_core::types::Structure>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::ToolOutput::Text(alloc::string::String)
+pub devboy_executor::ToolOutput::Users(alloc::vec::Vec<devboy_core::types::User>, core::option::Option<devboy_executor::output::ResultMeta>)
+impl devboy_executor::output::ToolOutput
+pub fn devboy_executor::output::ToolOutput::item_count(&self) -> usize
+pub fn devboy_executor::output::ToolOutput::result_meta(&self) -> core::option::Option<&devboy_executor::output::ResultMeta>
+pub fn devboy_executor::output::ToolOutput::type_name(&self) -> &'static str
+impl core::fmt::Debug for devboy_executor::output::ToolOutput
+pub fn devboy_executor::output::ToolOutput::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_executor::output::ToolOutput
+impl core::marker::Send for devboy_executor::output::ToolOutput
+impl core::marker::Sync for devboy_executor::output::ToolOutput
+impl core::marker::Unpin for devboy_executor::output::ToolOutput
+impl core::marker::UnsafeUnpin for devboy_executor::output::ToolOutput
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::output::ToolOutput
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::output::ToolOutput
+pub struct devboy_executor::AdditionalContext
+pub devboy_executor::AdditionalContext::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::AdditionalContext::metadata: core::option::Option<devboy_executor::context::ProviderMetadata>
+pub devboy_executor::AdditionalContext::provider: devboy_executor::context::ProviderConfig
+pub devboy_executor::AdditionalContext::proxy: core::option::Option<devboy_executor::context::ProxyConfig>
+impl core::clone::Clone for devboy_executor::context::AdditionalContext
+pub fn devboy_executor::context::AdditionalContext::clone(&self) -> devboy_executor::context::AdditionalContext
+impl core::fmt::Debug for devboy_executor::context::AdditionalContext
+pub fn devboy_executor::context::AdditionalContext::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_executor::context::AdditionalContext
+impl core::marker::Send for devboy_executor::context::AdditionalContext
+impl core::marker::Sync for devboy_executor::context::AdditionalContext
+impl core::marker::Unpin for devboy_executor::context::AdditionalContext
+impl core::marker::UnsafeUnpin for devboy_executor::context::AdditionalContext
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::AdditionalContext
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::AdditionalContext
+pub struct devboy_executor::Executor
+impl devboy_executor::executor::Executor
+pub fn devboy_executor::executor::Executor::add_enricher(&mut self, enricher: alloc::boxed::Box<dyn devboy_core::enricher::ToolEnricher>)
+pub async fn devboy_executor::executor::Executor::execute(&self, tool: &str, args: serde_json::value::Value, ctx: &devboy_executor::context::AdditionalContext) -> devboy_core::error::Result<devboy_executor::output::ToolOutput>
+pub async fn devboy_executor::executor::Executor::execute_direct(&self, tool: &str, args: serde_json::value::Value, provider: &dyn devboy_core::provider::Provider) -> devboy_core::error::Result<devboy_executor::output::ToolOutput>
+pub async fn devboy_executor::executor::Executor::execute_direct_knowledge_base(&self, tool: &str, args: serde_json::value::Value, provider: &dyn devboy_core::provider::KnowledgeBaseProvider) -> devboy_core::error::Result<devboy_executor::output::ToolOutput>
+pub async fn devboy_executor::executor::Executor::execute_direct_meeting(&self, tool: &str, args: serde_json::value::Value, provider: &dyn devboy_core::provider::MeetingNotesProvider) -> devboy_core::error::Result<devboy_executor::output::ToolOutput>
+pub async fn devboy_executor::executor::Executor::execute_direct_messenger(&self, tool: &str, args: serde_json::value::Value, provider: &dyn devboy_core::provider::MessengerProvider) -> devboy_core::error::Result<devboy_executor::output::ToolOutput>
+pub fn devboy_executor::executor::Executor::list_tools(&self) -> alloc::vec::Vec<devboy_executor::tools::ToolDefinition>
+pub fn devboy_executor::executor::Executor::new() -> Self
+pub fn devboy_executor::executor::Executor::tool_category(tool: &str) -> core::option::Option<devboy_core::tool_category::ToolCategory>
+pub fn devboy_executor::executor::Executor::with_asset_manager(self, mgr: devboy_assets::manager::AssetManager) -> Self
+impl core::default::Default for devboy_executor::executor::Executor
+pub fn devboy_executor::executor::Executor::default() -> Self
+impl core::marker::Freeze for devboy_executor::executor::Executor
+impl core::marker::Send for devboy_executor::executor::Executor
+impl core::marker::Sync for devboy_executor::executor::Executor
+impl core::marker::Unpin for devboy_executor::executor::Executor
+impl core::marker::UnsafeUnpin for devboy_executor::executor::Executor
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_executor::executor::Executor
+impl !core::panic::unwind_safe::UnwindSafe for devboy_executor::executor::Executor
+pub struct devboy_executor::FormatMetadata
+pub devboy_executor::FormatMetadata::baseline: alloc::string::String
+pub devboy_executor::FormatMetadata::chunk_number: usize
+pub devboy_executor::FormatMetadata::chunked: bool
+pub devboy_executor::FormatMetadata::combined_savings_pct: f32
+pub devboy_executor::FormatMetadata::compression_ratio: f32
+pub devboy_executor::FormatMetadata::dedup_savings_pct: f32
+pub devboy_executor::FormatMetadata::encoder_savings_pct: f32
+pub devboy_executor::FormatMetadata::estimated_tokens: usize
+pub devboy_executor::FormatMetadata::format: alloc::string::String
+pub devboy_executor::FormatMetadata::included_items: usize
+pub devboy_executor::FormatMetadata::output_chars: usize
+pub devboy_executor::FormatMetadata::pre_trim_chars: usize
+pub devboy_executor::FormatMetadata::provider_pagination: core::option::Option<devboy_core::types::Pagination>
+pub devboy_executor::FormatMetadata::provider_sort: core::option::Option<devboy_core::types::SortInfo>
+pub devboy_executor::FormatMetadata::raw_chars: usize
+pub devboy_executor::FormatMetadata::tokenizer: alloc::string::String
+pub devboy_executor::FormatMetadata::total_chunks: usize
+pub devboy_executor::FormatMetadata::total_items: core::option::Option<usize>
+pub devboy_executor::FormatMetadata::truncated: bool
+impl core::clone::Clone for devboy_executor::format::FormatMetadata
+pub fn devboy_executor::format::FormatMetadata::clone(&self) -> devboy_executor::format::FormatMetadata
+impl core::fmt::Debug for devboy_executor::format::FormatMetadata
+pub fn devboy_executor::format::FormatMetadata::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::format::FormatMetadata
+pub fn devboy_executor::format::FormatMetadata::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_executor::format::FormatMetadata
+impl core::marker::Send for devboy_executor::format::FormatMetadata
+impl core::marker::Sync for devboy_executor::format::FormatMetadata
+impl core::marker::Unpin for devboy_executor::format::FormatMetadata
+impl core::marker::UnsafeUnpin for devboy_executor::format::FormatMetadata
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::format::FormatMetadata
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::format::FormatMetadata
+pub struct devboy_executor::FormatResult
+pub devboy_executor::FormatResult::content: alloc::string::String
+pub devboy_executor::FormatResult::metadata: devboy_executor::format::FormatMetadata
+impl core::clone::Clone for devboy_executor::format::FormatResult
+pub fn devboy_executor::format::FormatResult::clone(&self) -> devboy_executor::format::FormatResult
+impl core::fmt::Debug for devboy_executor::format::FormatResult
+pub fn devboy_executor::format::FormatResult::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::format::FormatResult
+pub fn devboy_executor::format::FormatResult::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_executor::format::FormatResult
+impl core::marker::Send for devboy_executor::format::FormatResult
+impl core::marker::Sync for devboy_executor::format::FormatResult
+impl core::marker::Unpin for devboy_executor::format::FormatResult
+impl core::marker::UnsafeUnpin for devboy_executor::format::FormatResult
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::format::FormatResult
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::format::FormatResult
+pub struct devboy_executor::McpOnlyTool
+pub devboy_executor::McpOnlyTool::description: alloc::string::String
+pub devboy_executor::McpOnlyTool::input_schema: devboy_core::enricher::ToolSchema
+pub devboy_executor::McpOnlyTool::name: alloc::string::String
+impl core::clone::Clone for devboy_executor::tools::McpOnlyTool
+pub fn devboy_executor::tools::McpOnlyTool::clone(&self) -> devboy_executor::tools::McpOnlyTool
+impl core::fmt::Debug for devboy_executor::tools::McpOnlyTool
+pub fn devboy_executor::tools::McpOnlyTool::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_executor::tools::McpOnlyTool
+impl core::marker::Send for devboy_executor::tools::McpOnlyTool
+impl core::marker::Sync for devboy_executor::tools::McpOnlyTool
+impl core::marker::Unpin for devboy_executor::tools::McpOnlyTool
+impl core::marker::UnsafeUnpin for devboy_executor::tools::McpOnlyTool
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::tools::McpOnlyTool
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::tools::McpOnlyTool
+pub struct devboy_executor::ProviderMetadata
+pub devboy_executor::ProviderMetadata::data: serde_json::value::Value
+impl devboy_executor::context::ProviderMetadata
+pub fn devboy_executor::context::ProviderMetadata::new(data: serde_json::value::Value) -> Self
+impl core::clone::Clone for devboy_executor::context::ProviderMetadata
+pub fn devboy_executor::context::ProviderMetadata::clone(&self) -> devboy_executor::context::ProviderMetadata
+impl core::fmt::Debug for devboy_executor::context::ProviderMetadata
+pub fn devboy_executor::context::ProviderMetadata::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::ProviderMetadata
+pub fn devboy_executor::context::ProviderMetadata::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::ProviderMetadata
+pub fn devboy_executor::context::ProviderMetadata::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::ProviderMetadata
+impl core::marker::Send for devboy_executor::context::ProviderMetadata
+impl core::marker::Sync for devboy_executor::context::ProviderMetadata
+impl core::marker::Unpin for devboy_executor::context::ProviderMetadata
+impl core::marker::UnsafeUnpin for devboy_executor::context::ProviderMetadata
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::ProviderMetadata
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::ProviderMetadata
+pub struct devboy_executor::ProxyConfig
+pub devboy_executor::ProxyConfig::headers: std::collections::hash::map::HashMap<alloc::string::String, alloc::string::String>
+pub devboy_executor::ProxyConfig::url: alloc::string::String
+impl core::clone::Clone for devboy_executor::context::ProxyConfig
+pub fn devboy_executor::context::ProxyConfig::clone(&self) -> devboy_executor::context::ProxyConfig
+impl core::fmt::Debug for devboy_executor::context::ProxyConfig
+pub fn devboy_executor::context::ProxyConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::ProxyConfig
+pub fn devboy_executor::context::ProxyConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::ProxyConfig
+pub fn devboy_executor::context::ProxyConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::ProxyConfig
+impl core::marker::Send for devboy_executor::context::ProxyConfig
+impl core::marker::Sync for devboy_executor::context::ProxyConfig
+impl core::marker::Unpin for devboy_executor::context::ProxyConfig
+impl core::marker::UnsafeUnpin for devboy_executor::context::ProxyConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::ProxyConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::ProxyConfig
+pub struct devboy_executor::ResultMeta
+pub devboy_executor::ResultMeta::pagination: core::option::Option<devboy_core::types::Pagination>
+pub devboy_executor::ResultMeta::sort_info: core::option::Option<devboy_core::types::SortInfo>
+impl core::clone::Clone for devboy_executor::output::ResultMeta
+pub fn devboy_executor::output::ResultMeta::clone(&self) -> devboy_executor::output::ResultMeta
+impl core::default::Default for devboy_executor::output::ResultMeta
+pub fn devboy_executor::output::ResultMeta::default() -> devboy_executor::output::ResultMeta
+impl core::fmt::Debug for devboy_executor::output::ResultMeta
+pub fn devboy_executor::output::ResultMeta::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_executor::output::ResultMeta
+impl core::marker::Send for devboy_executor::output::ResultMeta
+impl core::marker::Sync for devboy_executor::output::ResultMeta
+impl core::marker::Unpin for devboy_executor::output::ResultMeta
+impl core::marker::UnsafeUnpin for devboy_executor::output::ResultMeta
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::output::ResultMeta
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::output::ResultMeta
+pub struct devboy_executor::ToolDefinition
+pub devboy_executor::ToolDefinition::category: devboy_core::tool_category::ToolCategory
+pub devboy_executor::ToolDefinition::description: alloc::string::String
+pub devboy_executor::ToolDefinition::input_schema: devboy_core::enricher::ToolSchema
+pub devboy_executor::ToolDefinition::name: alloc::string::String
+impl core::clone::Clone for devboy_executor::tools::ToolDefinition
+pub fn devboy_executor::tools::ToolDefinition::clone(&self) -> devboy_executor::tools::ToolDefinition
+impl core::fmt::Debug for devboy_executor::tools::ToolDefinition
+pub fn devboy_executor::tools::ToolDefinition::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::tools::ToolDefinition
+pub fn devboy_executor::tools::ToolDefinition::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_executor::tools::ToolDefinition
+impl core::marker::Send for devboy_executor::tools::ToolDefinition
+impl core::marker::Sync for devboy_executor::tools::ToolDefinition
+impl core::marker::Unpin for devboy_executor::tools::ToolDefinition
+impl core::marker::UnsafeUnpin for devboy_executor::tools::ToolDefinition
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::tools::ToolDefinition
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::tools::ToolDefinition
+pub const devboy_executor::SUPPORTED_TOOLS: &[&str]
+pub fn devboy_executor::create_enricher(config: &devboy_executor::context::ProviderConfig, metadata: core::option::Option<&devboy_executor::context::ProviderMetadata>) -> core::option::Option<alloc::boxed::Box<dyn devboy_core::enricher::ToolEnricher>>
+pub fn devboy_executor::create_knowledge_base_enricher(config: &devboy_executor::context::ProviderConfig) -> core::option::Option<alloc::boxed::Box<dyn devboy_core::enricher::ToolEnricher>>
+pub fn devboy_executor::create_knowledge_base_provider(config: &devboy_executor::context::ProviderConfig, proxy: core::option::Option<&devboy_executor::context::ProxyConfig>) -> devboy_core::error::Result<alloc::boxed::Box<dyn devboy_core::provider::KnowledgeBaseProvider>>
+pub async fn devboy_executor::execute_and_format(executor: &devboy_executor::executor::Executor, tool: &str, args: serde_json::value::Value, ctx: &devboy_executor::context::AdditionalContext, pipeline_config: core::option::Option<devboy_format_pipeline::PipelineConfig>) -> devboy_core::error::Result<devboy_executor::format::FormatResult>
+pub fn devboy_executor::format_output(output: devboy_executor::output::ToolOutput, format: core::option::Option<&str>, _tool_name: core::option::Option<&str>, config: core::option::Option<devboy_format_pipeline::PipelineConfig>) -> devboy_core::error::Result<devboy_executor::format::FormatResult>
+pub type devboy_executor::PipelineFormatEnricher = devboy_executor::enricher::FormatPipelineEnricher
