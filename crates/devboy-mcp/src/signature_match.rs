@@ -68,6 +68,7 @@ impl ToolMatch {
 /// Index of every tool name encountered across local and upstream catalogues.
 #[derive(Debug, Clone, Default)]
 pub struct MatchReport {
+    /// Matches.
     pub matches: HashMap<String, ToolMatch>,
 }
 
@@ -104,14 +105,17 @@ impl MatchReport {
             .collect()
     }
 
+    /// Get.
     pub fn get(&self, tool_name: &str) -> Option<&ToolMatch> {
         self.matches.get(tool_name)
     }
 
+    /// Len.
     pub fn len(&self) -> usize {
         self.matches.len()
     }
 
+    /// Is empty.
     pub fn is_empty(&self) -> bool {
         self.matches.is_empty()
     }

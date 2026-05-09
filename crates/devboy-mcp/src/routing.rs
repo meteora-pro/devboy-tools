@@ -39,7 +39,9 @@ pub enum RoutingTarget {
     /// Dispatch to the upstream proxy identified by `prefix`, using `original_name`
     /// as the unprefixed tool name forwarded to that upstream.
     Remote {
+        /// Prefix.
         prefix: String,
+        /// Original name.
         original_name: String,
     },
     /// Neither executor can handle the tool. The caller should reject with a clear error.
@@ -57,8 +59,11 @@ pub enum RoutingReason {
     RemoteOnly,
     /// Local and upstream both advertise the tool and schemas match.
     StrategyRemote,
+    /// StrategyLocal.
     StrategyLocal,
+    /// StrategyLocalFirst.
     StrategyLocalFirst,
+    /// StrategyRemoteFirst.
     StrategyRemoteFirst,
     /// Per-tool override rule fired.
     OverrideRule(String),
@@ -69,6 +74,7 @@ pub enum RoutingReason {
 }
 
 impl RoutingReason {
+    /// As label.
     pub fn as_label(&self) -> &str {
         match self {
             Self::ExplicitPrefix => "explicit_prefix",
@@ -84,6 +90,7 @@ impl RoutingReason {
         }
     }
 
+    /// Detail.
     pub fn detail(&self) -> Option<&str> {
         match self {
             Self::OverrideRule(p) => Some(p.as_str()),
@@ -155,6 +162,7 @@ impl RoutingDecision {
         );
     }
 
+    /// Local.
     pub fn local(name: impl Into<String>, reason: RoutingReason) -> Self {
         Self {
             primary: RoutingTarget::Local,
@@ -165,6 +173,7 @@ impl RoutingDecision {
         }
     }
 
+    /// Remote.
     pub fn remote(
         prefix: impl Into<String>,
         original_name: impl Into<String>,
@@ -183,6 +192,7 @@ impl RoutingDecision {
         }
     }
 
+    /// Reject.
     pub fn reject(name: impl Into<String>, reason: RoutingReason) -> Self {
         Self {
             primary: RoutingTarget::Reject,
@@ -193,6 +203,7 @@ impl RoutingDecision {
         }
     }
 
+    /// With fallback.
     pub fn with_fallback(mut self, fallback: RoutingTarget) -> Self {
         self.fallback = Some(fallback);
         self
@@ -209,6 +220,7 @@ pub struct RoutingEngine {
 }
 
 impl RoutingEngine {
+    /// New.
     pub fn new(config: ProxyRoutingConfig, report: MatchReport) -> Self {
         Self { config, report }
     }
@@ -355,21 +367,32 @@ fn strategy_label(s: RoutingStrategy) -> RoutingReason {
 /// command and any dashboard that wants to inspect how the proxy is configured.
 #[derive(Debug, Clone)]
 pub struct ProxyStatus {
+    /// Strategy.
     pub strategy: RoutingStrategy,
+    /// Fallback on error.
     pub fallback_on_error: bool,
+    /// Total tools.
     pub total_tools: usize,
+    /// Routable locally.
     pub routable_locally: Vec<String>,
+    /// Remote only.
     pub remote_only: Vec<String>,
+    /// Local only.
     pub local_only: Vec<String>,
+    /// Incompatible.
     pub incompatible: Vec<IncompatibleTool>,
+    /// Override rules.
     pub override_rules: Vec<(String, RoutingStrategy)>,
 }
 
 /// One row in the "schema disagrees" table.
 #[derive(Debug, Clone)]
 pub struct IncompatibleTool {
+    /// Tool.
     pub tool: String,
+    /// Upstream prefix.
     pub upstream_prefix: Option<String>,
+    /// Reason.
     pub reason: Option<String>,
 }
 

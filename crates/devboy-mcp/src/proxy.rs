@@ -29,6 +29,7 @@ pub enum ProxyTransport {
 }
 
 impl ProxyTransport {
+    /// Parse.
     pub fn parse(s: &str) -> Self {
         match s {
             "streamable-http" | "streamable_http" | "http" => Self::StreamableHttp,
@@ -563,16 +564,19 @@ impl Default for ProxyManager {
 }
 
 impl ProxyManager {
+    /// New.
     pub fn new() -> Self {
         Self {
             clients: Vec::new(),
         }
     }
 
+    /// Add client.
     pub fn add_client(&mut self, client: McpProxyClient) {
         self.clients.push(client);
     }
 
+    /// Is empty.
     pub fn is_empty(&self) -> bool {
         self.clients.is_empty()
     }

@@ -18,30 +18,41 @@ pub const MCP_VERSION: &str = "2025-11-25";
 /// JSON-RPC request message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
+    /// Jsonrpc.
     pub jsonrpc: String,
+    /// Id.
     pub id: RequestId,
+    /// Method.
     pub method: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Params.
     pub params: Option<Value>,
 }
 
 /// JSON-RPC response message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcResponse {
+    /// Jsonrpc.
     pub jsonrpc: String,
+    /// Id.
     pub id: RequestId,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Result.
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Error.
     pub error: Option<JsonRpcError>,
 }
 
 /// JSON-RPC notification (no response expected).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcNotification {
+    /// Jsonrpc.
     pub jsonrpc: String,
+    /// Method.
     pub method: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Params.
     pub params: Option<Value>,
 }
 
@@ -49,28 +60,40 @@ pub struct JsonRpcNotification {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum RequestId {
+    /// String.
     String(String),
+    /// Number.
     Number(i64),
+    /// Null.
     Null,
 }
 
 /// JSON-RPC error object.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcError {
+    /// Code.
     pub code: i32,
+    /// Message.
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Data.
     pub data: Option<Value>,
 }
 
 // Standard JSON-RPC error codes
 impl JsonRpcError {
+    /// P A R S E E R R O R.
     pub const PARSE_ERROR: i32 = -32700;
+    /// I N V A L I D R E Q U E S T.
     pub const INVALID_REQUEST: i32 = -32600;
+    /// M E T H O D N O T F O U N D.
     pub const METHOD_NOT_FOUND: i32 = -32601;
+    /// I N V A L I D P A R A M S.
     pub const INVALID_PARAMS: i32 = -32602;
+    /// I N T E R N A L E R R O R.
     pub const INTERNAL_ERROR: i32 = -32603;
 
+    /// Parse error.
     pub fn parse_error(msg: &str) -> Self {
         Self {
             code: Self::PARSE_ERROR,
@@ -79,6 +102,7 @@ impl JsonRpcError {
         }
     }
 
+    /// Invalid request.
     pub fn invalid_request(msg: &str) -> Self {
         Self {
             code: Self::INVALID_REQUEST,
@@ -87,6 +111,7 @@ impl JsonRpcError {
         }
     }
 
+    /// Method not found.
     pub fn method_not_found(method: &str) -> Self {
         Self {
             code: Self::METHOD_NOT_FOUND,
@@ -95,6 +120,7 @@ impl JsonRpcError {
         }
     }
 
+    /// Invalid params.
     pub fn invalid_params(msg: &str) -> Self {
         Self {
             code: Self::INVALID_PARAMS,
@@ -103,6 +129,7 @@ impl JsonRpcError {
         }
     }
 
+    /// Internal error.
     pub fn internal_error(msg: &str) -> Self {
         Self {
             code: Self::INTERNAL_ERROR,
@@ -142,8 +169,11 @@ impl JsonRpcResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeParams {
+    /// Protocol version.
     pub protocol_version: String,
+    /// Capabilities.
     pub capabilities: ClientCapabilities,
+    /// Client info.
     pub client_info: ClientInfo,
 }
 
@@ -151,24 +181,31 @@ pub struct InitializeParams {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClientCapabilities {
     #[serde(default)]
+    /// Roots.
     pub roots: Option<RootsCapability>,
     #[serde(default)]
+    /// Sampling.
     pub sampling: Option<SamplingCapability>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Roots Capability.
 pub struct RootsCapability {
     #[serde(default)]
+    /// List changed.
     pub list_changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Sampling Capability.
 pub struct SamplingCapability {}
 
 /// Client info.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientInfo {
+    /// Name.
     pub name: String,
+    /// Version.
     pub version: String,
 }
 
@@ -176,8 +213,11 @@ pub struct ClientInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeResult {
+    /// Protocol version.
     pub protocol_version: String,
+    /// Capabilities.
     pub capabilities: ServerCapabilities,
+    /// Server info.
     pub server_info: ServerInfo,
 }
 
@@ -185,37 +225,49 @@ pub struct InitializeResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Tools.
     pub tools: Option<ToolsCapability>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Resources.
     pub resources: Option<ResourcesCapability>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Prompts.
     pub prompts: Option<PromptsCapability>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Tools Capability.
 pub struct ToolsCapability {
     #[serde(default)]
+    /// List changed.
     pub list_changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Resources Capability.
 pub struct ResourcesCapability {
     #[serde(default)]
+    /// Subscribe.
     pub subscribe: bool,
     #[serde(default)]
+    /// List changed.
     pub list_changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Prompts Capability.
 pub struct PromptsCapability {
     #[serde(default)]
+    /// List changed.
     pub list_changed: bool,
 }
 
 /// Server info.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerInfo {
+    /// Name.
     pub name: String,
+    /// Version.
     pub version: String,
 }
 
@@ -223,8 +275,11 @@ pub struct ServerInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolDefinition {
+    /// Name.
     pub name: String,
+    /// Description.
     pub description: String,
+    /// Input schema.
     pub input_schema: Value,
     /// Tool category for filtering (not serialized to JSON).
     #[serde(skip)]
@@ -234,14 +289,17 @@ pub struct ToolDefinition {
 /// Tools list response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolsListResult {
+    /// Tools.
     pub tools: Vec<ToolDefinition>,
 }
 
 /// Tool call request params.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallParams {
+    /// Name.
     pub name: String,
     #[serde(default)]
+    /// Arguments.
     pub arguments: Option<Value>,
 }
 
@@ -249,8 +307,10 @@ pub struct ToolCallParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallResult {
+    /// Content.
     pub content: Vec<ToolResultContent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Is error.
     pub is_error: Option<bool>,
 }
 
@@ -258,8 +318,12 @@ pub struct ToolCallResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ToolResultContent {
+    /// Text content block (the only content kind we emit today).
     #[serde(rename = "text")]
-    Text { text: String },
+    Text {
+        /// The text payload returned to the caller.
+        text: String,
+    },
 }
 
 impl ToolCallResult {
