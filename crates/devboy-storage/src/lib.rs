@@ -42,6 +42,7 @@ pub mod cache;
 pub mod index;
 pub mod manifest;
 pub mod merge;
+pub mod pattern_resolution;
 pub mod secret_path;
 
 pub use cache::CachedStore;
@@ -52,6 +53,9 @@ pub use manifest::{
 pub use merge::{
     MergeError, MergeOutput, MergeWarning, MergeWarningKind, OverrideField, ResolvedSecret,
     SecretOrigin, merge_manifest,
+};
+pub use pattern_resolution::{
+    InheritanceWarning, InheritanceWarningKind, apply_pattern_inheritance,
 };
 pub use secret_path::{PathError, SecretPath};
 
