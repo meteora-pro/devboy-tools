@@ -5,12 +5,9 @@
 //! ClickUp does not have merge requests, so MR operations return
 //! `ProviderUnsupported` errors.
 
-#[allow(missing_docs)]
 mod client;
 pub mod enricher;
-#[allow(missing_docs)]
 pub mod metadata;
-#[allow(missing_docs)]
 mod types;
 
 pub use client::ClickUpClient;

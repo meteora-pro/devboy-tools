@@ -19,6 +19,7 @@ pub struct ClickUpMetadata {
 /// ClickUp list status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpStatus {
+    /// Name.
     pub name: String,
     /// Status type: "open", "closed", "custom", etc.
     #[serde(default)]
