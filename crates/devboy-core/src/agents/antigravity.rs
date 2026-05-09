@@ -22,7 +22,6 @@ use super::{AgentDetector, AgentSnapshot, InstallStatus};
 const ID: &str = "antigravity";
 const DISPLAY_NAME: &str = "Antigravity";
 
-/// Antigravity Detector.
 pub struct AntigravityDetector;
 
 impl AgentDetector for AntigravityDetector {

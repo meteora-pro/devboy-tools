@@ -16,7 +16,6 @@ const ID: &str = "codex";
 const DISPLAY_NAME: &str = "Codex CLI";
 const MAX_LINES: usize = 200_000;
 
-/// Codex Detector.
 pub struct CodexDetector;
 
 impl AgentDetector for CodexDetector {

@@ -18,7 +18,6 @@ use super::{AgentDetector, AgentSnapshot, InstallStatus};
 const ID: &str = "gemini";
 const DISPLAY_NAME: &str = "Gemini CLI";
 
-/// Gemini Detector.
 pub struct GeminiDetector;
 
 impl AgentDetector for GeminiDetector {

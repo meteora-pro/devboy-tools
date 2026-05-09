@@ -1,4 +1,3 @@
-#![warn(missing_docs)]
 //! Format pipeline for tool output transformation.
 //!
 //! Formats tool responses into an optimal format for LLM:
@@ -23,6 +22,9 @@
 //! println!("{}", output.to_string_with_hints());
 //! ```
 
+#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![deny(rustdoc::invalid_html_tags)]
 pub mod adaptive_config;
 pub mod budget;
 pub mod dedup;

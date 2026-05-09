@@ -53,13 +53,10 @@ pub trait PrefetchDispatcher: Send + Sync {
 }
 
 #[derive(Debug, thiserror::Error)]
-/// Prefetch Error.
 pub enum PrefetchError {
     #[error("dispatcher rejected: {0}")]
-    /// Rejected.
     Rejected(String),
     #[error("dispatcher I/O: {0}")]
-    /// Io.
     Io(String),
     #[error("dispatcher timed out (host-level)")]
     /// HostTimeout.
@@ -75,13 +72,9 @@ pub enum PrefetchOutcome {
     /// planner's admit-time estimate so callers can pass it through
     /// to telemetry (`PipelineEvent.enricher_predicted_cost_tokens`).
     Settled {
-        /// Tool.
         tool: String,
-        /// Args.
         args: Value,
-        /// Body.
         body: String,
-        /// Predicted cost tokens.
         predicted_cost_tokens: u32,
     },
     /// Prefetch returned an error. Counted as wasted; logged at WARN.
@@ -103,7 +96,6 @@ pub enum PrefetchOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Skip Reason.
 pub enum SkipReason {
     /// `rate_limit_host` saturated (in-flight count == cap).
     HostSaturated,
@@ -120,9 +112,7 @@ pub enum SkipReason {
 /// args from `projection`) before handing it to the engine.
 #[derive(Debug, Clone)]
 pub struct PrefetchRequest {
-    /// Call.
     pub call: PlannedCall,
-    /// Args.
     pub args: Value,
     /// Pre-computed rate-limit host for this call. `None` = uncapped.
     /// Built by the host from either the static

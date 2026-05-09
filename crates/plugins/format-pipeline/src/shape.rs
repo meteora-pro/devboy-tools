@@ -14,15 +14,11 @@ use serde_json::Value;
 /// Result of classifying one response.
 #[derive(Debug, Clone)]
 pub struct ClassifiedResponse {
-    /// Shape.
     pub shape: Shape,
-    /// Raw chars.
     pub raw_chars: usize,
-    /// Inner formats.
     pub inner_formats: Vec<InnerFormat>,
     /// For markdown-table: number of columns detected in the header row.
     pub md_n_cols: Option<usize>,
-    /// Md n rows.
     pub md_n_rows: Option<usize>,
     /// For array_of_objects: number of elements.
     pub n_items: Option<usize>,
@@ -37,15 +33,10 @@ pub struct ClassifiedResponse {
 /// Categories of inner formats we sniff inside string leaves and prose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InnerFormat {
-    /// Url.
     Url,
-    /// Log.
     Log,
-    /// Hash.
     Hash,
-    /// Diff.
     Diff,
-    /// Markdown.
     Markdown,
     /// MarkdownTable.
     MarkdownTable,
@@ -55,7 +46,6 @@ pub enum InnerFormat {
     CodeFence,
     /// XmlHtml.
     XmlHtml,
-    /// Yaml.
     Yaml,
     /// StackTrace.
     StackTrace,
@@ -63,7 +53,6 @@ pub enum InnerFormat {
     NumberedList,
     /// InlineJson.
     InlineJson,
-    /// Prose.
     Prose,
 }
 

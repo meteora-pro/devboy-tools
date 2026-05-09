@@ -45,17 +45,11 @@ pub enum DataLoss {
 /// Result of a round-trip key comparison.
 #[derive(Debug, Clone)]
 pub struct KeyComparison {
-    /// Encoder id.
     pub encoder_id: String,
-    /// Input keys.
     pub input_keys: BTreeSet<String>,
-    /// Output keys.
     pub output_keys: BTreeSet<String>,
-    /// Dropped.
     pub dropped: Vec<String>,
-    /// Added.
     pub added: Vec<String>,
-    /// Allowed loss.
     pub allowed_loss: DataLoss,
 }
 

@@ -5,11 +5,8 @@ use serde::{Deserialize, Serialize};
 /// MCP tool definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {
-    /// Name.
     pub name: String,
-    /// Description.
     pub description: String,
-    /// Parameters.
     pub parameters: serde_json::Value,
 }
 

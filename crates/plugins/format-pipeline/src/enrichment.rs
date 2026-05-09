@@ -81,11 +81,8 @@ pub struct PlannedCall {
 /// speculative prefetch.
 #[derive(Debug, Clone, Default)]
 pub struct EnrichmentPlan {
-    /// Calls.
     pub calls: Vec<PlannedCall>,
-    /// Total cost tokens.
     pub total_cost_tokens: u32,
-    /// Remaining budget tokens.
     pub remaining_budget_tokens: u32,
     /// Reasons we declined candidates — useful for `tune analyze` and
     /// for the operator to understand why a follow-up was skipped.
@@ -95,15 +92,12 @@ pub struct EnrichmentPlan {
 /// Why the planner left a candidate out.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeclineReason {
-    /// Tool.
     pub tool: String,
-    /// Reason.
     pub reason: DeclineKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-/// Decline Kind.
 pub enum DeclineKind {
     /// Adding this candidate would have crossed `budget_tokens`.
     /// Currently the only variant the v1 solver emits — low-probability

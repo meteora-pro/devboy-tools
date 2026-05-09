@@ -93,15 +93,9 @@ pub enum SlackScope {
 #[derive(Debug, Clone)]
 pub enum ConfluenceAuthConfig {
     /// BearerToken.
-    BearerToken {
-        /// Token.
-        token: SecretString,
-    },
-    /// Basic.
+    BearerToken { token: SecretString },
     Basic {
-        /// Username.
         username: String,
-        /// Password.
         password: SecretString,
     },
 }
@@ -120,89 +114,57 @@ pub enum ConfluenceAuthConfig {
 pub enum ProviderConfig {
     /// GitLab.
     GitLab {
-        /// Base url.
         base_url: String,
-        /// Access token.
         access_token: SecretString,
-        /// Scope.
         scope: GitLabScope,
-        /// Extra.
         extra: HashMap<String, serde_json::Value>,
     },
     /// GitHub.
     GitHub {
-        /// Base url.
         base_url: String,
-        /// Access token.
         access_token: SecretString,
-        /// Scope.
         scope: GitHubScope,
-        /// Extra.
         extra: HashMap<String, serde_json::Value>,
     },
     /// ClickUp.
     ClickUp {
-        /// Access token.
         access_token: SecretString,
-        /// Scope.
         scope: ClickUpScope,
-        /// Extra.
         extra: HashMap<String, serde_json::Value>,
     },
-    /// Jira.
     Jira {
-        /// Base url.
         base_url: String,
-        /// Access token.
         access_token: SecretString,
-        /// Email.
         email: String,
-        /// Scope.
         scope: JiraScope,
         /// Explicit flavor override. When set, skips auto-detection from URL.
         /// Important for proxy scenarios where URL doesn't reflect actual Jira deployment.
         flavor: Option<devboy_jira::JiraFlavor>,
-        /// Extra.
         extra: HashMap<String, serde_json::Value>,
     },
-    /// Confluence.
     Confluence {
-        /// Base url.
         base_url: String,
-        /// Auth.
         auth: ConfluenceAuthConfig,
-        /// Scope.
         scope: ConfluenceScope,
-        /// Api version.
         api_version: Option<String>,
-        /// Extra.
         extra: HashMap<String, serde_json::Value>,
     },
     /// Fireflies.ai meeting notes provider.
     Fireflies {
-        /// Api key.
         api_key: SecretString,
-        /// Extra.
         extra: HashMap<String, serde_json::Value>,
     },
     /// Slack messenger provider.
     Slack {
-        /// Base url.
         base_url: String,
-        /// Access token.
         access_token: SecretString,
-        /// Scope.
         scope: SlackScope,
-        /// Required scopes.
         required_scopes: Vec<String>,
-        /// Extra.
         extra: HashMap<String, serde_json::Value>,
     },
     /// Fully dynamic variant for community/custom provider plugins.
     Custom {
-        /// Name.
         name: String,
-        /// Config.
         config: HashMap<String, serde_json::Value>,
     },
 }
@@ -230,10 +192,8 @@ impl ProviderConfig {
 /// The provider's own auth headers are suppressed — proxy handles authentication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
-    /// Url.
     pub url: String,
     #[serde(default)]
-    /// Headers.
     pub headers: HashMap<String, String>,
 }
 
@@ -270,13 +230,9 @@ impl ProviderMetadata {
 /// `SecretString` access tokens that must not leak through wire formats.
 #[derive(Debug, Clone)]
 pub struct AdditionalContext {
-    /// Provider.
     pub provider: ProviderConfig,
-    /// Proxy.
     pub proxy: Option<ProxyConfig>,
-    /// Metadata.
     pub metadata: Option<ProviderMetadata>,
-    /// Extra.
     pub extra: HashMap<String, serde_json::Value>,
 }
 

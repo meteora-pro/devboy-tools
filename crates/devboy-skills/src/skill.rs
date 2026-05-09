@@ -218,7 +218,6 @@ impl Skill {
 pub struct SkillSummary {
     /// Skill name.
     pub name: String,
-    /// Category.
     pub category: Category,
     /// Integer version.
     pub version: u32,

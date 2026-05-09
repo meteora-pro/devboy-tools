@@ -39,9 +39,7 @@ pub enum RoutingTarget {
     /// Dispatch to the upstream proxy identified by `prefix`, using `original_name`
     /// as the unprefixed tool name forwarded to that upstream.
     Remote {
-        /// Prefix.
         prefix: String,
-        /// Original name.
         original_name: String,
     },
     /// Neither executor can handle the tool. The caller should reject with a clear error.
@@ -367,32 +365,21 @@ fn strategy_label(s: RoutingStrategy) -> RoutingReason {
 /// command and any dashboard that wants to inspect how the proxy is configured.
 #[derive(Debug, Clone)]
 pub struct ProxyStatus {
-    /// Strategy.
     pub strategy: RoutingStrategy,
-    /// Fallback on error.
     pub fallback_on_error: bool,
-    /// Total tools.
     pub total_tools: usize,
-    /// Routable locally.
     pub routable_locally: Vec<String>,
-    /// Remote only.
     pub remote_only: Vec<String>,
-    /// Local only.
     pub local_only: Vec<String>,
-    /// Incompatible.
     pub incompatible: Vec<IncompatibleTool>,
-    /// Override rules.
     pub override_rules: Vec<(String, RoutingStrategy)>,
 }
 
 /// One row in the "schema disagrees" table.
 #[derive(Debug, Clone)]
 pub struct IncompatibleTool {
-    /// Tool.
     pub tool: String,
-    /// Upstream prefix.
     pub upstream_prefix: Option<String>,
-    /// Reason.
     pub reason: Option<String>,
 }
 

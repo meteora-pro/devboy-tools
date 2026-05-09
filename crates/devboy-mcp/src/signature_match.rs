@@ -68,7 +68,6 @@ impl ToolMatch {
 /// Index of every tool name encountered across local and upstream catalogues.
 #[derive(Debug, Clone, Default)]
 pub struct MatchReport {
-    /// Matches.
     pub matches: HashMap<String, ToolMatch>,
 }
 
