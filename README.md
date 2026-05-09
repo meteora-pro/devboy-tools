@@ -328,7 +328,8 @@ devboy-core = "0.26"
 devboy-jira = "0.26"
 ```
 
-```rust,no_run
+```rust
+// Illustrative — not run automatically.
 use devboy_core::{Config, IssueProvider};
 use devboy_jira::JiraClient;
 use secrecy::SecretString;
