@@ -325,7 +325,7 @@ impl DedupCache {
 }
 
 impl Default for DedupCache {
-    /// Equivalent to [`DedupCache::with_capacity`]`(5)`.
+    /// Equivalent to `DedupCache::with_capacity(5)`.
     fn default() -> Self {
         Self::with_capacity(5)
     }
