@@ -1,9 +1,11 @@
+#![warn(missing_docs)]
 //! Confluence self-hosted provider implementation for devboy-tools.
 //!
 //! This crate provides the Confluence Server / Data Center knowledge base
 //! provider implementation, including API client logic plus page/space/search
 //! operations exposed through the shared `KnowledgeBaseProvider` trait.
 
+#[allow(missing_docs)]
 mod client;
 mod enricher;
 

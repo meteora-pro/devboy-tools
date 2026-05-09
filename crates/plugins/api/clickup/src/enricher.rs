@@ -26,6 +26,8 @@ pub struct ClickUpSchemaEnricher {
 }
 
 impl ClickUpSchemaEnricher {
+    /// Build an enricher from cached workspace metadata (custom fields,
+    /// statuses) used to refine MCP tool schemas at runtime.
     pub fn new(metadata: ClickUpMetadata) -> Self {
         Self { metadata }
     }

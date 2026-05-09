@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! Jira provider implementation for devboy-tools.
 //!
 //! This crate provides integration with Jira API for issues.
@@ -5,9 +6,12 @@
 //! Jira does not have merge requests, so MR operations return
 //! `ProviderUnsupported` errors.
 
+#[allow(missing_docs)]
 mod client;
 pub mod enricher;
+#[allow(missing_docs)]
 pub mod metadata;
+#[allow(missing_docs)]
 mod types;
 
 pub use client::{JiraClient, JiraFlavor};
