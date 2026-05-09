@@ -16,6 +16,7 @@
 pub mod aead;
 pub mod format;
 pub mod passphrase;
+pub mod recovery;
 
 pub use aead::{
     AeadError, EncryptedEntry, KEY_LEN, NONCE_LEN, TAG_LEN, decrypt_entry, decrypt_packed,
@@ -28,4 +29,9 @@ pub use format::{
 pub use passphrase::{
     DEFAULT_KDF_PARAMS, PASSPHRASE_ENVELOPE_AAD, PassphraseError, create_passphrase_envelope,
     derive_wrap_key, unwrap_passphrase,
+};
+pub use recovery::{
+    MNEMONIC_WORD_COUNT, RECOVERY_ENVELOPE_AAD, RECOVERY_HKDF_INFO, RecoveryError, RecoveryPhrase,
+    create_recovery_envelope, derive_recovery_key, generate_recovery_phrase, parse_recovery_phrase,
+    unwrap_recovery,
 };

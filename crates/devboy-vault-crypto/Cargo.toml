@@ -27,6 +27,9 @@ tempfile.workspace = true
 chacha20poly1305.workspace = true
 getrandom.workspace = true
 argon2.workspace = true
+bip39.workspace = true
+hkdf.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 # tempfile is in [dependencies] above (used by atomic write); no

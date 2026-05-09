@@ -109,6 +109,10 @@ getrandom = { version = "0.2", features = ["std"] }
 # Argon2id KDF for the local vault's passphrase envelope (ADR-023 §3.2).
 argon2 = "0.5"
 
+# BIP39 mnemonic + HKDF for the local vault's recovery envelope (ADR-023 §3.2).
+bip39 = "2"
+hkdf = "0.12"
+
 # Observability (optional)
 sentry = { version = "0.35", default-features = false, features = ["rustls", "reqwest", "tracing", "panic", "backtrace", "contexts"] }
 sentry-tracing = "0.35"
