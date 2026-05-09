@@ -32,6 +32,7 @@
 use std::fmt;
 use std::str::FromStr;
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 /// Reserved path prefixes that are rejected at user-facing entry points
@@ -197,6 +198,19 @@ impl FromStr for SecretPath {
 impl AsRef<str> for SecretPath {
     fn as_ref(&self) -> &str {
         &self.0
+    }
+}
+
+impl Serialize for SecretPath {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for SecretPath {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        SecretPath::parse(&s).map_err(serde::de::Error::custom)
     }
 }
 
