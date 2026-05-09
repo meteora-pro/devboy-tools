@@ -40,10 +40,14 @@ use tracing::{debug, warn};
 
 pub mod cache;
 pub mod index;
+pub mod manifest;
 pub mod secret_path;
 
 pub use cache::CachedStore;
 pub use index::{Gate, GlobalIndex, IndexEntry, IndexError, RotationMethod};
+pub use manifest::{
+    MANIFEST_RELATIVE_PATH, ManifestError, OverrideEntry, PathRole, ProjectManifest,
+};
 pub use secret_path::{PathError, SecretPath};
 
 /// Service name used in OS keychain.
