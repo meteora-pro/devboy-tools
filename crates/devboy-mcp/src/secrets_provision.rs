@@ -481,6 +481,18 @@ pub struct ProvisionStatusReply {
     pub age_seconds: u64,
 }
 
+/// Tiny wire-format envelope returned by every `request_*`
+/// tool. Pulled out as a typed struct so the
+/// [`crate::agent_safety::AgentSafeReply`] fence can verify
+/// it carries no value-shaped fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestIdReply {
+    pub request_id: String,
+}
+
+impl crate::agent_safety::AgentSafeReply for ProvisionStatusReply {}
+impl crate::agent_safety::AgentSafeReply for RequestIdReply {}
+
 // =============================================================================
 // Test fixtures
 // =============================================================================

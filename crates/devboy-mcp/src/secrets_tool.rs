@@ -101,6 +101,8 @@ pub struct SecretsListItem {
     pub capabilities_hint: String,
 }
 
+impl crate::agent_safety::AgentSafeReply for SecretsListItem {}
+
 /// Detail view returned by `secrets_describe`. Strict
 /// superset of [`SecretsListItem`] — the same row plus the
 /// metadata fields a user would want to inspect.
@@ -118,6 +120,8 @@ pub struct SecretsDescribeReply {
     pub rotate_every_days: Option<u32>,
     pub pattern_id: Option<String>,
 }
+
+impl crate::agent_safety::AgentSafeReply for SecretsDescribeReply {}
 
 /// Error variants surfaced as MCP tool errors.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

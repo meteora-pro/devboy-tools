@@ -21,6 +21,7 @@
 //! server.run().await?;
 //! ```
 
+pub mod agent_safety;
 pub mod handlers;
 pub mod layered;
 pub mod prefetch_adapter;
