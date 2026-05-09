@@ -40,13 +40,21 @@
 //! # }
 //! ```
 
+#![warn(missing_docs)]
+
+#[allow(missing_docs)]
 pub mod context;
 pub mod enricher;
+#[allow(missing_docs)]
 pub mod executor;
+#[allow(missing_docs)]
 pub mod factory;
 pub mod format;
+#[allow(missing_docs)]
 pub mod output;
+#[allow(missing_docs)]
 pub mod tool_docs;
+#[allow(missing_docs)]
 pub mod tools;
 
 // Re-export main types at crate root

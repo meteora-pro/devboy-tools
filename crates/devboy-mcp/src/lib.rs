@@ -21,17 +21,29 @@
 //! server.run().await?;
 //! ```
 
+#![warn(missing_docs)]
+
 pub mod handlers;
 pub mod layered;
+#[allow(missing_docs)]
 pub mod prefetch_adapter;
+#[allow(missing_docs)]
 pub mod protocol;
+#[allow(missing_docs)]
 pub mod proxy;
+#[allow(missing_docs)]
 pub mod routing;
+#[allow(missing_docs)]
 pub mod server;
+#[allow(missing_docs)]
 pub mod signature_match;
+#[allow(missing_docs)]
 pub mod speculation;
+#[allow(missing_docs)]
 pub mod telemetry;
+#[allow(missing_docs)]
 pub mod tools;
+#[allow(missing_docs)]
 pub mod transport;
 
 pub use handlers::KNOWN_BUILTIN_TOOLS;
