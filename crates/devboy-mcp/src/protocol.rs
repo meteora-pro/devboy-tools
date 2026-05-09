@@ -71,7 +71,6 @@ impl JsonRpcError {
     pub const INVALID_PARAMS: i32 = -32602;
     pub const INTERNAL_ERROR: i32 = -32603;
 
-    /// Parse error.
     pub fn parse_error(msg: &str) -> Self {
         Self {
             code: Self::PARSE_ERROR,
@@ -80,7 +79,6 @@ impl JsonRpcError {
         }
     }
 
-    /// Invalid request.
     pub fn invalid_request(msg: &str) -> Self {
         Self {
             code: Self::INVALID_REQUEST,
@@ -89,7 +87,6 @@ impl JsonRpcError {
         }
     }
 
-    /// Method not found.
     pub fn method_not_found(method: &str) -> Self {
         Self {
             code: Self::METHOD_NOT_FOUND,
@@ -98,7 +95,6 @@ impl JsonRpcError {
         }
     }
 
-    /// Invalid params.
     pub fn invalid_params(msg: &str) -> Self {
         Self {
             code: Self::INVALID_PARAMS,
@@ -107,7 +103,6 @@ impl JsonRpcError {
         }
     }
 
-    /// Internal error.
     pub fn internal_error(msg: &str) -> Self {
         Self {
             code: Self::INTERNAL_ERROR,
@@ -152,7 +147,6 @@ pub struct InitializeParams {
     pub client_info: ClientInfo,
 }
 
-/// Client capabilities.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClientCapabilities {
     #[serde(default)]
@@ -170,7 +164,6 @@ pub struct RootsCapability {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SamplingCapability {}
 
-/// Client info.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientInfo {
     pub name: String,
@@ -186,7 +179,6 @@ pub struct InitializeResult {
     pub server_info: ServerInfo,
 }
 
-/// Server capabilities.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -217,7 +209,6 @@ pub struct PromptsCapability {
     pub list_changed: bool,
 }
 
-/// Server info.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerInfo {
     pub name: String,
@@ -250,7 +241,6 @@ pub struct ToolCallParams {
     pub arguments: Option<Value>,
 }
 
-/// Tool call result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallResult {

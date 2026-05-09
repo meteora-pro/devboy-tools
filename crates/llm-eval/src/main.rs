@@ -46,7 +46,6 @@ struct ModelConfig {
     pub name: String,
     /// OpenAI-compatible base URL (without /chat/completions suffix)
     pub base_url: String,
-    /// API key
     pub api_key: SecretString,
     /// Model ID sent in the request
     pub model_id: String,

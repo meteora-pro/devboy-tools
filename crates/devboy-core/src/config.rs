@@ -31,7 +31,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use tracing::{debug, info};
 
-/// Config file name.
 const CONFIG_FILE_NAME: &str = "config.toml";
 
 /// Config directory name.
@@ -278,7 +277,6 @@ impl Default for SlackConfig {
     }
 }
 
-/// default slack required scopes.
 pub fn default_slack_required_scopes() -> Vec<String> {
     vec![
         "channels:read".to_string(),
@@ -707,7 +705,6 @@ impl Default for ProxySecretsConfig {
 }
 
 impl ProxySecretsConfig {
-    /// is default.
     pub fn is_default(&self) -> bool {
         self.cache_ttl_secs == default_secrets_cache_ttl()
     }
@@ -758,7 +755,6 @@ impl Default for ProxyTelemetryConfig {
 }
 
 impl ProxyTelemetryConfig {
-    /// is default.
     pub fn is_default(&self) -> bool {
         self.enabled
             && self.batch_size == default_batch_size()
@@ -796,7 +792,6 @@ pub struct ProxyConfig {
 }
 
 impl ProxyConfig {
-    /// is default.
     pub fn is_default(&self) -> bool {
         self.routing.is_default() && self.secrets.is_default() && self.telemetry.is_default()
     }

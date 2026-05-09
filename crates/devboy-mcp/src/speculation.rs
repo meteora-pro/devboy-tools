@@ -59,7 +59,6 @@ pub enum PrefetchError {
     #[error("dispatcher I/O: {0}")]
     Io(String),
     #[error("dispatcher timed out (host-level)")]
-    /// HostTimeout.
     HostTimeout,
 }
 
@@ -128,7 +127,6 @@ pub struct HostBudget {
 }
 
 impl HostBudget {
-    /// New.
     pub fn new() -> Self {
         Self::default()
     }

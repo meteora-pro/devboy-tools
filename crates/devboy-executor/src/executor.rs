@@ -68,7 +68,6 @@ pub struct Executor {
 }
 
 impl Executor {
-    /// New.
     pub fn new() -> Self {
         Self {
             enrichers: Vec::new(),

@@ -113,7 +113,6 @@ pub struct ClickUpPriority {
     pub color: Option<String>,
 }
 
-/// ClickUp tag.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpTag {
     pub name: String,

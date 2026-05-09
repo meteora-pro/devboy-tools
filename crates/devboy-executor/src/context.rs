@@ -92,7 +92,6 @@ pub enum SlackScope {
 /// expose `password` / `token` via the wire format.
 #[derive(Debug, Clone)]
 pub enum ConfluenceAuthConfig {
-    /// BearerToken.
     BearerToken { token: SecretString },
     Basic {
         username: String,
@@ -112,21 +111,18 @@ pub enum ConfluenceAuthConfig {
 /// `Config` + `CredentialStore` instead of round-tripping through transport.
 #[derive(Debug, Clone)]
 pub enum ProviderConfig {
-    /// GitLab.
     GitLab {
         base_url: String,
         access_token: SecretString,
         scope: GitLabScope,
         extra: HashMap<String, serde_json::Value>,
     },
-    /// GitHub.
     GitHub {
         base_url: String,
         access_token: SecretString,
         scope: GitHubScope,
         extra: HashMap<String, serde_json::Value>,
     },
-    /// ClickUp.
     ClickUp {
         access_token: SecretString,
         scope: ClickUpScope,
@@ -212,7 +208,6 @@ pub struct ProviderMetadata {
 }
 
 impl ProviderMetadata {
-    /// New.
     pub fn new(data: serde_json::Value) -> Self {
         Self { data }
     }

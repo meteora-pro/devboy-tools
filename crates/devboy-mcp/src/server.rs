@@ -170,12 +170,10 @@ impl McpServer {
         }
     }
 
-    /// Add meeting provider.
     pub fn add_meeting_provider(&mut self, provider: Arc<dyn devboy_core::MeetingNotesProvider>) {
         self.meeting_providers.push(provider);
     }
 
-    /// Add knowledge base provider.
     pub fn add_knowledge_base_provider(
         &mut self,
         provider: Arc<dyn devboy_core::KnowledgeBaseProvider>,
@@ -183,7 +181,6 @@ impl McpServer {
         self.add_knowledge_base_provider_to_context("default", provider);
     }
 
-    /// Add knowledge base provider to context.
     pub fn add_knowledge_base_provider_to_context(
         &mut self,
         context: &str,
@@ -196,12 +193,10 @@ impl McpServer {
             .push(provider);
     }
 
-    /// Add messenger provider.
     pub fn add_messenger_provider(&mut self, provider: Arc<dyn devboy_core::MessengerProvider>) {
         self.add_messenger_provider_to_context("default", provider);
     }
 
-    /// Add messenger provider to context.
     pub fn add_messenger_provider_to_context(
         &mut self,
         context: &str,
@@ -241,7 +236,6 @@ impl McpServer {
             .or_default();
     }
 
-    /// Set active context.
     pub fn set_active_context(&self, context: &str) -> devboy_core::Result<()> {
         if !self.contexts.contains_key(context) {
             return Err(devboy_core::Error::Config(format!(

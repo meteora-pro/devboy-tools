@@ -18,10 +18,8 @@ pub struct JiraUser {
     /// Username (Self-Hosted only)
     #[serde(default)]
     pub name: Option<String>,
-    /// Display name
     #[serde(default, rename = "displayName")]
     pub display_name: Option<String>,
-    /// Email address
     #[serde(default, rename = "emailAddress")]
     pub email_address: Option<String>,
 }
@@ -41,7 +39,6 @@ pub struct JiraIssue {
     pub fields: JiraIssueFields,
 }
 
-/// Jira issue fields.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraIssueFields {
     /// Summary (title)
@@ -50,19 +47,15 @@ pub struct JiraIssueFields {
     /// Description — plain text (v2) or ADF document (v3)
     #[serde(default)]
     pub description: Option<serde_json::Value>,
-    /// Status
     #[serde(default)]
     pub status: Option<JiraStatus>,
-    /// Priority
     #[serde(default)]
     pub priority: Option<JiraPriority>,
-    /// Assignee
     #[serde(default)]
     pub assignee: Option<JiraUser>,
     /// Reporter (author)
     #[serde(default)]
     pub reporter: Option<JiraUser>,
-    /// Labels
     #[serde(default)]
     pub labels: Vec<String>,
     /// Created timestamp
@@ -100,7 +93,6 @@ pub struct JiraAttachment {
     /// Size in bytes.
     #[serde(default)]
     pub size: Option<u64>,
-    /// MIME type.
     #[serde(default, rename = "mimeType")]
     pub mime_type: Option<String>,
     /// Creation timestamp (ISO 8601).
@@ -122,7 +114,6 @@ pub struct JiraStatus {
     pub status_category: Option<JiraStatusCategory>,
 }
 
-/// Jira status category.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraStatusCategory {
     /// Category key: "new", "indeterminate", "done"
@@ -146,7 +137,6 @@ pub struct JiraIssueLink {
     /// Link ID
     #[serde(default)]
     pub id: Option<String>,
-    /// Link type
     #[serde(rename = "type")]
     pub link_type: JiraIssueLinkType,
     /// Inward issue (e.g., "is blocked by" this issue)
@@ -157,7 +147,6 @@ pub struct JiraIssueLink {
     pub outward_issue: Option<Box<JiraIssue>>,
 }
 
-/// Jira issue link type.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraIssueLinkType {
     /// Link type name (e.g., "Blocks", "Relates")
@@ -177,7 +166,6 @@ pub struct JiraIssueLinkType {
 /// Search response from Self-Hosted Jira (API v2, GET /search).
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraSearchResponse {
-    /// Issues
     pub issues: Vec<JiraIssue>,
     /// Starting index
     #[serde(default, rename = "startAt")]
@@ -193,7 +181,6 @@ pub struct JiraSearchResponse {
 /// Search response from Jira Cloud (API v3, GET /search/jql).
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraCloudSearchResponse {
-    /// Issues
     pub issues: Vec<JiraIssue>,
     /// Token for next page
     #[serde(default, rename = "nextPageToken")]
@@ -226,7 +213,6 @@ pub struct JiraComment {
 /// Response from GET /issue/{key}/comment.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraCommentsResponse {
-    /// Comments
     pub comments: Vec<JiraComment>,
 }
 
@@ -266,7 +252,6 @@ pub struct CreateIssuePayload {
 /// Fields for creating an issue.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateIssueFields {
-    /// Project
     pub project: ProjectKey,
     /// Summary (title)
     pub summary: String,
@@ -275,13 +260,10 @@ pub struct CreateIssueFields {
     /// Description — plain text (v2) or ADF (v3)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<serde_json::Value>,
-    /// Labels
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<Vec<String>>,
-    /// Priority
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<PriorityName>,
-    /// Assignee
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assignee: Option<serde_json::Value>,
     /// Components (issue #197).
@@ -348,13 +330,10 @@ pub struct UpdateIssueFields {
     /// Description — plain text (v2) or ADF (v3)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<serde_json::Value>,
-    /// Labels
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<Vec<String>>,
-    /// Priority
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<PriorityName>,
-    /// Assignee
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assignee: Option<serde_json::Value>,
     /// Components (issue #197). `None` means do not touch.
@@ -418,7 +397,6 @@ pub struct JiraProjectStatus {
     /// Status ID
     #[serde(default)]
     pub id: Option<String>,
-    /// Status category
     #[serde(default)]
     pub status_category: Option<JiraStatusCategory>,
 }
@@ -431,7 +409,6 @@ pub struct JiraProjectStatus {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateIssueLinkPayload {
-    /// Link type
     #[serde(rename = "type")]
     pub link_type: IssueLinkTypeName,
     /// Inward issue (target)
@@ -622,7 +599,6 @@ pub struct JiraVersionIssueStatusCounts {
 }
 
 impl JiraVersionIssueStatusCounts {
-    /// Total.
     pub fn total(&self) -> u32 {
         self.unmapped
             .saturating_add(self.to_do)

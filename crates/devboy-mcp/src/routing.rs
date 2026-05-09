@@ -57,11 +57,8 @@ pub enum RoutingReason {
     RemoteOnly,
     /// Local and upstream both advertise the tool and schemas match.
     StrategyRemote,
-    /// StrategyLocal.
     StrategyLocal,
-    /// StrategyLocalFirst.
     StrategyLocalFirst,
-    /// StrategyRemoteFirst.
     StrategyRemoteFirst,
     /// Per-tool override rule fired.
     OverrideRule(String),
@@ -72,7 +69,6 @@ pub enum RoutingReason {
 }
 
 impl RoutingReason {
-    /// As label.
     pub fn as_label(&self) -> &str {
         match self {
             Self::ExplicitPrefix => "explicit_prefix",
@@ -88,7 +84,6 @@ impl RoutingReason {
         }
     }
 
-    /// Detail.
     pub fn detail(&self) -> Option<&str> {
         match self {
             Self::OverrideRule(p) => Some(p.as_str()),
@@ -160,7 +155,6 @@ impl RoutingDecision {
         );
     }
 
-    /// Local.
     pub fn local(name: impl Into<String>, reason: RoutingReason) -> Self {
         Self {
             primary: RoutingTarget::Local,
@@ -171,7 +165,6 @@ impl RoutingDecision {
         }
     }
 
-    /// Remote.
     pub fn remote(
         prefix: impl Into<String>,
         original_name: impl Into<String>,
@@ -190,7 +183,6 @@ impl RoutingDecision {
         }
     }
 
-    /// Reject.
     pub fn reject(name: impl Into<String>, reason: RoutingReason) -> Self {
         Self {
             primary: RoutingTarget::Reject,
@@ -201,7 +193,6 @@ impl RoutingDecision {
         }
     }
 
-    /// With fallback.
     pub fn with_fallback(mut self, fallback: RoutingTarget) -> Self {
         self.fallback = Some(fallback);
         self
@@ -218,7 +209,6 @@ pub struct RoutingEngine {
 }
 
 impl RoutingEngine {
-    /// New.
     pub fn new(config: ProxyRoutingConfig, report: MatchReport) -> Self {
         Self { config, report }
     }
