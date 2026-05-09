@@ -116,6 +116,14 @@ struct Cli {
     #[arg(short, long, global = true)]
     verbose: bool,
 
+    /// Force CI routing mode for the whole invocation. Equivalent
+    /// to setting `DEVBOY_CI=1`. CI mode promotes the env-store
+    /// source to the front of the chain, skips `NotInstalled`
+    /// sources silently, and refuses interactive unlock prompts
+    /// (local-vault PIN, biometric). See ADR-021 §8.
+    #[arg(long, global = true)]
+    ci: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -804,6 +812,16 @@ async fn main() -> Result<()> {
     } else {
         EnvFilter::new("info")
     };
+
+    // ADR-021 §8: detect CI mode early. The `--ci` flag and
+    // `DEVBOY_CI=1` are explicit opt-ins; heuristic signals
+    // (`CI`, `GITLAB_CI`, …) only emit a notice — they never
+    // flip routing on their own. The notice goes to stderr so
+    // it does not pollute scriptable subcommands' stdout.
+    let ci_detection = devboy_storage::detect_ci_mode(cli.ci, None);
+    if let Some(notice) = ci_detection.doctor_notice() {
+        eprintln!("warning: {notice}");
+    }
 
     // stdout is a transport-layer channel for `devboy mcp` (JSON-RPC messages) and
     // any subcommand a script is expected to parse (`tools call` → MCP tool-result

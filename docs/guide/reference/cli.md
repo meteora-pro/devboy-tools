@@ -93,6 +93,7 @@ DevBoy - AI-powered development tools
 ###### **Options:**
 
 * `-v`, `--verbose` — Enable verbose output
+* `--ci` — Force CI routing mode for the whole invocation. Equivalent to setting `DEVBOY_CI=1`. CI mode promotes the env-store source to the front of the chain, skips `NotInstalled` sources silently, and refuses interactive unlock prompts (local-vault PIN, biometric). See ADR-021 §8
 
 
 
