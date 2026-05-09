@@ -8,9 +8,13 @@ use devboy_core::{PropertySchema, ToolCategory, ToolSchema};
 /// A tool definition with name, description, category, and input schema.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ToolDefinition {
+    /// Name.
     pub name: String,
+    /// Description.
     pub description: String,
+    /// Category.
     pub category: ToolCategory,
+    /// Input schema.
     pub input_schema: ToolSchema,
 }
 
@@ -803,8 +807,11 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
 /// so the published reference doc can render them from a single source.
 #[derive(Debug, Clone)]
 pub struct McpOnlyTool {
+    /// Name.
     pub name: String,
+    /// Description.
     pub description: String,
+    /// Input schema.
     pub input_schema: ToolSchema,
 }
 
