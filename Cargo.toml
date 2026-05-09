@@ -9,6 +9,11 @@ members = [
     "crates/devboy-mcp",
     "crates/devboy-cli",
     "crates/devboy-skills",
+    # Secret framework crates (epic #247 — ADR-020/021/023)
+    "crates/devboy-vault-crypto",
+    "crates/devboy-secret-patterns",
+    "crates/devboy-secrets-agent",
+    "crates/devboy-secrets-ui",
     # API plugins
     "crates/plugins/api/gitlab",
     "crates/plugins/api/github",
@@ -17,6 +22,12 @@ members = [
     "crates/plugins/api/confluence",
     "crates/plugins/api/fireflies",
     "crates/plugins/api/slack",
+    # Secret-source plugins (epic #247 — ADR-021)
+    "crates/plugins/secrets/keychain",
+    "crates/plugins/secrets/local-vault",
+    "crates/plugins/secrets/1password",
+    "crates/plugins/secrets/vault",
+    "crates/plugins/secrets/env-store",
     # Pipeline plugins
     "crates/plugins/format-pipeline",
     # Research eval tools
@@ -108,6 +119,16 @@ devboy-jira = { version = "0.26.0", path = "crates/plugins/api/jira" }
 devboy-confluence = { version = "0.26.0", path = "crates/plugins/api/confluence" }
 devboy-fireflies = { version = "0.26.0", path = "crates/plugins/api/fireflies" }
 devboy-slack = { version = "0.26.0", path = "crates/plugins/api/slack" }
+# Secret framework crates (epic #247)
+devboy-vault-crypto = { version = "0.26.0", path = "crates/devboy-vault-crypto" }
+devboy-secret-patterns = { version = "0.26.0", path = "crates/devboy-secret-patterns" }
+devboy-secrets-agent = { version = "0.26.0", path = "crates/devboy-secrets-agent" }
+devboy-secrets-ui = { version = "0.26.0", path = "crates/devboy-secrets-ui" }
+devboy-secret-keychain = { version = "0.26.0", path = "crates/plugins/secrets/keychain" }
+devboy-secret-local-vault = { version = "0.26.0", path = "crates/plugins/secrets/local-vault" }
+devboy-secret-1password = { version = "0.26.0", path = "crates/plugins/secrets/1password" }
+devboy-secret-vault = { version = "0.26.0", path = "crates/plugins/secrets/vault" }
+devboy-secret-env-store = { version = "0.26.0", path = "crates/plugins/secrets/env-store" }
 
 [profile.release]
 lto = true

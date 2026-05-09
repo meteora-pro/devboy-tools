@@ -1,0 +1,30 @@
+[package]
+name = "devboy-vault-crypto"
+description = "Encrypted local vault primitives for devboy-tools — XChaCha20-Poly1305 + Argon2id with envelope encryption (ADR-023)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["devboy", "secrets", "vault", "encryption", "argon2"]
+categories = ["cryptography", "authentication"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+secrecy.workspace = true
+zeroize = { version = "1.8", features = ["derive"] }
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

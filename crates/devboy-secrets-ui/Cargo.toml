@@ -1,0 +1,32 @@
+[package]
+name = "devboy-secrets-ui"
+description = "Native UI (TUI on ratatui + GUI on egui) for managing devboy-tools secrets without exposing values to the agent (ADR-023 §3.4)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["devboy", "secrets", "ui", "tui", "egui"]
+categories = ["command-line-interface", "gui"]
+publish = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = ["tui"]
+tui = []
+gui = []
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
