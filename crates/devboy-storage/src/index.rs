@@ -74,6 +74,17 @@ pub enum IndexError {
         source: toml::de::Error,
     },
 
+    /// TOML serialization error — surfaced by
+    /// [`GlobalIndex::save_to`].
+    #[error("failed to serialize global index for {path}: {source}")]
+    Serialize {
+        /// File the writer was about to write to.
+        path: PathBuf,
+        /// Underlying TOML serialization error.
+        #[source]
+        source: toml::ser::Error,
+    },
+
     /// One of the keys in the index did not satisfy the path
     /// convention from ADR-020 §2.
     #[error("invalid secret path in index: {source}")]
@@ -293,6 +304,78 @@ impl GlobalIndex {
         }
 
         Ok(Self { entries })
+    }
+
+    /// Persist this index to `path`, creating parent directories
+    /// as needed. Used by the liveness flow (P9.2 / P9.3) to
+    /// write upstream-reported `expires_at` back into the global
+    /// metadata.
+    pub fn save_to(&self, path: &Path) -> Result<(), IndexError> {
+        let body = self.to_toml_string().map_err(|e| IndexError::Serialize {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| IndexError::Read {
+                path: parent.to_path_buf(),
+                source: e,
+            })?;
+        }
+        fs::write(path, body).map_err(|e| IndexError::Read {
+            path: path.to_path_buf(),
+            source: e,
+        })
+    }
+
+    /// Persist to the default path. Returns the path written for
+    /// the caller's logging convenience.
+    pub fn save(&self) -> Result<PathBuf, IndexError> {
+        let path = Self::default_path()?;
+        self.save_to(&path)?;
+        Ok(path)
+    }
+
+    /// Update `entry.expires_at` for `path`. Returns `Ok(true)`
+    /// when an entry existed and the field changed; `Ok(false)`
+    /// when no entry exists at that path. The caller persists
+    /// via [`save`](Self::save) / [`save_to`](Self::save_to).
+    ///
+    /// Used by the liveness flow (P9.2): a probe that returns
+    /// [`LivenessResult::expires_at`] hands the value here, and
+    /// the next `doctor` run sees the freshened expiry.
+    ///
+    /// [`LivenessResult::expires_at`]: devboy_core::liveness::LivenessResult
+    pub fn record_expiry(&mut self, path: &SecretPath, expires_at: &str) -> bool {
+        match self.entries.get_mut(path) {
+            Some(entry) => {
+                let new = Some(expires_at.to_owned());
+                if entry.expires_at != new {
+                    entry.expires_at = new;
+                    true
+                } else {
+                    false
+                }
+            }
+            None => false,
+        }
+    }
+
+    /// Update `entry.last_rotated_at` for `path`. Same shape as
+    /// [`record_expiry`](Self::record_expiry); used by the rotation
+    /// flow (P13.1) after a successful rotation.
+    pub fn record_rotation(&mut self, path: &SecretPath, last_rotated_at: &str) -> bool {
+        match self.entries.get_mut(path) {
+            Some(entry) => {
+                let new = Some(last_rotated_at.to_owned());
+                if entry.last_rotated_at != new {
+                    entry.last_rotated_at = new;
+                    true
+                } else {
+                    false
+                }
+            }
+            None => false,
+        }
     }
 
     /// Serialize back to TOML. Round-trips bit-for-bit with what

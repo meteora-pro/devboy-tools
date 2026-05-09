@@ -40,6 +40,7 @@ use tracing::{debug, warn};
 
 pub mod cache;
 pub mod ci;
+pub mod expiry;
 pub mod index;
 pub mod manifest;
 pub mod merge;
@@ -56,6 +57,7 @@ pub use cache::CachedStore;
 pub use ci::{
     CI_HEURISTIC_VARS, CiActivation, CiDetection, CiPolicy, DEVBOY_CI_ENV, detect_ci_mode,
 };
+pub use expiry::{ExpiryWarning, ExpiryWarningKind, WARNING_WINDOW_DAYS, check_rotation_reminders};
 pub use index::{Gate, GlobalIndex, IndexEntry, IndexError, RotationMethod};
 pub use manifest::{
     MANIFEST_RELATIVE_PATH, ManifestError, OverrideEntry, PathRole, ProjectManifest,
