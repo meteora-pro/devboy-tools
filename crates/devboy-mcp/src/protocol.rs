@@ -6,7 +6,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// JSON-RPC version constant.
 pub const JSONRPC_VERSION: &str = "2.0";
 
 /// MCP protocol version.
