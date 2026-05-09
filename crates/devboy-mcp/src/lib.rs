@@ -26,6 +26,7 @@ pub mod layered;
 pub mod prefetch_adapter;
 pub mod protocol;
 pub mod proxy;
+pub mod proxy_secrets;
 pub mod routing;
 pub mod server;
 pub mod signature_match;
