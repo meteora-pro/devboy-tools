@@ -40,6 +40,7 @@
 //! # }
 //! ```
 
+pub mod argv_secrets;
 pub mod context;
 pub mod enricher;
 pub mod executor;
