@@ -20,7 +20,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = ["tui"]
 tui = []
-gui = []
+gui = ["dep:egui"]
 
 [dependencies]
 thiserror.workspace = true
@@ -40,6 +40,12 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 # `--no-default-features` and the default build green.
 ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
 crossterm = "0.28"
+# `egui` is fully optional and only activated by the `gui` feature.
+# Unlike `ratatui` (which is referenced by the always-compiled
+# inventory.rs), the egui code lives entirely behind
+# `#[cfg(feature = "gui")] pub mod gui` — so clippy never sees
+# the imports outside the feature-on build.
+egui = { version = "0.34", optional = true, default-features = false }
 
 [lints]
 workspace = true

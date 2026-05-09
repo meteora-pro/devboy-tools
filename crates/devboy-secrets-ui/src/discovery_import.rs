@@ -290,6 +290,17 @@ impl ImportState {
             .count()
     }
 
+    /// Set the selection to a specific index. Clamped to the
+    /// current row count. Used by the GUI backend's
+    /// click-to-select.
+    pub fn set_selected(&mut self, idx: usize) {
+        if self.rows.is_empty() {
+            self.selected = 0;
+        } else {
+            self.selected = idx.min(self.rows.len() - 1);
+        }
+    }
+
     pub fn move_up(&mut self) {
         self.selected = self.selected.saturating_sub(1);
     }

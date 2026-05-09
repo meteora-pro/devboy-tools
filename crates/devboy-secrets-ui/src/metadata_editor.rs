@@ -318,6 +318,13 @@ impl EditorState {
             .collect()
     }
 
+    /// Snapshot the current draft value for a field as a fresh
+    /// `String`. Used by the GUI text-input binding which needs
+    /// an owned `&mut String` to bind into.
+    pub fn draft_field_clone(&self, field: MetadataField) -> String {
+        self.draft.get(field).to_string()
+    }
+
     /// Replace a field's value wholesale. Useful from a paste
     /// handler or a programmatic test fixture; key handlers go
     /// through `type_char` / `backspace` instead.

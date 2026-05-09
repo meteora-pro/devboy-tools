@@ -7,6 +7,8 @@
 //! [ADR-023]: https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md
 
 pub mod discovery_import;
+#[cfg(feature = "gui")]
+pub mod gui;
 pub mod inventory;
 pub mod metadata_editor;
 pub mod provision_dialog;

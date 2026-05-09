@@ -300,6 +300,24 @@ impl DialogState {
         self.value = SecretString::new(s.into());
     }
 
+    /// Clone the current value into a fresh `String` for use by
+    /// a GUI text-input binding. The returned buffer is the
+    /// caller's responsibility to drop or feed back through
+    /// [`Self::replace_value_str`]. Documented as
+    /// `for_edit` so the intent (transient editing) is explicit
+    /// at the call site.
+    pub fn value_clone_for_edit(&self) -> String {
+        self.value.expose_secret().to_string()
+    }
+
+    /// Wholesale replace the secret value from a GUI buffer.
+    /// The previous `SecretString` is dropped here, which
+    /// zeroizes its memory. Updates the cached length.
+    pub fn replace_value_str(&mut self, s: String) {
+        self.value_len = s.chars().count();
+        self.value = SecretString::new(s.into());
+    }
+
     /// Wipe the entered value. Intended for "user typed garbage,
     /// hit Ctrl-U" — the previous `SecretString` is dropped
     /// here, which zeroizes its memory.

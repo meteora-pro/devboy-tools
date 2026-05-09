@@ -302,6 +302,19 @@ impl InventoryState {
         self.focus = self.focus.prev();
     }
 
+    /// Set the selection to a specific index. Clamped to the
+    /// current visible row count. Used by the GUI backend's
+    /// click-to-select; TUI key handlers prefer `move_up` /
+    /// `move_down`.
+    pub fn set_selected(&mut self, idx: usize) {
+        let len = self.visible_rows().len();
+        if len == 0 {
+            self.selected = 0;
+        } else {
+            self.selected = idx.min(len - 1);
+        }
+    }
+
     pub fn move_up(&mut self) {
         if self.selected > 0 {
             self.selected -= 1;
