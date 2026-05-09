@@ -1,0 +1,745 @@
+pub mod devboy_gitlab
+pub mod devboy_gitlab::enricher
+pub struct devboy_gitlab::enricher::GitLabSchemaEnricher
+impl devboy_core::enricher::ToolEnricher for devboy_gitlab::enricher::GitLabSchemaEnricher
+pub fn devboy_gitlab::enricher::GitLabSchemaEnricher::enrich_schema(&self, tool_name: &str, schema: &mut devboy_core::enricher::ToolSchema)
+pub fn devboy_gitlab::enricher::GitLabSchemaEnricher::rate_limit_host(&self, _tool_name: &str, _args: &serde_json::value::Value) -> core::option::Option<alloc::string::String>
+pub fn devboy_gitlab::enricher::GitLabSchemaEnricher::supported_categories(&self) -> &[devboy_core::tool_category::ToolCategory]
+pub fn devboy_gitlab::enricher::GitLabSchemaEnricher::transform_args(&self, _tool_name: &str, _args: &mut serde_json::value::Value)
+pub fn devboy_gitlab::enricher::GitLabSchemaEnricher::value_model(&self, tool_name: &str) -> core::option::Option<devboy_core::tool_value_model::ToolValueModel>
+impl core::marker::Freeze for devboy_gitlab::enricher::GitLabSchemaEnricher
+impl core::marker::Send for devboy_gitlab::enricher::GitLabSchemaEnricher
+impl core::marker::Sync for devboy_gitlab::enricher::GitLabSchemaEnricher
+impl core::marker::Unpin for devboy_gitlab::enricher::GitLabSchemaEnricher
+impl core::marker::UnsafeUnpin for devboy_gitlab::enricher::GitLabSchemaEnricher
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::enricher::GitLabSchemaEnricher
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::enricher::GitLabSchemaEnricher
+pub mod devboy_gitlab::types
+pub struct devboy_gitlab::types::CreateDiscussionRequest
+pub devboy_gitlab::types::CreateDiscussionRequest::body: alloc::string::String
+pub devboy_gitlab::types::CreateDiscussionRequest::position: core::option::Option<devboy_gitlab::DiscussionPosition>
+impl core::clone::Clone for devboy_gitlab::CreateDiscussionRequest
+pub fn devboy_gitlab::CreateDiscussionRequest::clone(&self) -> devboy_gitlab::CreateDiscussionRequest
+impl core::fmt::Debug for devboy_gitlab::CreateDiscussionRequest
+pub fn devboy_gitlab::CreateDiscussionRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::CreateDiscussionRequest
+pub fn devboy_gitlab::CreateDiscussionRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_gitlab::CreateDiscussionRequest
+impl core::marker::Send for devboy_gitlab::CreateDiscussionRequest
+impl core::marker::Sync for devboy_gitlab::CreateDiscussionRequest
+impl core::marker::Unpin for devboy_gitlab::CreateDiscussionRequest
+impl core::marker::UnsafeUnpin for devboy_gitlab::CreateDiscussionRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::CreateDiscussionRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::CreateDiscussionRequest
+pub struct devboy_gitlab::types::CreateIssueRequest
+pub devboy_gitlab::types::CreateIssueRequest::assignee_ids: core::option::Option<alloc::vec::Vec<u64>>
+pub devboy_gitlab::types::CreateIssueRequest::description: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::CreateIssueRequest::labels: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::CreateIssueRequest::title: alloc::string::String
+impl core::clone::Clone for devboy_gitlab::CreateIssueRequest
+pub fn devboy_gitlab::CreateIssueRequest::clone(&self) -> devboy_gitlab::CreateIssueRequest
+impl core::fmt::Debug for devboy_gitlab::CreateIssueRequest
+pub fn devboy_gitlab::CreateIssueRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::CreateIssueRequest
+pub fn devboy_gitlab::CreateIssueRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_gitlab::CreateIssueRequest
+impl core::marker::Send for devboy_gitlab::CreateIssueRequest
+impl core::marker::Sync for devboy_gitlab::CreateIssueRequest
+impl core::marker::Unpin for devboy_gitlab::CreateIssueRequest
+impl core::marker::UnsafeUnpin for devboy_gitlab::CreateIssueRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::CreateIssueRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::CreateIssueRequest
+pub struct devboy_gitlab::types::CreateMergeRequestRequest
+pub devboy_gitlab::types::CreateMergeRequestRequest::description: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::CreateMergeRequestRequest::labels: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::CreateMergeRequestRequest::reviewer_ids: core::option::Option<alloc::vec::Vec<u64>>
+pub devboy_gitlab::types::CreateMergeRequestRequest::source_branch: alloc::string::String
+pub devboy_gitlab::types::CreateMergeRequestRequest::target_branch: alloc::string::String
+pub devboy_gitlab::types::CreateMergeRequestRequest::title: alloc::string::String
+impl core::clone::Clone for devboy_gitlab::CreateMergeRequestRequest
+pub fn devboy_gitlab::CreateMergeRequestRequest::clone(&self) -> devboy_gitlab::CreateMergeRequestRequest
+impl core::fmt::Debug for devboy_gitlab::CreateMergeRequestRequest
+pub fn devboy_gitlab::CreateMergeRequestRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::CreateMergeRequestRequest
+pub fn devboy_gitlab::CreateMergeRequestRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_gitlab::CreateMergeRequestRequest
+impl core::marker::Send for devboy_gitlab::CreateMergeRequestRequest
+impl core::marker::Sync for devboy_gitlab::CreateMergeRequestRequest
+impl core::marker::Unpin for devboy_gitlab::CreateMergeRequestRequest
+impl core::marker::UnsafeUnpin for devboy_gitlab::CreateMergeRequestRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::CreateMergeRequestRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::CreateMergeRequestRequest
+pub struct devboy_gitlab::types::CreateNoteRequest
+pub devboy_gitlab::types::CreateNoteRequest::body: alloc::string::String
+impl core::clone::Clone for devboy_gitlab::CreateNoteRequest
+pub fn devboy_gitlab::CreateNoteRequest::clone(&self) -> devboy_gitlab::CreateNoteRequest
+impl core::fmt::Debug for devboy_gitlab::CreateNoteRequest
+pub fn devboy_gitlab::CreateNoteRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::CreateNoteRequest
+pub fn devboy_gitlab::CreateNoteRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_gitlab::CreateNoteRequest
+impl core::marker::Send for devboy_gitlab::CreateNoteRequest
+impl core::marker::Sync for devboy_gitlab::CreateNoteRequest
+impl core::marker::Unpin for devboy_gitlab::CreateNoteRequest
+impl core::marker::UnsafeUnpin for devboy_gitlab::CreateNoteRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::CreateNoteRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::CreateNoteRequest
+pub struct devboy_gitlab::types::DiscussionPosition
+pub devboy_gitlab::types::DiscussionPosition::base_sha: alloc::string::String
+pub devboy_gitlab::types::DiscussionPosition::head_sha: alloc::string::String
+pub devboy_gitlab::types::DiscussionPosition::new_line: core::option::Option<u32>
+pub devboy_gitlab::types::DiscussionPosition::new_path: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::DiscussionPosition::old_line: core::option::Option<u32>
+pub devboy_gitlab::types::DiscussionPosition::old_path: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::DiscussionPosition::position_type: alloc::string::String
+pub devboy_gitlab::types::DiscussionPosition::start_sha: alloc::string::String
+impl core::clone::Clone for devboy_gitlab::DiscussionPosition
+pub fn devboy_gitlab::DiscussionPosition::clone(&self) -> devboy_gitlab::DiscussionPosition
+impl core::fmt::Debug for devboy_gitlab::DiscussionPosition
+pub fn devboy_gitlab::DiscussionPosition::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::DiscussionPosition
+pub fn devboy_gitlab::DiscussionPosition::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_gitlab::DiscussionPosition
+impl core::marker::Send for devboy_gitlab::DiscussionPosition
+impl core::marker::Sync for devboy_gitlab::DiscussionPosition
+impl core::marker::Unpin for devboy_gitlab::DiscussionPosition
+impl core::marker::UnsafeUnpin for devboy_gitlab::DiscussionPosition
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::DiscussionPosition
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::DiscussionPosition
+pub struct devboy_gitlab::types::GitLabDiff
+pub devboy_gitlab::types::GitLabDiff::deleted_file: bool
+pub devboy_gitlab::types::GitLabDiff::diff: alloc::string::String
+pub devboy_gitlab::types::GitLabDiff::new_file: bool
+pub devboy_gitlab::types::GitLabDiff::new_path: alloc::string::String
+pub devboy_gitlab::types::GitLabDiff::old_path: alloc::string::String
+pub devboy_gitlab::types::GitLabDiff::renamed_file: bool
+impl core::clone::Clone for devboy_gitlab::GitLabDiff
+pub fn devboy_gitlab::GitLabDiff::clone(&self) -> devboy_gitlab::GitLabDiff
+impl core::fmt::Debug for devboy_gitlab::GitLabDiff
+pub fn devboy_gitlab::GitLabDiff::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabDiff
+pub fn devboy_gitlab::GitLabDiff::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabDiff
+pub fn devboy_gitlab::GitLabDiff::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabDiff
+impl core::marker::Send for devboy_gitlab::GitLabDiff
+impl core::marker::Sync for devboy_gitlab::GitLabDiff
+impl core::marker::Unpin for devboy_gitlab::GitLabDiff
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabDiff
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabDiff
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabDiff
+pub struct devboy_gitlab::types::GitLabDiffRefs
+pub devboy_gitlab::types::GitLabDiffRefs::base_sha: alloc::string::String
+pub devboy_gitlab::types::GitLabDiffRefs::head_sha: alloc::string::String
+pub devboy_gitlab::types::GitLabDiffRefs::start_sha: alloc::string::String
+impl core::clone::Clone for devboy_gitlab::GitLabDiffRefs
+pub fn devboy_gitlab::GitLabDiffRefs::clone(&self) -> devboy_gitlab::GitLabDiffRefs
+impl core::fmt::Debug for devboy_gitlab::GitLabDiffRefs
+pub fn devboy_gitlab::GitLabDiffRefs::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabDiffRefs
+pub fn devboy_gitlab::GitLabDiffRefs::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabDiffRefs
+pub fn devboy_gitlab::GitLabDiffRefs::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabDiffRefs
+impl core::marker::Send for devboy_gitlab::GitLabDiffRefs
+impl core::marker::Sync for devboy_gitlab::GitLabDiffRefs
+impl core::marker::Unpin for devboy_gitlab::GitLabDiffRefs
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabDiffRefs
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabDiffRefs
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabDiffRefs
+pub struct devboy_gitlab::types::GitLabDiscussion
+pub devboy_gitlab::types::GitLabDiscussion::id: alloc::string::String
+pub devboy_gitlab::types::GitLabDiscussion::notes: alloc::vec::Vec<devboy_gitlab::GitLabNote>
+impl core::clone::Clone for devboy_gitlab::GitLabDiscussion
+pub fn devboy_gitlab::GitLabDiscussion::clone(&self) -> devboy_gitlab::GitLabDiscussion
+impl core::fmt::Debug for devboy_gitlab::GitLabDiscussion
+pub fn devboy_gitlab::GitLabDiscussion::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabDiscussion
+pub fn devboy_gitlab::GitLabDiscussion::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabDiscussion
+pub fn devboy_gitlab::GitLabDiscussion::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabDiscussion
+impl core::marker::Send for devboy_gitlab::GitLabDiscussion
+impl core::marker::Sync for devboy_gitlab::GitLabDiscussion
+impl core::marker::Unpin for devboy_gitlab::GitLabDiscussion
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabDiscussion
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabDiscussion
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabDiscussion
+pub struct devboy_gitlab::types::GitLabIssue
+pub devboy_gitlab::types::GitLabIssue::assignees: alloc::vec::Vec<devboy_gitlab::GitLabUser>
+pub devboy_gitlab::types::GitLabIssue::author: core::option::Option<devboy_gitlab::GitLabUser>
+pub devboy_gitlab::types::GitLabIssue::created_at: alloc::string::String
+pub devboy_gitlab::types::GitLabIssue::description: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::GitLabIssue::id: u64
+pub devboy_gitlab::types::GitLabIssue::iid: u64
+pub devboy_gitlab::types::GitLabIssue::labels: alloc::vec::Vec<alloc::string::String>
+pub devboy_gitlab::types::GitLabIssue::state: alloc::string::String
+pub devboy_gitlab::types::GitLabIssue::title: alloc::string::String
+pub devboy_gitlab::types::GitLabIssue::updated_at: alloc::string::String
+pub devboy_gitlab::types::GitLabIssue::web_url: alloc::string::String
+impl core::clone::Clone for devboy_gitlab::GitLabIssue
+pub fn devboy_gitlab::GitLabIssue::clone(&self) -> devboy_gitlab::GitLabIssue
+impl core::fmt::Debug for devboy_gitlab::GitLabIssue
+pub fn devboy_gitlab::GitLabIssue::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabIssue
+pub fn devboy_gitlab::GitLabIssue::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabIssue
+pub fn devboy_gitlab::GitLabIssue::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabIssue
+impl core::marker::Send for devboy_gitlab::GitLabIssue
+impl core::marker::Sync for devboy_gitlab::GitLabIssue
+impl core::marker::Unpin for devboy_gitlab::GitLabIssue
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabIssue
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabIssue
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabIssue
+pub struct devboy_gitlab::types::GitLabMergeRequest
+pub devboy_gitlab::types::GitLabMergeRequest::assignees: alloc::vec::Vec<devboy_gitlab::GitLabUser>
+pub devboy_gitlab::types::GitLabMergeRequest::author: core::option::Option<devboy_gitlab::GitLabUser>
+pub devboy_gitlab::types::GitLabMergeRequest::created_at: alloc::string::String
+pub devboy_gitlab::types::GitLabMergeRequest::description: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::GitLabMergeRequest::diff_refs: core::option::Option<devboy_gitlab::GitLabDiffRefs>
+pub devboy_gitlab::types::GitLabMergeRequest::draft: bool
+pub devboy_gitlab::types::GitLabMergeRequest::id: u64
+pub devboy_gitlab::types::GitLabMergeRequest::iid: u64
+pub devboy_gitlab::types::GitLabMergeRequest::labels: alloc::vec::Vec<alloc::string::String>
+pub devboy_gitlab::types::GitLabMergeRequest::merged_at: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::GitLabMergeRequest::reviewers: alloc::vec::Vec<devboy_gitlab::GitLabUser>
+pub devboy_gitlab::types::GitLabMergeRequest::sha: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::GitLabMergeRequest::source_branch: alloc::string::String
+pub devboy_gitlab::types::GitLabMergeRequest::state: alloc::string::String
+pub devboy_gitlab::types::GitLabMergeRequest::target_branch: alloc::string::String
+pub devboy_gitlab::types::GitLabMergeRequest::title: alloc::string::String
+pub devboy_gitlab::types::GitLabMergeRequest::updated_at: alloc::string::String
+pub devboy_gitlab::types::GitLabMergeRequest::web_url: alloc::string::String
+pub devboy_gitlab::types::GitLabMergeRequest::work_in_progress: bool
+impl core::clone::Clone for devboy_gitlab::GitLabMergeRequest
+pub fn devboy_gitlab::GitLabMergeRequest::clone(&self) -> devboy_gitlab::GitLabMergeRequest
+impl core::fmt::Debug for devboy_gitlab::GitLabMergeRequest
+pub fn devboy_gitlab::GitLabMergeRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabMergeRequest
+pub fn devboy_gitlab::GitLabMergeRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabMergeRequest
+pub fn devboy_gitlab::GitLabMergeRequest::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabMergeRequest
+impl core::marker::Send for devboy_gitlab::GitLabMergeRequest
+impl core::marker::Sync for devboy_gitlab::GitLabMergeRequest
+impl core::marker::Unpin for devboy_gitlab::GitLabMergeRequest
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabMergeRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabMergeRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabMergeRequest
+pub struct devboy_gitlab::types::GitLabMergeRequestChanges
+pub devboy_gitlab::types::GitLabMergeRequestChanges::changes: alloc::vec::Vec<devboy_gitlab::GitLabDiff>
+impl core::clone::Clone for devboy_gitlab::GitLabMergeRequestChanges
+pub fn devboy_gitlab::GitLabMergeRequestChanges::clone(&self) -> devboy_gitlab::GitLabMergeRequestChanges
+impl core::fmt::Debug for devboy_gitlab::GitLabMergeRequestChanges
+pub fn devboy_gitlab::GitLabMergeRequestChanges::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabMergeRequestChanges
+pub fn devboy_gitlab::GitLabMergeRequestChanges::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabMergeRequestChanges
+pub fn devboy_gitlab::GitLabMergeRequestChanges::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabMergeRequestChanges
+impl core::marker::Send for devboy_gitlab::GitLabMergeRequestChanges
+impl core::marker::Sync for devboy_gitlab::GitLabMergeRequestChanges
+impl core::marker::Unpin for devboy_gitlab::GitLabMergeRequestChanges
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabMergeRequestChanges
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabMergeRequestChanges
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabMergeRequestChanges
+pub struct devboy_gitlab::types::GitLabNote
+pub devboy_gitlab::types::GitLabNote::author: core::option::Option<devboy_gitlab::GitLabUser>
+pub devboy_gitlab::types::GitLabNote::body: alloc::string::String
+pub devboy_gitlab::types::GitLabNote::created_at: alloc::string::String
+pub devboy_gitlab::types::GitLabNote::id: u64
+pub devboy_gitlab::types::GitLabNote::position: core::option::Option<devboy_gitlab::GitLabNotePosition>
+pub devboy_gitlab::types::GitLabNote::resolvable: bool
+pub devboy_gitlab::types::GitLabNote::resolved: bool
+pub devboy_gitlab::types::GitLabNote::resolved_by: core::option::Option<devboy_gitlab::GitLabUser>
+pub devboy_gitlab::types::GitLabNote::system: bool
+pub devboy_gitlab::types::GitLabNote::updated_at: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_gitlab::GitLabNote
+pub fn devboy_gitlab::GitLabNote::clone(&self) -> devboy_gitlab::GitLabNote
+impl core::fmt::Debug for devboy_gitlab::GitLabNote
+pub fn devboy_gitlab::GitLabNote::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabNote
+pub fn devboy_gitlab::GitLabNote::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabNote
+pub fn devboy_gitlab::GitLabNote::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabNote
+impl core::marker::Send for devboy_gitlab::GitLabNote
+impl core::marker::Sync for devboy_gitlab::GitLabNote
+impl core::marker::Unpin for devboy_gitlab::GitLabNote
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabNote
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabNote
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabNote
+pub struct devboy_gitlab::types::GitLabNotePosition
+pub devboy_gitlab::types::GitLabNotePosition::new_line: core::option::Option<u32>
+pub devboy_gitlab::types::GitLabNotePosition::new_path: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::GitLabNotePosition::old_line: core::option::Option<u32>
+pub devboy_gitlab::types::GitLabNotePosition::old_path: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::GitLabNotePosition::position_type: alloc::string::String
+impl core::clone::Clone for devboy_gitlab::GitLabNotePosition
+pub fn devboy_gitlab::GitLabNotePosition::clone(&self) -> devboy_gitlab::GitLabNotePosition
+impl core::fmt::Debug for devboy_gitlab::GitLabNotePosition
+pub fn devboy_gitlab::GitLabNotePosition::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabNotePosition
+pub fn devboy_gitlab::GitLabNotePosition::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabNotePosition
+pub fn devboy_gitlab::GitLabNotePosition::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabNotePosition
+impl core::marker::Send for devboy_gitlab::GitLabNotePosition
+impl core::marker::Sync for devboy_gitlab::GitLabNotePosition
+impl core::marker::Unpin for devboy_gitlab::GitLabNotePosition
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabNotePosition
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabNotePosition
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabNotePosition
+pub struct devboy_gitlab::types::GitLabUser
+pub devboy_gitlab::types::GitLabUser::avatar_url: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::GitLabUser::id: u64
+pub devboy_gitlab::types::GitLabUser::name: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::GitLabUser::username: alloc::string::String
+pub devboy_gitlab::types::GitLabUser::web_url: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_gitlab::GitLabUser
+pub fn devboy_gitlab::GitLabUser::clone(&self) -> devboy_gitlab::GitLabUser
+impl core::fmt::Debug for devboy_gitlab::GitLabUser
+pub fn devboy_gitlab::GitLabUser::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabUser
+pub fn devboy_gitlab::GitLabUser::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabUser
+pub fn devboy_gitlab::GitLabUser::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabUser
+impl core::marker::Send for devboy_gitlab::GitLabUser
+impl core::marker::Sync for devboy_gitlab::GitLabUser
+impl core::marker::Unpin for devboy_gitlab::GitLabUser
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabUser
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabUser
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabUser
+pub struct devboy_gitlab::types::UpdateIssueRequest
+pub devboy_gitlab::types::UpdateIssueRequest::assignee_ids: core::option::Option<alloc::vec::Vec<u64>>
+pub devboy_gitlab::types::UpdateIssueRequest::description: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::UpdateIssueRequest::labels: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::UpdateIssueRequest::state_event: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::UpdateIssueRequest::title: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_gitlab::UpdateIssueRequest
+pub fn devboy_gitlab::UpdateIssueRequest::clone(&self) -> devboy_gitlab::UpdateIssueRequest
+impl core::default::Default for devboy_gitlab::UpdateIssueRequest
+pub fn devboy_gitlab::UpdateIssueRequest::default() -> devboy_gitlab::UpdateIssueRequest
+impl core::fmt::Debug for devboy_gitlab::UpdateIssueRequest
+pub fn devboy_gitlab::UpdateIssueRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::UpdateIssueRequest
+pub fn devboy_gitlab::UpdateIssueRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_gitlab::UpdateIssueRequest
+impl core::marker::Send for devboy_gitlab::UpdateIssueRequest
+impl core::marker::Sync for devboy_gitlab::UpdateIssueRequest
+impl core::marker::Unpin for devboy_gitlab::UpdateIssueRequest
+impl core::marker::UnsafeUnpin for devboy_gitlab::UpdateIssueRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::UpdateIssueRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::UpdateIssueRequest
+pub struct devboy_gitlab::types::UpdateMergeRequestRequest
+pub devboy_gitlab::types::UpdateMergeRequestRequest::description: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::UpdateMergeRequestRequest::labels: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::UpdateMergeRequestRequest::state_event: core::option::Option<alloc::string::String>
+pub devboy_gitlab::types::UpdateMergeRequestRequest::title: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_gitlab::UpdateMergeRequestRequest
+pub fn devboy_gitlab::UpdateMergeRequestRequest::clone(&self) -> devboy_gitlab::UpdateMergeRequestRequest
+impl core::fmt::Debug for devboy_gitlab::UpdateMergeRequestRequest
+pub fn devboy_gitlab::UpdateMergeRequestRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::UpdateMergeRequestRequest
+pub fn devboy_gitlab::UpdateMergeRequestRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_gitlab::UpdateMergeRequestRequest
+impl core::marker::Send for devboy_gitlab::UpdateMergeRequestRequest
+impl core::marker::Sync for devboy_gitlab::UpdateMergeRequestRequest
+impl core::marker::Unpin for devboy_gitlab::UpdateMergeRequestRequest
+impl core::marker::UnsafeUnpin for devboy_gitlab::UpdateMergeRequestRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::UpdateMergeRequestRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::UpdateMergeRequestRequest
+pub struct devboy_gitlab::CreateDiscussionRequest
+pub devboy_gitlab::CreateDiscussionRequest::body: alloc::string::String
+pub devboy_gitlab::CreateDiscussionRequest::position: core::option::Option<devboy_gitlab::DiscussionPosition>
+impl core::clone::Clone for devboy_gitlab::CreateDiscussionRequest
+pub fn devboy_gitlab::CreateDiscussionRequest::clone(&self) -> devboy_gitlab::CreateDiscussionRequest
+impl core::fmt::Debug for devboy_gitlab::CreateDiscussionRequest
+pub fn devboy_gitlab::CreateDiscussionRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::CreateDiscussionRequest
+pub fn devboy_gitlab::CreateDiscussionRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_gitlab::CreateDiscussionRequest
+impl core::marker::Send for devboy_gitlab::CreateDiscussionRequest
+impl core::marker::Sync for devboy_gitlab::CreateDiscussionRequest
+impl core::marker::Unpin for devboy_gitlab::CreateDiscussionRequest
+impl core::marker::UnsafeUnpin for devboy_gitlab::CreateDiscussionRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::CreateDiscussionRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::CreateDiscussionRequest
+pub struct devboy_gitlab::CreateIssueRequest
+pub devboy_gitlab::CreateIssueRequest::assignee_ids: core::option::Option<alloc::vec::Vec<u64>>
+pub devboy_gitlab::CreateIssueRequest::description: core::option::Option<alloc::string::String>
+pub devboy_gitlab::CreateIssueRequest::labels: core::option::Option<alloc::string::String>
+pub devboy_gitlab::CreateIssueRequest::title: alloc::string::String
+impl core::clone::Clone for devboy_gitlab::CreateIssueRequest
+pub fn devboy_gitlab::CreateIssueRequest::clone(&self) -> devboy_gitlab::CreateIssueRequest
+impl core::fmt::Debug for devboy_gitlab::CreateIssueRequest
+pub fn devboy_gitlab::CreateIssueRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::CreateIssueRequest
+pub fn devboy_gitlab::CreateIssueRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_gitlab::CreateIssueRequest
+impl core::marker::Send for devboy_gitlab::CreateIssueRequest
+impl core::marker::Sync for devboy_gitlab::CreateIssueRequest
+impl core::marker::Unpin for devboy_gitlab::CreateIssueRequest
+impl core::marker::UnsafeUnpin for devboy_gitlab::CreateIssueRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::CreateIssueRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::CreateIssueRequest
+pub struct devboy_gitlab::CreateMergeRequestRequest
+pub devboy_gitlab::CreateMergeRequestRequest::description: core::option::Option<alloc::string::String>
+pub devboy_gitlab::CreateMergeRequestRequest::labels: core::option::Option<alloc::string::String>
+pub devboy_gitlab::CreateMergeRequestRequest::reviewer_ids: core::option::Option<alloc::vec::Vec<u64>>
+pub devboy_gitlab::CreateMergeRequestRequest::source_branch: alloc::string::String
+pub devboy_gitlab::CreateMergeRequestRequest::target_branch: alloc::string::String
+pub devboy_gitlab::CreateMergeRequestRequest::title: alloc::string::String
+impl core::clone::Clone for devboy_gitlab::CreateMergeRequestRequest
+pub fn devboy_gitlab::CreateMergeRequestRequest::clone(&self) -> devboy_gitlab::CreateMergeRequestRequest
+impl core::fmt::Debug for devboy_gitlab::CreateMergeRequestRequest
+pub fn devboy_gitlab::CreateMergeRequestRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::CreateMergeRequestRequest
+pub fn devboy_gitlab::CreateMergeRequestRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_gitlab::CreateMergeRequestRequest
+impl core::marker::Send for devboy_gitlab::CreateMergeRequestRequest
+impl core::marker::Sync for devboy_gitlab::CreateMergeRequestRequest
+impl core::marker::Unpin for devboy_gitlab::CreateMergeRequestRequest
+impl core::marker::UnsafeUnpin for devboy_gitlab::CreateMergeRequestRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::CreateMergeRequestRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::CreateMergeRequestRequest
+pub struct devboy_gitlab::CreateNoteRequest
+pub devboy_gitlab::CreateNoteRequest::body: alloc::string::String
+impl core::clone::Clone for devboy_gitlab::CreateNoteRequest
+pub fn devboy_gitlab::CreateNoteRequest::clone(&self) -> devboy_gitlab::CreateNoteRequest
+impl core::fmt::Debug for devboy_gitlab::CreateNoteRequest
+pub fn devboy_gitlab::CreateNoteRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::CreateNoteRequest
+pub fn devboy_gitlab::CreateNoteRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_gitlab::CreateNoteRequest
+impl core::marker::Send for devboy_gitlab::CreateNoteRequest
+impl core::marker::Sync for devboy_gitlab::CreateNoteRequest
+impl core::marker::Unpin for devboy_gitlab::CreateNoteRequest
+impl core::marker::UnsafeUnpin for devboy_gitlab::CreateNoteRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::CreateNoteRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::CreateNoteRequest
+pub struct devboy_gitlab::DiscussionPosition
+pub devboy_gitlab::DiscussionPosition::base_sha: alloc::string::String
+pub devboy_gitlab::DiscussionPosition::head_sha: alloc::string::String
+pub devboy_gitlab::DiscussionPosition::new_line: core::option::Option<u32>
+pub devboy_gitlab::DiscussionPosition::new_path: core::option::Option<alloc::string::String>
+pub devboy_gitlab::DiscussionPosition::old_line: core::option::Option<u32>
+pub devboy_gitlab::DiscussionPosition::old_path: core::option::Option<alloc::string::String>
+pub devboy_gitlab::DiscussionPosition::position_type: alloc::string::String
+pub devboy_gitlab::DiscussionPosition::start_sha: alloc::string::String
+impl core::clone::Clone for devboy_gitlab::DiscussionPosition
+pub fn devboy_gitlab::DiscussionPosition::clone(&self) -> devboy_gitlab::DiscussionPosition
+impl core::fmt::Debug for devboy_gitlab::DiscussionPosition
+pub fn devboy_gitlab::DiscussionPosition::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::DiscussionPosition
+pub fn devboy_gitlab::DiscussionPosition::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_gitlab::DiscussionPosition
+impl core::marker::Send for devboy_gitlab::DiscussionPosition
+impl core::marker::Sync for devboy_gitlab::DiscussionPosition
+impl core::marker::Unpin for devboy_gitlab::DiscussionPosition
+impl core::marker::UnsafeUnpin for devboy_gitlab::DiscussionPosition
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::DiscussionPosition
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::DiscussionPosition
+pub struct devboy_gitlab::GitLabClient
+impl devboy_gitlab::GitLabClient
+pub fn devboy_gitlab::GitLabClient::new(project_id: impl core::convert::Into<alloc::string::String>, token: secrecy::SecretString) -> Self
+pub fn devboy_gitlab::GitLabClient::with_base_url(base_url: impl core::convert::Into<alloc::string::String>, project_id: impl core::convert::Into<alloc::string::String>, token: secrecy::SecretString) -> Self
+pub fn devboy_gitlab::GitLabClient::with_proxy(self, headers: std::collections::hash::map::HashMap<alloc::string::String, alloc::string::String>) -> Self
+impl devboy_core::provider::IssueProvider for devboy_gitlab::GitLabClient
+pub fn devboy_gitlab::GitLabClient::add_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, issue_key: &'life1 str, body: &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Comment>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn devboy_gitlab::GitLabClient::asset_capabilities(&self) -> devboy_core::asset::AssetCapabilities
+pub fn devboy_gitlab::GitLabClient::create_issue<'life0, 'async_trait>(&'life0 self, input: devboy_core::types::CreateIssueInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_gitlab::GitLabClient::download_attachment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, _issue_key: &'life1 str, asset_id: &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<alloc::vec::Vec<u8>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn devboy_gitlab::GitLabClient::get_comments<'life0, 'life1, 'async_trait>(&'life0 self, issue_key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::Comment>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_gitlab::GitLabClient::get_issue<'life0, 'life1, 'async_trait>(&'life0 self, key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_gitlab::GitLabClient::get_issue_attachments<'life0, 'life1, 'async_trait>(&'life0 self, issue_key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<alloc::vec::Vec<devboy_core::asset::AssetMeta>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_gitlab::GitLabClient::get_issues<'life0, 'async_trait>(&'life0 self, filter: devboy_core::types::IssueFilter) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_gitlab::GitLabClient::provider_name(&self) -> &'static str
+pub fn devboy_gitlab::GitLabClient::update_issue<'life0, 'life1, 'async_trait>(&'life0 self, key: &'life1 str, input: devboy_core::types::UpdateIssueInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_gitlab::GitLabClient::upload_attachment<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, issue_key: &'life1 str, filename: &'life2 str, data: &'life3 [u8]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+impl devboy_core::provider::MergeRequestProvider for devboy_gitlab::GitLabClient
+pub fn devboy_gitlab::GitLabClient::add_comment<'life0, 'life1, 'async_trait>(&'life0 self, mr_key: &'life1 str, input: devboy_core::types::CreateCommentInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Comment>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_gitlab::GitLabClient::create_merge_request<'life0, 'async_trait>(&'life0 self, input: devboy_core::types::CreateMergeRequestInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::MergeRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_gitlab::GitLabClient::download_mr_attachment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, _mr_key: &'life1 str, asset_id: &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<alloc::vec::Vec<u8>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn devboy_gitlab::GitLabClient::get_diffs<'life0, 'life1, 'async_trait>(&'life0 self, mr_key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::FileDiff>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_gitlab::GitLabClient::get_discussions<'life0, 'life1, 'async_trait>(&'life0 self, mr_key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::Discussion>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_gitlab::GitLabClient::get_merge_request<'life0, 'life1, 'async_trait>(&'life0 self, key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::MergeRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_gitlab::GitLabClient::get_merge_requests<'life0, 'async_trait>(&'life0 self, filter: devboy_core::types::MrFilter) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::MergeRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_gitlab::GitLabClient::get_mr_attachments<'life0, 'life1, 'async_trait>(&'life0 self, mr_key: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<alloc::vec::Vec<devboy_core::asset::AssetMeta>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_gitlab::GitLabClient::provider_name(&self) -> &'static str
+pub fn devboy_gitlab::GitLabClient::update_merge_request<'life0, 'life1, 'async_trait>(&'life0 self, key: &'life1 str, input: devboy_core::types::UpdateMergeRequestInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::MergeRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+impl devboy_core::provider::PipelineProvider for devboy_gitlab::GitLabClient
+pub fn devboy_gitlab::GitLabClient::get_job_logs<'life0, 'life1, 'async_trait>(&'life0 self, job_id: &'life1 str, options: devboy_core::types::JobLogOptions) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::JobLogOutput>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_gitlab::GitLabClient::get_pipeline<'life0, 'async_trait>(&'life0 self, input: devboy_core::types::GetPipelineInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::PipelineInfo>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_gitlab::GitLabClient::provider_name(&self) -> &'static str
+impl devboy_core::provider::Provider for devboy_gitlab::GitLabClient
+pub fn devboy_gitlab::GitLabClient::get_current_user<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::User>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+impl core::marker::Freeze for devboy_gitlab::GitLabClient
+impl core::marker::Send for devboy_gitlab::GitLabClient
+impl core::marker::Sync for devboy_gitlab::GitLabClient
+impl core::marker::Unpin for devboy_gitlab::GitLabClient
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabClient
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabClient
+impl !core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabClient
+pub struct devboy_gitlab::GitLabDiff
+pub devboy_gitlab::GitLabDiff::deleted_file: bool
+pub devboy_gitlab::GitLabDiff::diff: alloc::string::String
+pub devboy_gitlab::GitLabDiff::new_file: bool
+pub devboy_gitlab::GitLabDiff::new_path: alloc::string::String
+pub devboy_gitlab::GitLabDiff::old_path: alloc::string::String
+pub devboy_gitlab::GitLabDiff::renamed_file: bool
+impl core::clone::Clone for devboy_gitlab::GitLabDiff
+pub fn devboy_gitlab::GitLabDiff::clone(&self) -> devboy_gitlab::GitLabDiff
+impl core::fmt::Debug for devboy_gitlab::GitLabDiff
+pub fn devboy_gitlab::GitLabDiff::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabDiff
+pub fn devboy_gitlab::GitLabDiff::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabDiff
+pub fn devboy_gitlab::GitLabDiff::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabDiff
+impl core::marker::Send for devboy_gitlab::GitLabDiff
+impl core::marker::Sync for devboy_gitlab::GitLabDiff
+impl core::marker::Unpin for devboy_gitlab::GitLabDiff
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabDiff
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabDiff
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabDiff
+pub struct devboy_gitlab::GitLabDiffRefs
+pub devboy_gitlab::GitLabDiffRefs::base_sha: alloc::string::String
+pub devboy_gitlab::GitLabDiffRefs::head_sha: alloc::string::String
+pub devboy_gitlab::GitLabDiffRefs::start_sha: alloc::string::String
+impl core::clone::Clone for devboy_gitlab::GitLabDiffRefs
+pub fn devboy_gitlab::GitLabDiffRefs::clone(&self) -> devboy_gitlab::GitLabDiffRefs
+impl core::fmt::Debug for devboy_gitlab::GitLabDiffRefs
+pub fn devboy_gitlab::GitLabDiffRefs::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabDiffRefs
+pub fn devboy_gitlab::GitLabDiffRefs::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabDiffRefs
+pub fn devboy_gitlab::GitLabDiffRefs::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabDiffRefs
+impl core::marker::Send for devboy_gitlab::GitLabDiffRefs
+impl core::marker::Sync for devboy_gitlab::GitLabDiffRefs
+impl core::marker::Unpin for devboy_gitlab::GitLabDiffRefs
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabDiffRefs
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabDiffRefs
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabDiffRefs
+pub struct devboy_gitlab::GitLabDiscussion
+pub devboy_gitlab::GitLabDiscussion::id: alloc::string::String
+pub devboy_gitlab::GitLabDiscussion::notes: alloc::vec::Vec<devboy_gitlab::GitLabNote>
+impl core::clone::Clone for devboy_gitlab::GitLabDiscussion
+pub fn devboy_gitlab::GitLabDiscussion::clone(&self) -> devboy_gitlab::GitLabDiscussion
+impl core::fmt::Debug for devboy_gitlab::GitLabDiscussion
+pub fn devboy_gitlab::GitLabDiscussion::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabDiscussion
+pub fn devboy_gitlab::GitLabDiscussion::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabDiscussion
+pub fn devboy_gitlab::GitLabDiscussion::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabDiscussion
+impl core::marker::Send for devboy_gitlab::GitLabDiscussion
+impl core::marker::Sync for devboy_gitlab::GitLabDiscussion
+impl core::marker::Unpin for devboy_gitlab::GitLabDiscussion
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabDiscussion
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabDiscussion
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabDiscussion
+pub struct devboy_gitlab::GitLabIssue
+pub devboy_gitlab::GitLabIssue::assignees: alloc::vec::Vec<devboy_gitlab::GitLabUser>
+pub devboy_gitlab::GitLabIssue::author: core::option::Option<devboy_gitlab::GitLabUser>
+pub devboy_gitlab::GitLabIssue::created_at: alloc::string::String
+pub devboy_gitlab::GitLabIssue::description: core::option::Option<alloc::string::String>
+pub devboy_gitlab::GitLabIssue::id: u64
+pub devboy_gitlab::GitLabIssue::iid: u64
+pub devboy_gitlab::GitLabIssue::labels: alloc::vec::Vec<alloc::string::String>
+pub devboy_gitlab::GitLabIssue::state: alloc::string::String
+pub devboy_gitlab::GitLabIssue::title: alloc::string::String
+pub devboy_gitlab::GitLabIssue::updated_at: alloc::string::String
+pub devboy_gitlab::GitLabIssue::web_url: alloc::string::String
+impl core::clone::Clone for devboy_gitlab::GitLabIssue
+pub fn devboy_gitlab::GitLabIssue::clone(&self) -> devboy_gitlab::GitLabIssue
+impl core::fmt::Debug for devboy_gitlab::GitLabIssue
+pub fn devboy_gitlab::GitLabIssue::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabIssue
+pub fn devboy_gitlab::GitLabIssue::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabIssue
+pub fn devboy_gitlab::GitLabIssue::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabIssue
+impl core::marker::Send for devboy_gitlab::GitLabIssue
+impl core::marker::Sync for devboy_gitlab::GitLabIssue
+impl core::marker::Unpin for devboy_gitlab::GitLabIssue
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabIssue
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabIssue
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabIssue
+pub struct devboy_gitlab::GitLabMergeRequest
+pub devboy_gitlab::GitLabMergeRequest::assignees: alloc::vec::Vec<devboy_gitlab::GitLabUser>
+pub devboy_gitlab::GitLabMergeRequest::author: core::option::Option<devboy_gitlab::GitLabUser>
+pub devboy_gitlab::GitLabMergeRequest::created_at: alloc::string::String
+pub devboy_gitlab::GitLabMergeRequest::description: core::option::Option<alloc::string::String>
+pub devboy_gitlab::GitLabMergeRequest::diff_refs: core::option::Option<devboy_gitlab::GitLabDiffRefs>
+pub devboy_gitlab::GitLabMergeRequest::draft: bool
+pub devboy_gitlab::GitLabMergeRequest::id: u64
+pub devboy_gitlab::GitLabMergeRequest::iid: u64
+pub devboy_gitlab::GitLabMergeRequest::labels: alloc::vec::Vec<alloc::string::String>
+pub devboy_gitlab::GitLabMergeRequest::merged_at: core::option::Option<alloc::string::String>
+pub devboy_gitlab::GitLabMergeRequest::reviewers: alloc::vec::Vec<devboy_gitlab::GitLabUser>
+pub devboy_gitlab::GitLabMergeRequest::sha: core::option::Option<alloc::string::String>
+pub devboy_gitlab::GitLabMergeRequest::source_branch: alloc::string::String
+pub devboy_gitlab::GitLabMergeRequest::state: alloc::string::String
+pub devboy_gitlab::GitLabMergeRequest::target_branch: alloc::string::String
+pub devboy_gitlab::GitLabMergeRequest::title: alloc::string::String
+pub devboy_gitlab::GitLabMergeRequest::updated_at: alloc::string::String
+pub devboy_gitlab::GitLabMergeRequest::web_url: alloc::string::String
+pub devboy_gitlab::GitLabMergeRequest::work_in_progress: bool
+impl core::clone::Clone for devboy_gitlab::GitLabMergeRequest
+pub fn devboy_gitlab::GitLabMergeRequest::clone(&self) -> devboy_gitlab::GitLabMergeRequest
+impl core::fmt::Debug for devboy_gitlab::GitLabMergeRequest
+pub fn devboy_gitlab::GitLabMergeRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabMergeRequest
+pub fn devboy_gitlab::GitLabMergeRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabMergeRequest
+pub fn devboy_gitlab::GitLabMergeRequest::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabMergeRequest
+impl core::marker::Send for devboy_gitlab::GitLabMergeRequest
+impl core::marker::Sync for devboy_gitlab::GitLabMergeRequest
+impl core::marker::Unpin for devboy_gitlab::GitLabMergeRequest
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabMergeRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabMergeRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabMergeRequest
+pub struct devboy_gitlab::GitLabMergeRequestChanges
+pub devboy_gitlab::GitLabMergeRequestChanges::changes: alloc::vec::Vec<devboy_gitlab::GitLabDiff>
+impl core::clone::Clone for devboy_gitlab::GitLabMergeRequestChanges
+pub fn devboy_gitlab::GitLabMergeRequestChanges::clone(&self) -> devboy_gitlab::GitLabMergeRequestChanges
+impl core::fmt::Debug for devboy_gitlab::GitLabMergeRequestChanges
+pub fn devboy_gitlab::GitLabMergeRequestChanges::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabMergeRequestChanges
+pub fn devboy_gitlab::GitLabMergeRequestChanges::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabMergeRequestChanges
+pub fn devboy_gitlab::GitLabMergeRequestChanges::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabMergeRequestChanges
+impl core::marker::Send for devboy_gitlab::GitLabMergeRequestChanges
+impl core::marker::Sync for devboy_gitlab::GitLabMergeRequestChanges
+impl core::marker::Unpin for devboy_gitlab::GitLabMergeRequestChanges
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabMergeRequestChanges
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabMergeRequestChanges
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabMergeRequestChanges
+pub struct devboy_gitlab::GitLabNote
+pub devboy_gitlab::GitLabNote::author: core::option::Option<devboy_gitlab::GitLabUser>
+pub devboy_gitlab::GitLabNote::body: alloc::string::String
+pub devboy_gitlab::GitLabNote::created_at: alloc::string::String
+pub devboy_gitlab::GitLabNote::id: u64
+pub devboy_gitlab::GitLabNote::position: core::option::Option<devboy_gitlab::GitLabNotePosition>
+pub devboy_gitlab::GitLabNote::resolvable: bool
+pub devboy_gitlab::GitLabNote::resolved: bool
+pub devboy_gitlab::GitLabNote::resolved_by: core::option::Option<devboy_gitlab::GitLabUser>
+pub devboy_gitlab::GitLabNote::system: bool
+pub devboy_gitlab::GitLabNote::updated_at: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_gitlab::GitLabNote
+pub fn devboy_gitlab::GitLabNote::clone(&self) -> devboy_gitlab::GitLabNote
+impl core::fmt::Debug for devboy_gitlab::GitLabNote
+pub fn devboy_gitlab::GitLabNote::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabNote
+pub fn devboy_gitlab::GitLabNote::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabNote
+pub fn devboy_gitlab::GitLabNote::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabNote
+impl core::marker::Send for devboy_gitlab::GitLabNote
+impl core::marker::Sync for devboy_gitlab::GitLabNote
+impl core::marker::Unpin for devboy_gitlab::GitLabNote
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabNote
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabNote
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabNote
+pub struct devboy_gitlab::GitLabNotePosition
+pub devboy_gitlab::GitLabNotePosition::new_line: core::option::Option<u32>
+pub devboy_gitlab::GitLabNotePosition::new_path: core::option::Option<alloc::string::String>
+pub devboy_gitlab::GitLabNotePosition::old_line: core::option::Option<u32>
+pub devboy_gitlab::GitLabNotePosition::old_path: core::option::Option<alloc::string::String>
+pub devboy_gitlab::GitLabNotePosition::position_type: alloc::string::String
+impl core::clone::Clone for devboy_gitlab::GitLabNotePosition
+pub fn devboy_gitlab::GitLabNotePosition::clone(&self) -> devboy_gitlab::GitLabNotePosition
+impl core::fmt::Debug for devboy_gitlab::GitLabNotePosition
+pub fn devboy_gitlab::GitLabNotePosition::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabNotePosition
+pub fn devboy_gitlab::GitLabNotePosition::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabNotePosition
+pub fn devboy_gitlab::GitLabNotePosition::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabNotePosition
+impl core::marker::Send for devboy_gitlab::GitLabNotePosition
+impl core::marker::Sync for devboy_gitlab::GitLabNotePosition
+impl core::marker::Unpin for devboy_gitlab::GitLabNotePosition
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabNotePosition
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabNotePosition
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabNotePosition
+pub struct devboy_gitlab::GitLabSchemaEnricher
+impl devboy_core::enricher::ToolEnricher for devboy_gitlab::enricher::GitLabSchemaEnricher
+pub fn devboy_gitlab::enricher::GitLabSchemaEnricher::enrich_schema(&self, tool_name: &str, schema: &mut devboy_core::enricher::ToolSchema)
+pub fn devboy_gitlab::enricher::GitLabSchemaEnricher::rate_limit_host(&self, _tool_name: &str, _args: &serde_json::value::Value) -> core::option::Option<alloc::string::String>
+pub fn devboy_gitlab::enricher::GitLabSchemaEnricher::supported_categories(&self) -> &[devboy_core::tool_category::ToolCategory]
+pub fn devboy_gitlab::enricher::GitLabSchemaEnricher::transform_args(&self, _tool_name: &str, _args: &mut serde_json::value::Value)
+pub fn devboy_gitlab::enricher::GitLabSchemaEnricher::value_model(&self, tool_name: &str) -> core::option::Option<devboy_core::tool_value_model::ToolValueModel>
+impl core::marker::Freeze for devboy_gitlab::enricher::GitLabSchemaEnricher
+impl core::marker::Send for devboy_gitlab::enricher::GitLabSchemaEnricher
+impl core::marker::Sync for devboy_gitlab::enricher::GitLabSchemaEnricher
+impl core::marker::Unpin for devboy_gitlab::enricher::GitLabSchemaEnricher
+impl core::marker::UnsafeUnpin for devboy_gitlab::enricher::GitLabSchemaEnricher
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::enricher::GitLabSchemaEnricher
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::enricher::GitLabSchemaEnricher
+pub struct devboy_gitlab::GitLabUser
+pub devboy_gitlab::GitLabUser::avatar_url: core::option::Option<alloc::string::String>
+pub devboy_gitlab::GitLabUser::id: u64
+pub devboy_gitlab::GitLabUser::name: core::option::Option<alloc::string::String>
+pub devboy_gitlab::GitLabUser::username: alloc::string::String
+pub devboy_gitlab::GitLabUser::web_url: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_gitlab::GitLabUser
+pub fn devboy_gitlab::GitLabUser::clone(&self) -> devboy_gitlab::GitLabUser
+impl core::fmt::Debug for devboy_gitlab::GitLabUser
+pub fn devboy_gitlab::GitLabUser::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::GitLabUser
+pub fn devboy_gitlab::GitLabUser::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_gitlab::GitLabUser
+pub fn devboy_gitlab::GitLabUser::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_gitlab::GitLabUser
+impl core::marker::Send for devboy_gitlab::GitLabUser
+impl core::marker::Sync for devboy_gitlab::GitLabUser
+impl core::marker::Unpin for devboy_gitlab::GitLabUser
+impl core::marker::UnsafeUnpin for devboy_gitlab::GitLabUser
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::GitLabUser
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::GitLabUser
+pub struct devboy_gitlab::UpdateIssueRequest
+pub devboy_gitlab::UpdateIssueRequest::assignee_ids: core::option::Option<alloc::vec::Vec<u64>>
+pub devboy_gitlab::UpdateIssueRequest::description: core::option::Option<alloc::string::String>
+pub devboy_gitlab::UpdateIssueRequest::labels: core::option::Option<alloc::string::String>
+pub devboy_gitlab::UpdateIssueRequest::state_event: core::option::Option<alloc::string::String>
+pub devboy_gitlab::UpdateIssueRequest::title: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_gitlab::UpdateIssueRequest
+pub fn devboy_gitlab::UpdateIssueRequest::clone(&self) -> devboy_gitlab::UpdateIssueRequest
+impl core::default::Default for devboy_gitlab::UpdateIssueRequest
+pub fn devboy_gitlab::UpdateIssueRequest::default() -> devboy_gitlab::UpdateIssueRequest
+impl core::fmt::Debug for devboy_gitlab::UpdateIssueRequest
+pub fn devboy_gitlab::UpdateIssueRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::UpdateIssueRequest
+pub fn devboy_gitlab::UpdateIssueRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_gitlab::UpdateIssueRequest
+impl core::marker::Send for devboy_gitlab::UpdateIssueRequest
+impl core::marker::Sync for devboy_gitlab::UpdateIssueRequest
+impl core::marker::Unpin for devboy_gitlab::UpdateIssueRequest
+impl core::marker::UnsafeUnpin for devboy_gitlab::UpdateIssueRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::UpdateIssueRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::UpdateIssueRequest
+pub struct devboy_gitlab::UpdateMergeRequestRequest
+pub devboy_gitlab::UpdateMergeRequestRequest::description: core::option::Option<alloc::string::String>
+pub devboy_gitlab::UpdateMergeRequestRequest::labels: core::option::Option<alloc::string::String>
+pub devboy_gitlab::UpdateMergeRequestRequest::state_event: core::option::Option<alloc::string::String>
+pub devboy_gitlab::UpdateMergeRequestRequest::title: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_gitlab::UpdateMergeRequestRequest
+pub fn devboy_gitlab::UpdateMergeRequestRequest::clone(&self) -> devboy_gitlab::UpdateMergeRequestRequest
+impl core::fmt::Debug for devboy_gitlab::UpdateMergeRequestRequest
+pub fn devboy_gitlab::UpdateMergeRequestRequest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_gitlab::UpdateMergeRequestRequest
+pub fn devboy_gitlab::UpdateMergeRequestRequest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_gitlab::UpdateMergeRequestRequest
+impl core::marker::Send for devboy_gitlab::UpdateMergeRequestRequest
+impl core::marker::Sync for devboy_gitlab::UpdateMergeRequestRequest
+impl core::marker::Unpin for devboy_gitlab::UpdateMergeRequestRequest
+impl core::marker::UnsafeUnpin for devboy_gitlab::UpdateMergeRequestRequest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::UpdateMergeRequestRequest
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::UpdateMergeRequestRequest
+pub const devboy_gitlab::DEFAULT_GITLAB_URL: &str
