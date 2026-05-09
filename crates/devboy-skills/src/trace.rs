@@ -679,7 +679,9 @@ mod tests {
         // it a concurrent `DEVBOY_TRACE_REDACTION=off` in a sibling test
         // can disable redaction for the window this test runs and let
         // the raw token reach disk (observed as a hard failure on
-        // ubuntu-24.04-arm in CI).
+        // ubuntu-24.04-arm in CI). Strictly stronger than a bare
+        // `temp_env::with_var` reset because the mutex serialises against
+        // every redact-tests sibling that legitimately toggles the var.
         super::redact::test_support::with_clean_env(|| {
             let dir = tempdir().unwrap();
             let target = TraceTarget::Custom(dir.path().to_path_buf());

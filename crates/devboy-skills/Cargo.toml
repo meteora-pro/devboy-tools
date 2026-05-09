@@ -1,14 +1,23 @@
 [package]
 name = "devboy-skills"
-description = "Procedural skills on top of the devboy-tools bundle — install, upgrade, enumerate"
+description = "Skills subsystem for devboy-tools — SKILL.md frontmatter parser, install/upgrade lifecycle, manifest model (ADR-012/014)."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["devboy", "ai-agents", "skills", "claude", "manifest"]
+categories = ["development-tools", "parser-implementations"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-devboy-core = { path = "../devboy-core" }
+devboy-core = { workspace = true }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true

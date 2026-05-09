@@ -1,7 +1,7 @@
 use devboy_core::{
     Comment, Discussion, FileDiff, ForestModifyResult, Issue, IssueRelations, IssueStatus,
     JobLogOutput, KbPage, KbPageContent, KbSpace, MeetingNote, MeetingTranscript, MergeRequest,
-    MessengerChat, MessengerMessage, Pagination, PipelineInfo, SortInfo, Structure,
+    MessengerChat, MessengerMessage, Pagination, PipelineInfo, ProjectVersion, SortInfo, Structure,
     StructureForest, StructureValues, StructureView, User,
 };
 
@@ -101,6 +101,10 @@ pub enum ToolOutput {
     },
     /// List of Jira Structures
     Structures(Vec<Structure>, Option<ResultMeta>),
+    /// List of project versions / fixVersion targets (Jira releases)
+    ProjectVersions(Vec<ProjectVersion>, Option<ResultMeta>),
+    /// Single project version (returned by upsert_project_version)
+    SingleProjectVersion(Box<ProjectVersion>),
     /// Structure forest (hierarchy tree)
     StructureForest(Box<StructureForest>),
     /// Structure column values
@@ -131,6 +135,7 @@ impl ToolOutput {
             Self::MessengerMessages(v, _) => v.len(),
             Self::Structures(v, _) => v.len(),
             Self::StructureViews(v, _) => v.len(),
+            Self::ProjectVersions(v, _) => v.len(),
             Self::AssetList { count, .. } => *count,
             Self::SingleMergeRequest(_)
             | Self::SingleIssue(_)
@@ -144,6 +149,7 @@ impl ToolOutput {
             | Self::StructureForest(_)
             | Self::StructureValues(_)
             | Self::ForestModified(_)
+            | Self::SingleProjectVersion(_)
             | Self::AssetDownloaded { .. }
             | Self::AssetUploaded { .. }
             | Self::AssetDeleted { .. }
@@ -180,6 +186,8 @@ impl ToolOutput {
             Self::StructureValues(_) => "structure_values",
             Self::StructureViews(..) => "structure_views",
             Self::ForestModified(_) => "forest_modified",
+            Self::ProjectVersions(..) => "project_versions",
+            Self::SingleProjectVersion(_) => "project_version",
             Self::AssetList { .. } => "asset_list",
             Self::AssetDownloaded { .. } => "asset_downloaded",
             Self::AssetUploaded { .. } => "asset_uploaded",
@@ -204,7 +212,8 @@ impl ToolOutput {
             | Self::MessengerChats(_, meta)
             | Self::MessengerMessages(_, meta)
             | Self::Structures(_, meta)
-            | Self::StructureViews(_, meta) => meta.as_ref(),
+            | Self::StructureViews(_, meta)
+            | Self::ProjectVersions(_, meta) => meta.as_ref(),
             _ => None,
         }
     }

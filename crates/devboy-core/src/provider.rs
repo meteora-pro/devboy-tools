@@ -15,12 +15,13 @@ use crate::types::{
     CreateStructureInput, Discussion, FileDiff, ForestModifyResult, GetChatsParams,
     GetForestOptions, GetMessagesParams, GetPipelineInput, GetStructureValuesInput,
     GetUsersOptions, Issue, IssueFilter, IssueRelations, IssueStatus, JobLogOptions, JobLogOutput,
-    KbPage, KbPageContent, KbSpace, ListPagesParams, MeetingFilter, MeetingNote, MeetingTranscript,
-    MergeRequest, MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, PipelineInfo,
-    ProviderResult, Release, SaveStructureViewInput, SearchKbParams, SearchMessagesParams,
-    SendMessageParams, Sprint, SprintState, Structure, StructureForest, StructureGenerator,
-    StructureValues, StructureView, SyncStructureGeneratorInput, UpdateIssueInput,
-    UpdateMergeRequestInput, UpdatePageParams, UpdateStructureAutomationInput, User,
+    KbPage, KbPageContent, KbSpace, ListPagesParams, ListProjectVersionsParams, MeetingFilter,
+    MeetingNote, MeetingTranscript, MergeRequest, MessengerChat, MessengerMessage,
+    MoveStructureRowsInput, MrFilter, PipelineInfo, ProjectVersion, ProviderResult, Release,
+    SaveStructureViewInput, SearchKbParams, SearchMessagesParams, SendMessageParams, Sprint,
+    SprintState, Structure, StructureForest, StructureGenerator, StructureValues, StructureView,
+    SyncStructureGeneratorInput, UpdateIssueInput, UpdateMergeRequestInput, UpdatePageParams,
+    UpdateStructureAutomationInput, UpsertProjectVersionInput, User,
 };
 
 /// Provider for working with issues.
@@ -318,6 +319,38 @@ pub trait IssueProvider: Send + Sync {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "trigger_structure_automation".to_string(),
+        })
+    }
+
+    // --- Project versions / fixVersion (issue #238) --------------------
+    //
+    // List + upsert form a deliberately small surface: read returns a
+    // rich per-version payload so a separate get-by-id is unnecessary
+    // (Paper 3 — Context Enrichment Hypothesis), and write is name-keyed
+    // so the LLM never deals with numeric ids. See `docs/research/`.
+
+    /// List versions ("releases" / `fixVersion` targets) for a project.
+    /// Default: ProviderUnsupported.
+    async fn list_project_versions(
+        &self,
+        _params: ListProjectVersionsParams,
+    ) -> Result<ProviderResult<ProjectVersion>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "list_project_versions".to_string(),
+        })
+    }
+
+    /// Create-or-update a project version, keyed by `(project, name)`.
+    /// Partial update: optional fields left as `None` are not touched.
+    /// Default: ProviderUnsupported.
+    async fn upsert_project_version(
+        &self,
+        _input: UpsertProjectVersionInput,
+    ) -> Result<ProjectVersion> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "upsert_project_version".to_string(),
         })
     }
 
@@ -692,6 +725,23 @@ mod tests {
         assert_unsupported(p.download_attachment("k", "1").await, "download_attachment");
         assert_unsupported(p.delete_attachment("k", "1").await, "delete_attachment");
         assert_unsupported(p.get_issue_relations("k").await, "get_issue_relations");
+        assert_unsupported(
+            p.list_project_versions(crate::types::ListProjectVersionsParams {
+                project: "PROJ".into(),
+                ..Default::default()
+            })
+            .await,
+            "list_project_versions",
+        );
+        assert_unsupported(
+            p.upsert_project_version(crate::types::UpsertProjectVersionInput {
+                project: "PROJ".into(),
+                name: "1.0.0".into(),
+                ..Default::default()
+            })
+            .await,
+            "upsert_project_version",
+        );
     }
 
     #[tokio::test]
