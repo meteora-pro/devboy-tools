@@ -1,9 +1,9 @@
 ---
 name: setup
-description: Bootstrap devboy from scratch — install the CLI if missing, register the MCP server, run `devboy onboard` for the active agent, verify with `doctor`. First-run skill for both manual installs and the Claude Code / Codex plugin.
+description: Bootstrap devboy from scratch — install the CLI if missing, register the MCP server, run `devboy onboard` for the active agent, optionally bootstrap the secret framework, verify with `doctor`. First-run skill for both manual installs and the Claude Code / Codex plugin.
 category: self-bootstrap
-version: 2
-compatibility: devboy-tools >= 0.24
+version: 3
+compatibility: devboy-tools >= 0.26
 activation:
   - "setup devboy"
   - "configure devboy"
@@ -16,6 +16,7 @@ tools:
   - config
   - doctor
   - test
+  - secrets
 ---
 
 # setup
@@ -157,7 +158,53 @@ devboy doctor                 # overall health check
 
 Both must print green. If either flags a failure, stop and switch to `repair`.
 
-### 6. Confirm the tool bundle is wired
+### 6. Bootstrap secrets (when the project ships a manifest)
+
+Skip this step entirely when the project has no `.devboy/secrets.toml` — it's a noop on legacy projects that pre-date the secret framework. Backward-compat: a project without the manifest stays exactly as it was before this skill version landed.
+
+Detection — walk from CWD up to the filesystem root looking for the manifest:
+
+```bash
+manifest=""
+dir=$(pwd)
+while [ "$dir" != "/" ]; do
+  if [ -f "$dir/.devboy/secrets.toml" ]; then
+    manifest="$dir/.devboy/secrets.toml"
+    break
+  fi
+  dir=$(dirname "$dir")
+done
+```
+
+If `manifest` is empty, log `"no .devboy/secrets.toml found in this project tree — skipping secrets bootstrap"` and continue to step 7.
+
+When the manifest exists, count the `required` paths it declares:
+
+```bash
+required_count=$(devboy secrets list --json 2>/dev/null \
+  | jq '[.[] | select(.required == true)] | length' 2>/dev/null \
+  || echo 0)
+```
+
+`devboy secrets list --json` already merges the global index with the project manifest (ADR-020 §6), so the count reflects the user's actual setup, not the raw TOML. The `|| echo 0` makes the step safe on systems without `jq` — the worst case is the bootstrap is skipped.
+
+Three branches:
+
+- **`required_count == 0`** — manifest exists but only declares optional paths. Log `"manifest present but no required paths — skipping setup-secrets"` and continue.
+- **`required_count > 0` and the user is in an interactive session** — invoke the dedicated wizard:
+
+  ```text
+  Skill: setup-secrets
+  ```
+
+  The wizard's eight-step flow handles the rest (P16.1). Resume semantics are built in — if the user already ran `setup-secrets` once, the wizard picks up at the first non-done step.
+- **`required_count > 0` in a non-interactive context** (CI, scripted run, the user passed `--yes` to the parent setup) — emit a clear instruction line:
+
+  > "This project requires `<N>` secrets via `.devboy/secrets.toml`. Run `setup-secrets` (or `devboy secrets ui`) to provision them before the next CI step that depends on a value."
+
+  …then continue. The setup skill is not the right place to walk through value entry without a human at the keyboard.
+
+### 7. Confirm the tool bundle is wired
 
 ```bash
 devboy tools list
@@ -174,9 +221,11 @@ If `tools list` is empty or the tool call returns `ProviderUnsupported`, somethi
 - `devboy test <provider>` succeeds for each provider the user cares about.
 - At least one real tool call (`get_issues`, `get_merge_requests`, or equivalent) returns data rather than `ProviderUnsupported`.
 - In plugin context, `claude mcp list` shows `devboy` as registered after `/reload-plugins`.
+- When `.devboy/secrets.toml` is present and declares required paths, either `setup-secrets` was invoked (interactive) or the user was instructed to run it next (non-interactive). On legacy projects without a manifest, step 6 is silently skipped.
 
 ## Non-goals
 
 - This skill does not configure a proxy MCP server. Use `devboy proxy add` with its documented flags.
 - This skill does not migrate an existing setup between machines — it assumes a fresh install.
 - This skill does not pick which agent to install skills for in manual mode — `devboy onboard` does that.
+- This skill does not provision secret values — even when step 6 detects a manifest, the actual provisioning is delegated to `setup-secrets` so the eight-step idempotent flow stays in one place.
