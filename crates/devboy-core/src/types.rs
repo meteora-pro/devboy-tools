@@ -84,21 +84,25 @@ pub struct IssueLink {
 pub struct IssueRelations {
     /// Parent issue (if this is a subtask)
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Parent.
     pub parent: Option<Issue>,
     /// Child issues / subtasks
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Subtasks.
     pub subtasks: Vec<Issue>,
     /// Issues that block this one
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocked_by: Vec<IssueLink>,
     /// Issues that this one blocks
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Blocks.
     pub blocks: Vec<IssueLink>,
     /// Related issues
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related_to: Vec<IssueLink>,
     /// Duplicate issues
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Duplicates.
     pub duplicates: Vec<IssueLink>,
 }
 
@@ -157,6 +161,7 @@ pub struct CreateIssueInput {
     pub markdown: bool,
     /// Project key for issue creation (e.g., "PROJ"). Overrides default project.
     /// Ignored by providers that don't support multi-project (GitHub, GitLab, ClickUp).
+    /// Project id.
     pub project_id: Option<String>,
     /// Issue type (e.g., "Task", "Bug", "Story"). Provider-specific.
     /// Jira defaults to "Task" if not specified.
@@ -459,8 +464,10 @@ pub struct Pagination {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SortOrder {
+    /// Asc.
     Asc,
     #[default]
+    /// Desc.
     Desc,
 }
 
@@ -716,22 +723,32 @@ mod tests {
 /// Available status in an issue tracker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IssueStatus {
+    /// Id.
     pub id: String,
+    /// Name.
     pub name: String,
     /// Normalized category for cross-provider compatibility.
     pub category: String,
+    /// Color.
     pub color: Option<String>,
+    /// Order.
     pub order: Option<u32>,
 }
 
 /// Options for get_users.
 #[derive(Debug, Clone, Default)]
 pub struct GetUsersOptions {
+    /// User id.
     pub user_id: Option<String>,
+    /// Project key.
     pub project_key: Option<String>,
+    /// Search.
     pub search: Option<String>,
+    /// Include inactive.
     pub include_inactive: Option<bool>,
+    /// Start at.
     pub start_at: Option<u32>,
+    /// Pub.
     pub max_results: Option<u32>,
 }
 
@@ -840,27 +857,44 @@ pub struct UpsertProjectVersionInput {
 /// A release/tag from a git repository.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Release {
+    /// Id.
     pub id: String,
+    /// Key.
     pub key: String,
+    /// Tag name.
     pub tag_name: String,
+    /// Name.
     pub name: String,
+    /// Description.
     pub description: Option<String>,
+    /// Source.
     pub source: String,
+    /// Url.
     pub url: Option<String>,
+    /// Author.
     pub author: Option<User>,
+    /// Is draft.
     pub is_draft: Option<bool>,
+    /// Is prerelease.
     pub is_prerelease: Option<bool>,
+    /// Pub.
     pub assets: Vec<ReleaseAsset>,
+    /// Created at.
     pub created_at: Option<String>,
+    /// Published at.
     pub published_at: Option<String>,
 }
 
 /// Asset attached to a release.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReleaseAsset {
+    /// Name.
     pub name: String,
+    /// Url.
     pub url: String,
+    /// Size.
     pub size: Option<u64>,
+    /// Download count.
     pub download_count: Option<u64>,
 }
 
@@ -872,16 +906,24 @@ pub struct ReleaseAsset {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum PipelineStatus {
+    /// Success.
     Success,
+    /// Failed.
     Failed,
+    /// Running.
     Running,
+    /// Pending.
     Pending,
+    /// Canceled.
     Canceled,
+    /// Skipped.
     Skipped,
+    /// Unknown.
     Unknown,
 }
 
 impl PipelineStatus {
+    /// As str.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Success => "success",
@@ -894,6 +936,7 @@ impl PipelineStatus {
         }
     }
 
+    /// Is healthy.
     pub fn is_healthy(&self) -> bool {
         matches!(self, Self::Success)
     }
@@ -902,27 +945,40 @@ impl PipelineStatus {
 /// Summary counts of jobs in a pipeline.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PipelineSummary {
+    /// Total.
     pub total: u32,
+    /// Success.
     pub success: u32,
+    /// Failed.
     pub failed: u32,
+    /// Running.
     pub running: u32,
+    /// Pending.
     pub pending: u32,
+    /// Canceled.
     pub canceled: u32,
+    /// Skipped.
     pub skipped: u32,
 }
 
 /// A CI/CD pipeline with jobs grouped by stage/workflow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineInfo {
+    /// Id.
     pub id: String,
+    /// Status.
     pub status: PipelineStatus,
     /// Branch or tag ref.
     pub reference: String,
+    /// Sha.
     pub sha: String,
+    /// Url.
     pub url: Option<String>,
     /// Duration in seconds.
     pub duration: Option<u64>,
+    /// Coverage.
     pub coverage: Option<f64>,
+    /// Summary.
     pub summary: PipelineSummary,
     /// Jobs grouped by stage (GitLab) or workflow (GitHub).
     pub stages: Vec<PipelineStage>,
@@ -933,16 +989,22 @@ pub struct PipelineInfo {
 /// A stage/workflow in the pipeline containing jobs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineStage {
+    /// Name.
     pub name: String,
+    /// Jobs.
     pub jobs: Vec<PipelineJob>,
 }
 
 /// A single job in a pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineJob {
+    /// Id.
     pub id: String,
+    /// Name.
     pub name: String,
+    /// Status.
     pub status: PipelineStatus,
+    /// Url.
     pub url: Option<String>,
     /// Duration in seconds.
     pub duration: Option<u64>,
@@ -951,8 +1013,11 @@ pub struct PipelineJob {
 /// A failed job with extracted error context.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FailedJob {
+    /// Id.
     pub id: String,
+    /// Name.
     pub name: String,
+    /// Url.
     pub url: Option<String>,
     /// Extracted error lines from the job log.
     pub error_snippet: Option<String>,
@@ -972,6 +1037,7 @@ pub struct GetPipelineInput {
 /// Options for get_job_logs.
 #[derive(Debug, Clone)]
 pub struct JobLogOptions {
+    /// Mode.
     pub mode: JobLogMode,
 }
 
@@ -982,23 +1048,39 @@ pub enum JobLogMode {
     Smart,
     /// Search with regex/keyword pattern.
     Search {
+        /// Pattern.
         pattern: String,
+        /// Context.
         context: usize,
+        /// Max matches.
         max_matches: usize,
     },
     /// Browse specific line range.
-    Paginated { offset: usize, limit: usize },
+    Paginated {
+        /// Offset.
+        offset: usize,
+        /// Limit.
+        limit: usize,
+    },
     /// Full log (can be large).
-    Full { max_lines: usize },
+    Full {
+        /// Max lines.
+        max_lines: usize,
+    },
 }
 
 /// Result of job log retrieval.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobLogOutput {
+    /// Job id.
     pub job_id: String,
+    /// Job name.
     pub job_name: Option<String>,
+    /// Content.
     pub content: String,
+    /// Mode.
     pub mode: String,
+    /// Total lines.
     pub total_lines: Option<usize>,
 }
 
@@ -1048,7 +1130,9 @@ pub struct MeetingNote {
 /// A speaker in a meeting.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct MeetingSpeaker {
+    /// Id.
     pub id: String,
+    /// Pub.
     pub name: String,
 }
 
@@ -1618,7 +1702,9 @@ pub struct CreateStructureInput {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Sprint {
+    /// Id.
     pub id: u64,
+    /// Name.
     pub name: String,
     /// `future`, `active`, or `closed`.
     pub state: String,
@@ -1640,13 +1726,18 @@ pub struct Sprint {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum SprintState {
+    /// Active.
     Active,
+    /// Future.
     Future,
+    /// Closed.
     Closed,
+    /// All.
     All,
 }
 
 impl SprintState {
+    /// As query value.
     pub fn as_query_value(&self) -> Option<&'static str> {
         match self {
             SprintState::Active => Some("active"),
@@ -1688,6 +1779,7 @@ pub struct StructureGenerator {
 /// Input for `add_structure_generator` (issue #179).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddStructureGeneratorInput {
+    /// Structure id.
     pub structure_id: u64,
     /// Generator type, e.g. `"jql"` or `"agile-board"`.
     #[serde(rename = "type")]
@@ -1699,7 +1791,9 @@ pub struct AddStructureGeneratorInput {
 /// Input for `sync_structure_generator` (issue #179).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncStructureGeneratorInput {
+    /// Structure id.
     pub structure_id: u64,
+    /// Generator id.
     pub generator_id: String,
 }
 
@@ -1713,6 +1807,7 @@ pub struct SyncStructureGeneratorInput {
 /// `Some(id)` → replaces that rule, `None` → replaces all rules.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateStructureAutomationInput {
+    /// Structure id.
     pub structure_id: u64,
     /// Automation rule id. `None` means replace the entire automation
     /// collection on the structure (legacy "set everything" behaviour).
