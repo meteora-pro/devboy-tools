@@ -96,7 +96,7 @@ drift_check() {
     while IFS= read -r entry; do
       [ -z "$entry" ] && continue
       if ! grep -qx "$entry" <<<"$expected_names"; then
-        echo "Drift: unexpected entry $CLAUDE_DST/$entry (no matching skill in /skills/)" >&2
+        echo "Drift: unexpected entry $CLAUDE_DST/$entry (no matching skill in /crates/devboy-skills/skills/)" >&2
         rc=1
       fi
     done < <(ls -1 "$CLAUDE_DST" 2>/dev/null | sort)

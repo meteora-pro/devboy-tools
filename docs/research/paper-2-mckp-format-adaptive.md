@@ -682,8 +682,8 @@ near-tuned configuration on first run.
 
 ### Skill: `pipeline-tune`
 
-`skills/00-self-bootstrap/pipeline-tune/SKILL.md` is a procedural
-recipe for an agent driving the CLI on a user's behalf:
+`crates/devboy-skills/skills/00-self-bootstrap/pipeline-tune/SKILL.md`
+is a procedural recipe for an agent driving the CLI on a user's behalf:
 
 1. Sanity-check that `~/.claude/projects` exists and has data.
 2. Run with `--dry-run` first; surface the proposed pins to the user.
