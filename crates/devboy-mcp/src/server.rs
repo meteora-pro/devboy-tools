@@ -58,6 +58,12 @@ pub struct McpServer {
     /// response passes through L0 dedup before being returned to the client
     /// (Paper 2 §Implementation Status).
     layered_pipeline: Option<SessionPipeline>,
+    /// Registry for in-flight `secrets_request_provision` calls.
+    /// Defaults to a registry with the `NoopUiLauncher`; the host
+    /// swaps in a real daemon-backed launcher via
+    /// [`Self::set_secrets_provision_registry`] once the agent
+    /// socket is available.
+    secrets_provision: Arc<crate::secrets_provision::ProvisionRegistry>,
 }
 
 impl McpServer {
@@ -82,7 +88,26 @@ impl McpServer {
             telemetry: None,
             deferred_init: None,
             layered_pipeline: None,
+            secrets_provision: Arc::new(crate::secrets_provision::ProvisionRegistry::new()),
         }
+    }
+
+    /// Replace the provisioning-request registry — used by the
+    /// host to inject a daemon-backed launcher once the agent
+    /// socket is reachable. Tests inject a [`crate::secrets_provision::FakeUiLauncher`]-backed
+    /// registry instead.
+    pub fn set_secrets_provision_registry(
+        &mut self,
+        registry: Arc<crate::secrets_provision::ProvisionRegistry>,
+    ) {
+        self.secrets_provision = registry;
+    }
+
+    /// Borrow the provisioning registry — exposed primarily so
+    /// the daemon glue can call `resolve()` from outside the
+    /// server when the dialog reports back.
+    pub fn secrets_provision_registry(&self) -> Arc<crate::secrets_provision::ProvisionRegistry> {
+        Arc::clone(&self.secrets_provision)
     }
 
     /// Enable the Paper 2 layered pipeline (L0 cross-turn dedup) for the
@@ -757,6 +782,8 @@ impl McpServer {
             }
             "secrets_list" => Some(self.handle_secrets_list(params)),
             "secrets_describe" => Some(self.handle_secrets_describe(params)),
+            "secrets_request_provision" => Some(self.handle_secrets_request_provision(params)),
+            "secrets_poll_status" => Some(self.handle_secrets_poll_status(params)),
             _ => None,
         }
     }
@@ -827,6 +854,73 @@ impl McpServer {
                 Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
             },
             Err(e) => ToolCallResult::error(format!("secrets_describe failed: {e:?}")),
+        }
+    }
+
+    fn handle_secrets_request_provision(&self, params: &ToolCallParams) -> ToolCallResult {
+        use crate::secrets_provision::ProvisionMode;
+        use devboy_storage::SecretPath;
+
+        #[derive(Deserialize)]
+        struct RequestParams {
+            path: String,
+            #[serde(default)]
+            mode: Option<ProvisionMode>,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<RequestParams>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => return ToolCallResult::error("missing required parameter: path".to_string()),
+        };
+
+        let path = match SecretPath::parse(&args.path) {
+            Ok(p) => p,
+            Err(e) => {
+                return ToolCallResult::error(format!(
+                    "`{}` is not a valid ADR-020 path: {e}",
+                    args.path
+                ));
+            }
+        };
+
+        let mode = args.mode.unwrap_or_default();
+        match self.secrets_provision.request_provision(path, mode) {
+            Ok(id) => match serde_json::to_value(serde_json::json!({ "request_id": id.0 })) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            Err(e) => ToolCallResult::error(format!("secrets_request_provision failed: {e}")),
+        }
+    }
+
+    fn handle_secrets_poll_status(&self, params: &ToolCallParams) -> ToolCallResult {
+        use crate::secrets_provision::RequestId;
+
+        #[derive(Deserialize)]
+        struct PollParams {
+            request_id: String,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<PollParams>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => {
+                return ToolCallResult::error("missing required parameter: request_id".to_string());
+            }
+        };
+
+        let id = RequestId(args.request_id);
+        match self.secrets_provision.poll_status(&id) {
+            Some(reply) => match serde_json::to_value(&reply) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            None => ToolCallResult::error(format!("unknown request_id: {}", id.0)),
         }
     }
 
@@ -1018,6 +1112,8 @@ impl McpServer {
                 | "switch_context"
                 | "secrets_list"
                 | "secrets_describe"
+                | "secrets_request_provision"
+                | "secrets_poll_status"
         )
     }
 

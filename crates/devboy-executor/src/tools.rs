@@ -881,6 +881,49 @@ pub fn mcp_only_tools() -> Vec<McpOnlyTool> {
                 s
             },
         },
+        McpOnlyTool {
+            name: "secrets_request_provision".into(),
+            description: "Open the provisioning UI dialog for the given ADR-020 \
+                path. The dialog hands the user-entered value directly to the \
+                local daemon — the agent never sees it. Returns a `request_id` \
+                that can be polled with `secrets_poll_status`. Mode defaults to \
+                `provision`; pass `rotation` to surface the destructive-confirm \
+                checkbox. Pending requests expire 5 minutes after issuance."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "path",
+                    PropertySchema::string("Full ADR-020 path to provision."),
+                );
+                s.add_property(
+                    "mode",
+                    PropertySchema::string_enum(
+                        &["provision", "rotation"],
+                        "Dialog mode (default: provision).",
+                    ),
+                );
+                s.set_required("path", true);
+                s
+            },
+        },
+        McpOnlyTool {
+            name: "secrets_poll_status".into(),
+            description: "Poll a provisioning request issued by \
+                `secrets_request_provision`. Returns one of pending / ok / \
+                cancelled / expired / failed plus the request's age in seconds \
+                and the path it was opened for."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "request_id",
+                    PropertySchema::string("Opaque id returned by request_provision."),
+                );
+                s.set_required("request_id", true);
+                s
+            },
+        },
     ]
 }
 
