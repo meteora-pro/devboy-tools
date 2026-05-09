@@ -19,13 +19,13 @@ use crate::error::{Result, SkillError};
 use crate::skill::{Skill, SkillSummary};
 use crate::source::SkillSource;
 
-/// Embedder wrapper around the top-level `skills/` directory.
+/// Embedder wrapper around the in-crate `skills/` directory.
 ///
-/// The `RustEmbed` folder path is relative to the crate root. Because
-/// `crates/devboy-skills/` lives two directories below the workspace
-/// root, the relative path climbs two levels.
+/// The `RustEmbed` folder path is relative to the crate root. The tree
+/// lives inside the crate (at `crates/devboy-skills/skills/`) so that
+/// `cargo publish` can package it — see ADR-022 for the rationale.
 #[derive(RustEmbed)]
-#[folder = "../../skills/"]
+#[folder = "skills/"]
 #[include = "*/*/SKILL.md"]
 struct BaselineAssets;
 
