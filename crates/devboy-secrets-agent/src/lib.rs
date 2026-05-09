@@ -14,8 +14,16 @@
 
 #![forbid(unsafe_code)]
 
+pub mod rpc;
+pub mod server;
 pub mod socket;
 
+pub use rpc::{
+    BAD_UNLOCK, ENTRY_NOT_FOUND, FramingError, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST,
+    IO_ERROR, JSONRPC_VERSION, JsonRpcError, JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND,
+    NO_MATCHING_ENVELOPE, PARSE_ERROR, VAULT_LOCKED, read_request, write_response,
+};
+pub use server::VaultServer;
 pub use socket::{
     AgentError, AgentListener, SECRETS_SUBDIR, SOCKET_FILENAME, SOCKET_MODE,
     SOCKET_PARENT_DIR_MODE, SOCKET_PATH_ENV, default_socket_path,
