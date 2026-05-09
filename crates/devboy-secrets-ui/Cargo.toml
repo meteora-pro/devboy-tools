@@ -27,6 +27,7 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+secrecy.workspace = true
 # `ratatui` and `crossterm` are pulled in unconditionally and gated
 # only by `#[cfg(feature = "tui")]` in code. Marking them
 # `optional` and using `dep:` activation in the `tui` feature would

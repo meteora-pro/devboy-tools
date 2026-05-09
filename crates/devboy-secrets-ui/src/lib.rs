@@ -7,9 +7,16 @@
 //! [ADR-023]: https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md
 
 pub mod inventory;
+pub mod provision_dialog;
 
 #[cfg(feature = "tui")]
 pub use inventory::render as render_inventory;
 pub use inventory::{
     DaemonStatus, Focus, InventoryFilters, InventoryRow, InventoryState, RowStatus, SortKey,
+};
+
+#[cfg(feature = "tui")]
+pub use provision_dialog::render as render_provision_dialog;
+pub use provision_dialog::{
+    DialogFocus, DialogMetadata, DialogMode, DialogState, DialogStatus, DialogSubmission,
 };
