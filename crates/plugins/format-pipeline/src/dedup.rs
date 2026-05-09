@@ -69,7 +69,10 @@ pub enum DedupDecision {
     Fresh,
     /// Content matches a cached response — caller should emit a reference
     /// hint (see [`render_reference_hint`]) instead of the full payload.
-    Hint { reference_tool_call_id: String },
+    Hint {
+        /// Tool-call id of the cached response that the new request matches.
+        reference_tool_call_id: String,
+    },
 }
 
 /// Classification used to drive mutation-based invalidation.

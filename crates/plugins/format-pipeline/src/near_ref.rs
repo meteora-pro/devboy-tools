@@ -28,8 +28,11 @@ use std::collections::BTreeSet;
 /// One scalar field that differs between two JSON objects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeltaField {
+    /// Key.
     pub key: String,
+    /// Old.
     pub old: String,
+    /// New.
     pub new: String,
 }
 
