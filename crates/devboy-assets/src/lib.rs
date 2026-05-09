@@ -1,3 +1,5 @@
+// TODO: fix the `canonicalize` link in cache.rs (#250 follow-up).
+#![allow(rustdoc::broken_intra_doc_links)]
 //! Asset management for devboy-tools.
 //!
 //! This crate provides a local, on-disk cache for files downloaded from
