@@ -1,8 +1,3 @@
-// TODO: fix legacy doc links (#250 follow-up):
-//   - intent_keywords→intent_boost (private item)
-//   - LayeredPipeline / decide (unresolved)
-#![allow(rustdoc::private_intra_doc_links)]
-#![allow(rustdoc::broken_intra_doc_links)]
 //! MCP (Model Context Protocol) server for devboy-tools.
 //!
 //! This crate implements the MCP server that exposes devboy functionality

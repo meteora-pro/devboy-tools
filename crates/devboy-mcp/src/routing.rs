@@ -221,8 +221,8 @@ impl RoutingEngine {
         decision
     }
 
-    /// Same as [`decide`], but does not emit a tracing event. Useful from tests or from
-    /// diagnostic commands that render the decision themselves.
+    /// Same as [`Self::decide`], but does not emit a tracing event. Useful from tests or
+    /// from diagnostic commands that render the decision themselves.
     pub fn decide_quiet(&self, requested_name: &str) -> RoutingDecision {
         self.decide_inner(requested_name)
     }
