@@ -18,6 +18,7 @@ pub mod format;
 pub mod keychain;
 pub mod passphrase;
 pub mod recovery;
+pub mod vault;
 
 pub use aead::{
     AeadError, EncryptedEntry, KEY_LEN, NONCE_LEN, TAG_LEN, decrypt_entry, decrypt_packed,
@@ -40,3 +41,4 @@ pub use recovery::{
     create_recovery_envelope, derive_recovery_key, generate_recovery_phrase, parse_recovery_phrase,
     unwrap_recovery,
 };
+pub use vault::{CreateOutcome, EntryMetadata, InitialUnlock, UnlockMethod, Vault, VaultError};
