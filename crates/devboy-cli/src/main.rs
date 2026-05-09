@@ -2,6 +2,7 @@
 
 mod agents_cmd;
 mod doctor;
+mod hooks_cmd;
 mod onboard_cmd;
 mod secrets_agent;
 mod secrets_agent_service;
@@ -307,6 +308,12 @@ enum Commands {
     Secrets {
         #[command(subcommand)]
         command: secrets_cmd::SecretsCommands,
+    },
+
+    /// Manage git hooks installed by devboy (e.g. the secret-alias pre-commit lint, ADR-020 §5)
+    Hooks {
+        #[command(subcommand)]
+        command: hooks_cmd::HooksCommands,
     },
 
     /// Write to a skill's self-feedback session trace (ADR-015)
@@ -976,6 +983,10 @@ async fn main() -> Result<()> {
             }
             Some(Commands::Secrets { command }) => {
                 secrets_cmd::handle(command).await?;
+            }
+
+            Some(Commands::Hooks { command }) => {
+                hooks_cmd::handle(command)?;
             }
 
             Some(Commands::Agents { command }) => {

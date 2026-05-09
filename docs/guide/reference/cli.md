@@ -53,6 +53,10 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets agent start`↴](#devboy-secrets-agent-start)
 * [`devboy secrets agent install`↴](#devboy-secrets-agent-install)
 * [`devboy secrets agent uninstall`↴](#devboy-secrets-agent-uninstall)
+* [`devboy hooks`↴](#devboy-hooks)
+* [`devboy hooks install`↴](#devboy-hooks-install)
+* [`devboy hooks check`↴](#devboy-hooks-check)
+* [`devboy hooks check secret-alias`↴](#devboy-hooks-check-secret-alias)
 * [`devboy trace`↴](#devboy-trace)
 * [`devboy trace begin`↴](#devboy-trace-begin)
 * [`devboy trace event`↴](#devboy-trace-event)
@@ -84,6 +88,7 @@ DevBoy - AI-powered development tools
 * `agents` — Inspect AI coding agents installed on this machine
 * `onboard` — First-run setup: detect your AI agent and install the right skills bundle
 * `secrets` — Discover and inspect declared secrets (metadata only — values are never shown)
+* `hooks` — Manage git hooks installed by devboy (e.g. the secret-alias pre-commit lint, ADR-020 §5)
 * `trace` — Write to a skill's self-feedback session trace (ADR-015)
 * `doctor` — Run diagnostic checks for the local DevBoy setup
 * `upgrade` — Upgrade devboy to the latest version
@@ -799,6 +804,58 @@ Stop the user service (if loaded) and remove the unit file written by `install`.
 * `--no-unload` — Skip the platform service-manager teardown step (just remove the unit file). The next reboot will pick up the removal anyway
 
   Default value: `false`
+
+
+
+## `devboy hooks`
+
+Manage git hooks installed by devboy (e.g. the secret-alias pre-commit lint, ADR-020 §5)
+
+**Usage:** `devboy hooks <COMMAND>`
+
+###### **Subcommands:**
+
+* `install` — Install git hooks. Currently only the secret-alias-lint pre-commit hook is supported; future hooks land as additional flags on the same subcommand
+* `check` — Run a hook check directly. Used by the installed hooks but also as a standalone way to lint the staged diff before committing
+
+
+
+## `devboy hooks install`
+
+Install git hooks. Currently only the secret-alias-lint pre-commit hook is supported; future hooks land as additional flags on the same subcommand
+
+**Usage:** `devboy hooks install [OPTIONS]`
+
+###### **Options:**
+
+* `--secret-alias-lint` — Install the secret-alias pre-commit lint. Currently the only thing `install` knows about; the flag is required so future hooks can be added without changing the verb
+* `-f`, `--force` — Replace an existing `pre-commit` hook. Without this the install refuses when the hook file already exists
+
+  Default value: `false`
+
+
+
+## `devboy hooks check`
+
+Run a hook check directly. Used by the installed hooks but also as a standalone way to lint the staged diff before committing
+
+**Usage:** `devboy hooks check <COMMAND>`
+
+###### **Subcommands:**
+
+* `secret-alias` — Scan the staged git diff for `@secret:<path>` aliases in files not known to be alias-aware. Exits non-zero on hits
+
+
+
+## `devboy hooks check secret-alias`
+
+Scan the staged git diff for `@secret:<path>` aliases in files not known to be alias-aware. Exits non-zero on hits
+
+**Usage:** `devboy hooks check secret-alias [OPTIONS]`
+
+###### **Options:**
+
+* `--repo <REPO>` — Override the working directory the check runs in. Mostly useful for tests; defaults to the current process CWD
 
 
 
