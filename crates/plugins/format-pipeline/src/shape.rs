@@ -38,26 +38,18 @@ pub enum InnerFormat {
     Hash,
     Diff,
     Markdown,
-    /// MarkdownTable.
     MarkdownTable,
-    /// MarkdownWithCode.
     MarkdownWithCode,
-    /// CodeFence.
     CodeFence,
-    /// XmlHtml.
     XmlHtml,
     Yaml,
-    /// StackTrace.
     StackTrace,
-    /// NumberedList.
     NumberedList,
-    /// InlineJson.
     InlineJson,
     Prose,
 }
 
 impl InnerFormat {
-    /// As tag.
     pub fn as_tag(&self) -> &'static str {
         match self {
             Self::Url => "url",

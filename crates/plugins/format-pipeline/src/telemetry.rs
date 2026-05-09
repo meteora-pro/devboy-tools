@@ -75,21 +75,13 @@ pub type Result<T> = std::result::Result<T, TelemetryError>;
 #[serde(rename_all = "snake_case")]
 pub enum Shape {
     Prose,
-    /// NumberedList.
     NumberedList,
-    /// BulletList.
     BulletList,
-    /// CodeBlock.
     CodeBlock,
-    /// MarkdownTable.
     MarkdownTable,
-    /// NestedObject.
     NestedObject,
-    /// FlatObject.
     FlatObject,
-    /// ArrayOfObjects.
     ArrayOfObjects,
-    /// ArrayOfPrimitives.
     ArrayOfPrimitives,
     Empty,
     #[default]
@@ -627,27 +619,22 @@ pub struct MemorySink {
 }
 
 impl MemorySink {
-    /// New.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Events.
     pub fn events(&self) -> Vec<PipelineEvent> {
         self.events.lock().unwrap().clone()
     }
 
-    /// Summaries.
     pub fn summaries(&self) -> Vec<SessionSummary> {
         self.summaries.lock().unwrap().clone()
     }
 
-    /// Len.
     pub fn len(&self) -> usize {
         self.events.lock().unwrap().len()
     }
 
-    /// Is empty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

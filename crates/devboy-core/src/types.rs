@@ -21,7 +21,6 @@ pub struct User {
     pub name: Option<String>,
     /// Email address
     pub email: Option<String>,
-    /// Avatar URL
     pub avatar_url: Option<String>,
 }
 
@@ -46,9 +45,7 @@ pub struct Issue {
     pub priority: Option<String>,
     /// Labels / tags
     pub labels: Vec<String>,
-    /// Author
     pub author: Option<User>,
-    /// Assignees
     pub assignees: Vec<User>,
     /// Web URL for the issue
     pub url: Option<String>,
@@ -146,7 +143,6 @@ pub struct CreateIssueInput {
     pub labels: Vec<String>,
     /// Assignee usernames
     pub assignees: Vec<String>,
-    /// Priority
     pub priority: Option<String>,
     /// Parent issue key (for creating subtasks, e.g., "CU-abc123" or "DEV-42")
     pub parent: Option<String>,
@@ -267,15 +263,10 @@ pub struct MergeRequest {
     pub state: String,
     /// Source provider name
     pub source: String,
-    /// Source branch
     pub source_branch: String,
-    /// Target branch
     pub target_branch: String,
-    /// Author
     pub author: Option<User>,
-    /// Assignees
     pub assignees: Vec<User>,
-    /// Reviewers
     pub reviewers: Vec<User>,
     /// Labels / tags
     pub labels: Vec<String>,
@@ -372,7 +363,6 @@ pub struct Comment {
     pub id: String,
     /// Comment body / text
     pub body: String,
-    /// Author
     pub author: Option<User>,
     /// Created at timestamp (ISO 8601)
     pub created_at: Option<String>,
@@ -385,13 +375,11 @@ pub struct Comment {
 /// Position in code for inline comments.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct CodePosition {
-    /// File path
     pub file_path: String,
     /// Line number
     pub line: u32,
     /// Line type ("old" for deleted, "new" for added)
     pub line_type: String,
-    /// Commit SHA
     pub commit_sha: Option<String>,
 }
 
@@ -884,7 +872,6 @@ pub enum PipelineStatus {
 }
 
 impl PipelineStatus {
-    /// As str.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Success => "success",
@@ -897,7 +884,6 @@ impl PipelineStatus {
         }
     }
 
-    /// Is healthy.
     pub fn is_healthy(&self) -> bool {
         matches!(self, Self::Success)
     }
@@ -1021,9 +1007,7 @@ pub struct MeetingNote {
     pub meeting_date: Option<String>,
     /// Duration in seconds
     pub duration_seconds: Option<u64>,
-    /// Host email
     pub host_email: Option<String>,
-    /// Organizer email
     pub organizer_email: Option<String>,
     /// Participant identifiers (emails, names, or display names depending on provider)
     pub participants: Vec<String>,
@@ -1033,13 +1017,11 @@ pub struct MeetingNote {
     pub action_items: Vec<String>,
     /// Keywords / topics
     pub keywords: Vec<String>,
-    /// Topics discussed
     pub topics_discussed: Vec<String>,
     /// Meeting type (e.g., "standup", "planning")
     pub meeting_type: Option<String>,
     /// AI summary overview
     pub summary: Option<String>,
-    /// Transcript URL
     pub transcript_url: Option<String>,
     /// Audio recording URL
     pub audio_url: Option<String>,
@@ -1294,7 +1276,6 @@ pub struct MessageAuthor {
     pub name: String,
     /// Username/handle when available.
     pub username: Option<String>,
-    /// Avatar URL.
     pub avatar_url: Option<String>,
 }
 
@@ -1442,7 +1423,6 @@ pub struct StructureNode {
 pub struct StructureForest {
     /// Forest version (for optimistic concurrency)
     pub version: u64,
-    /// Structure ID
     pub structure_id: u64,
     /// Root nodes of the tree
     pub tree: Vec<StructureNode>,
@@ -1503,7 +1483,6 @@ pub struct StructureViewColumn {
 /// Batch values for Structure rows × columns.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct StructureValues {
-    /// Structure ID
     pub structure_id: u64,
     /// Values matrix: row_id → column values
     pub values: Vec<StructureRowValues>,
@@ -1512,7 +1491,6 @@ pub struct StructureValues {
 /// Values for a single row.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct StructureRowValues {
-    /// Row ID
     pub row_id: u64,
     /// Column values (column_id/field → value)
     pub columns: Vec<StructureColumnValue>,
@@ -1576,7 +1554,6 @@ pub struct MoveStructureRowsInput {
 /// Input for reading structure values.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GetStructureValuesInput {
-    /// Structure ID
     pub structure_id: u64,
     /// Row IDs to read
     pub rows: Vec<u64>,
@@ -1589,7 +1566,6 @@ pub struct GetStructureValuesInput {
 pub struct SaveStructureViewInput {
     /// View ID (omit to create new)
     pub id: Option<u64>,
-    /// Structure ID
     pub structure_id: u64,
     /// View name
     pub name: String,
@@ -1652,7 +1628,6 @@ pub enum SprintState {
 }
 
 impl SprintState {
-    /// As query value.
     pub fn as_query_value(&self) -> Option<&'static str> {
         match self {
             SprintState::Active => Some("active"),

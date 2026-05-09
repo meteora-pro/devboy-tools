@@ -45,7 +45,6 @@ pub struct McpPrefetchDispatcher {
 }
 
 impl McpPrefetchDispatcher {
-    /// New.
     pub fn new(server: Arc<McpServer>) -> Self {
         Self { server }
     }

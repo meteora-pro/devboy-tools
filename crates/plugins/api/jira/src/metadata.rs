@@ -59,7 +59,6 @@ pub struct JiraProjectMetadata {
     pub custom_fields: Vec<JiraCustomField>,
 }
 
-/// Jira issue type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraIssueType {
     pub id: String,
@@ -69,14 +68,12 @@ pub struct JiraIssueType {
     pub subtask: bool,
 }
 
-/// Jira component.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraComponent {
     pub id: String,
     pub name: String,
 }
 
-/// Jira priority.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraPriority {
     pub id: String,

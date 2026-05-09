@@ -44,7 +44,6 @@ pub struct TurnContext<'a> {
 }
 
 impl<'a> TurnContext<'a> {
-    /// New.
     pub fn new(recent_tools: &'a [String], budget_tokens: u32) -> Self {
         Self {
             recent_tools,

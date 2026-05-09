@@ -18,7 +18,6 @@ use crate::DEFAULT_CONFLUENCE_API_PATH;
 #[derive(Clone)]
 pub enum ConfluenceAuth {
     None,
-    /// BearerToken.
     BearerToken(SecretString),
     Basic {
         username: String,
@@ -80,7 +79,6 @@ impl fmt::Debug for ConfluenceClient {
 }
 
 impl ConfluenceClient {
-    /// New.
     pub fn new(base_url: impl Into<String>, auth: ConfluenceAuth) -> Self {
         Self {
             base_url: normalize_base_url(base_url.into()),
@@ -93,23 +91,19 @@ impl ConfluenceClient {
         }
     }
 
-    /// With http client.
     pub fn with_http_client(mut self, http: reqwest::Client) -> Self {
         self.http = http;
         self
     }
 
-    /// Base url.
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
 
-    /// Auth.
     pub fn auth(&self) -> &ConfluenceAuth {
         &self.auth
     }
 
-    /// With api version.
     pub fn with_api_version(mut self, api_version: Option<&str>) -> Self {
         self.page_api_path = api_path_for_version(api_version);
         self.space_api_path = api_path_for_version(api_version);
@@ -123,7 +117,6 @@ impl ConfluenceClient {
         self
     }
 
-    /// Rest api url.
     pub fn rest_api_url(&self, path: &str) -> String {
         self.api_url(&self.api_path, path)
     }

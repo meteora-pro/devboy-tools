@@ -59,7 +59,6 @@ pub enum ConfigError {
     #[error("adaptive-config serialize: {0}")]
     Serialize(#[from] toml::ser::Error),
     #[error("adaptive-config unsupported schema version {0} (expected 1)")]
-    /// UnsupportedSchemaVersion.
     UnsupportedSchemaVersion(u32),
 }
 
@@ -424,11 +423,9 @@ impl Default for TemplatesConfig {
 }
 
 impl TemplatesConfig {
-    /// Is template active.
     pub fn is_template_active(&self, id: &str) -> bool {
         self.active.iter().any(|s| s == id)
     }
-    /// Template for.
     pub fn template_for(&self, endpoint: &str) -> Option<&str> {
         self.endpoint_overrides.get(endpoint).map(String::as_str)
     }
@@ -473,7 +470,6 @@ impl Default for MckpConfig {
 }
 
 impl MckpConfig {
-    /// Format enabled.
     pub fn format_enabled(&self, id: &str) -> bool {
         self.formats_enabled.iter().any(|s| s == id)
     }

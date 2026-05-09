@@ -69,7 +69,6 @@ pub struct TelemetryEvent {
 }
 
 impl TelemetryEvent {
-    /// Now.
     pub fn now(tool: impl Into<String>, routing_decision: impl Into<String>) -> Self {
         Self {
             tool: tool.into(),
@@ -121,7 +120,6 @@ pub struct TelemetryBuffer {
 }
 
 impl TelemetryBuffer {
-    /// New.
     pub fn new(capacity: usize) -> Self {
         Self {
             inner: Arc::new(Mutex::new(VecDeque::with_capacity(capacity.min(1024)))),
@@ -205,7 +203,6 @@ pub struct TelemetryUploader {
 }
 
 impl TelemetryUploader {
-    /// New.
     pub fn new(endpoint: String, auth: TelemetryAuth) -> devboy_core::Result<Self> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(15))
@@ -256,7 +253,6 @@ pub struct TelemetryPipeline {
 }
 
 impl TelemetryPipeline {
-    /// New.
     pub fn new(config: ProxyTelemetryConfig) -> Self {
         let capacity = config.offline_queue_max.max(16);
         let buffer = TelemetryBuffer::new(capacity);
@@ -269,12 +265,10 @@ impl TelemetryPipeline {
         }
     }
 
-    /// Buffer.
     pub fn buffer(&self) -> TelemetryBuffer {
         self.buffer.clone()
     }
 
-    /// Config.
     pub fn config(&self) -> &ProxyTelemetryConfig {
         &self.config
     }

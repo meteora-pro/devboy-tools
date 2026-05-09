@@ -104,17 +104,14 @@ impl MatchReport {
             .collect()
     }
 
-    /// Get.
     pub fn get(&self, tool_name: &str) -> Option<&ToolMatch> {
         self.matches.get(tool_name)
     }
 
-    /// Len.
     pub fn len(&self) -> usize {
         self.matches.len()
     }
 
-    /// Is empty.
     pub fn is_empty(&self) -> bool {
         self.matches.is_empty()
     }

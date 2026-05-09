@@ -233,7 +233,6 @@ struct SlackRichAttachment {
 }
 
 impl SlackClient {
-    /// New.
     pub fn new(token: SecretString) -> Self {
         Self {
             token,
@@ -248,19 +247,16 @@ impl SlackClient {
         }
     }
 
-    /// With base url.
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into().trim_end_matches('/').to_string();
         self
     }
 
-    /// With required scopes.
     pub fn with_required_scopes(mut self, required_scopes: Vec<String>) -> Self {
         self.required_scopes = required_scopes;
         self
     }
 
-    /// Required scopes.
     pub fn required_scopes(&self) -> &[String] {
         &self.required_scopes
     }

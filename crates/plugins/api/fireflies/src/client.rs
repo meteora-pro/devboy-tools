@@ -84,7 +84,6 @@ pub struct FirefliesClient {
 }
 
 impl FirefliesClient {
-    /// New.
     pub fn new(api_key: SecretString) -> Self {
         Self {
             api_key,

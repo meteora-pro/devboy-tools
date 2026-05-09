@@ -29,7 +29,6 @@ const PRIMARY_THRESHOLD: f64 = 1.5;
 /// imply "I switched to this one and stopped touching the other."
 const RECENCY_DOMINANCE_HOURS: i64 = 4;
 
-/// compute score.
 pub fn compute_score(
     last_used: Option<DateTime<Utc>>,
     sessions: Option<u64>,

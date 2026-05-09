@@ -83,7 +83,6 @@ pub enum ToolOutput {
         /// Whether the result came from local cache.
         cached: bool,
     },
-    /// Asset uploaded
     AssetUploaded {
         /// Provider-returned URL for the uploaded file.
         url: String,
@@ -92,7 +91,6 @@ pub enum ToolOutput {
         /// Size in bytes.
         size: usize,
     },
-    /// Asset deleted
     AssetDeleted {
         /// Deleted asset identifier.
         asset_id: String,
@@ -109,7 +107,6 @@ pub enum ToolOutput {
     StructureForest(Box<StructureForest>),
     /// Structure column values
     StructureValues(Box<StructureValues>),
-    /// Structure views
     StructureViews(Vec<StructureView>, Option<ResultMeta>),
     /// Forest modification result (add/move rows)
     ForestModified(ForestModifyResult),
