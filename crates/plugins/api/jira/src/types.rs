@@ -561,3 +561,117 @@ pub struct JiraStructureValueEntry {
 pub struct JiraStructureValuesResponse {
     pub values: Vec<JiraStructureValueEntry>,
 }
+
+// =============================================================================
+// Jira Project Versions (issue #238) — /rest/api/2/version + /project/{key}/versions
+// =============================================================================
+
+/// Version DTO returned by the Jira REST API.
+///
+/// Field set is the union of Cloud (v3) and Server/DC (v2) — both use
+/// the same path family. `issuesStatusForFixVersion` only appears when
+/// the caller passes `?expand=issuesstatus`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraVersionDto {
+    pub id: String,
+    pub name: String,
+    /// Project key (e.g., "PROJ"). Server returns this directly; Cloud
+    /// returns `projectId` separately, so we accept either.
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<u64>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub start_date: Option<String>,
+    #[serde(default)]
+    pub release_date: Option<String>,
+    #[serde(default)]
+    pub released: bool,
+    #[serde(default)]
+    pub archived: bool,
+    /// Computed by the server: true when releaseDate is in the past
+    /// and the version is still unreleased.
+    #[serde(default)]
+    pub overdue: Option<bool>,
+    /// Returned only with `?expand=issuesstatus` (Cloud) — keys are
+    /// status categories (`unmapped`, `toDo`, `inProgress`, `done`).
+    #[serde(default)]
+    pub issues_status_for_fix_version: Option<JiraVersionIssueStatusCounts>,
+    /// Server/DC returns this directly on the version DTO. Callers that
+    /// need a total fixed-issue count have to hit
+    /// `/version/{id}/relatedIssueCounts` separately.
+    #[serde(default)]
+    pub issues_unresolved_count: Option<u32>,
+}
+
+/// Issue counts by status category (Cloud `?expand=issuesstatus`).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraVersionIssueStatusCounts {
+    #[serde(default)]
+    pub unmapped: u32,
+    #[serde(default)]
+    pub to_do: u32,
+    #[serde(default)]
+    pub in_progress: u32,
+    #[serde(default)]
+    pub done: u32,
+}
+
+impl JiraVersionIssueStatusCounts {
+    pub fn total(&self) -> u32 {
+        self.unmapped
+            .saturating_add(self.to_do)
+            .saturating_add(self.in_progress)
+            .saturating_add(self.done)
+    }
+}
+
+/// POST /rest/api/2/version payload.
+///
+/// `project` and `project_id` are mutually-exclusive routing keys —
+/// callers should fill exactly one (Server/DC accepts both, Cloud
+/// historically prefers `projectId`). Optional date / state fields
+/// are skipped when `None` so creation defaults match the UI.
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateVersionPayload {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub released: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived: Option<bool>,
+}
+
+/// PUT /rest/api/2/version/{id} payload — partial update; only fields
+/// explicitly set are sent (`#[serde(skip_serializing_if = "Option::is_none")]`),
+/// so unspecified fields are preserved server-side.
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateVersionPayload {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub released: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived: Option<bool>,
+}

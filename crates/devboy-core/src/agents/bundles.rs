@@ -1,16 +1,16 @@
 //! Skill bundle profiles for `devboy onboard`.
 //!
-//! A bundle is a TOML file under `skills/bundles/<profile>.toml` listing
-//! skill ids that should be installed for a given persona (engineer, PM,
-//! on-call). The TOML is `include_str!`-ed at build time so bundles ship
-//! inside the binary — no extra files to look up at runtime.
+//! A bundle is a TOML file under `bundles/<profile>.toml` (relative to this
+//! crate) listing skill ids that should be installed for a given persona
+//! (engineer, PM, on-call). The TOML is `include_str!`-ed at build time so
+//! bundles ship inside the binary — no extra files to look up at runtime.
 
 use anyhow::{Result, anyhow};
 use serde::Deserialize;
 
-const DEV: &str = include_str!("../../../../skills/bundles/dev.toml");
-const PM: &str = include_str!("../../../../skills/bundles/pm.toml");
-const ONCALL: &str = include_str!("../../../../skills/bundles/oncall.toml");
+const DEV: &str = include_str!("../../bundles/dev.toml");
+const PM: &str = include_str!("../../bundles/pm.toml");
+const ONCALL: &str = include_str!("../../bundles/oncall.toml");
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Bundle {

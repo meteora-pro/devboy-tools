@@ -1,14 +1,23 @@
 [package]
 name = "devboy-github"
-description = "GitHub provider implementation for devboy-tools"
+description = "GitHub provider for devboy-tools — implements IssueProvider, MergeRequestProvider, and Provider against the GitHub REST API."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["devboy", "github", "issues", "pull-requests", "ai-agents"]
+categories = ["api-bindings", "development-tools"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-devboy-core = { path = "../../../devboy-core" }
+devboy-core = { workspace = true }
 reqwest.workspace = true
 tokio.workspace = true
 serde.workspace = true
