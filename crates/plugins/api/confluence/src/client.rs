@@ -16,11 +16,17 @@ use serde::de::DeserializeOwned;
 use crate::DEFAULT_CONFLUENCE_API_PATH;
 
 #[derive(Clone)]
+/// Confluence Auth.
 pub enum ConfluenceAuth {
+    /// None.
     None,
+    /// BearerToken.
     BearerToken(SecretString),
+    /// Basic.
     Basic {
+        /// Username.
         username: String,
+        /// Password.
         password: SecretString,
     },
 }
@@ -55,6 +61,7 @@ impl ConfluenceAuth {
 }
 
 #[derive(Clone)]
+/// Confluence Client.
 pub struct ConfluenceClient {
     base_url: String,
     api_path: String,
@@ -79,6 +86,7 @@ impl fmt::Debug for ConfluenceClient {
 }
 
 impl ConfluenceClient {
+    /// New.
     pub fn new(base_url: impl Into<String>, auth: ConfluenceAuth) -> Self {
         Self {
             base_url: normalize_base_url(base_url.into()),
@@ -91,19 +99,23 @@ impl ConfluenceClient {
         }
     }
 
+    /// With http client.
     pub fn with_http_client(mut self, http: reqwest::Client) -> Self {
         self.http = http;
         self
     }
 
+    /// Base url.
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
 
+    /// Auth.
     pub fn auth(&self) -> &ConfluenceAuth {
         &self.auth
     }
 
+    /// With api version.
     pub fn with_api_version(mut self, api_version: Option<&str>) -> Self {
         self.page_api_path = api_path_for_version(api_version);
         self.space_api_path = api_path_for_version(api_version);
@@ -117,6 +129,7 @@ impl ConfluenceClient {
         self
     }
 
+    /// Rest api url.
     pub fn rest_api_url(&self, path: &str) -> String {
         self.api_url(&self.api_path, path)
     }
@@ -131,6 +144,7 @@ impl ConfluenceClient {
         self.api_url(&self.space_api_path, path)
     }
 
+    /// Async.
     pub async fn get_json<T>(&self, path: &str) -> Result<T>
     where
         T: DeserializeOwned,
@@ -181,6 +195,7 @@ impl ConfluenceClient {
         self.send_json(request).await
     }
 
+    /// Async.
     pub async fn post_json<T, B>(&self, path: &str, body: &B) -> Result<T>
     where
         T: DeserializeOwned,
@@ -195,6 +210,7 @@ impl ConfluenceClient {
         self.send_json(request).await
     }
 
+    /// Async.
     pub async fn put_json<T, B>(&self, path: &str, body: &B) -> Result<T>
     where
         T: DeserializeOwned,
@@ -209,6 +225,7 @@ impl ConfluenceClient {
         self.send_json(request).await
     }
 
+    /// Async.
     pub async fn post_empty_json<B>(&self, path: &str, body: &B) -> Result<()>
     where
         B: Serialize + ?Sized,
@@ -222,6 +239,7 @@ impl ConfluenceClient {
         self.send_empty(request).await
     }
 
+    /// Async.
     pub async fn delete_empty(&self, path: &str) -> Result<()> {
         let request = self
             .http
