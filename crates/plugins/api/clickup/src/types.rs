@@ -12,11 +12,15 @@ use serde::{Deserialize, Serialize};
 /// ClickUp user representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpUser {
+    /// Id.
     pub id: u64,
+    /// Username.
     pub username: String,
     #[serde(default)]
+    /// Email.
     pub email: Option<String>,
     #[serde(default, rename = "profilePicture")]
+    /// Profile picture.
     pub profile_picture: Option<String>,
 }
 
@@ -27,31 +31,46 @@ pub struct ClickUpUser {
 /// ClickUp task representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpTask {
+    /// Id.
     pub id: String,
     #[serde(default)]
+    /// Custom id.
     pub custom_id: Option<String>,
+    /// Name.
     pub name: String,
     #[serde(default)]
+    /// Description.
     pub description: Option<String>,
     #[serde(default)]
+    /// Text content.
     pub text_content: Option<String>,
+    /// Status.
     pub status: ClickUpStatus,
     #[serde(default)]
+    /// Priority.
     pub priority: Option<ClickUpPriority>,
     #[serde(default)]
+    /// Tags.
     pub tags: Vec<ClickUpTag>,
     #[serde(default)]
+    /// Assignees.
     pub assignees: Vec<ClickUpUser>,
     #[serde(default)]
+    /// Creator.
     pub creator: Option<ClickUpUser>,
+    /// Url.
     pub url: String,
     #[serde(default)]
+    /// Date created.
     pub date_created: Option<String>,
     #[serde(default)]
+    /// Date updated.
     pub date_updated: Option<String>,
     #[serde(default)]
+    /// Parent.
     pub parent: Option<String>,
     #[serde(default)]
+    /// Subtasks.
     pub subtasks: Option<Vec<ClickUpTask>>,
     /// Dependencies (blocking/waiting relationships).
     /// Uses `serde_json::Value` for flexible parsing of undocumented API shape.
@@ -99,30 +118,38 @@ pub struct ClickUpAttachment {
 /// ClickUp task status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpStatus {
+    /// Status.
     pub status: String,
     #[serde(default, rename = "type")]
+    /// Status type.
     pub status_type: Option<String>,
 }
 
 /// ClickUp task priority.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpPriority {
+    /// Id.
     pub id: String,
+    /// Priority.
     pub priority: String,
     #[serde(default)]
+    /// Color.
     pub color: Option<String>,
 }
 
 /// ClickUp tag.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpTag {
+    /// Name.
     pub name: String,
 }
 
 /// ClickUp linked task (non-dependency relationship).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpLinkedTask {
+    /// Task id.
     pub task_id: String,
+    /// Link id.
     pub link_id: String,
     /// Dependency type: "blocked_by", "blocking", or null (plain link).
     #[serde(default)]
@@ -136,6 +163,7 @@ pub struct ClickUpLinkedTask {
 /// Response from GET /list/{list_id}/task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpTaskList {
+    /// Tasks.
     pub tasks: Vec<ClickUpTask>,
 }
 
@@ -146,17 +174,22 @@ pub struct ClickUpTaskList {
 /// ClickUp comment representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpComment {
+    /// Id.
     pub id: String,
+    /// Comment text.
     pub comment_text: String,
     #[serde(default)]
+    /// User.
     pub user: Option<ClickUpUser>,
     #[serde(default)]
+    /// Date.
     pub date: Option<String>,
 }
 
 /// Response from GET /task/{task_id}/comment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpCommentList {
+    /// Comments.
     pub comments: Vec<ClickUpComment>,
 }
 
@@ -167,18 +200,23 @@ pub struct ClickUpCommentList {
 /// ClickUp list status (from GET /list/{list_id}).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClickUpListStatus {
+    /// Status.
     pub status: String,
     #[serde(default, rename = "type")]
+    /// Status type.
     pub status_type: Option<String>,
     #[serde(default)]
+    /// Color.
     pub color: Option<String>,
     #[serde(default)]
+    /// Orderindex.
     pub orderindex: Option<u32>,
 }
 
 /// Partial response from GET /list/{list_id} (only statuses needed).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClickUpListInfo {
+    /// Statuses.
     pub statuses: Vec<ClickUpListStatus>,
 }
 
@@ -186,6 +224,7 @@ pub struct ClickUpListInfo {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClickUpDependencyResponse {
     #[serde(default)]
+    /// Dependency.
     pub dependency: Option<serde_json::Value>,
 }
 
@@ -193,6 +232,7 @@ pub struct ClickUpDependencyResponse {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClickUpLinkResponse {
     #[serde(default)]
+    /// Link.
     pub link: Option<serde_json::Value>,
 }
 
@@ -203,20 +243,28 @@ pub struct ClickUpLinkResponse {
 /// Request body for creating a task.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateTaskRequest {
+    /// Name.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Description.
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Markdown content.
     pub markdown_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Parent.
     pub parent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Status.
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Priority.
     pub priority: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Tags.
     pub tags: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Assignees.
     pub assignees: Option<Vec<u64>>,
 }
 
@@ -224,24 +272,32 @@ pub struct CreateTaskRequest {
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct UpdateTaskRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Name.
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Description.
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Markdown content.
     pub markdown_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Status.
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Priority.
     pub priority: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Parent.
     pub parent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Tags.
     pub tags: Option<Vec<String>>,
 }
 
 /// Request body for creating a comment.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateCommentRequest {
+    /// Comment text.
     pub comment_text: String,
 }
 
@@ -250,8 +306,10 @@ pub struct CreateCommentRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateCommentResponse {
     #[serde(deserialize_with = "value_to_string")]
+    /// Id.
     pub id: String,
     #[serde(default, deserialize_with = "option_value_to_string")]
+    /// Date.
     pub date: Option<String>,
 }
 

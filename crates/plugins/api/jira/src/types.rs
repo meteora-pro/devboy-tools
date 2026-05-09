@@ -308,6 +308,7 @@ pub struct CreateIssueFields {
 /// This is addressed in Copilot review on PR #205.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentRef {
+    /// Name.
     pub name: String,
 }
 
@@ -461,15 +462,19 @@ pub struct IssueKeyRef {
 /// Structure info from GET /rest/structure/2.0/structure
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraStructure {
+    /// Id.
     pub id: u64,
+    /// Name.
     pub name: String,
     #[serde(default)]
+    /// Description.
     pub description: Option<String>,
 }
 
 /// Response from GET /rest/structure/2.0/structure
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraStructureListResponse {
+    /// Structures.
     pub structures: Vec<JiraStructure>,
 }
 
@@ -477,10 +482,13 @@ pub struct JiraStructureListResponse {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JiraForestRow {
+    /// Id.
     pub id: u64,
     #[serde(default)]
+    /// Item id.
     pub item_id: Option<String>,
     #[serde(default)]
+    /// Item type.
     pub item_type: Option<String>,
 }
 
@@ -488,20 +496,26 @@ pub struct JiraForestRow {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JiraForestResponse {
+    /// Version.
     pub version: u64,
     #[serde(default)]
+    /// Rows.
     pub rows: Vec<JiraForestRow>,
     #[serde(default)]
+    /// Depths.
     pub depths: Vec<u32>,
     #[serde(default)]
+    /// Total count.
     pub total_count: Option<u64>,
 }
 
 /// Response from forest modification operations (add/move)
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraForestModifyResponse {
+    /// Version.
     pub version: u64,
     #[serde(default)]
+    /// Rows.
     pub rows: Vec<JiraForestRow>,
 }
 
@@ -509,7 +523,9 @@ pub struct JiraForestModifyResponse {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JiraStructureView {
+    /// Id.
     pub id: u64,
+    /// Name.
     pub name: String,
     /// Owning structure id. Left non-optional and **without**
     /// `#[serde(default)]` so a missing / renamed field from the API
@@ -517,12 +533,16 @@ pub struct JiraStructureView {
     /// caller uses this id for cross-structure scope checks.
     pub structure_id: u64,
     #[serde(default)]
+    /// Columns.
     pub columns: Vec<JiraStructureViewColumn>,
     #[serde(default)]
+    /// Group by.
     pub group_by: Option<String>,
     #[serde(default)]
+    /// Sort by.
     pub sort_by: Option<String>,
     #[serde(default)]
+    /// Filter.
     pub filter: Option<String>,
 }
 
@@ -530,18 +550,23 @@ pub struct JiraStructureView {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct JiraStructureViewColumn {
     #[serde(default)]
+    /// Id.
     pub id: Option<String>,
     #[serde(default)]
+    /// Field.
     pub field: Option<String>,
     #[serde(default)]
+    /// Formula.
     pub formula: Option<String>,
     #[serde(default)]
+    /// Width.
     pub width: Option<u32>,
 }
 
 /// Response from GET /rest/structure/2.0/view?structureId={id}
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraStructureViewListResponse {
+    /// Views.
     pub views: Vec<JiraStructureView>,
 }
 
@@ -549,16 +574,20 @@ pub struct JiraStructureViewListResponse {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JiraStructureValueEntry {
+    /// Row id.
     pub row_id: u64,
     #[serde(default)]
+    /// Column id.
     pub column_id: Option<String>,
     #[serde(default)]
+    /// Value.
     pub value: serde_json::Value,
 }
 
 /// Response from POST /rest/structure/2.0/value
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraStructureValuesResponse {
+    /// Values.
     pub values: Vec<JiraStructureValueEntry>,
 }
 
@@ -574,23 +603,31 @@ pub struct JiraStructureValuesResponse {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JiraVersionDto {
+    /// Id.
     pub id: String,
+    /// Name.
     pub name: String,
     /// Project key (e.g., "PROJ"). Server returns this directly; Cloud
     /// returns `projectId` separately, so we accept either.
     #[serde(default)]
     pub project: Option<String>,
     #[serde(default)]
+    /// Project id.
     pub project_id: Option<u64>,
     #[serde(default)]
+    /// Description.
     pub description: Option<String>,
     #[serde(default)]
+    /// Start date.
     pub start_date: Option<String>,
     #[serde(default)]
+    /// Release date.
     pub release_date: Option<String>,
     #[serde(default)]
+    /// Released.
     pub released: bool,
     #[serde(default)]
+    /// Archived.
     pub archived: bool,
     /// Computed by the server: true when releaseDate is in the past
     /// and the version is still unreleased.
@@ -612,16 +649,21 @@ pub struct JiraVersionDto {
 #[serde(rename_all = "camelCase")]
 pub struct JiraVersionIssueStatusCounts {
     #[serde(default)]
+    /// Unmapped.
     pub unmapped: u32,
     #[serde(default)]
+    /// To do.
     pub to_do: u32,
     #[serde(default)]
+    /// In progress.
     pub in_progress: u32,
     #[serde(default)]
+    /// Done.
     pub done: u32,
 }
 
 impl JiraVersionIssueStatusCounts {
+    /// Total.
     pub fn total(&self) -> u32 {
         self.unmapped
             .saturating_add(self.to_do)
@@ -639,20 +681,28 @@ impl JiraVersionIssueStatusCounts {
 #[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateVersionPayload {
+    /// Name.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Project.
     pub project: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Project id.
     pub project_id: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Description.
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Start date.
     pub start_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Release date.
     pub release_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Released.
     pub released: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Archived.
     pub archived: Option<bool>,
 }
 
@@ -663,15 +713,21 @@ pub struct CreateVersionPayload {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateVersionPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Name.
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Description.
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Start date.
     pub start_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Release date.
     pub release_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Released.
     pub released: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Archived.
     pub archived: Option<bool>,
 }
