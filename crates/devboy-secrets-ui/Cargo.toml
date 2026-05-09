@@ -28,6 +28,7 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 secrecy.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 # `ratatui` and `crossterm` are pulled in unconditionally and gated
 # only by `#[cfg(feature = "tui")]` in code. Marking them
 # `optional` and using `dep:` activation in the `tui` feature would
