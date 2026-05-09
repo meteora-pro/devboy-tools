@@ -46,7 +46,6 @@
 /// Typed runtime context: provider configs, scopes, additional metadata.
 pub mod context;
 pub mod enricher;
-/// Tool execution engine.
 pub mod executor;
 /// Provider factory — builds concrete `Provider` instances from `ProviderConfig`.
 pub mod factory;

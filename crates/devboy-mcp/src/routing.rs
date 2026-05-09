@@ -60,7 +60,6 @@ pub enum RoutingReason {
     StrategyLocal,
     StrategyLocalFirst,
     StrategyRemoteFirst,
-    /// Per-tool override rule fired.
     OverrideRule(String),
     /// Schemas disagree; forced back to remote.
     SchemaIncompatible,

@@ -37,7 +37,6 @@ pub struct FormatMetadata {
     pub estimated_tokens: usize,
     /// Compression ratio: output_chars / raw_chars (< 1.0 = savings)
     pub compression_ratio: f32,
-    /// Output format used
     pub format: String,
     /// Whether output was truncated by budget trimming
     pub truncated: bool,

@@ -36,7 +36,6 @@ pub struct DeferredInit {
     pub routing_engine: Option<Arc<RoutingEngine>>,
 }
 
-/// MCP server for devboy-tools.
 pub struct McpServer {
     contexts: HashMap<String, Vec<Arc<dyn Provider>>>,
     knowledge_base_contexts: HashMap<String, Vec<Arc<dyn devboy_core::KnowledgeBaseProvider>>>,

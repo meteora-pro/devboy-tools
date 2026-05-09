@@ -78,7 +78,6 @@ pub enum PrefetchOutcome {
     },
     /// Prefetch returned an error. Counted as wasted; logged at WARN.
     Failed {
-        /// Tool name.
         tool: String,
         /// Underlying prefetch error.
         error: PrefetchError,
