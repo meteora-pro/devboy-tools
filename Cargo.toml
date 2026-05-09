@@ -95,6 +95,9 @@ tempfile = "3.15"
 # Asset management
 sha2 = "0.10"
 
+# Regular expressions (used by secret patterns and provider plugins)
+regex = "1"
+
 # Observability (optional)
 sentry = { version = "0.35", default-features = false, features = ["rustls", "reqwest", "tracing", "panic", "backtrace", "contexts"] }
 sentry-tracing = "0.35"
