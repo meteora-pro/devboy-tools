@@ -39,9 +39,7 @@ pub enum NodeKind {
         index: usize,
     },
     /// Field within an element (description, body, diff content)
-    Field {
-        name: String,
-    },
+    Field { name: String },
     /// Text block (description body, diff content, log content)
     Text,
 }

@@ -96,10 +96,7 @@ pub enum Error {
 
     /// Credential not found in keychain
     #[error("Credential not found: {provider}/{key}")]
-    CredentialNotFound {
-        provider: String,
-        key: String,
-    },
+    CredentialNotFound { provider: String, key: String },
 
     // =========================================================================
     // Provider Errors

@@ -57,9 +57,7 @@ pub enum JiraScope {
         key: String,
     },
     /// Multiple Jira projects (union of results)
-    MultiProject {
-        keys: Vec<String>,
-    },
+    MultiProject { keys: Vec<String> },
 }
 
 /// Scope for Confluence API calls.
@@ -76,9 +74,7 @@ pub enum ConfluenceScope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SlackScope {
     /// Single Slack workspace/team.
-    Workspace {
-        team_id: Option<String>,
-    },
+    Workspace { team_id: Option<String> },
 }
 
 /// Authentication configuration for Confluence self-hosted.
@@ -88,7 +84,9 @@ pub enum SlackScope {
 /// expose `password` / `token` via the wire format.
 #[derive(Debug, Clone)]
 pub enum ConfluenceAuthConfig {
-    BearerToken { token: SecretString },
+    BearerToken {
+        token: SecretString,
+    },
     Basic {
         username: String,
         password: SecretString,

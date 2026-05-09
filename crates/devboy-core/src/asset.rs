@@ -40,19 +40,11 @@ pub enum AssetContext {
         mr_id: String,
     },
     /// Attachment on a comment/note of a merge request.
-    MrComment {
-        mr_id: String,
-        note_id: String,
-    },
+    MrComment { mr_id: String, note_id: String },
     /// Attachment from a messenger chat (Slack, Telegram, etc.).
-    Chat {
-        chat_id: String,
-        message_id: String,
-    },
+    Chat { chat_id: String, message_id: String },
     /// Attachment from a knowledge base page (Confluence, etc.).
-    KbPage {
-        page_id: String,
-    },
+    KbPage { page_id: String },
 }
 
 impl AssetContext {
