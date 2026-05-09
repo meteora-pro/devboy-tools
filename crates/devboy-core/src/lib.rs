@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! Core traits, types, and error handling for devboy-tools.
 //!
 //! This crate provides the foundational abstractions used across all devboy components:
@@ -22,8 +23,15 @@
 //! }
 //! ```
 
+// Module-level escape hatches. The crate-wide `#![warn(missing_docs)]`
+// at the top of this file catches new pub items in *documented* modules,
+// but the legacy DTO + config + agent-detector surface predates the
+// guard and is too large to backfill in one PR. Each `#[allow]` below
+// is a TODO for a follow-up documentation pass (see #250 / Phase 5).
+#[allow(missing_docs)]
 pub mod agents;
 pub mod asset;
+#[allow(missing_docs)]
 pub mod config;
 pub mod enricher;
 pub mod error;
@@ -33,6 +41,7 @@ pub mod remote_config;
 pub mod sentry_integration;
 pub mod tool_category;
 pub mod tool_value_model;
+#[allow(missing_docs)]
 pub mod types;
 
 // Re-export error types
