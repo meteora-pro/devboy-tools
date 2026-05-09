@@ -1,4 +1,3 @@
-#![warn(missing_docs)]
 //! Jira provider implementation for devboy-tools.
 //!
 //! This crate provides integration with Jira API for issues.
@@ -6,6 +5,9 @@
 //! Jira does not have merge requests, so MR operations return
 //! `ProviderUnsupported` errors.
 
+#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![deny(rustdoc::invalid_html_tags)]
 mod client;
 pub mod enricher;
 pub mod metadata;

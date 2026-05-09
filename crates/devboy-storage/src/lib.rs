@@ -1,4 +1,3 @@
-#![warn(missing_docs)]
 //! Secure credential storage with multiple backends.
 //!
 //! This crate provides credential storage with support for:
@@ -34,6 +33,9 @@
 //! keychain.store("gitlab.token", "glpat-xxx")?;
 //! ```
 
+#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![deny(rustdoc::invalid_html_tags)]
 use devboy_core::{Error, Result};
 use keyring::Entry;
 use secrecy::{ExposeSecret, SecretString};

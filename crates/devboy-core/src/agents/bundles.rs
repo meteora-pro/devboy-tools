@@ -13,13 +13,9 @@ const PM: &str = include_str!("../../bundles/pm.toml");
 const ONCALL: &str = include_str!("../../bundles/oncall.toml");
 
 #[derive(Debug, Clone, Deserialize)]
-/// Bundle.
 pub struct Bundle {
-    /// Name.
     pub name: String,
-    /// Description.
     pub description: String,
-    /// Skills.
     pub skills: Vec<String>,
 }
 

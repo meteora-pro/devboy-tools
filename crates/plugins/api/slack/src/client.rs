@@ -21,28 +21,18 @@ use tracing::debug;
 use crate::DEFAULT_SLACK_API_URL;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// Slack Auth Info.
 pub struct SlackAuthInfo {
-    /// User id.
     pub user_id: String,
-    /// User name.
     pub user_name: Option<String>,
-    /// Team id.
     pub team_id: String,
-    /// Team name.
     pub team_name: String,
-    /// Bot id.
     pub bot_id: Option<String>,
-    /// Url.
     pub url: Option<String>,
-    /// Scopes.
     pub scopes: Vec<String>,
-    /// Missing scopes.
     pub missing_scopes: Vec<String>,
 }
 
 #[derive(Clone)]
-/// Slack Client.
 pub struct SlackClient {
     token: SecretString,
     base_url: String,
@@ -275,7 +265,6 @@ impl SlackClient {
         &self.required_scopes
     }
 
-    /// Async.
     pub async fn auth_info(&self) -> Result<SlackAuthInfo> {
         let url = format!("{}/auth.test", self.base_url);
         debug!(url, "slack auth.test request");
@@ -318,7 +307,6 @@ impl SlackClient {
         })
     }
 
-    /// Async.
     pub async fn ensure_healthy(&self) -> Result<SlackAuthInfo> {
         let info = self.auth_info().await?;
         if info.missing_scopes.is_empty() {

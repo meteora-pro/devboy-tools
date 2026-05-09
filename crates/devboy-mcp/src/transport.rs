@@ -9,9 +9,7 @@ use crate::protocol::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
 /// Message that can be received from the client.
 #[derive(Debug)]
 pub enum IncomingMessage {
-    /// Request.
     Request(JsonRpcRequest),
-    /// Notification.
     Notification(JsonRpcNotification),
 }
 

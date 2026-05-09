@@ -46,7 +46,6 @@ pub struct AssetConfig {
     /// eviction, e.g. `"7d"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_file_age: Option<String>,
-    /// Eviction policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eviction_policy: Option<EvictionPolicy>,
 }
@@ -60,7 +59,6 @@ pub struct ResolvedAssetConfig {
     pub max_cache_size: u64,
     /// Maximum age for an unaccessed file before eviction is allowed.
     pub max_file_age: Duration,
-    /// Eviction policy.
     pub eviction_policy: EvictionPolicy,
 }
 

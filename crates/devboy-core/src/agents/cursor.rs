@@ -20,7 +20,6 @@ use super::{AgentDetector, AgentSnapshot, InstallStatus};
 const ID: &str = "cursor";
 const DISPLAY_NAME: &str = "Cursor";
 
-/// Cursor Detector.
 pub struct CursorDetector;
 
 impl AgentDetector for CursorDetector {

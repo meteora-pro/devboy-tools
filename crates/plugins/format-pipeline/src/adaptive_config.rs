@@ -51,26 +51,20 @@ use thiserror::Error;
 use crate::token_counter::Tokenizer;
 
 #[derive(Error, Debug)]
-/// Config Error.
 pub enum ConfigError {
     #[error("adaptive-config I/O: {0}")]
-    /// Io.
     Io(#[from] std::io::Error),
     #[error("adaptive-config parse: {0}")]
-    /// Parse.
     Parse(#[from] toml::de::Error),
     #[error("adaptive-config serialize: {0}")]
-    /// Serialize.
     Serialize(#[from] toml::ser::Error),
     #[error("adaptive-config unsupported schema version {0} (expected 1)")]
     /// UnsupportedSchemaVersion.
     UnsupportedSchemaVersion(u32),
 }
 
-/// Result.
 pub type Result<T> = std::result::Result<T, ConfigError>;
 
-/// C U R R E N T S C H E M A V E R S I O N.
 pub const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 /// Lowest schema version we still accept on load (auto-upgraded in memory).
@@ -80,19 +74,14 @@ pub const MIN_SUPPORTED_SCHEMA_VERSION: u32 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdaptiveConfig {
     #[serde(default = "default_schema_version")]
-    /// Schema version.
     pub schema_version: u32,
     #[serde(default)]
-    /// Dedup.
     pub dedup: DedupConfig,
     #[serde(default)]
-    /// Templates.
     pub templates: TemplatesConfig,
     #[serde(default)]
-    /// Mckp.
     pub mckp: MckpConfig,
     #[serde(default)]
-    /// Telemetry.
     pub telemetry: TelemetryConfig,
     /// Per-endpoint overrides. Keyed by `endpoint_class` (see telemetry schema).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -329,7 +318,6 @@ impl AdaptiveConfig {
 // ─── L0 DEDUP ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Dedup Config.
 pub struct DedupConfig {
     /// LRU cache capacity per context_partition.
     #[serde(default = "default_lru_size")]
@@ -409,7 +397,6 @@ impl HintVerbosity {
 // ─── L1 TEMPLATES ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Templates Config.
 pub struct TemplatesConfig {
     /// Template IDs the dispatcher may choose from.
     #[serde(default = "default_active_templates")]
@@ -450,7 +437,6 @@ impl TemplatesConfig {
 // ─── L2 GENERIC MCKP ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Mckp Config.
 pub struct MckpConfig {
     /// Maximum recursion depth for deep_mckp (per-leaf format selection).
     #[serde(default = "default_recursion_depth")]
@@ -459,7 +445,6 @@ pub struct MckpConfig {
     #[serde(default = "default_formats_enabled")]
     pub formats_enabled: Vec<String>,
     #[serde(default)]
-    /// Shape thresholds.
     pub shape_thresholds: ShapeThresholds,
 }
 
@@ -495,7 +480,6 @@ impl MckpConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Shape Thresholds.
 pub struct ShapeThresholds {
     /// Apply csv_from_md only if the markdown table has at least this many columns.
     #[serde(default = "thr_md_cols")]
@@ -538,7 +522,6 @@ impl Default for ShapeThresholds {
 // ─── TELEMETRY ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Telemetry Config.
 pub struct TelemetryConfig {
     /// Master switch — when `false`, no sink is opened on the host even
     /// if `path` is set. Default: `false` so a fresh install does not
@@ -678,16 +661,12 @@ impl Default for EnrichmentConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EndpointOverride {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Dedup enabled.
     pub dedup_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Lru size.
     pub lru_size: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Template id.
     pub template_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Min body chars.
     pub min_body_chars: Option<usize>,
 }
 
@@ -709,16 +688,12 @@ pub struct EndpointOverride {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProfilesConfig {
     #[serde(default)]
-    /// Tokenizer.
     pub tokenizer: TokenizerProfilesConfig,
     #[serde(default)]
-    /// Llm.
     pub llm: LlmProfilesConfig,
     #[serde(default)]
-    /// Agent.
     pub agent: AgentProfilesConfig,
     #[serde(default)]
-    /// Data.
     pub data: DataProfilesConfig,
 }
 
@@ -800,13 +775,11 @@ impl TokenizerProfile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Tokenizer Profiles Config.
 pub struct TokenizerProfilesConfig {
     /// Active variant id, or `"auto"` to resolve from `profiles.llm`.
     #[serde(default = "default_active_auto")]
     pub active: String,
     #[serde(default = "default_tokenizer_variants")]
-    /// Variants.
     pub variants: BTreeMap<String, TokenizerProfile>,
 }
 
@@ -878,7 +851,6 @@ impl TokenizerProfilesConfig {
 // ── LLM ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Llm Profile.
 pub struct LlmProfile {
     /// Tokenizer variant id (resolved against `profiles.tokenizer.variants`).
     pub tokenizer: String,
@@ -915,14 +887,12 @@ impl Default for LlmProfile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Llm Profiles Config.
 pub struct LlmProfilesConfig {
     /// Active variant id (model name) or `"auto"` to resolve from
     /// `SessionContext::model_id`.
     #[serde(default = "default_active_auto")]
     pub active: String,
     #[serde(default = "default_llm_variants")]
-    /// Variants.
     pub variants: BTreeMap<String, LlmProfile>,
 }
 
@@ -1010,31 +980,23 @@ impl LlmProfilesConfig {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Priority.
 pub enum Priority {
-    /// Latency.
     Latency,
     #[default]
-    /// Balanced.
     Balanced,
-    /// Accuracy.
     Accuracy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Agent Profile.
 pub struct AgentProfile {
     #[serde(default)]
-    /// Priority.
     pub priority: Priority,
     #[serde(default = "default_recursion_depth")]
-    /// Mckp recursion depth.
     pub mckp_recursion_depth: usize,
     /// 0.0 = never emit hints, 1.0 = always (scaled by `HintsConfig` rules).
     #[serde(default = "default_hint_aggressiveness")]
     pub hint_aggressiveness: f32,
     #[serde(default)]
-    /// Near ref enabled.
     pub near_ref_enabled: bool,
 }
 
@@ -1054,16 +1016,13 @@ impl Default for AgentProfile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Agent Profiles Config.
 pub struct AgentProfilesConfig {
     #[serde(default = "default_active_auto")]
-    /// Active.
     pub active: String,
     /// How many events to observe before auto-classifying the agent profile.
     #[serde(default = "default_auto_window")]
     pub auto_detect_window: usize,
     #[serde(default = "default_agent_variants")]
-    /// Variants.
     pub variants: BTreeMap<String, AgentProfile>,
 }
 
@@ -1143,7 +1102,6 @@ fn classify_agent(stats: &SessionStats) -> &'static str {
 // ── DATA / DOMAIN ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Data Profile.
 pub struct DataProfile {
     /// Glob-like pattern (currently exact-match-or-prefix on `endpoint_class`).
     pub endpoint_pattern: String,
@@ -1156,13 +1114,10 @@ pub struct DataProfile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Data Profiles Config.
 pub struct DataProfilesConfig {
     #[serde(default = "default_active_auto")]
-    /// Active.
     pub active: String,
     #[serde(default = "default_data_variants")]
-    /// Variants.
     pub variants: BTreeMap<String, DataProfile>,
 }
 
@@ -1228,10 +1183,8 @@ impl DataProfilesConfig {
 // ── HINTS ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Hint Type Rule.
 pub struct HintTypeRule {
     #[serde(default = "default_true")]
-    /// Enabled.
     pub enabled: bool,
     /// Cap on how often this hint type may be emitted in one session.
     /// `None` = unlimited.
@@ -1272,13 +1225,10 @@ impl HintTypeRule {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Hints Config.
 pub struct HintsConfig {
     #[serde(default)]
-    /// Default verbosity.
     pub default_verbosity: HintVerbosity,
     #[serde(default = "default_hint_types")]
-    /// Types.
     pub types: BTreeMap<String, HintTypeRule>,
 }
 
@@ -1356,9 +1306,7 @@ impl HintsConfig {
 /// `AgentProfilesConfig::resolve` to auto-classify the agent profile.
 #[derive(Debug, Clone, Default)]
 pub struct SessionStats {
-    /// Event count.
     pub event_count: usize,
-    /// Compaction count.
     pub compaction_count: usize,
     /// Fraction of events that were file-read tools (Read, Glob, Grep, …).
     pub read_share: f32,
@@ -1368,9 +1316,7 @@ pub struct SessionStats {
 /// resolve the four profile axes plus the legacy v1 fields.
 #[derive(Debug, Clone, Default)]
 pub struct SessionContext {
-    /// Model id.
     pub model_id: Option<String>,
-    /// Stats.
     pub stats: SessionStats,
 }
 
@@ -1378,13 +1324,9 @@ pub struct SessionContext {
 /// pipeline reads on the hot path; produce it once at session start.
 #[derive(Debug, Clone)]
 pub struct EffectiveConfig {
-    /// Tokenizer.
     pub tokenizer: TokenizerProfile,
-    /// Llm.
     pub llm: LlmProfile,
-    /// Agent.
     pub agent: AgentProfile,
-    /// Hints.
     pub hints: HintsConfig,
     /// Cached MckpConfig — recursion_depth comes from the agent profile,
     /// other fields are inherited from the legacy `[mckp]` section.

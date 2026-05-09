@@ -225,7 +225,6 @@ pub struct FirefliesConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Confluence Config.
 pub struct ConfluenceConfig {
     /// Confluence base URL, e.g. `https://wiki.example.com`.
     pub base_url: String,
@@ -680,13 +679,10 @@ impl ProxyRoutingConfig {
 #[serde(deny_unknown_fields)]
 pub struct ProxyRoutingOverride {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Strategy.
     pub strategy: Option<RoutingStrategy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Fallback on error.
     pub fallback_on_error: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Tool overrides.
     pub tool_overrides: Option<Vec<ProxyToolRule>>,
 }
 
@@ -790,15 +786,12 @@ fn default_offline_queue_max() -> usize {
 #[serde(deny_unknown_fields)]
 pub struct ProxyConfig {
     #[serde(default, skip_serializing_if = "ProxyRoutingConfig::is_default")]
-    /// Routing.
     pub routing: ProxyRoutingConfig,
 
     #[serde(default, skip_serializing_if = "ProxySecretsConfig::is_default")]
-    /// Secrets.
     pub secrets: ProxySecretsConfig,
 
     #[serde(default, skip_serializing_if = "ProxyTelemetryConfig::is_default")]
-    /// Telemetry.
     pub telemetry: ProxyTelemetryConfig,
 }
 

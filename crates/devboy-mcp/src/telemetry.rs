@@ -41,9 +41,7 @@ use tracing::{debug, warn};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TelemetryStatus {
-    /// Success.
     Success,
-    /// Error.
     Error,
 }
 
@@ -60,7 +58,6 @@ pub struct TelemetryEvent {
     /// Upstream prefix when the call went remote (`cloud`); `None` for local.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream: Option<String>,
-    /// Status.
     pub status: TelemetryStatus,
     /// Wall-clock latency observed by the proxy.
     pub latency_ms: u64,
@@ -97,14 +94,12 @@ fn unix_now() -> u64 {
 /// Authentication credentials used when uploading batches.
 #[derive(Clone, Default)]
 pub struct TelemetryAuth {
-    /// Bearer token.
     pub bearer_token: Option<secrecy::SecretString>,
 }
 
 /// Request body shape expected by the backend (documented for the future endpoint).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelemetryBatch {
-    /// Events.
     pub events: Vec<TelemetryEvent>,
 }
 
@@ -192,12 +187,10 @@ impl TelemetryBuffer {
         }
     }
 
-    /// Async.
     pub async fn len(&self) -> usize {
         self.inner.lock().await.len()
     }
 
-    /// Async.
     pub async fn is_empty(&self) -> bool {
         self.inner.lock().await.is_empty()
     }

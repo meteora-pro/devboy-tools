@@ -62,9 +62,7 @@ pub struct JiraProjectMetadata {
 /// Jira issue type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraIssueType {
-    /// Id.
     pub id: String,
-    /// Name.
     pub name: String,
     /// Whether this is a subtask type (exclude from create_issue enum).
     #[serde(default)]
@@ -74,27 +72,21 @@ pub struct JiraIssueType {
 /// Jira component.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraComponent {
-    /// Id.
     pub id: String,
-    /// Name.
     pub name: String,
 }
 
 /// Jira priority.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraPriority {
-    /// Id.
     pub id: String,
-    /// Name.
     pub name: String,
 }
 
 /// Jira issue link type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraLinkType {
-    /// Id.
     pub id: String,
-    /// Name.
     pub name: String,
     /// Outward description (e.g., "blocks").
     #[serde(default)]
@@ -111,7 +103,6 @@ pub struct JiraCustomField {
     pub id: String,
     /// Human-readable name.
     pub name: String,
-    /// Field type.
     pub field_type: JiraFieldType,
     /// Whether this field is required.
     #[serde(default)]
@@ -144,9 +135,7 @@ pub enum JiraFieldType {
 /// Option for Jira option/array custom fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraFieldOption {
-    /// Id.
     pub id: String,
-    /// Name.
     pub name: String,
 }
 
@@ -159,12 +148,9 @@ pub struct JiraFieldOption {
 /// until `PropertySchema.enum_values` supports non-string variants).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JiraStructureRef {
-    /// Id.
     pub id: u64,
-    /// Name.
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Description.
     pub description: Option<String>,
 }
 

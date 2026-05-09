@@ -1,4 +1,3 @@
-#![warn(missing_docs)]
 //! Core traits, types, and error handling for devboy-tools.
 //!
 //! This crate provides the foundational abstractions used across all devboy components:
@@ -23,6 +22,9 @@
 //! }
 //! ```
 
+#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![deny(rustdoc::invalid_html_tags)]
 pub mod agents;
 pub mod asset;
 pub mod config;
