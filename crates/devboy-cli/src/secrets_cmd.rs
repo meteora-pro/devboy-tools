@@ -29,6 +29,7 @@ use devboy_storage::{
 use serde::Serialize;
 
 use crate::secrets_agent;
+use crate::secrets_agent_service::{self, ServiceOptions, UserServiceLayout};
 
 /// `devboy secrets <subcommand>` subcommand family.
 #[derive(Subcommand, Debug)]
@@ -55,6 +56,18 @@ pub enum AgentCommands {
     /// Spawn the agent if it isn't already running. Idempotent —
     /// no-op when the socket is already live.
     Start(AgentStartArgs),
+    /// Install a per-user service unit so the daemon starts at
+    /// login and respawns on failure. macOS writes a launchd plist
+    /// at `~/Library/LaunchAgents/dev.devboy.secrets.plist`; Linux
+    /// writes a systemd-user unit at
+    /// `~/.config/systemd/user/devboy-secrets-agent.service`. After
+    /// install: verify with `launchctl print gui/$(id -u)/dev.devboy.secrets`
+    /// (macOS) or `systemctl --user status devboy-secrets-agent.service`
+    /// (Linux).
+    Install(AgentInstallArgs),
+    /// Stop the user service (if loaded) and remove the unit file
+    /// written by `install`. Idempotent — running it twice is fine.
+    Uninstall(AgentUninstallArgs),
 }
 
 /// Flags for `devboy secrets agent start`.
@@ -68,6 +81,38 @@ pub struct AgentStartArgs {
     /// [`secrets_agent::DEFAULT_SPAWN_TIMEOUT`].
     #[arg(long)]
     pub timeout_secs: Option<u64>,
+}
+
+/// Flags for `devboy secrets agent install`.
+#[derive(Args, Debug, Default)]
+pub struct AgentInstallArgs {
+    /// Override the path to the `devboy-secrets-agent` binary. By
+    /// default the same lookup as `secrets agent start` is used
+    /// (env override → sibling-of-current_exe → `PATH`).
+    #[arg(long)]
+    pub binary: Option<PathBuf>,
+    /// Override the daemon's socket path (`DEVBOY_AGENT_SOCKET`).
+    #[arg(long)]
+    pub socket: Option<PathBuf>,
+    /// Override the daemon's vault path (`DEVBOY_VAULT_PATH`).
+    #[arg(long)]
+    pub vault: Option<PathBuf>,
+    /// Skip the platform service-manager activation step (just
+    /// write the unit file). Useful for previewing what would land
+    /// on disk; the unit is loaded next time `launchctl/systemctl`
+    /// scans its directory anyway.
+    #[arg(long, default_value_t = false)]
+    pub no_load: bool,
+}
+
+/// Flags for `devboy secrets agent uninstall`.
+#[derive(Args, Debug, Default)]
+pub struct AgentUninstallArgs {
+    /// Skip the platform service-manager teardown step (just
+    /// remove the unit file). The next reboot will pick up the
+    /// removal anyway.
+    #[arg(long, default_value_t = false)]
+    pub no_unload: bool,
 }
 
 /// Flags for `devboy secrets list`.
@@ -100,6 +145,8 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
         SecretsCommands::Agent { command } => match command {
             AgentCommands::Status => agent_status().await,
             AgentCommands::Start(args) => agent_start(args).await,
+            AgentCommands::Install(args) => agent_install(args),
+            AgentCommands::Uninstall(args) => agent_uninstall(args),
         },
     }
 }
@@ -135,6 +182,52 @@ async fn agent_start(args: AgentStartArgs) -> Result<()> {
         timeout
     );
     Ok(())
+}
+
+fn agent_install(args: AgentInstallArgs) -> Result<()> {
+    let home = dirs::home_dir().context("could not resolve the user's home directory")?;
+    let binary_path = match args.binary {
+        Some(p) => p,
+        None => secrets_agent::find_agent_binary()
+            .context("could not locate the `devboy-secrets-agent` binary to install")?,
+    };
+    let log_path = default_log_path()?;
+    let layout = UserServiceLayout {
+        binary_path,
+        log_path,
+        socket_path: args.socket,
+        vault_path: args.vault,
+    };
+    let options = ServiceOptions {
+        load: !args.no_load,
+    };
+    let path = secrets_agent_service::install_user_service(&home, &layout, &options)?;
+    println!("installed user service at {}", path.display());
+    if options.load {
+        println!("loaded via the platform service manager");
+    } else {
+        println!("--no-load was set; load it manually or reboot to pick it up");
+    }
+    Ok(())
+}
+
+fn agent_uninstall(args: AgentUninstallArgs) -> Result<()> {
+    let home = dirs::home_dir().context("could not resolve the user's home directory")?;
+    let options = ServiceOptions {
+        load: !args.no_unload,
+    };
+    let removed = secrets_agent_service::uninstall_user_service(&home, &options)?;
+    if removed {
+        println!("removed the user service unit file");
+    } else {
+        println!("no user service unit installed; nothing to remove");
+    }
+    Ok(())
+}
+
+fn default_log_path() -> Result<PathBuf> {
+    let dir = dirs::config_dir().context("could not resolve the user's config directory")?;
+    Ok(dir.join("devboy-tools").join("secrets").join("agent.log"))
 }
 
 // =============================================================================

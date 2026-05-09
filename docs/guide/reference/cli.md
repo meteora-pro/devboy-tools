@@ -51,6 +51,8 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets agent`↴](#devboy-secrets-agent)
 * [`devboy secrets agent status`↴](#devboy-secrets-agent-status)
 * [`devboy secrets agent start`↴](#devboy-secrets-agent-start)
+* [`devboy secrets agent install`↴](#devboy-secrets-agent-install)
+* [`devboy secrets agent uninstall`↴](#devboy-secrets-agent-uninstall)
 * [`devboy trace`↴](#devboy-trace)
 * [`devboy trace begin`↴](#devboy-trace-begin)
 * [`devboy trace event`↴](#devboy-trace-event)
@@ -742,6 +744,8 @@ Manage the local secret-store agent daemon (ADR-023 §3.3)
 
 * `status` — Report the agent socket path and whether the daemon is currently accepting connections
 * `start` — Spawn the agent if it isn't already running. Idempotent — no-op when the socket is already live
+* `install` — Install a per-user service unit so the daemon starts at login and respawns on failure. macOS writes a launchd plist at `~/Library/LaunchAgents/dev.devboy.secrets.plist`; Linux writes a systemd-user unit at `~/.config/systemd/user/devboy-secrets-agent.service`. After install: verify with `launchctl print gui/$(id -u)/dev.devboy.secrets` (macOS) or `systemctl --user status devboy-secrets-agent.service` (Linux)
+* `uninstall` — Stop the user service (if loaded) and remove the unit file written by `install`. Idempotent — running it twice is fine
 
 
 
@@ -763,6 +767,37 @@ Spawn the agent if it isn't already running. Idempotent — no-op when the socke
 
 * `--vault <VAULT>` — Override the vault file the daemon will operate on. Defaults to `<config_dir>/devboy-tools/secrets/vault.dvb`
 * `--timeout-secs <TIMEOUT_SECS>` — Cap on the wait-for-socket loop, in seconds. Defaults to [`secrets_agent::DEFAULT_SPAWN_TIMEOUT`]
+
+
+
+## `devboy secrets agent install`
+
+Install a per-user service unit so the daemon starts at login and respawns on failure. macOS writes a launchd plist at `~/Library/LaunchAgents/dev.devboy.secrets.plist`; Linux writes a systemd-user unit at `~/.config/systemd/user/devboy-secrets-agent.service`. After install: verify with `launchctl print gui/$(id -u)/dev.devboy.secrets` (macOS) or `systemctl --user status devboy-secrets-agent.service` (Linux)
+
+**Usage:** `devboy secrets agent install [OPTIONS]`
+
+###### **Options:**
+
+* `--binary <BINARY>` — Override the path to the `devboy-secrets-agent` binary. By default the same lookup as `secrets agent start` is used (env override → sibling-of-current_exe → `PATH`)
+* `--socket <SOCKET>` — Override the daemon's socket path (`DEVBOY_AGENT_SOCKET`)
+* `--vault <VAULT>` — Override the daemon's vault path (`DEVBOY_VAULT_PATH`)
+* `--no-load` — Skip the platform service-manager activation step (just write the unit file). Useful for previewing what would land on disk; the unit is loaded next time `launchctl/systemctl` scans its directory anyway
+
+  Default value: `false`
+
+
+
+## `devboy secrets agent uninstall`
+
+Stop the user service (if loaded) and remove the unit file written by `install`. Idempotent — running it twice is fine
+
+**Usage:** `devboy secrets agent uninstall [OPTIONS]`
+
+###### **Options:**
+
+* `--no-unload` — Skip the platform service-manager teardown step (just remove the unit file). The next reboot will pick up the removal anyway
+
+  Default value: `false`
 
 
 

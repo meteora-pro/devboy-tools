@@ -4,6 +4,7 @@ mod agents_cmd;
 mod doctor;
 mod onboard_cmd;
 mod secrets_agent;
+mod secrets_agent_service;
 mod secrets_cmd;
 mod skills_cmd;
 mod update_check;
