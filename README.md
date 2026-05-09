@@ -328,13 +328,31 @@ devboy-core = "0.26"
 devboy-jira = "0.26"
 ```
 
-```rust
+```rust,no_run
 use devboy_core::{Config, IssueProvider};
-use devboy_jira::JiraProvider;
+use devboy_jira::JiraClient;
+use secrecy::SecretString;
 
-let cfg = Config::from_env()?;
-let jira = JiraProvider::from_config(&cfg.jira)?;
-let issues = jira.get_issues(/* params */).await?;
+async fn embed() -> anyhow::Result<()> {
+    let cfg = Config::load()?;
+    let jira_cfg = cfg.jira.expect("jira section missing in .devboy.toml");
+
+    // In a real devboy setup the token comes from the OS keychain via
+    // `devboy_storage::ChainStore`; for an embedded host pass any
+    // `SecretString` source you trust.
+    let token: SecretString = std::env::var("JIRA_TOKEN")?.into();
+
+    let client = JiraClient::new(
+        jira_cfg.url,
+        jira_cfg.project_key,
+        jira_cfg.email,
+        token,
+    );
+
+    let issue = client.get_issue("PROJ-123").await?;
+    println!("{}", issue.key);
+    Ok(())
+}
 ```
 
 `devboy-skills` and `devboy-cli` ship in a **second wave** — see [ADR-022](docs/architecture/adr/ADR-022-crates-io-publishing.md) for the layout work that gates them.
