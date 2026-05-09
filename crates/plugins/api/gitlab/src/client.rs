@@ -49,6 +49,19 @@ impl GitLabClient {
         }
     }
 
+    /// Base URL the client was configured against. Public so the
+    /// liveness probe (and any future sibling module) can build
+    /// its own requests without re-walking the constructor.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Borrow the underlying [`reqwest::Client`]. Same rationale as
+    /// [`Self::base_url`].
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.client
+    }
+
     /// Configure proxy mode with extra headers added to every request.
     /// When proxy is active, the provider's own auth header (`PRIVATE-TOKEN`)
     /// is suppressed — the proxy handles authentication.

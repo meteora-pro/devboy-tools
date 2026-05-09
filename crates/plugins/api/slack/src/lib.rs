@@ -5,6 +5,7 @@
 //! separately from connection/auth setup.
 
 mod client;
+pub mod liveness;
 
 pub use client::{SlackAuthInfo, SlackClient};
 

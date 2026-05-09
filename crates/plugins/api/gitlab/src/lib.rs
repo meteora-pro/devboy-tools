@@ -5,6 +5,7 @@
 
 mod client;
 pub mod enricher;
+pub mod liveness;
 pub mod types;
 
 pub use client::GitLabClient;

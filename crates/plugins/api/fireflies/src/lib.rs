@@ -5,6 +5,7 @@
 
 mod client;
 mod enricher;
+pub mod liveness;
 mod types;
 
 pub use client::FirefliesClient;

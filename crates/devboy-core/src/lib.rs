@@ -28,7 +28,10 @@ pub mod asset;
 pub mod config;
 pub mod enricher;
 pub mod error;
+pub mod liveness;
 pub mod provider;
+
+pub use liveness::{LivenessProbe, LivenessResult, LivenessStatus};
 pub mod remote_config;
 #[cfg(feature = "sentry")]
 pub mod sentry_integration;

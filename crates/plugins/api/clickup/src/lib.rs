@@ -6,6 +6,7 @@
 
 mod client;
 pub mod enricher;
+pub mod liveness;
 pub mod metadata;
 mod types;
 
