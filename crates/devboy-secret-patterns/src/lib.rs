@@ -60,6 +60,10 @@
 
 #![forbid(unsafe_code)]
 
+pub mod builtin;
+
+pub use builtin::{BUILTINS, Builtin, builtins, find};
+
 use std::fmt;
 
 use regex::Regex;
