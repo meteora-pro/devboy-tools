@@ -98,6 +98,9 @@ sha2 = "0.10"
 # Regular expressions (used by secret patterns and provider plugins)
 regex = "1"
 
+# Base64 encoding (used by the vault file format for binary payloads in TOML)
+base64 = "0.22"
+
 # Observability (optional)
 sentry = { version = "0.35", default-features = false, features = ["rustls", "reqwest", "tracing", "panic", "backtrace", "contexts"] }
 sentry-tracing = "0.35"
