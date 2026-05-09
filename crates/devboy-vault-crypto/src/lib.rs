@@ -15,6 +15,7 @@
 
 pub mod aead;
 pub mod format;
+pub mod keychain;
 pub mod passphrase;
 pub mod recovery;
 
@@ -25,6 +26,10 @@ pub use aead::{
 pub use format::{
     EntryMeta, Envelope, EnvelopeKdfParams, FormatError, HEADER_LEN, Header, KdfParams, MAGIC,
     VERSION_V1, VaultFile, b64_decode, b64_encode,
+};
+pub use keychain::{
+    KEYCHAIN_ACCOUNT_PREFIX, KEYCHAIN_ENVELOPE_AAD, KEYCHAIN_SERVICE, KeychainError,
+    create_keychain_envelope, delete_keychain_entry, unwrap_keychain,
 };
 pub use passphrase::{
     DEFAULT_KDF_PARAMS, PASSPHRASE_ENVELOPE_AAD, PassphraseError, create_passphrase_envelope,
