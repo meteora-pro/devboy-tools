@@ -831,6 +831,56 @@ pub fn mcp_only_tools() -> Vec<McpOnlyTool> {
             description: "Get current active context name.".into(),
             input_schema: ToolSchema::new(),
         },
+        McpOnlyTool {
+            name: "secrets_list".into(),
+            description: "List secrets the active context's manifest declares. \
+                Returns metadata only — values are never included. \
+                Optional filter narrows by path substring, scope, status, or \
+                whether to include framework-internal paths."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "path_contains",
+                    PropertySchema::string("Substring to match against the full ADR-020 path."),
+                );
+                s.add_property(
+                    "scope",
+                    PropertySchema::string(
+                        "Exact match against the first path segment (e.g. team / personal).",
+                    ),
+                );
+                s.add_property(
+                    "status",
+                    PropertySchema::string_enum(
+                        &["registered", "expiring", "expired"],
+                        "Lifecycle status filter computed from expires_at.",
+                    ),
+                );
+                s.add_property(
+                    "include_internal",
+                    PropertySchema::boolean("Include framework-internal paths (default: false)."),
+                );
+                s
+            },
+        },
+        McpOnlyTool {
+            name: "secrets_describe".into(),
+            description: "Describe one secret by ADR-020 path. Returns the same \
+                metadata fields as `secrets_list` plus description, retrieval URL, \
+                rotation method, last rotated date, rotation cadence, and pattern \
+                ID. The value is never returned."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "path",
+                    PropertySchema::string("Full ADR-020 path to describe."),
+                );
+                s.set_required("path", true);
+                s
+            },
+        },
     ]
 }
 

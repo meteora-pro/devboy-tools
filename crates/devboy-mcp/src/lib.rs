@@ -28,6 +28,7 @@ pub mod protocol;
 pub mod proxy;
 pub mod proxy_secrets;
 pub mod routing;
+pub mod secrets_tool;
 pub mod server;
 pub mod signature_match;
 pub mod speculation;

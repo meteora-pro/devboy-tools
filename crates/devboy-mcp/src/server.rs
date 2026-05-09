@@ -755,7 +755,78 @@ impl McpServer {
                     None => ToolCallResult::error("Missing required parameter: name".to_string()),
                 })
             }
+            "secrets_list" => Some(self.handle_secrets_list(params)),
+            "secrets_describe" => Some(self.handle_secrets_describe(params)),
             _ => None,
+        }
+    }
+
+    fn handle_secrets_list(&self, params: &ToolCallParams) -> ToolCallResult {
+        use crate::secrets_tool::{self, SecretsListFilter};
+        use devboy_storage::{GlobalIndex, ProjectManifest};
+
+        let filter: SecretsListFilter = match &params.arguments {
+            Some(args) => match serde_json::from_value(args.clone()) {
+                Ok(f) => f,
+                Err(e) => return ToolCallResult::error(format!("invalid filter: {e}")),
+            },
+            None => SecretsListFilter::default(),
+        };
+
+        let index = match GlobalIndex::load() {
+            Ok(i) => i,
+            Err(e) => return ToolCallResult::error(format!("could not load global index: {e}")),
+        };
+        let manifest = match ProjectManifest::load() {
+            Ok(m) => m,
+            Err(e) => {
+                return ToolCallResult::error(format!("could not load project manifest: {e}"));
+            }
+        };
+
+        match secrets_tool::list(&index, &manifest, &filter, secrets_tool::today_local()) {
+            Ok(rows) => match serde_json::to_value(&rows) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            Err(e) => ToolCallResult::error(format!("secrets_list failed: {e:?}")),
+        }
+    }
+
+    fn handle_secrets_describe(&self, params: &ToolCallParams) -> ToolCallResult {
+        use crate::secrets_tool;
+        use devboy_storage::{GlobalIndex, ProjectManifest};
+
+        #[derive(Deserialize)]
+        struct DescribeParams {
+            path: String,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<DescribeParams>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => return ToolCallResult::error("missing required parameter: path".to_string()),
+        };
+
+        let index = match GlobalIndex::load() {
+            Ok(i) => i,
+            Err(e) => return ToolCallResult::error(format!("could not load global index: {e}")),
+        };
+        let manifest = match ProjectManifest::load() {
+            Ok(m) => m,
+            Err(e) => {
+                return ToolCallResult::error(format!("could not load project manifest: {e}"));
+            }
+        };
+
+        match secrets_tool::describe(&index, &manifest, &args.path, secrets_tool::today_local()) {
+            Ok(reply) => match serde_json::to_value(&reply) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            Err(e) => ToolCallResult::error(format!("secrets_describe failed: {e:?}")),
         }
     }
 
@@ -941,7 +1012,12 @@ impl McpServer {
     fn is_internal_tool(name: &str) -> bool {
         matches!(
             name,
-            "use_context" | "list_contexts" | "get_current_context" | "switch_context"
+            "use_context"
+                | "list_contexts"
+                | "get_current_context"
+                | "switch_context"
+                | "secrets_list"
+                | "secrets_describe"
         )
     }
 
