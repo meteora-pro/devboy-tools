@@ -44,6 +44,7 @@ pub mod manifest;
 pub mod merge;
 pub mod pattern_resolution;
 pub mod secret_path;
+pub mod source;
 
 pub use cache::CachedStore;
 pub use index::{Gate, GlobalIndex, IndexEntry, IndexError, RotationMethod};
@@ -58,6 +59,9 @@ pub use pattern_resolution::{
     InheritanceWarning, InheritanceWarningKind, apply_pattern_inheritance,
 };
 pub use secret_path::{PathError, SecretPath};
+pub use source::{
+    Capabilities, CredentialRef, GetOutcome, RemoteRef, SecretSource, SourceError, SourceStatus,
+};
 
 /// Service name used in OS keychain.
 const SERVICE_NAME: &str = "devboy-tools";
