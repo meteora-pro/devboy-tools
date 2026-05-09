@@ -1,0 +1,1387 @@
+pub mod devboy_skills
+pub mod devboy_skills::catalog
+pub struct devboy_skills::catalog::Catalog
+impl devboy_skills::catalog::Catalog
+pub fn devboy_skills::catalog::Catalog::by_category(&self, category: devboy_skills::skill::Category) -> impl core::iter::traits::iterator::Iterator<Item = &devboy_skills::skill::SkillSummary>
+pub fn devboy_skills::catalog::Catalog::counts_per_category(&self) -> alloc::collections::btree::map::BTreeMap<devboy_skills::skill::Category, usize>
+pub fn devboy_skills::catalog::Catalog::from_summaries(summaries: alloc::vec::Vec<devboy_skills::skill::SkillSummary>) -> Self
+pub fn devboy_skills::catalog::Catalog::get(&self, name: &str) -> core::option::Option<&devboy_skills::skill::SkillSummary>
+pub fn devboy_skills::catalog::Catalog::is_empty(&self) -> bool
+pub fn devboy_skills::catalog::Catalog::iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = &devboy_skills::skill::SkillSummary>
+pub fn devboy_skills::catalog::Catalog::len(&self) -> usize
+impl core::clone::Clone for devboy_skills::catalog::Catalog
+pub fn devboy_skills::catalog::Catalog::clone(&self) -> devboy_skills::catalog::Catalog
+impl core::default::Default for devboy_skills::catalog::Catalog
+pub fn devboy_skills::catalog::Catalog::default() -> devboy_skills::catalog::Catalog
+impl core::fmt::Debug for devboy_skills::catalog::Catalog
+pub fn devboy_skills::catalog::Catalog::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_skills::catalog::Catalog
+impl core::marker::Send for devboy_skills::catalog::Catalog
+impl core::marker::Sync for devboy_skills::catalog::Catalog
+impl core::marker::Unpin for devboy_skills::catalog::Catalog
+impl core::marker::UnsafeUnpin for devboy_skills::catalog::Catalog
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::catalog::Catalog
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::catalog::Catalog
+pub fn devboy_skills::catalog::canonical_skill_name(name: &str) -> &str
+pub mod devboy_skills::embedded
+pub struct devboy_skills::embedded::EmbeddedSkillSource
+impl devboy_skills::embedded::EmbeddedSkillSource
+pub fn devboy_skills::embedded::EmbeddedSkillSource::all() -> devboy_skills::error::Result<alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_skills::skill::Skill>>
+pub fn devboy_skills::embedded::EmbeddedSkillSource::new() -> Self
+impl core::clone::Clone for devboy_skills::embedded::EmbeddedSkillSource
+pub fn devboy_skills::embedded::EmbeddedSkillSource::clone(&self) -> devboy_skills::embedded::EmbeddedSkillSource
+impl core::default::Default for devboy_skills::embedded::EmbeddedSkillSource
+pub fn devboy_skills::embedded::EmbeddedSkillSource::default() -> devboy_skills::embedded::EmbeddedSkillSource
+impl devboy_skills::source::SkillSource for devboy_skills::embedded::EmbeddedSkillSource
+pub fn devboy_skills::embedded::EmbeddedSkillSource::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_skills::error::Result<alloc::vec::Vec<devboy_skills::skill::SkillSummary>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_skills::embedded::EmbeddedSkillSource::load<'life0, 'life1, 'async_trait>(&'life0 self, name: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_skills::error::Result<devboy_skills::skill::Skill>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_skills::embedded::EmbeddedSkillSource::name(&self) -> &'static str
+impl core::marker::Freeze for devboy_skills::embedded::EmbeddedSkillSource
+impl core::marker::Send for devboy_skills::embedded::EmbeddedSkillSource
+impl core::marker::Sync for devboy_skills::embedded::EmbeddedSkillSource
+impl core::marker::Unpin for devboy_skills::embedded::EmbeddedSkillSource
+impl core::marker::UnsafeUnpin for devboy_skills::embedded::EmbeddedSkillSource
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::embedded::EmbeddedSkillSource
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::embedded::EmbeddedSkillSource
+pub mod devboy_skills::error
+pub enum devboy_skills::error::SkillError
+pub devboy_skills::error::SkillError::InvalidFieldType
+pub devboy_skills::error::SkillError::InvalidFieldType::field: &'static str
+pub devboy_skills::error::SkillError::InvalidFieldType::reason: alloc::string::String
+pub devboy_skills::error::SkillError::InvalidFieldType::skill: alloc::string::String
+pub devboy_skills::error::SkillError::InvalidManifest
+pub devboy_skills::error::SkillError::InvalidManifest::path: std::path::PathBuf
+pub devboy_skills::error::SkillError::InvalidManifest::source: serde_json::error::Error
+pub devboy_skills::error::SkillError::InvalidYaml
+pub devboy_skills::error::SkillError::InvalidYaml::skill: alloc::string::String
+pub devboy_skills::error::SkillError::InvalidYaml::source: serde_yaml::error::Error
+pub devboy_skills::error::SkillError::Io
+pub devboy_skills::error::SkillError::Io::path: std::path::PathBuf
+pub devboy_skills::error::SkillError::Io::source: std::io::error::Error
+pub devboy_skills::error::SkillError::MissingFrontmatter
+pub devboy_skills::error::SkillError::MissingFrontmatter::skill: alloc::string::String
+pub devboy_skills::error::SkillError::MissingRequiredField
+pub devboy_skills::error::SkillError::MissingRequiredField::field: &'static str
+pub devboy_skills::error::SkillError::MissingRequiredField::skill: alloc::string::String
+pub devboy_skills::error::SkillError::NotFound
+pub devboy_skills::error::SkillError::NotFound::name: alloc::string::String
+pub devboy_skills::error::SkillError::NotFound::source_name: &'static str
+pub devboy_skills::error::SkillError::SerdeJson
+pub devboy_skills::error::SkillError::SerdeJson::operation: &'static str
+pub devboy_skills::error::SkillError::SerdeJson::path: std::path::PathBuf
+pub devboy_skills::error::SkillError::SerdeJson::source: serde_json::error::Error
+pub devboy_skills::error::SkillError::UnknownCategory
+pub devboy_skills::error::SkillError::UnknownCategory::category: alloc::string::String
+pub devboy_skills::error::SkillError::UnknownCategory::skill: alloc::string::String
+impl core::error::Error for devboy_skills::error::SkillError
+pub fn devboy_skills::error::SkillError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for devboy_skills::error::SkillError
+pub fn devboy_skills::error::SkillError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_skills::error::SkillError
+pub fn devboy_skills::error::SkillError::fmt(&self, __formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_skills::error::SkillError
+impl core::marker::Send for devboy_skills::error::SkillError
+impl core::marker::Sync for devboy_skills::error::SkillError
+impl core::marker::Unpin for devboy_skills::error::SkillError
+impl core::marker::UnsafeUnpin for devboy_skills::error::SkillError
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_skills::error::SkillError
+impl !core::panic::unwind_safe::UnwindSafe for devboy_skills::error::SkillError
+pub type devboy_skills::error::Result<T> = core::result::Result<T, devboy_skills::error::SkillError>
+pub mod devboy_skills::install
+pub enum devboy_skills::install::Agent
+pub devboy_skills::install::Agent::Claude
+pub devboy_skills::install::Agent::Codex
+pub devboy_skills::install::Agent::Cursor
+pub devboy_skills::install::Agent::Kimi
+impl devboy_skills::install::Agent
+pub fn devboy_skills::install::Agent::all() -> &'static [devboy_skills::install::Agent]
+pub fn devboy_skills::install::Agent::as_str(&self) -> &'static str
+pub fn devboy_skills::install::Agent::dir_name(&self) -> &'static str
+pub fn devboy_skills::install::Agent::parse(s: &str) -> core::option::Option<Self>
+impl core::clone::Clone for devboy_skills::install::Agent
+pub fn devboy_skills::install::Agent::clone(&self) -> devboy_skills::install::Agent
+impl core::cmp::Eq for devboy_skills::install::Agent
+impl core::cmp::PartialEq for devboy_skills::install::Agent
+pub fn devboy_skills::install::Agent::eq(&self, other: &devboy_skills::install::Agent) -> bool
+impl core::fmt::Debug for devboy_skills::install::Agent
+pub fn devboy_skills::install::Agent::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_skills::install::Agent
+impl core::marker::StructuralPartialEq for devboy_skills::install::Agent
+impl core::marker::Freeze for devboy_skills::install::Agent
+impl core::marker::Send for devboy_skills::install::Agent
+impl core::marker::Sync for devboy_skills::install::Agent
+impl core::marker::Unpin for devboy_skills::install::Agent
+impl core::marker::UnsafeUnpin for devboy_skills::install::Agent
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::Agent
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::Agent
+pub enum devboy_skills::install::InstallOutcome
+pub devboy_skills::install::InstallOutcome::Installed
+pub devboy_skills::install::InstallOutcome::OverwrittenWithForce
+pub devboy_skills::install::InstallOutcome::SkippedUnknown
+pub devboy_skills::install::InstallOutcome::SkippedUserModified
+pub devboy_skills::install::InstallOutcome::Unchanged
+pub devboy_skills::install::InstallOutcome::Upgraded
+pub devboy_skills::install::InstallOutcome::Upgraded::from_version: core::option::Option<u32>
+impl core::clone::Clone for devboy_skills::install::InstallOutcome
+pub fn devboy_skills::install::InstallOutcome::clone(&self) -> devboy_skills::install::InstallOutcome
+impl core::cmp::Eq for devboy_skills::install::InstallOutcome
+impl core::cmp::PartialEq for devboy_skills::install::InstallOutcome
+pub fn devboy_skills::install::InstallOutcome::eq(&self, other: &devboy_skills::install::InstallOutcome) -> bool
+impl core::fmt::Debug for devboy_skills::install::InstallOutcome
+pub fn devboy_skills::install::InstallOutcome::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_skills::install::InstallOutcome
+impl core::marker::Freeze for devboy_skills::install::InstallOutcome
+impl core::marker::Send for devboy_skills::install::InstallOutcome
+impl core::marker::Sync for devboy_skills::install::InstallOutcome
+impl core::marker::Unpin for devboy_skills::install::InstallOutcome
+impl core::marker::UnsafeUnpin for devboy_skills::install::InstallOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::InstallOutcome
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::InstallOutcome
+pub struct devboy_skills::install::Environment
+pub devboy_skills::install::Environment::cwd: std::path::PathBuf
+pub devboy_skills::install::Environment::home: std::path::PathBuf
+pub devboy_skills::install::Environment::repo_root: core::option::Option<std::path::PathBuf>
+impl devboy_skills::install::Environment
+pub fn devboy_skills::install::Environment::detect() -> devboy_skills::error::Result<Self>
+impl core::clone::Clone for devboy_skills::install::Environment
+pub fn devboy_skills::install::Environment::clone(&self) -> devboy_skills::install::Environment
+impl core::fmt::Debug for devboy_skills::install::Environment
+pub fn devboy_skills::install::Environment::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_skills::install::Environment
+impl core::marker::Send for devboy_skills::install::Environment
+impl core::marker::Sync for devboy_skills::install::Environment
+impl core::marker::Unpin for devboy_skills::install::Environment
+impl core::marker::UnsafeUnpin for devboy_skills::install::Environment
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::Environment
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::Environment
+pub struct devboy_skills::install::InstallOptions
+pub devboy_skills::install::InstallOptions::dry_run: bool
+pub devboy_skills::install::InstallOptions::force: bool
+pub devboy_skills::install::InstallOptions::installed_from: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_skills::install::InstallOptions
+pub fn devboy_skills::install::InstallOptions::clone(&self) -> devboy_skills::install::InstallOptions
+impl core::default::Default for devboy_skills::install::InstallOptions
+pub fn devboy_skills::install::InstallOptions::default() -> devboy_skills::install::InstallOptions
+impl core::fmt::Debug for devboy_skills::install::InstallOptions
+pub fn devboy_skills::install::InstallOptions::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_skills::install::InstallOptions
+impl core::marker::Send for devboy_skills::install::InstallOptions
+impl core::marker::Sync for devboy_skills::install::InstallOptions
+impl core::marker::Unpin for devboy_skills::install::InstallOptions
+impl core::marker::UnsafeUnpin for devboy_skills::install::InstallOptions
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::InstallOptions
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::InstallOptions
+pub struct devboy_skills::install::InstallReport
+pub devboy_skills::install::InstallReport::outcomes: alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_skills::install::InstallOutcome>
+impl devboy_skills::install::InstallReport
+pub fn devboy_skills::install::InstallReport::count(&self, outcome: &devboy_skills::install::InstallOutcome) -> usize
+pub fn devboy_skills::install::InstallReport::is_all_noop(&self) -> bool
+impl core::clone::Clone for devboy_skills::install::InstallReport
+pub fn devboy_skills::install::InstallReport::clone(&self) -> devboy_skills::install::InstallReport
+impl core::default::Default for devboy_skills::install::InstallReport
+pub fn devboy_skills::install::InstallReport::default() -> devboy_skills::install::InstallReport
+impl core::fmt::Debug for devboy_skills::install::InstallReport
+pub fn devboy_skills::install::InstallReport::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_skills::install::InstallReport
+impl core::marker::Send for devboy_skills::install::InstallReport
+impl core::marker::Sync for devboy_skills::install::InstallReport
+impl core::marker::Unpin for devboy_skills::install::InstallReport
+impl core::marker::UnsafeUnpin for devboy_skills::install::InstallReport
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::InstallReport
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::InstallReport
+pub struct devboy_skills::install::InstallSpec
+pub devboy_skills::install::InstallSpec::agents: alloc::vec::Vec<devboy_skills::install::Agent>
+pub devboy_skills::install::InstallSpec::global: bool
+pub devboy_skills::install::InstallSpec::include_vendor_neutral_global: bool
+pub devboy_skills::install::InstallSpec::local: bool
+impl core::clone::Clone for devboy_skills::install::InstallSpec
+pub fn devboy_skills::install::InstallSpec::clone(&self) -> devboy_skills::install::InstallSpec
+impl core::cmp::Eq for devboy_skills::install::InstallSpec
+impl core::cmp::PartialEq for devboy_skills::install::InstallSpec
+pub fn devboy_skills::install::InstallSpec::eq(&self, other: &devboy_skills::install::InstallSpec) -> bool
+impl core::default::Default for devboy_skills::install::InstallSpec
+pub fn devboy_skills::install::InstallSpec::default() -> devboy_skills::install::InstallSpec
+impl core::fmt::Debug for devboy_skills::install::InstallSpec
+pub fn devboy_skills::install::InstallSpec::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_skills::install::InstallSpec
+impl core::marker::Freeze for devboy_skills::install::InstallSpec
+impl core::marker::Send for devboy_skills::install::InstallSpec
+impl core::marker::Sync for devboy_skills::install::InstallSpec
+impl core::marker::Unpin for devboy_skills::install::InstallSpec
+impl core::marker::UnsafeUnpin for devboy_skills::install::InstallSpec
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::InstallSpec
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::InstallSpec
+pub struct devboy_skills::install::InstallTarget
+pub devboy_skills::install::InstallTarget::label: alloc::string::String
+pub devboy_skills::install::InstallTarget::skills_dir: std::path::PathBuf
+impl core::clone::Clone for devboy_skills::install::InstallTarget
+pub fn devboy_skills::install::InstallTarget::clone(&self) -> devboy_skills::install::InstallTarget
+impl core::cmp::Eq for devboy_skills::install::InstallTarget
+impl core::cmp::PartialEq for devboy_skills::install::InstallTarget
+pub fn devboy_skills::install::InstallTarget::eq(&self, other: &devboy_skills::install::InstallTarget) -> bool
+impl core::fmt::Debug for devboy_skills::install::InstallTarget
+pub fn devboy_skills::install::InstallTarget::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_skills::install::InstallTarget
+impl core::marker::Freeze for devboy_skills::install::InstallTarget
+impl core::marker::Send for devboy_skills::install::InstallTarget
+impl core::marker::Sync for devboy_skills::install::InstallTarget
+impl core::marker::Unpin for devboy_skills::install::InstallTarget
+impl core::marker::UnsafeUnpin for devboy_skills::install::InstallTarget
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::InstallTarget
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::InstallTarget
+pub struct devboy_skills::install::LegacySkill
+pub devboy_skills::install::LegacySkill::canonical_name: alloc::string::String
+pub devboy_skills::install::LegacySkill::canonical_present: bool
+pub devboy_skills::install::LegacySkill::legacy_name: alloc::string::String
+pub devboy_skills::install::LegacySkill::path: std::path::PathBuf
+impl core::clone::Clone for devboy_skills::install::LegacySkill
+pub fn devboy_skills::install::LegacySkill::clone(&self) -> devboy_skills::install::LegacySkill
+impl core::cmp::Eq for devboy_skills::install::LegacySkill
+impl core::cmp::PartialEq for devboy_skills::install::LegacySkill
+pub fn devboy_skills::install::LegacySkill::eq(&self, other: &devboy_skills::install::LegacySkill) -> bool
+impl core::fmt::Debug for devboy_skills::install::LegacySkill
+pub fn devboy_skills::install::LegacySkill::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_skills::install::LegacySkill
+impl core::marker::Freeze for devboy_skills::install::LegacySkill
+impl core::marker::Send for devboy_skills::install::LegacySkill
+impl core::marker::Sync for devboy_skills::install::LegacySkill
+impl core::marker::Unpin for devboy_skills::install::LegacySkill
+impl core::marker::UnsafeUnpin for devboy_skills::install::LegacySkill
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::LegacySkill
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::LegacySkill
+pub fn devboy_skills::install::detect_installed_agents(home: &std::path::Path) -> alloc::vec::Vec<devboy_skills::install::Agent>
+pub fn devboy_skills::install::install_skills_to_target(target: &devboy_skills::install::InstallTarget, skills: &[devboy_skills::skill::Skill], history: &devboy_skills::manifest::HistoricalHashes, options: &devboy_skills::install::InstallOptions) -> devboy_skills::error::Result<devboy_skills::install::InstallReport>
+pub fn devboy_skills::install::migrate_legacy_skills_at_target(target: &devboy_skills::install::InstallTarget, dry_run: bool) -> devboy_skills::error::Result<alloc::vec::Vec<alloc::string::String>>
+pub fn devboy_skills::install::remove_skills_from_target(target: &devboy_skills::install::InstallTarget, names: &[alloc::string::String], strict: bool, dry_run: bool) -> devboy_skills::error::Result<alloc::vec::Vec<alloc::string::String>>
+pub fn devboy_skills::install::resolve_targets(env: &devboy_skills::install::Environment, spec: &devboy_skills::install::InstallSpec) -> devboy_skills::error::Result<alloc::vec::Vec<devboy_skills::install::InstallTarget>>
+pub fn devboy_skills::install::scan_legacy_skills_at_target(target: &devboy_skills::install::InstallTarget) -> devboy_skills::error::Result<alloc::vec::Vec<devboy_skills::install::LegacySkill>>
+pub mod devboy_skills::manifest
+pub enum devboy_skills::manifest::InstallState
+pub devboy_skills::manifest::InstallState::HistoricalSafe
+pub devboy_skills::manifest::InstallState::Unchanged
+pub devboy_skills::manifest::InstallState::Unknown
+pub devboy_skills::manifest::InstallState::UserModified
+impl core::clone::Clone for devboy_skills::manifest::InstallState
+pub fn devboy_skills::manifest::InstallState::clone(&self) -> devboy_skills::manifest::InstallState
+impl core::cmp::Eq for devboy_skills::manifest::InstallState
+impl core::cmp::PartialEq for devboy_skills::manifest::InstallState
+pub fn devboy_skills::manifest::InstallState::eq(&self, other: &devboy_skills::manifest::InstallState) -> bool
+impl core::fmt::Debug for devboy_skills::manifest::InstallState
+pub fn devboy_skills::manifest::InstallState::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_skills::manifest::InstallState
+impl core::marker::StructuralPartialEq for devboy_skills::manifest::InstallState
+impl core::marker::Freeze for devboy_skills::manifest::InstallState
+impl core::marker::Send for devboy_skills::manifest::InstallState
+impl core::marker::Sync for devboy_skills::manifest::InstallState
+impl core::marker::Unpin for devboy_skills::manifest::InstallState
+impl core::marker::UnsafeUnpin for devboy_skills::manifest::InstallState
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::manifest::InstallState
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::manifest::InstallState
+pub struct devboy_skills::manifest::HistoricalHashes
+pub devboy_skills::manifest::HistoricalHashes::by_skill: alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_skills::manifest::SkillHistory>
+impl devboy_skills::manifest::HistoricalHashes
+pub fn devboy_skills::manifest::HistoricalHashes::get(&self, name: &str) -> core::option::Option<&devboy_skills::manifest::SkillHistory>
+pub fn devboy_skills::manifest::HistoricalHashes::load_embedded() -> devboy_skills::error::Result<Self>
+impl core::clone::Clone for devboy_skills::manifest::HistoricalHashes
+pub fn devboy_skills::manifest::HistoricalHashes::clone(&self) -> devboy_skills::manifest::HistoricalHashes
+impl core::default::Default for devboy_skills::manifest::HistoricalHashes
+pub fn devboy_skills::manifest::HistoricalHashes::default() -> devboy_skills::manifest::HistoricalHashes
+impl core::fmt::Debug for devboy_skills::manifest::HistoricalHashes
+pub fn devboy_skills::manifest::HistoricalHashes::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::manifest::HistoricalHashes
+pub fn devboy_skills::manifest::HistoricalHashes::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::manifest::HistoricalHashes
+pub fn devboy_skills::manifest::HistoricalHashes::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::manifest::HistoricalHashes
+impl core::marker::Send for devboy_skills::manifest::HistoricalHashes
+impl core::marker::Sync for devboy_skills::manifest::HistoricalHashes
+impl core::marker::Unpin for devboy_skills::manifest::HistoricalHashes
+impl core::marker::UnsafeUnpin for devboy_skills::manifest::HistoricalHashes
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::manifest::HistoricalHashes
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::manifest::HistoricalHashes
+pub struct devboy_skills::manifest::HistoricalVersion
+pub devboy_skills::manifest::HistoricalVersion::sha256: alloc::string::String
+pub devboy_skills::manifest::HistoricalVersion::version: u32
+impl core::clone::Clone for devboy_skills::manifest::HistoricalVersion
+pub fn devboy_skills::manifest::HistoricalVersion::clone(&self) -> devboy_skills::manifest::HistoricalVersion
+impl core::cmp::Eq for devboy_skills::manifest::HistoricalVersion
+impl core::cmp::PartialEq for devboy_skills::manifest::HistoricalVersion
+pub fn devboy_skills::manifest::HistoricalVersion::eq(&self, other: &devboy_skills::manifest::HistoricalVersion) -> bool
+impl core::fmt::Debug for devboy_skills::manifest::HistoricalVersion
+pub fn devboy_skills::manifest::HistoricalVersion::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_skills::manifest::HistoricalVersion
+impl serde_core::ser::Serialize for devboy_skills::manifest::HistoricalVersion
+pub fn devboy_skills::manifest::HistoricalVersion::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::manifest::HistoricalVersion
+pub fn devboy_skills::manifest::HistoricalVersion::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::manifest::HistoricalVersion
+impl core::marker::Send for devboy_skills::manifest::HistoricalVersion
+impl core::marker::Sync for devboy_skills::manifest::HistoricalVersion
+impl core::marker::Unpin for devboy_skills::manifest::HistoricalVersion
+impl core::marker::UnsafeUnpin for devboy_skills::manifest::HistoricalVersion
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::manifest::HistoricalVersion
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::manifest::HistoricalVersion
+pub struct devboy_skills::manifest::InstalledFile
+pub devboy_skills::manifest::InstalledFile::sha256: alloc::string::String
+pub devboy_skills::manifest::InstalledFile::size: u64
+impl core::clone::Clone for devboy_skills::manifest::InstalledFile
+pub fn devboy_skills::manifest::InstalledFile::clone(&self) -> devboy_skills::manifest::InstalledFile
+impl core::fmt::Debug for devboy_skills::manifest::InstalledFile
+pub fn devboy_skills::manifest::InstalledFile::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::manifest::InstalledFile
+pub fn devboy_skills::manifest::InstalledFile::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::manifest::InstalledFile
+pub fn devboy_skills::manifest::InstalledFile::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::manifest::InstalledFile
+impl core::marker::Send for devboy_skills::manifest::InstalledFile
+impl core::marker::Sync for devboy_skills::manifest::InstalledFile
+impl core::marker::Unpin for devboy_skills::manifest::InstalledFile
+impl core::marker::UnsafeUnpin for devboy_skills::manifest::InstalledFile
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::manifest::InstalledFile
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::manifest::InstalledFile
+pub struct devboy_skills::manifest::InstalledSkill
+pub devboy_skills::manifest::InstalledSkill::files: alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_skills::manifest::InstalledFile>
+pub devboy_skills::manifest::InstalledSkill::installed_at: chrono::datetime::DateTime<chrono::offset::utc::Utc>
+pub devboy_skills::manifest::InstalledSkill::source: alloc::string::String
+pub devboy_skills::manifest::InstalledSkill::version: u32
+impl core::clone::Clone for devboy_skills::manifest::InstalledSkill
+pub fn devboy_skills::manifest::InstalledSkill::clone(&self) -> devboy_skills::manifest::InstalledSkill
+impl core::fmt::Debug for devboy_skills::manifest::InstalledSkill
+pub fn devboy_skills::manifest::InstalledSkill::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::manifest::InstalledSkill
+pub fn devboy_skills::manifest::InstalledSkill::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::manifest::InstalledSkill
+pub fn devboy_skills::manifest::InstalledSkill::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::manifest::InstalledSkill
+impl core::marker::Send for devboy_skills::manifest::InstalledSkill
+impl core::marker::Sync for devboy_skills::manifest::InstalledSkill
+impl core::marker::Unpin for devboy_skills::manifest::InstalledSkill
+impl core::marker::UnsafeUnpin for devboy_skills::manifest::InstalledSkill
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::manifest::InstalledSkill
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::manifest::InstalledSkill
+pub struct devboy_skills::manifest::Manifest
+pub devboy_skills::manifest::Manifest::installed_from: core::option::Option<alloc::string::String>
+pub devboy_skills::manifest::Manifest::skills: alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_skills::manifest::InstalledSkill>
+pub devboy_skills::manifest::Manifest::version: u32
+impl devboy_skills::manifest::Manifest
+pub fn devboy_skills::manifest::Manifest::forget(&mut self, name: &str) -> core::option::Option<devboy_skills::manifest::InstalledSkill>
+pub fn devboy_skills::manifest::Manifest::get(&self, name: &str) -> core::option::Option<&devboy_skills::manifest::InstalledSkill>
+pub fn devboy_skills::manifest::Manifest::load(path: &std::path::Path) -> devboy_skills::error::Result<Self>
+pub fn devboy_skills::manifest::Manifest::record(&mut self, name: &str, entry: devboy_skills::manifest::InstalledSkill)
+pub fn devboy_skills::manifest::Manifest::save(&self, path: &std::path::Path) -> devboy_skills::error::Result<()>
+impl core::clone::Clone for devboy_skills::manifest::Manifest
+pub fn devboy_skills::manifest::Manifest::clone(&self) -> devboy_skills::manifest::Manifest
+impl core::default::Default for devboy_skills::manifest::Manifest
+pub fn devboy_skills::manifest::Manifest::default() -> Self
+impl core::fmt::Debug for devboy_skills::manifest::Manifest
+pub fn devboy_skills::manifest::Manifest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::manifest::Manifest
+pub fn devboy_skills::manifest::Manifest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::manifest::Manifest
+pub fn devboy_skills::manifest::Manifest::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::manifest::Manifest
+impl core::marker::Send for devboy_skills::manifest::Manifest
+impl core::marker::Sync for devboy_skills::manifest::Manifest
+impl core::marker::Unpin for devboy_skills::manifest::Manifest
+impl core::marker::UnsafeUnpin for devboy_skills::manifest::Manifest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::manifest::Manifest
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::manifest::Manifest
+pub struct devboy_skills::manifest::SkillHistory
+pub devboy_skills::manifest::SkillHistory::current: devboy_skills::manifest::HistoricalVersion
+pub devboy_skills::manifest::SkillHistory::history: alloc::vec::Vec<devboy_skills::manifest::HistoricalVersion>
+impl devboy_skills::manifest::SkillHistory
+pub fn devboy_skills::manifest::SkillHistory::is_current(&self, sha256: &str) -> bool
+pub fn devboy_skills::manifest::SkillHistory::is_historical(&self, sha256: &str) -> bool
+impl core::clone::Clone for devboy_skills::manifest::SkillHistory
+pub fn devboy_skills::manifest::SkillHistory::clone(&self) -> devboy_skills::manifest::SkillHistory
+impl core::fmt::Debug for devboy_skills::manifest::SkillHistory
+pub fn devboy_skills::manifest::SkillHistory::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::manifest::SkillHistory
+pub fn devboy_skills::manifest::SkillHistory::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::manifest::SkillHistory
+pub fn devboy_skills::manifest::SkillHistory::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::manifest::SkillHistory
+impl core::marker::Send for devboy_skills::manifest::SkillHistory
+impl core::marker::Sync for devboy_skills::manifest::SkillHistory
+impl core::marker::Unpin for devboy_skills::manifest::SkillHistory
+impl core::marker::UnsafeUnpin for devboy_skills::manifest::SkillHistory
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::manifest::SkillHistory
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::manifest::SkillHistory
+pub const devboy_skills::manifest::MANIFEST_FILE: &str
+pub const devboy_skills::manifest::MANIFEST_VERSION: u32
+pub fn devboy_skills::manifest::classify(history: &devboy_skills::manifest::HistoricalHashes, name: &str, body: &[u8]) -> devboy_skills::manifest::InstallState
+pub fn devboy_skills::manifest::classify_path(history: &devboy_skills::manifest::HistoricalHashes, name: &str, path: &std::path::Path) -> devboy_skills::error::Result<core::option::Option<devboy_skills::manifest::InstallState>>
+pub fn devboy_skills::manifest::sha256_hex(bytes: &[u8]) -> alloc::string::String
+pub mod devboy_skills::plugin_dedup
+pub struct devboy_skills::plugin_dedup::PluginId
+pub devboy_skills::plugin_dedup::PluginId::marketplace: &'static str
+pub devboy_skills::plugin_dedup::PluginId::name: &'static str
+impl core::clone::Clone for devboy_skills::plugin_dedup::PluginId
+pub fn devboy_skills::plugin_dedup::PluginId::clone(&self) -> devboy_skills::plugin_dedup::PluginId
+impl core::cmp::Eq for devboy_skills::plugin_dedup::PluginId
+impl core::cmp::PartialEq for devboy_skills::plugin_dedup::PluginId
+pub fn devboy_skills::plugin_dedup::PluginId::eq(&self, other: &devboy_skills::plugin_dedup::PluginId) -> bool
+impl core::fmt::Debug for devboy_skills::plugin_dedup::PluginId
+pub fn devboy_skills::plugin_dedup::PluginId::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_skills::plugin_dedup::PluginId
+impl core::marker::StructuralPartialEq for devboy_skills::plugin_dedup::PluginId
+impl core::marker::Freeze for devboy_skills::plugin_dedup::PluginId
+impl core::marker::Send for devboy_skills::plugin_dedup::PluginId
+impl core::marker::Sync for devboy_skills::plugin_dedup::PluginId
+impl core::marker::Unpin for devboy_skills::plugin_dedup::PluginId
+impl core::marker::UnsafeUnpin for devboy_skills::plugin_dedup::PluginId
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::plugin_dedup::PluginId
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::plugin_dedup::PluginId
+pub const devboy_skills::plugin_dedup::DEVBOY_PLUGIN: devboy_skills::plugin_dedup::PluginId
+pub fn devboy_skills::plugin_dedup::is_claude_plugin_enabled(home: &std::path::Path, plugin: &devboy_skills::plugin_dedup::PluginId) -> bool
+pub fn devboy_skills::plugin_dedup::is_codex_plugin_enabled(home: &std::path::Path, plugin: &devboy_skills::plugin_dedup::PluginId) -> bool
+pub mod devboy_skills::skill
+pub enum devboy_skills::skill::Category
+pub devboy_skills::skill::Category::CodeReview
+pub devboy_skills::skill::Category::IssueTracking
+pub devboy_skills::skill::Category::MeetingNotes
+pub devboy_skills::skill::Category::Messenger
+pub devboy_skills::skill::Category::SelfBootstrap
+pub devboy_skills::skill::Category::SelfFeedback
+impl devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::all() -> &'static [devboy_skills::skill::Category]
+pub fn devboy_skills::skill::Category::as_str(&self) -> &'static str
+pub fn devboy_skills::skill::Category::parse(s: &str) -> core::option::Option<Self>
+impl core::clone::Clone for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::clone(&self) -> devboy_skills::skill::Category
+impl core::cmp::Eq for devboy_skills::skill::Category
+impl core::cmp::Ord for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::cmp(&self, other: &devboy_skills::skill::Category) -> core::cmp::Ordering
+impl core::cmp::PartialEq for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::eq(&self, other: &devboy_skills::skill::Category) -> bool
+impl core::cmp::PartialOrd for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::partial_cmp(&self, other: &devboy_skills::skill::Category) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::hash<__H: core::hash::Hasher>(&self, state: &mut __H)
+impl core::marker::Copy for devboy_skills::skill::Category
+impl core::marker::StructuralPartialEq for devboy_skills::skill::Category
+impl serde_core::ser::Serialize for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::skill::Category
+impl core::marker::Send for devboy_skills::skill::Category
+impl core::marker::Sync for devboy_skills::skill::Category
+impl core::marker::Unpin for devboy_skills::skill::Category
+impl core::marker::UnsafeUnpin for devboy_skills::skill::Category
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::skill::Category
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::skill::Category
+pub struct devboy_skills::skill::Frontmatter
+pub devboy_skills::skill::Frontmatter::activation: alloc::vec::Vec<alloc::string::String>
+pub devboy_skills::skill::Frontmatter::category: devboy_skills::skill::Category
+pub devboy_skills::skill::Frontmatter::compatibility: core::option::Option<alloc::string::String>
+pub devboy_skills::skill::Frontmatter::description: alloc::string::String
+pub devboy_skills::skill::Frontmatter::extra: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub devboy_skills::skill::Frontmatter::name: alloc::string::String
+pub devboy_skills::skill::Frontmatter::tools: alloc::vec::Vec<alloc::string::String>
+pub devboy_skills::skill::Frontmatter::version: u32
+impl core::clone::Clone for devboy_skills::skill::Frontmatter
+pub fn devboy_skills::skill::Frontmatter::clone(&self) -> devboy_skills::skill::Frontmatter
+impl core::fmt::Debug for devboy_skills::skill::Frontmatter
+pub fn devboy_skills::skill::Frontmatter::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::skill::Frontmatter
+pub fn devboy_skills::skill::Frontmatter::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::skill::Frontmatter
+pub fn devboy_skills::skill::Frontmatter::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::skill::Frontmatter
+impl core::marker::Send for devboy_skills::skill::Frontmatter
+impl core::marker::Sync for devboy_skills::skill::Frontmatter
+impl core::marker::Unpin for devboy_skills::skill::Frontmatter
+impl core::marker::UnsafeUnpin for devboy_skills::skill::Frontmatter
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::skill::Frontmatter
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::skill::Frontmatter
+pub struct devboy_skills::skill::Skill
+pub devboy_skills::skill::Skill::body: alloc::string::String
+pub devboy_skills::skill::Skill::frontmatter: devboy_skills::skill::Frontmatter
+impl devboy_skills::skill::Skill
+pub fn devboy_skills::skill::Skill::category(&self) -> devboy_skills::skill::Category
+pub fn devboy_skills::skill::Skill::name(&self) -> &str
+pub fn devboy_skills::skill::Skill::parse(skill_id: &str, contents: &str) -> devboy_skills::error::Result<Self>
+pub fn devboy_skills::skill::Skill::version(&self) -> u32
+impl core::clone::Clone for devboy_skills::skill::Skill
+pub fn devboy_skills::skill::Skill::clone(&self) -> devboy_skills::skill::Skill
+impl core::convert::From<&devboy_skills::skill::Skill> for devboy_skills::skill::SkillSummary
+pub fn devboy_skills::skill::SkillSummary::from(skill: &devboy_skills::skill::Skill) -> Self
+impl core::fmt::Debug for devboy_skills::skill::Skill
+pub fn devboy_skills::skill::Skill::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_skills::skill::Skill
+impl core::marker::Send for devboy_skills::skill::Skill
+impl core::marker::Sync for devboy_skills::skill::Skill
+impl core::marker::Unpin for devboy_skills::skill::Skill
+impl core::marker::UnsafeUnpin for devboy_skills::skill::Skill
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::skill::Skill
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::skill::Skill
+pub struct devboy_skills::skill::SkillSummary
+pub devboy_skills::skill::SkillSummary::category: devboy_skills::skill::Category
+pub devboy_skills::skill::SkillSummary::description: alloc::string::String
+pub devboy_skills::skill::SkillSummary::name: alloc::string::String
+pub devboy_skills::skill::SkillSummary::version: u32
+impl core::clone::Clone for devboy_skills::skill::SkillSummary
+pub fn devboy_skills::skill::SkillSummary::clone(&self) -> devboy_skills::skill::SkillSummary
+impl core::convert::From<&devboy_skills::skill::Skill> for devboy_skills::skill::SkillSummary
+pub fn devboy_skills::skill::SkillSummary::from(skill: &devboy_skills::skill::Skill) -> Self
+impl core::fmt::Debug for devboy_skills::skill::SkillSummary
+pub fn devboy_skills::skill::SkillSummary::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::skill::SkillSummary
+pub fn devboy_skills::skill::SkillSummary::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::skill::SkillSummary
+pub fn devboy_skills::skill::SkillSummary::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::skill::SkillSummary
+impl core::marker::Send for devboy_skills::skill::SkillSummary
+impl core::marker::Sync for devboy_skills::skill::SkillSummary
+impl core::marker::Unpin for devboy_skills::skill::SkillSummary
+impl core::marker::UnsafeUnpin for devboy_skills::skill::SkillSummary
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::skill::SkillSummary
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::skill::SkillSummary
+pub mod devboy_skills::source
+pub trait devboy_skills::source::SkillSource: core::marker::Send + core::marker::Sync
+pub fn devboy_skills::source::SkillSource::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_skills::error::Result<alloc::vec::Vec<devboy_skills::skill::SkillSummary>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_skills::source::SkillSource::load<'life0, 'life1, 'async_trait>(&'life0 self, name: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_skills::error::Result<devboy_skills::skill::Skill>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_skills::source::SkillSource::name(&self) -> &'static str
+impl devboy_skills::source::SkillSource for devboy_skills::embedded::EmbeddedSkillSource
+pub fn devboy_skills::embedded::EmbeddedSkillSource::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_skills::error::Result<alloc::vec::Vec<devboy_skills::skill::SkillSummary>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_skills::embedded::EmbeddedSkillSource::load<'life0, 'life1, 'async_trait>(&'life0 self, name: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_skills::error::Result<devboy_skills::skill::Skill>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_skills::embedded::EmbeddedSkillSource::name(&self) -> &'static str
+pub mod devboy_skills::trace
+pub mod devboy_skills::trace::redact
+pub struct devboy_skills::trace::redact::Redactor
+impl devboy_skills::trace::redact::Redactor
+pub fn devboy_skills::trace::redact::Redactor::sanitize(&self, value: serde_json::value::Value) -> serde_json::value::Value
+pub fn devboy_skills::trace::redact::Redactor::snapshot() -> Self
+impl core::clone::Clone for devboy_skills::trace::redact::Redactor
+pub fn devboy_skills::trace::redact::Redactor::clone(&self) -> devboy_skills::trace::redact::Redactor
+impl core::fmt::Debug for devboy_skills::trace::redact::Redactor
+pub fn devboy_skills::trace::redact::Redactor::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_skills::trace::redact::Redactor
+impl core::marker::Send for devboy_skills::trace::redact::Redactor
+impl core::marker::Sync for devboy_skills::trace::redact::Redactor
+impl core::marker::Unpin for devboy_skills::trace::redact::Redactor
+impl core::marker::UnsafeUnpin for devboy_skills::trace::redact::Redactor
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::trace::redact::Redactor
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::trace::redact::Redactor
+pub fn devboy_skills::trace::redact::sanitize(value: serde_json::value::Value) -> serde_json::value::Value
+pub enum devboy_skills::trace::Outcome
+pub devboy_skills::trace::Outcome::Aborted
+pub devboy_skills::trace::Outcome::Failure
+pub devboy_skills::trace::Outcome::Success
+impl core::clone::Clone for devboy_skills::trace::Outcome
+pub fn devboy_skills::trace::Outcome::clone(&self) -> devboy_skills::trace::Outcome
+impl core::cmp::Eq for devboy_skills::trace::Outcome
+impl core::cmp::PartialEq for devboy_skills::trace::Outcome
+pub fn devboy_skills::trace::Outcome::eq(&self, other: &devboy_skills::trace::Outcome) -> bool
+impl core::fmt::Debug for devboy_skills::trace::Outcome
+pub fn devboy_skills::trace::Outcome::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_skills::trace::Outcome
+impl core::marker::StructuralPartialEq for devboy_skills::trace::Outcome
+impl serde_core::ser::Serialize for devboy_skills::trace::Outcome
+pub fn devboy_skills::trace::Outcome::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::trace::Outcome
+pub fn devboy_skills::trace::Outcome::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::trace::Outcome
+impl core::marker::Send for devboy_skills::trace::Outcome
+impl core::marker::Sync for devboy_skills::trace::Outcome
+impl core::marker::Unpin for devboy_skills::trace::Outcome
+impl core::marker::UnsafeUnpin for devboy_skills::trace::Outcome
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::trace::Outcome
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::trace::Outcome
+pub enum devboy_skills::trace::Phase
+pub devboy_skills::trace::Phase::Artifact
+pub devboy_skills::trace::Phase::Decision
+pub devboy_skills::trace::Phase::End
+pub devboy_skills::trace::Phase::Note
+pub devboy_skills::trace::Phase::Start
+pub devboy_skills::trace::Phase::ToolCall
+pub devboy_skills::trace::Phase::ToolResult
+pub devboy_skills::trace::Phase::Verify
+impl core::clone::Clone for devboy_skills::trace::Phase
+pub fn devboy_skills::trace::Phase::clone(&self) -> devboy_skills::trace::Phase
+impl core::cmp::Eq for devboy_skills::trace::Phase
+impl core::cmp::PartialEq for devboy_skills::trace::Phase
+pub fn devboy_skills::trace::Phase::eq(&self, other: &devboy_skills::trace::Phase) -> bool
+impl core::fmt::Debug for devboy_skills::trace::Phase
+pub fn devboy_skills::trace::Phase::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_skills::trace::Phase
+impl core::marker::StructuralPartialEq for devboy_skills::trace::Phase
+impl serde_core::ser::Serialize for devboy_skills::trace::Phase
+pub fn devboy_skills::trace::Phase::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::trace::Phase
+pub fn devboy_skills::trace::Phase::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::trace::Phase
+impl core::marker::Send for devboy_skills::trace::Phase
+impl core::marker::Sync for devboy_skills::trace::Phase
+impl core::marker::Unpin for devboy_skills::trace::Phase
+impl core::marker::UnsafeUnpin for devboy_skills::trace::Phase
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::trace::Phase
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::trace::Phase
+pub enum devboy_skills::trace::TraceTarget
+pub devboy_skills::trace::TraceTarget::Custom(std::path::PathBuf)
+pub devboy_skills::trace::TraceTarget::Global
+pub devboy_skills::trace::TraceTarget::RepoLocal
+impl devboy_skills::trace::TraceTarget
+pub fn devboy_skills::trace::TraceTarget::sessions_root(&self) -> devboy_skills::error::Result<std::path::PathBuf>
+impl core::clone::Clone for devboy_skills::trace::TraceTarget
+pub fn devboy_skills::trace::TraceTarget::clone(&self) -> devboy_skills::trace::TraceTarget
+impl core::fmt::Debug for devboy_skills::trace::TraceTarget
+pub fn devboy_skills::trace::TraceTarget::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_skills::trace::TraceTarget
+impl core::marker::Send for devboy_skills::trace::TraceTarget
+impl core::marker::Sync for devboy_skills::trace::TraceTarget
+impl core::marker::Unpin for devboy_skills::trace::TraceTarget
+impl core::marker::UnsafeUnpin for devboy_skills::trace::TraceTarget
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::trace::TraceTarget
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::trace::TraceTarget
+pub struct devboy_skills::trace::SessionMeta
+pub devboy_skills::trace::SessionMeta::devboy_version: alloc::string::String
+pub devboy_skills::trace::SessionMeta::ended_at: core::option::Option<chrono::datetime::DateTime<chrono::offset::utc::Utc>>
+pub devboy_skills::trace::SessionMeta::errors: u64
+pub devboy_skills::trace::SessionMeta::input_summary: core::option::Option<alloc::string::String>
+pub devboy_skills::trace::SessionMeta::outcome: core::option::Option<devboy_skills::trace::Outcome>
+pub devboy_skills::trace::SessionMeta::session_id: alloc::string::String
+pub devboy_skills::trace::SessionMeta::skill: alloc::string::String
+pub devboy_skills::trace::SessionMeta::skill_version: core::option::Option<u32>
+pub devboy_skills::trace::SessionMeta::started_at: chrono::datetime::DateTime<chrono::offset::utc::Utc>
+pub devboy_skills::trace::SessionMeta::summary: core::option::Option<alloc::string::String>
+pub devboy_skills::trace::SessionMeta::tool_calls: u64
+impl core::clone::Clone for devboy_skills::trace::SessionMeta
+pub fn devboy_skills::trace::SessionMeta::clone(&self) -> devboy_skills::trace::SessionMeta
+impl core::fmt::Debug for devboy_skills::trace::SessionMeta
+pub fn devboy_skills::trace::SessionMeta::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::trace::SessionMeta
+pub fn devboy_skills::trace::SessionMeta::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::trace::SessionMeta
+pub fn devboy_skills::trace::SessionMeta::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::trace::SessionMeta
+impl core::marker::Send for devboy_skills::trace::SessionMeta
+impl core::marker::Sync for devboy_skills::trace::SessionMeta
+impl core::marker::Unpin for devboy_skills::trace::SessionMeta
+impl core::marker::UnsafeUnpin for devboy_skills::trace::SessionMeta
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::trace::SessionMeta
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::trace::SessionMeta
+pub struct devboy_skills::trace::SessionTracer
+impl devboy_skills::trace::SessionTracer
+pub fn devboy_skills::trace::SessionTracer::begin(skill: &str, target: &devboy_skills::trace::TraceTarget) -> devboy_skills::error::Result<Self>
+pub fn devboy_skills::trace::SessionTracer::end(self, outcome: devboy_skills::trace::Outcome, summary: &str) -> devboy_skills::error::Result<()>
+pub fn devboy_skills::trace::SessionTracer::event(&self, phase: devboy_skills::trace::Phase, payload: serde_json::value::Value) -> devboy_skills::error::Result<()>
+pub fn devboy_skills::trace::SessionTracer::session_dir(&self) -> &std::path::Path
+pub fn devboy_skills::trace::SessionTracer::session_id(&self) -> &str
+pub fn devboy_skills::trace::SessionTracer::trace_path(&self) -> &std::path::Path
+impl !core::marker::Freeze for devboy_skills::trace::SessionTracer
+impl core::marker::Send for devboy_skills::trace::SessionTracer
+impl core::marker::Sync for devboy_skills::trace::SessionTracer
+impl core::marker::Unpin for devboy_skills::trace::SessionTracer
+impl core::marker::UnsafeUnpin for devboy_skills::trace::SessionTracer
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::trace::SessionTracer
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::trace::SessionTracer
+pub struct devboy_skills::trace::TraceRecord
+pub devboy_skills::trace::TraceRecord::payload: serde_json::value::Value
+pub devboy_skills::trace::TraceRecord::phase: devboy_skills::trace::Phase
+pub devboy_skills::trace::TraceRecord::session_id: alloc::string::String
+pub devboy_skills::trace::TraceRecord::skill: alloc::string::String
+pub devboy_skills::trace::TraceRecord::ts: chrono::datetime::DateTime<chrono::offset::utc::Utc>
+impl core::clone::Clone for devboy_skills::trace::TraceRecord
+pub fn devboy_skills::trace::TraceRecord::clone(&self) -> devboy_skills::trace::TraceRecord
+impl core::fmt::Debug for devboy_skills::trace::TraceRecord
+pub fn devboy_skills::trace::TraceRecord::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::trace::TraceRecord
+pub fn devboy_skills::trace::TraceRecord::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::trace::TraceRecord
+pub fn devboy_skills::trace::TraceRecord::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::trace::TraceRecord
+impl core::marker::Send for devboy_skills::trace::TraceRecord
+impl core::marker::Sync for devboy_skills::trace::TraceRecord
+impl core::marker::Unpin for devboy_skills::trace::TraceRecord
+impl core::marker::UnsafeUnpin for devboy_skills::trace::TraceRecord
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::trace::TraceRecord
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::trace::TraceRecord
+pub fn devboy_skills::trace::append_event(session_dir: &std::path::Path, session_id: &str, skill: &str, phase: devboy_skills::trace::Phase, payload: serde_json::value::Value) -> devboy_skills::error::Result<()>
+pub fn devboy_skills::trace::create_session(skill: &str, target: &devboy_skills::trace::TraceTarget) -> devboy_skills::error::Result<(alloc::string::String, std::path::PathBuf)>
+pub fn devboy_skills::trace::finalise_session(session_dir: &std::path::Path, session_id: &str, skill: &str, outcome: devboy_skills::trace::Outcome, summary: &str) -> devboy_skills::error::Result<()>
+pub enum devboy_skills::Agent
+pub devboy_skills::Agent::Claude
+pub devboy_skills::Agent::Codex
+pub devboy_skills::Agent::Cursor
+pub devboy_skills::Agent::Kimi
+impl devboy_skills::install::Agent
+pub fn devboy_skills::install::Agent::all() -> &'static [devboy_skills::install::Agent]
+pub fn devboy_skills::install::Agent::as_str(&self) -> &'static str
+pub fn devboy_skills::install::Agent::dir_name(&self) -> &'static str
+pub fn devboy_skills::install::Agent::parse(s: &str) -> core::option::Option<Self>
+impl core::clone::Clone for devboy_skills::install::Agent
+pub fn devboy_skills::install::Agent::clone(&self) -> devboy_skills::install::Agent
+impl core::cmp::Eq for devboy_skills::install::Agent
+impl core::cmp::PartialEq for devboy_skills::install::Agent
+pub fn devboy_skills::install::Agent::eq(&self, other: &devboy_skills::install::Agent) -> bool
+impl core::fmt::Debug for devboy_skills::install::Agent
+pub fn devboy_skills::install::Agent::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_skills::install::Agent
+impl core::marker::StructuralPartialEq for devboy_skills::install::Agent
+impl core::marker::Freeze for devboy_skills::install::Agent
+impl core::marker::Send for devboy_skills::install::Agent
+impl core::marker::Sync for devboy_skills::install::Agent
+impl core::marker::Unpin for devboy_skills::install::Agent
+impl core::marker::UnsafeUnpin for devboy_skills::install::Agent
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::Agent
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::Agent
+pub enum devboy_skills::Category
+pub devboy_skills::Category::CodeReview
+pub devboy_skills::Category::IssueTracking
+pub devboy_skills::Category::MeetingNotes
+pub devboy_skills::Category::Messenger
+pub devboy_skills::Category::SelfBootstrap
+pub devboy_skills::Category::SelfFeedback
+impl devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::all() -> &'static [devboy_skills::skill::Category]
+pub fn devboy_skills::skill::Category::as_str(&self) -> &'static str
+pub fn devboy_skills::skill::Category::parse(s: &str) -> core::option::Option<Self>
+impl core::clone::Clone for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::clone(&self) -> devboy_skills::skill::Category
+impl core::cmp::Eq for devboy_skills::skill::Category
+impl core::cmp::Ord for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::cmp(&self, other: &devboy_skills::skill::Category) -> core::cmp::Ordering
+impl core::cmp::PartialEq for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::eq(&self, other: &devboy_skills::skill::Category) -> bool
+impl core::cmp::PartialOrd for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::partial_cmp(&self, other: &devboy_skills::skill::Category) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::hash<__H: core::hash::Hasher>(&self, state: &mut __H)
+impl core::marker::Copy for devboy_skills::skill::Category
+impl core::marker::StructuralPartialEq for devboy_skills::skill::Category
+impl serde_core::ser::Serialize for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::skill::Category
+pub fn devboy_skills::skill::Category::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::skill::Category
+impl core::marker::Send for devboy_skills::skill::Category
+impl core::marker::Sync for devboy_skills::skill::Category
+impl core::marker::Unpin for devboy_skills::skill::Category
+impl core::marker::UnsafeUnpin for devboy_skills::skill::Category
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::skill::Category
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::skill::Category
+pub enum devboy_skills::InstallOutcome
+pub devboy_skills::InstallOutcome::Installed
+pub devboy_skills::InstallOutcome::OverwrittenWithForce
+pub devboy_skills::InstallOutcome::SkippedUnknown
+pub devboy_skills::InstallOutcome::SkippedUserModified
+pub devboy_skills::InstallOutcome::Unchanged
+pub devboy_skills::InstallOutcome::Upgraded
+pub devboy_skills::InstallOutcome::Upgraded::from_version: core::option::Option<u32>
+impl core::clone::Clone for devboy_skills::install::InstallOutcome
+pub fn devboy_skills::install::InstallOutcome::clone(&self) -> devboy_skills::install::InstallOutcome
+impl core::cmp::Eq for devboy_skills::install::InstallOutcome
+impl core::cmp::PartialEq for devboy_skills::install::InstallOutcome
+pub fn devboy_skills::install::InstallOutcome::eq(&self, other: &devboy_skills::install::InstallOutcome) -> bool
+impl core::fmt::Debug for devboy_skills::install::InstallOutcome
+pub fn devboy_skills::install::InstallOutcome::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_skills::install::InstallOutcome
+impl core::marker::Freeze for devboy_skills::install::InstallOutcome
+impl core::marker::Send for devboy_skills::install::InstallOutcome
+impl core::marker::Sync for devboy_skills::install::InstallOutcome
+impl core::marker::Unpin for devboy_skills::install::InstallOutcome
+impl core::marker::UnsafeUnpin for devboy_skills::install::InstallOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::InstallOutcome
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::InstallOutcome
+pub enum devboy_skills::InstallState
+pub devboy_skills::InstallState::HistoricalSafe
+pub devboy_skills::InstallState::Unchanged
+pub devboy_skills::InstallState::Unknown
+pub devboy_skills::InstallState::UserModified
+impl core::clone::Clone for devboy_skills::manifest::InstallState
+pub fn devboy_skills::manifest::InstallState::clone(&self) -> devboy_skills::manifest::InstallState
+impl core::cmp::Eq for devboy_skills::manifest::InstallState
+impl core::cmp::PartialEq for devboy_skills::manifest::InstallState
+pub fn devboy_skills::manifest::InstallState::eq(&self, other: &devboy_skills::manifest::InstallState) -> bool
+impl core::fmt::Debug for devboy_skills::manifest::InstallState
+pub fn devboy_skills::manifest::InstallState::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_skills::manifest::InstallState
+impl core::marker::StructuralPartialEq for devboy_skills::manifest::InstallState
+impl core::marker::Freeze for devboy_skills::manifest::InstallState
+impl core::marker::Send for devboy_skills::manifest::InstallState
+impl core::marker::Sync for devboy_skills::manifest::InstallState
+impl core::marker::Unpin for devboy_skills::manifest::InstallState
+impl core::marker::UnsafeUnpin for devboy_skills::manifest::InstallState
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::manifest::InstallState
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::manifest::InstallState
+pub enum devboy_skills::SkillError
+pub devboy_skills::SkillError::InvalidFieldType
+pub devboy_skills::SkillError::InvalidFieldType::field: &'static str
+pub devboy_skills::SkillError::InvalidFieldType::reason: alloc::string::String
+pub devboy_skills::SkillError::InvalidFieldType::skill: alloc::string::String
+pub devboy_skills::SkillError::InvalidManifest
+pub devboy_skills::SkillError::InvalidManifest::path: std::path::PathBuf
+pub devboy_skills::SkillError::InvalidManifest::source: serde_json::error::Error
+pub devboy_skills::SkillError::InvalidYaml
+pub devboy_skills::SkillError::InvalidYaml::skill: alloc::string::String
+pub devboy_skills::SkillError::InvalidYaml::source: serde_yaml::error::Error
+pub devboy_skills::SkillError::Io
+pub devboy_skills::SkillError::Io::path: std::path::PathBuf
+pub devboy_skills::SkillError::Io::source: std::io::error::Error
+pub devboy_skills::SkillError::MissingFrontmatter
+pub devboy_skills::SkillError::MissingFrontmatter::skill: alloc::string::String
+pub devboy_skills::SkillError::MissingRequiredField
+pub devboy_skills::SkillError::MissingRequiredField::field: &'static str
+pub devboy_skills::SkillError::MissingRequiredField::skill: alloc::string::String
+pub devboy_skills::SkillError::NotFound
+pub devboy_skills::SkillError::NotFound::name: alloc::string::String
+pub devboy_skills::SkillError::NotFound::source_name: &'static str
+pub devboy_skills::SkillError::SerdeJson
+pub devboy_skills::SkillError::SerdeJson::operation: &'static str
+pub devboy_skills::SkillError::SerdeJson::path: std::path::PathBuf
+pub devboy_skills::SkillError::SerdeJson::source: serde_json::error::Error
+pub devboy_skills::SkillError::UnknownCategory
+pub devboy_skills::SkillError::UnknownCategory::category: alloc::string::String
+pub devboy_skills::SkillError::UnknownCategory::skill: alloc::string::String
+impl core::error::Error for devboy_skills::error::SkillError
+pub fn devboy_skills::error::SkillError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for devboy_skills::error::SkillError
+pub fn devboy_skills::error::SkillError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_skills::error::SkillError
+pub fn devboy_skills::error::SkillError::fmt(&self, __formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_skills::error::SkillError
+impl core::marker::Send for devboy_skills::error::SkillError
+impl core::marker::Sync for devboy_skills::error::SkillError
+impl core::marker::Unpin for devboy_skills::error::SkillError
+impl core::marker::UnsafeUnpin for devboy_skills::error::SkillError
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_skills::error::SkillError
+impl !core::panic::unwind_safe::UnwindSafe for devboy_skills::error::SkillError
+pub enum devboy_skills::TraceOutcome
+pub devboy_skills::TraceOutcome::Aborted
+pub devboy_skills::TraceOutcome::Failure
+pub devboy_skills::TraceOutcome::Success
+impl core::clone::Clone for devboy_skills::trace::Outcome
+pub fn devboy_skills::trace::Outcome::clone(&self) -> devboy_skills::trace::Outcome
+impl core::cmp::Eq for devboy_skills::trace::Outcome
+impl core::cmp::PartialEq for devboy_skills::trace::Outcome
+pub fn devboy_skills::trace::Outcome::eq(&self, other: &devboy_skills::trace::Outcome) -> bool
+impl core::fmt::Debug for devboy_skills::trace::Outcome
+pub fn devboy_skills::trace::Outcome::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_skills::trace::Outcome
+impl core::marker::StructuralPartialEq for devboy_skills::trace::Outcome
+impl serde_core::ser::Serialize for devboy_skills::trace::Outcome
+pub fn devboy_skills::trace::Outcome::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::trace::Outcome
+pub fn devboy_skills::trace::Outcome::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::trace::Outcome
+impl core::marker::Send for devboy_skills::trace::Outcome
+impl core::marker::Sync for devboy_skills::trace::Outcome
+impl core::marker::Unpin for devboy_skills::trace::Outcome
+impl core::marker::UnsafeUnpin for devboy_skills::trace::Outcome
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::trace::Outcome
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::trace::Outcome
+pub enum devboy_skills::TracePhase
+pub devboy_skills::TracePhase::Artifact
+pub devboy_skills::TracePhase::Decision
+pub devboy_skills::TracePhase::End
+pub devboy_skills::TracePhase::Note
+pub devboy_skills::TracePhase::Start
+pub devboy_skills::TracePhase::ToolCall
+pub devboy_skills::TracePhase::ToolResult
+pub devboy_skills::TracePhase::Verify
+impl core::clone::Clone for devboy_skills::trace::Phase
+pub fn devboy_skills::trace::Phase::clone(&self) -> devboy_skills::trace::Phase
+impl core::cmp::Eq for devboy_skills::trace::Phase
+impl core::cmp::PartialEq for devboy_skills::trace::Phase
+pub fn devboy_skills::trace::Phase::eq(&self, other: &devboy_skills::trace::Phase) -> bool
+impl core::fmt::Debug for devboy_skills::trace::Phase
+pub fn devboy_skills::trace::Phase::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_skills::trace::Phase
+impl core::marker::StructuralPartialEq for devboy_skills::trace::Phase
+impl serde_core::ser::Serialize for devboy_skills::trace::Phase
+pub fn devboy_skills::trace::Phase::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::trace::Phase
+pub fn devboy_skills::trace::Phase::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::trace::Phase
+impl core::marker::Send for devboy_skills::trace::Phase
+impl core::marker::Sync for devboy_skills::trace::Phase
+impl core::marker::Unpin for devboy_skills::trace::Phase
+impl core::marker::UnsafeUnpin for devboy_skills::trace::Phase
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::trace::Phase
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::trace::Phase
+pub enum devboy_skills::TraceTarget
+pub devboy_skills::TraceTarget::Custom(std::path::PathBuf)
+pub devboy_skills::TraceTarget::Global
+pub devboy_skills::TraceTarget::RepoLocal
+impl devboy_skills::trace::TraceTarget
+pub fn devboy_skills::trace::TraceTarget::sessions_root(&self) -> devboy_skills::error::Result<std::path::PathBuf>
+impl core::clone::Clone for devboy_skills::trace::TraceTarget
+pub fn devboy_skills::trace::TraceTarget::clone(&self) -> devboy_skills::trace::TraceTarget
+impl core::fmt::Debug for devboy_skills::trace::TraceTarget
+pub fn devboy_skills::trace::TraceTarget::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_skills::trace::TraceTarget
+impl core::marker::Send for devboy_skills::trace::TraceTarget
+impl core::marker::Sync for devboy_skills::trace::TraceTarget
+impl core::marker::Unpin for devboy_skills::trace::TraceTarget
+impl core::marker::UnsafeUnpin for devboy_skills::trace::TraceTarget
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::trace::TraceTarget
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::trace::TraceTarget
+pub struct devboy_skills::Catalog
+impl devboy_skills::catalog::Catalog
+pub fn devboy_skills::catalog::Catalog::by_category(&self, category: devboy_skills::skill::Category) -> impl core::iter::traits::iterator::Iterator<Item = &devboy_skills::skill::SkillSummary>
+pub fn devboy_skills::catalog::Catalog::counts_per_category(&self) -> alloc::collections::btree::map::BTreeMap<devboy_skills::skill::Category, usize>
+pub fn devboy_skills::catalog::Catalog::from_summaries(summaries: alloc::vec::Vec<devboy_skills::skill::SkillSummary>) -> Self
+pub fn devboy_skills::catalog::Catalog::get(&self, name: &str) -> core::option::Option<&devboy_skills::skill::SkillSummary>
+pub fn devboy_skills::catalog::Catalog::is_empty(&self) -> bool
+pub fn devboy_skills::catalog::Catalog::iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = &devboy_skills::skill::SkillSummary>
+pub fn devboy_skills::catalog::Catalog::len(&self) -> usize
+impl core::clone::Clone for devboy_skills::catalog::Catalog
+pub fn devboy_skills::catalog::Catalog::clone(&self) -> devboy_skills::catalog::Catalog
+impl core::default::Default for devboy_skills::catalog::Catalog
+pub fn devboy_skills::catalog::Catalog::default() -> devboy_skills::catalog::Catalog
+impl core::fmt::Debug for devboy_skills::catalog::Catalog
+pub fn devboy_skills::catalog::Catalog::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_skills::catalog::Catalog
+impl core::marker::Send for devboy_skills::catalog::Catalog
+impl core::marker::Sync for devboy_skills::catalog::Catalog
+impl core::marker::Unpin for devboy_skills::catalog::Catalog
+impl core::marker::UnsafeUnpin for devboy_skills::catalog::Catalog
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::catalog::Catalog
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::catalog::Catalog
+pub struct devboy_skills::EmbeddedSkillSource
+impl devboy_skills::embedded::EmbeddedSkillSource
+pub fn devboy_skills::embedded::EmbeddedSkillSource::all() -> devboy_skills::error::Result<alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_skills::skill::Skill>>
+pub fn devboy_skills::embedded::EmbeddedSkillSource::new() -> Self
+impl core::clone::Clone for devboy_skills::embedded::EmbeddedSkillSource
+pub fn devboy_skills::embedded::EmbeddedSkillSource::clone(&self) -> devboy_skills::embedded::EmbeddedSkillSource
+impl core::default::Default for devboy_skills::embedded::EmbeddedSkillSource
+pub fn devboy_skills::embedded::EmbeddedSkillSource::default() -> devboy_skills::embedded::EmbeddedSkillSource
+impl devboy_skills::source::SkillSource for devboy_skills::embedded::EmbeddedSkillSource
+pub fn devboy_skills::embedded::EmbeddedSkillSource::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_skills::error::Result<alloc::vec::Vec<devboy_skills::skill::SkillSummary>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_skills::embedded::EmbeddedSkillSource::load<'life0, 'life1, 'async_trait>(&'life0 self, name: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_skills::error::Result<devboy_skills::skill::Skill>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_skills::embedded::EmbeddedSkillSource::name(&self) -> &'static str
+impl core::marker::Freeze for devboy_skills::embedded::EmbeddedSkillSource
+impl core::marker::Send for devboy_skills::embedded::EmbeddedSkillSource
+impl core::marker::Sync for devboy_skills::embedded::EmbeddedSkillSource
+impl core::marker::Unpin for devboy_skills::embedded::EmbeddedSkillSource
+impl core::marker::UnsafeUnpin for devboy_skills::embedded::EmbeddedSkillSource
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::embedded::EmbeddedSkillSource
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::embedded::EmbeddedSkillSource
+pub struct devboy_skills::Environment
+pub devboy_skills::Environment::cwd: std::path::PathBuf
+pub devboy_skills::Environment::home: std::path::PathBuf
+pub devboy_skills::Environment::repo_root: core::option::Option<std::path::PathBuf>
+impl devboy_skills::install::Environment
+pub fn devboy_skills::install::Environment::detect() -> devboy_skills::error::Result<Self>
+impl core::clone::Clone for devboy_skills::install::Environment
+pub fn devboy_skills::install::Environment::clone(&self) -> devboy_skills::install::Environment
+impl core::fmt::Debug for devboy_skills::install::Environment
+pub fn devboy_skills::install::Environment::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_skills::install::Environment
+impl core::marker::Send for devboy_skills::install::Environment
+impl core::marker::Sync for devboy_skills::install::Environment
+impl core::marker::Unpin for devboy_skills::install::Environment
+impl core::marker::UnsafeUnpin for devboy_skills::install::Environment
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::Environment
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::Environment
+pub struct devboy_skills::Frontmatter
+pub devboy_skills::Frontmatter::activation: alloc::vec::Vec<alloc::string::String>
+pub devboy_skills::Frontmatter::category: devboy_skills::skill::Category
+pub devboy_skills::Frontmatter::compatibility: core::option::Option<alloc::string::String>
+pub devboy_skills::Frontmatter::description: alloc::string::String
+pub devboy_skills::Frontmatter::extra: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub devboy_skills::Frontmatter::name: alloc::string::String
+pub devboy_skills::Frontmatter::tools: alloc::vec::Vec<alloc::string::String>
+pub devboy_skills::Frontmatter::version: u32
+impl core::clone::Clone for devboy_skills::skill::Frontmatter
+pub fn devboy_skills::skill::Frontmatter::clone(&self) -> devboy_skills::skill::Frontmatter
+impl core::fmt::Debug for devboy_skills::skill::Frontmatter
+pub fn devboy_skills::skill::Frontmatter::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::skill::Frontmatter
+pub fn devboy_skills::skill::Frontmatter::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::skill::Frontmatter
+pub fn devboy_skills::skill::Frontmatter::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::skill::Frontmatter
+impl core::marker::Send for devboy_skills::skill::Frontmatter
+impl core::marker::Sync for devboy_skills::skill::Frontmatter
+impl core::marker::Unpin for devboy_skills::skill::Frontmatter
+impl core::marker::UnsafeUnpin for devboy_skills::skill::Frontmatter
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::skill::Frontmatter
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::skill::Frontmatter
+pub struct devboy_skills::HistoricalHashes
+pub devboy_skills::HistoricalHashes::by_skill: alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_skills::manifest::SkillHistory>
+impl devboy_skills::manifest::HistoricalHashes
+pub fn devboy_skills::manifest::HistoricalHashes::get(&self, name: &str) -> core::option::Option<&devboy_skills::manifest::SkillHistory>
+pub fn devboy_skills::manifest::HistoricalHashes::load_embedded() -> devboy_skills::error::Result<Self>
+impl core::clone::Clone for devboy_skills::manifest::HistoricalHashes
+pub fn devboy_skills::manifest::HistoricalHashes::clone(&self) -> devboy_skills::manifest::HistoricalHashes
+impl core::default::Default for devboy_skills::manifest::HistoricalHashes
+pub fn devboy_skills::manifest::HistoricalHashes::default() -> devboy_skills::manifest::HistoricalHashes
+impl core::fmt::Debug for devboy_skills::manifest::HistoricalHashes
+pub fn devboy_skills::manifest::HistoricalHashes::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::manifest::HistoricalHashes
+pub fn devboy_skills::manifest::HistoricalHashes::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::manifest::HistoricalHashes
+pub fn devboy_skills::manifest::HistoricalHashes::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::manifest::HistoricalHashes
+impl core::marker::Send for devboy_skills::manifest::HistoricalHashes
+impl core::marker::Sync for devboy_skills::manifest::HistoricalHashes
+impl core::marker::Unpin for devboy_skills::manifest::HistoricalHashes
+impl core::marker::UnsafeUnpin for devboy_skills::manifest::HistoricalHashes
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::manifest::HistoricalHashes
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::manifest::HistoricalHashes
+pub struct devboy_skills::HistoricalVersion
+pub devboy_skills::HistoricalVersion::sha256: alloc::string::String
+pub devboy_skills::HistoricalVersion::version: u32
+impl core::clone::Clone for devboy_skills::manifest::HistoricalVersion
+pub fn devboy_skills::manifest::HistoricalVersion::clone(&self) -> devboy_skills::manifest::HistoricalVersion
+impl core::cmp::Eq for devboy_skills::manifest::HistoricalVersion
+impl core::cmp::PartialEq for devboy_skills::manifest::HistoricalVersion
+pub fn devboy_skills::manifest::HistoricalVersion::eq(&self, other: &devboy_skills::manifest::HistoricalVersion) -> bool
+impl core::fmt::Debug for devboy_skills::manifest::HistoricalVersion
+pub fn devboy_skills::manifest::HistoricalVersion::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_skills::manifest::HistoricalVersion
+impl serde_core::ser::Serialize for devboy_skills::manifest::HistoricalVersion
+pub fn devboy_skills::manifest::HistoricalVersion::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::manifest::HistoricalVersion
+pub fn devboy_skills::manifest::HistoricalVersion::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::manifest::HistoricalVersion
+impl core::marker::Send for devboy_skills::manifest::HistoricalVersion
+impl core::marker::Sync for devboy_skills::manifest::HistoricalVersion
+impl core::marker::Unpin for devboy_skills::manifest::HistoricalVersion
+impl core::marker::UnsafeUnpin for devboy_skills::manifest::HistoricalVersion
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::manifest::HistoricalVersion
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::manifest::HistoricalVersion
+pub struct devboy_skills::InstallOptions
+pub devboy_skills::InstallOptions::dry_run: bool
+pub devboy_skills::InstallOptions::force: bool
+pub devboy_skills::InstallOptions::installed_from: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_skills::install::InstallOptions
+pub fn devboy_skills::install::InstallOptions::clone(&self) -> devboy_skills::install::InstallOptions
+impl core::default::Default for devboy_skills::install::InstallOptions
+pub fn devboy_skills::install::InstallOptions::default() -> devboy_skills::install::InstallOptions
+impl core::fmt::Debug for devboy_skills::install::InstallOptions
+pub fn devboy_skills::install::InstallOptions::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_skills::install::InstallOptions
+impl core::marker::Send for devboy_skills::install::InstallOptions
+impl core::marker::Sync for devboy_skills::install::InstallOptions
+impl core::marker::Unpin for devboy_skills::install::InstallOptions
+impl core::marker::UnsafeUnpin for devboy_skills::install::InstallOptions
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::InstallOptions
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::InstallOptions
+pub struct devboy_skills::InstallReport
+pub devboy_skills::InstallReport::outcomes: alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_skills::install::InstallOutcome>
+impl devboy_skills::install::InstallReport
+pub fn devboy_skills::install::InstallReport::count(&self, outcome: &devboy_skills::install::InstallOutcome) -> usize
+pub fn devboy_skills::install::InstallReport::is_all_noop(&self) -> bool
+impl core::clone::Clone for devboy_skills::install::InstallReport
+pub fn devboy_skills::install::InstallReport::clone(&self) -> devboy_skills::install::InstallReport
+impl core::default::Default for devboy_skills::install::InstallReport
+pub fn devboy_skills::install::InstallReport::default() -> devboy_skills::install::InstallReport
+impl core::fmt::Debug for devboy_skills::install::InstallReport
+pub fn devboy_skills::install::InstallReport::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_skills::install::InstallReport
+impl core::marker::Send for devboy_skills::install::InstallReport
+impl core::marker::Sync for devboy_skills::install::InstallReport
+impl core::marker::Unpin for devboy_skills::install::InstallReport
+impl core::marker::UnsafeUnpin for devboy_skills::install::InstallReport
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::InstallReport
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::InstallReport
+pub struct devboy_skills::InstallSpec
+pub devboy_skills::InstallSpec::agents: alloc::vec::Vec<devboy_skills::install::Agent>
+pub devboy_skills::InstallSpec::global: bool
+pub devboy_skills::InstallSpec::include_vendor_neutral_global: bool
+pub devboy_skills::InstallSpec::local: bool
+impl core::clone::Clone for devboy_skills::install::InstallSpec
+pub fn devboy_skills::install::InstallSpec::clone(&self) -> devboy_skills::install::InstallSpec
+impl core::cmp::Eq for devboy_skills::install::InstallSpec
+impl core::cmp::PartialEq for devboy_skills::install::InstallSpec
+pub fn devboy_skills::install::InstallSpec::eq(&self, other: &devboy_skills::install::InstallSpec) -> bool
+impl core::default::Default for devboy_skills::install::InstallSpec
+pub fn devboy_skills::install::InstallSpec::default() -> devboy_skills::install::InstallSpec
+impl core::fmt::Debug for devboy_skills::install::InstallSpec
+pub fn devboy_skills::install::InstallSpec::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_skills::install::InstallSpec
+impl core::marker::Freeze for devboy_skills::install::InstallSpec
+impl core::marker::Send for devboy_skills::install::InstallSpec
+impl core::marker::Sync for devboy_skills::install::InstallSpec
+impl core::marker::Unpin for devboy_skills::install::InstallSpec
+impl core::marker::UnsafeUnpin for devboy_skills::install::InstallSpec
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::InstallSpec
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::InstallSpec
+pub struct devboy_skills::InstallTarget
+pub devboy_skills::InstallTarget::label: alloc::string::String
+pub devboy_skills::InstallTarget::skills_dir: std::path::PathBuf
+impl core::clone::Clone for devboy_skills::install::InstallTarget
+pub fn devboy_skills::install::InstallTarget::clone(&self) -> devboy_skills::install::InstallTarget
+impl core::cmp::Eq for devboy_skills::install::InstallTarget
+impl core::cmp::PartialEq for devboy_skills::install::InstallTarget
+pub fn devboy_skills::install::InstallTarget::eq(&self, other: &devboy_skills::install::InstallTarget) -> bool
+impl core::fmt::Debug for devboy_skills::install::InstallTarget
+pub fn devboy_skills::install::InstallTarget::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_skills::install::InstallTarget
+impl core::marker::Freeze for devboy_skills::install::InstallTarget
+impl core::marker::Send for devboy_skills::install::InstallTarget
+impl core::marker::Sync for devboy_skills::install::InstallTarget
+impl core::marker::Unpin for devboy_skills::install::InstallTarget
+impl core::marker::UnsafeUnpin for devboy_skills::install::InstallTarget
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::InstallTarget
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::InstallTarget
+pub struct devboy_skills::InstalledFile
+pub devboy_skills::InstalledFile::sha256: alloc::string::String
+pub devboy_skills::InstalledFile::size: u64
+impl core::clone::Clone for devboy_skills::manifest::InstalledFile
+pub fn devboy_skills::manifest::InstalledFile::clone(&self) -> devboy_skills::manifest::InstalledFile
+impl core::fmt::Debug for devboy_skills::manifest::InstalledFile
+pub fn devboy_skills::manifest::InstalledFile::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::manifest::InstalledFile
+pub fn devboy_skills::manifest::InstalledFile::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::manifest::InstalledFile
+pub fn devboy_skills::manifest::InstalledFile::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::manifest::InstalledFile
+impl core::marker::Send for devboy_skills::manifest::InstalledFile
+impl core::marker::Sync for devboy_skills::manifest::InstalledFile
+impl core::marker::Unpin for devboy_skills::manifest::InstalledFile
+impl core::marker::UnsafeUnpin for devboy_skills::manifest::InstalledFile
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::manifest::InstalledFile
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::manifest::InstalledFile
+pub struct devboy_skills::InstalledSkill
+pub devboy_skills::InstalledSkill::files: alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_skills::manifest::InstalledFile>
+pub devboy_skills::InstalledSkill::installed_at: chrono::datetime::DateTime<chrono::offset::utc::Utc>
+pub devboy_skills::InstalledSkill::source: alloc::string::String
+pub devboy_skills::InstalledSkill::version: u32
+impl core::clone::Clone for devboy_skills::manifest::InstalledSkill
+pub fn devboy_skills::manifest::InstalledSkill::clone(&self) -> devboy_skills::manifest::InstalledSkill
+impl core::fmt::Debug for devboy_skills::manifest::InstalledSkill
+pub fn devboy_skills::manifest::InstalledSkill::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::manifest::InstalledSkill
+pub fn devboy_skills::manifest::InstalledSkill::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::manifest::InstalledSkill
+pub fn devboy_skills::manifest::InstalledSkill::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::manifest::InstalledSkill
+impl core::marker::Send for devboy_skills::manifest::InstalledSkill
+impl core::marker::Sync for devboy_skills::manifest::InstalledSkill
+impl core::marker::Unpin for devboy_skills::manifest::InstalledSkill
+impl core::marker::UnsafeUnpin for devboy_skills::manifest::InstalledSkill
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::manifest::InstalledSkill
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::manifest::InstalledSkill
+pub struct devboy_skills::LegacySkill
+pub devboy_skills::LegacySkill::canonical_name: alloc::string::String
+pub devboy_skills::LegacySkill::canonical_present: bool
+pub devboy_skills::LegacySkill::legacy_name: alloc::string::String
+pub devboy_skills::LegacySkill::path: std::path::PathBuf
+impl core::clone::Clone for devboy_skills::install::LegacySkill
+pub fn devboy_skills::install::LegacySkill::clone(&self) -> devboy_skills::install::LegacySkill
+impl core::cmp::Eq for devboy_skills::install::LegacySkill
+impl core::cmp::PartialEq for devboy_skills::install::LegacySkill
+pub fn devboy_skills::install::LegacySkill::eq(&self, other: &devboy_skills::install::LegacySkill) -> bool
+impl core::fmt::Debug for devboy_skills::install::LegacySkill
+pub fn devboy_skills::install::LegacySkill::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_skills::install::LegacySkill
+impl core::marker::Freeze for devboy_skills::install::LegacySkill
+impl core::marker::Send for devboy_skills::install::LegacySkill
+impl core::marker::Sync for devboy_skills::install::LegacySkill
+impl core::marker::Unpin for devboy_skills::install::LegacySkill
+impl core::marker::UnsafeUnpin for devboy_skills::install::LegacySkill
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::install::LegacySkill
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::install::LegacySkill
+pub struct devboy_skills::Manifest
+pub devboy_skills::Manifest::installed_from: core::option::Option<alloc::string::String>
+pub devboy_skills::Manifest::skills: alloc::collections::btree::map::BTreeMap<alloc::string::String, devboy_skills::manifest::InstalledSkill>
+pub devboy_skills::Manifest::version: u32
+impl devboy_skills::manifest::Manifest
+pub fn devboy_skills::manifest::Manifest::forget(&mut self, name: &str) -> core::option::Option<devboy_skills::manifest::InstalledSkill>
+pub fn devboy_skills::manifest::Manifest::get(&self, name: &str) -> core::option::Option<&devboy_skills::manifest::InstalledSkill>
+pub fn devboy_skills::manifest::Manifest::load(path: &std::path::Path) -> devboy_skills::error::Result<Self>
+pub fn devboy_skills::manifest::Manifest::record(&mut self, name: &str, entry: devboy_skills::manifest::InstalledSkill)
+pub fn devboy_skills::manifest::Manifest::save(&self, path: &std::path::Path) -> devboy_skills::error::Result<()>
+impl core::clone::Clone for devboy_skills::manifest::Manifest
+pub fn devboy_skills::manifest::Manifest::clone(&self) -> devboy_skills::manifest::Manifest
+impl core::default::Default for devboy_skills::manifest::Manifest
+pub fn devboy_skills::manifest::Manifest::default() -> Self
+impl core::fmt::Debug for devboy_skills::manifest::Manifest
+pub fn devboy_skills::manifest::Manifest::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::manifest::Manifest
+pub fn devboy_skills::manifest::Manifest::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::manifest::Manifest
+pub fn devboy_skills::manifest::Manifest::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::manifest::Manifest
+impl core::marker::Send for devboy_skills::manifest::Manifest
+impl core::marker::Sync for devboy_skills::manifest::Manifest
+impl core::marker::Unpin for devboy_skills::manifest::Manifest
+impl core::marker::UnsafeUnpin for devboy_skills::manifest::Manifest
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::manifest::Manifest
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::manifest::Manifest
+pub struct devboy_skills::PluginId
+pub devboy_skills::PluginId::marketplace: &'static str
+pub devboy_skills::PluginId::name: &'static str
+impl core::clone::Clone for devboy_skills::plugin_dedup::PluginId
+pub fn devboy_skills::plugin_dedup::PluginId::clone(&self) -> devboy_skills::plugin_dedup::PluginId
+impl core::cmp::Eq for devboy_skills::plugin_dedup::PluginId
+impl core::cmp::PartialEq for devboy_skills::plugin_dedup::PluginId
+pub fn devboy_skills::plugin_dedup::PluginId::eq(&self, other: &devboy_skills::plugin_dedup::PluginId) -> bool
+impl core::fmt::Debug for devboy_skills::plugin_dedup::PluginId
+pub fn devboy_skills::plugin_dedup::PluginId::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_skills::plugin_dedup::PluginId
+impl core::marker::StructuralPartialEq for devboy_skills::plugin_dedup::PluginId
+impl core::marker::Freeze for devboy_skills::plugin_dedup::PluginId
+impl core::marker::Send for devboy_skills::plugin_dedup::PluginId
+impl core::marker::Sync for devboy_skills::plugin_dedup::PluginId
+impl core::marker::Unpin for devboy_skills::plugin_dedup::PluginId
+impl core::marker::UnsafeUnpin for devboy_skills::plugin_dedup::PluginId
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::plugin_dedup::PluginId
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::plugin_dedup::PluginId
+pub struct devboy_skills::SessionMeta
+pub devboy_skills::SessionMeta::devboy_version: alloc::string::String
+pub devboy_skills::SessionMeta::ended_at: core::option::Option<chrono::datetime::DateTime<chrono::offset::utc::Utc>>
+pub devboy_skills::SessionMeta::errors: u64
+pub devboy_skills::SessionMeta::input_summary: core::option::Option<alloc::string::String>
+pub devboy_skills::SessionMeta::outcome: core::option::Option<devboy_skills::trace::Outcome>
+pub devboy_skills::SessionMeta::session_id: alloc::string::String
+pub devboy_skills::SessionMeta::skill: alloc::string::String
+pub devboy_skills::SessionMeta::skill_version: core::option::Option<u32>
+pub devboy_skills::SessionMeta::started_at: chrono::datetime::DateTime<chrono::offset::utc::Utc>
+pub devboy_skills::SessionMeta::summary: core::option::Option<alloc::string::String>
+pub devboy_skills::SessionMeta::tool_calls: u64
+impl core::clone::Clone for devboy_skills::trace::SessionMeta
+pub fn devboy_skills::trace::SessionMeta::clone(&self) -> devboy_skills::trace::SessionMeta
+impl core::fmt::Debug for devboy_skills::trace::SessionMeta
+pub fn devboy_skills::trace::SessionMeta::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::trace::SessionMeta
+pub fn devboy_skills::trace::SessionMeta::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::trace::SessionMeta
+pub fn devboy_skills::trace::SessionMeta::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::trace::SessionMeta
+impl core::marker::Send for devboy_skills::trace::SessionMeta
+impl core::marker::Sync for devboy_skills::trace::SessionMeta
+impl core::marker::Unpin for devboy_skills::trace::SessionMeta
+impl core::marker::UnsafeUnpin for devboy_skills::trace::SessionMeta
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::trace::SessionMeta
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::trace::SessionMeta
+pub struct devboy_skills::SessionTracer
+impl devboy_skills::trace::SessionTracer
+pub fn devboy_skills::trace::SessionTracer::begin(skill: &str, target: &devboy_skills::trace::TraceTarget) -> devboy_skills::error::Result<Self>
+pub fn devboy_skills::trace::SessionTracer::end(self, outcome: devboy_skills::trace::Outcome, summary: &str) -> devboy_skills::error::Result<()>
+pub fn devboy_skills::trace::SessionTracer::event(&self, phase: devboy_skills::trace::Phase, payload: serde_json::value::Value) -> devboy_skills::error::Result<()>
+pub fn devboy_skills::trace::SessionTracer::session_dir(&self) -> &std::path::Path
+pub fn devboy_skills::trace::SessionTracer::session_id(&self) -> &str
+pub fn devboy_skills::trace::SessionTracer::trace_path(&self) -> &std::path::Path
+impl !core::marker::Freeze for devboy_skills::trace::SessionTracer
+impl core::marker::Send for devboy_skills::trace::SessionTracer
+impl core::marker::Sync for devboy_skills::trace::SessionTracer
+impl core::marker::Unpin for devboy_skills::trace::SessionTracer
+impl core::marker::UnsafeUnpin for devboy_skills::trace::SessionTracer
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::trace::SessionTracer
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::trace::SessionTracer
+pub struct devboy_skills::Skill
+pub devboy_skills::Skill::body: alloc::string::String
+pub devboy_skills::Skill::frontmatter: devboy_skills::skill::Frontmatter
+impl devboy_skills::skill::Skill
+pub fn devboy_skills::skill::Skill::category(&self) -> devboy_skills::skill::Category
+pub fn devboy_skills::skill::Skill::name(&self) -> &str
+pub fn devboy_skills::skill::Skill::parse(skill_id: &str, contents: &str) -> devboy_skills::error::Result<Self>
+pub fn devboy_skills::skill::Skill::version(&self) -> u32
+impl core::clone::Clone for devboy_skills::skill::Skill
+pub fn devboy_skills::skill::Skill::clone(&self) -> devboy_skills::skill::Skill
+impl core::convert::From<&devboy_skills::skill::Skill> for devboy_skills::skill::SkillSummary
+pub fn devboy_skills::skill::SkillSummary::from(skill: &devboy_skills::skill::Skill) -> Self
+impl core::fmt::Debug for devboy_skills::skill::Skill
+pub fn devboy_skills::skill::Skill::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_skills::skill::Skill
+impl core::marker::Send for devboy_skills::skill::Skill
+impl core::marker::Sync for devboy_skills::skill::Skill
+impl core::marker::Unpin for devboy_skills::skill::Skill
+impl core::marker::UnsafeUnpin for devboy_skills::skill::Skill
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::skill::Skill
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::skill::Skill
+pub struct devboy_skills::SkillHistory
+pub devboy_skills::SkillHistory::current: devboy_skills::manifest::HistoricalVersion
+pub devboy_skills::SkillHistory::history: alloc::vec::Vec<devboy_skills::manifest::HistoricalVersion>
+impl devboy_skills::manifest::SkillHistory
+pub fn devboy_skills::manifest::SkillHistory::is_current(&self, sha256: &str) -> bool
+pub fn devboy_skills::manifest::SkillHistory::is_historical(&self, sha256: &str) -> bool
+impl core::clone::Clone for devboy_skills::manifest::SkillHistory
+pub fn devboy_skills::manifest::SkillHistory::clone(&self) -> devboy_skills::manifest::SkillHistory
+impl core::fmt::Debug for devboy_skills::manifest::SkillHistory
+pub fn devboy_skills::manifest::SkillHistory::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::manifest::SkillHistory
+pub fn devboy_skills::manifest::SkillHistory::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::manifest::SkillHistory
+pub fn devboy_skills::manifest::SkillHistory::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::manifest::SkillHistory
+impl core::marker::Send for devboy_skills::manifest::SkillHistory
+impl core::marker::Sync for devboy_skills::manifest::SkillHistory
+impl core::marker::Unpin for devboy_skills::manifest::SkillHistory
+impl core::marker::UnsafeUnpin for devboy_skills::manifest::SkillHistory
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::manifest::SkillHistory
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::manifest::SkillHistory
+pub struct devboy_skills::SkillSummary
+pub devboy_skills::SkillSummary::category: devboy_skills::skill::Category
+pub devboy_skills::SkillSummary::description: alloc::string::String
+pub devboy_skills::SkillSummary::name: alloc::string::String
+pub devboy_skills::SkillSummary::version: u32
+impl core::clone::Clone for devboy_skills::skill::SkillSummary
+pub fn devboy_skills::skill::SkillSummary::clone(&self) -> devboy_skills::skill::SkillSummary
+impl core::convert::From<&devboy_skills::skill::Skill> for devboy_skills::skill::SkillSummary
+pub fn devboy_skills::skill::SkillSummary::from(skill: &devboy_skills::skill::Skill) -> Self
+impl core::fmt::Debug for devboy_skills::skill::SkillSummary
+pub fn devboy_skills::skill::SkillSummary::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::skill::SkillSummary
+pub fn devboy_skills::skill::SkillSummary::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::skill::SkillSummary
+pub fn devboy_skills::skill::SkillSummary::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::skill::SkillSummary
+impl core::marker::Send for devboy_skills::skill::SkillSummary
+impl core::marker::Sync for devboy_skills::skill::SkillSummary
+impl core::marker::Unpin for devboy_skills::skill::SkillSummary
+impl core::marker::UnsafeUnpin for devboy_skills::skill::SkillSummary
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::skill::SkillSummary
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::skill::SkillSummary
+pub struct devboy_skills::TraceRecord
+pub devboy_skills::TraceRecord::payload: serde_json::value::Value
+pub devboy_skills::TraceRecord::phase: devboy_skills::trace::Phase
+pub devboy_skills::TraceRecord::session_id: alloc::string::String
+pub devboy_skills::TraceRecord::skill: alloc::string::String
+pub devboy_skills::TraceRecord::ts: chrono::datetime::DateTime<chrono::offset::utc::Utc>
+impl core::clone::Clone for devboy_skills::trace::TraceRecord
+pub fn devboy_skills::trace::TraceRecord::clone(&self) -> devboy_skills::trace::TraceRecord
+impl core::fmt::Debug for devboy_skills::trace::TraceRecord
+pub fn devboy_skills::trace::TraceRecord::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_skills::trace::TraceRecord
+pub fn devboy_skills::trace::TraceRecord::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_skills::trace::TraceRecord
+pub fn devboy_skills::trace::TraceRecord::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_skills::trace::TraceRecord
+impl core::marker::Send for devboy_skills::trace::TraceRecord
+impl core::marker::Sync for devboy_skills::trace::TraceRecord
+impl core::marker::Unpin for devboy_skills::trace::TraceRecord
+impl core::marker::UnsafeUnpin for devboy_skills::trace::TraceRecord
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_skills::trace::TraceRecord
+impl core::panic::unwind_safe::UnwindSafe for devboy_skills::trace::TraceRecord
+pub const devboy_skills::DEVBOY_PLUGIN: devboy_skills::plugin_dedup::PluginId
+pub const devboy_skills::MANIFEST_FILE: &str
+pub const devboy_skills::MANIFEST_VERSION: u32
+pub trait devboy_skills::SkillSource: core::marker::Send + core::marker::Sync
+pub fn devboy_skills::SkillSource::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_skills::error::Result<alloc::vec::Vec<devboy_skills::skill::SkillSummary>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_skills::SkillSource::load<'life0, 'life1, 'async_trait>(&'life0 self, name: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_skills::error::Result<devboy_skills::skill::Skill>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_skills::SkillSource::name(&self) -> &'static str
+impl devboy_skills::source::SkillSource for devboy_skills::embedded::EmbeddedSkillSource
+pub fn devboy_skills::embedded::EmbeddedSkillSource::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_skills::error::Result<alloc::vec::Vec<devboy_skills::skill::SkillSummary>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_skills::embedded::EmbeddedSkillSource::load<'life0, 'life1, 'async_trait>(&'life0 self, name: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_skills::error::Result<devboy_skills::skill::Skill>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_skills::embedded::EmbeddedSkillSource::name(&self) -> &'static str
+pub fn devboy_skills::append_event(session_dir: &std::path::Path, session_id: &str, skill: &str, phase: devboy_skills::trace::Phase, payload: serde_json::value::Value) -> devboy_skills::error::Result<()>
+pub fn devboy_skills::canonical_skill_name(name: &str) -> &str
+pub fn devboy_skills::classify(history: &devboy_skills::manifest::HistoricalHashes, name: &str, body: &[u8]) -> devboy_skills::manifest::InstallState
+pub fn devboy_skills::classify_path(history: &devboy_skills::manifest::HistoricalHashes, name: &str, path: &std::path::Path) -> devboy_skills::error::Result<core::option::Option<devboy_skills::manifest::InstallState>>
+pub fn devboy_skills::create_session(skill: &str, target: &devboy_skills::trace::TraceTarget) -> devboy_skills::error::Result<(alloc::string::String, std::path::PathBuf)>
+pub fn devboy_skills::detect_installed_agents(home: &std::path::Path) -> alloc::vec::Vec<devboy_skills::install::Agent>
+pub fn devboy_skills::finalise_session(session_dir: &std::path::Path, session_id: &str, skill: &str, outcome: devboy_skills::trace::Outcome, summary: &str) -> devboy_skills::error::Result<()>
+pub fn devboy_skills::install_skills_to_target(target: &devboy_skills::install::InstallTarget, skills: &[devboy_skills::skill::Skill], history: &devboy_skills::manifest::HistoricalHashes, options: &devboy_skills::install::InstallOptions) -> devboy_skills::error::Result<devboy_skills::install::InstallReport>
+pub fn devboy_skills::is_claude_plugin_enabled(home: &std::path::Path, plugin: &devboy_skills::plugin_dedup::PluginId) -> bool
+pub fn devboy_skills::is_codex_plugin_enabled(home: &std::path::Path, plugin: &devboy_skills::plugin_dedup::PluginId) -> bool
+pub fn devboy_skills::migrate_legacy_skills_at_target(target: &devboy_skills::install::InstallTarget, dry_run: bool) -> devboy_skills::error::Result<alloc::vec::Vec<alloc::string::String>>
+pub fn devboy_skills::remove_skills_from_target(target: &devboy_skills::install::InstallTarget, names: &[alloc::string::String], strict: bool, dry_run: bool) -> devboy_skills::error::Result<alloc::vec::Vec<alloc::string::String>>
+pub fn devboy_skills::resolve_targets(env: &devboy_skills::install::Environment, spec: &devboy_skills::install::InstallSpec) -> devboy_skills::error::Result<alloc::vec::Vec<devboy_skills::install::InstallTarget>>
+pub fn devboy_skills::scan_legacy_skills_at_target(target: &devboy_skills::install::InstallTarget) -> devboy_skills::error::Result<alloc::vec::Vec<devboy_skills::install::LegacySkill>>
+pub fn devboy_skills::sha256_hex(bytes: &[u8]) -> alloc::string::String
+pub type devboy_skills::Result<T> = core::result::Result<T, devboy_skills::error::SkillError>

@@ -28,7 +28,7 @@ Requirements:
 
 ## Decision
 
-> **Decision:** Introduce a `devboy-skills` crate, a `SkillSource` trait with an initial `EmbeddedSkillSource` implementation, and a `devboy skills` CLI command family. Baseline skills live in the OSS repository under `skills/<NN-category>/<name>/SKILL.md` and are compiled into the binary via `rust-embed`.
+> **Decision:** Introduce a `devboy-skills` crate, a `SkillSource` trait with an initial `EmbeddedSkillSource` implementation, and a `devboy skills` CLI command family. Baseline skills live in the OSS repository under `crates/devboy-skills/skills/<NN-category>/<name>/SKILL.md` and are compiled into the binary via `rust-embed`. (The tree was relocated from a top-level `skills/` to satisfy `cargo publish` — see [ADR-022](./ADR-022-crates-io-publishing.md).)
 
 ### Crate layout
 
@@ -60,7 +60,7 @@ Multiple sources can be layered; the CLI picks the source explicitly (`--source 
 ### Repository layout for baseline skills
 
 ```
-skills/
+crates/devboy-skills/skills/
 ├── 00-self-bootstrap/         # Skills that configure / repair devboy itself
 │   ├── setup/
 │   │   └── SKILL.md

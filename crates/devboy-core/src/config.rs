@@ -31,7 +31,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use tracing::{debug, info};
 
-/// Config file name.
 const CONFIG_FILE_NAME: &str = "config.toml";
 
 /// Config directory name.
@@ -44,19 +43,15 @@ const CONFIG_DIR_NAME: &str = "devboy-tools";
 /// Main configuration structure.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
-    /// GitHub configuration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GitHubConfig>,
 
-    /// GitLab configuration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gitlab: Option<GitLabConfig>,
 
-    /// ClickUp configuration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clickup: Option<ClickUpConfig>,
 
-    /// Jira configuration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jira: Option<JiraConfig>,
 
@@ -184,19 +179,15 @@ fn default_auth_none() -> String {
 /// Per-context provider configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ContextConfig {
-    /// GitHub configuration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GitHubConfig>,
 
-    /// GitLab configuration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gitlab: Option<GitLabConfig>,
 
-    /// ClickUp configuration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clickup: Option<ClickUpConfig>,
 
-    /// Jira configuration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jira: Option<JiraConfig>,
 
@@ -213,19 +204,16 @@ pub struct ContextConfig {
     pub slack: Option<SlackConfig>,
 }
 
-/// GitHub provider configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitHubConfig {
     /// Repository owner (user or organization)
     pub owner: String,
-    /// Repository name
     pub repo: String,
     /// GitHub API base URL (for GitHub Enterprise)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
 }
 
-/// GitLab provider configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabConfig {
     /// GitLab instance URL
@@ -235,17 +223,14 @@ pub struct GitLabConfig {
     pub project_id: String,
 }
 
-/// ClickUp provider configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpConfig {
-    /// ClickUp list ID
     pub list_id: String,
     /// ClickUp team (workspace) ID — required for custom task ID resolution
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team_id: Option<String>,
 }
 
-/// Jira provider configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraConfig {
     /// Jira instance URL
@@ -293,7 +278,6 @@ pub struct SlackConfig {
     /// OAuth app client ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
-    /// OAuth redirect URI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redirect_uri: Option<String>,
     /// Required bot scopes expected by devboy Slack integration.
@@ -445,7 +429,6 @@ pub struct FormatPipelineConfig {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub strategies: HashMap<String, String>,
 
-    /// Proxy tool matching configuration.
     #[serde(default)]
     pub proxy_matching: ProxyMatchingConfig,
 }
@@ -479,7 +462,6 @@ fn default_format_toon() -> String {
     "toon".to_string()
 }
 
-/// Proxy tool matching configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyMatchingConfig {
     /// When true, strip proxy prefix (e.g. `cloud__get_issues` → `get_issues`)

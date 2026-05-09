@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 // User
 // =============================================================================
 
-/// ClickUp user representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpUser {
     pub id: u64,
@@ -24,7 +23,6 @@ pub struct ClickUpUser {
 // Task (Issue)
 // =============================================================================
 
-/// ClickUp task representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpTask {
     pub id: String,
@@ -71,9 +69,7 @@ pub struct ClickUpTask {
 /// ClickUp task attachment entry as returned on the task payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpAttachment {
-    /// Attachment id.
     pub id: String,
-    /// File title / original filename.
     #[serde(default)]
     pub title: Option<String>,
     /// Direct download URL.
@@ -85,7 +81,6 @@ pub struct ClickUpAttachment {
     /// File extension (e.g. "png").
     #[serde(default)]
     pub extension: Option<String>,
-    /// MIME type.
     #[serde(default)]
     pub mimetype: Option<String>,
     /// Creation timestamp (epoch ms as string in ClickUp's responses).
@@ -113,7 +108,6 @@ pub struct ClickUpPriority {
     pub color: Option<String>,
 }
 
-/// ClickUp tag.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpTag {
     pub name: String,
@@ -143,7 +137,6 @@ pub struct ClickUpTaskList {
 // Comment
 // =============================================================================
 
-/// ClickUp comment representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpComment {
     pub id: String,
@@ -200,7 +193,6 @@ pub struct ClickUpLinkResponse {
 // Create/Update types
 // =============================================================================
 
-/// Request body for creating a task.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateTaskRequest {
     pub name: String,
@@ -220,7 +212,6 @@ pub struct CreateTaskRequest {
     pub assignees: Option<Vec<u64>>,
 }
 
-/// Request body for updating a task.
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct UpdateTaskRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -239,7 +230,6 @@ pub struct UpdateTaskRequest {
     pub tags: Option<Vec<String>>,
 }
 
-/// Request body for creating a comment.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateCommentRequest {
     pub comment_text: String,

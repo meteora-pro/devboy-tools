@@ -38,7 +38,8 @@ pub struct TurnContext<'a> {
     /// message). When non-empty, the planner promotes any tool's
     /// `default_include = false` field group whose member fields
     /// match a keyword (case-insensitive substring), boosting that
-    /// tool's value-score for this turn. See [`intent_boost`].
+    /// tool's value-score for this turn. See the private
+    /// `intent_boost` helper in this module for the matching logic.
     pub intent_keywords: Vec<String>,
 }
 

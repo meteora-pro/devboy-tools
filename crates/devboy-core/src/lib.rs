@@ -22,6 +22,9 @@
 //! }
 //! ```
 
+#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![deny(rustdoc::invalid_html_tags)]
 pub mod agents;
 pub mod alias;
 pub mod asset;

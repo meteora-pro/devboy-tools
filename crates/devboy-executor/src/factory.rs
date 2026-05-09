@@ -149,7 +149,6 @@ pub fn create_provider(
     }
 }
 
-/// Create a knowledge base provider from config.
 pub fn create_knowledge_base_provider(
     config: &ProviderConfig,
     proxy: Option<&ProxyConfig>,
@@ -214,7 +213,6 @@ pub fn create_meeting_notes_provider(
     }
 }
 
-/// Create a messenger provider from config.
 pub fn create_messenger_provider(config: &ProviderConfig) -> Result<Box<dyn MessengerProvider>> {
     match config {
         ProviderConfig::Slack {

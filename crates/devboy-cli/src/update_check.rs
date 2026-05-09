@@ -11,10 +11,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-/// GitHub repository owner.
 const GITHUB_OWNER: &str = "meteora-pro";
 
-/// GitHub repository name.
 const GITHUB_REPO: &str = "devboy-tools";
 
 /// Cache TTL: 24 hours.

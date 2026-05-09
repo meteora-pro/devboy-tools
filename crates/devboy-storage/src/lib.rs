@@ -33,6 +33,9 @@
 //! keychain.store("gitlab.token", "glpat-xxx")?;
 //! ```
 
+#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![deny(rustdoc::invalid_html_tags)]
 use devboy_core::{Error, Result};
 use keyring::Entry;
 use secrecy::{ExposeSecret, SecretString};
@@ -388,6 +391,11 @@ fn read_env_var(key: &str) -> std::result::Result<String, std::env::VarError> {
     std::env::var(key)
 }
 
+/// Environment-variable-backed credential store.
+///
+/// Resolves secrets by name through `std::env::var` (or an injected
+/// reader, for testing). Used as the CI / Docker fallback when the OS
+/// keychain is unavailable.
 pub struct EnvVarStore {
     /// Prefix for environment variables (e.g., "DEVBOY").
     prefix: String,

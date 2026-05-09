@@ -340,7 +340,6 @@ pub struct TraceRecord {
 pub struct SessionMeta {
     /// Session id matching every record in `trace.jsonl`.
     pub session_id: String,
-    /// Skill name.
     pub skill: String,
     /// Skill version at run time, if the caller provided it.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -45,21 +45,16 @@ pub struct JiraProjectMetadata {
     /// Available issue types (filter out subtask types for create_issue).
     #[serde(default)]
     pub issue_types: Vec<JiraIssueType>,
-    /// Available components.
     #[serde(default)]
     pub components: Vec<JiraComponent>,
-    /// Available priorities.
     #[serde(default)]
     pub priorities: Vec<JiraPriority>,
-    /// Available issue link types.
     #[serde(default)]
     pub link_types: Vec<JiraLinkType>,
-    /// Custom fields for this project.
     #[serde(default)]
     pub custom_fields: Vec<JiraCustomField>,
 }
 
-/// Jira issue type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraIssueType {
     pub id: String,
@@ -69,21 +64,18 @@ pub struct JiraIssueType {
     pub subtask: bool,
 }
 
-/// Jira component.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraComponent {
     pub id: String,
     pub name: String,
 }
 
-/// Jira priority.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraPriority {
     pub id: String,
     pub name: String,
 }
 
-/// Jira issue link type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraLinkType {
     pub id: String,
@@ -103,7 +95,6 @@ pub struct JiraCustomField {
     pub id: String,
     /// Human-readable name.
     pub name: String,
-    /// Field type.
     pub field_type: JiraFieldType,
     /// Whether this field is required.
     #[serde(default)]
@@ -113,7 +104,6 @@ pub struct JiraCustomField {
     pub options: Vec<JiraFieldOption>,
 }
 
-/// Jira custom field types.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum JiraFieldType {

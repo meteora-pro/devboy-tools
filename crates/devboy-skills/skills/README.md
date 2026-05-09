@@ -2,12 +2,12 @@
 
 This directory holds the **baseline catalogue of skills** shipped embedded in the `devboy-tools` binary. Skills are procedural recipes on top of the existing tool bundle — "given these tools, here is how to accomplish task X".
 
-The design is described in [`ADR-012`](../docs/architecture/adr/ADR-012-skills-subsystem.md), the install-target rules in [`ADR-013`](../docs/architecture/adr/ADR-013-skills-install-targets.md), and the upgrade / collision lifecycle in [`ADR-014`](../docs/architecture/adr/ADR-014-skills-lifecycle.md).
+The design is described in [`ADR-012`](../../../docs/architecture/adr/ADR-012-skills-subsystem.md), the install-target rules in [`ADR-013`](../../../docs/architecture/adr/ADR-013-skills-install-targets.md), and the upgrade / collision lifecycle in [`ADR-014`](../../../docs/architecture/adr/ADR-014-skills-lifecycle.md).
 
 ## Layout
 
 ```
-skills/
+crates/devboy-skills/skills/
 ├── 00-self-bootstrap/
 ├── 01-issue-tracking/
 ├── 02-code-review/
@@ -19,7 +19,7 @@ skills/
 Each skill lives in its own directory containing a single `SKILL.md` file with YAML frontmatter and Markdown body:
 
 ```
-skills/<NN-category>/<skill-name>/SKILL.md
+crates/devboy-skills/skills/<NN-category>/<skill-name>/SKILL.md
 ```
 
 ## Frontmatter
@@ -41,13 +41,13 @@ Unknown fields are preserved verbatim so agent-specific extensions are not strip
 
 ## Conventions
 
-- **English only.** See [`ADR-016`](../docs/architecture/adr/ADR-016-skills-language-adaptation.md) for why, and when we might revisit.
+- **English only.** See [`ADR-016`](../../../docs/architecture/adr/ADR-016-skills-language-adaptation.md) for why, and when we might revisit.
 - **CLI-first tool invocation.** Skills invoke tools through `devboy tools call <name>` rather than referencing a specific MCP server name. This keeps recipes portable across agents and transports.
 - **Keep bodies short.** A SKILL.md is a recipe, not a framework. If a skill grows past a single page, split it.
 
 ## Installing baseline skills
 
-End users install skills through the CLI (see [`ADR-013`](../docs/architecture/adr/ADR-013-skills-install-targets.md)):
+End users install skills through the CLI (see [`ADR-013`](../../../docs/architecture/adr/ADR-013-skills-install-targets.md)):
 
 ```bash
 devboy skills list
@@ -59,6 +59,6 @@ devboy skills install --all --agent claude
 ## Adding a new baseline skill
 
 1. Pick the category and name
-2. Create `skills/<NN-category>/<name>/SKILL.md` with valid frontmatter
+2. Create `crates/devboy-skills/skills/<NN-category>/<name>/SKILL.md` with valid frontmatter
 3. Add unit-test coverage if the skill introduces new frontmatter fields the parser should recognise
 4. Submit a PR — reviewers check that the skill obeys the conventions above

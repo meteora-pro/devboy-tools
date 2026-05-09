@@ -55,26 +55,28 @@ We want to change that without disturbing the npm distribution channel.
 | `devboy-slack` | `crates/plugins/api/slack` | library | `true` | Depends on `devboy-core`. |
 | `devboy-executor` | `crates/devboy-executor` | library | `true` | Depends on `devboy-core`, `devboy-assets`, all API plugins, format-pipeline. |
 | `devboy-mcp` | `crates/devboy-mcp` | library | `true` | Depends on `devboy-core`, `devboy-assets`, `devboy-executor`, `devboy-confluence`, format-pipeline. |
-| `devboy-skills` | `crates/devboy-skills` | library | `true` (second wave) | Depends on `devboy-core`. Embeds the `skills/` tree from the workspace root via `rust-embed` — first wave requires moving the tree inside the crate (or a build.rs sync) to satisfy `cargo publish`'s "no files outside crate root" rule. Tracked separately from this PR. |
-| `devboy-cli` | `crates/devboy-cli` | binary | `true` (second wave) | Secondary: `cargo install devboy-cli` works alongside the npm channel. Blocked on `devboy-skills` second-wave landing. |
+| `devboy-skills` | `crates/devboy-skills` | library | `true` | Depends on `devboy-core`. The embedded `skills/` tree was moved inside the crate (`crates/devboy-skills/skills/`) so that `cargo publish` packages it cleanly. Plugin symlinks and the build-skills script were re-targeted in the same change. |
+| `devboy-cli` | `crates/devboy-cli` | binary | `true` | Secondary: `cargo install devboy-cli` works alongside the npm channel. |
 | `llm-eval` | `crates/llm-eval` | binary | `false` | Internal research tool. Not for public consumption. |
 
 ### Versioning
 
 - Workspace stays on a **single shared version** (`workspace.package.version`). Bump once, all crates move together.
-- First wave ships from the current `0.26.x` line — pre-1.0 semver permits breaking changes when needed.
+- First release ships from the current `0.26.x` line — pre-1.0 semver permits breaking changes when needed.
 - Internal dependencies are pinned through `[workspace.dependencies]` with both a `version =` and a `path =`. Local builds resolve via path; crates.io builds resolve via version.
 
-### Release waves
+### Release order
 
-**First wave** — 13 library crates, ordered topologically from leaves up:
+All 15 publishable crates ship in a **single coordinated wave**, ordered topologically from leaves up:
 
 1. `devboy-core` (no internal deps)
 2. `devboy-storage`, `devboy-assets`, `devboy-format-pipeline`, all 7 API plugins (depend only on `devboy-core`)
 3. `devboy-executor` (depends on core + assets + plugins + format-pipeline)
 4. `devboy-mcp` (depends on core + assets + executor + confluence + format-pipeline)
+5. `devboy-skills` (depends on core)
+6. `devboy-cli` (depends on everything)
 
-**Second wave** — `devboy-skills` and `devboy-cli`. Blocked on a workspace-layout change: `devboy-skills` currently `rust-embed`s the workspace-root `skills/` tree, and `cargo publish` rejects files outside the crate. The fix (move `skills/` inside the crate, or add a build.rs sync) ripples into plugin symlinks, release scripts, and several ADRs — large enough to warrant its own PR.
+Earlier drafts of this ADR split publication into two waves because `devboy-skills` embedded a workspace-root `skills/` tree that `cargo publish` rejected. That blocker is resolved: the tree now lives inside the crate (`crates/devboy-skills/skills/`), with plugin symlinks and `scripts/release/build-skills.sh` re-targeted accordingly.
 
 The release procedure lives under [`docs/guide/contributing/release.md`](../../guide/contributing/release.md).
 
@@ -106,8 +108,8 @@ There is a structural caveat: `cargo publish --dry-run` resolves dependencies th
 
 ### Risks
 
-- ⚠️ **Name squatters.** All 15 names are free on crates.io as of 2026-05-08 (verified via `GET /api/v1/crates/<name>`). Mitigation: publish a `0.0.0` placeholder for each name from the same release that flips `publish = false → true` to claim ownership before the formal first wave.
-- ⚠️ **Internal coupling leaking through public types.** A `devboy-mcp` function that returns a private `devboy-executor` type silently makes that executor type part of the MCP public surface. Mitigation: Phase 4 (public API audit, [#250](https://github.com/meteora-pro/devboy-tools/issues/250)) runs `cargo public-api` and locks down boundaries before the first wave.
+- ⚠️ **Name squatters.** All 15 names are free on crates.io as of 2026-05-08 (verified via `GET /api/v1/crates/<name>`). Mitigation: publish a `0.0.0` placeholder for each name before the formal release to claim ownership.
+- ⚠️ **Internal coupling leaking through public types.** A `devboy-mcp` function that returns a private `devboy-executor` type silently makes that executor type part of the MCP public surface. Mitigation: Phase 4 (public API audit, [#250](https://github.com/meteora-pro/devboy-tools/issues/250)) runs `cargo public-api` and locks down boundaries before publication.
 - ⚠️ **CI cost.** Running 15 `cargo publish --dry-run` invocations per PR is non-trivial. Mitigation: gate the job on `paths:` filters (only run when a Cargo.toml or `crates/**` file changes) and reuse `Swatinem/rust-cache`.
 
 ## Alternatives Considered

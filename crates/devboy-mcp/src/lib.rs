@@ -21,6 +21,10 @@
 //! server.run().await?;
 //! ```
 
+#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![deny(rustdoc::invalid_html_tags)]
+
 pub mod agent_safety;
 pub mod handlers;
 pub mod layered;

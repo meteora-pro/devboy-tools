@@ -149,4 +149,4 @@ tools:
 
 Agents that honour the standard will discover the skill automatically. `devboy skills list` also picks it up if you point a custom source at the directory (coming in a future release — the initial cut only lists the embedded catalogue).
 
-To contribute a skill upstream, open a pull request that adds `skills/<NN-category>/<name>/SKILL.md` in the `devboy-tools` repository.
+To contribute a skill upstream, open a pull request that adds `crates/devboy-skills/skills/<NN-category>/<name>/SKILL.md` in the `devboy-tools` repository.

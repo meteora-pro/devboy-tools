@@ -4,6 +4,9 @@
 //! ClickUp does not have merge requests, so MR operations return
 //! `ProviderUnsupported` errors.
 
+#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![deny(rustdoc::invalid_html_tags)]
 mod client;
 pub mod enricher;
 pub mod liveness;
@@ -15,5 +18,4 @@ pub use enricher::ClickUpSchemaEnricher;
 pub use metadata::ClickUpMetadata;
 pub use types::*;
 
-/// Default ClickUp API URL.
 pub const DEFAULT_CLICKUP_URL: &str = "https://api.clickup.com/api/v2";
