@@ -216,7 +216,6 @@ impl Skill {
 /// full body when a source only needs the names and descriptions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillSummary {
-    /// Skill name.
     pub name: String,
     pub category: Category,
     /// Integer version.

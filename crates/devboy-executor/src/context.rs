@@ -26,7 +26,6 @@ pub enum GitHubScope {
     Repository {
         /// Owner (user or org).
         owner: String,
-        /// Repo name.
         repo: String,
     },
     /// Organization-level: search with `org:` qualifier
@@ -43,7 +42,6 @@ pub enum GitHubScope {
 pub enum ClickUpScope {
     /// Single list (with optional team_id for custom task ID resolution)
     List {
-        /// List id.
         id: String,
         /// Optional team id (workspace) for custom task ID resolution.
         team_id: Option<String>,
@@ -60,7 +58,6 @@ pub enum JiraScope {
     },
     /// Multiple Jira projects (union of results)
     MultiProject {
-        /// Project keys.
         keys: Vec<String>,
     },
 }
@@ -80,7 +77,6 @@ pub enum ConfluenceScope {
 pub enum SlackScope {
     /// Single Slack workspace/team.
     Workspace {
-        /// Team id (workspace id).
         team_id: Option<String>,
     },
 }

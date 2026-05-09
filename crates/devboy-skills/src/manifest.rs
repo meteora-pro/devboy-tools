@@ -115,7 +115,6 @@ impl HistoricalHashes {
 pub struct InstalledFile {
     /// SHA256 of the file at install time.
     pub sha256: String,
-    /// Size in bytes.
     pub size: u64,
 }
 

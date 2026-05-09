@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 // User
 // =============================================================================
 
-/// Jira user representation.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraUser {
     /// Account ID (Cloud only)
@@ -28,20 +27,16 @@ pub struct JiraUser {
 // Issue
 // =============================================================================
 
-/// Jira issue representation.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraIssue {
-    /// Issue ID
     pub id: String,
     /// Issue key (e.g., "PROJ-123")
     pub key: String,
-    /// Issue fields
     pub fields: JiraIssueFields,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraIssueFields {
-    /// Summary (title)
     #[serde(default)]
     pub summary: Option<String>,
     /// Description — plain text (v2) or ADF document (v3)
@@ -70,7 +65,6 @@ pub struct JiraIssueFields {
     /// Subtasks / child issues
     #[serde(default)]
     pub subtasks: Vec<JiraIssue>,
-    /// Issue links
     #[serde(default)]
     pub issuelinks: Vec<JiraIssueLink>,
     /// Attachments on the issue (present when the caller requests
@@ -84,13 +78,11 @@ pub struct JiraIssueFields {
 pub struct JiraAttachment {
     /// Attachment id (numeric string).
     pub id: String,
-    /// Original filename.
     #[serde(default)]
     pub filename: Option<String>,
     /// Direct download URL (`content` in the Jira API).
     #[serde(default)]
     pub content: Option<String>,
-    /// Size in bytes.
     #[serde(default)]
     pub size: Option<u64>,
     #[serde(default, rename = "mimeType")]
@@ -103,11 +95,9 @@ pub struct JiraAttachment {
     pub author: Option<JiraUser>,
 }
 
-/// Jira issue status.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JiraStatus {
-    /// Status name
     pub name: String,
     /// Status category (new, indeterminate, done)
     #[serde(default)]
@@ -120,10 +110,8 @@ pub struct JiraStatusCategory {
     pub key: String,
 }
 
-/// Jira issue priority.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraPriority {
-    /// Priority name
     pub name: String,
 }
 
@@ -131,7 +119,6 @@ pub struct JiraPriority {
 // Issue Links
 // =============================================================================
 
-/// Jira issue link representation.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraIssueLink {
     /// Link ID
@@ -182,7 +169,6 @@ pub struct JiraSearchResponse {
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraCloudSearchResponse {
     pub issues: Vec<JiraIssue>,
-    /// Token for next page
     #[serde(default, rename = "nextPageToken")]
     pub next_page_token: Option<String>,
 }

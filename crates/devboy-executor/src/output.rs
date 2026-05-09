@@ -19,35 +19,25 @@ pub struct ResultMeta {
 /// how to format the output (pipeline text, JSON, etc.).
 #[derive(Debug)]
 pub enum ToolOutput {
-    /// List of merge requests / pull requests
     MergeRequests(Vec<MergeRequest>, Option<ResultMeta>),
-    /// Single merge request / pull request
     SingleMergeRequest(Box<MergeRequest>),
     /// MR/PR discussions with comments and code positions
     Discussions(Vec<Discussion>, Option<ResultMeta>),
-    /// File diffs from a merge request / pull request
     Diffs(Vec<FileDiff>, Option<ResultMeta>),
     /// List of issues / tasks
     Issues(Vec<Issue>, Option<ResultMeta>),
     /// Single issue / task
     SingleIssue(Box<Issue>),
-    /// Comments on an issue or merge request
     Comments(Vec<Comment>, Option<ResultMeta>),
     /// CI/CD pipeline status with jobs
     Pipeline(Box<PipelineInfo>),
-    /// Job log output
     JobLog(Box<JobLogOutput>),
-    /// Available issue statuses
     Statuses(Vec<IssueStatus>, Option<ResultMeta>),
-    /// List of users
     Users(Vec<User>, Option<ResultMeta>),
-    /// List of meeting notes
     MeetingNotes(Vec<MeetingNote>, Option<ResultMeta>),
     /// Single meeting transcript with sentences
     MeetingTranscript(Box<MeetingTranscript>),
-    /// List of knowledge base spaces
     KnowledgeBaseSpaces(Vec<KbSpace>, Option<ResultMeta>),
-    /// List of knowledge base pages
     KnowledgeBasePages(Vec<KbPage>, Option<ResultMeta>),
     /// Single knowledge base page summary
     KnowledgeBasePageSummary(Box<KbPage>),
@@ -55,13 +45,10 @@ pub enum ToolOutput {
     KnowledgeBasePage(Box<KbPageContent>),
     /// Issue relations (parent, subtasks, linked issues)
     Relations(Box<IssueRelations>),
-    /// List of messenger chats
     MessengerChats(Vec<MessengerChat>, Option<ResultMeta>),
-    /// List of messenger messages
     MessengerMessages(Vec<MessengerMessage>, Option<ResultMeta>),
     /// Single sent message
     SingleMessage(Box<MessengerMessage>),
-    /// Asset listing result
     AssetList {
         /// Serialized attachment objects from the provider.
         attachments: Vec<serde_json::Value>,
@@ -74,7 +61,6 @@ pub enum ToolOutput {
     AssetDownloaded {
         /// Provider-specific asset identifier.
         asset_id: String,
-        /// Size in bytes.
         size: usize,
         /// Absolute path when cached locally.
         local_path: Option<String>,
@@ -86,9 +72,7 @@ pub enum ToolOutput {
     AssetUploaded {
         /// Provider-returned URL for the uploaded file.
         url: String,
-        /// Original filename.
         filename: String,
-        /// Size in bytes.
         size: usize,
     },
     AssetDeleted {
@@ -97,7 +81,6 @@ pub enum ToolOutput {
         /// Human-readable confirmation message.
         message: String,
     },
-    /// List of Jira Structures
     Structures(Vec<Structure>, Option<ResultMeta>),
     /// List of project versions / fixVersion targets (Jira releases)
     ProjectVersions(Vec<ProjectVersion>, Option<ResultMeta>),
