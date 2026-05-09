@@ -34,7 +34,12 @@ ignore = []
 
 [licenses]
 version = 2
-# Permissive licenses we accept across the dependency graph.
+# Licenses we accept across the dependency graph. All are
+# redistribution-friendly under the project's Apache-2.0 release.
+# MPL-2.0 is file-level weak copyleft (modifications to MPL-licensed
+# files must be shared under MPL); admitted because we ship MPL crates
+# untouched as binary deps. No strong copyleft (GPL, AGPL, LGPL) is
+# admitted.
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
@@ -48,11 +53,10 @@ allow = [
     "Unicode-DFS-2016",
     "CC0-1.0",
     "0BSD",
-    "MPL-2.0",
-    # Permissive, fund-friendly licenses pulled in transitively
-    # (no copyleft, no patent encumbrance for distribution).
-    "bzip2-1.0.6",          # bzip2 itself — used by zip → libbz2
-    "CDLA-Permissive-2.0",  # webpki-roots ships CA bundle under CDLA
+    "MPL-2.0",                     # weak (file-level) copyleft, shipped untouched
+    # Transitive-only entries:
+    "bzip2-1.0.6",                 # bzip2 itself — used by zip → libbz2
+    "CDLA-Permissive-2.0",         # webpki-roots ships CA bundle under CDLA
 ]
 # Crate-level confidence threshold for license detection.
 confidence-threshold = 0.8
