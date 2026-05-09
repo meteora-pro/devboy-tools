@@ -33,6 +33,7 @@ regex.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 sha2.workspace = true
 hex = "0.4"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "sync", "io-util", "time"] }
 
 # Keychain access (platform-specific features)
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -45,9 +46,9 @@ keyring = { version = "3", features = ["windows-native"] }
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "sync", "io-util", "time"] }
 tempfile.workspace = true
-temp-env = "0.3"
+temp-env = { version = "0.3", features = ["async_closure"] }
 
 [lints]
 workspace = true
