@@ -50,6 +50,7 @@ pub mod router_credentials;
 pub mod router_resolve;
 pub mod secret_path;
 pub mod source;
+pub mod validation;
 
 pub use cache::CachedStore;
 pub use ci::{
@@ -79,6 +80,7 @@ pub use secret_path::{PathError, SecretPath};
 pub use source::{
     Capabilities, CredentialRef, GetOutcome, RemoteRef, SecretSource, SourceError, SourceStatus,
 };
+pub use validation::{FormatCheck, FormatRuleSource, validate_format};
 
 /// Service name used in OS keychain.
 const SERVICE_NAME: &str = "devboy-tools";

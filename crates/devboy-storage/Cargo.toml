@@ -29,6 +29,7 @@ zeroize = { version = "1.8", features = ["derive"] }
 secrecy.workspace = true
 async-trait.workspace = true
 bitflags = "2.6"
+regex.workspace = true
 
 # Keychain access (platform-specific features)
 [target.'cfg(target_os = "macos")'.dependencies]
