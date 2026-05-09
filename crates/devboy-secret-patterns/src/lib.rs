@@ -61,9 +61,12 @@
 #![forbid(unsafe_code)]
 
 pub mod builtin;
+pub mod user;
 
 pub use builtin::{BUILTINS, Builtin, builtins, find};
+pub use user::{Catalogue, LoadError, LoadWarning, LoadWarningKind, UserPattern, UserPatternFile};
 
+use std::borrow::Cow;
 use std::fmt;
 
 use regex::Regex;
@@ -112,23 +115,29 @@ impl fmt::Display for Severity {
 
 /// Optional descriptive metadata for a pattern. Consumed by the secret
 /// store's `pattern_id` inheritance (epic phase P2.4) and by the UI.
+///
+/// String fields are [`Cow<'static, str>`] so both built-in patterns
+/// (which carry `&'static str` literals via `Cow::Borrowed`) and
+/// user-loaded patterns (which carry owned `String`s deserialised from
+/// `~/.devboy/secrets/patterns.d/*.toml`) can populate them without
+/// either side leaking memory or leaning on `Box::leak`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PatternMetadata {
     /// Stable provider identifier, lowercase ASCII (`"github"`,
     /// `"gitlab"`, `"openai"`, …). Used as the second segment in
     /// suggested ADR-020 paths and as the routing key for liveness
     /// probes.
-    pub provider_id: &'static str,
+    pub provider_id: Cow<'static, str>,
     /// URL template the user opens to obtain a fresh value. May
     /// contain `{var}` placeholders the UI substitutes; if it has no
     /// placeholders, the UI opens it verbatim.
-    pub retrieval_url_template: &'static str,
+    pub retrieval_url_template: Cow<'static, str>,
     /// Default rotation cadence in days. Drives `doctor`'s default
     /// reminder when the per-secret entry doesn't override it.
     pub default_expiry_days: Option<u32>,
     /// Hint on the API scopes this token is typically created with.
     /// Surfaced in the metadata card; does **not** validate.
-    pub scopes_hint: Vec<&'static str>,
+    pub scopes_hint: Vec<Cow<'static, str>>,
 }
 
 // =============================================================================
@@ -354,10 +363,10 @@ mod tests {
         fn metadata(&self) -> Option<&PatternMetadata> {
             static M: OnceLock<PatternMetadata> = OnceLock::new();
             Some(M.get_or_init(|| PatternMetadata {
-                provider_id: "test",
-                retrieval_url_template: "https://test.example/tokens",
+                provider_id: Cow::Borrowed("test"),
+                retrieval_url_template: Cow::Borrowed("https://test.example/tokens"),
                 default_expiry_days: Some(90),
-                scopes_hint: vec!["read", "write"],
+                scopes_hint: vec![Cow::Borrowed("read"), Cow::Borrowed("write")],
             }))
         }
         fn rotation(&self) -> Option<&RotationSpec> {
@@ -451,7 +460,10 @@ mod tests {
         assert_eq!(m.provider_id, "test");
         assert_eq!(m.retrieval_url_template, "https://test.example/tokens");
         assert_eq!(m.default_expiry_days, Some(90));
-        assert_eq!(m.scopes_hint, vec!["read", "write"]);
+        assert_eq!(
+            m.scopes_hint,
+            vec![Cow::Borrowed("read"), Cow::Borrowed("write")]
+        );
     }
 
     #[test]
