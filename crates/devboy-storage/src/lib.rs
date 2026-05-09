@@ -43,6 +43,7 @@ pub mod index;
 pub mod manifest;
 pub mod merge;
 pub mod pattern_resolution;
+pub mod router_config;
 pub mod secret_path;
 pub mod source;
 
@@ -57,6 +58,10 @@ pub use merge::{
 };
 pub use pattern_resolution::{
     InheritanceWarning, InheritanceWarningKind, apply_pattern_inheritance,
+};
+pub use router_config::{
+    DefaultRoute, RouteRule, RouterConfig, RouterConfigError, SOURCES_FILENAME, SecretOverride,
+    SourceDefinition,
 };
 pub use secret_path::{PathError, SecretPath};
 pub use source::{
