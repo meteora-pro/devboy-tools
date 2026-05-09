@@ -5,7 +5,6 @@
 //! provider implementation, including API client logic plus page/space/search
 //! operations exposed through the shared `KnowledgeBaseProvider` trait.
 
-#[allow(missing_docs)]
 mod client;
 mod enricher;
 

@@ -5,7 +5,6 @@
 //! foundations. Messenger tool methods are scaffolded here and implemented
 //! separately from connection/auth setup.
 
-#[allow(missing_docs)]
 mod client;
 
 pub use client::{SlackAuthInfo, SlackClient};
