@@ -55,6 +55,7 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets agent start`↴](#devboy-secrets-agent-start)
 * [`devboy secrets agent install`↴](#devboy-secrets-agent-install)
 * [`devboy secrets agent uninstall`↴](#devboy-secrets-agent-uninstall)
+* [`devboy secrets ui`↴](#devboy-secrets-ui)
 * [`devboy hooks`↴](#devboy-hooks)
 * [`devboy hooks install`↴](#devboy-hooks-install)
 * [`devboy hooks check`↴](#devboy-hooks-check)
@@ -712,6 +713,7 @@ Discover and inspect declared secrets (metadata only — values are never shown)
 * `validate` — Validate manifest paths' format / liveness as a CI gate. Format-only by default; pass `--liveness` to also probe upstreams (github + gitlab). See ADR-021 §6
 * `migrate` — Move a legacy keychain entry under the ADR-020 path convention. See `doctor` "Legacy keychain entries" (P10.1) for what's eligible
 * `agent` — Manage the local secret-store agent daemon (ADR-023 §3.3)
+* `ui` — Open the native UI (TUI in a terminal, GUI in a window). Backend autodetected from `$DISPLAY` / `$WAYLAND_DISPLAY` on Linux and the OS on macOS / Windows; override with `--tui` or `--gui`. See ADR-023 §3.4
 
 
 
@@ -847,6 +849,19 @@ Stop the user service (if loaded) and remove the unit file written by `install`.
 * `--no-unload` — Skip the platform service-manager teardown step (just remove the unit file). The next reboot will pick up the removal anyway
 
   Default value: `false`
+
+
+
+## `devboy secrets ui`
+
+Open the native UI (TUI in a terminal, GUI in a window). Backend autodetected from `$DISPLAY` / `$WAYLAND_DISPLAY` on Linux and the OS on macOS / Windows; override with `--tui` or `--gui`. See ADR-023 §3.4
+
+**Usage:** `devboy secrets ui [OPTIONS]`
+
+###### **Options:**
+
+* `--tui` — Force the terminal renderer (ratatui)
+* `--gui` — Force the windowed renderer (egui). Currently prints a "windowing not yet wired from the CLI" message and exits non-zero — the egui view-models exist, but launching them requires an event-loop integration that ships in a follow-up
 
 
 

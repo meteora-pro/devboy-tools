@@ -53,6 +53,11 @@ pub enum SecretsCommands {
         #[command(subcommand)]
         command: AgentCommands,
     },
+    /// Open the native UI (TUI in a terminal, GUI in a window).
+    /// Backend autodetected from `$DISPLAY` / `$WAYLAND_DISPLAY` on
+    /// Linux and the OS on macOS / Windows; override with `--tui`
+    /// or `--gui`. See ADR-023 §3.4.
+    Ui(crate::secrets_ui::UiArgs),
 }
 
 /// `devboy secrets agent <subcommand>` family.
@@ -158,6 +163,7 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
             AgentCommands::Install(args) => agent_install(args),
             AgentCommands::Uninstall(args) => agent_uninstall(args),
         },
+        SecretsCommands::Ui(args) => crate::secrets_ui::handle(args).await,
     }
 }
 
