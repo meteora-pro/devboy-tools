@@ -389,38 +389,77 @@ impl McpProxyClient {
         &self,
         response: reqwest::Response,
     ) -> devboy_core::Result<JsonRpcResponse> {
-        let stream = response
-            .bytes_stream()
-            .map(|r| r.map_err(|e| e.to_string()));
-        Self::parse_json_stream(stream).await
+        Self::parse_json_stream(response.bytes_stream()).await
     }
 
-    /// Drain a chunked body stream into a `Vec<u8>` and parse it as
-    /// `JsonRpcResponse`. If the stream ends with an error after a complete
-    /// body has already been received, the parse still succeeds — that is the
-    /// production scenario that motivated the streaming read in the first
-    /// place. If the stream ends with an error and the accumulated bytes do
-    /// not parse, the original stream error is preserved in the resulting
-    /// message so callers can distinguish a truncated body from a malformed
-    /// one.
+    /// Drain a chunked body stream and parse it as `JsonRpcResponse`.
     ///
-    /// Generic over chunk type and error type so unit tests can drive this
-    /// path with `futures::stream::iter` without constructing a real
-    /// `reqwest::Response`.
-    async fn parse_json_stream<S, B>(mut stream: S) -> devboy_core::Result<JsonRpcResponse>
+    /// The loop attempts an incremental parse after each chunk and **returns
+    /// as soon as one complete JSON-RPC response has been deserialized**,
+    /// regardless of whether the upstream has signalled EOF. This is the
+    /// behaviour that actually fixes the streamable-HTTP hang from #244:
+    /// servers that keep the connection open after the response body for
+    /// notifications no longer block the caller until the proxy/CDN drops
+    /// the idle connection. Trailing bytes after the response object are
+    /// ignored.
+    ///
+    /// If the stream ends (clean EOF or error) before a complete response
+    /// is parsed, the loop falls back to a final parse on the accumulated
+    /// bytes. Stream-error context is preserved in the resulting message so
+    /// callers can distinguish a truncated body from a malformed one.
+    ///
+    /// Generic over chunk type and stream-error type so unit tests can drive
+    /// this path with `futures::stream::iter` without constructing a real
+    /// `reqwest::Response`. The error is stringified late, only when
+    /// composing the final failure message.
+    async fn parse_json_stream<S, B, E>(mut stream: S) -> devboy_core::Result<JsonRpcResponse>
     where
-        S: futures::Stream<Item = std::result::Result<B, String>> + Unpin,
+        S: futures::Stream<Item = std::result::Result<B, E>> + Unpin,
         B: AsRef<[u8]>,
+        E: std::fmt::Display,
     {
         let mut body = Vec::new();
         let mut stream_error: Option<String> = None;
 
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
-                Ok(chunk) => body.extend_from_slice(chunk.as_ref()),
+                Ok(chunk) => {
+                    body.extend_from_slice(chunk.as_ref());
+                    // Try parsing the first JSON value out of the accumulated
+                    // bytes. `Deserializer::from_slice` lets us deserialize a
+                    // single value and ignore trailing bytes — useful when
+                    // the upstream then sends notifications on the same
+                    // stream.
+                    let mut de = serde_json::Deserializer::from_slice(&body);
+                    match <JsonRpcResponse as serde::Deserialize>::deserialize(&mut de) {
+                        Ok(resp) => {
+                            tracing::debug!(
+                                "Parsed JSON-RPC response after {} bytes (stream still open)",
+                                body.len()
+                            );
+                            return Ok(resp);
+                        }
+                        Err(e) if e.is_eof() => {
+                            // Body so far is a valid JSON prefix but
+                            // incomplete — keep reading.
+                        }
+                        Err(_) => {
+                            // Not a parse-from-prefix error. It might be a
+                            // chunk boundary inside a string literal; let
+                            // the loop continue and the post-loop final
+                            // parse surface a clean error if the body is
+                            // genuinely malformed.
+                        }
+                    }
+                }
                 Err(e) => {
-                    tracing::debug!("Stream ended with error ({} bytes read): {}", body.len(), e);
-                    stream_error = Some(e);
+                    let msg = e.to_string();
+                    tracing::debug!(
+                        "Stream ended with error ({} bytes read): {}",
+                        body.len(),
+                        msg
+                    );
+                    stream_error = Some(msg);
                     break;
                 }
             }
@@ -433,7 +472,7 @@ impl McpProxyClient {
             }));
         }
 
-        tracing::debug!("Read {} bytes from upstream response", body.len());
+        tracing::debug!("Final parse over {} accumulated bytes", body.len());
 
         serde_json::from_slice::<JsonRpcResponse>(&body).map_err(|json_err| {
             let preview = String::from_utf8_lossy(&body[..body.len().min(200)]);
@@ -2121,5 +2160,36 @@ mod tests {
             msg.contains("immediate disconnect"),
             "stream error must be preserved, got: {msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn parse_json_stream_returns_early_when_stream_stays_open() {
+        use futures::stream;
+
+        // Production scenario: server sends a complete JSON-RPC response
+        // then keeps the connection open for notifications. The parser
+        // must return as soon as a complete response is decoded — without
+        // waiting for the upstream (or a downstream proxy) to ever close
+        // the connection. We simulate "stream stays open with extra
+        // notification chunks after the response" by appending bytes that
+        // would NOT compose a valid `JsonRpcResponse`. Without an
+        // incremental early return, the post-loop final parse would fail
+        // because of the trailing data.
+        let body: Vec<u8> = serde_json::to_vec(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 99,
+            "result": { "tools": [] }
+        }))
+        .unwrap();
+        let trailing: Vec<u8> =
+            b"\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n".to_vec();
+
+        let chunks: Vec<std::result::Result<Vec<u8>, String>> = vec![Ok(body), Ok(trailing)];
+        let s = stream::iter(chunks);
+
+        let resp = McpProxyClient::parse_json_stream(s)
+            .await
+            .expect("complete response should parse before EOF, ignoring trailing notifications");
+        assert!(matches!(resp.id, RequestId::Number(99)));
     }
 }
