@@ -15,12 +15,17 @@
 
 pub mod aead;
 pub mod format;
+pub mod passphrase;
 
 pub use aead::{
-    AeadError, EncryptedEntry, KEY_LEN, NONCE_LEN, TAG_LEN, decrypt_entry, encrypt_entry,
-    random_nonce,
+    AeadError, EncryptedEntry, KEY_LEN, NONCE_LEN, TAG_LEN, decrypt_entry, decrypt_packed,
+    encrypt_entry, encrypt_packed, random_nonce,
 };
 pub use format::{
     EntryMeta, Envelope, EnvelopeKdfParams, FormatError, HEADER_LEN, Header, KdfParams, MAGIC,
     VERSION_V1, VaultFile, b64_decode, b64_encode,
+};
+pub use passphrase::{
+    DEFAULT_KDF_PARAMS, PASSPHRASE_ENVELOPE_AAD, PassphraseError, create_passphrase_envelope,
+    derive_wrap_key, unwrap_passphrase,
 };

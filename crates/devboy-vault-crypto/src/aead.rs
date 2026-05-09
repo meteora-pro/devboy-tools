@@ -152,6 +152,45 @@ pub fn random_nonce() -> Result<[u8; NONCE_LEN], getrandom::Error> {
     Ok(nonce)
 }
 
+/// Encrypt and return a single packed buffer `nonce || ciphertext`.
+///
+/// Use this when the call site can only carry one blob — the
+/// envelope `wrapped_key` field on a [`crate::format::Envelope`], for
+/// example, has no separate nonce slot, so the nonce is prepended to
+/// the ciphertext bytes and stored as one base64 string per the
+/// ADR-023 §3.1 envelope shape.
+pub fn encrypt_packed(
+    key: &[u8; KEY_LEN],
+    aad: &str,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, AeadError> {
+    let enc = encrypt_entry(key, aad, plaintext)?;
+    let mut out = Vec::with_capacity(NONCE_LEN + enc.ciphertext.len());
+    out.extend_from_slice(&enc.nonce);
+    out.extend_from_slice(&enc.ciphertext);
+    Ok(out)
+}
+
+/// Inverse of [`encrypt_packed`] — split a packed buffer into nonce +
+/// ciphertext and decrypt.
+///
+/// A buffer shorter than `NONCE_LEN + TAG_LEN` cannot possibly be a
+/// valid packed ciphertext; rather than introducing a dedicated
+/// "Truncated" error variant the function returns
+/// [`AeadError::AeadFailed`], matching the policy of not
+/// distinguishing "obviously wrong shape" from "wrong key / tampered"
+/// on the decrypt path.
+pub fn decrypt_packed(key: &[u8; KEY_LEN], aad: &str, packed: &[u8]) -> Result<Vec<u8>, AeadError> {
+    if packed.len() < NONCE_LEN + TAG_LEN {
+        return Err(AeadError::AeadFailed);
+    }
+    let nonce: [u8; NONCE_LEN] = packed[..NONCE_LEN]
+        .try_into()
+        .expect("length checked above");
+    let ciphertext = &packed[NONCE_LEN..];
+    decrypt_entry(key, aad, &nonce, ciphertext)
+}
+
 // =============================================================================
 // Internal helpers
 // =============================================================================
@@ -353,5 +392,36 @@ mod tests {
         assert_eq!(KEY_LEN, 32);
         assert_eq!(NONCE_LEN, 24);
         assert_eq!(TAG_LEN, 16);
+    }
+
+    // -- Packed (nonce || ciphertext) helpers -------------------------------
+
+    #[test]
+    fn packed_roundtrip() {
+        let key = fixed_key();
+        let packed = encrypt_packed(&key, "envelope:v1", b"vault-key-bytes").unwrap();
+        // Packed layout: 24-byte nonce + (plaintext + 16-byte tag).
+        assert_eq!(packed.len(), NONCE_LEN + b"vault-key-bytes".len() + TAG_LEN);
+        let decrypted = decrypt_packed(&key, "envelope:v1", &packed).unwrap();
+        assert_eq!(decrypted, b"vault-key-bytes");
+    }
+
+    #[test]
+    fn packed_decrypt_rejects_too_short_buffer() {
+        let key = fixed_key();
+        // Anything shorter than NONCE_LEN + TAG_LEN can't be a valid
+        // packed ciphertext; should fail without panicking on a slice
+        // out-of-bounds.
+        let too_short = vec![0u8; NONCE_LEN + TAG_LEN - 1];
+        let err = decrypt_packed(&key, "envelope:v1", &too_short).unwrap_err();
+        assert!(matches!(err, AeadError::AeadFailed));
+    }
+
+    #[test]
+    fn packed_decrypt_with_wrong_aad_fails() {
+        let key = fixed_key();
+        let packed = encrypt_packed(&key, "envelope:passphrase", b"v").unwrap();
+        let err = decrypt_packed(&key, "envelope:recovery", &packed).unwrap_err();
+        assert!(matches!(err, AeadError::AeadFailed));
     }
 }

@@ -106,6 +106,9 @@ base64 = "0.22"
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }
 getrandom = { version = "0.2", features = ["std"] }
 
+# Argon2id KDF for the local vault's passphrase envelope (ADR-023 §3.2).
+argon2 = "0.5"
+
 # Observability (optional)
 sentry = { version = "0.35", default-features = false, features = ["rustls", "reqwest", "tracing", "panic", "backtrace", "contexts"] }
 sentry-tracing = "0.35"
