@@ -76,7 +76,7 @@ We want to change that without disturbing the npm distribution channel.
 
 **Second wave** — `devboy-skills` and `devboy-cli`. Blocked on a workspace-layout change: `devboy-skills` currently `rust-embed`s the workspace-root `skills/` tree, and `cargo publish` rejects files outside the crate. The fix (move `skills/` inside the crate, or add a build.rs sync) ripples into plugin symlinks, release scripts, and several ADRs — large enough to warrant its own PR.
 
-The release procedure lives under [`docs/guide/contributing/release.mdx`](../../guide/contributing/release.mdx).
+The release procedure lives under [`docs/guide/contributing/release.md`](../../guide/contributing/release.md).
 
 ### CI guard
 
@@ -134,7 +134,7 @@ There is a structural caveat: `cargo publish --dry-run` resolves dependencies th
 
 - **Issues:** [#250](https://github.com/meteora-pro/devboy-tools/issues/250)
 - **PR:** _this PR_
-- **Code:** workspace `Cargo.toml`, every crate's `Cargo.toml`, `.github/workflows/ci.yml`, `docs/guide/contributing/release.mdx`
+- **Code:** workspace `Cargo.toml`, every crate's `Cargo.toml`, `.github/workflows/ci.yml`, `docs/guide/contributing/release.md`
 
 The implementation is staged across the phases listed in [#250](https://github.com/meteora-pro/devboy-tools/issues/250). This ADR captures the architectural decision; the issue tracks the per-phase checklist.
 
