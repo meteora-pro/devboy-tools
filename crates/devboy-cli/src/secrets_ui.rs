@@ -17,13 +17,11 @@
 //!   inventory view rendered into the alternate screen. `q` /
 //!   `Esc` quits. Real keystrokes drive
 //!   [`devboy_secrets_ui::InventoryState`]'s key handlers.
-//! - **GUI**: the egui half of the renderer is implemented in
-//!   `devboy-secrets-ui::gui` (see P12.1) but launching it as
-//!   a window from the CLI requires an event-loop crate (eframe
-//!   / winit). That integration ships in a follow-up `secrets
-//!   ui --gui` flow; until it lands, the GUI selection prints
-//!   a clear "use --tui or wait for the windowed flow" message
-//!   and exits non-zero rather than silently doing nothing.
+//! - **GUI**: spins up a real eframe-backed native window
+//!   that hosts the egui inventory view from
+//!   [`devboy_secrets_ui::gui::inventory`]. The window opens
+//!   at 1024×640 with the title `devboy — secrets inventory`
+//!   and pumps frames until the user closes it.
 //!
 //! [ADR-023]: https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md
 
@@ -189,11 +187,8 @@ pub struct UiArgs {
     /// Force the terminal renderer (ratatui).
     #[arg(long, conflicts_with = "gui")]
     pub tui: bool,
-    /// Force the windowed renderer (egui). Currently prints a
-    /// "windowing not yet wired from the CLI" message and exits
-    /// non-zero — the egui view-models exist, but launching
-    /// them requires an event-loop integration that ships in a
-    /// follow-up.
+    /// Force the windowed renderer (egui). Opens a native
+    /// window via eframe; runs until the user closes it.
     #[arg(long)]
     pub gui: bool,
 }
@@ -218,7 +213,7 @@ pub async fn handle(args: UiArgs) -> Result<()> {
     eprintln!("devboy secrets ui: backend = {}", backend.label());
     match backend {
         Backend::Tui => launch_tui(),
-        Backend::Gui => launch_gui_stub(),
+        Backend::Gui => launch_gui(),
     }
 }
 
@@ -283,16 +278,49 @@ fn run_tui_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()>
     Ok(())
 }
 
-fn launch_gui_stub() -> Result<()> {
-    // The egui view-models exist (P12.1); the windowing
-    // integration that runs them as a real desktop window
-    // (eframe / winit) is a follow-up. Print a precise message
-    // and exit non-zero so a wrapper script can pick it up.
-    anyhow::bail!(
-        "GUI backend selected, but the windowed launcher (eframe integration) \
-         is not yet wired from `devboy secrets ui`. Re-run with `--tui` to use \
-         the terminal renderer."
+fn launch_gui() -> Result<()> {
+    // Real eframe-backed window. View-model + render code lives
+    // in `devboy_secrets_ui::gui` (P12.1); this function is the
+    // event-loop host that pumps frames into the OS windowing
+    // system.
+    let options = eframe::NativeOptions {
+        viewport: eframe::egui::ViewportBuilder::default()
+            .with_inner_size([1024.0, 640.0])
+            .with_title("devboy — secrets inventory"),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "devboy-secrets",
+        options,
+        Box::new(|_cc| Ok(Box::new(InventoryApp::new()))),
     )
+    .map_err(|e| anyhow::anyhow!("eframe failed to run native window: {e}"))
+}
+
+/// Minimal `eframe::App` shell that hosts the inventory view-model
+/// and renders it once per frame. State stays in memory; persistence
+/// across runs (window size, sort key) is a separate enhancement.
+struct InventoryApp {
+    state: devboy_secrets_ui::InventoryState,
+}
+
+impl InventoryApp {
+    fn new() -> Self {
+        // Empty inventory — the orchestration layer that fills it
+        // in (manifest snapshot, daemon subscription) lands in a
+        // subsequent task. The window opens regardless so the
+        // user sees the chrome and can confirm the GUI launcher
+        // is alive.
+        Self {
+            state: devboy_secrets_ui::InventoryState::new(Vec::new()),
+        }
+    }
+}
+
+impl eframe::App for InventoryApp {
+    fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
+        devboy_secrets_ui::gui::inventory::render(ui, &mut self.state);
+    }
 }
 
 // =============================================================================

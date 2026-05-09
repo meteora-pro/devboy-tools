@@ -863,7 +863,7 @@ Open the native UI (TUI in a terminal, GUI in a window). Backend autodetected fr
 ###### **Options:**
 
 * `--tui` — Force the terminal renderer (ratatui)
-* `--gui` — Force the windowed renderer (egui). Currently prints a "windowing not yet wired from the CLI" message and exits non-zero — the egui view-models exist, but launching them requires an event-loop integration that ships in a follow-up
+* `--gui` — Force the windowed renderer (egui). Opens a native window via eframe; runs until the user closes it
 
 
 
