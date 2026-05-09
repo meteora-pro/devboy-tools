@@ -2,6 +2,7 @@ mod checks;
 mod output;
 
 use self::checks::config::{ActiveContextCheck, ConfigExistsCheck, ConfigValidTomlCheck};
+use self::checks::context_secrets::ContextSecretsCheck;
 use self::checks::credentials::{
     ClickUpTokenCheck, ConfluenceTokenCheck, GitHubTokenCheck, GitLabTokenCheck, JiraTokenCheck,
     SlackTokenCheck,
@@ -165,6 +166,7 @@ impl CheckRegistry {
         registry.register(Box::new(McpToolsCheck));
         registry.register(Box::new(ProxyServersCheck));
         registry.register(Box::new(SourcesCheck));
+        registry.register(Box::new(ContextSecretsCheck));
         registry
     }
 

@@ -1,4 +1,5 @@
 pub mod config;
+pub mod context_secrets;
 pub mod credentials;
 pub mod environment;
 pub mod mcp;
