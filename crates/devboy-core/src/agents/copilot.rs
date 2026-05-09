@@ -16,6 +16,7 @@ const ID: &str = "copilot";
 const DISPLAY_NAME: &str = "GitHub Copilot CLI";
 const MAX_ENTRIES: usize = 5_000;
 
+/// Copilot Detector.
 pub struct CopilotDetector;
 
 impl AgentDetector for CopilotDetector {

@@ -51,18 +51,27 @@ pub enum InstallStatus {
 /// One row in the detector's report.
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentSnapshot {
+    /// Id.
     pub id: &'static str,
+    /// Display name.
     pub display_name: &'static str,
+    /// Status.
     pub status: InstallStatus,
+    /// Sessions.
     pub sessions: Option<u64>,
+    /// Last used.
     pub last_used: Option<DateTime<Utc>>,
+    /// Score.
     pub score: f64,
+    /// Paths checked.
     pub paths_checked: Vec<PathBuf>,
 }
 
 /// Trait every per-agent detector implements.
 pub trait AgentDetector: Send + Sync {
+    /// Fn.
     fn id(&self) -> &'static str;
+    /// Fn.
     fn display_name(&self) -> &'static str;
 
     /// Inspect `home` (the user's home directory) and produce a snapshot.
