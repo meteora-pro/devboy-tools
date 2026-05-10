@@ -707,13 +707,16 @@ impl eframe::App for InventoryApp {
                     if let Some((loaded, _)) = self.current_provider_and_variant()
                         && loaded.catalog.variants.len() > 1
                     {
-                        ui.label(
-                            eframe::egui::RichText::new(format!(
-                                "{} — pick a variant:",
-                                loaded.catalog.display_name
-                            ))
-                            .strong(),
-                        );
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                eframe::egui::RichText::new(format!(
+                                    "{} — pick a variant:",
+                                    loaded.catalog.display_name
+                                ))
+                                .strong(),
+                            );
+                            ui.label(catalog_source_chip(loaded.source));
+                        });
                         let variants: Vec<(String, String)> = loaded
                             .catalog
                             .variants
@@ -733,7 +736,9 @@ impl eframe::App for InventoryApp {
                         ui.separator();
                     }
 
-                    let variant_for_card = self.current_provider_and_variant().map(|(_, v)| v);
+                    let variant_for_card = self
+                        .current_provider_and_variant()
+                        .map(|(loaded, v)| (v, loaded.source));
                     render_context_card(
                         ui,
                         &dialog_path,
@@ -1075,12 +1080,30 @@ fn run_catalog_liveness(
     }
 }
 
+/// Render-ready chip indicating where a catalog entry came
+/// from. Used both in the multi-variant picker title and in
+/// the context card so a team override (project-scope JSON
+/// shadowing the bundled default) is visible at a glance.
+fn catalog_source_chip(source: devboy_token_catalog::CatalogSource) -> eframe::egui::RichText {
+    use devboy_token_catalog::CatalogSource;
+    use eframe::egui::{Color32, RichText};
+    let (label, color) = match source {
+        CatalogSource::Bundled => ("bundled", Color32::from_rgb(0x99, 0x99, 0x99)),
+        CatalogSource::User => ("user", Color32::from_rgb(0x55, 0xa0, 0xcc)),
+        CatalogSource::Project => ("project", Color32::from_rgb(0x55, 0xaa, 0x55)),
+    };
+    RichText::new(format!("[{label}]")).small().color(color)
+}
+
 fn render_context_card(
     ui: &mut eframe::egui::Ui,
     path: &str,
     entry: Option<&devboy_storage::IndexEntry>,
     backend: &StorageBackend,
-    variant: Option<&devboy_token_catalog::TokenVariant>,
+    variant: Option<(
+        &devboy_token_catalog::TokenVariant,
+        devboy_token_catalog::CatalogSource,
+    )>,
 ) {
     use eframe::egui::{Color32, RichText};
 
@@ -1088,11 +1111,15 @@ fn render_context_card(
     ui.add_space(4.0);
 
     // Variant block — when the active path resolved to a
-    // catalog variant, render its description as a paragraph
-    // followed by a numbered procedure (one `ui.label` per
-    // step). The grid below skips its own "Description" row in
-    // that case to avoid duplication.
-    if let Some(v) = variant {
+    // catalog variant, render the source-origin chip followed
+    // by `description` as a paragraph and `retrieval.steps` as
+    // a numbered procedure. The grid below skips its own
+    // "Description" row in that case to avoid duplication.
+    if let Some((v, source)) = variant {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(&v.display_name).strong());
+            ui.label(catalog_source_chip(source));
+        });
         ui.label(&v.description);
         ui.add_space(4.0);
         for (idx, step) in v.retrieval.steps.iter().enumerate() {
