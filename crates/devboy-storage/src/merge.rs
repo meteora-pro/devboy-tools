@@ -34,13 +34,13 @@
 //! resolved view. `doctor` consumes them; the loader itself accepts
 //! the manifest. Cases:
 //!
-//! - [`MergeWarning::NoOpOverride`] — an `[overrides]` field is set to
+//! - [`MergeWarningKind::NoOpOverride`] — an `[overrides]` field is set to
 //!   the same value as the global. The override is harmless but adds
 //!   noise; suggest removal.
-//! - [`MergeWarning::OverrideForUndeclaredPath`] — an `[overrides."x"]`
+//! - [`MergeWarningKind::OverrideForUndeclaredPath`] — an `[overrides."x"]`
 //!   block exists for a path that is not in `required` / `optional`.
 //!   Possibly a typo or a leftover; the override is unused.
-//! - [`MergeWarning::ProjectLocalForUndeclaredPath`] — a
+//! - [`MergeWarningKind::ProjectLocalForUndeclaredPath`] — a
 //!   `[secret."x"]` block exists for a path that is not in
 //!   `required` / `optional`. Same shape as the previous warning;
 //!   metadata is registered but no caller depends on it.

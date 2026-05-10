@@ -22,7 +22,7 @@
 //!   marked **disabled**; `doctor` reports the failure count
 //!   and the user has to clear it.
 //! - **Env restriction** — the child inherits exactly the env
-//!   vars listed in [`plugin_manifest::PluginManifest::allowed_env_vars`]
+//!   vars listed in [`crate::plugin_manifest::PluginManifest::allowed_env_vars`]
 //!   and nothing else. `Command::env_clear()` is the gate; the
 //!   test crate's env-leak fixture proves it.
 //!

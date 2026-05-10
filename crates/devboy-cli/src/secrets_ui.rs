@@ -1470,7 +1470,7 @@ impl InventoryApp {
     /// the user's responses. Modeless `egui::Window`s — the
     /// user can compare against the rest of the GUI before
     /// deciding. Returned tuples are applied by
-    /// [`apply_trust_decisions`].
+    /// [`Self::apply_trust_decisions`].
     fn render_url_trust_prompts(&mut self, ctx: &eframe::egui::Context) -> Vec<UrlTrustDecision> {
         use eframe::egui::{Color32, RichText};
         let mut out: Vec<UrlTrustDecision> = Vec::new();
@@ -1588,7 +1588,7 @@ impl InventoryApp {
     }
 
     /// Apply user decisions from
-    /// [`render_url_trust_prompts`] to `known_hashes.toml`,
+    /// [`Self::render_url_trust_prompts`] to `known_hashes.toml`,
     /// then re-walk the catalog sources so accepted catalogs
     /// activate (or rejected ones drop from the pending list).
     fn apply_trust_decisions(&mut self, decisions: Vec<UrlTrustDecision>) {

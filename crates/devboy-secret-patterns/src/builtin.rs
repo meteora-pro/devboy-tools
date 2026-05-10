@@ -24,10 +24,7 @@ use std::sync::{LazyLock, OnceLock};
 
 use regex::Regex;
 
-use crate::{
-    HttpMethod, LivenessAuth, LivenessKind, LivenessSpec, PatternMetadata, RotationSpec,
-    SecretPattern, Severity,
-};
+use crate::{LivenessSpec, PatternMetadata, RotationSpec, SecretPattern, Severity};
 
 /// Adapter struct that turns a static data row into a
 /// [`SecretPattern`] implementation. Each [`BUILTINS`] entry is a

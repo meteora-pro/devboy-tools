@@ -124,7 +124,7 @@ pub struct RetrievalSpec {
 }
 
 /// HTTP probe definition. Mirrors
-/// [`devboy_secret_patterns::LivenessSpec`] but is JSON-shaped
+/// `devboy_secret_patterns::LivenessSpec` but is JSON-shaped
 /// so it can ride in the catalog file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

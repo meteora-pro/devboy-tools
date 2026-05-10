@@ -1673,10 +1673,12 @@ mod tests {
 
     #[test]
     fn is_secrets_migration_complete_reads_explicit_flag() {
-        let mut config = Config::default();
-        config.secrets = Some(SecretsConfig {
-            migration_complete: true,
-        });
+        let config = Config {
+            secrets: Some(SecretsConfig {
+                migration_complete: true,
+            }),
+            ..Config::default()
+        };
         assert!(config.is_secrets_migration_complete());
     }
 

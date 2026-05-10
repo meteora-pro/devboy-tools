@@ -14,7 +14,7 @@
 //!   field is `None`.
 //! - When `pattern_id` references an id that does not exist in the
 //!   catalogue, the entry is returned unchanged and an
-//!   [`InheritanceWarning::UnknownPatternId`] is recorded.
+//!   [`InheritanceWarningKind::UnknownPatternId`] is recorded.
 //!   Surfacing the missing id is `doctor`'s job (epic phase P7.3);
 //!   the resolver itself does not error.
 //!

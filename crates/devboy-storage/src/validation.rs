@@ -14,7 +14,7 @@
 //! 1. If the entry has an inline `format_regex`, compile and use it.
 //! 2. Otherwise, if the entry has a `pattern_id`, look it up in the
 //!    [`devboy_secret_patterns::Catalogue`] and use its
-//!    [`SecretPattern::format_regex`].
+//!    `SecretPattern::format_regex`.
 //! 3. Otherwise, return [`FormatCheck::NoRule`] — the caller chose
 //!    not to declare a format, so the validator stays silent.
 //!

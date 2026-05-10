@@ -11,7 +11,7 @@
 //!
 //! - **KDF.** Argon2id, version 1.3 (`Version::V0x13`), with
 //!   `m_cost`, `t_cost`, `p_cost` taken from the envelope's stored
-//!   parameters. The default ([`EnvelopeKdfParams::DEFAULT`]) is
+//!   parameters. The default (`EnvelopeKdfParams::DEFAULT`) is
 //!   `m=64 MiB, t=3, p=1` — the OWASP-recommended baseline cited in
 //!   ADR-023 §3.2 and tuned to ~250 ms on a 2024-class laptop.
 //! - **Wrap.** XChaCha20-Poly1305 from [`crate::aead`], with

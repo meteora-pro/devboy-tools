@@ -202,7 +202,7 @@ pub struct IndexEntry {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_scopes: Vec<String>,
 
-    /// Reference into the [`devboy-secret-patterns`] catalogue. When
+    /// Reference into the `devboy-secret-patterns` catalogue. When
     /// set, the catalogue supplies sensible defaults for `format_regex`,
     /// `retrieval_url`, `rotation_method`, and `default_expiry_days`
     /// — see ADR-020 §3 and epic phase P2.4 for the wiring.

@@ -314,7 +314,7 @@ struct EnvelopesFile {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EntryMeta {
-    /// ADR-020 path string. Validated against [`devboy_storage::SecretPath`]
+    /// ADR-020 path string. Validated against `devboy_storage::SecretPath`
     /// upstream (this layer keeps it as a free-form `String` to avoid
     /// the cross-crate dep — the storage layer is the gatekeeper).
     pub path: String,
@@ -551,7 +551,7 @@ fn write_length_prefixed_u64(writer: &mut impl Write, body: &[u8]) -> Result<(),
 
 /// Convenience for callers that need to embed binary data into the
 /// envelope/entry TOML — wrap and unwrap base64 with the same
-/// no-padding alphabet used by [`Envelope::wrapped_key`] etc.
+/// no-padding alphabet used by `Envelope::wrapped_key` etc.
 pub fn b64_encode(bytes: &[u8]) -> String {
     B64.encode(bytes)
 }
