@@ -90,6 +90,14 @@ pub enum CatalogCommands {
     /// and (for URL sources) cache state. Replaces the older
     /// `list` command for the URL-loaded catalog flow (P23).
     Status(CatalogStatusArgs),
+    /// Subscribe to a remote catalog by URL. Fetches once
+    /// through every P23 defence layer (HTTPS-only, SSRF
+    /// guard, size cap, content-type, schema version), prints
+    /// the body SHA256 + variant summary, asks for trust
+    /// confirmation (or accepts a `--pin` for unattended use),
+    /// then appends a `[[source]]` entry to
+    /// `~/.devboy/secrets/catalog/sources.toml`.
+    AddUrl(CatalogAddUrlArgs),
     /// Validate a single catalog JSON file. Loads the file,
     /// runs schema deserialisation (`deny_unknown_fields` is
     /// strict), then per-variant checks that the regex compiles
@@ -103,6 +111,37 @@ pub struct CatalogStatusArgs {
     /// Print as machine-readable JSON instead of a human table.
     #[arg(long)]
     pub json: bool,
+}
+
+/// Flags for `devboy secrets catalog add-url`.
+#[derive(Args, Debug)]
+pub struct CatalogAddUrlArgs {
+    /// HTTPS URL of the JSON catalog (e.g. a GitHub raw link).
+    /// `http://` is rejected outright by the fetcher's first
+    /// defence layer.
+    pub url: String,
+    /// Pin the body to this SHA256 (lower-case hex, no
+    /// `sha256:` prefix). Future fetches refuse any mismatch.
+    /// When omitted, the loader falls back to TOFU and
+    /// records the body's SHA in `known_hashes.toml` on
+    /// first fetch.
+    #[arg(long, value_name = "HEX")]
+    pub pin: Option<String>,
+    /// How long the cached body stays fresh before the loader
+    /// re-fetches. Defaults to 24 hours.
+    #[arg(long, default_value_t = 86_400)]
+    pub refresh_seconds: u64,
+    /// Also flip `enable_url_catalogs = true` in the same
+    /// `sources.toml`. Without this flag the entry is added
+    /// but the master kill-switch remains off — the URL is
+    /// not loaded until the user explicitly enables it.
+    #[arg(long)]
+    pub enable: bool,
+    /// Skip the interactive trust-confirm prompt. Implied
+    /// when `--pin` is set (the pin already locks the body).
+    /// Required for non-tty / CI invocations.
+    #[arg(long)]
+    pub yes: bool,
 }
 
 /// Flags for `devboy secrets catalog validate`.
@@ -262,6 +301,7 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
         SecretsCommands::Catalog { command } => match command {
             CatalogCommands::List => catalog_list(),
             CatalogCommands::Status(args) => catalog_status(args),
+            CatalogCommands::AddUrl(args) => catalog_add_url(args),
             CatalogCommands::Validate(args) => catalog_validate(args),
         },
         SecretsCommands::Setup(args) => crate::secrets_setup::handle_cli(args),
@@ -481,6 +521,123 @@ fn catalog_status(args: CatalogStatusArgs) -> Result<()> {
         for e in &errors {
             eprintln!("  - {e}");
         }
+    }
+    Ok(())
+}
+
+/// Subscribe to a remote catalog by URL. Walks every P23
+/// defence layer once (HTTPS / SSRF / size / content-type /
+/// schema / TOFU or pin), prints what it found, asks for
+/// trust if the user did not pre-pin, then writes a
+/// `[[source]]` entry into `~/.devboy/secrets/catalog/sources.toml`.
+fn catalog_add_url(args: CatalogAddUrlArgs) -> Result<()> {
+    use devboy_token_catalog::{
+        CatalogSourcesConfig, FirstFetchPolicy, UrlSource, default_catalog_audit_log_path,
+        default_catalog_cache_dir, default_known_hashes_path, default_sources_toml_path,
+        fetch_url_source, parse_sources_toml, sha256_hex,
+    };
+    use std::fs;
+    use std::io::IsTerminal;
+
+    if !args.url.starts_with("https://") {
+        anyhow::bail!("URL must start with `https://` (got `{}`)", args.url);
+    }
+
+    let pin_set = args.pin.is_some();
+    let source = UrlSource {
+        url: args.url.clone(),
+        sha256: args.pin.clone(),
+        refresh_seconds: args.refresh_seconds,
+    };
+
+    let known_hashes_path = default_known_hashes_path();
+    let cache_dir = default_catalog_cache_dir();
+    let audit_log_path = default_catalog_audit_log_path();
+
+    println!("fetching {} …", source.url);
+    // The CLI is unattended for the fetch step itself —
+    // FirstFetchPolicy::AutoRecord is fine because the
+    // caller is the one running this command and we surface
+    // the SHA back to them before persisting sources.toml.
+    let catalog = fetch_url_source(
+        &source,
+        known_hashes_path.as_deref(),
+        cache_dir.as_deref(),
+        FirstFetchPolicy::AutoRecord,
+        audit_log_path.as_deref(),
+    )
+    .context("URL catalog fetch failed")?;
+
+    // Re-hash the body for the human-facing print so the
+    // user sees the same SHA the loader recorded.
+    let body = serde_json::to_vec(&catalog).context("could not re-encode catalog for SHA print")?;
+    let sha = sha256_hex(&body);
+
+    println!();
+    println!("provider:   {}", catalog.provider_id);
+    println!("display:    {}", catalog.display_name);
+    println!("variants:   {}", catalog.variants.len());
+    println!("patterns:   {}", catalog.env_var_patterns.len());
+    println!("skip rules: {}", catalog.env_var_skip.len());
+    println!("body sha256 (re-hashed locally): {sha}");
+    println!();
+
+    if !pin_set && !args.yes {
+        if !std::io::stdin().is_terminal() {
+            anyhow::bail!(
+                "no --pin and no --yes; refusing to record an unpinned URL source from a non-tty \
+                 invocation. Re-run with --yes to accept TOFU, or with --pin <sha256> to lock the \
+                 body."
+            );
+        }
+        let prompt = format!(
+            "Trust catalog `{}` from {} ? [y/N] ",
+            catalog.provider_id, source.url
+        );
+        let answer: bool = dialoguer::Confirm::new()
+            .with_prompt(prompt)
+            .default(false)
+            .interact()
+            .unwrap_or(false);
+        if !answer {
+            anyhow::bail!("user declined trust prompt — sources.toml unchanged");
+        }
+    }
+
+    let sources_path = default_sources_toml_path()
+        .ok_or_else(|| anyhow::anyhow!("could not resolve default sources.toml path"))?;
+    if let Some(parent) = sources_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("could not create catalog dir {}", parent.display()))?;
+    }
+
+    let mut cfg: CatalogSourcesConfig = if sources_path.exists() {
+        let body = fs::read_to_string(&sources_path)
+            .with_context(|| format!("could not read {}", sources_path.display()))?;
+        parse_sources_toml(&body)
+            .with_context(|| format!("malformed {}", sources_path.display()))?
+    } else {
+        CatalogSourcesConfig::default()
+    };
+
+    // Replace any existing entry with the same URL (idempotent
+    // re-add) — otherwise append. URL is the natural key.
+    cfg.sources.retain(|s| s.url != source.url);
+    cfg.sources.push(source.clone());
+    if args.enable {
+        cfg.enable_url_catalogs = true;
+    }
+
+    let body = toml::to_string_pretty(&cfg).context("could not serialise sources.toml")?;
+    fs::write(&sources_path, body)
+        .with_context(|| format!("could not write {}", sources_path.display()))?;
+
+    println!("wrote {}", sources_path.display());
+    if !cfg.enable_url_catalogs {
+        println!(
+            "note: enable_url_catalogs is still `false` — pass --enable to flip the master \
+             switch, or edit sources.toml by hand."
+        );
     }
     Ok(())
 }
