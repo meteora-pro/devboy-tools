@@ -40,7 +40,7 @@ pub struct Builtin {
     pub severity: Severity,
     /// Regex source — compiled lazily into [`Builtin::regex`].
     pub regex_src: &'static str,
-    /// Lazily-compiled regex. Use [`Builtin::compiled_regex`] in
+    /// Lazily-compiled regex. Use `Builtin::compiled_regex` in
     /// preference to touching this field directly.
     pub regex: OnceLock<Regex>,
     /// Optional descriptive metadata (provider id, retrieval URL,

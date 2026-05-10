@@ -717,12 +717,13 @@ diff --git a/config.yaml b/config.yaml
     ///
     /// - `git` not on PATH (some arm runners ship without it).
     /// - Running under `cargo-llvm-cov` (sets `LLVM_PROFILE_FILE`).
-    ///   The instrumentation runner can pass the
-    ///   `git --version` probe yet still spawn `git init` with
-    ///   `NotFound`, suggesting the cov harness wraps `Command`
-    ///   in a way that breaks subcommand spawn. The behaviour is
-    ///   environment-only; the test stays exercised on every
-    ///   other CI target.
+    /// - `git --version` succeeds but `git init` in a
+    ///   throwaway tempdir doesn't — happens on arm runners
+    ///   that ship a git shim with limited subcommand
+    ///   coverage.
+    ///
+    /// The test stays exercised on macOS / ubuntu-latest where
+    /// every probe passes.
     #[cfg(unix)]
     fn skip_git_dependent_test() -> bool {
         if std::env::var_os("LLVM_PROFILE_FILE").is_some() {
@@ -738,6 +739,23 @@ diff --git a/config.yaml b/config.yaml
             eprintln!("skipping: `git` not on PATH (likely an arm-runner sandbox)");
             return true;
         }
-        false
+        // Real-spawn probe — try `git init` in a fresh tempdir.
+        // If that returns `NotFound` even after `--version`
+        // worked, we're on a host with a partial git shim.
+        let probe_dir = match tempfile::TempDir::new() {
+            Ok(d) => d,
+            Err(_) => return false,
+        };
+        match Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(probe_dir.path())
+            .status()
+        {
+            Ok(status) if status.success() => false,
+            _ => {
+                eprintln!("skipping: `git init` returned NotFound / non-zero in probe dir");
+                true
+            }
+        }
     }
 }

@@ -68,7 +68,7 @@ pub struct UserPatternFile {
 #[serde(deny_unknown_fields)]
 pub struct UserPatternEntry {
     /// Stable identifier (lowercase kebab-case, see
-    /// [`is_kebab_id`]).
+    /// `is_kebab_id`).
     pub id: String,
     /// Human-readable name shown in the metadata card and scan
     /// reports.
@@ -118,7 +118,7 @@ pub struct UserPattern {
 impl UserPattern {
     /// Source path of the file the pattern was loaded from. Currently
     /// not stored; kept on the entry as a future hook for surfacing
-    /// "this user pattern was defined at <path>" in `doctor` output.
+    /// "this user pattern was defined at `<path>`" in `doctor` output.
     pub fn id(&self) -> &str {
         &self.id
     }
