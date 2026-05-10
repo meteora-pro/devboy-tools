@@ -1313,6 +1313,71 @@ pub mod devboy_core::remote_config
 pub async fn devboy_core::remote_config::fetch_and_merge(local_config: devboy_core::config::Config, token_from_keychain: core::option::Option<&str>) -> devboy_core::config::Config
 pub fn devboy_core::remote_config::redact_url_for_display(raw: &str) -> alloc::string::String
 pub fn devboy_core::remote_config::resolve_url(local_config: &devboy_core::config::Config) -> core::option::Option<alloc::string::String>
+pub mod devboy_core::secret_approval
+pub enum devboy_core::secret_approval::ApprovalGate
+pub devboy_core::secret_approval::ApprovalGate::AlreadyApproved
+pub devboy_core::secret_approval::ApprovalGate::NotRequired
+pub devboy_core::secret_approval::ApprovalGate::PromptRequired
+impl core::clone::Clone for devboy_core::secret_approval::ApprovalGate
+pub fn devboy_core::secret_approval::ApprovalGate::clone(&self) -> devboy_core::secret_approval::ApprovalGate
+impl core::cmp::Eq for devboy_core::secret_approval::ApprovalGate
+impl core::cmp::PartialEq for devboy_core::secret_approval::ApprovalGate
+pub fn devboy_core::secret_approval::ApprovalGate::eq(&self, other: &devboy_core::secret_approval::ApprovalGate) -> bool
+impl core::fmt::Debug for devboy_core::secret_approval::ApprovalGate
+pub fn devboy_core::secret_approval::ApprovalGate::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_core::secret_approval::ApprovalGate
+impl core::marker::StructuralPartialEq for devboy_core::secret_approval::ApprovalGate
+impl core::marker::Freeze for devboy_core::secret_approval::ApprovalGate
+impl core::marker::Send for devboy_core::secret_approval::ApprovalGate
+impl core::marker::Sync for devboy_core::secret_approval::ApprovalGate
+impl core::marker::Unpin for devboy_core::secret_approval::ApprovalGate
+impl core::marker::UnsafeUnpin for devboy_core::secret_approval::ApprovalGate
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::secret_approval::ApprovalGate
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::secret_approval::ApprovalGate
+pub enum devboy_core::secret_approval::ApproveOnUsePolicy
+pub devboy_core::secret_approval::ApproveOnUsePolicy::Never
+pub devboy_core::secret_approval::ApproveOnUsePolicy::PerCall
+pub devboy_core::secret_approval::ApproveOnUsePolicy::Session
+impl core::clone::Clone for devboy_core::secret_approval::ApproveOnUsePolicy
+pub fn devboy_core::secret_approval::ApproveOnUsePolicy::clone(&self) -> devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::cmp::Eq for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::cmp::PartialEq for devboy_core::secret_approval::ApproveOnUsePolicy
+pub fn devboy_core::secret_approval::ApproveOnUsePolicy::eq(&self, other: &devboy_core::secret_approval::ApproveOnUsePolicy) -> bool
+impl core::default::Default for devboy_core::secret_approval::ApproveOnUsePolicy
+pub fn devboy_core::secret_approval::ApproveOnUsePolicy::default() -> devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::fmt::Debug for devboy_core::secret_approval::ApproveOnUsePolicy
+pub fn devboy_core::secret_approval::ApproveOnUsePolicy::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::marker::StructuralPartialEq for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::marker::Freeze for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::marker::Send for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::marker::Sync for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::marker::Unpin for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::marker::UnsafeUnpin for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::secret_approval::ApproveOnUsePolicy
+pub struct devboy_core::secret_approval::SessionApprovalCache
+impl devboy_core::secret_approval::SessionApprovalCache
+pub fn devboy_core::secret_approval::SessionApprovalCache::clear(&self)
+pub fn devboy_core::secret_approval::SessionApprovalCache::evaluate(&self, path: &str, policy: devboy_core::secret_approval::ApproveOnUsePolicy) -> devboy_core::secret_approval::ApprovalGate
+pub fn devboy_core::secret_approval::SessionApprovalCache::forget(&self, path: &str) -> bool
+pub fn devboy_core::secret_approval::SessionApprovalCache::is_approved(&self, path: &str) -> bool
+pub fn devboy_core::secret_approval::SessionApprovalCache::is_empty(&self) -> bool
+pub fn devboy_core::secret_approval::SessionApprovalCache::len(&self) -> usize
+pub fn devboy_core::secret_approval::SessionApprovalCache::new() -> Self
+pub fn devboy_core::secret_approval::SessionApprovalCache::record_session(&self, path: impl core::convert::Into<alloc::string::String>, ttl: core::time::Duration)
+pub fn devboy_core::secret_approval::SessionApprovalCache::sweep_expired(&self) -> usize
+impl core::default::Default for devboy_core::secret_approval::SessionApprovalCache
+pub fn devboy_core::secret_approval::SessionApprovalCache::default() -> devboy_core::secret_approval::SessionApprovalCache
+impl core::fmt::Debug for devboy_core::secret_approval::SessionApprovalCache
+pub fn devboy_core::secret_approval::SessionApprovalCache::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl !core::marker::Freeze for devboy_core::secret_approval::SessionApprovalCache
+impl core::marker::Send for devboy_core::secret_approval::SessionApprovalCache
+impl core::marker::Sync for devboy_core::secret_approval::SessionApprovalCache
+impl core::marker::Unpin for devboy_core::secret_approval::SessionApprovalCache
+impl core::marker::UnsafeUnpin for devboy_core::secret_approval::SessionApprovalCache
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::secret_approval::SessionApprovalCache
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::secret_approval::SessionApprovalCache
 pub mod devboy_core::tool_category
 pub enum devboy_core::tool_category::ToolCategory
 pub devboy_core::tool_category::ToolCategory::Epics

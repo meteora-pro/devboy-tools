@@ -746,11 +746,14 @@ impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_provision::
 impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_provision::ProvisionMode
 pub enum devboy_mcp::secrets_provision::ProvisionStatus
 pub devboy_mcp::secrets_provision::ProvisionStatus::Cancelled
+pub devboy_mcp::secrets_provision::ProvisionStatus::Denied
 pub devboy_mcp::secrets_provision::ProvisionStatus::Expired
 pub devboy_mcp::secrets_provision::ProvisionStatus::Failed
 pub devboy_mcp::secrets_provision::ProvisionStatus::Failed::reason: alloc::string::String
 pub devboy_mcp::secrets_provision::ProvisionStatus::Ok
+pub devboy_mcp::secrets_provision::ProvisionStatus::Once
 pub devboy_mcp::secrets_provision::ProvisionStatus::Pending
+pub devboy_mcp::secrets_provision::ProvisionStatus::Session
 impl devboy_mcp::secrets_provision::ProvisionStatus
 pub fn devboy_mcp::secrets_provision::ProvisionStatus::label(&self) -> &str
 impl core::clone::Clone for devboy_mcp::secrets_provision::ProvisionStatus
@@ -777,6 +780,7 @@ pub devboy_mcp::secrets_provision::RequestKind::MetadataProposal
 pub devboy_mcp::secrets_provision::RequestKind::NewPathProposal
 pub devboy_mcp::secrets_provision::RequestKind::Provision
 pub devboy_mcp::secrets_provision::RequestKind::Rotation
+pub devboy_mcp::secrets_provision::RequestKind::UseApproval
 impl devboy_mcp::secrets_provision::RequestKind
 pub fn devboy_mcp::secrets_provision::RequestKind::label(self) -> &'static str
 impl core::clone::Clone for devboy_mcp::secrets_provision::RequestKind
@@ -808,6 +812,7 @@ pub fn devboy_mcp::secrets_provision::FakeUiLauncher::fail_next_with(&self, reas
 pub fn devboy_mcp::secrets_provision::FakeUiLauncher::metadata_calls(&self) -> alloc::vec::Vec<(devboy_mcp::secrets_provision::RequestId, devboy_storage::secret_path::SecretPath, devboy_mcp::secrets_provision::ProposedMetadata)>
 pub fn devboy_mcp::secrets_provision::FakeUiLauncher::new() -> Self
 pub fn devboy_mcp::secrets_provision::FakeUiLauncher::new_path_calls(&self) -> alloc::vec::Vec<(devboy_mcp::secrets_provision::RequestId, devboy_storage::secret_path::SecretPath, devboy_mcp::secrets_provision::ProposedMetadata)>
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::use_approval_calls(&self) -> alloc::vec::Vec<(devboy_mcp::secrets_provision::RequestId, devboy_storage::secret_path::SecretPath, alloc::string::String)>
 impl core::default::Default for devboy_mcp::secrets_provision::FakeUiLauncher
 pub fn devboy_mcp::secrets_provision::FakeUiLauncher::default() -> devboy_mcp::secrets_provision::FakeUiLauncher
 impl core::fmt::Debug for devboy_mcp::secrets_provision::FakeUiLauncher
@@ -816,6 +821,7 @@ impl devboy_mcp::secrets_provision::UiDialogLauncher for devboy_mcp::secrets_pro
 pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open(&self, request_id: &devboy_mcp::secrets_provision::RequestId, path: &devboy_storage::secret_path::SecretPath, mode: devboy_mcp::secrets_provision::ProvisionMode) -> core::result::Result<(), alloc::string::String>
 pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open_metadata_proposal(&self, request_id: &devboy_mcp::secrets_provision::RequestId, path: &devboy_storage::secret_path::SecretPath, proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
 pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open_new_path_proposal(&self, request_id: &devboy_mcp::secrets_provision::RequestId, suggested_path: &devboy_storage::secret_path::SecretPath, proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open_use_approval(&self, request_id: &devboy_mcp::secrets_provision::RequestId, path: &devboy_storage::secret_path::SecretPath, reason: &str) -> core::result::Result<(), alloc::string::String>
 impl !core::marker::Freeze for devboy_mcp::secrets_provision::FakeUiLauncher
 impl core::marker::Send for devboy_mcp::secrets_provision::FakeUiLauncher
 impl core::marker::Sync for devboy_mcp::secrets_provision::FakeUiLauncher
@@ -832,6 +838,7 @@ impl devboy_mcp::secrets_provision::UiDialogLauncher for devboy_mcp::secrets_pro
 pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _mode: devboy_mcp::secrets_provision::ProvisionMode) -> core::result::Result<(), alloc::string::String>
 pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open_metadata_proposal(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
 pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open_new_path_proposal(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _suggested_path: &devboy_storage::secret_path::SecretPath, _proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open_use_approval(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _reason: &str) -> core::result::Result<(), alloc::string::String>
 impl core::marker::Freeze for devboy_mcp::secrets_provision::NoopUiLauncher
 impl core::marker::Send for devboy_mcp::secrets_provision::NoopUiLauncher
 impl core::marker::Sync for devboy_mcp::secrets_provision::NoopUiLauncher
@@ -873,6 +880,7 @@ pub fn devboy_mcp::secrets_provision::ProvisionRegistry::poll_status(&self, id: 
 pub fn devboy_mcp::secrets_provision::ProvisionRegistry::request_metadata_proposal(&self, path: devboy_storage::secret_path::SecretPath, proposed: devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<devboy_mcp::secrets_provision::RequestId, alloc::string::String>
 pub fn devboy_mcp::secrets_provision::ProvisionRegistry::request_new_path_proposal(&self, suggested_path: devboy_storage::secret_path::SecretPath, proposed: devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<devboy_mcp::secrets_provision::RequestId, alloc::string::String>
 pub fn devboy_mcp::secrets_provision::ProvisionRegistry::request_provision(&self, path: devboy_storage::secret_path::SecretPath, mode: devboy_mcp::secrets_provision::ProvisionMode) -> core::result::Result<devboy_mcp::secrets_provision::RequestId, alloc::string::String>
+pub fn devboy_mcp::secrets_provision::ProvisionRegistry::request_use_approval(&self, path: devboy_storage::secret_path::SecretPath, reason: alloc::string::String, ttl_seconds: core::option::Option<u64>) -> core::result::Result<devboy_mcp::secrets_provision::RequestId, alloc::string::String>
 pub fn devboy_mcp::secrets_provision::ProvisionRegistry::resolve(&self, id: &devboy_mcp::secrets_provision::RequestId, status: devboy_mcp::secrets_provision::ProvisionStatus)
 pub fn devboy_mcp::secrets_provision::ProvisionRegistry::sweep_settled(&self, older_than: core::time::Duration) -> usize
 pub fn devboy_mcp::secrets_provision::ProvisionRegistry::with_launcher(launcher: alloc::sync::Arc<dyn devboy_mcp::secrets_provision::UiDialogLauncher>) -> Self
@@ -965,14 +973,17 @@ pub trait devboy_mcp::secrets_provision::UiDialogLauncher: core::marker::Send + 
 pub fn devboy_mcp::secrets_provision::UiDialogLauncher::open(&self, request_id: &devboy_mcp::secrets_provision::RequestId, path: &devboy_storage::secret_path::SecretPath, mode: devboy_mcp::secrets_provision::ProvisionMode) -> core::result::Result<(), alloc::string::String>
 pub fn devboy_mcp::secrets_provision::UiDialogLauncher::open_metadata_proposal(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
 pub fn devboy_mcp::secrets_provision::UiDialogLauncher::open_new_path_proposal(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _suggested_path: &devboy_storage::secret_path::SecretPath, _proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::UiDialogLauncher::open_use_approval(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _reason: &str) -> core::result::Result<(), alloc::string::String>
 impl devboy_mcp::secrets_provision::UiDialogLauncher for devboy_mcp::secrets_provision::FakeUiLauncher
 pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open(&self, request_id: &devboy_mcp::secrets_provision::RequestId, path: &devboy_storage::secret_path::SecretPath, mode: devboy_mcp::secrets_provision::ProvisionMode) -> core::result::Result<(), alloc::string::String>
 pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open_metadata_proposal(&self, request_id: &devboy_mcp::secrets_provision::RequestId, path: &devboy_storage::secret_path::SecretPath, proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
 pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open_new_path_proposal(&self, request_id: &devboy_mcp::secrets_provision::RequestId, suggested_path: &devboy_storage::secret_path::SecretPath, proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open_use_approval(&self, request_id: &devboy_mcp::secrets_provision::RequestId, path: &devboy_storage::secret_path::SecretPath, reason: &str) -> core::result::Result<(), alloc::string::String>
 impl devboy_mcp::secrets_provision::UiDialogLauncher for devboy_mcp::secrets_provision::NoopUiLauncher
 pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _mode: devboy_mcp::secrets_provision::ProvisionMode) -> core::result::Result<(), alloc::string::String>
 pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open_metadata_proposal(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
 pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open_new_path_proposal(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _suggested_path: &devboy_storage::secret_path::SecretPath, _proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open_use_approval(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _reason: &str) -> core::result::Result<(), alloc::string::String>
 pub mod devboy_mcp::secrets_tool
 pub enum devboy_mcp::secrets_tool::SecretsStatus
 pub devboy_mcp::secrets_tool::SecretsStatus::Expired

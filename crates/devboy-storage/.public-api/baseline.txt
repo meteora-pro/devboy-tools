@@ -148,6 +148,34 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_storage::expiry::ExpiryWarn
 pub const devboy_storage::expiry::WARNING_WINDOW_DAYS: i64
 pub fn devboy_storage::expiry::check_rotation_reminders(index: &devboy_storage::index::GlobalIndex, today: chrono::naive::date::NaiveDate) -> alloc::vec::Vec<devboy_storage::expiry::ExpiryWarning>
 pub mod devboy_storage::index
+pub enum devboy_storage::index::ApproveOnUse
+pub devboy_storage::index::ApproveOnUse::Never
+pub devboy_storage::index::ApproveOnUse::PerCall
+pub devboy_storage::index::ApproveOnUse::Session
+impl core::clone::Clone for devboy_storage::index::ApproveOnUse
+pub fn devboy_storage::index::ApproveOnUse::clone(&self) -> devboy_storage::index::ApproveOnUse
+impl core::cmp::Eq for devboy_storage::index::ApproveOnUse
+impl core::cmp::PartialEq for devboy_storage::index::ApproveOnUse
+pub fn devboy_storage::index::ApproveOnUse::eq(&self, other: &devboy_storage::index::ApproveOnUse) -> bool
+impl core::convert::From<devboy_storage::index::ApproveOnUse> for devboy_core::secret_approval::ApproveOnUsePolicy
+pub fn devboy_core::secret_approval::ApproveOnUsePolicy::from(v: devboy_storage::index::ApproveOnUse) -> Self
+impl core::default::Default for devboy_storage::index::ApproveOnUse
+pub fn devboy_storage::index::ApproveOnUse::default() -> devboy_storage::index::ApproveOnUse
+impl core::fmt::Debug for devboy_storage::index::ApproveOnUse
+pub fn devboy_storage::index::ApproveOnUse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_storage::index::ApproveOnUse
+impl core::marker::StructuralPartialEq for devboy_storage::index::ApproveOnUse
+impl serde_core::ser::Serialize for devboy_storage::index::ApproveOnUse
+pub fn devboy_storage::index::ApproveOnUse::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_storage::index::ApproveOnUse
+pub fn devboy_storage::index::ApproveOnUse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_storage::index::ApproveOnUse
+impl core::marker::Send for devboy_storage::index::ApproveOnUse
+impl core::marker::Sync for devboy_storage::index::ApproveOnUse
+impl core::marker::Unpin for devboy_storage::index::ApproveOnUse
+impl core::marker::UnsafeUnpin for devboy_storage::index::ApproveOnUse
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::index::ApproveOnUse
+impl core::panic::unwind_safe::UnwindSafe for devboy_storage::index::ApproveOnUse
 pub enum devboy_storage::index::Gate
 pub devboy_storage::index::Gate::Auto
 pub devboy_storage::index::Gate::Confirm
@@ -260,6 +288,7 @@ impl core::marker::UnsafeUnpin for devboy_storage::index::GlobalIndex
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::index::GlobalIndex
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::index::GlobalIndex
 pub struct devboy_storage::index::IndexEntry
+pub devboy_storage::index::IndexEntry::approve_on_use: core::option::Option<devboy_storage::index::ApproveOnUse>
 pub devboy_storage::index::IndexEntry::cache_ttl_seconds_max: core::option::Option<u64>
 pub devboy_storage::index::IndexEntry::default_gate: core::option::Option<devboy_storage::index::Gate>
 pub devboy_storage::index::IndexEntry::description: core::option::Option<alloc::string::String>
@@ -343,6 +372,7 @@ impl core::marker::UnsafeUnpin for devboy_storage::manifest::PathRole
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::manifest::PathRole
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::manifest::PathRole
 pub struct devboy_storage::manifest::OverrideEntry
+pub devboy_storage::manifest::OverrideEntry::approve_on_use: core::option::Option<devboy_storage::index::ApproveOnUse>
 pub devboy_storage::manifest::OverrideEntry::description: core::option::Option<alloc::string::String>
 pub devboy_storage::manifest::OverrideEntry::gate: core::option::Option<devboy_storage::index::Gate>
 pub devboy_storage::manifest::OverrideEntry::rotate_every_days: core::option::Option<u32>
@@ -446,6 +476,7 @@ impl core::marker::UnsafeUnpin for devboy_storage::merge::MergeWarningKind
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::merge::MergeWarningKind
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::merge::MergeWarningKind
 pub enum devboy_storage::merge::OverrideField
+pub devboy_storage::merge::OverrideField::ApproveOnUse
 pub devboy_storage::merge::OverrideField::Description
 pub devboy_storage::merge::OverrideField::Gate
 pub devboy_storage::merge::OverrideField::RotateEveryDays
@@ -2131,6 +2162,7 @@ impl core::marker::UnsafeUnpin for devboy_storage::merge::MergeWarningKind
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::merge::MergeWarningKind
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::merge::MergeWarningKind
 pub enum devboy_storage::OverrideField
+pub devboy_storage::OverrideField::ApproveOnUse
 pub devboy_storage::OverrideField::Description
 pub devboy_storage::OverrideField::Gate
 pub devboy_storage::OverrideField::RotateEveryDays
@@ -2716,6 +2748,7 @@ impl core::marker::UnsafeUnpin for devboy_storage::index::GlobalIndex
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::index::GlobalIndex
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::index::GlobalIndex
 pub struct devboy_storage::IndexEntry
+pub devboy_storage::IndexEntry::approve_on_use: core::option::Option<devboy_storage::index::ApproveOnUse>
 pub devboy_storage::IndexEntry::cache_ttl_seconds_max: core::option::Option<u64>
 pub devboy_storage::IndexEntry::default_gate: core::option::Option<devboy_storage::index::Gate>
 pub devboy_storage::IndexEntry::description: core::option::Option<alloc::string::String>
@@ -2869,6 +2902,7 @@ impl core::marker::UnsafeUnpin for devboy_storage::merge::MergeWarning
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::merge::MergeWarning
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::merge::MergeWarning
 pub struct devboy_storage::OverrideEntry
+pub devboy_storage::OverrideEntry::approve_on_use: core::option::Option<devboy_storage::index::ApproveOnUse>
 pub devboy_storage::OverrideEntry::description: core::option::Option<alloc::string::String>
 pub devboy_storage::OverrideEntry::gate: core::option::Option<devboy_storage::index::Gate>
 pub devboy_storage::OverrideEntry::rotate_every_days: core::option::Option<u32>
