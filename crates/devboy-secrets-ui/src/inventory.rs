@@ -114,6 +114,14 @@ pub struct InventoryRow {
     /// First segment of the path (`team` / `personal` /
     /// `client-acme` / …).
     pub scope: String,
+    /// Catalog source override badge for the GUI (P22.2). `None`
+    /// when the path resolves to a bundled catalog (or to no
+    /// catalog at all). When `Some`, the GUI renders a tiny chip
+    /// next to the path so a team-pinned override is visible at
+    /// a glance. Free-form text — typical values: `"user"`,
+    /// `"project"`, `"url:host.example"`. The renderer maps the
+    /// prefix (`user` / `project` / `url`) to a colour.
+    pub catalog_override: Option<String>,
 }
 
 /// Daemon's current state — feeds the inventory header chip.
@@ -589,6 +597,7 @@ mod tests {
             expires_at: expires_at.map(str::to_owned),
             provider: provider.map(str::to_owned),
             scope,
+            catalog_override: None,
         }
     }
 

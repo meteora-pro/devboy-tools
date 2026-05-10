@@ -108,6 +108,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut EditorState) -> EditorFrameResult {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)] // helpers stay below for readability
 mod tests {
     use super::*;
     use crate::metadata_editor::{EditorState, MetadataDraft};

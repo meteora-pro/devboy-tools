@@ -366,8 +366,10 @@ struct InventoryApp {
 impl InventoryApp {
     fn new_with_initial(initial_path: Option<String>) -> Self {
         let backend = StorageBackend::detect_from_env();
-        let (rows, metadata_by_path) = load_inventory_or_empty(&backend);
+        // Catalogs first — `load_inventory_or_empty` needs them
+        // to populate the per-row `catalog_override` chip (P22.2).
         let (catalogs, catalog_errors) = load_token_catalogs();
+        let (rows, metadata_by_path) = load_inventory_or_empty(&backend, &catalogs);
         let (pending_url_confirms, pending_url_warnings) =
             partition_url_trust_errors(&catalog_errors);
         let mut app = Self {
@@ -406,7 +408,7 @@ impl InventoryApp {
     }
 
     fn reload(&mut self) {
-        let (rows, metadata) = load_inventory_or_empty(&self.backend);
+        let (rows, metadata) = load_inventory_or_empty(&self.backend, &self.catalogs);
         self.state.replace_rows(rows);
         self.metadata_by_path = metadata;
     }
@@ -626,8 +628,14 @@ fn load_token_catalogs() -> (
 /// return inventory rows ready for `InventoryState::replace_rows`
 /// plus a `path → IndexEntry` map the dialog uses to populate
 /// its metadata fields.
+///
+/// `catalogs` feeds the per-row `catalog_override` chip (P22.2):
+/// when a row's middle path segment matches a catalog whose
+/// source is *not* `Bundled`, the chip is set so the GUI can
+/// render a coloured tag inline.
 fn load_inventory_or_empty(
     backend: &StorageBackend,
+    catalogs: &[devboy_token_catalog::LoadedCatalog],
 ) -> (
     Vec<devboy_secrets_ui::InventoryRow>,
     std::collections::HashMap<String, devboy_storage::IndexEntry>,
@@ -654,12 +662,13 @@ fn load_inventory_or_empty(
         } else {
             devboy_secrets_ui::RowStatus::Missing
         };
+        let provider_segment = resolved.path.as_str().split('/').nth(1);
         rows.push(devboy_secrets_ui::InventoryRow {
             path: path_str.clone(),
             status,
             routed_source: provisioned.then(|| backend.source_label().to_owned()),
             expires_at: resolved.metadata.expires_at.clone(),
-            provider: resolved.path.as_str().split('/').nth(1).map(str::to_owned),
+            provider: provider_segment.map(str::to_owned),
             scope: resolved
                 .path
                 .as_str()
@@ -667,10 +676,37 @@ fn load_inventory_or_empty(
                 .next()
                 .unwrap_or("")
                 .to_owned(),
+            catalog_override: provider_segment.and_then(|p| catalog_override_for(catalogs, p)),
         });
         metadata.insert(path_str, resolved.metadata.clone());
     }
     (rows, metadata)
+}
+
+/// Determine the inline catalog-override badge for a row whose
+/// middle path segment is `provider_id`. Returns `None` for
+/// bundled sources (the common case — no chip needed) and for
+/// paths whose provider isn't in any loaded catalog.
+fn catalog_override_for(
+    catalogs: &[devboy_token_catalog::LoadedCatalog],
+    provider_id: &str,
+) -> Option<String> {
+    use devboy_token_catalog::CatalogSource;
+    let loaded = catalogs
+        .iter()
+        .find(|l| l.catalog.provider_id == provider_id)?;
+    match &loaded.source {
+        CatalogSource::Bundled => None,
+        CatalogSource::User => Some("user".to_owned()),
+        CatalogSource::Project => Some("project".to_owned()),
+        CatalogSource::Url { url, .. } => {
+            let host = reqwest::Url::parse(url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned))
+                .unwrap_or_else(|| "url".to_owned());
+            Some(format!("url:{host}"))
+        }
+    }
 }
 
 impl eframe::App for InventoryApp {

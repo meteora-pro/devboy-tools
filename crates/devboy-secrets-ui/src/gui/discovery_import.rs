@@ -104,6 +104,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut ImportState) -> ImportFrameResult {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)] // helpers stay below for readability
 mod tests {
     use super::*;
     use crate::discovery_import::{DiscoveryItem, ImportState};

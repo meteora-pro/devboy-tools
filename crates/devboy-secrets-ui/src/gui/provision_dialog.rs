@@ -99,6 +99,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut DialogState) -> DialogFrameResult {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)] // helpers stay below for readability
 mod tests {
     use super::*;
     use crate::provision_dialog::{DialogMetadata, DialogState};

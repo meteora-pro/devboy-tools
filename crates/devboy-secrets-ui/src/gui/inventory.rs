@@ -57,6 +57,7 @@ fn render_table(ui: &mut egui::Ui, state: &mut InventoryState) {
                 r.expires_at.clone(),
                 r.provider.clone(),
                 r.scope.clone(),
+                r.catalog_override.clone(),
             )
         })
         .collect();
@@ -77,14 +78,23 @@ fn render_table(ui: &mut egui::Ui, state: &mut InventoryState) {
                     ui.end_row();
 
                     let selected = state.selected();
-                    for (i, (path, status, routed, expires, provider, scope)) in
+                    for (i, (path, status, routed, expires, provider, scope, catalog_override)) in
                         rows.iter().enumerate()
                     {
                         let row_selected = i == selected;
-                        let label = ui.selectable_label(row_selected, path.as_str());
-                        if label.clicked() {
-                            state.set_selected(i);
-                        }
+                        // Path cell: selectable label + optional
+                        // catalog-override chip rendered inline so
+                        // a team-pinned override is visible without
+                        // opening the row's dialog (P22.2).
+                        ui.horizontal(|ui| {
+                            let label = ui.selectable_label(row_selected, path.as_str());
+                            if label.clicked() {
+                                state.set_selected(i);
+                            }
+                            if let Some(badge) = catalog_override.as_deref() {
+                                ui.label(catalog_override_chip(badge));
+                            }
+                        });
                         ui.colored_label(status_color(*status), status.label());
                         ui.label(routed.as_deref().unwrap_or("—"));
                         ui.label(expires.as_deref().unwrap_or("—"));
@@ -96,7 +106,25 @@ fn render_table(ui: &mut egui::Ui, state: &mut InventoryState) {
         });
 }
 
+/// Map a free-form catalog-override badge (`"user"`, `"project"`,
+/// `"url:host"`) to a coloured `RichText` chip. Mirrors the
+/// dialog-side `catalog_source_chip` palette (P20.5 / P23.1) so
+/// the visual language is consistent across both views.
+fn catalog_override_chip(badge: &str) -> egui::RichText {
+    let kind = badge.split(':').next().unwrap_or(badge);
+    let color = match kind {
+        "user" => egui::Color32::from_rgb(0x55, 0xa0, 0xcc),
+        "project" => egui::Color32::from_rgb(0x55, 0xaa, 0x55),
+        "url" => egui::Color32::from_rgb(0xdd, 0x88, 0x33),
+        _ => egui::Color32::from_rgb(0x99, 0x99, 0x99),
+    };
+    egui::RichText::new(format!("[{badge}]"))
+        .small()
+        .color(color)
+}
+
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)] // status_color / catalog_override_chip stay below for readability
 mod tests {
     use super::*;
     use crate::inventory::{DaemonStatus, InventoryRow, InventoryState, RowStatus};
@@ -110,6 +138,7 @@ mod tests {
             expires_at: Some("2026-12-01".into()),
             provider: Some("1password".into()),
             scope: "team".into(),
+            catalog_override: None,
         }]);
         s.apply_daemon_status(DaemonStatus::Unlocked);
         s
