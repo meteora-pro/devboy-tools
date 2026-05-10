@@ -379,6 +379,56 @@ pub struct AddCommentPayload {
 }
 
 // =============================================================================
+// Field discovery
+// =============================================================================
+
+/// Entry from `GET /rest/api/{v}/field` — every field (system + custom)
+/// available on the Jira instance.
+///
+/// Used to resolve human-readable field names (e.g. `"Epic Link"`,
+/// `"Sprint"`, `"Epic Name"`) to their numeric `customfield_*` ids,
+/// which vary across instances. Cached inside [`crate::JiraClient`] to
+/// avoid repeating the request for every issue mutation.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JiraField {
+    /// Field id, e.g. `"customfield_10014"` for customs or `"summary"`
+    /// for system fields.
+    pub id: String,
+    /// Human-readable name, e.g. `"Epic Link"`.
+    pub name: String,
+    /// Whether this is a custom field (`true`) or a system field
+    /// (`false`).
+    #[serde(default)]
+    pub custom: bool,
+    /// Optional schema descriptor.
+    #[serde(default)]
+    pub schema: Option<JiraFieldSchema>,
+}
+
+/// `schema` block of a [`JiraField`] entry. All fields optional —
+/// shape varies between system and custom fields and across Jira
+/// flavors.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JiraFieldSchema {
+    /// Top-level type, e.g. `"string"`, `"array"`, `"any"`.
+    #[serde(default, rename = "type")]
+    pub field_type: Option<String>,
+    /// Element type when `field_type == "array"`.
+    #[serde(default)]
+    pub items: Option<String>,
+    /// Custom field type URI, e.g.
+    /// `"com.pyxis.greenhopper.jira:gh-epic-link"`.
+    #[serde(default)]
+    pub custom: Option<String>,
+    /// Numeric custom field id (when `custom == true`).
+    #[serde(default, rename = "customId")]
+    pub custom_id: Option<i64>,
+    /// System field name when this is a system field.
+    #[serde(default)]
+    pub system: Option<String>,
+}
+
+// =============================================================================
 // Project Statuses
 // =============================================================================
 
