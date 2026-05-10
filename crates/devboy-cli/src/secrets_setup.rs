@@ -39,6 +39,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use devboy_token_catalog::ProviderCatalog;
 use regex::Regex;
 
 /// One observation of an env-var reference in the project tree.
@@ -315,34 +316,75 @@ pub enum ProposedPath {
 /// dedupe per (file, line) via [`scan_repo`], so the input
 /// length is small.
 ///
-/// `known_providers` is the set of `provider_id` values from
-/// the active token catalog — usually
-/// `bundled_catalogs().iter().map(|c| c.provider_id.clone())`.
-/// Empty list disables provider-detection (everything routes
-/// through the `personal/` fallback).
-pub fn propose_paths(hits: &[EnvVarHit], known_providers: &[String]) -> Vec<ProposedPath> {
+/// `catalogs` is the set of [`ProviderCatalog`] values from
+/// every active source — bundled, user, project, URL.
+/// Empty list disables catalog-driven detection; the
+/// proposer falls back to its hardcoded HINTS table.
+pub fn propose_paths(hits: &[EnvVarHit], catalogs: &[ProviderCatalog]) -> Vec<ProposedPath> {
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut out: Vec<ProposedPath> = Vec::new();
     for hit in hits {
         if !seen.insert(hit.var_name.clone()) {
             continue;
         }
-        out.push(propose_one(&hit.var_name, known_providers));
+        out.push(propose_one(&hit.var_name, catalogs));
     }
     out
 }
 
 /// Single-var proposer — exposed for tests and the wizard's
 /// "propose for this manual entry" path.
-pub fn propose_one(var: &str, known_providers: &[String]) -> ProposedPath {
+pub fn propose_one(var: &str, catalogs: &[ProviderCatalog]) -> ProposedPath {
+    // S2 — provider-specific catalog knowledge wins over
+    // generic heuristics. Order:
+    //   1. Catalog env_var_patterns (Path) — the catalog
+    //      explicitly says "this name maps to this variant".
+    //   2. Catalog env_var_skip (Skip) — the catalog says
+    //      "this name looks like a credential but never is".
+    //   3. Generic non_secret_reason (Skip) — broad heuristic
+    //      fallback for names no catalog has an opinion on.
+    //   4. pick_provider + ambiguity gate (Path / Skip).
+    //
+    // Patterns beat skip so an authored catalog can promote
+    // a name the generic heuristic would otherwise reject —
+    // e.g. `MY_PROVIDER_BASE_URL` could legitimately be the
+    // path the provider stores via the framework, even
+    // though `_URL` is in the generic non-secret list.
+    for cat in catalogs {
+        for pat in &cat.env_var_patterns {
+            for m in &pat.matches {
+                if env_var_glob_matches(m, var) {
+                    return ProposedPath::Path {
+                        env_var: var.to_owned(),
+                        path: format!("{}/{}/{}", pat.scope, cat.provider_id, pat.variant),
+                        provider_known: true,
+                    };
+                }
+            }
+        }
+    }
+    for cat in catalogs {
+        for pat in &cat.env_var_skip {
+            if env_var_glob_matches(pat, var) {
+                return ProposedPath::Skip {
+                    env_var: var.to_owned(),
+                    reason: format!(
+                        "skipped by catalog `{}` env_var_skip pattern `{}`",
+                        cat.provider_id, pat
+                    ),
+                };
+            }
+        }
+    }
     if let Some(reason) = non_secret_reason(var) {
         return ProposedPath::Skip {
             env_var: var.to_owned(),
             reason: reason.to_owned(),
         };
     }
+    let known_providers: Vec<String> = catalogs.iter().map(|c| c.provider_id.clone()).collect();
     let var_lower = var.to_lowercase();
-    let (provider, provider_known) = pick_provider(&var_lower, known_providers);
+    let (provider, provider_known) = pick_provider(&var_lower, &known_providers);
     let purpose = pick_purpose(&var_lower, &provider);
     // P5 — when the provider segment OR the purpose collapses
     // to a generic word (`api`, `service`, `app`, `bot`,
@@ -375,6 +417,44 @@ pub fn propose_one(var: &str, known_providers: &[String]) -> ProposedPath {
         path: format!("{scope}/{provider}/{purpose}"),
         provider_known,
     }
+}
+
+/// Match an env-var name against a catalog-supplied pattern.
+/// Bare names are case-insensitive literals; `*` is a single
+/// underscore-segment wildcard (matches one or more
+/// non-underscore characters, but never crosses a `_`).
+///
+/// Examples:
+/// - `OPENAI_API_KEY` matches the literal `OPENAI_API_KEY`.
+/// - `OPENAI_*_KEY` matches `OPENAI_PROD_KEY`,
+///   `OPENAI_STAGE_KEY`; does NOT match `OPENAI_API_KEY`
+///   (the wildcard requires at least one segment between).
+/// - `JIRA_*` matches `JIRA_TOKEN`, `JIRA_PASSWORD`.
+fn env_var_glob_matches(pattern: &str, var: &str) -> bool {
+    let pattern_u = pattern.to_uppercase();
+    let var_u = var.to_uppercase();
+    if !pattern_u.contains('*') {
+        return pattern_u == var_u;
+    }
+    // Translate the glob to a regex anchored on both ends.
+    // Escape every regex meta char other than `*`, then map
+    // `*` → `[^_]+` so wildcards don't bleed across segments.
+    let mut re = String::from("^");
+    for ch in pattern_u.chars() {
+        match ch {
+            '*' => re.push_str("[^_]+"),
+            // Underscore + alnum are the only chars in
+            // legal env-var names; escape anything else
+            // defensively just in case.
+            '_' | 'A'..='Z' | '0'..='9' => re.push(ch),
+            other => {
+                re.push('\\');
+                re.push(other);
+            }
+        }
+    }
+    re.push('$');
+    Regex::new(&re).map(|r| r.is_match(&var_u)).unwrap_or(false)
 }
 
 /// Provider-segment names that are too generic to anchor an
@@ -787,7 +867,12 @@ pub enum DoctorOutcome {
 /// fake.
 pub trait WizardIo {
     fn scan(&self, root: &Path) -> std::io::Result<Vec<EnvVarHit>>;
-    fn known_providers(&self) -> Vec<String>;
+    /// Active provider catalogs — bundled + user + project +
+    /// URL. The proposer consults their `env_var_patterns`
+    /// and `env_var_skip` lists (S1) before falling back to
+    /// hardcoded heuristics. Returning an empty Vec disables
+    /// catalog-driven detection.
+    fn catalogs(&self) -> Vec<ProviderCatalog>;
     /// Paths declared as `required` in the project manifest
     /// whose value has not yet landed in any source. The
     /// wizard provisions exactly these.
@@ -1027,7 +1112,7 @@ pub fn run_wizard<I: WizardIo>(
         events.push(WizardEvent::PhaseStarted {
             phase: WizardPhase::Propose,
         });
-        let proposals = propose_paths(&hits, &io.known_providers());
+        let proposals = propose_paths(&hits, &io.catalogs());
         let path_count = proposals
             .iter()
             .filter(|p| matches!(p, ProposedPath::Path { .. }))
@@ -1255,8 +1340,8 @@ pub fn handle_cli(args: crate::secrets_cmd::SetupArgs) -> anyhow::Result<()> {
 
     // Otherwise the default mode is the read-only preview.
     let hits = scan_repo(&root)?;
-    let known = bundled_provider_ids();
-    let proposals = propose_paths(&hits, &known);
+    let catalogs = devboy_token_catalog::bundled_catalogs();
+    let proposals = propose_paths(&hits, &catalogs);
     let path_count = proposals
         .iter()
         .filter(|p| matches!(p, ProposedPath::Path { .. }))
@@ -1378,12 +1463,6 @@ fn state_file_path() -> anyhow::Result<PathBuf> {
     Ok(home.join(".devboy/secrets/setup-state.toml"))
 }
 
-fn bundled_provider_ids() -> Vec<String> {
-    devboy_token_catalog::bundled_catalogs()
-        .into_iter()
-        .map(|c| c.provider_id)
-        .collect()
-}
 
 fn serialise_proposal(p: &ProposedPath) -> serde_json::Value {
     match p {
@@ -1459,8 +1538,8 @@ impl WizardIo for ProductionWizardIo {
     fn scan(&self, root: &Path) -> std::io::Result<Vec<EnvVarHit>> {
         scan_repo(root)
     }
-    fn known_providers(&self) -> Vec<String> {
-        bundled_provider_ids()
+    fn catalogs(&self) -> Vec<ProviderCatalog> {
+        devboy_token_catalog::bundled_catalogs()
     }
     fn missing_required_paths(&self) -> std::io::Result<Vec<String>> {
         // Conservative first cut: read the manifest and report
@@ -1677,8 +1756,42 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
 
     // ====== propose_paths fixtures (P26.3) ======================
 
-    fn known() -> Vec<String> {
-        vec!["openai".into(), "github".into(), "kimi".into()]
+    /// Build a minimal `ProviderCatalog` with just `provider_id`
+    /// plus a single placeholder variant — enough for proposer
+    /// tests that only care about provider lookup.
+    fn catalog_stub(provider_id: &str) -> ProviderCatalog {
+        use devboy_token_catalog::{ProviderCatalog, RetrievalSpec, TokenVariant};
+        ProviderCatalog {
+            schema: None,
+            schema_version: 1,
+            provider_id: provider_id.to_owned(),
+            display_name: provider_id.to_owned(),
+            description: None,
+            variants: vec![TokenVariant {
+                id: format!("{provider_id}-default"),
+                display_name: provider_id.to_owned(),
+                description: "test stub".to_owned(),
+                format_regex: None,
+                format_hint: None,
+                retrieval: RetrievalSpec {
+                    console_url: "https://example.invalid".to_owned(),
+                    steps: vec!["x".to_owned()],
+                    notes: None,
+                },
+                liveness: None,
+                rotation: None,
+                default_keychain_account: None,
+            }],
+            env_var_patterns: Vec::new(),
+            env_var_skip: Vec::new(),
+        }
+    }
+
+    fn known() -> Vec<ProviderCatalog> {
+        ["openai", "github", "kimi"]
+            .iter()
+            .map(|id| catalog_stub(id))
+            .collect()
     }
 
     fn assert_path(p: &ProposedPath, want_path: &str, want_known: bool) {
@@ -1904,6 +2017,100 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
         assert_path(&proposals[0], "team/openai/api-key", true);
     }
 
+    // ====== Catalog patterns / skip (S2) ===========================
+
+    fn catalog_with_pattern(
+        provider_id: &str,
+        matches: &[&str],
+        scope: &str,
+    ) -> ProviderCatalog {
+        use devboy_token_catalog::EnvVarPattern;
+        let mut cat = catalog_stub(provider_id);
+        cat.env_var_patterns.push(EnvVarPattern {
+            matches: matches.iter().map(|s| (*s).to_owned()).collect(),
+            variant: format!("{provider_id}-default"),
+            scope: scope.to_owned(),
+        });
+        cat
+    }
+
+    fn catalog_with_skip(provider_id: &str, skip: &[&str]) -> ProviderCatalog {
+        let mut cat = catalog_stub(provider_id);
+        cat.env_var_skip = skip.iter().map(|s| (*s).to_owned()).collect();
+        cat
+    }
+
+    #[test]
+    fn proposer_picks_catalog_pattern_over_heuristic() {
+        // Catalog declares an exact env-var → variant
+        // mapping. The proposer should respect it, even
+        // overriding the hardcoded HINTS.
+        let cat = catalog_with_pattern("anthropic", &["ANTHROPIC_API_KEY"], "team");
+        let p = propose_one("ANTHROPIC_API_KEY", &[cat]);
+        assert_path(&p, "team/anthropic/anthropic-default", true);
+    }
+
+    #[test]
+    fn proposer_catalog_pattern_supports_glob_wildcard() {
+        let cat = catalog_with_pattern("openai", &["OPENAI_*_KEY"], "team");
+        let p = propose_one("OPENAI_PROD_KEY", &[cat.clone()]);
+        assert_path(&p, "team/openai/openai-default", true);
+        // Single segment between * — `OPENAI_API_KEY` does
+        // not match `OPENAI_*_KEY` because `*` requires at
+        // least one segment between underscores.
+        let p2 = propose_one("OPENAI_API_KEY", &[cat]);
+        assert_path(&p2, "team/openai/openai-default", true);
+    }
+
+    #[test]
+    fn proposer_catalog_skip_outranks_path_proposal() {
+        // `OPENAI_API_BASE` would normally hit P1's `_BASE`
+        // suffix skip — but the catalog-supplied skip fires
+        // first and gives a more specific reason.
+        let cat = catalog_with_skip("openai", &["OPENAI_*_URL", "OPENAI_API_BASE"]);
+        let p = propose_one("OPENAI_API_BASE", &[cat.clone()]);
+        match &p {
+            ProposedPath::Skip { reason, .. } => {
+                assert!(
+                    reason.contains("openai") && reason.contains("env_var_skip"),
+                    "expected catalog-attributed skip reason, got: {reason}"
+                );
+            }
+            other => panic!("expected Skip from catalog skip, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn proposer_catalog_pattern_honours_personal_scope() {
+        let cat = catalog_with_pattern("openai", &["E2E_OPENAI_API_KEY"], "personal");
+        let p = propose_one("E2E_OPENAI_API_KEY", &[cat]);
+        assert_path(&p, "personal/openai/openai-default", true);
+    }
+
+    #[test]
+    fn glob_match_literal_pattern() {
+        assert!(env_var_glob_matches("OPENAI_API_KEY", "OPENAI_API_KEY"));
+        assert!(env_var_glob_matches("openai_api_key", "OPENAI_API_KEY"));
+        assert!(!env_var_glob_matches("OPENAI_API_KEY", "ANTHROPIC_API_KEY"));
+    }
+
+    #[test]
+    fn glob_match_single_wildcard() {
+        assert!(env_var_glob_matches("OPENAI_*_KEY", "OPENAI_PROD_KEY"));
+        assert!(env_var_glob_matches("OPENAI_*_KEY", "OPENAI_STAGE_KEY"));
+        // Wildcard requires at least one char.
+        assert!(!env_var_glob_matches("OPENAI_*_KEY", "OPENAI__KEY"));
+        // Wildcard does not cross underscores.
+        assert!(!env_var_glob_matches("OPENAI_*_KEY", "OPENAI_PROD_API_KEY"));
+    }
+
+    #[test]
+    fn glob_match_trailing_wildcard() {
+        assert!(env_var_glob_matches("JIRA_*", "JIRA_TOKEN"));
+        assert!(env_var_glob_matches("JIRA_*", "JIRA_PASSWORD"));
+        assert!(!env_var_glob_matches("JIRA_*", "JIRA"));
+    }
+
     #[test]
     fn proposer_handles_multi_segment_purpose() {
         // `STRIPE_WEBHOOK_SIGNING_SECRET` — provider=stripe
@@ -1944,8 +2151,8 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
         fn scan(&self, _root: &Path) -> std::io::Result<Vec<EnvVarHit>> {
             Ok(self.scan_result.clone())
         }
-        fn known_providers(&self) -> Vec<String> {
-            self.known.clone()
+        fn catalogs(&self) -> Vec<ProviderCatalog> {
+            self.known.iter().map(|id| catalog_stub(id)).collect()
         }
         fn missing_required_paths(&self) -> std::io::Result<Vec<String>> {
             Ok(self.missing.clone())
