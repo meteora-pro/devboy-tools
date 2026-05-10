@@ -733,7 +733,14 @@ impl eframe::App for InventoryApp {
                         ui.separator();
                     }
 
-                    render_context_card(ui, &dialog_path, entry.as_ref(), &self.backend);
+                    let variant_for_card = self.current_provider_and_variant().map(|(_, v)| v);
+                    render_context_card(
+                        ui,
+                        &dialog_path,
+                        entry.as_ref(),
+                        &self.backend,
+                        variant_for_card,
+                    );
                     ui.separator();
 
                     // Reveal-toggle for the value below. Echoes
@@ -999,11 +1006,26 @@ fn render_context_card(
     path: &str,
     entry: Option<&devboy_storage::IndexEntry>,
     backend: &StorageBackend,
+    variant: Option<&devboy_token_catalog::TokenVariant>,
 ) {
     use eframe::egui::{Color32, RichText};
 
     ui.heading("How to fill this secret");
     ui.add_space(4.0);
+
+    // Variant block — when the active path resolved to a
+    // catalog variant, render its description as a paragraph
+    // followed by a numbered procedure (one `ui.label` per
+    // step). The grid below skips its own "Description" row in
+    // that case to avoid duplication.
+    if let Some(v) = variant {
+        ui.label(&v.description);
+        ui.add_space(4.0);
+        for (idx, step) in v.retrieval.steps.iter().enumerate() {
+            ui.label(format!("{}. {}", idx + 1, step));
+        }
+        ui.add_space(6.0);
+    }
 
     eframe::egui::Grid::new(format!("ctx-grid-{path}"))
         .num_columns(2)
@@ -1014,7 +1036,9 @@ fn render_context_card(
             ui.end_row();
 
             if let Some(e) = entry {
-                if let Some(desc) = e.description.as_deref() {
+                if variant.is_none()
+                    && let Some(desc) = e.description.as_deref()
+                {
                     ui.label(RichText::new("Description").strong());
                     ui.label(desc);
                     ui.end_row();
