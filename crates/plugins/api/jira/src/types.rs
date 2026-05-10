@@ -389,7 +389,7 @@ pub struct AddCommentPayload {
 /// `"Sprint"`, `"Epic Name"`) to their numeric `customfield_*` ids,
 /// which vary across instances. Cached inside [`crate::JiraClient`] to
 /// avoid repeating the request for every issue mutation.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraField {
     /// Field id, e.g. `"customfield_10014"` for customs or `"summary"`
     /// for system fields.
@@ -408,7 +408,7 @@ pub struct JiraField {
 /// `schema` block of a [`JiraField`] entry. All fields optional —
 /// shape varies between system and custom fields and across Jira
 /// flavors.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraFieldSchema {
     /// Top-level type, e.g. `"string"`, `"array"`, `"any"`.
     #[serde(default, rename = "type")]
