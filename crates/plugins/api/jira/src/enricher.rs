@@ -196,12 +196,17 @@ impl ToolEnricher for JiraSchemaEnricher {
             }
         }
 
-        // Custom fields (only for single-project, too complex to merge for multi)
-        if (tool_name == "create_issue" || tool_name == "update_issue") && is_single {
-            schema.remove_params(&["customFields"]);
+        // Customfields: union across projects, capped by
+        // `MAX_ENRICHMENT_PROJECTS`. Single-project mode and
+        // multi-project mode go through the same code path — the
+        // only difference is `all_custom_fields()` returns one
+        // project's set vs the union.
+        if tool_name == "create_issue" || tool_name == "update_issue" {
+            let unified_fields = self.metadata.all_custom_fields();
+            if !unified_fields.is_empty() {
+                schema.remove_params(&["customFields"]);
 
-            if let Some(project_meta) = self.metadata.projects.values().next() {
-                for field in &project_meta.custom_fields {
+                for field in &unified_fields {
                     match well_known_alias(&field.name) {
                         Some(alias) => {
                             // Replace the raw `cf_*` slot with a
@@ -242,23 +247,53 @@ impl ToolEnricher for JiraSchemaEnricher {
             obj.insert("priority".into(), json!(mapped));
         }
 
-        // Transform cf_* params to customFields for single-project
-        if !self.metadata.is_single_project() {
-            return;
-        }
-
-        let Some(project_meta) = self.metadata.projects.values().next() else {
-            return;
-        };
-
+        // Transform aliases / cf_* params back to instance-specific
+        // `customField` ids. In multi-project mode we resolve via the
+        // project named in `args.projectId` — same display name can
+        // map to different `customfield_*` ids across projects, so we
+        // can't pick the first project blindly.
         let Some(obj) = args.as_object_mut() else {
             return;
         };
 
+        let project_key = obj
+            .get("projectId")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
+        // Fields list to scan for: prefer the named project's
+        // metadata; fall back to first project (covers single-project
+        // and the `projectId`-omitted edge case).
+        let project_fields: Vec<crate::metadata::JiraCustomField> = match project_key.as_deref() {
+            Some(key) => self
+                .metadata
+                .projects
+                .get(key)
+                .map(|p| p.custom_fields.clone())
+                .or_else(|| {
+                    self.metadata
+                        .projects
+                        .values()
+                        .next()
+                        .map(|p| p.custom_fields.clone())
+                })
+                .unwrap_or_default(),
+            None => self
+                .metadata
+                .projects
+                .values()
+                .next()
+                .map(|p| p.custom_fields.clone())
+                .unwrap_or_default(),
+        };
+        if project_fields.is_empty() {
+            return;
+        }
+
         let mut custom_fields = serde_json::Map::new();
         let mut cf_keys_to_remove: Vec<String> = Vec::new();
 
-        for field in &project_meta.custom_fields {
+        for field in &project_fields {
             let param_name: String = match well_known_alias(&field.name) {
                 Some(alias) => alias.to_string(),
                 None => sanitize_field_name(&field.name),
@@ -756,9 +791,12 @@ mod tests {
         assert!(project_enum.contains(&"PROJ".to_string()));
         assert!(project_enum.contains(&"INFRA".to_string()));
 
-        // customFields NOT replaced (multi-project)
-        assert!(schema.properties.contains_key("customFields"));
-        assert!(!schema.properties.contains_key("cf_story_points"));
+        // customFields IS replaced in multi-project — the union of
+        // customfields across projects gets expanded to typed
+        // params. `customFields` raw escape-hatch goes away when
+        // any project has customfields.
+        assert!(!schema.properties.contains_key("customFields"));
+        assert!(schema.properties.contains_key("cf_story_points"));
     }
 
     #[test]
@@ -786,9 +824,18 @@ mod tests {
         assert_eq!(args["priority"], "Highest"); // pass-through
     }
 
+    /// Multi-project mode: `transform_args` resolves customfield ids
+    /// against the project named in `args.projectId` — the same
+    /// display name maps to different `customfield_*` ids across
+    /// projects on real instances.
     #[test]
-    fn test_jira_enricher_multi_project_no_cf_transform() {
+    fn test_jira_enricher_multi_project_resolves_per_project_id() {
         let mut meta = single_project_metadata();
+        // PROJ has Story Points = customfield_10001 (from
+        // single_project_metadata). INFRA gets the same display
+        // name with a different id — exactly the case where
+        // first-project resolution would target the wrong
+        // customfield.
         meta.projects.insert(
             "INFRA".into(),
             JiraProjectMetadata {
@@ -796,15 +843,74 @@ mod tests {
                 priorities: vec![],
                 components: vec![],
                 link_types: vec![],
-                custom_fields: vec![],
+                custom_fields: vec![JiraCustomField {
+                    id: "customfield_20001".into(),
+                    name: "Story Points".into(),
+                    field_type: JiraFieldType::Number,
+                    required: false,
+                    options: vec![],
+                }],
             },
         );
         let enricher = JiraSchemaEnricher::new(meta);
-        let mut args = json!({"title": "T", "cf_story_points": 5});
+
+        // projectId=INFRA → INFRA's customfield_20001
+        let mut args = json!({"title": "T", "projectId": "INFRA", "cf_story_points": 5});
         enricher.transform_args("create_issue", &mut args);
-        // Multi-project: cf_* NOT transformed
-        assert!(args.get("cf_story_points").is_some());
-        assert!(args.get("customFields").is_none());
+        assert!(args.get("cf_story_points").is_none());
+        assert_eq!(args["customFields"]["customfield_20001"], 5);
+        assert!(args["customFields"].get("customfield_10001").is_none());
+
+        // projectId=PROJ → PROJ's customfield_10001
+        let mut args = json!({"title": "T", "projectId": "PROJ", "cf_story_points": 9});
+        enricher.transform_args("create_issue", &mut args);
+        assert!(args.get("cf_story_points").is_none());
+        assert_eq!(args["customFields"]["customfield_10001"], 9);
+        assert!(args["customFields"].get("customfield_20001").is_none());
+    }
+
+    /// `all_custom_fields` truncates above
+    /// `MAX_ENRICHMENT_PROJECTS` so a 1000-project instance
+    /// doesn't blow up the schema. Caller is expected to feed the
+    /// most relevant subset.
+    #[test]
+    fn test_jira_metadata_caps_custom_fields_at_max_projects() {
+        use crate::metadata::MAX_ENRICHMENT_PROJECTS;
+        let mut meta = single_project_metadata();
+        // Inflate to one over the cap with each project carrying a
+        // unique customfield. Only the first MAX_ENRICHMENT_PROJECTS
+        // (including the original PROJ) should make it into the
+        // union.
+        let extra = MAX_ENRICHMENT_PROJECTS;
+        for i in 0..extra {
+            meta.projects.insert(
+                format!("EXTRA_{i}"),
+                JiraProjectMetadata {
+                    issue_types: vec![],
+                    priorities: vec![],
+                    components: vec![],
+                    link_types: vec![],
+                    custom_fields: vec![JiraCustomField {
+                        id: format!("customfield_30{i:03}"),
+                        name: format!("ExtraField{i}"),
+                        field_type: JiraFieldType::String,
+                        required: false,
+                        options: vec![],
+                    }],
+                },
+            );
+        }
+        // metadata now has 1 + MAX_ENRICHMENT_PROJECTS projects.
+        let union = meta.all_custom_fields();
+        // At most MAX_ENRICHMENT_PROJECTS projects' customfields
+        // surface — exact set is HashMap-iteration-order-dependent
+        // but the count is bounded.
+        assert!(
+            union.len() <= MAX_ENRICHMENT_PROJECTS,
+            "union size {} exceeded cap {}",
+            union.len(),
+            MAX_ENRICHMENT_PROJECTS
+        );
     }
 
     #[test]
