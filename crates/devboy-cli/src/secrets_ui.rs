@@ -334,6 +334,12 @@ struct InventoryApp {
     /// provision-dialog hidden input. Off by default — only
     /// flip on when the user wants to verify what they typed.
     reveal_value: bool,
+    /// `id` of the currently selected token variant, when the
+    /// dialog's path resolves to a multi-variant provider.
+    /// `None` when the provider has only one variant (auto-
+    /// resolved) or no catalog match at all. Driven by the
+    /// radio-button picker rendered above the context card.
+    selected_variant_id: Option<String>,
     /// Backend-driven token catalogs loaded at startup.
     /// Sources: bundled (compiled in), user
     /// (`~/.devboy/secrets/catalog/`), project
@@ -361,6 +367,7 @@ impl InventoryApp {
             backend,
             recovery_phrase_to_show: None,
             reveal_value: false,
+            selected_variant_id: None,
             catalogs,
             catalog_errors,
         };
@@ -691,6 +698,41 @@ impl eframe::App for InventoryApp {
                 .resizable(true)
                 .default_width(560.0)
                 .show(ui.ctx(), |ui| {
+                    // Variant picker — only visible when the
+                    // active path resolves to a catalog provider
+                    // with more than one variant. Single-variant
+                    // providers skip the picker entirely (we
+                    // already pre-selected the only choice in
+                    // open_dialog_for).
+                    if let Some((loaded, _)) = self.current_provider_and_variant()
+                        && loaded.catalog.variants.len() > 1
+                    {
+                        ui.label(
+                            eframe::egui::RichText::new(format!(
+                                "{} — pick a variant:",
+                                loaded.catalog.display_name
+                            ))
+                            .strong(),
+                        );
+                        let variants: Vec<(String, String)> = loaded
+                            .catalog
+                            .variants
+                            .iter()
+                            .map(|v| (v.id.clone(), v.display_name.clone()))
+                            .collect();
+                        for (vid, vname) in variants {
+                            let selected = self
+                                .selected_variant_id
+                                .as_deref()
+                                .map(|s| s == vid)
+                                .unwrap_or(false);
+                            if ui.radio(selected, vname).clicked() {
+                                self.selected_variant_id = Some(vid);
+                            }
+                        }
+                        ui.separator();
+                    }
+
                     render_context_card(ui, &dialog_path, entry.as_ref(), &self.backend);
                     ui.separator();
 
@@ -1055,12 +1097,63 @@ impl InventoryApp {
             provisioning_url: entry.retrieval_url.clone(),
             format_hint: entry.description.clone(),
         };
+        self.selected_variant_id = self.resolve_initial_variant(&entry);
         self.dialog = Some(devboy_secrets_ui::DialogState::new(
             devboy_secrets_ui::DialogMode::Provision,
             metadata,
         ));
         self.dialog_path = Some(path.to_owned());
         self.last_save_error = None;
+    }
+
+    /// Pick the variant that should be selected when the
+    /// dialog opens. Two strategies in priority order:
+    ///
+    /// 1. `entry.pattern_id` matches a specific variant id
+    ///    (`kimi-cn`, `kimi-global`, …) — pre-select that
+    ///    one.
+    /// 2. `entry.pattern_id` matches a `provider_id` (`kimi`)
+    ///    — pre-select the provider's first variant. The
+    ///    user can flip via radio.
+    ///
+    /// Returns `None` when no catalog match — the dialog
+    /// renders without a picker.
+    fn resolve_initial_variant(&self, entry: &devboy_storage::IndexEntry) -> Option<String> {
+        let pid = entry.pattern_id.as_deref()?;
+        // Specific-variant match wins.
+        if let Some((_, variant)) = devboy_token_catalog::find_variant_by_id(
+            &self
+                .catalogs
+                .iter()
+                .map(|l| l.catalog.clone())
+                .collect::<Vec<_>>(),
+            pid,
+        ) {
+            return Some(variant.id.clone());
+        }
+        // Otherwise: pick first variant of the matching provider.
+        self.catalogs
+            .iter()
+            .find(|l| l.catalog.provider_id == pid)
+            .and_then(|l| l.catalog.variants.first().map(|v| v.id.clone()))
+    }
+
+    /// Look up the loaded catalog whose provider owns the
+    /// currently-selected variant. Returns the catalog plus
+    /// the variant slot, when both resolve.
+    fn current_provider_and_variant(
+        &self,
+    ) -> Option<(
+        &devboy_token_catalog::LoadedCatalog,
+        &devboy_token_catalog::TokenVariant,
+    )> {
+        let variant_id = self.selected_variant_id.as_deref()?;
+        for loaded in &self.catalogs {
+            if let Some(v) = loaded.catalog.variants.iter().find(|v| v.id == variant_id) {
+                return Some((loaded, v));
+            }
+        }
+        None
     }
 }
 
