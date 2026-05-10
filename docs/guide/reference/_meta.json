@@ -6,6 +6,11 @@
   },
   {
     "type": "file",
+    "name": "consuming-tool-schemas",
+    "label": "Consuming tool schemas"
+  },
+  {
+    "type": "file",
     "name": "cli",
     "label": "CLI reference"
   }
