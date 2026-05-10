@@ -965,12 +965,61 @@ impl JiraClient {
                     structures: vec![],
                 })
             }
-            MetadataLoadStrategy::MyProjects | MetadataLoadStrategy::RecentActivity { .. } => {
-                Err(Error::ProviderUnsupported {
-                    provider: "jira".into(),
-                    operation: "load_default_metadata".into(),
+            MetadataLoadStrategy::MyProjects => {
+                // Recent-projects endpoint shape differs between
+                // flavors: Cloud paginates via `/project/search`
+                // (`{values: [...]}`), Server/DC returns a flat
+                // array from `/project?recent=N`.
+                let keys: Vec<String> = match self.flavor {
+                    JiraFlavor::Cloud => {
+                        let url = format!(
+                            "{}/project/search?recent={}",
+                            self.base_url, MAX_ENRICHMENT_PROJECTS
+                        );
+                        let raw: serde_json::Value = self.get(&url).await?;
+                        raw.get("values")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| {
+                                        v.get("key").and_then(|k| k.as_str()).map(str::to_string)
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    }
+                    JiraFlavor::SelfHosted => {
+                        let url = format!(
+                            "{}/project?recent={}",
+                            self.base_url, MAX_ENRICHMENT_PROJECTS
+                        );
+                        let raw: Vec<serde_json::Value> = self.get(&url).await?;
+                        raw.iter()
+                            .filter_map(|v| {
+                                v.get("key").and_then(|k| k.as_str()).map(str::to_string)
+                            })
+                            .collect()
+                    }
+                };
+
+                let mut projects = std::collections::HashMap::new();
+                for key in keys.into_iter().take(MAX_ENRICHMENT_PROJECTS) {
+                    let project_meta = self.build_project_metadata(&key).await?;
+                    projects.insert(key, project_meta);
+                }
+                Ok(crate::metadata::JiraMetadata {
+                    flavor: match self.flavor {
+                        JiraFlavor::Cloud => crate::metadata::JiraFlavor::Cloud,
+                        JiraFlavor::SelfHosted => crate::metadata::JiraFlavor::SelfHosted,
+                    },
+                    projects,
+                    structures: vec![],
                 })
             }
+            MetadataLoadStrategy::RecentActivity { .. } => Err(Error::ProviderUnsupported {
+                provider: "jira".into(),
+                operation: "load_default_metadata".into(),
+            }),
         }
     }
 
@@ -5447,6 +5496,111 @@ mod tests {
                 .unwrap();
 
             assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// `MyProjects` on Server/DC uses flat `/project?recent=N`.
+        #[tokio::test]
+        async fn test_load_default_metadata_my_projects_self_hosted() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/project")
+                    .query_param("recent", "30");
+                then.status(200).json_body(serde_json::json!([
+                    {"key": "RECENT1", "name": "Recent 1"},
+                    {"key": "RECENT2", "name": "Recent 2"}
+                ]));
+            });
+
+            for key in &["RECENT1", "RECENT2"] {
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}"));
+                    then.status(200).json_body(serde_json::json!({
+                        "key": key,
+                        "issueTypes": [{"id": "1", "name": "Task", "subtask": false}]
+                    }));
+                });
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}/components"));
+                    then.status(200).json_body(serde_json::json!([]));
+                });
+            }
+            server.mock(|when, then| {
+                when.method(GET).path("/priority");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/issueLinkType");
+                then.status(200)
+                    .json_body(serde_json::json!({"issueLinkTypes": []}));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let meta = client
+                .load_default_metadata(crate::metadata::MetadataLoadStrategy::MyProjects)
+                .await
+                .unwrap();
+            assert_eq!(meta.projects.len(), 2);
+            assert!(meta.projects.contains_key("RECENT1"));
+            assert!(meta.projects.contains_key("RECENT2"));
+        }
+
+        /// `MyProjects` on Cloud uses paginated `/project/search`
+        /// which wraps the project list in `{values: [...]}`.
+        #[tokio::test]
+        async fn test_load_default_metadata_my_projects_cloud() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/project/search")
+                    .query_param("recent", "30");
+                then.status(200).json_body(serde_json::json!({
+                    "values": [
+                        {"key": "CLOUD1", "name": "Cloud Project 1"}
+                    ],
+                    "isLast": true
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/project/CLOUD1");
+                then.status(200).json_body(serde_json::json!({
+                    "key": "CLOUD1",
+                    "issueTypes": [{"id": "1", "name": "Task", "subtask": false}]
+                }));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/project/CLOUD1/components");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/priority");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/issueLinkType");
+                then.status(200)
+                    .json_body(serde_json::json!({"issueLinkTypes": []}));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+
+            let client = create_cloud_client(&server);
+            let meta = client
+                .load_default_metadata(crate::metadata::MetadataLoadStrategy::MyProjects)
+                .await
+                .unwrap();
+            assert_eq!(meta.projects.len(), 1);
+            assert!(meta.projects.contains_key("CLOUD1"));
+            assert_eq!(meta.flavor, crate::metadata::JiraFlavor::Cloud);
         }
 
         /// `All` strategy lists every project from `GET /project`
