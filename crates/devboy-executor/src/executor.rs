@@ -934,6 +934,9 @@ struct CreateIssueParams {
     /// input instead of silently dropping entries (Copilot review on PR #205).
     #[serde(default)]
     components: Vec<String>,
+    /// Jira fix-version names. Same shape and semantics as `components`.
+    #[serde(default, rename = "fixVersions")]
+    fix_versions: Vec<String>,
 }
 
 async fn execute_create_issue(
@@ -955,6 +958,7 @@ async fn execute_create_issue(
         issue_type: params.issue_type,
         custom_fields,
         components: params.components,
+        fix_versions: params.fix_versions,
     };
     let issue = provider.create_issue(input).await?;
 
@@ -987,6 +991,9 @@ struct UpdateIssueParams {
     /// Serde-parsed so non-array / non-string input errors fast.
     #[serde(default)]
     components: Option<Vec<String>>,
+    /// Jira fix-version names. Same shape and semantics as `components`.
+    #[serde(default, rename = "fixVersions")]
+    fix_versions: Option<Vec<String>>,
 }
 
 async fn execute_update_issue(
@@ -1007,6 +1014,7 @@ async fn execute_update_issue(
         markdown: params.markdown.unwrap_or(true),
         custom_fields,
         components: params.components,
+        fix_versions: params.fix_versions,
     };
     let key = params.key;
     let issue = provider.update_issue(&key, input).await?;
@@ -1570,6 +1578,7 @@ async fn execute_create_epic(
         issue_type: None,
         custom_fields: args.get("customFields").cloned(),
         components: Vec::new(),
+        fix_versions: Vec::new(),
     };
     let issue = provider.create_issue(input).await?;
 
@@ -1657,6 +1666,7 @@ async fn execute_update_epic(
         markdown: params.markdown.unwrap_or(true),
         custom_fields: args.get("customFields").cloned(),
         components: None,
+        fix_versions: None,
     };
     let key = params.key;
     let issue = provider.update_issue(&key, input).await?;

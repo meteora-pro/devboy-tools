@@ -255,6 +255,10 @@ pub struct CreateIssueFields {
     /// Components (issue #197).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub components: Option<Vec<ComponentRef>>,
+    /// Fix versions / release targets. Serialised as
+    /// `[{ "name": "..." }, ...]` into Jira's `fields.fixVersions`.
+    #[serde(rename = "fixVersions", skip_serializing_if = "Option::is_none")]
+    pub fix_versions: Option<Vec<VersionRef>>,
     /// Parent issue reference. Required by Jira when `issuetype` is a
     /// sub-task or any "is_subtask" hierarchical type — the API rejects
     /// the request with a 400 otherwise (issue #214). Serialised as
@@ -276,6 +280,17 @@ pub struct CreateIssueFields {
 /// This is addressed in Copilot review on PR #205.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentRef {
+    pub name: String,
+}
+
+/// Fix-version reference used in create/update issue payloads.
+///
+/// Same shape and rationale as [`ComponentRef`]: name-based reference
+/// that works across Cloud and Self-Hosted without callers having to
+/// resolve numeric ids first. Pairs with the `fix_versions` field in
+/// [`devboy_core::CreateIssueInput`] / [`devboy_core::UpdateIssueInput`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionRef {
     pub name: String,
 }
 
@@ -326,6 +341,11 @@ pub struct UpdateIssueFields {
     /// `Some(vec![])` clears all components.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub components: Option<Vec<ComponentRef>>,
+    /// Fix versions. `None` leaves them untouched. `Some(vec![])` clears
+    /// all fix versions. `Some(vec![...])` replaces with the given
+    /// release names.
+    #[serde(rename = "fixVersions", skip_serializing_if = "Option::is_none")]
+    pub fix_versions: Option<Vec<VersionRef>>,
 }
 
 /// Request body for transitioning an issue.

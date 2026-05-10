@@ -167,6 +167,15 @@ pub struct CreateIssueInput {
     /// first-class Components concept (GitHub/GitLab/ClickUp).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub components: Vec<String>,
+    /// Fix version **names** to associate with the issue (Jira-only).
+    /// Each entry is a release name from the project's versions
+    /// (`ProjectVersion.name`, e.g. `"3.18.0"`). Jira accepts both id-
+    /// and name-based references in `fields.fixVersions`; names line up
+    /// with the schema enricher and stay portable across Cloud and
+    /// Self-Hosted. Ignored by providers without first-class fix
+    /// versions (GitHub/GitLab/ClickUp).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fix_versions: Vec<String>,
 }
 
 impl Default for CreateIssueInput {
@@ -183,6 +192,7 @@ impl Default for CreateIssueInput {
             issue_type: None,
             custom_fields: None,
             components: Vec::new(),
+            fix_versions: Vec::new(),
         }
     }
 }
@@ -223,6 +233,12 @@ pub struct UpdateIssueInput {
     /// **names** (see [`CreateIssueInput::components`] for rationale).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub components: Option<Vec<String>>,
+    /// Replace fix versions on the issue (Jira-only).
+    /// `None` leaves fix versions untouched. `Some(vec![])` clears all
+    /// fix versions. `Some(vec![...])` replaces with the given release
+    /// **names** (see [`CreateIssueInput::fix_versions`] for rationale).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix_versions: Option<Vec<String>>,
 }
 
 impl Default for UpdateIssueInput {
@@ -238,6 +254,7 @@ impl Default for UpdateIssueInput {
             markdown: true,
             custom_fields: None,
             components: None,
+            fix_versions: None,
         }
     }
 }

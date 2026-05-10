@@ -46,6 +46,7 @@ Create a new issue in the configured provider.
 | `assignees` | array&lt;string&gt; | — | Assignee usernames |
 | `components` | array&lt;string&gt; | — | Jira component names to associate with the issue. Ignored by providers that don't have Components (GitHub/GitLab/ClickUp). |
 | `description` | string | — | Issue description/body |
+| `fixVersions` | array&lt;string&gt; | — | Jira fix-version (release) names to associate with the issue. Each entry is a `ProjectVersion.name` (e.g., "3.18.0"). Ignored by providers without fix versions (GitHub/GitLab/ClickUp). |
 | `issueType` | string | — | Issue type (e.g., "Task", "Bug", "Story"). Default: "Task". Removed by providers that don't support it. |
 | `labels` | array&lt;string&gt; | — | Labels to add |
 | `markdown` | boolean | — | Whether the description is markdown (default: true). When true, ClickUp renders formatted text. |
@@ -182,6 +183,7 @@ Update an existing issue. Only provided fields will be changed.
 | `assignees` | array&lt;string&gt; | — | New assignees |
 | `components` | array&lt;string&gt; | — | Replace components with these Jira component names. Omit the field to leave existing components untouched; pass an empty array to clear. |
 | `description` | string | — | New description |
+| `fixVersions` | array&lt;string&gt; | — | Replace fix versions with these Jira release names. Omit the field to leave existing fix versions untouched; pass an empty array to clear. |
 | `labels` | array&lt;string&gt; | — | New labels (replaces existing) |
 | `markdown` | boolean | — | Whether the description is markdown (default: true). When true, ClickUp renders formatted text. |
 | `parentId` | string | — | Parent issue key to move task as subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp. |

@@ -1715,6 +1715,18 @@ impl IssueProvider for JiraClient {
             )
         };
 
+        let fix_versions = if input.fix_versions.is_empty() {
+            None
+        } else {
+            Some(
+                input
+                    .fix_versions
+                    .into_iter()
+                    .map(|name| crate::types::VersionRef { name })
+                    .collect(),
+            )
+        };
+
         let payload = CreateIssuePayload {
             fields: CreateIssueFields {
                 project: ProjectKey {
@@ -1729,6 +1741,7 @@ impl IssueProvider for JiraClient {
                 priority,
                 assignee,
                 components,
+                fix_versions,
                 parent: input.parent.map(|key| crate::types::IssueKeyRef { key }),
             },
         };
@@ -1812,6 +1825,15 @@ impl IssueProvider for JiraClient {
         });
         let has_components = components.is_some();
 
+        // Fix versions. `None` → untouched, `Some([])` → clear.
+        let fix_versions = input.fix_versions.map(|names| {
+            names
+                .into_iter()
+                .map(|name| crate::types::VersionRef { name })
+                .collect()
+        });
+        let has_fix_versions = fix_versions.is_some();
+
         let fields = UpdateIssueFields {
             summary: input.title,
             description,
@@ -1819,6 +1841,7 @@ impl IssueProvider for JiraClient {
             priority,
             assignee,
             components,
+            fix_versions,
         };
 
         let has_custom_fields = input.custom_fields.as_ref().is_some_and(|v| {
@@ -1833,6 +1856,7 @@ impl IssueProvider for JiraClient {
             || fields.priority.is_some()
             || fields.assignee.is_some()
             || has_components
+            || has_fix_versions
             || has_custom_fields;
 
         if has_field_updates {
@@ -4435,6 +4459,94 @@ mod tests {
             assert_eq!(issue.key, "jira#PROJ-11");
         }
 
+        /// fix_versions pass-through on create — names serialise as
+        /// `[{"name": "..."}, ...]` into `fields.fixVersions`.
+        #[tokio::test]
+        async fn test_create_issue_with_fix_versions() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issue")
+                    .body_includes("\"fixVersions\":[{\"name\":\"3.18.0\"},{\"name\":\"3.19.0\"}]");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10012",
+                    "key": "PROJ-12"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-12");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10012",
+                    "key": "PROJ-12",
+                    "fields": {
+                        "summary": "With fix versions",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-05T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "With fix versions".to_string(),
+                    fix_versions: vec!["3.18.0".to_string(), "3.19.0".to_string()],
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-12");
+        }
+
+        /// Empty `fix_versions` must not emit a `"fixVersions": []` into
+        /// the payload — Jira treats absent and empty differently for
+        /// validators on the create screen.
+        #[tokio::test]
+        async fn test_create_issue_without_fix_versions_omits_field() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST).path("/issue").is_true(|req| {
+                    let body = String::from_utf8_lossy(req.body().as_ref());
+                    !body.contains("\"fixVersions\"")
+                });
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10013",
+                    "key": "PROJ-13"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-13");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10013",
+                    "key": "PROJ-13",
+                    "fields": {
+                        "summary": "No fix versions",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-05T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "No fix versions".to_string(),
+                    fix_versions: vec![],
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-13");
+        }
+
         /// Issue #214 — sub-task creation requires `fields.parent.key`
         /// in the payload; the API returns 400 otherwise. The
         /// `CreateIssueInput.parent` field must round-trip into the body.
@@ -4560,6 +4672,48 @@ mod tests {
                     "PROJ-1",
                     UpdateIssueInput {
                         components: Some(vec!["Backend".to_string()]),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// `Some(["3.18.0"])` replaces fix versions with one entry;
+        /// `Some(vec![])` clears; `None` does not touch (handled upstream).
+        #[tokio::test]
+        async fn test_update_issue_replaces_fix_versions() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/issue/PROJ-1")
+                    .body_includes("\"fixVersions\":[{\"name\":\"3.18.0\"}]");
+                then.status(204);
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "summary": "Updated",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .update_issue(
+                    "PROJ-1",
+                    UpdateIssueInput {
+                        fix_versions: Some(vec!["3.18.0".to_string()]),
                         ..Default::default()
                     },
                 )
@@ -5521,6 +5675,7 @@ mod tests {
                     priority: None,
                     assignee: None,
                     components: None,
+                    fix_versions: None,
                     parent: None,
                 },
             };
@@ -5551,6 +5706,7 @@ mod tests {
                     priority: None,
                     assignee: None,
                     components: None,
+                    fix_versions: None,
                     parent: None,
                 },
             };
@@ -5577,6 +5733,7 @@ mod tests {
                     priority: None,
                     assignee: None,
                     components: None,
+                    fix_versions: None,
                     parent: None,
                 },
             };
