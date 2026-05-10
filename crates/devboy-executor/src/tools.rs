@@ -86,24 +86,12 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("markdown", PropertySchema::boolean("Whether the description is markdown (default: true). When true, ClickUp renders formatted text."));
                 s.add_property("projectId", PropertySchema::string("Jira project key (not numeric ID) for issue creation (e.g., \"PROJ\"). Optional — overrides the default project."));
                 s.add_property("issueType", PropertySchema::string("Issue type (e.g., \"Task\", \"Bug\", \"Story\"). Default: \"Task\". Removed by providers that don't support it."));
-                // Issue #197 — component names. The Jira enricher
-                // populates an enum at metadata-assembly time so schema
-                // consumers see the valid values; here we just declare
-                // the property exists (Codex review on PR #205).
-                s.add_property("components", PropertySchema::array(
-                    PropertySchema::string("component name"),
-                    "Jira component names to associate with the issue. Ignored by providers that don't have Components (GitHub/GitLab/ClickUp).",
-                ));
-                s.add_property("fixVersions", PropertySchema::array(
-                    PropertySchema::string("fix version name"),
-                    "Jira fix-version (release) names to associate with the issue. Each entry is a `ProjectVersion.name` (e.g., \"3.18.0\"). Ignored by providers without fix versions (GitHub/GitLab/ClickUp).",
-                ));
-                // `epicKey` / `sprintId` / `epicName` are *not* in the
-                // base schema — they're customfield-backed and only
-                // exist on instances where the corresponding Jira
-                // customfield is configured. The Jira enricher adds
-                // them dynamically when it sees `Epic Link`,
-                // `Sprint`, or `Epic Name` in project metadata.
+                // Jira-specific slots (`components`, `fixVersions`,
+                // `epicKey`, `sprintId`, `epicName`) are *not* in
+                // the base schema — `JiraSchemaEnricher` adds them
+                // dynamically so non-Jira providers
+                // (GitHub/GitLab/ClickUp) don't see them and can't
+                // think they're applicable.
                 s.set_required("title", true);
                 s
             },
@@ -122,20 +110,9 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("assignees", PropertySchema::array(PropertySchema::string("assignee"), "New assignees"));
                 s.add_property("parentId", PropertySchema::string("Parent issue key to move task as subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp."));
                 s.add_property("markdown", PropertySchema::boolean("Whether the description is markdown (default: true). When true, ClickUp renders formatted text."));
-                // Issue #197 — `None` leaves components untouched, empty
-                // array clears them, array with names replaces them.
-                s.add_property("components", PropertySchema::array(
-                    PropertySchema::string("component name"),
-                    "Replace components with these Jira component names. Omit the field to leave existing components untouched; pass an empty array to clear.",
-                ));
-                s.add_property("fixVersions", PropertySchema::array(
-                    PropertySchema::string("fix version name"),
-                    "Replace fix versions with these Jira release names. Omit the field to leave existing fix versions untouched; pass an empty array to clear.",
-                ));
-                // `epicKey` / `sprintId` / `epicName` are added by the
-                // Jira enricher only when the matching customfield is
-                // configured on the instance — see the create_issue
-                // schema for rationale.
+                // Jira-specific slots are added dynamically by
+                // `JiraSchemaEnricher` — see the create_issue
+                // schema comment above.
                 s.set_required("key", true);
                 s
             },

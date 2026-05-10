@@ -179,12 +179,39 @@ impl ToolEnricher for JiraSchemaEnricher {
             schema.set_description("priority", &desc);
         }
 
-        // Components enum
-        let components = self.metadata.all_components();
-        if !components.is_empty() {
-            schema.set_enum("components", &components);
-            let desc = format!("Components. Available: {}", components.join(", "));
-            schema.set_description("components", &desc);
+        // Components / fixVersions: Jira system fields. Added on
+        // the Jira enricher path only — non-Jira providers don't see
+        // them in their `tools/list` (Codex/Copilot review feedback
+        // on PR #260).
+        if tool_name == "create_issue" || tool_name == "update_issue" {
+            let components = self.metadata.all_components();
+            let comp_desc = if components.is_empty() {
+                "Jira component names to associate with the issue.".to_string()
+            } else {
+                format!("Components. Available: {}", components.join(", "))
+            };
+            let mut comp_prop =
+                PropertySchema::array(PropertySchema::string("component name"), &comp_desc);
+            if !components.is_empty() {
+                comp_prop.enum_values = Some(components.clone());
+                comp_prop.enriched = Some(true);
+            }
+            schema.add_param(
+                "components",
+                serde_json::to_value(comp_prop).unwrap_or_default(),
+            );
+
+            let fix_desc = if tool_name == "update_issue" {
+                "Replace fix versions with these Jira release names. Omit the field to leave existing fix versions untouched; pass an empty array to clear."
+            } else {
+                "Jira fix-version (release) names to associate with the issue. Each entry is a `ProjectVersion.name` (e.g., \"3.18.0\")."
+            };
+            let fix_prop =
+                PropertySchema::array(PropertySchema::string("fix version name"), fix_desc);
+            schema.add_param(
+                "fixVersions",
+                serde_json::to_value(fix_prop).unwrap_or_default(),
+            );
         }
 
         // Link types
