@@ -67,6 +67,53 @@ pub struct ProviderCatalog {
     /// All token variants this provider supports. One element
     /// = one form the GUI will render.
     pub variants: Vec<TokenVariant>,
+    /// Env-var → variant patterns the `setup-secrets` proposer
+    /// (devboy-cli) consults to map a scanned env-var name to
+    /// an ADR-020 path with high accuracy. Optional and
+    /// additive — catalogs that don't carry these fields
+    /// still load and the proposer falls back to its
+    /// hardcoded heuristics.
+    ///
+    /// Each pattern says "if the env-var name matches one of
+    /// `matches`, propose `<scope>/<provider_id>/<variant>`".
+    /// Globs use `*` as a single-segment wildcard
+    /// (`OPENAI_*_KEY`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_var_patterns: Vec<EnvVarPattern>,
+    /// Env-var names this provider's catalog asks the proposer
+    /// to skip outright — typically configuration toggles
+    /// shaped like `<PROVIDER>_BASE_URL`, `<PROVIDER>_MODEL`,
+    /// `<PROVIDER>_TIMEOUT` that look like credentials at
+    /// first glance but never carry a value the framework
+    /// would store. Globs use `*` (`OPENAI_*_URL`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_var_skip: Vec<String>,
+}
+
+/// One env-var → variant mapping. The proposer treats
+/// `matches` as a list of literal names plus glob patterns
+/// (`*` = single underscore segment); the first entry that
+/// matches wins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvVarPattern {
+    /// One or more env-var names the pattern fires on. A bare
+    /// name is matched literally (`OPENAI_API_KEY`); a name
+    /// with `*` is a glob (`OPENAI_*_KEY` matches
+    /// `OPENAI_PROD_KEY`, `OPENAI_STAGE_KEY`, …).
+    pub matches: Vec<String>,
+    /// Variant id (must exist in the same catalog's
+    /// `variants` list) the matched env-var maps to.
+    pub variant: String,
+    /// ADR-020 scope segment for the resulting path. Defaults
+    /// to `team`. Catalogs override to `personal` for
+    /// developer-account-style credentials.
+    #[serde(default = "default_pattern_scope")]
+    pub scope: String,
+}
+
+fn default_pattern_scope() -> String {
+    "team".to_owned()
 }
 
 /// One token kind — region, tier, subscription level.
@@ -1572,6 +1619,8 @@ mod tests {
                 }),
                 default_keychain_account: None,
             }],
+            env_var_patterns: Vec::new(),
+            env_var_skip: Vec::new(),
         }
     }
 
@@ -1588,6 +1637,78 @@ mod tests {
         let body = r#"{"schema_version":1,"provider_id":"x","display_name":"X","variants":[],"unknown":true}"#;
         let r: Result<ProviderCatalog, _> = serde_json::from_str(body);
         assert!(r.is_err());
+    }
+
+    // -- env_var_patterns / env_var_skip (S1) --------------------
+
+    #[test]
+    fn env_var_patterns_round_trip_with_defaults() {
+        // Matches without `scope` should default to "team".
+        let body = r#"{
+            "schema_version":1,
+            "provider_id":"openai",
+            "display_name":"OpenAI",
+            "variants":[{
+                "id":"openai-api-key",
+                "display_name":"OpenAI API key",
+                "description":"main",
+                "retrieval":{"console_url":"https://example.invalid","steps":["x"]}
+            }],
+            "env_var_patterns":[
+                {"matches":["OPENAI_API_KEY"],"variant":"openai-api-key"},
+                {"matches":["E2E_OPENAI_API_KEY"],"variant":"openai-api-key","scope":"personal"}
+            ],
+            "env_var_skip":["OPENAI_API_BASE","OPENAI_*_URL","OPENAI_MODEL"]
+        }"#;
+        let cat: ProviderCatalog = serde_json::from_str(body).unwrap();
+        assert_eq!(cat.env_var_patterns.len(), 2);
+        assert_eq!(cat.env_var_patterns[0].scope, "team");
+        assert_eq!(cat.env_var_patterns[1].scope, "personal");
+        assert_eq!(cat.env_var_skip.len(), 3);
+    }
+
+    #[test]
+    fn env_var_patterns_omitted_in_legacy_catalogs() {
+        // Catalogs authored before S1 lack the new fields and
+        // must still load; the proposer treats absence as
+        // "no patterns".
+        let body = r#"{
+            "schema_version":1,
+            "provider_id":"x",
+            "display_name":"X",
+            "variants":[{
+                "id":"x-default",
+                "display_name":"X",
+                "description":"main",
+                "retrieval":{"console_url":"https://example.invalid","steps":["x"]}
+            }]
+        }"#;
+        let cat: ProviderCatalog = serde_json::from_str(body).unwrap();
+        assert!(cat.env_var_patterns.is_empty());
+        assert!(cat.env_var_skip.is_empty());
+    }
+
+    #[test]
+    fn env_var_pattern_rejects_unknown_field() {
+        let body = r#"{
+            "schema_version":1,
+            "provider_id":"x",
+            "display_name":"X",
+            "variants":[{
+                "id":"x-default",
+                "display_name":"X",
+                "description":"main",
+                "retrieval":{"console_url":"https://example.invalid","steps":["x"]}
+            }],
+            "env_var_patterns":[
+                {"matches":["X_TOKEN"],"variant":"x-default","unknown":true}
+            ]
+        }"#;
+        let r: Result<ProviderCatalog, _> = serde_json::from_str(body);
+        assert!(
+            r.is_err(),
+            "deny_unknown_fields must reject extra keys on EnvVarPattern"
+        );
     }
 
     #[test]
