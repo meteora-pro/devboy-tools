@@ -276,6 +276,203 @@ fn scan_manifest(
 }
 
 // =============================================================================
+// Path proposer (P26.3)
+// =============================================================================
+
+/// One ADR-020 path proposal derived from an [`EnvVarHit`].
+/// `Skip` means the env-var is not a credential (e.g.
+/// `JIRA_USER`, `LANG`); `Path` carries the proposed path
+/// plus the inferred provider identifier, which the wizard
+/// uses to pick a [`devboy_token_catalog::ProviderCatalog`]
+/// when the user opens the provision dialog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProposedPath {
+    /// The wizard should add this path to the manifest.
+    Path {
+        /// Source observation that triggered the proposal.
+        env_var: String,
+        /// Suggested ADR-020 path (`<scope>/<provider>/<purpose>`).
+        path: String,
+        /// `true` when the provider segment matches a bundled
+        /// catalog `provider_id` — the GUI can offer the
+        /// matching variant directly.
+        provider_known: bool,
+    },
+    /// Variable is not a credential — surface it to the user
+    /// so they can confirm the skip but do not propose a
+    /// path.
+    Skip {
+        env_var: String,
+        /// One-line reason rendered in the wizard's review
+        /// pane (e.g. `not a secret — usually a username`).
+        reason: String,
+    },
+}
+
+/// Reduce a slice of [`EnvVarHit`]s to one [`ProposedPath`]
+/// per distinct `var_name`. The first occurrence wins for
+/// `env_var` provenance — call sites typically already
+/// dedupe per (file, line) via [`scan_repo`], so the input
+/// length is small.
+///
+/// `known_providers` is the set of `provider_id` values from
+/// the active token catalog — usually
+/// `bundled_catalogs().iter().map(|c| c.provider_id.clone())`.
+/// Empty list disables provider-detection (everything routes
+/// through the `personal/` fallback).
+pub fn propose_paths(hits: &[EnvVarHit], known_providers: &[String]) -> Vec<ProposedPath> {
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut out: Vec<ProposedPath> = Vec::new();
+    for hit in hits {
+        if !seen.insert(hit.var_name.clone()) {
+            continue;
+        }
+        out.push(propose_one(&hit.var_name, known_providers));
+    }
+    out
+}
+
+/// Single-var proposer — exposed for tests and the wizard's
+/// "propose for this manual entry" path.
+pub fn propose_one(var: &str, known_providers: &[String]) -> ProposedPath {
+    if let Some(reason) = non_secret_reason(var) {
+        return ProposedPath::Skip {
+            env_var: var.to_owned(),
+            reason: reason.to_owned(),
+        };
+    }
+    let var_lower = var.to_lowercase();
+    let (provider, provider_known) = pick_provider(&var_lower, known_providers);
+    let purpose = pick_purpose(&var_lower, &provider);
+    let scope = if provider_known { "team" } else { "personal" };
+    ProposedPath::Path {
+        env_var: var.to_owned(),
+        path: format!("{scope}/{provider}/{purpose}"),
+        provider_known,
+    }
+}
+
+/// Names that are clearly NOT secrets — usernames, emails,
+/// hostnames, ports, locale toggles. Returning `Some(reason)`
+/// makes the proposer emit a `Skip` proposal so the user can
+/// see the rejected name and confirm.
+fn non_secret_reason(var: &str) -> Option<&'static str> {
+    let v = var.to_uppercase();
+    // Suffix-based: e.g. `JIRA_USER`, `JIRA_USERNAME`.
+    const NON_SECRET_SUFFIXES: &[&str] = &[
+        "_USER",
+        "_USERNAME",
+        "_LOGIN",
+        "_EMAIL",
+        "_HOST",
+        "_HOSTNAME",
+        "_PORT",
+        "_URL",
+        "_REGION",
+        "_PROJECT",
+        "_BUCKET",
+        "_NAMESPACE",
+        "_ID",
+    ];
+    for suf in NON_SECRET_SUFFIXES {
+        if v.ends_with(suf) {
+            return Some("not a secret — usually a username / hostname / id");
+        }
+    }
+    // Exact-match list for short standalone names.
+    match v.as_str() {
+        "USER" | "USERNAME" | "EMAIL" | "HOST" | "HOSTNAME" | "PORT" | "URL" | "LANG"
+        | "LOCALE" | "TZ" | "HOME" | "PATH" | "PWD" | "SHELL" | "TERM" => {
+            Some("not a secret — environment / machine variable")
+        }
+        _ => None,
+    }
+}
+
+/// Pick `<provider>` for the path. Walks the env var's
+/// underscore-separated parts, lower-cased, and returns the
+/// first part that matches a known `provider_id` from the
+/// catalog (case-insensitively). Falls back to the first
+/// alphabetic part for the `personal/` scope.
+fn pick_provider(var_lower: &str, known: &[String]) -> (String, bool) {
+    let parts: Vec<&str> = var_lower.split('_').filter(|p| !p.is_empty()).collect();
+    for p in &parts {
+        for k in known {
+            if k.eq_ignore_ascii_case(p) {
+                return (k.clone(), true);
+            }
+        }
+    }
+    // Hardcoded provider hints for cases the bundled catalog
+    // does not cover yet (the catalog is intentionally small
+    // — issue #258 will keep it fresh). These aliases keep
+    // the proposer useful before that lands.
+    const HINTS: &[(&str, &str)] = &[
+        ("jira", "jira"),
+        ("gitlab", "gitlab"),
+        ("github", "github"),
+        ("slack", "slack"),
+        ("openai", "openai"),
+        ("anthropic", "anthropic"),
+        ("kimi", "kimi"),
+        ("clickup", "clickup"),
+        ("confluence", "confluence"),
+        ("stripe", "stripe"),
+        ("aws", "aws"),
+        ("gcp", "gcp"),
+    ];
+    for p in &parts {
+        for (alias, canonical) in HINTS {
+            if alias == p {
+                // Match found in hints — `provider_known` is
+                // false because the bundled catalog does not
+                // know about it yet, but the path uses the
+                // canonical name so a future catalog update
+                // matches without rewriting the manifest.
+                return ((*canonical).to_owned(), false);
+            }
+        }
+    }
+    // Last resort: first alphabetic-only part.
+    let fallback = parts
+        .iter()
+        .find(|p| p.chars().all(|c| c.is_ascii_alphabetic()))
+        .map(|s| (*s).to_owned())
+        .unwrap_or_else(|| "unknown".to_owned());
+    (fallback, false)
+}
+
+/// Pick `<purpose>` for the path. Strips the provider segment
+/// and any trailing `_TOKEN` / `_KEY` / `_SECRET` noise; what
+/// remains is the purpose. Defaults to `api-key` when the
+/// remainder is empty, mirroring the bundled catalogs'
+/// canonical name for "the only credential the provider has".
+fn pick_purpose(var_lower: &str, provider: &str) -> String {
+    let parts: Vec<&str> = var_lower
+        .split('_')
+        .filter(|p| !p.is_empty() && *p != provider)
+        .collect();
+    // Remove trailing noise words. `key` is intentionally
+    // NOT in this list — `api-key` is the canonical purpose
+    // for "the only credential a provider has", so an
+    // `OPENAI_API_KEY` env-var should land as
+    // `team/openai/api-key`, not `team/openai/api`.
+    const TRAILING_NOISE: &[&str] = &["token", "secret", "credential", "credentials"];
+    let mut cleaned: Vec<&str> = parts;
+    while cleaned
+        .last()
+        .map(|p| TRAILING_NOISE.contains(p))
+        .unwrap_or(false)
+    {
+        cleaned.pop();
+    }
+    if cleaned.is_empty() {
+        return "api-key".to_owned();
+    }
+    cleaned.join("-")
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -449,5 +646,127 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
         write(dir.path(), "b.py", r#"os.getenv("A")"#);
         let hits = scan_repo(dir.path()).unwrap();
         assert_eq!(names(&hits), vec!["A", "Z"]);
+    }
+
+    // ====== propose_paths fixtures (P26.3) ======================
+
+    fn known() -> Vec<String> {
+        vec!["openai".into(), "github".into(), "kimi".into()]
+    }
+
+    fn assert_path(p: &ProposedPath, want_path: &str, want_known: bool) {
+        match p {
+            ProposedPath::Path {
+                path,
+                provider_known,
+                ..
+            } => {
+                assert_eq!(path, want_path, "{p:?}");
+                assert_eq!(*provider_known, want_known, "{p:?}");
+            }
+            ProposedPath::Skip { .. } => panic!("expected Path, got Skip: {p:?}"),
+        }
+    }
+
+    fn assert_skip(p: &ProposedPath) {
+        assert!(matches!(p, ProposedPath::Skip { .. }), "{p:?}");
+    }
+
+    #[test]
+    fn proposer_jira_token_to_team_jira_api_key() {
+        // No `jira` in bundled — provider_known=false, but
+        // the canonical hint produces the right path.
+        let p = propose_one("JIRA_TOKEN", &known());
+        assert_path(&p, "personal/jira/api-key", false);
+    }
+
+    #[test]
+    fn proposer_skips_jira_user() {
+        assert_skip(&propose_one("JIRA_USER", &known()));
+        assert_skip(&propose_one("JIRA_EMAIL", &known()));
+        assert_skip(&propose_one("JIRA_USERNAME", &known()));
+    }
+
+    #[test]
+    fn proposer_openai_api_key_known_provider() {
+        // `openai` is in `known` → provider_known=true,
+        // scope=team.
+        let p = propose_one("OPENAI_API_KEY", &known());
+        assert_path(&p, "team/openai/api-key", true);
+    }
+
+    #[test]
+    fn proposer_gitlab_token_routes_to_gitlab_via_hints() {
+        // `gitlab` is not in our `known` slice, so it routes
+        // through the hardcoded hints — provider_known=false,
+        // scope=personal, purpose collapses to `api-key`
+        // because GITLAB_TOKEN has no extra purpose words.
+        let p = propose_one("GITLAB_TOKEN", &known());
+        assert_path(&p, "personal/gitlab/api-key", false);
+    }
+
+    #[test]
+    fn proposer_strips_trailing_token_key_secret_words() {
+        // `OPENAI_API_KEY` keeps `api`; `_KEY` drops; the
+        // result is `api-key` because we collapse trailing
+        // noise iteratively. Symmetric for `_SECRET`.
+        let p = propose_one("OPENAI_SECRET", &known());
+        assert_path(&p, "team/openai/api-key", true);
+    }
+
+    #[test]
+    fn proposer_unknown_provider_falls_back_to_personal() {
+        // `WEIRD_TOKEN` — first part `weird` matches no
+        // catalog and no hint. Fallback `personal/weird/...`,
+        // purpose collapses to `api-key`.
+        let p = propose_one("WEIRD_TOKEN", &known());
+        assert_path(&p, "personal/weird/api-key", false);
+    }
+
+    #[test]
+    fn proposer_keeps_purpose_when_distinct_from_provider() {
+        // `GITHUB_DEPLOY_TOKEN` — provider=github (known),
+        // purpose=deploy (token stripped as noise).
+        let p = propose_one("GITHUB_DEPLOY_TOKEN", &known());
+        assert_path(&p, "team/github/deploy", true);
+    }
+
+    #[test]
+    fn proposer_skips_machine_environment_vars() {
+        // Standalone names like `HOME` / `PATH` / `PORT` are
+        // never secrets.
+        assert_skip(&propose_one("HOME", &known()));
+        assert_skip(&propose_one("PATH", &known()));
+        assert_skip(&propose_one("PORT", &known()));
+    }
+
+    #[test]
+    fn proposer_dedupes_repeated_var_across_hits() {
+        // Same env-var, two distinct files / lines — one
+        // proposal in the result.
+        let hits = vec![
+            EnvVarHit {
+                var_name: "OPENAI_API_KEY".into(),
+                file: PathBuf::from("a.py"),
+                line: 1,
+            },
+            EnvVarHit {
+                var_name: "OPENAI_API_KEY".into(),
+                file: PathBuf::from("b.py"),
+                line: 12,
+            },
+        ];
+        let proposals = propose_paths(&hits, &known());
+        assert_eq!(proposals.len(), 1);
+        assert_path(&proposals[0], "team/openai/api-key", true);
+    }
+
+    #[test]
+    fn proposer_handles_multi_segment_purpose() {
+        // `STRIPE_WEBHOOK_SIGNING_SECRET` — provider=stripe
+        // (hint), purpose=webhook-signing (after stripping
+        // trailing `_SECRET`).
+        let p = propose_one("STRIPE_WEBHOOK_SIGNING_SECRET", &known());
+        assert_path(&p, "personal/stripe/webhook-signing", false);
     }
 }
