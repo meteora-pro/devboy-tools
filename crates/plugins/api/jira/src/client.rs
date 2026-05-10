@@ -2922,6 +2922,62 @@ impl IssueProvider for JiraClient {
         Ok(jira_version_to_project_version(dto, &project_key))
     }
 
+    async fn list_custom_fields(
+        &self,
+        params: devboy_core::ListCustomFieldsParams,
+    ) -> Result<ProviderResult<devboy_core::CustomFieldDescriptor>> {
+        // Jira's `/field` is global and unpaginated — `project` and
+        // `issue_type` filter params are accepted on the trait for
+        // forward compat (Cloud `/field/<id>/contexts` may scope per
+        // project/issuetype) but ignored here. Document accordingly.
+        let _ = (&params.project, &params.issue_type);
+
+        let fields = self.fetch_fields().await?;
+        let limit = params.limit.unwrap_or(50).min(200);
+        let needle = params.search.as_deref().map(str::to_lowercase);
+
+        let mut descriptors: Vec<devboy_core::CustomFieldDescriptor> = fields
+            .into_iter()
+            .filter(|f| f.custom)
+            .filter(|f| match &needle {
+                Some(n) => f.name.to_lowercase().contains(n),
+                None => true,
+            })
+            .map(|f| {
+                let field_type = f
+                    .schema
+                    .as_ref()
+                    .and_then(|s| s.field_type.clone())
+                    .unwrap_or_default();
+                let native = f.schema.as_ref().and_then(|s| serde_json::to_value(s).ok());
+                devboy_core::CustomFieldDescriptor {
+                    id: f.id,
+                    name: f.name,
+                    field_type,
+                    description: None,
+                    native,
+                }
+            })
+            .collect();
+
+        descriptors.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let total_after_filter = descriptors.len() as u32;
+        if (limit as usize) < descriptors.len() {
+            descriptors.truncate(limit as usize);
+        }
+
+        let pagination = devboy_core::Pagination {
+            offset: 0,
+            limit,
+            total: Some(total_after_filter),
+            has_more: (descriptors.len() as u32) < total_after_filter,
+            next_cursor: None,
+        };
+
+        Ok(ProviderResult::new(descriptors).with_pagination(pagination))
+    }
+
     fn provider_name(&self) -> &'static str {
         "jira"
     }
@@ -4996,6 +5052,77 @@ mod tests {
                 .unwrap();
 
             assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// list_custom_fields filters out system fields, sorts by
+        /// name, and applies the case-insensitive search filter.
+        #[tokio::test]
+        async fn test_list_custom_fields_filters_and_sorts() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "summary", "name": "Summary", "custom": false},
+                    {"id": "customfield_10020", "name": "Sprint", "custom": true,
+                     "schema": {"type": "array", "items": "json"}},
+                    {"id": "customfield_10014", "name": "Epic Link", "custom": true,
+                     "schema": {"type": "any"}},
+                    {"id": "customfield_10011", "name": "Epic Name", "custom": true,
+                     "schema": {"type": "string"}}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let result = client
+                .list_custom_fields(devboy_core::ListCustomFieldsParams {
+                    search: Some("epic".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            // Two epic-named fields, sorted alphabetically; system
+            // `Summary` is dropped because `custom == false`.
+            assert_eq!(result.items.len(), 2);
+            assert_eq!(result.items[0].name, "Epic Link");
+            assert_eq!(result.items[1].name, "Epic Name");
+            assert_eq!(result.items[0].field_type, "any");
+            assert_eq!(result.items[1].field_type, "string");
+
+            let pagination = result.pagination.expect("pagination present");
+            assert_eq!(pagination.total, Some(2));
+            assert!(!pagination.has_more);
+        }
+
+        /// list_custom_fields honours the `limit` cap and reports
+        /// `has_more` so callers can ask for a wider page.
+        #[tokio::test]
+        async fn test_list_custom_fields_limit_truncates_with_has_more() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "customfield_10020", "name": "Sprint", "custom": true},
+                    {"id": "customfield_10014", "name": "Epic Link", "custom": true},
+                    {"id": "customfield_10011", "name": "Epic Name", "custom": true}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let result = client
+                .list_custom_fields(devboy_core::ListCustomFieldsParams {
+                    limit: Some(2),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(result.items.len(), 2);
+            let pagination = result.pagination.expect("pagination present");
+            assert_eq!(pagination.total, Some(3));
+            assert!(pagination.has_more);
         }
 
         /// `resolve_field_id_by_name` finds the customfield id for a

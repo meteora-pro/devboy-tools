@@ -875,6 +875,45 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s
             },
         },
+        // Custom-field discovery — pairs with the `epicKey` / `sprintId` /
+        // `epicName` slots on create/update_issue and the raw `customFields`
+        // escape hatch. Returns a name → id mapping so agents stop guessing
+        // `customfield_*` numbers.
+        ToolDefinition {
+            name: "get_custom_fields".into(),
+            description: "List custom fields available on the issue tracker, with their id, name, and field type. Use to discover the `customfield_*` id of a Jira instance — names like `Epic Link`, `Sprint`, `Epic Name` map to different ids on every deployment. Pair with `customFields: { \"<id>\": <value> }` on `create_issue` / `update_issue` for fields not yet exposed as first-class params.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "project",
+                    PropertySchema::string(
+                        "Optional project key. Reserved for providers that scope custom fields per project; ignored on Jira's global `/field` endpoint.",
+                    ),
+                );
+                s.add_property(
+                    "issueType",
+                    PropertySchema::string(
+                        "Optional issue type. Reserved for providers that scope custom fields per create-screen context.",
+                    ),
+                );
+                s.add_property(
+                    "search",
+                    PropertySchema::string(
+                        "Case-insensitive substring filter on the field name (e.g. `\"Epic\"` to find `Epic Link` and `Epic Name`).",
+                    ),
+                );
+                s.add_property(
+                    "limit",
+                    PropertySchema::integer(
+                        "Max fields to return after filtering (default 50). Sorted by name asc.",
+                        Some(1.0),
+                        Some(200.0),
+                    ),
+                );
+                s
+            },
+        },
     ]
 }
 
@@ -923,7 +962,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 53);
+        assert_eq!(tools.len(), 54);
     }
 
     #[test]
@@ -958,6 +997,7 @@ mod tests {
             "upsert_project_version",
             "get_board_sprints",
             "assign_to_sprint",
+            "get_custom_fields",
         ];
         let git_repository_tools = [
             "get_merge_requests",

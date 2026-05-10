@@ -838,6 +838,50 @@ pub struct ListProjectVersionsParams {
     pub include_issue_count: bool,
 }
 
+/// Provider-agnostic descriptor for a custom field on an issue
+/// tracker — Jira's `customfield_*` numbers, GitLab's resource
+/// labels, ClickUp's "custom field" entities. Only the lowest common
+/// denominator (`id`, `name`, `field_type`) is unified; provider
+/// specifics live under `native` so callers that need them (e.g.
+/// downstream codegen) can read them without losing fidelity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomFieldDescriptor {
+    /// Provider-specific id (e.g. `"customfield_10014"` on Jira).
+    pub id: String,
+    /// Human-readable name (e.g. `"Epic Link"`).
+    pub name: String,
+    /// Normalised type tag (`"string"`, `"array"`, `"number"`, ...).
+    /// Empty string when the provider didn't expose a schema.
+    pub field_type: String,
+    /// Optional description copied from the provider, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Provider-native schema details preserved verbatim — Jira's
+    /// `JiraFieldSchema` (custom URI, customId), ClickUp's option
+    /// list, GitHub's enum values. Opaque to the unified layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<Value>,
+}
+
+/// Filters / pagination for `IssueProvider::list_custom_fields`.
+#[derive(Debug, Clone, Default)]
+pub struct ListCustomFieldsParams {
+    /// Project key to scope the query — used by providers that
+    /// expose project-scoped customfields. Ignored on Jira global
+    /// `/field` endpoint.
+    pub project: Option<String>,
+    /// Issue type to scope the query (Jira create-screen contexts).
+    /// Ignored when the provider returns a flat global list.
+    pub issue_type: Option<String>,
+    /// Case-insensitive substring filter on the field name. Useful
+    /// for "find the Epic Link customfield" without listing every
+    /// field on the instance.
+    pub search: Option<String>,
+    /// Maximum results after filtering. Tool layer caps this at 200
+    /// to honour Paper-1 token budgets.
+    pub limit: Option<u32>,
+}
+
 /// Input to `IssueProvider::upsert_project_version`.
 ///
 /// Resolves `(project, name)` → existing version id. If found, the

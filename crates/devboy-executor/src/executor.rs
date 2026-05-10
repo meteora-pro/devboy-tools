@@ -4,11 +4,11 @@ use devboy_core::{
     CreateMergeRequestInput, CreatePageParams, CreateStructureInput, Error, GetChatsParams,
     GetForestOptions, GetMessagesParams, GetPipelineInput, GetStructureValuesInput,
     GetUsersOptions, IssueFilter, IssueProvider, JobLogMode, JobLogOptions, KnowledgeBaseProvider,
-    ListPagesParams, ListProjectVersionsParams, MeetingFilter, MeetingNotesProvider,
-    MergeRequestProvider, MessengerProvider, MoveStructureRowsInput, MrFilter, PipelineProvider,
-    Result, SaveStructureViewInput, SearchKbParams, SearchMessagesParams, SendMessageParams,
-    SprintState, StructureRowItem, StructureViewColumn, ToolCategory, UpdateIssueInput,
-    UpdatePageParams, UpsertProjectVersionInput,
+    ListCustomFieldsParams, ListPagesParams, ListProjectVersionsParams, MeetingFilter,
+    MeetingNotesProvider, MergeRequestProvider, MessengerProvider, MoveStructureRowsInput,
+    MrFilter, PipelineProvider, Result, SaveStructureViewInput, SearchKbParams,
+    SearchMessagesParams, SendMessageParams, SprintState, StructureRowItem, StructureViewColumn,
+    ToolCategory, UpdateIssueInput, UpdatePageParams, UpsertProjectVersionInput,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -667,6 +667,9 @@ async fn dispatch_tool(
         // Agile / Sprint (issue #198)
         "get_board_sprints" => execute_get_board_sprints(provider, args).await,
         "assign_to_sprint" => execute_assign_to_sprint(provider, args).await,
+
+        // Custom-field discovery
+        "get_custom_fields" => execute_get_custom_fields(provider, args).await,
 
         _ => Err(Error::NotFound(format!("unknown tool: {tool}"))),
     }
@@ -2554,6 +2557,40 @@ async fn execute_assign_to_sprint(
     )))
 }
 
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct GetCustomFieldsArgs {
+    project: Option<String>,
+    issue_type: Option<String>,
+    search: Option<String>,
+    limit: Option<u32>,
+}
+
+async fn execute_get_custom_fields(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetCustomFieldsArgs = parse_tool_params(args, "get_custom_fields")?;
+    if let Some(0) = params.limit {
+        return Err(Error::InvalidData(
+            "limit must be at least 1 (use the default by omitting the field)".into(),
+        ));
+    }
+    let result = provider
+        .list_custom_fields(ListCustomFieldsParams {
+            project: params.project,
+            issue_type: params.issue_type,
+            search: params.search,
+            limit: params.limit,
+        })
+        .await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::CustomFields(result.items, Some(meta)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2869,6 +2906,53 @@ mod tests {
             _input: devboy_core::AssignToSprintInput,
         ) -> devboy_core::Result<()> {
             Ok(())
+        }
+        async fn list_custom_fields(
+            &self,
+            params: devboy_core::ListCustomFieldsParams,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<devboy_core::CustomFieldDescriptor>>
+        {
+            // Return a few fixed entries so dispatch tests can pin
+            // filter and limit behaviour.
+            let mut all = vec![
+                devboy_core::CustomFieldDescriptor {
+                    id: "customfield_10014".into(),
+                    name: "Epic Link".into(),
+                    field_type: "any".into(),
+                    description: None,
+                    native: None,
+                },
+                devboy_core::CustomFieldDescriptor {
+                    id: "customfield_10011".into(),
+                    name: "Epic Name".into(),
+                    field_type: "string".into(),
+                    description: None,
+                    native: None,
+                },
+                devboy_core::CustomFieldDescriptor {
+                    id: "customfield_10020".into(),
+                    name: "Sprint".into(),
+                    field_type: "array".into(),
+                    description: None,
+                    native: None,
+                },
+            ];
+            if let Some(needle) = params.search.as_deref().map(str::to_lowercase) {
+                all.retain(|f| f.name.to_lowercase().contains(&needle));
+            }
+            let total = all.len() as u32;
+            let limit = params.limit.unwrap_or(50);
+            if (limit as usize) < all.len() {
+                all.truncate(limit as usize);
+            }
+            let pagination = devboy_core::Pagination {
+                offset: 0,
+                limit,
+                total: Some(total),
+                has_more: (all.len() as u32) < total,
+                next_cursor: None,
+            };
+            Ok(devboy_core::ProviderResult::new(all).with_pagination(pagination))
         }
         fn provider_name(&self) -> &'static str {
             "mock"
@@ -4165,6 +4249,66 @@ mod tests {
         assert!(
             matches!(err, devboy_core::Error::InvalidData(ref m) if m.contains("issueKeys")),
             "expected InvalidData about issueKeys, got {err:?}"
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // get_custom_fields dispatch
+    // -------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_dispatch_get_custom_fields_returns_all_entries_by_default() {
+        let provider = MockProvider;
+        let result = dispatch_tool("get_custom_fields", &serde_json::json!({}), &provider, None)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::CustomFields(items, _) => {
+                assert_eq!(items.len(), 3);
+                let names: Vec<_> = items.iter().map(|f| f.name.as_str()).collect();
+                assert!(names.contains(&"Epic Link"));
+                assert!(names.contains(&"Sprint"));
+            }
+            other => panic!("expected CustomFields, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_custom_fields_search_filters_by_substring() {
+        let provider = MockProvider;
+        let result = dispatch_tool(
+            "get_custom_fields",
+            &serde_json::json!({"search": "epic"}),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap();
+        match result {
+            ToolOutput::CustomFields(items, _) => {
+                assert_eq!(items.len(), 2);
+                for f in items {
+                    assert!(f.name.to_lowercase().contains("epic"));
+                }
+            }
+            other => panic!("expected CustomFields, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_custom_fields_rejects_zero_limit() {
+        let provider = MockProvider;
+        let err = dispatch_tool(
+            "get_custom_fields",
+            &serde_json::json!({"limit": 0}),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, devboy_core::Error::InvalidData(ref m) if m.contains("limit")),
+            "expected InvalidData about limit, got {err:?}"
         );
     }
 

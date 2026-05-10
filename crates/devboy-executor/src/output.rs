@@ -1,8 +1,9 @@
 use devboy_core::{
-    Comment, Discussion, FileDiff, ForestModifyResult, Issue, IssueRelations, IssueStatus,
-    JobLogOutput, KbPage, KbPageContent, KbSpace, MeetingNote, MeetingTranscript, MergeRequest,
-    MessengerChat, MessengerMessage, Pagination, PipelineInfo, ProjectVersion, SortInfo, Sprint,
-    Structure, StructureForest, StructureValues, StructureView, User,
+    Comment, CustomFieldDescriptor, Discussion, FileDiff, ForestModifyResult, Issue,
+    IssueRelations, IssueStatus, JobLogOutput, KbPage, KbPageContent, KbSpace, MeetingNote,
+    MeetingTranscript, MergeRequest, MessengerChat, MessengerMessage, Pagination, PipelineInfo,
+    ProjectVersion, SortInfo, Sprint, Structure, StructureForest, StructureValues, StructureView,
+    User,
 };
 
 /// Metadata from provider result (pagination + sort info).
@@ -88,6 +89,8 @@ pub enum ToolOutput {
     SingleProjectVersion(Box<ProjectVersion>),
     /// Sprints visible on a Jira agile board (issue #198)
     Sprints(Vec<Sprint>, Option<ResultMeta>),
+    /// Custom-field descriptors discovered on the issue tracker
+    CustomFields(Vec<CustomFieldDescriptor>, Option<ResultMeta>),
     /// Structure forest (hierarchy tree)
     StructureForest(Box<StructureForest>),
     /// Structure column values
@@ -119,6 +122,7 @@ impl ToolOutput {
             Self::StructureViews(v, _) => v.len(),
             Self::ProjectVersions(v, _) => v.len(),
             Self::Sprints(v, _) => v.len(),
+            Self::CustomFields(v, _) => v.len(),
             Self::AssetList { count, .. } => *count,
             Self::SingleMergeRequest(_)
             | Self::SingleIssue(_)
@@ -172,6 +176,7 @@ impl ToolOutput {
             Self::ProjectVersions(..) => "project_versions",
             Self::SingleProjectVersion(_) => "project_version",
             Self::Sprints(..) => "sprints",
+            Self::CustomFields(..) => "custom_fields",
             Self::AssetList { .. } => "asset_list",
             Self::AssetDownloaded { .. } => "asset_downloaded",
             Self::AssetUploaded { .. } => "asset_uploaded",
@@ -198,7 +203,8 @@ impl ToolOutput {
             | Self::Structures(_, meta)
             | Self::StructureViews(_, meta)
             | Self::ProjectVersions(_, meta)
-            | Self::Sprints(_, meta) => meta.as_ref(),
+            | Self::Sprints(_, meta)
+            | Self::CustomFields(_, meta) => meta.as_ref(),
             _ => None,
         }
     }

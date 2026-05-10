@@ -31,6 +31,8 @@ pub const KNOWN_BUILTIN_TOOLS: &[&str] = &[
     // Agile / Sprint (issue #198)
     "get_board_sprints",
     "assign_to_sprint",
+    // Custom-field discovery
+    "get_custom_fields",
     // Git repository tools (MR/PR, pipeline)
     "get_merge_requests",
     "get_merge_request",
