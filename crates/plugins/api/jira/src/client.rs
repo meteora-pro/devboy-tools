@@ -742,6 +742,60 @@ impl JiraClient {
             .await?;
         Ok(cache.get(name).cloned())
     }
+
+    /// Convenience wrapper around
+    /// [`resolve_field_id_by_name`](Self::resolve_field_id_by_name)
+    /// that turns the `None` case into a friendly error pointing at
+    /// `get_custom_fields` for discovery. Used by the agile-field
+    /// inject path where the absence of a well-known name is a hard
+    /// failure, not a soft "not configured".
+    async fn resolve_well_known_field_id(&self, name: &str) -> Result<String> {
+        self.resolve_field_id_by_name(name).await?.ok_or_else(|| {
+            Error::InvalidData(format!(
+                "Jira field `{name}` not found on this instance. \
+                 Use `get_custom_fields` to list available fields, or \
+                 pass it explicitly via `customFields` with the right id."
+            ))
+        })
+    }
+
+    /// Inject the three agile-track customfields (`Epic Link`,
+    /// `Sprint`, `Epic Name`) into a serialised create/update payload.
+    /// Each input is optional and only resolved when `Some(_)`.
+    /// Mutates `payload["fields"]` in place. Caller is responsible for
+    /// having already produced a serialised value (e.g. via
+    /// [`merge_custom_fields_into_payload`]).
+    async fn inject_well_known_customfields(
+        &self,
+        payload: &mut serde_json::Value,
+        epic_key: &Option<String>,
+        sprint_id: &Option<i64>,
+        epic_name: &Option<String>,
+    ) -> Result<()> {
+        if epic_key.is_none() && sprint_id.is_none() && epic_name.is_none() {
+            return Ok(());
+        }
+        let fields = payload
+            .get_mut("fields")
+            .and_then(|f| f.as_object_mut())
+            .ok_or_else(|| {
+                Error::InvalidData("payload missing top-level `fields` object".into())
+            })?;
+
+        if let Some(value) = epic_key {
+            let id = self.resolve_well_known_field_id("Epic Link").await?;
+            fields.insert(id, serde_json::json!(value));
+        }
+        if let Some(value) = sprint_id {
+            let id = self.resolve_well_known_field_id("Sprint").await?;
+            fields.insert(id, serde_json::json!(*value));
+        }
+        if let Some(value) = epic_name {
+            let id = self.resolve_well_known_field_id("Epic Name").await?;
+            fields.insert(id, serde_json::json!(value));
+        }
+        Ok(())
+    }
 }
 
 /// Install hint shown when the Structure plugin may not be detected on the
@@ -1804,6 +1858,14 @@ impl IssueProvider for JiraClient {
 
         let (mut payload, _) = merge_custom_fields_into_payload(payload, &input.custom_fields)?;
 
+        self.inject_well_known_customfields(
+            &mut payload,
+            &input.epic_key,
+            &input.sprint_id,
+            &input.epic_name,
+        )
+        .await?;
+
         let url = format!("{}/issue", self.base_url);
         let create_result: std::result::Result<CreateIssueResponse, Error> =
             self.post(&url, &payload).await;
@@ -1905,6 +1967,9 @@ impl IssueProvider for JiraClient {
                 .is_some_and(|obj| obj.keys().any(|k| k.starts_with("customfield_")))
         });
 
+        let has_well_known_fields =
+            input.epic_key.is_some() || input.sprint_id.is_some() || input.epic_name.is_some();
+
         // Only call PUT if there are field updates
         let has_field_updates = fields.summary.is_some()
             || fields.description.is_some()
@@ -1913,12 +1978,20 @@ impl IssueProvider for JiraClient {
             || fields.assignee.is_some()
             || has_components
             || has_fix_versions
-            || has_custom_fields;
+            || has_custom_fields
+            || has_well_known_fields;
 
         if has_field_updates {
             let url = format!("{}/issue/{}", self.base_url, jira_key);
             let payload = UpdateIssuePayload { fields };
-            let (payload, _) = merge_custom_fields_into_payload(payload, &input.custom_fields)?;
+            let (mut payload, _) = merge_custom_fields_into_payload(payload, &input.custom_fields)?;
+            self.inject_well_known_customfields(
+                &mut payload,
+                &input.epic_key,
+                &input.sprint_id,
+                &input.epic_name,
+            )
+            .await?;
             self.put(&url, &payload).await?;
         }
 
@@ -4770,6 +4843,152 @@ mod tests {
                     "PROJ-1",
                     UpdateIssueInput {
                         fix_versions: Some(vec!["3.18.0".to_string()]),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// epic_key, sprint_id, epic_name on create are resolved via
+        /// `GET /field` and injected into the payload under their
+        /// instance-specific customfield ids — agents don't need to
+        /// know `customfield_*` numbers.
+        #[tokio::test]
+        async fn test_create_issue_with_epic_sprint_epicname() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "customfield_10014", "name": "Epic Link", "custom": true},
+                    {"id": "customfield_10020", "name": "Sprint", "custom": true},
+                    {"id": "customfield_10011", "name": "Epic Name", "custom": true}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(POST).path("/issue").is_true(|req| {
+                    let body = String::from_utf8_lossy(req.body().as_ref());
+                    body.contains("\"customfield_10014\":\"PROJ-1\"")
+                        && body.contains("\"customfield_10020\":42")
+                        && body.contains("\"customfield_10011\":\"Q4 platform\"")
+                });
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10100",
+                    "key": "PROJ-100"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-100");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10100",
+                    "key": "PROJ-100",
+                    "fields": {
+                        "summary": "Epic with agile fields",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-05T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "Epic with agile fields".to_string(),
+                    epic_key: Some("PROJ-1".to_string()),
+                    sprint_id: Some(42),
+                    epic_name: Some("Q4 platform".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-100");
+        }
+
+        /// When the requested well-known field is absent on the
+        /// instance, the create call surfaces a friendly error
+        /// pointing at `get_custom_fields` for discovery.
+        #[tokio::test]
+        async fn test_create_issue_epic_key_errors_when_field_missing() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                // Epic Link absent — only summary + an unrelated customfield
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "summary", "name": "Summary", "custom": false},
+                    {"id": "customfield_99999", "name": "Tenant", "custom": true}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let err = client
+                .create_issue(CreateIssueInput {
+                    title: "No epic link".to_string(),
+                    epic_key: Some("PROJ-1".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+
+            let msg = err.to_string();
+            assert!(
+                msg.contains("Epic Link"),
+                "missing field name in error: {msg}"
+            );
+            assert!(
+                msg.contains("get_custom_fields"),
+                "missing discovery hint: {msg}"
+            );
+        }
+
+        /// update_issue routes epic_key through the same resolver
+        /// path. This test asserts the customfield id lands in the
+        /// PUT body.
+        #[tokio::test]
+        async fn test_update_issue_replaces_epic_key() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "customfield_10014", "name": "Epic Link", "custom": true}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/issue/PROJ-1")
+                    .body_includes("\"customfield_10014\":\"PROJ-50\"");
+                then.status(204);
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "summary": "Reparented",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .update_issue(
+                    "PROJ-1",
+                    UpdateIssueInput {
+                        epic_key: Some("PROJ-50".to_string()),
                         ..Default::default()
                     },
                 )

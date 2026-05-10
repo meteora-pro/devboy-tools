@@ -176,6 +176,25 @@ pub struct CreateIssueInput {
     /// versions (GitHub/GitLab/ClickUp).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fix_versions: Vec<String>,
+    /// Parent epic key (Jira-only). Maps to the instance's `Epic Link`
+    /// custom field — id resolved at runtime, no need for callers to
+    /// know the `customfield_*` number. On Cloud team-managed projects
+    /// the canonical Epic Link is the system `parent` field; passing
+    /// the same value via `epic_key` works there too because Jira
+    /// accepts the customfield as an alias.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_key: Option<String>,
+    /// Sprint id (Jira-only). Maps to the instance's `Sprint` custom
+    /// field. Numeric, not name — Jira's Sprint field stores agile
+    /// board sprint ids; use `get_board_sprints` to discover them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sprint_id: Option<i64>,
+    /// Epic name (Jira-only, required when `issue_type == "Epic"` on
+    /// Server/DC and Cloud company-managed projects). Maps to the
+    /// instance's `Epic Name` custom field. Cloud team-managed
+    /// projects use the regular `summary` and ignore this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_name: Option<String>,
 }
 
 impl Default for CreateIssueInput {
@@ -193,6 +212,9 @@ impl Default for CreateIssueInput {
             custom_fields: None,
             components: Vec::new(),
             fix_versions: Vec::new(),
+            epic_key: None,
+            sprint_id: None,
+            epic_name: None,
         }
     }
 }
@@ -239,6 +261,21 @@ pub struct UpdateIssueInput {
     /// **names** (see [`CreateIssueInput::fix_versions`] for rationale).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fix_versions: Option<Vec<String>>,
+    /// Set the parent epic (Jira-only). `None` leaves the link
+    /// untouched. `Some("PROJ-1")` replaces it. To detach an issue
+    /// from its epic, pass `customFields: { "<epic-link-cf>": null }`
+    /// — the `epic_key` slot is for setting, not clearing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_key: Option<String>,
+    /// Move the issue to a sprint (Jira-only). `None` leaves the
+    /// sprint untouched. See [`CreateIssueInput::sprint_id`] for the
+    /// id-vs-name rationale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sprint_id: Option<i64>,
+    /// Set the Epic Name (Jira-only, applies to Epic-typed issues).
+    /// `None` leaves it untouched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_name: Option<String>,
 }
 
 impl Default for UpdateIssueInput {
@@ -255,6 +292,9 @@ impl Default for UpdateIssueInput {
             custom_fields: None,
             components: None,
             fix_versions: None,
+            epic_key: None,
+            sprint_id: None,
+            epic_name: None,
         }
     }
 }

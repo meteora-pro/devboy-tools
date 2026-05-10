@@ -937,6 +937,17 @@ struct CreateIssueParams {
     /// Jira fix-version names. Same shape and semantics as `components`.
     #[serde(default, rename = "fixVersions")]
     fix_versions: Vec<String>,
+    /// Jira parent epic key. Resolved via the field-id lookup so callers
+    /// don't need to know the instance's `customfield_*` number.
+    #[serde(default, rename = "epicKey")]
+    epic_key: Option<String>,
+    /// Jira sprint id. Numeric agile-board sprint id.
+    #[serde(default, rename = "sprintId")]
+    sprint_id: Option<i64>,
+    /// Jira Epic Name. Required by Server/DC + Cloud company-managed
+    /// when `issueType == "Epic"`.
+    #[serde(default, rename = "epicName")]
+    epic_name: Option<String>,
 }
 
 async fn execute_create_issue(
@@ -959,6 +970,9 @@ async fn execute_create_issue(
         custom_fields,
         components: params.components,
         fix_versions: params.fix_versions,
+        epic_key: params.epic_key,
+        sprint_id: params.sprint_id,
+        epic_name: params.epic_name,
     };
     let issue = provider.create_issue(input).await?;
 
@@ -994,6 +1008,15 @@ struct UpdateIssueParams {
     /// Jira fix-version names. Same shape and semantics as `components`.
     #[serde(default, rename = "fixVersions")]
     fix_versions: Option<Vec<String>>,
+    /// Jira parent epic key.
+    #[serde(default, rename = "epicKey")]
+    epic_key: Option<String>,
+    /// Jira sprint id.
+    #[serde(default, rename = "sprintId")]
+    sprint_id: Option<i64>,
+    /// Jira Epic Name (Epic-typed issues).
+    #[serde(default, rename = "epicName")]
+    epic_name: Option<String>,
 }
 
 async fn execute_update_issue(
@@ -1015,6 +1038,9 @@ async fn execute_update_issue(
         custom_fields,
         components: params.components,
         fix_versions: params.fix_versions,
+        epic_key: params.epic_key,
+        sprint_id: params.sprint_id,
+        epic_name: params.epic_name,
     };
     let key = params.key;
     let issue = provider.update_issue(&key, input).await?;
@@ -1579,6 +1605,9 @@ async fn execute_create_epic(
         custom_fields: args.get("customFields").cloned(),
         components: Vec::new(),
         fix_versions: Vec::new(),
+        epic_key: None,
+        sprint_id: None,
+        epic_name: None,
     };
     let issue = provider.create_issue(input).await?;
 
@@ -1667,6 +1696,9 @@ async fn execute_update_epic(
         custom_fields: args.get("customFields").cloned(),
         components: None,
         fix_versions: None,
+        epic_key: None,
+        sprint_id: None,
+        epic_name: None,
     };
     let key = params.key;
     let issue = provider.update_issue(&key, input).await?;

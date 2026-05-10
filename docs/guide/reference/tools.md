@@ -46,12 +46,15 @@ Create a new issue in the configured provider.
 | `assignees` | array&lt;string&gt; | — | Assignee usernames |
 | `components` | array&lt;string&gt; | — | Jira component names to associate with the issue. Ignored by providers that don't have Components (GitHub/GitLab/ClickUp). |
 | `description` | string | — | Issue description/body |
+| `epicKey` | string | — | Jira parent epic key (e.g. "PROJ-12"). Resolved at runtime to the instance's `Epic Link` customfield id, no need to know `customfield_*` numbers. Ignored by non-Jira providers. |
+| `epicName` | string | — | Jira Epic Name (required when `issueType` is `Epic` on Server/DC and Cloud company-managed projects). Ignored by non-Jira providers. |
 | `fixVersions` | array&lt;string&gt; | — | Jira fix-version (release) names to associate with the issue. Each entry is a `ProjectVersion.name` (e.g., "3.18.0"). Ignored by providers without fix versions (GitHub/GitLab/ClickUp). |
 | `issueType` | string | — | Issue type (e.g., "Task", "Bug", "Story"). Default: "Task". Removed by providers that don't support it. |
 | `labels` | array&lt;string&gt; | — | Labels to add |
 | `markdown` | boolean | — | Whether the description is markdown (default: true). When true, ClickUp renders formatted text. |
 | `parentId` | string | — | Parent issue key to create a subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp. |
 | `projectId` | string | — | Jira project key (not numeric ID) for issue creation (e.g., "PROJ"). Optional — overrides the default project. |
+| `sprintId` | integer | — | Jira sprint id (numeric agile-board sprint id; use `get_board_sprints` to discover available ids). Ignored by non-Jira providers. |
 
 ### `delete_asset`
 
@@ -183,10 +186,13 @@ Update an existing issue. Only provided fields will be changed.
 | `assignees` | array&lt;string&gt; | — | New assignees |
 | `components` | array&lt;string&gt; | — | Replace components with these Jira component names. Omit the field to leave existing components untouched; pass an empty array to clear. |
 | `description` | string | — | New description |
+| `epicKey` | string | — | Set the parent epic (Jira-only). Pass an issue key like `PROJ-12`. Omit to leave the link untouched. To clear an Epic Link, use `customFields` with the Epic Link customfield set to `null`. |
+| `epicName` | string | — | Set the Epic Name (Jira-only, applies to Epic-typed issues). Omit to leave it untouched. |
 | `fixVersions` | array&lt;string&gt; | — | Replace fix versions with these Jira release names. Omit the field to leave existing fix versions untouched; pass an empty array to clear. |
 | `labels` | array&lt;string&gt; | — | New labels (replaces existing) |
 | `markdown` | boolean | — | Whether the description is markdown (default: true). When true, ClickUp renders formatted text. |
 | `parentId` | string | — | Parent issue key to move task as subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp. |
+| `sprintId` | integer | — | Move the issue to a sprint by numeric id (Jira-only). Omit to leave the sprint untouched. |
 | `state` | string | — | New state. Allowed values: `open`, `closed` |
 | `title` | string | — | New title |
 
