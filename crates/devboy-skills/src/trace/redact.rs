@@ -239,35 +239,44 @@ fn known_env_secrets() -> HashSet<String> {
     out
 }
 
+/// Test-only helpers shared with sibling modules (notably `trace::tests`)
+/// that also touch `DEVBOY_TRACE_REDACTION`. Sharing the same mutex
+/// across modules is required: without it, a `temp_env::with_var(..,
+/// "off")` in one test leaks into a concurrently running assertion
+/// elsewhere in the crate and silently disables redaction mid-test.
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
+pub(crate) mod test_support {
     use std::sync::Mutex;
 
-    /// Serialise every test in this module around the process-wide
-    /// environment. Two tests legitimately toggle
+    /// Serialise every test in `devboy-skills` that mutates the
+    /// process-wide environment. Two tests legitimately toggle
     /// `DEVBOY_TRACE_REDACTION=off` via `temp_env::with_var`, and
-    /// `cargo test` runs the others concurrently — without this mutex
-    /// a sibling test's `off` setting can leak into an unrelated test
-    /// for the window it holds the var, making
-    /// `masks_bare_bearer_value_case_insensitive` and friends flake
-    /// on CI. The mutex is cheap (only contended during tests) and
-    /// keeps the production code path zero-overhead. Combined with
+    /// `cargo test` runs the others concurrently — without this
+    /// mutex a sibling test's `off` setting can leak into an
+    /// unrelated test for the window it holds the var, making
+    /// arm64-Linux `events_are_redacted_before_writing` and
+    /// `masks_bare_bearer_value_case_insensitive` flake on CI. The
+    /// mutex is cheap (only contended during tests) and keeps the
+    /// production code path zero-overhead. Combined with
     /// `temp_env::with_var`'s own save/restore logic this gives the
-    /// whole module deterministic env state.
-    static ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
+    /// whole crate deterministic env state.
+    pub(crate) static ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
-    /// Helper: acquire the module-wide env-serialisation lock and run
-    /// `f` inside a `temp_env` guard that explicitly UNsets
+    /// Acquire the crate-wide env-serialisation lock and run `f`
+    /// inside a `temp_env` guard that explicitly UNsets
     /// `DEVBOY_TRACE_REDACTION`. Used by every test that expects the
-    /// default (enabled) redactor. Without this wrapper a sibling
-    /// test's `DEVBOY_TRACE_REDACTION=off` setting could race in and
-    /// silently disable redaction mid-assertion.
-    fn with_clean_env<R>(f: impl FnOnce() -> R) -> R {
+    /// default (enabled) redactor.
+    pub(crate) fn with_clean_env<R>(f: impl FnOnce() -> R) -> R {
         let _guard = ENV_TEST_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         temp_env::with_var("DEVBOY_TRACE_REDACTION", None::<&str>, f)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::{ENV_TEST_MUTEX, with_clean_env};
+    use super::*;
+    use serde_json::json;
 
     #[test]
     fn masks_github_pat() {
