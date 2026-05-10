@@ -1148,6 +1148,7 @@ pub fn devboy_core::provider::IssueProvider::get_structure_views<'life0, 'async_
 pub fn devboy_core::provider::IssueProvider::get_structures<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::Structure>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_core::provider::IssueProvider::get_users<'life0, 'async_trait>(&'life0 self, _options: devboy_core::types::GetUsersOptions) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::User>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_core::provider::IssueProvider::link_issues<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, _source_key: &'life1 str, _target_key: &'life2 str, _link_type: &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn devboy_core::provider::IssueProvider::list_custom_fields<'life0, 'async_trait>(&'life0 self, _params: devboy_core::types::ListCustomFieldsParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::CustomFieldDescriptor>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_core::provider::IssueProvider::list_project_versions<'life0, 'async_trait>(&'life0 self, _params: devboy_core::types::ListProjectVersionsParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::ProjectVersion>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_core::provider::IssueProvider::move_structure_rows<'life0, 'async_trait>(&'life0 self, _structure_id: u64, _input: devboy_core::types::MoveStructureRowsInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ForestModifyResult>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_core::provider::IssueProvider::provider_name(&self) -> &'static str
@@ -1674,12 +1675,16 @@ pub devboy_core::types::CreateIssueInput::assignees: alloc::vec::Vec<alloc::stri
 pub devboy_core::types::CreateIssueInput::components: alloc::vec::Vec<alloc::string::String>
 pub devboy_core::types::CreateIssueInput::custom_fields: core::option::Option<serde_json::value::Value>
 pub devboy_core::types::CreateIssueInput::description: core::option::Option<alloc::string::String>
+pub devboy_core::types::CreateIssueInput::epic_key: core::option::Option<alloc::string::String>
+pub devboy_core::types::CreateIssueInput::epic_name: core::option::Option<alloc::string::String>
+pub devboy_core::types::CreateIssueInput::fix_versions: alloc::vec::Vec<alloc::string::String>
 pub devboy_core::types::CreateIssueInput::issue_type: core::option::Option<alloc::string::String>
 pub devboy_core::types::CreateIssueInput::labels: alloc::vec::Vec<alloc::string::String>
 pub devboy_core::types::CreateIssueInput::markdown: bool
 pub devboy_core::types::CreateIssueInput::parent: core::option::Option<alloc::string::String>
 pub devboy_core::types::CreateIssueInput::priority: core::option::Option<alloc::string::String>
 pub devboy_core::types::CreateIssueInput::project_id: core::option::Option<alloc::string::String>
+pub devboy_core::types::CreateIssueInput::sprint_id: core::option::Option<i64>
 pub devboy_core::types::CreateIssueInput::title: alloc::string::String
 impl core::clone::Clone for devboy_core::types::CreateIssueInput
 pub fn devboy_core::types::CreateIssueInput::clone(&self) -> devboy_core::types::CreateIssueInput
@@ -1767,6 +1772,27 @@ impl core::marker::Unpin for devboy_core::types::CreateStructureInput
 impl core::marker::UnsafeUnpin for devboy_core::types::CreateStructureInput
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::CreateStructureInput
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::CreateStructureInput
+pub struct devboy_core::types::CustomFieldDescriptor
+pub devboy_core::types::CustomFieldDescriptor::description: core::option::Option<alloc::string::String>
+pub devboy_core::types::CustomFieldDescriptor::field_type: alloc::string::String
+pub devboy_core::types::CustomFieldDescriptor::id: alloc::string::String
+pub devboy_core::types::CustomFieldDescriptor::name: alloc::string::String
+pub devboy_core::types::CustomFieldDescriptor::native: core::option::Option<serde_json::value::Value>
+impl core::clone::Clone for devboy_core::types::CustomFieldDescriptor
+pub fn devboy_core::types::CustomFieldDescriptor::clone(&self) -> devboy_core::types::CustomFieldDescriptor
+impl core::fmt::Debug for devboy_core::types::CustomFieldDescriptor
+pub fn devboy_core::types::CustomFieldDescriptor::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_core::types::CustomFieldDescriptor
+pub fn devboy_core::types::CustomFieldDescriptor::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::types::CustomFieldDescriptor
+pub fn devboy_core::types::CustomFieldDescriptor::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::types::CustomFieldDescriptor
+impl core::marker::Send for devboy_core::types::CustomFieldDescriptor
+impl core::marker::Sync for devboy_core::types::CustomFieldDescriptor
+impl core::marker::Unpin for devboy_core::types::CustomFieldDescriptor
+impl core::marker::UnsafeUnpin for devboy_core::types::CustomFieldDescriptor
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::CustomFieldDescriptor
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::CustomFieldDescriptor
 pub struct devboy_core::types::Discussion
 pub devboy_core::types::Discussion::comments: alloc::vec::Vec<devboy_core::types::Comment>
 pub devboy_core::types::Discussion::id: alloc::string::String
@@ -1995,6 +2021,7 @@ pub devboy_core::types::Issue::assignees: alloc::vec::Vec<devboy_core::types::Us
 pub devboy_core::types::Issue::attachments_count: core::option::Option<u32>
 pub devboy_core::types::Issue::author: core::option::Option<devboy_core::types::User>
 pub devboy_core::types::Issue::created_at: core::option::Option<alloc::string::String>
+pub devboy_core::types::Issue::custom_fields: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
 pub devboy_core::types::Issue::description: core::option::Option<alloc::string::String>
 pub devboy_core::types::Issue::key: alloc::string::String
 pub devboy_core::types::Issue::labels: alloc::vec::Vec<alloc::string::String>
@@ -2081,6 +2108,7 @@ pub struct devboy_core::types::IssueRelations
 pub devboy_core::types::IssueRelations::blocked_by: alloc::vec::Vec<devboy_core::types::IssueLink>
 pub devboy_core::types::IssueRelations::blocks: alloc::vec::Vec<devboy_core::types::IssueLink>
 pub devboy_core::types::IssueRelations::duplicates: alloc::vec::Vec<devboy_core::types::IssueLink>
+pub devboy_core::types::IssueRelations::epic_key: core::option::Option<alloc::string::String>
 pub devboy_core::types::IssueRelations::parent: core::option::Option<devboy_core::types::Issue>
 pub devboy_core::types::IssueRelations::related_to: alloc::vec::Vec<devboy_core::types::IssueLink>
 pub devboy_core::types::IssueRelations::subtasks: alloc::vec::Vec<devboy_core::types::Issue>
@@ -2269,6 +2297,24 @@ impl core::marker::Unpin for devboy_core::types::KbSpace
 impl core::marker::UnsafeUnpin for devboy_core::types::KbSpace
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::KbSpace
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::KbSpace
+pub struct devboy_core::types::ListCustomFieldsParams
+pub devboy_core::types::ListCustomFieldsParams::issue_type: core::option::Option<alloc::string::String>
+pub devboy_core::types::ListCustomFieldsParams::limit: core::option::Option<u32>
+pub devboy_core::types::ListCustomFieldsParams::project: core::option::Option<alloc::string::String>
+pub devboy_core::types::ListCustomFieldsParams::search: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_core::types::ListCustomFieldsParams
+pub fn devboy_core::types::ListCustomFieldsParams::clone(&self) -> devboy_core::types::ListCustomFieldsParams
+impl core::default::Default for devboy_core::types::ListCustomFieldsParams
+pub fn devboy_core::types::ListCustomFieldsParams::default() -> devboy_core::types::ListCustomFieldsParams
+impl core::fmt::Debug for devboy_core::types::ListCustomFieldsParams
+pub fn devboy_core::types::ListCustomFieldsParams::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_core::types::ListCustomFieldsParams
+impl core::marker::Send for devboy_core::types::ListCustomFieldsParams
+impl core::marker::Sync for devboy_core::types::ListCustomFieldsParams
+impl core::marker::Unpin for devboy_core::types::ListCustomFieldsParams
+impl core::marker::UnsafeUnpin for devboy_core::types::ListCustomFieldsParams
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::ListCustomFieldsParams
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::ListCustomFieldsParams
 pub struct devboy_core::types::ListPagesParams
 pub devboy_core::types::ListPagesParams::cursor: core::option::Option<alloc::string::String>
 pub devboy_core::types::ListPagesParams::limit: core::option::Option<u32>
@@ -3262,10 +3308,14 @@ pub devboy_core::types::UpdateIssueInput::assignees: core::option::Option<alloc:
 pub devboy_core::types::UpdateIssueInput::components: core::option::Option<alloc::vec::Vec<alloc::string::String>>
 pub devboy_core::types::UpdateIssueInput::custom_fields: core::option::Option<serde_json::value::Value>
 pub devboy_core::types::UpdateIssueInput::description: core::option::Option<alloc::string::String>
+pub devboy_core::types::UpdateIssueInput::epic_key: core::option::Option<alloc::string::String>
+pub devboy_core::types::UpdateIssueInput::epic_name: core::option::Option<alloc::string::String>
+pub devboy_core::types::UpdateIssueInput::fix_versions: core::option::Option<alloc::vec::Vec<alloc::string::String>>
 pub devboy_core::types::UpdateIssueInput::labels: core::option::Option<alloc::vec::Vec<alloc::string::String>>
 pub devboy_core::types::UpdateIssueInput::markdown: bool
 pub devboy_core::types::UpdateIssueInput::parent_id: core::option::Option<alloc::string::String>
 pub devboy_core::types::UpdateIssueInput::priority: core::option::Option<alloc::string::String>
+pub devboy_core::types::UpdateIssueInput::sprint_id: core::option::Option<i64>
 pub devboy_core::types::UpdateIssueInput::state: core::option::Option<alloc::string::String>
 pub devboy_core::types::UpdateIssueInput::title: core::option::Option<alloc::string::String>
 impl core::clone::Clone for devboy_core::types::UpdateIssueInput
@@ -4219,12 +4269,16 @@ pub devboy_core::CreateIssueInput::assignees: alloc::vec::Vec<alloc::string::Str
 pub devboy_core::CreateIssueInput::components: alloc::vec::Vec<alloc::string::String>
 pub devboy_core::CreateIssueInput::custom_fields: core::option::Option<serde_json::value::Value>
 pub devboy_core::CreateIssueInput::description: core::option::Option<alloc::string::String>
+pub devboy_core::CreateIssueInput::epic_key: core::option::Option<alloc::string::String>
+pub devboy_core::CreateIssueInput::epic_name: core::option::Option<alloc::string::String>
+pub devboy_core::CreateIssueInput::fix_versions: alloc::vec::Vec<alloc::string::String>
 pub devboy_core::CreateIssueInput::issue_type: core::option::Option<alloc::string::String>
 pub devboy_core::CreateIssueInput::labels: alloc::vec::Vec<alloc::string::String>
 pub devboy_core::CreateIssueInput::markdown: bool
 pub devboy_core::CreateIssueInput::parent: core::option::Option<alloc::string::String>
 pub devboy_core::CreateIssueInput::priority: core::option::Option<alloc::string::String>
 pub devboy_core::CreateIssueInput::project_id: core::option::Option<alloc::string::String>
+pub devboy_core::CreateIssueInput::sprint_id: core::option::Option<i64>
 pub devboy_core::CreateIssueInput::title: alloc::string::String
 impl core::clone::Clone for devboy_core::types::CreateIssueInput
 pub fn devboy_core::types::CreateIssueInput::clone(&self) -> devboy_core::types::CreateIssueInput
@@ -4312,6 +4366,27 @@ impl core::marker::Unpin for devboy_core::types::CreateStructureInput
 impl core::marker::UnsafeUnpin for devboy_core::types::CreateStructureInput
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::CreateStructureInput
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::CreateStructureInput
+pub struct devboy_core::CustomFieldDescriptor
+pub devboy_core::CustomFieldDescriptor::description: core::option::Option<alloc::string::String>
+pub devboy_core::CustomFieldDescriptor::field_type: alloc::string::String
+pub devboy_core::CustomFieldDescriptor::id: alloc::string::String
+pub devboy_core::CustomFieldDescriptor::name: alloc::string::String
+pub devboy_core::CustomFieldDescriptor::native: core::option::Option<serde_json::value::Value>
+impl core::clone::Clone for devboy_core::types::CustomFieldDescriptor
+pub fn devboy_core::types::CustomFieldDescriptor::clone(&self) -> devboy_core::types::CustomFieldDescriptor
+impl core::fmt::Debug for devboy_core::types::CustomFieldDescriptor
+pub fn devboy_core::types::CustomFieldDescriptor::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_core::types::CustomFieldDescriptor
+pub fn devboy_core::types::CustomFieldDescriptor::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::types::CustomFieldDescriptor
+pub fn devboy_core::types::CustomFieldDescriptor::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::types::CustomFieldDescriptor
+impl core::marker::Send for devboy_core::types::CustomFieldDescriptor
+impl core::marker::Sync for devboy_core::types::CustomFieldDescriptor
+impl core::marker::Unpin for devboy_core::types::CustomFieldDescriptor
+impl core::marker::UnsafeUnpin for devboy_core::types::CustomFieldDescriptor
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::CustomFieldDescriptor
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::CustomFieldDescriptor
 pub struct devboy_core::Discussion
 pub devboy_core::Discussion::comments: alloc::vec::Vec<devboy_core::types::Comment>
 pub devboy_core::Discussion::id: alloc::string::String
@@ -4663,6 +4738,7 @@ pub devboy_core::Issue::assignees: alloc::vec::Vec<devboy_core::types::User>
 pub devboy_core::Issue::attachments_count: core::option::Option<u32>
 pub devboy_core::Issue::author: core::option::Option<devboy_core::types::User>
 pub devboy_core::Issue::created_at: core::option::Option<alloc::string::String>
+pub devboy_core::Issue::custom_fields: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
 pub devboy_core::Issue::description: core::option::Option<alloc::string::String>
 pub devboy_core::Issue::key: alloc::string::String
 pub devboy_core::Issue::labels: alloc::vec::Vec<alloc::string::String>
@@ -4749,6 +4825,7 @@ pub struct devboy_core::IssueRelations
 pub devboy_core::IssueRelations::blocked_by: alloc::vec::Vec<devboy_core::types::IssueLink>
 pub devboy_core::IssueRelations::blocks: alloc::vec::Vec<devboy_core::types::IssueLink>
 pub devboy_core::IssueRelations::duplicates: alloc::vec::Vec<devboy_core::types::IssueLink>
+pub devboy_core::IssueRelations::epic_key: core::option::Option<alloc::string::String>
 pub devboy_core::IssueRelations::parent: core::option::Option<devboy_core::types::Issue>
 pub devboy_core::IssueRelations::related_to: alloc::vec::Vec<devboy_core::types::IssueLink>
 pub devboy_core::IssueRelations::subtasks: alloc::vec::Vec<devboy_core::types::Issue>
@@ -4956,6 +5033,24 @@ impl core::marker::Unpin for devboy_core::types::KbSpace
 impl core::marker::UnsafeUnpin for devboy_core::types::KbSpace
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::KbSpace
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::KbSpace
+pub struct devboy_core::ListCustomFieldsParams
+pub devboy_core::ListCustomFieldsParams::issue_type: core::option::Option<alloc::string::String>
+pub devboy_core::ListCustomFieldsParams::limit: core::option::Option<u32>
+pub devboy_core::ListCustomFieldsParams::project: core::option::Option<alloc::string::String>
+pub devboy_core::ListCustomFieldsParams::search: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_core::types::ListCustomFieldsParams
+pub fn devboy_core::types::ListCustomFieldsParams::clone(&self) -> devboy_core::types::ListCustomFieldsParams
+impl core::default::Default for devboy_core::types::ListCustomFieldsParams
+pub fn devboy_core::types::ListCustomFieldsParams::default() -> devboy_core::types::ListCustomFieldsParams
+impl core::fmt::Debug for devboy_core::types::ListCustomFieldsParams
+pub fn devboy_core::types::ListCustomFieldsParams::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_core::types::ListCustomFieldsParams
+impl core::marker::Send for devboy_core::types::ListCustomFieldsParams
+impl core::marker::Sync for devboy_core::types::ListCustomFieldsParams
+impl core::marker::Unpin for devboy_core::types::ListCustomFieldsParams
+impl core::marker::UnsafeUnpin for devboy_core::types::ListCustomFieldsParams
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::ListCustomFieldsParams
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::ListCustomFieldsParams
 pub struct devboy_core::ListPagesParams
 pub devboy_core::ListPagesParams::cursor: core::option::Option<alloc::string::String>
 pub devboy_core::ListPagesParams::limit: core::option::Option<u32>
@@ -6333,10 +6428,14 @@ pub devboy_core::UpdateIssueInput::assignees: core::option::Option<alloc::vec::V
 pub devboy_core::UpdateIssueInput::components: core::option::Option<alloc::vec::Vec<alloc::string::String>>
 pub devboy_core::UpdateIssueInput::custom_fields: core::option::Option<serde_json::value::Value>
 pub devboy_core::UpdateIssueInput::description: core::option::Option<alloc::string::String>
+pub devboy_core::UpdateIssueInput::epic_key: core::option::Option<alloc::string::String>
+pub devboy_core::UpdateIssueInput::epic_name: core::option::Option<alloc::string::String>
+pub devboy_core::UpdateIssueInput::fix_versions: core::option::Option<alloc::vec::Vec<alloc::string::String>>
 pub devboy_core::UpdateIssueInput::labels: core::option::Option<alloc::vec::Vec<alloc::string::String>>
 pub devboy_core::UpdateIssueInput::markdown: bool
 pub devboy_core::UpdateIssueInput::parent_id: core::option::Option<alloc::string::String>
 pub devboy_core::UpdateIssueInput::priority: core::option::Option<alloc::string::String>
+pub devboy_core::UpdateIssueInput::sprint_id: core::option::Option<i64>
 pub devboy_core::UpdateIssueInput::state: core::option::Option<alloc::string::String>
 pub devboy_core::UpdateIssueInput::title: core::option::Option<alloc::string::String>
 impl core::clone::Clone for devboy_core::types::UpdateIssueInput
@@ -6495,6 +6594,7 @@ pub fn devboy_core::IssueProvider::get_structure_views<'life0, 'async_trait>(&'l
 pub fn devboy_core::IssueProvider::get_structures<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::Structure>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_core::IssueProvider::get_users<'life0, 'async_trait>(&'life0 self, _options: devboy_core::types::GetUsersOptions) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::User>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_core::IssueProvider::link_issues<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, _source_key: &'life1 str, _target_key: &'life2 str, _link_type: &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn devboy_core::IssueProvider::list_custom_fields<'life0, 'async_trait>(&'life0 self, _params: devboy_core::types::ListCustomFieldsParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::CustomFieldDescriptor>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_core::IssueProvider::list_project_versions<'life0, 'async_trait>(&'life0 self, _params: devboy_core::types::ListProjectVersionsParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::ProjectVersion>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_core::IssueProvider::move_structure_rows<'life0, 'async_trait>(&'life0 self, _structure_id: u64, _input: devboy_core::types::MoveStructureRowsInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ForestModifyResult>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_core::IssueProvider::provider_name(&self) -> &'static str
