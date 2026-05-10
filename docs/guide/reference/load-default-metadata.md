@@ -35,10 +35,12 @@ gets fat enough to cost real tokens at every `tools/list`, and
 agent budgets erode. The cap is enforced at two layers:
 
 - `load_default_metadata` honours it per the table above.
-- `JiraSchemaEnricher` walks the first 30 projects from
-  `JiraMetadata.projects` when building the customfield union and
-  emits a `tracing::warn!` if the cache carries more. Selecting
-  the right 30 is the caller's responsibility.
+- The schema enricher walks the first 30 projects (sorted by
+  project key for determinism across reloads) when building both
+  the flat customfield union and the per-name conflict groups.
+  Both code paths emit a `tracing::warn!` when the cache carries
+  more than 30 projects. Selecting the right 30 is the caller's
+  responsibility — see the strategies above.
 
 ## Example
 

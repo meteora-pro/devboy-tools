@@ -271,17 +271,25 @@ impl JiraMetadata {
                 project_count = self.projects.len(),
                 cap = MAX_ENRICHMENT_PROJECTS,
                 "Jira metadata carries more projects than the enrichment cap; \
-                 customfield schema will only reflect the first {} — narrow \
-                 the metadata loader's project selection (top-N by recency, \
-                 allowlist, etc.) for full coverage.",
+                 customfield schema will only reflect the first {} (by sorted \
+                 project key) — narrow the metadata loader's project \
+                 selection (top-N by recency, allowlist, etc.) for full \
+                 coverage.",
                 MAX_ENRICHMENT_PROJECTS
             );
         }
+        // Sort project keys before truncating so the "first 30" set
+        // is deterministic across reloads — HashMap iteration order
+        // is not stable (Codex review on PR #260).
+        let mut project_keys: Vec<&String> = self.projects.keys().collect();
+        project_keys.sort();
         let mut by_name: std::collections::HashMap<String, JiraCustomField> =
             std::collections::HashMap::new();
-        for proj in self.projects.values().take(MAX_ENRICHMENT_PROJECTS) {
-            for cf in &proj.custom_fields {
-                by_name.entry(cf.name.clone()).or_insert_with(|| cf.clone());
+        for key in project_keys.iter().take(MAX_ENRICHMENT_PROJECTS) {
+            if let Some(proj) = self.projects.get(*key) {
+                for cf in &proj.custom_fields {
+                    by_name.entry(cf.name.clone()).or_insert_with(|| cf.clone());
+                }
             }
         }
         let mut result: Vec<JiraCustomField> = by_name.into_values().collect();
@@ -311,11 +319,28 @@ impl JiraMetadata {
     /// cross-project shape conflict the enricher resolves with
     /// `anyOf` instead of first-wins.
     pub fn custom_field_groups(&self) -> Vec<(String, Vec<JiraCustomField>)> {
+        if self.projects.len() > MAX_ENRICHMENT_PROJECTS {
+            tracing::warn!(
+                project_count = self.projects.len(),
+                cap = MAX_ENRICHMENT_PROJECTS,
+                "Jira metadata carries more projects than the enrichment cap; \
+                 customfield groups will only reflect the first {} (by sorted \
+                 project key).",
+                MAX_ENRICHMENT_PROJECTS
+            );
+        }
+        // Sort project keys before truncating so the selected
+        // subset is deterministic across reloads — see
+        // `all_custom_fields` (Codex review on PR #260).
+        let mut project_keys: Vec<&String> = self.projects.keys().collect();
+        project_keys.sort();
         let mut groups: std::collections::HashMap<String, Vec<JiraCustomField>> =
             std::collections::HashMap::new();
-        for proj in self.projects.values().take(MAX_ENRICHMENT_PROJECTS) {
-            for cf in &proj.custom_fields {
-                groups.entry(cf.name.clone()).or_default().push(cf.clone());
+        for key in project_keys.iter().take(MAX_ENRICHMENT_PROJECTS) {
+            if let Some(proj) = self.projects.get(*key) {
+                for cf in &proj.custom_fields {
+                    groups.entry(cf.name.clone()).or_default().push(cf.clone());
+                }
             }
         }
         let mut result: Vec<(String, Vec<JiraCustomField>)> = groups.into_iter().collect();

@@ -17,7 +17,7 @@ You don't need the rest of the workspace just to read schemas. The transitive `d
 
 ## Listing every tool
 
-`base_tool_definitions()` returns a `Vec<ToolDefinition>` — every provider-backed built-in tool, in declaration order. No I/O, no async, allocation-free across calls.
+`base_tool_definitions()` returns a `Vec<ToolDefinition>` — every provider-backed built-in tool, in declaration order. Pure function: no I/O, no async, deterministic. Each call allocates a fresh `Vec` and owned `String`s, so cache the result if you call it on a hot path.
 
 ```rust
 use devboy_executor::tools::base_tool_definitions;

@@ -63,13 +63,14 @@ pub struct Issue {
     pub subtasks: Vec<Issue>,
     /// Provider-specific custom fields. **Key is always the
     /// provider-stable id** (Jira `customfield_10014`, ClickUp field
-    /// uuid, etc.) so downstream consumers can join with metadata
-    /// from `get_custom_fields` regardless of provider. Display name
-    /// rides along inside the value when the provider returns it on
-    /// the issue payload — Jira leaves `name` empty (do a follow-up
-    /// `get_custom_fields` call if you need it), ClickUp fills it
-    /// from `task.custom_fields[].name`. Empty map for providers
-    /// that don't expose custom fields (GitHub, GitLab).
+    /// uuid) so downstream consumers can join with metadata from
+    /// `get_custom_fields` regardless of provider. Display name
+    /// rides along inside the value when the provider returns it
+    /// on the issue payload — Jira leaves `name` empty (do a
+    /// follow-up `get_custom_fields` call if you need it), ClickUp
+    /// fills it from `task.custom_fields[].name`. GitHub and GitLab
+    /// don't have a customfield concept and always return an empty
+    /// map here.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub custom_fields: std::collections::HashMap<String, CustomFieldValue>,
 }
