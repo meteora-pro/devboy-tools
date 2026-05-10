@@ -292,17 +292,27 @@ fn override_or_push(
 }
 
 /// Bundled provider catalogs shipped in the binary itself.
-/// Currently just Kimi as a worked example; other providers
-/// will land here as the canonical references mature.
+/// New providers land here as their canonical references
+/// mature; downstream catalogs at user / project scope can
+/// override any of these by `provider_id`.
 pub fn bundled_catalogs() -> Vec<ProviderCatalog> {
     let mut out = Vec::new();
-    if let Ok(c) = serde_json::from_str::<ProviderCatalog>(BUNDLED_KIMI) {
-        out.push(c);
+    for body in BUNDLED_SOURCES {
+        if let Ok(c) = serde_json::from_str::<ProviderCatalog>(body) {
+            out.push(c);
+        }
     }
     out
 }
 
 const BUNDLED_KIMI: &str = include_str!("../data/kimi.json");
+const BUNDLED_OPENAI: &str = include_str!("../data/openai.json");
+
+/// Every bundled JSON catalog shipped in the binary. Order is
+/// not load-bearing — `load_all` resolves overrides by source
+/// scope (bundled < user < project), and within a scope
+/// duplicate `provider_id`s would surface as a load error.
+const BUNDLED_SOURCES: &[&str] = &[BUNDLED_KIMI, BUNDLED_OPENAI];
 
 /// Load every `*.json` file under `dir` as a [`ProviderCatalog`].
 /// Errors are isolated per-file: one bad JSON file doesn't hide
@@ -477,5 +487,23 @@ mod tests {
         assert!(hit.is_some());
         let miss = find_variant_by_id(&cats, "doesnt-exist");
         assert!(miss.is_none());
+    }
+
+    #[test]
+    fn every_bundled_catalog_parses() {
+        let cats = bundled_catalogs();
+        let ids: Vec<&str> = cats.iter().map(|c| c.provider_id.as_str()).collect();
+        assert!(
+            ids.contains(&"kimi"),
+            "expected `kimi` bundled, got {ids:?}"
+        );
+        assert!(
+            ids.contains(&"openai"),
+            "expected `openai` bundled, got {ids:?}"
+        );
+        for body in BUNDLED_SOURCES {
+            serde_json::from_str::<ProviderCatalog>(body)
+                .expect("bundled catalog must parse cleanly");
+        }
     }
 }
