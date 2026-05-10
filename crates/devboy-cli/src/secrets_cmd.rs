@@ -230,10 +230,11 @@ fn catalog_list() -> Result<()> {
         return Ok(());
     }
     for c in &loaded {
-        let source = match c.source {
-            CatalogSource::Bundled => "bundled",
-            CatalogSource::User => "user   ",
-            CatalogSource::Project => "project",
+        let source = match &c.source {
+            CatalogSource::Bundled => "bundled".to_owned(),
+            CatalogSource::User => "user   ".to_owned(),
+            CatalogSource::Project => "project".to_owned(),
+            CatalogSource::Url { url, .. } => format!("url    ({url})"),
         };
         let n = c.catalog.variants.len();
         let suffix = if n == 1 { "variant" } else { "variants" };

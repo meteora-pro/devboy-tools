@@ -211,8 +211,8 @@ pub fn default_project_catalog_dir(project_root: &Path) -> PathBuf {
 /// the origin next to each variant ("from your manifest" vs
 /// "from the bundled defaults") and so a `validate` command
 /// can group errors by source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum CatalogSource {
     /// Bundled defaults shipped in the `devboy-tools` binary.
     Bundled,
@@ -220,6 +220,15 @@ pub enum CatalogSource {
     User,
     /// Project-scope: `<project>/.devboy/secrets/catalog/`.
     Project,
+    /// Remote-fetched via `sources.toml`. Carries the URL it
+    /// was loaded from and the optional pinned SHA256 (when the
+    /// user wrote one in the config). The fetcher (P23.2) and
+    /// the GUI source-chip (P23.6) both consume these fields.
+    Url {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha256: Option<String>,
+    },
 }
 
 /// One loaded catalog plus its origin.
@@ -397,6 +406,110 @@ pub fn all_variants(catalogs: &[ProviderCatalog]) -> Vec<(&ProviderCatalog, &Tok
 }
 
 // =============================================================================
+// sources.toml — config for remote-URL catalog sources (P23)
+// =============================================================================
+
+/// Default refresh window for an unpinned URL source. 24h —
+/// enough to catch upstream provider changes within a day, not
+/// so eager that the loader hammers the server on every
+/// startup.
+fn default_refresh_seconds() -> u64 {
+    86_400
+}
+
+/// Top-level config parsed from
+/// `~/.devboy/secrets/catalog/sources.toml`. The fetcher (P23.2)
+/// is **opt-in** — when [`enable_url_catalogs`] is `false`
+/// (the default), URL sources are silently skipped even if the
+/// `[[source]]` blocks are present, so a careless paste of a
+/// malicious config in the user's home doesn't auto-activate
+/// network fetches.
+///
+/// [`enable_url_catalogs`]: Self::enable_url_catalogs
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogSourcesConfig {
+    /// Master kill-switch. Defaults to `false` — URL sources
+    /// require explicit user opt-in.
+    #[serde(default)]
+    pub enable_url_catalogs: bool,
+    /// Each `[[source]]` block in the TOML maps to one entry.
+    #[serde(default, rename = "source")]
+    pub sources: Vec<UrlSource>,
+}
+
+/// One `[[source]]` block — a URL the fetcher should pull.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UrlSource {
+    /// HTTPS URL of the JSON catalog. The fetcher (P23.2)
+    /// rejects `http://`.
+    pub url: String,
+    /// Pinned SHA256 of the expected body, hex-encoded
+    /// lowercase, no `sha256:` prefix. When set, the fetcher
+    /// compares against this exact value and refuses any
+    /// mismatch. When unset, the loader uses TOFU
+    /// (`known_hashes.toml`, P23.3) instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    /// How long a cached body stays fresh before the loader
+    /// re-fetches. Defaults to 24h.
+    #[serde(default = "default_refresh_seconds")]
+    pub refresh_seconds: u64,
+}
+
+/// Default `sources.toml` location. Same directory as user-
+/// scope catalog JSONs so there's only one place to look.
+pub fn default_sources_toml_path() -> Option<PathBuf> {
+    default_user_catalog_dir().map(|d| d.join("sources.toml"))
+}
+
+/// Parse a `sources.toml` body. Pure — no I/O. Validates each
+/// URL starts with `https://` and that pinned SHA256 strings
+/// are 64 hex chars; returns a structured error per-source on
+/// shape violations so the fetcher can surface them in the
+/// audit log without aborting the whole load.
+pub fn parse_sources_toml(body: &str) -> Result<CatalogSourcesConfig, SourcesConfigError> {
+    let cfg: CatalogSourcesConfig =
+        toml::from_str(body).map_err(|source| SourcesConfigError::Parse { source })?;
+    for (idx, src) in cfg.sources.iter().enumerate() {
+        if !src.url.starts_with("https://") {
+            return Err(SourcesConfigError::HttpsRequired {
+                index: idx,
+                url: src.url.clone(),
+            });
+        }
+        if let Some(sha) = src.sha256.as_deref()
+            && !is_valid_sha256_hex(sha)
+        {
+            return Err(SourcesConfigError::InvalidSha256 {
+                index: idx,
+                value: sha.to_owned(),
+            });
+        }
+    }
+    Ok(cfg)
+}
+
+/// Errors surfaced by [`parse_sources_toml`].
+#[derive(Debug, Error)]
+pub enum SourcesConfigError {
+    #[error("malformed sources.toml: {source}")]
+    Parse {
+        #[source]
+        source: toml::de::Error,
+    },
+    #[error("source #{index} URL must start with https:// (got `{url}`)")]
+    HttpsRequired { index: usize, url: String },
+    #[error("source #{index} sha256 must be exactly 64 lowercase hex chars (got `{value}`)")]
+    InvalidSha256 { index: usize, value: String },
+}
+
+fn is_valid_sha256_hex(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -488,6 +601,75 @@ mod tests {
         assert!(hit.is_some());
         let miss = find_variant_by_id(&cats, "doesnt-exist");
         assert!(miss.is_none());
+    }
+
+    #[test]
+    fn sources_toml_empty_body_yields_defaults() {
+        let cfg = parse_sources_toml("").unwrap();
+        assert!(!cfg.enable_url_catalogs);
+        assert!(cfg.sources.is_empty());
+    }
+
+    #[test]
+    fn sources_toml_full_block_parses() {
+        let body = r#"
+            enable_url_catalogs = true
+
+            [[source]]
+            url = "https://example.invalid/catalog.json"
+            sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            refresh_seconds = 3600
+        "#;
+        let cfg = parse_sources_toml(body).unwrap();
+        assert!(cfg.enable_url_catalogs);
+        assert_eq!(cfg.sources.len(), 1);
+        let s = &cfg.sources[0];
+        assert_eq!(s.url, "https://example.invalid/catalog.json");
+        assert_eq!(s.refresh_seconds, 3600);
+        assert!(s.sha256.is_some());
+    }
+
+    #[test]
+    fn sources_toml_url_only_uses_default_refresh() {
+        let body = r#"
+            [[source]]
+            url = "https://example.invalid/x.json"
+        "#;
+        let cfg = parse_sources_toml(body).unwrap();
+        assert_eq!(cfg.sources[0].refresh_seconds, 86_400);
+        assert!(cfg.sources[0].sha256.is_none());
+    }
+
+    #[test]
+    fn sources_toml_rejects_http_scheme() {
+        let body = r#"
+            [[source]]
+            url = "http://example.invalid/x.json"
+        "#;
+        let err = parse_sources_toml(body).unwrap_err();
+        assert!(matches!(err, SourcesConfigError::HttpsRequired { .. }));
+    }
+
+    #[test]
+    fn sources_toml_rejects_malformed_sha256() {
+        let body = r#"
+            [[source]]
+            url = "https://example.invalid/x.json"
+            sha256 = "tooshort"
+        "#;
+        let err = parse_sources_toml(body).unwrap_err();
+        assert!(matches!(err, SourcesConfigError::InvalidSha256 { .. }));
+    }
+
+    #[test]
+    fn sources_toml_rejects_unknown_fields() {
+        let body = r#"
+            [[source]]
+            url = "https://example.invalid/x.json"
+            mystery = true
+        "#;
+        let err = parse_sources_toml(body).unwrap_err();
+        assert!(matches!(err, SourcesConfigError::Parse { .. }));
     }
 
     #[test]

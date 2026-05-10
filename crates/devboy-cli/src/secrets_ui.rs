@@ -715,7 +715,7 @@ impl eframe::App for InventoryApp {
                                 ))
                                 .strong(),
                             );
-                            ui.label(catalog_source_chip(loaded.source));
+                            ui.label(catalog_source_chip(&loaded.source));
                         });
                         let variants: Vec<(String, String)> = loaded
                             .catalog
@@ -738,7 +738,7 @@ impl eframe::App for InventoryApp {
 
                     let variant_for_card = self
                         .current_provider_and_variant()
-                        .map(|(loaded, v)| (v, loaded.source));
+                        .map(|(loaded, v)| (v, &loaded.source));
                     render_context_card(
                         ui,
                         &dialog_path,
@@ -1084,13 +1084,25 @@ fn run_catalog_liveness(
 /// from. Used both in the multi-variant picker title and in
 /// the context card so a team override (project-scope JSON
 /// shadowing the bundled default) is visible at a glance.
-fn catalog_source_chip(source: devboy_token_catalog::CatalogSource) -> eframe::egui::RichText {
+fn catalog_source_chip(source: &devboy_token_catalog::CatalogSource) -> eframe::egui::RichText {
     use devboy_token_catalog::CatalogSource;
     use eframe::egui::{Color32, RichText};
     let (label, color) = match source {
-        CatalogSource::Bundled => ("bundled", Color32::from_rgb(0x99, 0x99, 0x99)),
-        CatalogSource::User => ("user", Color32::from_rgb(0x55, 0xa0, 0xcc)),
-        CatalogSource::Project => ("project", Color32::from_rgb(0x55, 0xaa, 0x55)),
+        CatalogSource::Bundled => ("bundled".to_owned(), Color32::from_rgb(0x99, 0x99, 0x99)),
+        CatalogSource::User => ("user".to_owned(), Color32::from_rgb(0x55, 0xa0, 0xcc)),
+        CatalogSource::Project => ("project".to_owned(), Color32::from_rgb(0x55, 0xaa, 0x55)),
+        // URL sources get an orange chip + the hostname so the
+        // user can see at a glance whether a remote catalog is
+        // shadowing a bundled default. P23.6 layers the
+        // first-fetch confirm + diff-on-change UX on top of
+        // this; the chip itself is the always-on tell.
+        CatalogSource::Url { url, .. } => {
+            let host = reqwest::Url::parse(url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned))
+                .unwrap_or_else(|| "url".to_owned());
+            (format!("url:{host}"), Color32::from_rgb(0xdd, 0x88, 0x33))
+        }
     };
     RichText::new(format!("[{label}]")).small().color(color)
 }
@@ -1102,7 +1114,7 @@ fn render_context_card(
     backend: &StorageBackend,
     variant: Option<(
         &devboy_token_catalog::TokenVariant,
-        devboy_token_catalog::CatalogSource,
+        &devboy_token_catalog::CatalogSource,
     )>,
 ) {
     use eframe::egui::{Color32, RichText};
