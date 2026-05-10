@@ -821,6 +821,60 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s
             },
         },
+        // Agile / Sprint (issue #198). Pairs with the `sprintId` slot on
+        // create_issue / update_issue: `get_board_sprints` is how callers
+        // discover available sprint ids on a board.
+        ToolDefinition {
+            name: "get_board_sprints".into(),
+            description: "List sprints visible on a Jira agile board. Use to discover the numeric `sprintId` accepted by `create_issue` / `update_issue` and `assign_to_sprint`. Returns name, state (active/future/closed), planned start/end, and goal — enough for the agent to pick the right sprint without a follow-up call.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "boardId",
+                    PropertySchema::integer(
+                        "Numeric Jira board id. The Agile / Boards REST endpoint returns sprints scoped to one board — there is no global sprint list.",
+                        Some(0.0),
+                        None,
+                    ),
+                );
+                s.add_property(
+                    "state",
+                    PropertySchema::string_enum(
+                        &["active", "future", "closed", "all"],
+                        "Filter by sprint state. Default `all` returns every sprint on the board.",
+                    ),
+                );
+                s.set_required("boardId", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "assign_to_sprint".into(),
+            description: "Move one or more issues onto a Jira sprint. Pair with `get_board_sprints` to look up the numeric `sprintId`. Issues already on a sprint are silently moved.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "sprintId",
+                    PropertySchema::integer(
+                        "Numeric sprint id. Use `get_board_sprints` to discover ids on a board.",
+                        Some(0.0),
+                        None,
+                    ),
+                );
+                s.add_property(
+                    "issueKeys",
+                    PropertySchema::array(
+                        PropertySchema::string("issue key (e.g., \"PROJ-1\")"),
+                        "Issue keys to move onto the sprint. Must contain at least one key.",
+                    ),
+                );
+                s.set_required("sprintId", true);
+                s.set_required("issueKeys", true);
+                s
+            },
+        },
     ]
 }
 
@@ -869,7 +923,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 51);
+        assert_eq!(tools.len(), 53);
     }
 
     #[test]
@@ -902,6 +956,8 @@ mod tests {
             "delete_asset",
             "list_project_versions",
             "upsert_project_version",
+            "get_board_sprints",
+            "assign_to_sprint",
         ];
         let git_repository_tools = [
             "get_merge_requests",

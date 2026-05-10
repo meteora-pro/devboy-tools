@@ -1,14 +1,14 @@
 use devboy_core::types::ChatType;
 use devboy_core::{
-    AddStructureRowsInput, CreateCommentInput, CreateIssueInput, CreateMergeRequestInput,
-    CreatePageParams, CreateStructureInput, Error, GetChatsParams, GetForestOptions,
-    GetMessagesParams, GetPipelineInput, GetStructureValuesInput, GetUsersOptions, IssueFilter,
-    IssueProvider, JobLogMode, JobLogOptions, KnowledgeBaseProvider, ListPagesParams,
-    ListProjectVersionsParams, MeetingFilter, MeetingNotesProvider, MergeRequestProvider,
-    MessengerProvider, MoveStructureRowsInput, MrFilter, PipelineProvider, Result,
-    SaveStructureViewInput, SearchKbParams, SearchMessagesParams, SendMessageParams,
-    StructureRowItem, StructureViewColumn, ToolCategory, UpdateIssueInput, UpdatePageParams,
-    UpsertProjectVersionInput,
+    AddStructureRowsInput, AssignToSprintInput, CreateCommentInput, CreateIssueInput,
+    CreateMergeRequestInput, CreatePageParams, CreateStructureInput, Error, GetChatsParams,
+    GetForestOptions, GetMessagesParams, GetPipelineInput, GetStructureValuesInput,
+    GetUsersOptions, IssueFilter, IssueProvider, JobLogMode, JobLogOptions, KnowledgeBaseProvider,
+    ListPagesParams, ListProjectVersionsParams, MeetingFilter, MeetingNotesProvider,
+    MergeRequestProvider, MessengerProvider, MoveStructureRowsInput, MrFilter, PipelineProvider,
+    Result, SaveStructureViewInput, SearchKbParams, SearchMessagesParams, SendMessageParams,
+    SprintState, StructureRowItem, StructureViewColumn, ToolCategory, UpdateIssueInput,
+    UpdatePageParams, UpsertProjectVersionInput,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -663,6 +663,10 @@ async fn dispatch_tool(
         // Project versions / fixVersion (issue #238)
         "list_project_versions" => execute_list_project_versions(provider, args).await,
         "upsert_project_version" => execute_upsert_project_version(provider, args).await,
+
+        // Agile / Sprint (issue #198)
+        "get_board_sprints" => execute_get_board_sprints(provider, args).await,
+        "assign_to_sprint" => execute_assign_to_sprint(provider, args).await,
 
         _ => Err(Error::NotFound(format!("unknown tool: {tool}"))),
     }
@@ -2486,6 +2490,70 @@ async fn execute_upsert_project_version(
     Ok(ToolOutput::SingleProjectVersion(Box::new(version)))
 }
 
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct GetBoardSprintsArgs {
+    board_id: u64,
+    /// Optional state filter: `active`, `future`, `closed`, or `all`
+    /// (default `all`).
+    state: Option<String>,
+}
+
+async fn execute_get_board_sprints(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: GetBoardSprintsArgs = parse_tool_params(args, "get_board_sprints")?;
+    let state = match params.state.as_deref() {
+        None | Some("all") => SprintState::All,
+        Some("active") => SprintState::Active,
+        Some("future") => SprintState::Future,
+        Some("closed") => SprintState::Closed,
+        Some(other) => {
+            return Err(Error::InvalidData(format!(
+                "invalid sprint state `{other}` — expected one of: active, future, closed, all"
+            )));
+        }
+    };
+
+    let result = provider.get_board_sprints(params.board_id, state).await?;
+    let meta = ResultMeta {
+        pagination: result.pagination,
+        sort_info: result.sort_info,
+    };
+    Ok(ToolOutput::Sprints(result.items, Some(meta)))
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AssignToSprintArgs {
+    sprint_id: u64,
+    issue_keys: Vec<String>,
+}
+
+async fn execute_assign_to_sprint(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: AssignToSprintArgs = parse_tool_params(args, "assign_to_sprint")?;
+    if params.issue_keys.is_empty() {
+        return Err(Error::InvalidData(
+            "issueKeys must contain at least one issue key".into(),
+        ));
+    }
+    let count = params.issue_keys.len();
+    provider
+        .assign_to_sprint(AssignToSprintInput {
+            sprint_id: params.sprint_id,
+            issue_keys: params.issue_keys,
+        })
+        .await?;
+    Ok(ToolOutput::Text(format!(
+        "Moved {count} issue(s) to sprint {}.",
+        params.sprint_id
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2777,6 +2845,30 @@ mod tests {
                 unresolved_issue_count: None,
                 source: "mock".into(),
             })
+        }
+        async fn get_board_sprints(
+            &self,
+            board_id: u64,
+            state: devboy_core::SprintState,
+        ) -> devboy_core::Result<devboy_core::ProviderResult<devboy_core::Sprint>> {
+            // Echo applied filters into the name so dispatch tests can
+            // pin behaviour without sniffing call args.
+            Ok(vec![devboy_core::Sprint {
+                id: 1,
+                name: format!("sprint-board={board_id}-state={state:?}"),
+                state: "active".into(),
+                origin_board_id: Some(board_id),
+                start_date: None,
+                end_date: None,
+                goal: None,
+            }]
+            .into())
+        }
+        async fn assign_to_sprint(
+            &self,
+            _input: devboy_core::AssignToSprintInput,
+        ) -> devboy_core::Result<()> {
+            Ok(())
         }
         fn provider_name(&self) -> &'static str {
             "mock"
@@ -3968,6 +4060,111 @@ mod tests {
         assert!(
             matches!(err, devboy_core::Error::InvalidData(ref m) if m.contains("limit")),
             "expected InvalidData about limit, got {err:?}"
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Agile / Sprint dispatch (issue #198)
+    // -------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_dispatch_get_board_sprints_default_state_is_all() {
+        let provider = MockProvider;
+        let result = dispatch_tool(
+            "get_board_sprints",
+            &serde_json::json!({"boardId": 7}),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap();
+        match result {
+            ToolOutput::Sprints(items, _) => {
+                assert_eq!(items.len(), 1);
+                assert!(items[0].name.contains("board=7"), "got {}", items[0].name);
+                assert!(items[0].name.contains("state=All"), "got {}", items[0].name);
+            }
+            other => panic!("expected Sprints, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_board_sprints_state_filter_round_trips() {
+        let provider = MockProvider;
+        let result = dispatch_tool(
+            "get_board_sprints",
+            &serde_json::json!({"boardId": 9, "state": "active"}),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap();
+        match result {
+            ToolOutput::Sprints(items, _) => {
+                assert!(
+                    items[0].name.contains("state=Active"),
+                    "got {}",
+                    items[0].name
+                );
+            }
+            other => panic!("expected Sprints, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_board_sprints_rejects_unknown_state() {
+        let provider = MockProvider;
+        let err = dispatch_tool(
+            "get_board_sprints",
+            &serde_json::json!({"boardId": 1, "state": "wat"}),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, devboy_core::Error::InvalidData(ref m) if m.contains("wat")),
+            "expected InvalidData mentioning the bad value, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_assign_to_sprint_returns_text_summary() {
+        let provider = MockProvider;
+        let result = dispatch_tool(
+            "assign_to_sprint",
+            &serde_json::json!({
+                "sprintId": 42,
+                "issueKeys": ["PROJ-1", "PROJ-2"],
+            }),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap();
+        match result {
+            ToolOutput::Text(msg) => {
+                assert!(msg.contains("2 issue"), "got {msg}");
+                assert!(msg.contains("42"), "got {msg}");
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_assign_to_sprint_rejects_empty_issue_keys() {
+        let provider = MockProvider;
+        let err = dispatch_tool(
+            "assign_to_sprint",
+            &serde_json::json!({"sprintId": 1, "issueKeys": []}),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, devboy_core::Error::InvalidData(ref m) if m.contains("issueKeys")),
+            "expected InvalidData about issueKeys, got {err:?}"
         );
     }
 

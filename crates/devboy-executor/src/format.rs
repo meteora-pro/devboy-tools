@@ -484,6 +484,11 @@ pub fn format_output(
             None,
             None,
         )),
+        ToolOutput::Sprints(sprints, _meta) => Ok(text_result(
+            format_sprints(&sprints),
+            provider_pagination,
+            provider_sort,
+        )),
         ToolOutput::Text(text) => Ok(text_result(text, None, None)),
     }
 }
@@ -643,6 +648,35 @@ fn format_project_versions(
         ));
     }
 
+    output
+}
+
+/// Format sprints from `get_board_sprints` as a compact markdown table.
+fn format_sprints(sprints: &[devboy_core::Sprint]) -> String {
+    if sprints.is_empty() {
+        return "No sprints found.".to_string();
+    }
+
+    let mut output = format!("# Sprints ({})\n\n", sprints.len());
+    output.push_str("| Id | Name | State | Start | End | Goal |\n");
+    output.push_str("|---|---|---|---|---|---|\n");
+    for s in sprints {
+        let start = s.start_date.as_deref().unwrap_or("-");
+        let end = s.end_date.as_deref().unwrap_or("-");
+        let goal = match s.goal.as_deref() {
+            None | Some("") => "-".to_string(),
+            Some(g) => escape_table_cell(&truncate_for_table(g, 120)),
+        };
+        output.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} |\n",
+            s.id,
+            escape_table_cell(&s.name),
+            s.state,
+            start,
+            end,
+            goal,
+        ));
+    }
     output
 }
 
