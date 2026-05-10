@@ -1,0 +1,63 @@
+{
+  "$schema": "../schema/v1.json",
+  "schema_version": 1,
+  "provider_id": "github",
+  "display_name": "GitHub",
+  "description": "GitHub Personal Access Tokens. Two coexisting kinds — pick `fine-grained` for new work (per-repo permissions, expiration), pick `classic` only when you need scopes the fine-grained model still can't express.",
+  "variants": [
+    {
+      "id": "github-pat",
+      "display_name": "Classic Personal Access Token",
+      "description": "Legacy `ghp_…` token. Account-wide scopes (`repo`, `admin:org`, `workflow`). Use only for tooling that hasn't migrated to fine-grained tokens yet — GitHub plans to retire classic PATs.",
+      "format_regex": "^ghp_[a-zA-Z0-9]{36}$",
+      "format_hint": "starts with `ghp_`, exactly 40 characters total",
+      "retrieval": {
+        "console_url": "https://github.com/settings/tokens",
+        "steps": [
+          "Open https://github.com/settings/tokens",
+          "Click Generate new token → Generate new token (classic)",
+          "Pick scopes (`repo`, `read:org`, `workflow` are the common ones)",
+          "Set an expiration — never `No expiration` for shared tooling",
+          "Click Generate token, copy the value (shown once)"
+        ],
+        "notes": "Classic tokens grant access to ALL of your repos at the chosen scope. Prefer the fine-grained variant whenever possible — only fall back here when the workflow needs scopes (org-level admin, workflow billing) the fine-grained API still doesn't expose."
+      },
+      "liveness": {
+        "kind": "http",
+        "url": "https://api.github.com/user",
+        "method": "GET",
+        "auth": { "kind": "bearer" },
+        "expect_status": 200
+      },
+      "rotation": { "method": "manual", "every_days": 90 }
+    },
+    {
+      "id": "github-fine-grained-pat",
+      "display_name": "Fine-grained Personal Access Token",
+      "description": "Modern `github_pat_…` token. Per-repo scope, expiration mandatory, granular permissions. Default choice for new tooling.",
+      "format_regex": "^github_pat_[A-Z0-9_]{82}$",
+      "format_hint": "starts with `github_pat_`, 82 chars of [A-Z0-9_] after the prefix",
+      "retrieval": {
+        "console_url": "https://github.com/settings/personal-access-tokens",
+        "steps": [
+          "Open https://github.com/settings/personal-access-tokens",
+          "Click Generate new token (fine-grained)",
+          "Pick the resource owner (your account or an org you admin)",
+          "Limit to specific repositories — don't use `All repositories` unless you must",
+          "Pick the granular Repository permissions (Contents read/write, Pull requests, etc.)",
+          "Set an expiration (max 1 year)",
+          "Click Generate token, copy the value (shown once)"
+        ],
+        "notes": "Fine-grained tokens cannot access org-admin or workflow billing scopes — those still require a classic PAT. For org-owned tokens, the org admin must enable fine-grained access in Org → Settings → Personal access tokens."
+      },
+      "liveness": {
+        "kind": "http",
+        "url": "https://api.github.com/user",
+        "method": "GET",
+        "auth": { "kind": "bearer" },
+        "expect_status": 200
+      },
+      "rotation": { "method": "manual", "every_days": 90 }
+    }
+  ]
+}

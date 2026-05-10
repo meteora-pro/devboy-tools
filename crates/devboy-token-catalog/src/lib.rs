@@ -307,12 +307,13 @@ pub fn bundled_catalogs() -> Vec<ProviderCatalog> {
 
 const BUNDLED_KIMI: &str = include_str!("../data/kimi.json");
 const BUNDLED_OPENAI: &str = include_str!("../data/openai.json");
+const BUNDLED_GITHUB: &str = include_str!("../data/github.json");
 
 /// Every bundled JSON catalog shipped in the binary. Order is
 /// not load-bearing — `load_all` resolves overrides by source
 /// scope (bundled < user < project), and within a scope
 /// duplicate `provider_id`s would surface as a load error.
-const BUNDLED_SOURCES: &[&str] = &[BUNDLED_KIMI, BUNDLED_OPENAI];
+const BUNDLED_SOURCES: &[&str] = &[BUNDLED_KIMI, BUNDLED_OPENAI, BUNDLED_GITHUB];
 
 /// Load every `*.json` file under `dir` as a [`ProviderCatalog`].
 /// Errors are isolated per-file: one bad JSON file doesn't hide
@@ -493,14 +494,12 @@ mod tests {
     fn every_bundled_catalog_parses() {
         let cats = bundled_catalogs();
         let ids: Vec<&str> = cats.iter().map(|c| c.provider_id.as_str()).collect();
-        assert!(
-            ids.contains(&"kimi"),
-            "expected `kimi` bundled, got {ids:?}"
-        );
-        assert!(
-            ids.contains(&"openai"),
-            "expected `openai` bundled, got {ids:?}"
-        );
+        for expected in ["kimi", "openai", "github"] {
+            assert!(
+                ids.contains(&expected),
+                "expected `{expected}` bundled, got {ids:?}"
+            );
+        }
         for body in BUNDLED_SOURCES {
             serde_json::from_str::<ProviderCatalog>(body)
                 .expect("bundled catalog must parse cleanly");
