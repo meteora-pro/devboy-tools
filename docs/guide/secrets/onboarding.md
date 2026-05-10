@@ -1,46 +1,48 @@
-# Онбординг секрет-фреймворка
+# Secret framework onboarding
 
-Первое включение secret framework на новой машине или в новом репозитории. Документ ведёт от «ничего не настроено» до «`devboy doctor --secrets` зелёный, манифест валидируется в CI».
+First-run setup of the secret framework on a new machine or in a new repository. This document walks from "nothing configured" to "`devboy doctor --secrets` is green and the manifest passes CI".
 
-> **Когда использовать**: после `npm install -g @devboy-tools/cli` и базового `devboy onboard` (см. [Quick start](../getting-started/quick-start.md)). Если в проекте уже есть `.devboy/secrets.toml` и вы хотите интерактивный wizard — запускайте `setup-secrets` через AI-агента, он автоматизирует те же шаги.
+> **When to use**: after `npm install -g @devboy-tools/cli` and the basic `devboy onboard` (see [Quick start](../getting-started/quick-start.md)). If your project already has `.devboy/secrets.toml` and you want an interactive wizard, run `setup-secrets` via the AI agent — it automates the same steps.
 
-## Чек-лист готовности
+> Russian translation: [`ru/onboarding.md`](./ru/onboarding.md).
 
-- [ ] `devboy --version` отвечает (CLI установлен).
-- [ ] OS keychain доступен (macOS Keychain / Windows Credential Manager / Linux Secret Service).
-- [ ] Есть права на создание `~/.devboy/secrets/` и `<project>/.devboy/`.
-- [ ] Понимаете, какие секреты нужны проекту (можно начать с одного — манифест расширяется по ходу).
+## Readiness checklist
+
+- [ ] `devboy --version` answers (CLI installed).
+- [ ] OS keychain available (macOS Keychain / Windows Credential Manager / Linux Secret Service).
+- [ ] Permissions to create `~/.devboy/secrets/` and `<project>/.devboy/`.
+- [ ] You know which secrets the project needs (one is enough to start — the manifest grows as you go).
 
 ---
 
-## Шаг 1. Установка и проверка CLI
+## Step 1. Install and verify the CLI
 
-Если `devboy` уже на PATH — пропустите шаг.
+If `devboy` is already on `PATH`, skip this step.
 
 ```bash
 npm install -g @devboy-tools/cli
 devboy --version
 ```
 
-Альтернатива через `cargo`:
+Alternative via `cargo`:
 
 ```bash
 cargo install devboy-cli
 ```
 
-После установки убедитесь, что подсистема секретов доступна:
+Confirm the secrets subsystem is available:
 
 ```bash
 devboy secrets --help
 ```
 
-Должны увидеть подкоманды `list`, `describe`, `validate`, `migrate`, `agent`, `ui`, `rotate`. Если их нет — обновите CLI до версии 0.26 или выше (минимальная версия с secret framework).
+You should see subcommands `list`, `describe`, `validate`, `migrate`, `agent`, `ui`, `rotate`, `catalog`. If any are missing, upgrade the CLI to 0.26 or later (the minimum version that ships the secret framework).
 
-## Шаг 2. Подключение первого источника
+## Step 2. Wire up the first source
 
-По умолчанию CLI работает с OS keychain без настройки. Этого достаточно для одного разработчика на одной машине. Когда команда подключает 1Password, Vault или env-store — расширяете конфиг роутера. Начнём с keychain.
+By default the CLI works against the OS keychain with no configuration. That's enough for one developer on one machine. When the team adds 1Password, Vault, or env-store, you extend the router config. Start with keychain.
 
-Создайте файл `~/.devboy/secrets/sources.toml` (если ещё нет):
+Create `~/.devboy/secrets/sources.toml` (if you don't have one yet):
 
 ```bash
 mkdir -p ~/.devboy/secrets
@@ -53,30 +55,30 @@ schema_version = 1
 [[source]]
 name = "default-keychain"
 type = "keychain"
-# Никаких credentials не нужно — keychain сам управляет доступом.
+# No credentials needed — the keychain manages access itself.
 
-# Когда `[[route]]` ни по одному префиксу не подошёл — спрашиваем
-# default source. `fallback` подключается, когда default ответил
-# `NotInstalled` (CI без OS keychain).
+# When no `[[route]]` matches by prefix, the router falls back
+# to the default source. `fallback` engages when the default
+# answers `NotInstalled` (CI without an OS keychain).
 [default]
 source = "default-keychain"
 ```
 
-Проверьте, что роутер видит источник:
+Verify the router sees the source:
 
 ```bash
 devboy doctor --checks context-secrets --format json
 ```
 
-Должна быть запись `{"name": "default-keychain", "type": "keychain", "available": true}`.
+You should get an entry like `{"name": "default-keychain", "type": "keychain", "available": true}`.
 
-> **Если планируете 1Password / Vault**: добавьте отдельный `[[source]]` блок с типом `1password` или `vault`, и пропишите `[[route]]` с нужным `prefix`. Подробности — [docs/guide/secrets/local-vault.md](./local-vault.md).
+> **If you plan to use 1Password / Vault**: add a separate `[[source]]` block of type `1password` or `vault`, plus a `[[route]]` with the matching `prefix`. Details: [docs/guide/secrets/local-vault.md](./local-vault.md).
 
-## Шаг 3. Манифест проекта
+## Step 3. Project manifest
 
-Манифест объявляет, какие секреты проект ожидает увидеть. Без манифеста framework не знает, на что смотреть, и `doctor` не сможет жаловаться на их отсутствие.
+The manifest declares which secrets the project expects. Without it the framework has no idea what to look for and `doctor` cannot complain about missing values.
 
-Создайте `<project>/.devboy/secrets.toml`:
+Create `<project>/.devboy/secrets.toml`:
 
 ```toml
 # <project>/.devboy/secrets.toml
@@ -90,115 +92,117 @@ optional = [
 ]
 
 [overrides."team/<provider>/api-key"]
-description = "Используется CI-пайплайном при публикации артефактов."
+description = "Used by the CI pipeline when publishing artefacts."
 rotate_every_days = 90
 
 [secret."sandbox/<provider>/local-token"]
-description = "Только для локальных smoke-тестов; в репозитории не хранится."
+description = "Local smoke tests only; never committed."
 retrieval_url = "https://example.invalid/<provider>/tokens"
 pattern_id = "generic-bearer"
 rotation_method = "manual"
 ```
 
-Структура (см. [ADR-020](../architecture/adr/ADR-020-secret-manifest-and-alias-resolution.md)):
+Structure (see [ADR-020](../architecture/adr/ADR-020-secret-manifest-and-alias-resolution.md)):
 
-- `required` — список путей в формате ADR-020 (`<scope>/<provider>/<purpose>`), без значений которых проект не работает.
-- `optional` — пути, которые улучшают опыт (рассылки, фича-флаги), но не блокируют сборку.
-- `[overrides."<path>"]` — точечные правки метаданных для пути из глобального индекса (`~/.devboy/secrets/index.toml`).
-- `[secret."<path>"]` — полная декларация для пути, который существует только в этом проекте (sandbox-сценарии, локальные плейграунды).
+- `required` — list of paths in ADR-020 form (`<scope>/<provider>/<purpose>`); the project does not work without their values.
+- `optional` — paths that improve UX (mailers, feature flags) but don't block the build.
+- `[overrides."<path>"]` — per-path metadata patches over the global index (`~/.devboy/secrets/index.toml`).
+- `[secret."<path>"]` — full declaration for a path that exists only in this project (sandbox scenarios, local playgrounds).
 
-> **Шаблоны вместо реальных имён**: в примерах используются плейсхолдеры `<provider>` / `<purpose>`. В реальном манифесте пишите конкретные сегменты (`team/jira/api-key`), но **никогда** не публикуйте на GitHub имена клиентов, внутренние коды команд или ID серверов — это утечка инфраструктуры. Для таких полей используйте `team/`-scope с обобщённым provider-именем.
+> **Use placeholders, not real names**: examples use `<provider>` / `<purpose>` placeholders. In a real manifest write concrete segments (`team/jira/api-key`), but **never** publish client names, internal team codes, or server IDs to GitHub — that's an infra leak. For those, use the `team/`-scope with a generic provider name.
 
-## Шаг 4. Валидация манифеста
+## Step 4. Validate the manifest
 
-Каждый раз после правки манифеста — формат-валидация:
+Re-run format validation after every manifest edit:
 
 ```bash
 devboy secrets validate
 ```
 
-Что проверяется (см. [ADR-021] §6):
+What it checks (see [ADR-021] §6):
 
-- Каждый путь — валидный ADR-020 (3+ сегмента, kebab-case).
-- `required` ∩ `optional` пусто.
-- Поля `rotate_every_days`, `expires_at`, `pattern_id` — корректного типа.
-- Если включён liveness-flag (`--liveness`), framework проверит, что для каждого `required`-пути в роутере зарегистрирован источник, способный выдать значение.
+- Every path is valid ADR-020 (3+ segments, kebab-case).
+- `required` ∩ `optional` is empty.
+- `rotate_every_days`, `expires_at`, `pattern_id` are well-typed.
+- With the liveness flag (`--liveness`), the framework also checks that for every `required` path there's a router source that can return a value.
 
-Включите команду в pre-commit hook или CI-pipeline:
+Wire the command into a pre-commit hook or CI pipeline:
 
 ```yaml
 # .github/workflows/secrets.yml
 - run: devboy secrets validate --strict
 ```
 
-`--strict` превращает предупреждения о non-conformant путях (P10.1) в ошибки.
+`--strict` promotes warnings about non-conformant paths (P10.1) to errors.
 
-## Шаг 5. Обзор того, что фреймворк видит
+## Step 5. Inspect what the framework sees
 
 ```bash
 devboy secrets list
 ```
 
-Вывод — таблица с колонками `path`, `status`, `expires_at`, `provider`. Только метаданные, без значений.
+The output is a table with columns `path`, `status`, `expires_at`, `provider`. Metadata only — no values.
 
-Подробности по конкретному пути:
+Per-path details:
 
 ```bash
 devboy secrets describe team/<provider>/api-key
 ```
 
-Покажет `description`, `retrieval_url`, `rotation_method`, `last_rotated_at`, `pattern_id` и все `overrides`, применённые поверх глобального индекса.
+Shows `description`, `retrieval_url`, `rotation_method`, `last_rotated_at`, `pattern_id`, and every `overrides` patch applied on top of the global index.
 
-JSON-режим для скриптов:
+JSON mode for scripts:
 
 ```bash
 devboy secrets list --json | jq '.[] | select(.status == "missing")'
 ```
 
-## Шаг 6. Заполнение значений
+## Step 6. Provision values
 
-Значения попадают в keychain через `secrets ui` (TUI/GUI с диалогом ввода) или через AI-агента (`secrets_request_provision` MCP-инструмент). Выберите режим, который ближе:
+Values land in the keychain through `secrets ui` (TUI/GUI with a provision dialog) or via the AI agent (`secrets_request_provision` MCP tool). Pick the mode that fits:
 
-- **Интерактивно (рекомендуется)**:
+- **Interactive (recommended)**:
 
   ```bash
   devboy secrets ui --tui
   ```
 
-  Откроется TUI с inventory-видом. Стрелки — навигация, Enter — открыть диалог provision для выбранного пути, `q` — выход. Для GUI-окружений CLI автоопределит наличие `$DISPLAY` / `$WAYLAND_DISPLAY` и поднимет egui.
+  Opens a TUI with the inventory view. Arrow keys navigate, Enter opens the provision dialog for the selected path, `q` quits. In a GUI environment the CLI auto-detects `$DISPLAY` / `$WAYLAND_DISPLAY` and launches the egui window instead.
 
-- **Через AI-агента**: попросите агента «provision missing secrets» — он вызовет `setup-secrets` skill (см. [docs/guide/secrets/agent-protocol.md](./agent-protocol.md)).
+- **Via the AI agent**: ask the agent to "provision missing secrets" — it runs the `setup-secrets` skill (see [docs/guide/secrets/agent-protocol.md](./agent-protocol.md)).
 
-- **Скриптом** (только для повторяющихся секретов в одной машине):
+- **Scripted** (only for repeatable secrets on one machine):
 
   ```bash
   devboy secrets rotate team/<provider>/api-key --from-stdin --yes <<<"<value>"
   ```
 
-  Помечает время ротации и валидирует формат. Для первичной заливки эквивалент — поднять daemon и записать через provision-флоу; см. [docs/guide/secrets/local-vault.md](./local-vault.md).
+  Stamps the rotation time and validates the format. For initial provisioning the equivalent is to bring the daemon up and write through the provision flow; see [docs/guide/secrets/local-vault.md](./local-vault.md).
 
-После ввода значений `secrets list` покажет `status = provisioned` для тех путей, где value реально сохранилось в keychain.
+After values are in, `secrets list` shows `status = provisioned` for paths whose value actually landed in the keychain.
 
-## Шаг 7. Финальная проверка
+## Step 7. Final check
 
 ```bash
 devboy doctor --secrets
 ```
 
-Зелёный итог:
+A green run means:
 
-- Все `required` пути — `provisioned`.
-- Все провайдеры в `sources.toml` — `available`.
-- Нет non-conformant путей в keychain (legacy-записи мигрированы — см. `devboy secrets migrate`).
-- Daemon запущен (только если активно использовался `secrets ui` или MCP-инструменты).
+- Every `required` path is `provisioned`.
+- Every source in `sources.toml` is `available`.
+- No non-conformant paths in the keychain (legacy entries migrated — see `devboy secrets migrate`).
+- Daemon is running (only if you actually use `secrets ui` or the MCP tools).
 
-Если что-то красное — `doctor` укажет точный код и подскажет команду для починки. Дальше — `repair` skill или раздел [Doctor](../configuration/doctor.md).
+If anything is red, `doctor` prints the exact code and suggests a fix command. Next stops: the `repair` skill or the [Doctor](../configuration/doctor.md) section.
 
-## Что дальше
+## What's next
 
-- [`local-vault.md`](./local-vault.md) — настройка собственного локального хранилища (zeroize-on-drop файл с XChaCha20-Poly1305).
-- [`agent-protocol.md`](./agent-protocol.md) — как AI-агент работает с секретами через MCP без доступа к значениям.
-- [`source-plugin-protocol.md`](./source-plugin-protocol.md) — добавление собственного источника через subprocess-плагин.
-- ADR-020 / ADR-021 / ADR-023 — формальные спецификации манифеста, роутера и UX-слоя.
+- [`local-vault.md`](./local-vault.md) — set up your own local store (zeroize-on-drop file with XChaCha20-Poly1305).
+- [`token-catalog.md`](./token-catalog.md) — author per-provider procedure files (`kimi.json`, `openai.json`, …) the GUI binds to.
+- [`catalog-url-sources.md`](./catalog-url-sources.md) — serve the catalog over the network with sha-pinning + audit log.
+- [`agent-protocol.md`](./agent-protocol.md) — how the AI agent works with secrets through MCP without ever seeing the values.
+- [`source-plugin-protocol.md`](./source-plugin-protocol.md) — add your own source via the subprocess plugin protocol.
+- ADR-020 / ADR-021 / ADR-023 — the formal specs of the manifest, the router, and the UX layer.
 
 [ADR-021]: ../architecture/adr/ADR-021-secret-source-router.md
