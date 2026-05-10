@@ -76,7 +76,11 @@ impl Env {
     /// Compute the global-index path the binary would resolve to
     /// under our isolated HOME. macOS uses
     /// `~/Library/Application Support/...`; Linux respects
-    /// `XDG_CONFIG_HOME` first, then `~/.config/...`.
+    /// `XDG_CONFIG_HOME` first, then `~/.config/...`. Windows is
+    /// not supported here because `dirs::config_dir()` reads
+    /// `FOLDERID_RoamingAppData` via the Win32 API and ignores
+    /// the `HOME` env we set in `cmd()` — the e2e tests are
+    /// gated to non-Windows targets at the test level.
     fn global_index_path(&self) -> PathBuf {
         let dir = if cfg!(target_os = "macos") {
             self.home_path().join("Library").join("Application Support")
@@ -147,6 +151,7 @@ description = "test entry for {path}"
 // Mode 1 — CI (env-store)
 // =============================================================================
 
+#[cfg(not(target_os = "windows"))]
 #[test]
 fn mode_env_store_full_roundtrip_through_secrets_list() {
     let env = Env::new();
@@ -285,6 +290,7 @@ fn mode_keychain_doctor_reports_missing_when_no_value_is_provisioned() {
 // Manifest gating — cross-cutting invariant
 // =============================================================================
 
+#[cfg(not(target_os = "windows"))]
 #[test]
 fn manifest_gating_hides_global_index_paths_not_in_active_manifest() {
     let env = Env::new();

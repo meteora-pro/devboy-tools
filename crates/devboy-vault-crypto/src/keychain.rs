@@ -23,7 +23,7 @@
 //!
 //! # Biometric protection — current limitation
 //!
-//! The first cut uses [`keyring`] for storage, which writes a
+//! The first cut uses the `keyring` crate for storage, which writes a
 //! generic-password Keychain entry without an attached
 //! `SecAccessControl`. That means the wrap key is protected by the
 //! standard "user is logged in and the keychain is unlocked" ACL,
