@@ -24,7 +24,10 @@ use std::sync::{LazyLock, OnceLock};
 
 use regex::Regex;
 
-use crate::{LivenessSpec, PatternMetadata, RotationSpec, SecretPattern, Severity};
+use crate::{
+    HttpMethod, LivenessAuth, LivenessKind, LivenessSpec, PatternMetadata, RotationSpec,
+    SecretPattern, Severity,
+};
 
 /// Adapter struct that turns a static data row into a
 /// [`SecretPattern`] implementation. Each [`BUILTINS`] entry is a
@@ -237,6 +240,28 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             )),
             rotation: None,
             liveness: None,
+        },
+        Builtin {
+            id: "moonshot-api-key",
+            display_name: "Kimi (Moonshot AI) API Key",
+            severity: Severity::High,
+            regex_src: r"^sk-[A-Za-z0-9]{32,}$",
+            regex: OnceLock::new(),
+            metadata: Some(meta(
+                "moonshot",
+                "https://platform.moonshot.cn/console/api-keys",
+            )),
+            rotation: None,
+            liveness: Some(LivenessSpec {
+                kind: LivenessKind::Http {
+                    // GET /v1/models — cheapest authenticated probe
+                    // that returns 200 only when the key is valid.
+                    url: "https://api.moonshot.cn/v1/models",
+                    method: HttpMethod::Get,
+                    auth: LivenessAuth::Bearer,
+                    expect_status: 200,
+                },
+            }),
         },
         // ── Slack ───────────────────────────────────────────────────────────
         Builtin {
@@ -688,6 +713,11 @@ mod tests {
             "abcdefghijABCDEFGHIJ0123456789_abcdefghij",
             "tooshort",
         ),
+        (
+            "moonshot-api-key",
+            "sk-abcdefghijklmnopqrstuvwxyz0123456789",
+            "ghp_xxx",
+        ),
     ];
 
     #[test]
@@ -695,7 +725,7 @@ mod tests {
         // P2.2 description: "~30 patterns". The exact count is a
         // useful regression signal — if this fails because someone
         // added a pattern, update the literal.
-        assert_eq!(BUILTINS.len(), 30);
+        assert_eq!(BUILTINS.len(), 31);
     }
 
     #[test]

@@ -617,8 +617,8 @@ severity     = "low"
 
         let cat = Catalogue::load(dir.path()).unwrap();
         let visible: Vec<&dyn SecretPattern> = cat.iter();
-        // Built-ins (30) + 1 user.
-        assert_eq!(visible.len(), 31);
+        // Built-ins (31) + 1 user.
+        assert_eq!(visible.len(), 32);
         // No shadow warnings for non-shadowing user patterns.
         assert!(
             !cat.warnings
@@ -772,10 +772,10 @@ unknown_field = "wrong"
     // -- Builtins-only catalogue --------------------------------------------
 
     #[test]
-    fn builtins_only_returns_thirty_patterns() {
+    fn builtins_only_returns_thirty_one_patterns() {
         let cat = Catalogue::builtins_only();
         let visible = cat.iter();
-        assert_eq!(visible.len(), 30);
+        assert_eq!(visible.len(), 31);
         assert!(cat.warnings.is_empty());
     }
 

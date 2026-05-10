@@ -191,6 +191,14 @@ pub struct UiArgs {
     /// window via eframe; runs until the user closes it.
     #[arg(long)]
     pub gui: bool,
+    /// Open the provision dialog focused on the given path.
+    /// The window still opens with the full inventory in the
+    /// background, but the dialog overlay is armed at startup
+    /// — useful when the AI agent (or a script) wants to put
+    /// the user one click away from filling a known-missing
+    /// secret. Path must be valid ADR-020.
+    #[arg(long, value_name = "PATH")]
+    pub provision: Option<String>,
 }
 
 impl UiArgs {
@@ -213,7 +221,7 @@ pub async fn handle(args: UiArgs) -> Result<()> {
     eprintln!("devboy secrets ui: backend = {}", backend.label());
     match backend {
         Backend::Tui => launch_tui(),
-        Backend::Gui => launch_gui(),
+        Backend::Gui => launch_gui(args.provision.as_deref()),
     }
 }
 
@@ -278,11 +286,8 @@ fn run_tui_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()>
     Ok(())
 }
 
-fn launch_gui() -> Result<()> {
-    // Real eframe-backed window. View-model + render code lives
-    // in `devboy_secrets_ui::gui` (P12.1); this function is the
-    // event-loop host that pumps frames into the OS windowing
-    // system.
+fn launch_gui(provision_path: Option<&str>) -> Result<()> {
+    let initial_path = provision_path.map(str::to_owned);
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1024.0, 640.0])
@@ -292,34 +297,726 @@ fn launch_gui() -> Result<()> {
     eframe::run_native(
         "devboy-secrets",
         options,
-        Box::new(|_cc| Ok(Box::new(InventoryApp::new()))),
+        Box::new(move |_cc| Ok(Box::new(InventoryApp::new_with_initial(initial_path)))),
     )
     .map_err(|e| anyhow::anyhow!("eframe failed to run native window: {e}"))
 }
 
-/// Minimal `eframe::App` shell that hosts the inventory view-model
-/// and renders it once per frame. State stays in memory; persistence
-/// across runs (window size, sort key) is a separate enhancement.
+/// `eframe::App` shell that:
+///
+/// 1. Loads the global index + project manifest at startup and
+///    populates the inventory view-model with one row per
+///    declared path.
+/// 2. Renders the inventory list in the central area; clicking
+///    a row arms the provision dialog with the row's metadata.
+/// 3. When armed, shows the provision dialog as a modal
+///    `egui::Window` overlay. On `Save`, writes the value
+///    straight to the OS keychain via `KeychainStore` and
+///    refreshes the row's status.
+///
+/// `inventory_rows_for(...)` is the orchestration glue — pure
+/// data + no `egui` types so it's testable on its own.
 struct InventoryApp {
     state: devboy_secrets_ui::InventoryState,
+    metadata_by_path: std::collections::HashMap<String, devboy_storage::IndexEntry>,
+    dialog: Option<devboy_secrets_ui::DialogState>,
+    dialog_path: Option<String>,
+    last_save_error: Option<String>,
+    /// Selected backend (keychain or local-vault), picked at
+    /// app construction from env vars.
+    backend: StorageBackend,
+    /// Recovery phrase to surface once after first vault create.
+    /// `None` until a vault is created, then `Some` for the
+    /// rest of the session — the user must save it somewhere
+    /// before closing the window.
+    recovery_phrase_to_show: Option<String>,
+    /// Toggle for the «show entered value» switch above the
+    /// provision-dialog hidden input. Off by default — only
+    /// flip on when the user wants to verify what they typed.
+    reveal_value: bool,
 }
 
 impl InventoryApp {
-    fn new() -> Self {
-        // Empty inventory — the orchestration layer that fills it
-        // in (manifest snapshot, daemon subscription) lands in a
-        // subsequent task. The window opens regardless so the
-        // user sees the chrome and can confirm the GUI launcher
-        // is alive.
-        Self {
-            state: devboy_secrets_ui::InventoryState::new(Vec::new()),
+    fn new_with_initial(initial_path: Option<String>) -> Self {
+        let backend = StorageBackend::detect_from_env();
+        let (rows, metadata_by_path) = load_inventory_or_empty(&backend);
+        let mut app = Self {
+            state: devboy_secrets_ui::InventoryState::new(rows),
+            metadata_by_path,
+            dialog: None,
+            dialog_path: None,
+            last_save_error: None,
+            backend,
+            recovery_phrase_to_show: None,
+            reveal_value: false,
+        };
+        if let Some(path) = initial_path {
+            app.open_dialog_for(&path);
+        }
+        app
+    }
+
+    fn reload(&mut self) {
+        let (rows, metadata) = load_inventory_or_empty(&self.backend);
+        self.state.replace_rows(rows);
+        self.metadata_by_path = metadata;
+    }
+}
+
+/// Which backend the GUI should write secrets to.
+///
+/// Picked at app construction time and held for the lifetime of
+/// the window. The user can switch by closing the window and
+/// flipping the env var.
+#[derive(Debug, Clone)]
+enum StorageBackend {
+    /// Default — OS keychain via `devboy_storage::KeychainStore`.
+    Keychain,
+    /// Local-vault file at `vault_path`, unlocked with
+    /// `passphrase`. Selected when `DEVBOY_VAULT_PASSPHRASE` is
+    /// set; the file is created on first save if it doesn't exist.
+    LocalVault {
+        vault_path: std::path::PathBuf,
+        passphrase: secrecy::SecretString,
+    },
+}
+
+impl StorageBackend {
+    fn detect_from_env() -> Self {
+        if let Ok(pass) = std::env::var("DEVBOY_VAULT_PASSPHRASE")
+            && !pass.is_empty()
+        {
+            let vault_path = std::env::var("DEVBOY_VAULT_PATH")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    let mut p = dirs::config_dir().unwrap_or_else(std::env::temp_dir);
+                    p.push("devboy-tools");
+                    p.push("secrets");
+                    p.push("local-vault.dvb");
+                    p
+                });
+            return StorageBackend::LocalVault {
+                vault_path,
+                passphrase: secrecy::SecretString::new(pass.into()),
+            };
+        }
+        StorageBackend::Keychain
+    }
+
+    fn label(&self) -> String {
+        match self {
+            StorageBackend::Keychain => {
+                "macOS Keychain — service `devboy-tools`, account = path".to_owned()
+            }
+            StorageBackend::LocalVault { vault_path, .. } => {
+                format!(
+                    "local-vault — file `{}`, XChaCha20-Poly1305 + Argon2id passphrase",
+                    vault_path.display()
+                )
+            }
+        }
+    }
+
+    fn source_label(&self) -> &'static str {
+        match self {
+            StorageBackend::Keychain => "default-keychain",
+            StorageBackend::LocalVault { .. } => "local-vault",
+        }
+    }
+
+    /// Probe whether `path` already has a value. Errors collapse
+    /// to "not provisioned" to keep the inventory render simple.
+    fn has_value(&self, path: &str) -> bool {
+        match self {
+            StorageBackend::Keychain => {
+                let store = devboy_storage::KeychainStore::new();
+                matches!(
+                    devboy_storage::CredentialStore::get(&store, path),
+                    Ok(Some(_))
+                )
+            }
+            StorageBackend::LocalVault {
+                vault_path,
+                passphrase,
+            } => {
+                if !vault_path.exists() {
+                    return false;
+                }
+                let unlock = devboy_vault_crypto::UnlockMethod::Passphrase(passphrase.clone());
+                let Ok(vault) = devboy_vault_crypto::Vault::open(vault_path, unlock) else {
+                    return false;
+                };
+                matches!(vault.get(path), Ok(Some(_)))
+            }
+        }
+    }
+
+    /// Write `value` to the backend. Creates a vault file if it
+    /// doesn't exist (LocalVault). Returns the optional recovery
+    /// phrase the user must save (only on first vault create).
+    fn store(&self, path: &str, value: &secrecy::SecretString) -> Result<Option<String>, String> {
+        match self {
+            StorageBackend::Keychain => {
+                let store = devboy_storage::KeychainStore::new();
+                devboy_storage::CredentialStore::store(&store, path, value)
+                    .map_err(|e| format!("{e}"))?;
+                Ok(None)
+            }
+            StorageBackend::LocalVault {
+                vault_path,
+                passphrase,
+            } => {
+                use devboy_vault_crypto::{EntryMetadata, InitialUnlock, UnlockMethod, Vault};
+                if let Some(parent) = vault_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let recovery = if vault_path.exists() {
+                    let mut vault =
+                        Vault::open(vault_path, UnlockMethod::Passphrase(passphrase.clone()))
+                            .map_err(|e| format!("vault open: {e}"))?;
+                    vault
+                        .put(path, value, EntryMetadata::default())
+                        .map_err(|e| format!("vault put: {e}"))?;
+                    None
+                } else {
+                    let outcome = Vault::create(
+                        vault_path,
+                        InitialUnlock {
+                            passphrase: passphrase.clone(),
+                            with_recovery: true,
+                            with_keychain_account: None,
+                            passphrase_params: None,
+                        },
+                    )
+                    .map_err(|e| format!("vault create: {e}"))?;
+                    let mut vault = outcome.vault;
+                    vault
+                        .put(path, value, EntryMetadata::default())
+                        .map_err(|e| format!("vault put: {e}"))?;
+                    outcome.recovery_phrase.map(|p| p.expose_words().to_owned())
+                };
+                Ok(recovery)
+            }
         }
     }
 }
 
+/// Walk global index + project manifest in CWD, merge them, and
+/// return:
+///
+/// - the inventory rows for `InventoryState::replace_rows`
+/// - a `path → IndexEntry` map the dialog uses to populate its
+///   metadata fields
+fn load_inventory_or_empty(
+    backend: &StorageBackend,
+) -> (
+    Vec<devboy_secrets_ui::InventoryRow>,
+    std::collections::HashMap<String, devboy_storage::IndexEntry>,
+) {
+    use devboy_storage::{GlobalIndex, ProjectManifest, merge_manifest};
+
+    let Ok(index) = GlobalIndex::load() else {
+        return (Vec::new(), std::collections::HashMap::new());
+    };
+    let Ok(manifest) = ProjectManifest::load() else {
+        return (Vec::new(), std::collections::HashMap::new());
+    };
+    let Ok(merged) = merge_manifest(&index, &manifest) else {
+        return (Vec::new(), std::collections::HashMap::new());
+    };
+
+    let mut rows = Vec::with_capacity(merged.secrets.len());
+    let mut metadata = std::collections::HashMap::with_capacity(merged.secrets.len());
+    for resolved in merged.secrets.values() {
+        let path_str = resolved.path.to_string();
+        let provisioned = backend.has_value(&path_str);
+        let status = if provisioned {
+            devboy_secrets_ui::RowStatus::Provisioned
+        } else {
+            devboy_secrets_ui::RowStatus::Missing
+        };
+        rows.push(devboy_secrets_ui::InventoryRow {
+            path: path_str.clone(),
+            status,
+            routed_source: provisioned.then(|| backend.source_label().to_owned()),
+            expires_at: resolved.metadata.expires_at.clone(),
+            provider: resolved.path.as_str().split('/').nth(1).map(str::to_owned),
+            scope: resolved
+                .path
+                .as_str()
+                .split('/')
+                .next()
+                .unwrap_or("")
+                .to_owned(),
+        });
+        metadata.insert(path_str, resolved.metadata.clone());
+    }
+    (rows, metadata)
+}
+
 impl eframe::App for InventoryApp {
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
+        // Backend banner — tells the user where saves go.
+        ui.label(
+            eframe::egui::RichText::new(format!("Backend: {}", self.backend.label()))
+                .small()
+                .color(eframe::egui::Color32::from_rgb(0x55, 0xaa, 0xff)),
+        );
+        ui.separator();
+
+        // Recovery phrase — surfaced exactly once after first
+        // vault create. The user must save this somewhere; we
+        // do not show it again across runs.
+        if let Some(phrase) = &self.recovery_phrase_to_show {
+            ui.label(
+                eframe::egui::RichText::new("⚠ Save your recovery phrase")
+                    .strong()
+                    .color(eframe::egui::Color32::from_rgb(0xcc, 0xa0, 0x33)),
+            );
+            ui.label(
+                eframe::egui::RichText::new(phrase)
+                    .monospace()
+                    .background_color(eframe::egui::Color32::from_rgb(0x33, 0x33, 0x33)),
+            );
+            ui.label(
+                eframe::egui::RichText::new(
+                    "Without this phrase you cannot recover the vault if you forget the passphrase.",
+                )
+                .small()
+                .italics(),
+            );
+            ui.separator();
+        }
+
+        if let Some(err) = &self.last_save_error {
+            ui.colored_label(eframe::egui::Color32::from_rgb(0xcc, 0x44, 0x44), err);
+            ui.separator();
+        }
+
+        // Track which row was selected before render so we can
+        // detect a click → arm the dialog.
+        let prev_selected = self.state.selected();
         devboy_secrets_ui::gui::inventory::render(ui, &mut self.state);
+
+        // Top buttons: open dialog for selected row, refresh.
+        ui.horizontal(|ui| {
+            let has_row = self.state.selected_row().is_some();
+            if ui
+                .add_enabled(
+                    has_row,
+                    eframe::egui::Button::new("Add / update value for selected"),
+                )
+                .clicked()
+                && let Some(row) = self.state.selected_row()
+            {
+                self.open_dialog_for(&row.path);
+            }
+            if ui.button("Reload from manifest").clicked() {
+                self.reload();
+            }
+        });
+
+        // Detect click that changed selection → auto-open dialog
+        // (UX convenience — same effect as the explicit button).
+        if self.state.selected() != prev_selected
+            && let Some(row) = self.state.selected_row()
+        {
+            self.open_dialog_for(&row.path);
+        }
+
+        // Dialog overlay.
+        if self.dialog.is_some() {
+            let mut close = false;
+            let mut submitted_value = None;
+            let mut submitted_path = None;
+            // Render the dialog inside an egui::Window. The
+            // window has two stacked sections:
+            //   1. Context card  — full description, retrieval
+            //      URL as a clickable hyperlink, env_var alias,
+            //      pattern hint, expiry & rotation reminders.
+            //      Pulled from the index entry the dialog was
+            //      opened against — gives the user enough info
+            //      to know WHAT to fill and WHERE to get it.
+            //   2. Provision form — the existing
+            //      `gui::provision_dialog` widget (path, hidden
+            //      input, save / cancel).
+            let dialog_path = self.dialog_path.clone().unwrap_or_default();
+            let entry = self.metadata_by_path.get(&dialog_path).cloned();
+            eframe::egui::Window::new(format!("Provision: {dialog_path}"))
+                .collapsible(false)
+                .resizable(true)
+                .default_width(560.0)
+                .show(ui.ctx(), |ui| {
+                    render_context_card(ui, &dialog_path, entry.as_ref(), &self.backend);
+                    ui.separator();
+
+                    // Reveal-toggle for the value below. Echoes
+                    // chars in plaintext when on. Off by default
+                    // — turn on only when you need to spot-check
+                    // what you typed before saving.
+                    let mut reveal = self.reveal_value;
+                    if ui
+                        .checkbox(&mut reveal, "Show entered value (off = bullets)")
+                        .clicked()
+                    {
+                        self.reveal_value = reveal;
+                    }
+                    if self.reveal_value
+                        && let Some(d) = self.dialog.as_ref()
+                    {
+                        let val = d.value_clone_for_edit();
+                        ui.label(
+                            eframe::egui::RichText::new(format!("current value: «{val}»"))
+                                .monospace()
+                                .background_color(eframe::egui::Color32::from_rgb(
+                                    0x33, 0x33, 0x33,
+                                )),
+                        );
+                    }
+
+                    // Live regex feedback — visible to the user
+                    // while they're typing. Pulled from
+                    // `format_regex` (manifest-inline) or the
+                    // pattern in the catalogue.
+                    if let Some(d) = self.dialog.as_ref() {
+                        let val = d.value_clone_for_edit();
+                        let pattern = entry.as_ref().and_then(|e| {
+                            if let Some(re) = e.format_regex.as_deref() {
+                                Some(re.to_owned())
+                            } else if let Some(pid) = e.pattern_id.as_deref() {
+                                let cat = devboy_secret_patterns::Catalogue::builtins_only();
+                                cat.find(pid).map(|p| p.format_regex().as_str().to_owned())
+                            } else {
+                                None
+                            }
+                        });
+                        match pattern {
+                            Some(re) if !val.is_empty() => match regex::Regex::new(&re) {
+                                Ok(compiled) => {
+                                    if compiled.is_match(&val) {
+                                        ui.colored_label(
+                                            eframe::egui::Color32::from_rgb(0x55, 0xaa, 0x55),
+                                            format!("✓ matches /{re}/"),
+                                        );
+                                    } else {
+                                        ui.colored_label(
+                                            eframe::egui::Color32::from_rgb(0xcc, 0x44, 0x44),
+                                            format!("✗ mismatch — expected /{re}/"),
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    ui.colored_label(
+                                        eframe::egui::Color32::from_rgb(0xcc, 0xa0, 0x33),
+                                        format!("regex error: {e}"),
+                                    );
+                                }
+                            },
+                            Some(re) => {
+                                ui.label(
+                                    eframe::egui::RichText::new(format!("expected format: /{re}/"))
+                                        .small()
+                                        .italics(),
+                                );
+                            }
+                            None => {
+                                ui.label(
+                                    eframe::egui::RichText::new(
+                                        "no format rule declared for this path \
+                                         (any value will pass format check)",
+                                    )
+                                    .small()
+                                    .italics(),
+                                );
+                            }
+                        }
+                    }
+                    ui.separator();
+
+                    let dialog = self.dialog.as_mut().unwrap();
+                    let result = devboy_secrets_ui::gui::provision_dialog::render(ui, dialog);
+                    if let Some(submission) = result.submission {
+                        submitted_value = Some(submission.value);
+                        submitted_path = Some(submission.path);
+                    } else if result.cancelled {
+                        close = true;
+                    } else if result.open_url_clicked
+                        && let Some(url) = dialog.metadata().provisioning_url.clone()
+                    {
+                        // Spawn the OS browser without blocking.
+                        let _ = std::process::Command::new(if cfg!(target_os = "macos") {
+                            "open"
+                        } else if cfg!(target_os = "windows") {
+                            "start"
+                        } else {
+                            "xdg-open"
+                        })
+                        .arg(url)
+                        .spawn();
+                    }
+                });
+
+            if let (Some(value), Some(path)) = (submitted_value, submitted_path) {
+                use secrecy::ExposeSecret;
+                let entry = self.metadata_by_path.get(&path).cloned();
+                // Stage 1 — format validation. Cheap, never
+                // round-trips. Reuses the same `validate_format`
+                // the CLI's `secrets validate` runs on CI, so a
+                // value rejected here would also be rejected
+                // there.
+                let format_check = entry.as_ref().map(|e| {
+                    let catalogue = devboy_secret_patterns::Catalogue::builtins_only();
+                    devboy_storage::validate_format(e, value.expose_secret(), &catalogue)
+                });
+                let format_problem: Option<String> = match &format_check {
+                    Some(devboy_storage::FormatCheck::Mismatch { source, expected }) => {
+                        Some(format!(
+                            "value does not match the declared format ({source:?}, expected `{expected}`)"
+                        ))
+                    }
+                    Some(devboy_storage::FormatCheck::Error { message }) => {
+                        Some(format!("format rule could not be evaluated: {message}"))
+                    }
+                    _ => None,
+                };
+
+                if let Some(reason) = format_problem {
+                    self.last_save_error = Some(format!("rejected before write: {reason}"));
+                    if let Some(d) = self.dialog.as_mut() {
+                        d.apply_status(devboy_secrets_ui::DialogStatus::ValidationFailed {
+                            reason,
+                        });
+                    }
+                } else if let Some(reason) = liveness_probe(entry.as_ref(), &value).err() {
+                    // Stage 2 — actually call the provider's
+                    // endpoint (when the pattern declares one).
+                    // Synchronous blocking probe — UI hangs for
+                    // up to 5s. The trade-off: we never let a
+                    // dead token land in the vault.
+                    self.last_save_error = Some(format!("liveness probe failed: {reason}"));
+                    if let Some(d) = self.dialog.as_mut() {
+                        d.apply_status(devboy_secrets_ui::DialogStatus::ValidationFailed {
+                            reason,
+                        });
+                    }
+                } else {
+                    // Stage 3 — write through the selected
+                    // backend (keychain or local-vault).
+                    match self.backend.store(
+                        &path,
+                        &secrecy::SecretString::new(value.expose_secret().to_string().into()),
+                    ) {
+                        Ok(maybe_recovery) => {
+                            self.last_save_error = None;
+                            if let Some(d) = self.dialog.as_mut() {
+                                d.apply_status(devboy_secrets_ui::DialogStatus::Saved);
+                            }
+                            if let Some(phrase) = maybe_recovery {
+                                self.recovery_phrase_to_show = Some(phrase);
+                            }
+                            close = true;
+                            self.reload();
+                        }
+                        Err(e) => {
+                            self.last_save_error = Some(format!("backend write failed: {e}"));
+                            if let Some(d) = self.dialog.as_mut() {
+                                d.apply_status(devboy_secrets_ui::DialogStatus::ValidationFailed {
+                                    reason: format!("backend: {e}"),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            if close {
+                self.dialog = None;
+                self.dialog_path = None;
+            }
+        }
+    }
+}
+
+/// Render the "what is this secret + where to take it from"
+/// card above the provision form. Fed straight from the merged
+/// `IndexEntry` so the user sees everything the manifest knows
+/// about the path before they have to type anything.
+/// Try to call the provider's liveness endpoint with the
+/// given value. Returns `Ok(())` when:
+///
+/// - the entry has no `pattern_id` (nothing to probe), OR
+/// - the pattern has no `LivenessSpec` (catalog doesn't ship
+///   one for this provider), OR
+/// - the HTTP probe returned the expected status code.
+///
+/// Returns `Err(reason)` when the probe ran and the upstream
+/// rejected the value. Network errors are also `Err` — we'd
+/// rather block save on a transient than silently land a dead
+/// token.
+fn liveness_probe(
+    entry: Option<&devboy_storage::IndexEntry>,
+    value: &secrecy::SecretString,
+) -> Result<(), String> {
+    use devboy_secret_patterns::{HttpMethod, LivenessAuth, LivenessKind};
+    use secrecy::ExposeSecret;
+    let Some(entry) = entry else { return Ok(()) };
+    let Some(pid) = entry.pattern_id.as_deref() else {
+        return Ok(());
+    };
+    let cat = devboy_secret_patterns::Catalogue::builtins_only();
+    let Some(pattern) = cat.find(pid) else {
+        return Ok(());
+    };
+    let Some(spec) = pattern.liveness() else {
+        return Ok(());
+    };
+    let LivenessKind::Http {
+        url,
+        method,
+        auth,
+        expect_status,
+    } = &spec.kind;
+
+    // Blocking client — we run inside an egui frame so async
+    // wouldn't help anyway. 5-second timeout.
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => return Err(format!("could not build HTTP client: {e}")),
+    };
+    let mut req = match method {
+        HttpMethod::Get => client.get(*url),
+        HttpMethod::Post => client.post(*url),
+        HttpMethod::Head => client.head(*url),
+    };
+    let raw = value.expose_secret();
+    req = match auth {
+        LivenessAuth::Bearer => req.bearer_auth(raw),
+        LivenessAuth::BasicUser => req.basic_auth(raw, None::<&str>),
+        LivenessAuth::BasicPassword => req.basic_auth("", Some(raw)),
+        LivenessAuth::Header { name } => req.header(*name, raw),
+    };
+    let resp = req.send().map_err(|e| format!("network: {e}"))?;
+    let status = resp.status();
+    if status.as_u16() == *expect_status {
+        Ok(())
+    } else {
+        Err(format!(
+            "upstream returned HTTP {status} (expected {expect_status})"
+        ))
+    }
+}
+
+fn render_context_card(
+    ui: &mut eframe::egui::Ui,
+    path: &str,
+    entry: Option<&devboy_storage::IndexEntry>,
+    backend: &StorageBackend,
+) {
+    use eframe::egui::{Color32, RichText};
+
+    ui.heading("How to fill this secret");
+    ui.add_space(4.0);
+
+    eframe::egui::Grid::new(format!("ctx-grid-{path}"))
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            ui.label(RichText::new("Path").strong());
+            ui.label(RichText::new(path).monospace());
+            ui.end_row();
+
+            if let Some(e) = entry {
+                if let Some(desc) = e.description.as_deref() {
+                    ui.label(RichText::new("Description").strong());
+                    ui.label(desc);
+                    ui.end_row();
+                }
+                if let Some(url) = e.retrieval_url.as_deref() {
+                    ui.label(RichText::new("Where to take from").strong());
+                    ui.hyperlink(url);
+                    ui.end_row();
+                }
+                if let Some(env_var) = e.env_var.as_deref() {
+                    ui.label(RichText::new("Env var alias").strong());
+                    ui.label(RichText::new(env_var).monospace());
+                    ui.end_row();
+                }
+                if let Some(pat) = e.pattern_id.as_deref() {
+                    ui.label(RichText::new("Pattern").strong());
+                    ui.label(RichText::new(pat).monospace());
+                    ui.end_row();
+                }
+                if let Some(method) = e.rotation_method {
+                    ui.label(RichText::new("Rotation").strong());
+                    ui.label(format!(
+                        "{method:?} ({} days)",
+                        e.rotate_every_days.unwrap_or(0)
+                    ));
+                    ui.end_row();
+                }
+                if let Some(last) = e.last_rotated_at.as_deref() {
+                    ui.label(RichText::new("Last rotated").strong());
+                    ui.label(last);
+                    ui.end_row();
+                }
+                if let Some(exp) = e.expires_at.as_deref() {
+                    ui.label(RichText::new("Expires at").strong());
+                    ui.label(exp);
+                    ui.end_row();
+                }
+            } else {
+                ui.label(RichText::new("Note").strong());
+                ui.label(
+                    RichText::new(
+                        "no metadata for this path in the global index — \
+                         only the manifest declared it",
+                    )
+                    .color(Color32::from_rgb(0xcc, 0xa0, 0x33)),
+                );
+                ui.end_row();
+            }
+
+            ui.label(RichText::new("Stored in").strong());
+            ui.label(RichText::new(backend.label()).small());
+            ui.end_row();
+        });
+
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new(
+            "Paste the value below. It is held in a SecretString \
+             (zeroized on drop) and written straight to the OS keychain — \
+             the agent layer never sees it.",
+        )
+        .small()
+        .italics(),
+    );
+}
+
+impl InventoryApp {
+    fn open_dialog_for(&mut self, path: &str) {
+        let entry = match self.metadata_by_path.get(path) {
+            Some(e) => e.clone(),
+            None => devboy_storage::IndexEntry::default(),
+        };
+        let metadata = devboy_secrets_ui::DialogMetadata {
+            path: path.to_owned(),
+            provider: path.split('/').nth(1).unwrap_or("unknown").to_owned(),
+            rotation_method: entry
+                .rotation_method
+                .map(|m| format!("{m:?}").to_lowercase())
+                .unwrap_or_else(|| "manual".to_owned()),
+            provisioning_url: entry.retrieval_url.clone(),
+            format_hint: entry.description.clone(),
+        };
+        self.dialog = Some(devboy_secrets_ui::DialogState::new(
+            devboy_secrets_ui::DialogMode::Provision,
+            metadata,
+        ));
+        self.dialog_path = Some(path.to_owned());
+        self.last_save_error = None;
     }
 }
 
@@ -478,6 +1175,7 @@ mod tests {
         let args = UiArgs {
             tui: true,
             gui: false,
+            provision: None,
         };
         assert_eq!(args.choice(), BackendChoice::ForceTui);
     }
@@ -487,6 +1185,7 @@ mod tests {
         let args = UiArgs {
             tui: false,
             gui: true,
+            provision: None,
         };
         assert_eq!(args.choice(), BackendChoice::ForceGui);
     }

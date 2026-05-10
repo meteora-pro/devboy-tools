@@ -32,6 +32,8 @@ devboy-storage = { workspace = true }
 devboy-secret-patterns = { workspace = true }
 devboy-secrets-agent = { workspace = true }
 devboy-secrets-ui = { workspace = true, features = ["gui"] }
+devboy-vault-crypto = { workspace = true }
+regex.workspace = true
 ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
 crossterm = "0.28"
 # `eframe` powers the windowed `secrets ui --gui` launcher. Pinned
@@ -65,7 +67,7 @@ tracing-subscriber.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["json", "rustls-tls", "multipart", "blocking"] }
 dialoguer = "0.11"
 chrono = "0.4"
 toml.workspace = true

@@ -52,19 +52,25 @@ schema_version = 1
 
 [[source]]
 name = "default-keychain"
-kind = "keychain"
+type = "keychain"
 # Никаких credentials не нужно — keychain сам управляет доступом.
+
+# Когда `[[route]]` ни по одному префиксу не подошёл — спрашиваем
+# default source. `fallback` подключается, когда default ответил
+# `NotInstalled` (CI без OS keychain).
+[default]
+source = "default-keychain"
 ```
 
 Проверьте, что роутер видит источник:
 
 ```bash
-devboy doctor --secrets --json | jq '.sources'
+devboy doctor --checks context-secrets --format json
 ```
 
-Должна быть запись `{"name": "default-keychain", "kind": "keychain", "available": true}`.
+Должна быть запись `{"name": "default-keychain", "type": "keychain", "available": true}`.
 
-> **Если планируете 1Password / Vault**: добавьте отдельный `[[source]]` блок с типом `1password` или `vault`. Подробности — [docs/guide/secrets/local-vault.md](./local-vault.md) и `devboy secrets describe --source <name>`.
+> **Если планируете 1Password / Vault**: добавьте отдельный `[[source]]` блок с типом `1password` или `vault`, и пропишите `[[route]]` с нужным `prefix`. Подробности — [docs/guide/secrets/local-vault.md](./local-vault.md).
 
 ## Шаг 3. Манифест проекта
 

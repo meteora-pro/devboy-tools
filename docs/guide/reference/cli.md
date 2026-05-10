@@ -864,6 +864,7 @@ Open the native UI (TUI in a terminal, GUI in a window). Backend autodetected fr
 
 * `--tui` — Force the terminal renderer (ratatui)
 * `--gui` — Force the windowed renderer (egui). Opens a native window via eframe; runs until the user closes it
+* `--provision <PATH>` — Open the provision dialog focused on the given path. The window still opens with the full inventory in the background, but the dialog overlay is armed at startup — useful when the AI agent (or a script) wants to put the user one click away from filling a known-missing secret. Path must be valid ADR-020
 
 
 
@@ -1016,6 +1017,7 @@ Run diagnostic checks for the local DevBoy setup
 
 * `--list-checks` — List available check IDs and exit
 * `--checks <CHECKS>` — Run only the specified check IDs (comma-delimited or repeated)
+* `--secrets` — Shorthand for `--checks context-secrets` — focuses doctor on the secret-framework checks (manifest gating, missing values, format validation, source health). See ADR-023 §3.7
 
 
 

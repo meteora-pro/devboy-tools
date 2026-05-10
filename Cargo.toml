@@ -14,6 +14,7 @@ members = [
     "crates/devboy-secret-patterns",
     "crates/devboy-secrets-agent",
     "crates/devboy-secrets-ui",
+    "crates/devboy-token-catalog",
     # API plugins
     "crates/plugins/api/gitlab",
     "crates/plugins/api/github",
@@ -125,6 +126,7 @@ secrecy = { version = "0.10", features = ["serde"] }
 # Keep `version` synced with `[workspace.package].version`.
 devboy-core = { version = "0.26.0", path = "crates/devboy-core" }
 devboy-storage = { version = "0.26.0", path = "crates/devboy-storage" }
+devboy-token-catalog = { version = "0.26.0", path = "crates/devboy-token-catalog" }
 devboy-assets = { version = "0.26.0", path = "crates/devboy-assets" }
 devboy-executor = { version = "0.26.0", path = "crates/devboy-executor" }
 devboy-mcp = { version = "0.26.0", path = "crates/devboy-mcp" }

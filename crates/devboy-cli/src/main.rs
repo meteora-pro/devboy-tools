@@ -339,6 +339,12 @@ enum Commands {
         /// Run only the specified check IDs (comma-delimited or repeated)
         #[arg(long, value_delimiter = ',')]
         checks: Vec<String>,
+
+        /// Shorthand for `--checks context-secrets` — focuses doctor on
+        /// the secret-framework checks (manifest gating, missing
+        /// values, format validation, source health). See ADR-023 §3.7.
+        #[arg(long, conflicts_with = "checks")]
+        secrets: bool,
     },
 
     /// Upgrade devboy to the latest version
@@ -1008,8 +1014,12 @@ async fn main() -> Result<()> {
             Some(Commands::Doctor {
                 format,
                 list_checks,
-                checks,
+                mut checks,
+                secrets,
             }) => {
+                if secrets {
+                    checks.push("context-secrets".to_string());
+                }
                 let exit_code = doctor::handle_doctor_command(DoctorOptions {
                     verbose: cli.verbose,
                     output_format: format.map(Into::into),
