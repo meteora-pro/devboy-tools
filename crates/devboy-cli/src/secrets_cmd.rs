@@ -543,6 +543,7 @@ fn override_field_name(f: &OverrideField) -> &'static str {
         OverrideField::Gate => "gate",
         OverrideField::RotateEveryDays => "rotate_every_days",
         OverrideField::Description => "description",
+        OverrideField::ApproveOnUse => "approve_on_use",
     }
 }
 
@@ -878,6 +879,7 @@ mod tests {
                 pattern_id: Some("gitlab-pat".to_owned()),
                 env_var: Some("GITLAB_TOKEN_DEPLOY".to_owned()),
                 cache_ttl_seconds_max: Some(60),
+                approve_on_use: None,
             },
         );
         let json = serde_json::to_value(DescribeJson {
