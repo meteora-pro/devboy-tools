@@ -2062,7 +2062,10 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
         // `OPENAI_API_BASE` would normally hit P1's `_BASE`
         // suffix skip — but the catalog-supplied skip fires
         // first and gives a more specific reason.
-        let cats = vec![catalog_with_skip("openai", &["OPENAI_*_URL", "OPENAI_API_BASE"])];
+        let cats = vec![catalog_with_skip(
+            "openai",
+            &["OPENAI_*_URL", "OPENAI_API_BASE"],
+        )];
         let p = propose_one("OPENAI_API_BASE", &cats);
         match &p {
             ProposedPath::Skip { reason, .. } => {
