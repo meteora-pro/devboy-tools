@@ -3,18 +3,28 @@
 Authoritative checklist for cutting a `devboy-tools` release. Reflects [ADR-022](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-022-crates-io-publishing.md) — the workspace ships through **two** channels:
 
 - **npm** — `@devboy-tools/cli` and per-platform binary subpackages. Primary user-facing channel; this is what `devboy onboard` and the agent plugins assume.
-- **crates.io** — every workspace **library** crate (the first wave covered by ADR-022). Secondary channel that lets downstream Rust projects embed devboy components without vendoring source. Publishing the `devboy-cli` binary through `cargo install` is part of the **second wave** and lands together with the `devboy-skills` packaging fix; until then, `cargo install` is not yet a supported install path for the CLI.
+- **crates.io** — every workspace library + the `devboy-cli` binary (`cargo install devboy-cli`). Secondary channel for downstream Rust projects that want to embed devboy components without vendoring source.
 
-Both channels publish from the **same git tag**.
+Both channels publish from the **same `v*` git tag**, in parallel: pushing the tag fans out to two GitHub Actions workflows (`.github/workflows/release.yml` for npm, `.github/workflows/release-crates-io.yml` for crates.io).
+
+## CI tokens
+
+Two repo secrets drive the two channels. Set both at https://github.com/meteora-pro/devboy-tools/settings/secrets/actions.
+
+| Secret | Channel | What it is | Scopes |
+|---|---|---|---|
+| `NPM_TOKEN` | npm | npm automation token | `automation` |
+| `CARGO_REGISTRY_TOKEN` | crates.io | crates.io API token | `publish-update` (every release after first); add `publish-new` until each crate has had its first publish |
+
+The `CARGO_REGISTRY_TOKEN` env var is read by `cargo publish` natively — no `cargo login` step is needed in CI. Generate the token at https://crates.io/settings/tokens, scope it to "All crates" (or an explicit `devboy-*` allowlist), pick an expiry you're willing to rotate, and paste it into the repo secret.
 
 ## Before you start
 
 - Decide the target version (workspace-wide, single bump in `[workspace.package].version`).
 - Confirm `main` is green: CI, tests, plugin manifest drift check, and `cargo publish --dry-run -p devboy-core` all passed on the merge commit.
 - Confirm you have:
-  - A crates.io API token with publish permission on every `devboy-*` crate. `cargo login` once per machine.
-  - Push access to the `meteora-pro/devboy-tools` git remote (the npm release pipeline triggers from a `v*` tag).
-  - The local toolchain matches CI (`rustup show` → stable, satisfying `rust-version = 1.87` from the workspace `Cargo.toml`).
+  - Push access to the `meteora-pro/devboy-tools` git remote (both release pipelines trigger from `v*` tags).
+  - Both `NPM_TOKEN` and `CARGO_REGISTRY_TOKEN` set as repo secrets (see the table at the top of this doc).
 
 ## Step 1 — Bump the version
 
@@ -24,9 +34,7 @@ Both channels publish from the **same git tag**.
 4. Commit: `chore(release): bump workspace to X.Y.Z`.
 5. Open a PR. Wait for CI. Merge.
 
-## Step 2 — Tag and publish to npm
-
-The existing `.github/workflows/release.yml` triggers on `v*` tags and handles npm publication, signing, and GitHub Release creation.
+## Step 2 — Tag
 
 ```bash
 git checkout main
@@ -35,16 +43,27 @@ git tag -a vX.Y.Z -m "release X.Y.Z"
 git push origin vX.Y.Z
 ```
 
-Wait for the workflow to finish. Verify on:
+Pushing the tag fans out to **two parallel GitHub Actions workflows**:
 
-- [crates page on npm](https://www.npmjs.com/package/@devboy-tools/cli) — new version visible
-- GitHub Releases — new tag with platform binaries attached
+- `.github/workflows/release.yml` → builds platform binaries, signs them, and publishes the npm package + GitHub Release.
+- `.github/workflows/release-crates-io.yml` → publishes every workspace crate to crates.io in topological order using `CARGO_REGISTRY_TOKEN`.
 
-## Step 3 — Publish to crates.io
+No further manual steps. The workflows are idempotent on retry-after-failure (re-runs from the failed step), but **not** on already-published versions — see "Recovery" below.
 
-Order matters: each crate's deps must already be on crates.io before its own `cargo publish` runs. Publish in topological order from leaves up.
+## Step 3 — Verify
 
-> **Smoke-test first.** Before you start, run `cargo publish --dry-run -p devboy-core` from a clean checkout of the tagged commit. If it fails, stop — fix the underlying issue, retag, retry.
+Once both workflows are green:
+
+- [npm page](https://www.npmjs.com/package/@devboy-tools/cli) — new version visible
+- GitHub Releases — tag with platform binaries attached
+- `https://crates.io/crates/<name>` — every devboy-* crate at the new version
+- `https://docs.rs/<name>` — docs build green (5–10 min)
+
+If a docs.rs build is red, ship a patch version with the doc fix (you can't re-upload the same version).
+
+## Manual fallback (rare)
+
+The first ever crates.io release (0.27.0) was run by hand because each crate had to claim its name. From 0.27.x onwards CI handles it; this section is here for break-glass scenarios.
 
 ```bash
 git checkout vX.Y.Z
@@ -77,15 +96,18 @@ cargo publish -p devboy-skills
 cargo publish -p devboy-cli
 ```
 
-Each `cargo publish` call:
+`cargo login` once with a token that has `publish-new` + `publish-update` (or just rely on `CARGO_REGISTRY_TOKEN` env var if you'd rather not persist the token).
 
-1. Packages the crate.
-2. Re-builds it from the tarball (verify step) — this is what catches "files outside the package" issues.
-3. Uploads to crates.io and waits for the registry to acknowledge.
+## Recovery
 
-If a step fails, **stop**. Investigate, fix on `main`, bump the patch version to `X.Y.(Z+1)` in `[workspace.package].version` (and the corresponding `[workspace.dependencies]` entries), retag as `vX.Y.(Z+1)`, push the tag, and resume publishing from the crate that failed. Re-running with the original `vX.Y.Z` tag won't work — crates.io rejects re-uploads of an already-published version, so a fresh patch number is required.
+If a step fails partway through the wave, **stop** and investigate. crates.io rejects re-uploads of the same version, so:
 
-> **Settling delay.** crates.io's index sometimes needs a few seconds before a freshly-published crate becomes resolvable as a dependency. If the next `cargo publish` errors with `no matching package named …`, wait 30 seconds and retry.
+1. Fix the underlying issue on `main`.
+2. Bump the patch version to `X.Y.(Z+1)` in `[workspace.package].version` and every `[workspace.dependencies]` entry.
+3. Retag as `vX.Y.(Z+1)` and push.
+4. Re-running CI publishes from the failed crate onwards — the earlier ones already on crates.io are skipped automatically when they hit "no token" or "already exists" with `--no-verify`. (If they fail loudly, edit the workflow to comment out the already-published layers temporarily.)
+
+> **Settling delay.** crates.io's index sometimes needs ~30 s before a freshly-published crate becomes resolvable as a dependency. The CI workflow has explicit `sleep` calls between layers to handle this; if you're publishing manually and hit `no matching package named …`, wait 30 seconds and retry.
 
 ## Step 4 — Verify the wave landed
 

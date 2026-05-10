@@ -1,0 +1,115 @@
+name: Release to crates.io
+
+# Publishes every workspace library + the CLI binary to crates.io on
+# every `v*` tag, in topological order (devboy-core first, devboy-cli
+# last). Mirrors what `docs/guide/contributing/release.md` describes
+# but driven by CI instead of a human at a terminal.
+#
+# Token: a single `CARGO_REGISTRY_TOKEN` repo secret. Cargo reads that
+# env var natively — `cargo publish` picks it up without `cargo login`.
+# Generate at https://crates.io/settings/tokens with scopes:
+#   - publish-update     (every release after the first ships a new version of an existing crate)
+# Optionally, until every crate has had its first publish, add:
+#   - publish-new        (first-time uploads only — can be removed once the catalogue stabilises)
+# Crates: all (or the explicit `devboy-*` allowlist).
+# Expiry: pick something you're willing to rotate; the workflow doesn't
+# need a long-lived token but does need an unexpired one at release time.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+  # Manual trigger for re-runs / patch publishes that don't move the tag.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to publish from (defaults to the workflow ref)"
+        required: false
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+jobs:
+  publish:
+    name: cargo publish (workspace)
+    runs-on: ubuntu-latest
+    # Topological order is encoded as sequential `cargo publish -p <crate>`
+    # calls below. We deliberately use a single job (not a matrix) so the
+    # ordering is explicit and a failure on layer N stops layers N+1…
+    # before they upload partially.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Sanity — workspace builds and tests pass
+        run: |
+          cargo check --workspace --all-targets
+          cargo test --workspace --no-fail-fast
+
+      # Layer 1 — leaf
+      - name: Publish devboy-core
+        run: cargo publish -p devboy-core --no-verify
+
+      # crates.io index needs ~30 s to make the new version resolvable as a
+      # dependency for the next layer. Hard-coded sleep is the simplest
+      # cross-cutting fix; the dry-run guard caught any pre-release issue.
+      - name: Wait for index propagation
+        run: sleep 30
+
+      # Layer 2 — crates that depend only on devboy-core. Order within the
+      # layer doesn't matter for correctness, but we publish API plugins
+      # before storage/assets so any plugin-side failure surfaces early.
+      - name: Publish layer 2 (deps on devboy-core only)
+        run: |
+          set -euo pipefail
+          for crate in \
+              devboy-storage \
+              devboy-assets \
+              devboy-format-pipeline \
+              devboy-gitlab \
+              devboy-github \
+              devboy-jira \
+              devboy-clickup \
+              devboy-confluence \
+              devboy-fireflies \
+              devboy-slack ; do
+            echo "::group::cargo publish -p $crate"
+            cargo publish -p "$crate" --no-verify
+            echo "::endgroup::"
+            sleep 20
+          done
+
+      # Layer 3 — depends on layer 1 + 2
+      - name: Publish devboy-executor
+        run: cargo publish -p devboy-executor --no-verify
+
+      - name: Wait for index propagation
+        run: sleep 30
+
+      # Layer 4 — depends on layer 3
+      - name: Publish devboy-mcp
+        run: cargo publish -p devboy-mcp --no-verify
+
+      - name: Wait for index propagation
+        run: sleep 30
+
+      # Layer 5 — depends on devboy-core (independent of executor/mcp chain)
+      - name: Publish devboy-skills
+        run: cargo publish -p devboy-skills --no-verify
+
+      - name: Wait for index propagation
+        run: sleep 30
+
+      # Layer 6 — binary, depends on everything above
+      - name: Publish devboy-cli
+        run: cargo publish -p devboy-cli --no-verify
