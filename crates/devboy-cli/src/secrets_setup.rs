@@ -630,6 +630,87 @@ fn save_state(path: &Path, state: &PersistedState) -> std::io::Result<()> {
     fs::write(path, body)
 }
 
+/// Typed view over the persisted wizard state. Returned by
+/// [`read_setup_state`] so callers (the future `devboy secrets
+/// setup --resume` sub-command, doctor checks, status renders)
+/// don't have to parse the TOML by hand.
+///
+/// Carries only the fields a caller actually needs to make a
+/// decision: which phases are settled, which paths the wizard
+/// has already provisioned, and how far through the four-phase
+/// flow the previous run got. Private fields like
+/// `completed_at` stay inside the persisted-state shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupState {
+    /// Phase 1 — env-var scan — has settled (`done` /
+    /// `skipped`).
+    pub scanned: bool,
+    /// Phase 2 — path proposal review — has settled.
+    pub proposed: bool,
+    /// Paths the wizard has already provisioned within this
+    /// state file. Read out of the `provision` step's `note`,
+    /// which the runner writes as `provisioned=<n>` plus a
+    /// per-path summary line.
+    pub provisioned: Vec<String>,
+    /// 1-indexed position of the highest phase the previous
+    /// run reached. `0` means "wizard has not started"; `4`
+    /// means "every phase settled". Matches `WizardPhase::ALL`
+    /// + 1.
+    pub last_step: u8,
+}
+
+impl SetupState {
+    /// `true` when every phase has settled. `read_setup_state`
+    /// callers use this to decide whether `--resume` would be
+    /// a no-op and a fresh-run hint is more useful.
+    pub fn is_complete(&self) -> bool {
+        self.last_step >= WizardPhase::ALL.len() as u8
+    }
+}
+
+/// Read the wizard's state file and project it into a
+/// [`SetupState`]. A missing or malformed file maps to a
+/// fresh `SetupState` (`scanned=false`, …, `last_step=0`) —
+/// the wizard treats both the same way.
+pub fn read_setup_state(path: &Path) -> SetupState {
+    let persisted = load_state(path);
+    SetupState {
+        scanned: persisted
+            .steps
+            .get(WizardPhase::Scan.key())
+            .map(|r| r.is_settled())
+            .unwrap_or(false),
+        proposed: persisted
+            .steps
+            .get(WizardPhase::Propose.key())
+            .map(|r| r.is_settled())
+            .unwrap_or(false),
+        provisioned: persisted
+            .steps
+            .get(WizardPhase::Provision.key())
+            .filter(|r| r.status == "done")
+            .map(|r| {
+                // Recorder note shape on success:
+                // `provisioned=<n>: <path1>, <path2>, ...`.
+                // Pull out the path-shaped tokens —
+                // anything matching ADR-020's
+                // `<scope>/<provider>/<purpose>` form.
+                r.note
+                    .as_deref()
+                    .map(|n| {
+                        n.split([',', ' ', ';'])
+                            .map(str::trim)
+                            .filter(|p| p.matches('/').count() >= 2)
+                            .map(str::to_owned)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default(),
+        last_step: persisted.last_step.try_into().unwrap_or(u8::MAX),
+    }
+}
+
 fn ensure_started(state: &mut PersistedState, io: &impl WizardIo) {
     if state.schema_version == 0 {
         state.schema_version = 1;
@@ -792,7 +873,7 @@ pub fn run_wizard<I: WizardIo>(
                 io,
             );
         } else {
-            let mut saved = 0usize;
+            let mut saved_paths: Vec<String> = Vec::new();
             let mut bail: Option<String> = None;
             for path in &missing {
                 events.push(WizardEvent::PhaseProgress {
@@ -801,7 +882,7 @@ pub fn run_wizard<I: WizardIo>(
                 });
                 match io.provision(path) {
                     ProvisionOutcome::Saved => {
-                        saved += 1;
+                        saved_paths.push(path.clone());
                         events.push(WizardEvent::PhaseProgress {
                             phase: WizardPhase::Provision,
                             message: format!("{path}: saved"),
@@ -825,15 +906,17 @@ pub fn run_wizard<I: WizardIo>(
                 None => {
                     events.push(WizardEvent::PhaseCompleted {
                         phase: WizardPhase::Provision,
-                        summary: format!("{saved}/{} provisioned", missing.len()),
+                        summary: format!("{}/{} provisioned", saved_paths.len(), missing.len()),
                     });
-                    record_status(
-                        &mut state,
-                        WizardPhase::Provision,
-                        "done",
-                        Some(format!("provisioned={saved}")),
-                        io,
+                    // Record both the count and the path list
+                    // so `read_setup_state` can recover the
+                    // already-provisioned set on resume.
+                    let note = format!(
+                        "provisioned={}: {}",
+                        saved_paths.len(),
+                        saved_paths.join(", ")
                     );
+                    record_status(&mut state, WizardPhase::Provision, "done", Some(note), io);
                 }
                 Some(reason) => {
                     events.push(WizardEvent::PhaseFailed {
@@ -1382,6 +1465,65 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
             .count();
         assert_eq!(skip_count, 4);
         assert!(events.contains(&WizardEvent::Completed));
+    }
+
+    // ====== SetupState typed-view fixtures (P26.5) =================
+
+    #[test]
+    fn setup_state_for_missing_file_is_fresh() {
+        let dir = TempDir::new().unwrap();
+        let s = read_setup_state(&state_path(dir.path()));
+        assert!(!s.scanned);
+        assert!(!s.proposed);
+        assert!(s.provisioned.is_empty());
+        assert_eq!(s.last_step, 0);
+        assert!(!s.is_complete());
+    }
+
+    #[test]
+    fn setup_state_after_happy_path_reports_complete() {
+        let dir = TempDir::new().unwrap();
+        let path = state_path(dir.path());
+        let mut io = FakeIo::new();
+        io.missing = vec!["team/jira/api-key".into(), "team/openai/api-key".into()];
+        let _ = run_wizard(dir.path(), &path, &mut io);
+        let s = read_setup_state(&path);
+        assert!(s.scanned);
+        assert!(s.proposed);
+        assert_eq!(
+            s.provisioned,
+            vec![
+                "team/jira/api-key".to_owned(),
+                "team/openai/api-key".to_owned(),
+            ]
+        );
+        assert_eq!(s.last_step, 4);
+        assert!(s.is_complete());
+    }
+
+    #[test]
+    fn setup_state_partial_run_records_progress_only_up_to_failure() {
+        let dir = TempDir::new().unwrap();
+        let path = state_path(dir.path());
+        let mut io = FakeIo::new();
+        io.missing = vec!["team/jira/api-key".into(), "team/openai/api-key".into()];
+        // First provision saves; second is cancelled — wizard
+        // bails after recording phase 3 as `failed`.
+        io.provision_outcomes = vec![ProvisionOutcome::Saved, ProvisionOutcome::Cancelled];
+        let _ = run_wizard(dir.path(), &path, &mut io);
+        let s = read_setup_state(&path);
+        // Phases 1 and 2 settled; phase 3 failed (not done /
+        // skipped) → `scanned=true, proposed=true,
+        // is_complete=false`. provisioned stays empty because
+        // the recorder only writes paths on phase success.
+        assert!(s.scanned);
+        assert!(s.proposed);
+        assert!(s.provisioned.is_empty());
+        assert!(!s.is_complete());
+        // last_step reflects how far the wizard *reached*
+        // (phase 3 attempted), not the highest *settled*
+        // phase.
+        assert!(s.last_step >= 3);
     }
 
     #[test]

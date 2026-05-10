@@ -235,6 +235,7 @@ If anything is red, `doctor` prints the exact code and suggests a fix command. N
 - [`token-catalog.md`](./token-catalog.md) — author per-provider procedure files (`kimi.json`, `openai.json`, …) the GUI binds to.
 - [`catalog-url-sources.md`](./catalog-url-sources.md) — serve the catalog over the network with sha-pinning + audit log.
 - [`agent-protocol.md`](./agent-protocol.md) — how the AI agent works with secrets through MCP without ever seeing the values.
+- [`setup-skill.md`](./setup-skill.md) — the AI-driven equivalent of this page: eight-step flow, `setup-state.toml` shape, resume contract.
 - [`source-plugin-protocol.md`](./source-plugin-protocol.md) — add your own source via the subprocess plugin protocol.
 - ADR-020 / ADR-021 / ADR-023 — the formal specs of the manifest, the router, and the UX layer.
 
