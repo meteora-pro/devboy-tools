@@ -827,7 +827,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property(
                     "boardId",
                     PropertySchema::integer(
-                        "Numeric Jira board id. The Agile / Boards REST endpoint returns sprints scoped to one board — there is no global sprint list.",
+                        "Numeric Jira board id. The Agile / Boards REST endpoint returns sprints scoped to one board — there is no global sprint list",
                         Some(0.0),
                         None,
                     ),
@@ -852,7 +852,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property(
                     "sprintId",
                     PropertySchema::integer(
-                        "Numeric sprint id. Use `get_board_sprints` to discover ids on a board.",
+                        "Numeric sprint id. Use `get_board_sprints` to discover ids on a board",
                         Some(0.0),
                         None,
                     ),

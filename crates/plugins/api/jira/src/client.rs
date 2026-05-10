@@ -838,10 +838,9 @@ impl JiraClient {
         &self,
         payload: &mut serde_json::Value,
         epic_key: &Option<String>,
-        sprint_id: &Option<i64>,
         epic_name: &Option<String>,
     ) -> Result<()> {
-        if epic_key.is_none() && sprint_id.is_none() && epic_name.is_none() {
+        if epic_key.is_none() && epic_name.is_none() {
             return Ok(());
         }
         let fields = payload
@@ -854,10 +853,6 @@ impl JiraClient {
         if let Some(value) = epic_key {
             let id = self.resolve_well_known_field_id("Epic Link").await?;
             fields.insert(id, serde_json::json!(value));
-        }
-        if let Some(value) = sprint_id {
-            let id = self.resolve_well_known_field_id("Sprint").await?;
-            fields.insert(id, serde_json::json!(*value));
         }
         if let Some(value) = epic_name {
             let id = self.resolve_well_known_field_id("Epic Name").await?;
@@ -924,16 +919,56 @@ impl JiraClient {
                 })
             }
             MetadataLoadStrategy::All => {
-                // `GET /project` returns every project the user can
-                // read on both Cloud (paginated, but the first page
-                // is usually enough — total > cap is treated as a
-                // hard error anyway) and Server/DC.
-                let url = format!("{}/project", self.base_url);
-                let raw: Vec<serde_json::Value> = self.get(&url).await?;
-                let keys: Vec<String> = raw
-                    .iter()
-                    .filter_map(|v| v.get("key").and_then(|k| k.as_str()).map(str::to_string))
-                    .collect();
+                // Cloud paginates `/project/search` (`{values, isLast, total}`),
+                // Server/DC returns a flat array from `/project`. We walk all
+                // pages on Cloud so the over-cap check sees the true total
+                // (Codex review on PR #260 — first-page-only let large Cloud
+                // instances slip through as "partial metadata").
+                let keys: Vec<String> = match self.flavor {
+                    JiraFlavor::Cloud => {
+                        let mut collected: Vec<String> = Vec::new();
+                        let mut start_at: u32 = 0;
+                        let page_size: u32 = (MAX_ENRICHMENT_PROJECTS as u32) + 1;
+                        loop {
+                            let url = format!(
+                                "{}/project/search?startAt={}&maxResults={}",
+                                self.base_url, start_at, page_size
+                            );
+                            let raw: serde_json::Value = self.get(&url).await?;
+                            let page_values = raw
+                                .get("values")
+                                .and_then(|v| v.as_array())
+                                .cloned()
+                                .unwrap_or_default();
+                            let page_len = page_values.len();
+                            for v in page_values {
+                                if let Some(k) = v.get("key").and_then(|k| k.as_str()) {
+                                    collected.push(k.to_string());
+                                }
+                            }
+                            let is_last_default = page_len < page_size as usize;
+                            let is_last = raw
+                                .get("isLast")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(is_last_default);
+                            if is_last || page_len == 0 || collected.len() > MAX_ENRICHMENT_PROJECTS
+                            {
+                                break;
+                            }
+                            start_at += page_len as u32;
+                        }
+                        collected
+                    }
+                    JiraFlavor::SelfHosted => {
+                        let url = format!("{}/project", self.base_url);
+                        let raw: Vec<serde_json::Value> = self.get(&url).await?;
+                        raw.iter()
+                            .filter_map(|v| {
+                                v.get("key").and_then(|k| k.as_str()).map(str::to_string)
+                            })
+                            .collect()
+                    }
+                };
 
                 if keys.len() > MAX_ENRICHMENT_PROJECTS {
                     // `All` is semantically "give me everything";
@@ -1024,7 +1059,11 @@ impl JiraClient {
                 // order so the freshest activity wins under the cap.
                 let jql = format!("updated >= -{days}d ORDER BY updated DESC");
                 let url = format!("{}/search", self.base_url);
-                let response: serde_json::Value = self
+                // Route through `handle_response` so 4xx/5xx
+                // bodies surface as `Error` rather than parsing as
+                // an empty result and returning success with zero
+                // projects (Codex review on PR #260).
+                let response = self
                     .request(reqwest::Method::GET, &url)
                     .query(&[
                         ("jql", jql.as_str()),
@@ -1033,10 +1072,8 @@ impl JiraClient {
                     ])
                     .send()
                     .await
-                    .map_err(|e| Error::Http(e.to_string()))?
-                    .json()
-                    .await
                     .map_err(|e| Error::Http(e.to_string()))?;
+                let response: serde_json::Value = self.handle_response(response).await?;
 
                 let mut seen = std::collections::HashSet::new();
                 let mut keys: Vec<String> = Vec::new();
@@ -1077,17 +1114,20 @@ impl JiraClient {
     /// link types, customfields. Building block reused by every
     /// concrete `MetadataLoadStrategy`.
     ///
-    /// Issuance breakdown (5 round-trips, sequential since the
-    /// instance-wide ones can be amortised across projects when
-    /// callers loop):
+    /// Issuance breakdown (5 round-trips per project, sequential):
     /// - `GET /project/{key}` for `issueTypes`
     /// - `GET /project/{key}/components`
     /// - `GET /priority` (instance-wide; same payload for every
     ///   project but small)
     /// - `GET /issueLinkType` (instance-wide)
-    /// - `GET /field` (instance-wide; cached via
-    ///   `JiraClient::fetch_fields` so subsequent project calls
-    ///   reuse the response)
+    /// - `GET /field` (instance-wide)
+    ///
+    /// None of the instance-wide calls are memoised today — looping
+    /// over N projects issues 3·N redundant round-trips for
+    /// `/priority`/`/issueLinkType`/`/field`. Acceptable for the
+    /// `MAX_ENRICHMENT_PROJECTS = 30` budget; a follow-up may wrap
+    /// the instance-wide responses in a `tokio::sync::OnceCell`
+    /// alongside `field_cache` if profiling justifies it.
     pub async fn build_project_metadata(
         &self,
         project_key: &str,
@@ -2308,14 +2348,16 @@ impl IssueProvider for JiraClient {
 
         let (mut payload, _) = merge_custom_fields_into_payload(payload, &input.custom_fields)?;
 
-        self.inject_well_known_customfields(
-            &mut payload,
-            &input.epic_key,
-            &input.sprint_id,
-            &input.epic_name,
-        )
-        .await?;
+        self.inject_well_known_customfields(&mut payload, &input.epic_key, &input.epic_name)
+            .await?;
 
+        // Sprint is intentionally NOT written into the core REST
+        // payload — Jira treats it as an Agile-managed field that
+        // reliably accepts updates only through
+        // `/rest/agile/1.0/sprint/{id}/issue`. We dispatch to that
+        // endpoint after the core mutation succeeds (Copilot review
+        // on PR #260).
+        let sprint_id = input.sprint_id;
         let url = format!("{}/issue", self.base_url);
         let create_result: std::result::Result<CreateIssueResponse, Error> =
             self.post(&url, &payload).await;
@@ -2353,6 +2395,17 @@ impl IssueProvider for JiraClient {
             }
             Err(e) => return Err(e),
         };
+
+        // Sprint dispatch (see comment above the core POST).
+        if let Some(sid) = sprint_id
+            && sid > 0
+        {
+            self.assign_to_sprint(devboy_core::AssignToSprintInput {
+                sprint_id: sid as u64,
+                issue_keys: vec![create_resp.key.clone()],
+            })
+            .await?;
+        }
 
         // Fetch the full issue to return
         self.get_issue(&create_resp.key).await
@@ -2417,8 +2470,11 @@ impl IssueProvider for JiraClient {
                 .is_some_and(|obj| obj.keys().any(|k| k.starts_with("customfield_")))
         });
 
-        let has_well_known_fields =
-            input.epic_key.is_some() || input.sprint_id.is_some() || input.epic_name.is_some();
+        // Sprint is routed through the Agile API after the PUT,
+        // not via customfield write — see same-named comment in
+        // `create_issue`.
+        let sprint_id = input.sprint_id;
+        let has_epic_fields = input.epic_key.is_some() || input.epic_name.is_some();
 
         // Only call PUT if there are field updates
         let has_field_updates = fields.summary.is_some()
@@ -2429,20 +2485,25 @@ impl IssueProvider for JiraClient {
             || has_components
             || has_fix_versions
             || has_custom_fields
-            || has_well_known_fields;
+            || has_epic_fields;
 
         if has_field_updates {
             let url = format!("{}/issue/{}", self.base_url, jira_key);
             let payload = UpdateIssuePayload { fields };
             let (mut payload, _) = merge_custom_fields_into_payload(payload, &input.custom_fields)?;
-            self.inject_well_known_customfields(
-                &mut payload,
-                &input.epic_key,
-                &input.sprint_id,
-                &input.epic_name,
-            )
-            .await?;
+            self.inject_well_known_customfields(&mut payload, &input.epic_key, &input.epic_name)
+                .await?;
             self.put(&url, &payload).await?;
+        }
+
+        if let Some(sid) = sprint_id
+            && sid > 0
+        {
+            self.assign_to_sprint(devboy_core::AssignToSprintInput {
+                sprint_id: sid as u64,
+                issue_keys: vec![jira_key.to_string()],
+            })
+            .await?;
         }
 
         // Handle status change via transitions
@@ -5413,22 +5474,33 @@ mod tests {
                 when.method(GET).path("/field");
                 then.status(200).json_body(serde_json::json!([
                     {"id": "customfield_10014", "name": "Epic Link", "custom": true},
-                    {"id": "customfield_10020", "name": "Sprint", "custom": true},
                     {"id": "customfield_10011", "name": "Epic Name", "custom": true}
                 ]));
             });
 
+            // Core POST writes Epic Link / Epic Name as customfields
+            // — Sprint is NOT in the body (Copilot review on
+            // PR #260: Sprint goes through the Agile API).
             server.mock(|when, then| {
                 when.method(POST).path("/issue").is_true(|req| {
                     let body = String::from_utf8_lossy(req.body().as_ref());
                     body.contains("\"customfield_10014\":\"PROJ-1\"")
-                        && body.contains("\"customfield_10020\":42")
+                        && !body.contains("customfield_10020")
                         && body.contains("\"customfield_10011\":\"Q4 platform\"")
                 });
                 then.status(201).json_body(serde_json::json!({
                     "id": "10100",
                     "key": "PROJ-100"
                 }));
+            });
+
+            // Agile API call after the core POST attaches the
+            // newly-created issue to the requested sprint.
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/rest/agile/1.0/sprint/42/issue")
+                    .body_includes("\"issues\":[\"PROJ-100\"]");
+                then.status(204);
             });
 
             server.mock(|when, then| {
