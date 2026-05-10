@@ -68,6 +68,13 @@ pub enum SecretsCommands {
         #[command(subcommand)]
         command: CatalogCommands,
     },
+    /// Run the setup-secrets wizard against the current
+    /// directory. Default mode is `--scan-only` — read-only
+    /// preview of what the wizard would propose. Pass
+    /// `--write-manifest` to commit the proposals to
+    /// `<repo>/.devboy/secrets.toml`. See ADR-023 §3.8 and
+    /// `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/`.
+    Setup(SetupArgs),
 }
 
 /// `devboy secrets catalog <subcommand>` family.
@@ -182,6 +189,48 @@ pub struct DescribeArgs {
     pub json: bool,
 }
 
+/// Flags for `devboy secrets setup`.
+///
+/// Default mode is read-only preview (`--scan-only` is implicit
+/// when neither `--write-manifest` nor `--resume` is set), which
+/// makes the command safe to run against any project — nothing
+/// is created in the repo or in `~/.devboy/secrets/` until the
+/// caller explicitly opts in.
+#[derive(Args, Debug, Default)]
+pub struct SetupArgs {
+    /// Project root to scan. Defaults to the current directory.
+    #[arg(long)]
+    pub root: Option<PathBuf>,
+    /// Print the scan + propose preview without touching disk.
+    /// This is the default mode — included as an explicit flag
+    /// for self-documenting scripts.
+    #[arg(long)]
+    pub scan_only: bool,
+    /// Commit the proposed paths to `<root>/.devboy/secrets.toml`.
+    /// Refuses to overwrite an existing manifest unless `--force`
+    /// is passed too — drift in the manifest is the user's own
+    /// authoritative copy and the wizard treats it as opaque.
+    #[arg(long, conflicts_with = "scan_only")]
+    pub write_manifest: bool,
+    /// Allow `--write-manifest` to overwrite an existing
+    /// `<root>/.devboy/secrets.toml`. No-op without
+    /// `--write-manifest`.
+    #[arg(long)]
+    pub force: bool,
+    /// Resume the wizard from the recorded state file
+    /// (`~/.devboy/secrets/setup-state.toml`). Skips phases
+    /// already marked `done` / `skipped`. Implies a full wizard
+    /// run, not just the scan preview.
+    #[arg(long, conflicts_with = "scan_only")]
+    pub resume: bool,
+    /// Emit JSON-lines events to stdout instead of human prose.
+    /// One event per line with shape
+    /// `{"phase":"scan","status":"completed","summary":"…"}` —
+    /// designed for the AI agent driving the skill.
+    #[arg(long)]
+    pub json: bool,
+}
+
 /// Dispatch a `devboy secrets` subcommand.
 pub async fn handle(command: SecretsCommands) -> Result<()> {
     match command {
@@ -201,6 +250,7 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
             CatalogCommands::List => catalog_list(),
             CatalogCommands::Validate(args) => catalog_validate(args),
         },
+        SecretsCommands::Setup(args) => crate::secrets_setup::handle_cli(args),
     }
 }
 

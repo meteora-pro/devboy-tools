@@ -9,11 +9,6 @@ mod secrets_agent_service;
 mod secrets_cmd;
 mod secrets_migrate;
 mod secrets_rotate;
-// `secrets_setup` is the env-var scanner / path-proposer module
-// for the `setup-secrets` wizard. The CLI sub-command that
-// drives it lands in P26.4; for now the module ships its API
-// and tests only.
-#[allow(dead_code)]
 mod secrets_setup;
 mod secrets_ui;
 mod secrets_validate;
