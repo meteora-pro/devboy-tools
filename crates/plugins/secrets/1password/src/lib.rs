@@ -455,12 +455,17 @@ mod tests {
         use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
         let path = dir.join(name);
-        // Open + write + sync + close explicitly. The cargo-
-        // llvm-cov coverage runner on Linux occasionally
-        // returns `ETXTBSY` ("Text file busy") when `exec`
-        // follows `fs::write` too closely — the explicit
-        // `sync_all` forces the kernel to commit the write
-        // before we hand the file off to a child process.
+        // Open + write + `sync_all` + drop, then chmod, then a
+        // sync `std::process` warmup exec. Background:
+        // cargo-llvm-cov on Linux and the ubuntu-24.04-arm
+        // runner occasionally surface `ETXTBSY` ("Text file
+        // busy") when `tokio::process::Command::output` execs
+        // a shell script we just wrote. The kernel ETXTBSY
+        // signal lingers briefly after the write FD is closed.
+        // `std::process::Command::status` has stricter
+        // synchronous fork+exec semantics — running it once
+        // primes the file in the OS cache and clears the
+        // text-busy state for the subsequent tokio exec.
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -473,6 +478,9 @@ mod tests {
         let mut perms = std::fs::metadata(&path).unwrap().permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(&path, perms).unwrap();
+        // Warmup exec — ignore errors; we just want the kernel
+        // to commit the inode + text-segment state.
+        let _ = std::process::Command::new(&path).arg("__warmup__").output();
         path
     }
 
