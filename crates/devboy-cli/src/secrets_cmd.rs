@@ -213,8 +213,9 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
 /// one line per provider. Read-only, no flags.
 fn catalog_list() -> Result<()> {
     use devboy_token_catalog::{
-        CatalogSource, bundled_catalogs, default_known_hashes_path, default_sources_toml_path,
-        default_user_catalog_dir, load_all_with_urls, parse_sources_toml,
+        CatalogSource, bundled_catalogs, default_catalog_cache_dir, default_known_hashes_path,
+        default_sources_toml_path, default_user_catalog_dir, load_all_with_urls,
+        parse_sources_toml,
     };
 
     let bundled = bundled_catalogs();
@@ -231,12 +232,14 @@ fn catalog_list() -> Result<()> {
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|body| parse_sources_toml(&body).ok());
     let known_hashes_path = default_known_hashes_path();
+    let cache_dir = default_catalog_cache_dir();
     let (loaded, errors) = load_all_with_urls(
         &bundled,
         user_dir.as_deref(),
         project_dir.as_deref(),
         url_config.as_ref(),
         known_hashes_path.as_deref(),
+        cache_dir.as_deref(),
     );
 
     if loaded.is_empty() && errors.is_empty() {

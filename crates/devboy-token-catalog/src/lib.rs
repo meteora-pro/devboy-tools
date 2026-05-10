@@ -299,13 +299,14 @@ pub fn load_all_with_urls(
     project_dir: Option<&Path>,
     url_config: Option<&CatalogSourcesConfig>,
     known_hashes_path: Option<&Path>,
+    cache_dir: Option<&Path>,
 ) -> (Vec<LoadedCatalog>, Vec<CatalogError>) {
     let (mut loaded, mut errors) = load_all(bundled, user_dir, project_dir);
     if let Some(cfg) = url_config
         && cfg.enable_url_catalogs
     {
         for src in &cfg.sources {
-            match fetch_url_source(src, known_hashes_path) {
+            match fetch_url_source(src, known_hashes_path, cache_dir) {
                 Ok(catalog) => {
                     let url_source = CatalogSource::Url {
                         url: src.url.clone(),
@@ -418,11 +419,21 @@ pub enum FetchError {
 /// Fetch one [`UrlSource`] over HTTPS and decode the body as a
 /// [`ProviderCatalog`]. Performs the full P23.2 guard chain —
 /// HTTPS-only, 10 s timeout, 256 KB body cap, JSON-only
-/// Content-Type, schema-version match. Pure: no caching, no
-/// SHA pinning (those are P23.3 / P23.5).
+/// Content-Type, schema-version match — plus, when present, the
+/// P23.3 SHA pin / TOFU and the P23.5 disk cache.
+///
+/// `cache_dir`: when `Some`, fetched bodies and ETag metadata
+/// are persisted under it (one file pair per URL). On startup
+/// the cache short-circuits the network when within the source's
+/// `refresh_seconds`; outside the TTL it goes back to the wire
+/// with `If-None-Match` so a 304 still avoids re-downloading the
+/// body. When the network is unreachable AND a cached copy
+/// exists, the cached copy serves as a graceful fallback. Pass
+/// `None` to disable caching (e.g. one-shot CLI invocations).
 pub fn fetch_url_source(
     source: &UrlSource,
     known_hashes_path: Option<&Path>,
+    cache_dir: Option<&Path>,
 ) -> Result<ProviderCatalog, FetchError> {
     if !source.url.starts_with("https://") {
         return Err(FetchError::HttpsRequired {
@@ -433,25 +444,141 @@ pub fn fetch_url_source(
         .timeout(FETCH_TIMEOUT)
         .build()
         .map_err(|source| FetchError::Client { source })?;
-    let bytes = fetch_bytes_with_client(&client, &source.url)?;
-    let actual_sha = sha256_hex(&bytes);
-    enforce_pin_or_tofu(source, known_hashes_path, &actual_sha)?;
-    parse_catalog_bytes(&bytes)
+    fetch_inner_with_client(&client, source, known_hashes_path, cache_dir, unix_now())
 }
 
-/// Body fetch only — the HTTP / Content-Type / size guards.
-/// Returns the raw bytes so the caller can hash them before
-/// parsing. Split out so tests can drive it against an
-/// `http://` mock server (httpmock does not speak TLS).
+/// Internal entry point for [`fetch_url_source`]. Splits out
+/// the client, time source, and cache plumbing so tests can
+/// drive it against an `http://` mock server (httpmock does
+/// not speak TLS) and against synthetic clock values without
+/// sleeping.
+fn fetch_inner_with_client(
+    client: &reqwest::blocking::Client,
+    source: &UrlSource,
+    known_hashes_path: Option<&Path>,
+    cache_dir: Option<&Path>,
+    now_secs: u64,
+) -> Result<ProviderCatalog, FetchError> {
+    let cache_paths = cache_dir.map(|d| cache_paths_for(d, &source.url));
+
+    // Cache hit within TTL — no network at all.
+    if let Some((body_path, meta_path)) = cache_paths.as_ref()
+        && let Some((meta, bytes)) = read_cache(meta_path, body_path)
+        && now_secs.saturating_sub(meta.fetched_at) < source.refresh_seconds
+    {
+        let actual = sha256_hex(&bytes);
+        enforce_pin_or_tofu(source, known_hashes_path, &actual)?;
+        return parse_catalog_bytes(&bytes);
+    }
+
+    // Outside TTL (or no cache) — go back to the wire. If we
+    // do have a stored ETag, send `If-None-Match` so a server
+    // that hasn't changed can give us 304 + zero body.
+    let prev_etag = cache_paths
+        .as_ref()
+        .and_then(|(_, mp)| read_meta(mp))
+        .and_then(|m| m.etag);
+    let http_result = fetch_bytes_with_client(client, &source.url, prev_etag.as_deref());
+
+    match http_result {
+        Ok(HttpFetch::NotModified) => {
+            // Server says nothing changed — bump fetched_at on
+            // the existing meta and serve the cached body.
+            let Some((body_path, meta_path)) = cache_paths.as_ref() else {
+                // Without a cache directory, 304 is unexpected — we
+                // never sent If-None-Match. Treat as protocol error.
+                return Err(FetchError::Status { status: 304 });
+            };
+            let Some((mut meta, bytes)) = read_cache(meta_path, body_path) else {
+                // Body disappeared between read_meta and now —
+                // unusual but recoverable: re-fetch unconditionally.
+                let bytes = match fetch_bytes_with_client(client, &source.url, None)? {
+                    HttpFetch::Body { bytes, etag } => {
+                        let m = CacheMeta {
+                            url: source.url.clone(),
+                            sha256: sha256_hex(&bytes),
+                            etag,
+                            fetched_at: now_secs,
+                        };
+                        let _ = write_cache(body_path, meta_path, &m, &bytes);
+                        bytes
+                    }
+                    HttpFetch::NotModified => {
+                        return Err(FetchError::Status { status: 304 });
+                    }
+                };
+                let actual = sha256_hex(&bytes);
+                enforce_pin_or_tofu(source, known_hashes_path, &actual)?;
+                return parse_catalog_bytes(&bytes);
+            };
+            meta.fetched_at = now_secs;
+            let _ = write_meta(meta_path, &meta);
+            let actual = sha256_hex(&bytes);
+            enforce_pin_or_tofu(source, known_hashes_path, &actual)?;
+            parse_catalog_bytes(&bytes)
+        }
+        Ok(HttpFetch::Body { bytes, etag }) => {
+            // Fresh body — write through cache (best-effort: a
+            // failed write does not block the load).
+            if let Some((body_path, meta_path)) = cache_paths.as_ref() {
+                let m = CacheMeta {
+                    url: source.url.clone(),
+                    sha256: sha256_hex(&bytes),
+                    etag,
+                    fetched_at: now_secs,
+                };
+                let _ = write_cache(body_path, meta_path, &m, &bytes);
+            }
+            let actual = sha256_hex(&bytes);
+            enforce_pin_or_tofu(source, known_hashes_path, &actual)?;
+            parse_catalog_bytes(&bytes)
+        }
+        Err(e) => {
+            // Network failed. If we have a stale cache, serve
+            // it as graceful degradation — better than nothing
+            // when the user is on a flaky link or offline.
+            if let Some((body_path, meta_path)) = cache_paths.as_ref()
+                && let Some((_meta, bytes)) = read_cache(meta_path, body_path)
+            {
+                let actual = sha256_hex(&bytes);
+                enforce_pin_or_tofu(source, known_hashes_path, &actual)?;
+                return parse_catalog_bytes(&bytes);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Outcome of one HTTP body fetch — either fresh body bytes or
+/// a 304 short-circuit when the server confirms our ETag.
+enum HttpFetch {
+    Body {
+        bytes: Vec<u8>,
+        etag: Option<String>,
+    },
+    NotModified,
+}
+
+/// Body fetch with optional `If-None-Match`. Runs the
+/// HTTP / Content-Type / size guards on 200. Returns
+/// [`HttpFetch::NotModified`] on 304 (the caller is expected to
+/// have a cached body to fall back on).
 fn fetch_bytes_with_client(
     client: &reqwest::blocking::Client,
     url: &str,
-) -> Result<Vec<u8>, FetchError> {
-    let resp = client
-        .get(url)
+    if_none_match: Option<&str>,
+) -> Result<HttpFetch, FetchError> {
+    let mut req = client.get(url);
+    if let Some(etag) = if_none_match {
+        req = req.header(reqwest::header::IF_NONE_MATCH, etag);
+    }
+    let resp = req
         .send()
         .map_err(|source| FetchError::Request { source })?;
 
+    if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
+        return Ok(HttpFetch::NotModified);
+    }
     if !resp.status().is_success() {
         return Err(FetchError::Status {
             status: resp.status().as_u16(),
@@ -477,6 +604,11 @@ fn fetch_bytes_with_client(
         return Err(FetchError::BodyTooLarge { bytes: cl });
     }
 
+    let etag = resp
+        .headers()
+        .get(reqwest::header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
     let bytes = resp
         .bytes()
         .map_err(|source| FetchError::Request { source })?;
@@ -485,8 +617,10 @@ fn fetch_bytes_with_client(
             bytes: bytes.len() as u64,
         });
     }
-
-    Ok(bytes.to_vec())
+    Ok(HttpFetch::Body {
+        bytes: bytes.to_vec(),
+        etag,
+    })
 }
 
 /// Parse already-fetched body bytes as a [`ProviderCatalog`].
@@ -692,6 +826,113 @@ fn is_blocked_ip(ip: std::net::IpAddr) -> bool {
 /// `sources.toml` so all URL-source state is in one directory.
 pub fn default_known_hashes_path() -> Option<PathBuf> {
     default_user_catalog_dir().map(|d| d.join("known_hashes.toml"))
+}
+
+/// Default cache directory for fetched URL-catalog bodies:
+/// `~/.devboy/secrets/catalog/cache/`.
+pub fn default_catalog_cache_dir() -> Option<PathBuf> {
+    default_user_catalog_dir().map(|d| d.join("cache"))
+}
+
+// =============================================================================
+// Disk cache for URL-loaded catalogs (P23.5)
+// =============================================================================
+
+/// Sidecar metadata for a cached URL fetch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CacheMeta {
+    /// Original URL the body came from.
+    pub url: String,
+    /// SHA256 of the cached body, lowercase hex. Verified on
+    /// every read — a tampered file is treated as a cache miss.
+    pub sha256: String,
+    /// Server-supplied ETag, if any. Used to drive
+    /// `If-None-Match` on the next refresh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub etag: Option<String>,
+    /// Unix epoch seconds the body was last accepted (whether
+    /// via 200 or via 304 confirming the cached body is still
+    /// good).
+    pub fetched_at: u64,
+}
+
+/// Compute the (body, meta) paths for a given URL inside a
+/// cache directory. Key is `sha256(url)` so collisions are
+/// effectively impossible and the user can `ls` the directory
+/// to count what's cached.
+fn cache_paths_for(cache_dir: &Path, url: &str) -> (PathBuf, PathBuf) {
+    let key = sha256_hex(url.as_bytes());
+    (
+        cache_dir.join(format!("{key}.json")),
+        cache_dir.join(format!("{key}.meta.toml")),
+    )
+}
+
+fn read_meta(meta_path: &Path) -> Option<CacheMeta> {
+    let body = fs::read_to_string(meta_path).ok()?;
+    toml::from_str(&body).ok()
+}
+
+fn write_meta(meta_path: &Path, meta: &CacheMeta) -> Result<(), FetchError> {
+    if let Some(parent) = meta_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|source| FetchError::KnownHashesIo {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let body = toml::to_string_pretty(meta).expect("CacheMeta always serializes");
+    fs::write(meta_path, body).map_err(|source| FetchError::KnownHashesIo {
+        path: meta_path.to_path_buf(),
+        source,
+    })
+}
+
+/// Read a (meta, body) pair from disk, re-verifying that the
+/// body's SHA matches what the meta records. Returns `None` on
+/// any I/O failure, schema mismatch, or SHA mismatch — the
+/// caller treats `None` as a cache miss and refetches. This is
+/// the integrity check from the P23.5 design: a tampered
+/// cached file does not poison the loader.
+fn read_cache(meta_path: &Path, body_path: &Path) -> Option<(CacheMeta, Vec<u8>)> {
+    let meta = read_meta(meta_path)?;
+    let bytes = fs::read(body_path).ok()?;
+    if sha256_hex(&bytes) != meta.sha256 {
+        return None;
+    }
+    Some((meta, bytes))
+}
+
+fn write_cache(
+    body_path: &Path,
+    meta_path: &Path,
+    meta: &CacheMeta,
+    bytes: &[u8],
+) -> Result<(), FetchError> {
+    if let Some(parent) = body_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|source| FetchError::KnownHashesIo {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    fs::write(body_path, bytes).map_err(|source| FetchError::KnownHashesIo {
+        path: body_path.to_path_buf(),
+        source,
+    })?;
+    write_meta(meta_path, meta)?;
+    Ok(())
+}
+
+fn unix_now() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// On-disk shape of `known_hashes.toml`:
@@ -1111,7 +1352,7 @@ mod tests {
             sha256: None,
             refresh_seconds: 60,
         };
-        let err = fetch_url_source(&src, None).unwrap_err();
+        let err = fetch_url_source(&src, None, None).unwrap_err();
         assert!(matches!(err, FetchError::HttpsRequired { .. }));
     }
 
@@ -1125,12 +1366,15 @@ mod tests {
     /// Convenience for the body+parse tests: combines the two
     /// post-P23.3 internal stages (`fetch_bytes_with_client` →
     /// `parse_catalog_bytes`) so existing test logic stays as-is.
+    /// 200-only — these tests don't drive ETag.
     fn fetch_with_client(
         client: &reqwest::blocking::Client,
         url: &str,
     ) -> Result<ProviderCatalog, FetchError> {
-        let bytes = fetch_bytes_with_client(client, url)?;
-        parse_catalog_bytes(&bytes)
+        match fetch_bytes_with_client(client, url, None)? {
+            HttpFetch::Body { bytes, .. } => parse_catalog_bytes(&bytes),
+            HttpFetch::NotModified => Err(FetchError::Status { status: 304 }),
+        }
     }
 
     fn fixture_json() -> String {
@@ -1244,15 +1488,13 @@ mod tests {
 
     /// Like fetch_url_source but skips the https:// guard so
     /// httpmock can serve over http://. Re-implements the
-    /// exact public flow.
+    /// exact public flow (now via `fetch_inner_with_client`,
+    /// which handles cache + ETag + pin/TOFU).
     fn fetch_no_https_guard(
         source: &UrlSource,
         known_hashes_path: Option<&Path>,
     ) -> Result<ProviderCatalog, FetchError> {
-        let bytes = fetch_bytes_with_client(&test_client(), &source.url)?;
-        let actual = sha256_hex(&bytes);
-        enforce_pin_or_tofu(source, known_hashes_path, &actual)?;
-        parse_catalog_bytes(&bytes)
+        fetch_inner_with_client(&test_client(), source, known_hashes_path, None, unix_now())
     }
 
     #[test]
@@ -1427,6 +1669,123 @@ mod tests {
         assert!(kh.url.is_empty());
     }
 
+    fn fetch_inner_at(
+        source: &UrlSource,
+        cache_dir: Option<&Path>,
+        now_secs: u64,
+    ) -> Result<ProviderCatalog, FetchError> {
+        fetch_inner_with_client(&test_client(), source, None, cache_dir, now_secs)
+    }
+
+    #[test]
+    fn cache_serves_within_ttl_without_network() {
+        let server = httpmock::MockServer::start();
+        let body = fixture_json();
+        let m = server.mock(|when, then| {
+            when.method("GET").path("/k.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("etag", "\"v1\"")
+                .body(body.clone());
+        });
+        let dir = TempDir::new().unwrap();
+        let src = fixture_url_source(&server.base_url(), "/k.json", None);
+
+        // First fetch — fills cache.
+        fetch_inner_at(&src, Some(dir.path()), 1_000).unwrap();
+        m.assert_calls(1);
+
+        // Second fetch within TTL — must NOT hit the server.
+        fetch_inner_at(&src, Some(dir.path()), 1_000 + src.refresh_seconds - 5).unwrap();
+        m.assert_calls(1);
+    }
+
+    #[test]
+    fn cache_uses_etag_on_refresh_when_server_returns_304() {
+        let server = httpmock::MockServer::start();
+        let body = fixture_json();
+        // Specific mock first — only matches when the client
+        // sends `If-None-Match: "v1"`. httpmock evaluates mocks
+        // in registration order and returns the first matching
+        // one, so the request without the header falls through
+        // to the 200 mock below.
+        let three_oh_four = server.mock(|when, then| {
+            when.method("GET")
+                .path("/k.json")
+                .header("if-none-match", "\"v1\"");
+            then.status(304);
+        });
+        let two_hundred = server.mock(|when, then| {
+            when.method("GET").path("/k.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("etag", "\"v1\"")
+                .body(body.clone());
+        });
+        let dir = TempDir::new().unwrap();
+        let src = fixture_url_source(&server.base_url(), "/k.json", None);
+
+        // First fetch — server replies 200 with ETag.
+        fetch_inner_at(&src, Some(dir.path()), 1_000).unwrap();
+        two_hundred.assert_calls(1);
+
+        // After TTL — server replies 304, body served from cache.
+        let cat = fetch_inner_at(&src, Some(dir.path()), 1_000 + src.refresh_seconds + 1).unwrap();
+        assert_eq!(cat.provider_id, "kimi");
+        three_oh_four.assert_calls(1);
+        two_hundred.assert_calls(1);
+    }
+
+    #[test]
+    fn offline_falls_back_to_stale_cache() {
+        let body = fixture_json();
+        let dir = TempDir::new().unwrap();
+        // URL points at a port no one is listening on — the
+        // fetch fails. With a stale cache present, the loader
+        // serves it as graceful degradation.
+        let stale_src = UrlSource {
+            url: "http://127.0.0.1:1/k.json".to_owned(),
+            sha256: None,
+            refresh_seconds: 1,
+        };
+        let (body_path, meta_path) = cache_paths_for(dir.path(), &stale_src.url);
+        let meta = CacheMeta {
+            url: stale_src.url.clone(),
+            sha256: sha256_hex(body.as_bytes()),
+            etag: None,
+            fetched_at: 0,
+        };
+        write_cache(&body_path, &meta_path, &meta, body.as_bytes()).unwrap();
+
+        let cat = fetch_inner_at(&stale_src, Some(dir.path()), 1_000_000).unwrap();
+        assert_eq!(cat.provider_id, "kimi");
+    }
+
+    #[test]
+    fn cache_tampering_is_treated_as_miss() {
+        let server = httpmock::MockServer::start();
+        let body = fixture_json();
+        let m = server.mock(|when, then| {
+            when.method("GET").path("/k.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(body.clone());
+        });
+        let dir = TempDir::new().unwrap();
+        let src = fixture_url_source(&server.base_url(), "/k.json", None);
+        fetch_inner_at(&src, Some(dir.path()), 1_000).unwrap();
+        m.assert_calls(1);
+
+        // Tamper: overwrite the cached body with junk.
+        let (body_path, _meta_path) = cache_paths_for(dir.path(), &src.url);
+        std::fs::write(&body_path, b"<tampered>").unwrap();
+
+        // Within TTL — read_cache returns None on sha mismatch,
+        // so the loader refetches over the wire.
+        fetch_inner_at(&src, Some(dir.path()), 1_010).unwrap();
+        m.assert_calls(2);
+    }
+
     #[test]
     fn load_all_with_urls_skips_when_disabled() {
         let cfg = CatalogSourcesConfig {
@@ -1437,7 +1796,7 @@ mod tests {
                 refresh_seconds: 60,
             }],
         };
-        let (loaded, errors) = load_all_with_urls(&[], None, None, Some(&cfg), None);
+        let (loaded, errors) = load_all_with_urls(&[], None, None, Some(&cfg), None, None);
         assert!(loaded.is_empty());
         assert!(errors.is_empty(), "fetch should be skipped, no errors");
     }
