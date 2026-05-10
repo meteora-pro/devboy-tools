@@ -62,6 +62,22 @@ pub enum SecretsCommands {
     /// destructive-confirm, read the new value, format-validate,
     /// and record `last_rotated_at`. See ADR-023 §3.4.
     Rotate(crate::secrets_rotate::RotateArgs),
+    /// Manage the token catalog (provider procedure files the
+    /// `secrets ui` form binds to). See ADR-023 §3.4.
+    Catalog {
+        #[command(subcommand)]
+        command: CatalogCommands,
+    },
+}
+
+/// `devboy secrets catalog <subcommand>` family.
+#[derive(Subcommand, Debug)]
+pub enum CatalogCommands {
+    /// List every loaded provider catalog with its source
+    /// (bundled / user / project) and variant count. Useful to
+    /// debug which override is winning when a team has its own
+    /// project-scope file shadowing the bundled default.
+    List,
 }
 
 /// `devboy secrets agent <subcommand>` family.
@@ -169,7 +185,55 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
         },
         SecretsCommands::Ui(args) => crate::secrets_ui::handle(args).await,
         SecretsCommands::Rotate(args) => crate::secrets_rotate::handle(args).await,
+        SecretsCommands::Catalog { command } => match command {
+            CatalogCommands::List => catalog_list(),
+        },
     }
+}
+
+// =============================================================================
+// catalog
+// =============================================================================
+
+/// Walk the bundled / user / project catalog sources and print
+/// one line per provider. Read-only, no flags.
+fn catalog_list() -> Result<()> {
+    use devboy_token_catalog::{
+        CatalogSource, bundled_catalogs, default_user_catalog_dir, load_all,
+    };
+
+    let bundled = bundled_catalogs();
+    let user_dir = default_user_catalog_dir();
+    // Project-scope is the current working directory by
+    // convention — `<cwd>/.devboy/secrets/catalog/`. Future
+    // versions may derive a smarter project root.
+    let project_dir = std::env::current_dir()
+        .ok()
+        .map(|d| d.join(".devboy").join("secrets").join("catalog"));
+    let (loaded, errors) = load_all(&bundled, user_dir.as_deref(), project_dir.as_deref());
+
+    if loaded.is_empty() && errors.is_empty() {
+        println!("no catalogs loaded");
+        return Ok(());
+    }
+    for c in &loaded {
+        let source = match c.source {
+            CatalogSource::Bundled => "bundled",
+            CatalogSource::User => "user   ",
+            CatalogSource::Project => "project",
+        };
+        let n = c.catalog.variants.len();
+        let suffix = if n == 1 { "variant" } else { "variants" };
+        println!("{:<14} {}  {} {}", c.catalog.provider_id, source, n, suffix);
+    }
+    if !errors.is_empty() {
+        eprintln!();
+        eprintln!("errors ({}):", errors.len());
+        for e in &errors {
+            eprintln!("  - {e}");
+        }
+    }
+    Ok(())
 }
 
 // =============================================================================

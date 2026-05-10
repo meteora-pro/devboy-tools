@@ -57,6 +57,8 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets agent uninstall`↴](#devboy-secrets-agent-uninstall)
 * [`devboy secrets ui`↴](#devboy-secrets-ui)
 * [`devboy secrets rotate`↴](#devboy-secrets-rotate)
+* [`devboy secrets catalog`↴](#devboy-secrets-catalog)
+* [`devboy secrets catalog list`↴](#devboy-secrets-catalog-list)
 * [`devboy hooks`↴](#devboy-hooks)
 * [`devboy hooks install`↴](#devboy-hooks-install)
 * [`devboy hooks check`↴](#devboy-hooks-check)
@@ -716,6 +718,7 @@ Discover and inspect declared secrets (metadata only — values are never shown)
 * `agent` — Manage the local secret-store agent daemon (ADR-023 §3.3)
 * `ui` — Open the native UI (TUI in a terminal, GUI in a window). Backend autodetected from `$DISPLAY` / `$WAYLAND_DISPLAY` on Linux and the OS on macOS / Windows; override with `--tui` or `--gui`. See ADR-023 §3.4
 * `rotate` — Rotate a secret: open the provider URL in the browser, destructive-confirm, read the new value, format-validate, and record `last_rotated_at`. See ADR-023 §3.4
+* `catalog` — Manage the token catalog (provider procedure files the `secrets ui` form binds to). See ADR-023 §3.4
 
 
 
@@ -884,6 +887,26 @@ Rotate a secret: open the provider URL in the browser, destructive-confirm, read
 * `--yes` — Skip the destructive-confirm prompt. Required when stdin isn't a TTY (the prompt would have nothing to read)
 * `--from-stdin` — Read the new value from stdin (one line, no echo) instead of the interactive prompt. Useful for `vault read` / `op read` shell pipelines and for tests
 * `--index <INDEX>` — Override the path the global index is loaded from / saved to. Defaults to the platform's config dir
+
+
+
+## `devboy secrets catalog`
+
+Manage the token catalog (provider procedure files the `secrets ui` form binds to). See ADR-023 §3.4
+
+**Usage:** `devboy secrets catalog <COMMAND>`
+
+###### **Subcommands:**
+
+* `list` — List every loaded provider catalog with its source (bundled / user / project) and variant count. Useful to debug which override is winning when a team has its own project-scope file shadowing the bundled default
+
+
+
+## `devboy secrets catalog list`
+
+List every loaded provider catalog with its source (bundled / user / project) and variant count. Useful to debug which override is winning when a team has its own project-scope file shadowing the bundled default
+
+**Usage:** `devboy secrets catalog list`
 
 
 
