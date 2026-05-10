@@ -642,6 +642,10 @@ diff --git a/config.yaml b/config.yaml
     #[cfg(unix)]
     #[test]
     fn check_secret_alias_flags_alias_in_yaml_in_real_git_repo() {
+        if !git_on_path() {
+            eprintln!("skipping: `git` not on PATH (likely a coverage / arm-runner sandbox)");
+            return;
+        }
         let dir = tempfile::TempDir::new().unwrap();
         let repo = dir.path();
 
@@ -674,6 +678,10 @@ diff --git a/config.yaml b/config.yaml
     #[cfg(unix)]
     #[test]
     fn check_secret_alias_passes_when_alias_lives_in_devboy_config() {
+        if !git_on_path() {
+            eprintln!("skipping: `git` not on PATH (likely a coverage / arm-runner sandbox)");
+            return;
+        }
         let dir = tempfile::TempDir::new().unwrap();
         let repo = dir.path();
 
@@ -705,5 +713,19 @@ diff --git a/config.yaml b/config.yaml
             .status()
             .expect("failed to invoke git");
         assert!(status.success(), "git {:?} failed", args);
+    }
+
+    /// Cheap probe — the test sandbox on cargo-llvm-cov coverage
+    /// runs and on some arm runners ships without `git` on PATH.
+    /// The tests need a real `git init` to be meaningful, so we
+    /// skip with a `eprintln!` rather than panicking on a missing
+    /// binary that has nothing to do with the code under test.
+    #[cfg(unix)]
+    fn git_on_path() -> bool {
+        Command::new("git")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
     }
 }

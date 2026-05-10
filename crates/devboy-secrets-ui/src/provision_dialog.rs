@@ -87,7 +87,7 @@ impl DialogMode {
 pub struct DialogMetadata {
     /// ADR-020 path, e.g. `team/jira/api-key`.
     pub path: String,
-    /// Provider label rendered as "via <provider>" — e.g.
+    /// Provider label rendered as `via <provider>` — e.g.
     /// `1password`, `keychain`, `local-vault`.
     pub provider: String,
     /// Rotation method declared in the manifest / pattern.

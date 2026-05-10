@@ -573,7 +573,10 @@ impl Drop for PluginClient {
 // Tests
 // =============================================================================
 
-#[cfg(test)]
+// Tests run a real subprocess plugin (a shell script). Shell
+// scripts and `chmod +x` (`std::os::unix::fs::PermissionsExt`)
+// are UNIX-only, so the test module is gated to UNIX targets.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use crate::plugin_manifest::PluginManifest;
