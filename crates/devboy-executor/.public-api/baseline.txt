@@ -362,6 +362,7 @@ pub devboy_executor::output::ToolOutput::AssetUploaded::filename: alloc::string:
 pub devboy_executor::output::ToolOutput::AssetUploaded::size: usize
 pub devboy_executor::output::ToolOutput::AssetUploaded::url: alloc::string::String
 pub devboy_executor::output::ToolOutput::Comments(alloc::vec::Vec<devboy_core::types::Comment>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::output::ToolOutput::CustomFields(alloc::vec::Vec<devboy_core::types::CustomFieldDescriptor>, core::option::Option<devboy_executor::output::ResultMeta>)
 pub devboy_executor::output::ToolOutput::Diffs(alloc::vec::Vec<devboy_core::types::FileDiff>, core::option::Option<devboy_executor::output::ResultMeta>)
 pub devboy_executor::output::ToolOutput::Discussions(alloc::vec::Vec<devboy_core::types::Discussion>, core::option::Option<devboy_executor::output::ResultMeta>)
 pub devboy_executor::output::ToolOutput::ForestModified(devboy_core::types::ForestModifyResult)
@@ -383,6 +384,7 @@ pub devboy_executor::output::ToolOutput::SingleIssue(alloc::boxed::Box<devboy_co
 pub devboy_executor::output::ToolOutput::SingleMergeRequest(alloc::boxed::Box<devboy_core::types::MergeRequest>)
 pub devboy_executor::output::ToolOutput::SingleMessage(alloc::boxed::Box<devboy_core::types::MessengerMessage>)
 pub devboy_executor::output::ToolOutput::SingleProjectVersion(alloc::boxed::Box<devboy_core::types::ProjectVersion>)
+pub devboy_executor::output::ToolOutput::Sprints(alloc::vec::Vec<devboy_core::types::Sprint>, core::option::Option<devboy_executor::output::ResultMeta>)
 pub devboy_executor::output::ToolOutput::Statuses(alloc::vec::Vec<devboy_core::types::IssueStatus>, core::option::Option<devboy_executor::output::ResultMeta>)
 pub devboy_executor::output::ToolOutput::StructureForest(alloc::boxed::Box<devboy_core::types::StructureForest>)
 pub devboy_executor::output::ToolOutput::StructureValues(alloc::boxed::Box<devboy_core::types::StructureValues>)
@@ -699,6 +701,7 @@ pub devboy_executor::ToolOutput::AssetUploaded::filename: alloc::string::String
 pub devboy_executor::ToolOutput::AssetUploaded::size: usize
 pub devboy_executor::ToolOutput::AssetUploaded::url: alloc::string::String
 pub devboy_executor::ToolOutput::Comments(alloc::vec::Vec<devboy_core::types::Comment>, core::option::Option<devboy_executor::output::ResultMeta>)
+pub devboy_executor::ToolOutput::CustomFields(alloc::vec::Vec<devboy_core::types::CustomFieldDescriptor>, core::option::Option<devboy_executor::output::ResultMeta>)
 pub devboy_executor::ToolOutput::Diffs(alloc::vec::Vec<devboy_core::types::FileDiff>, core::option::Option<devboy_executor::output::ResultMeta>)
 pub devboy_executor::ToolOutput::Discussions(alloc::vec::Vec<devboy_core::types::Discussion>, core::option::Option<devboy_executor::output::ResultMeta>)
 pub devboy_executor::ToolOutput::ForestModified(devboy_core::types::ForestModifyResult)
@@ -720,6 +723,7 @@ pub devboy_executor::ToolOutput::SingleIssue(alloc::boxed::Box<devboy_core::type
 pub devboy_executor::ToolOutput::SingleMergeRequest(alloc::boxed::Box<devboy_core::types::MergeRequest>)
 pub devboy_executor::ToolOutput::SingleMessage(alloc::boxed::Box<devboy_core::types::MessengerMessage>)
 pub devboy_executor::ToolOutput::SingleProjectVersion(alloc::boxed::Box<devboy_core::types::ProjectVersion>)
+pub devboy_executor::ToolOutput::Sprints(alloc::vec::Vec<devboy_core::types::Sprint>, core::option::Option<devboy_executor::output::ResultMeta>)
 pub devboy_executor::ToolOutput::Statuses(alloc::vec::Vec<devboy_core::types::IssueStatus>, core::option::Option<devboy_executor::output::ResultMeta>)
 pub devboy_executor::ToolOutput::StructureForest(alloc::boxed::Box<devboy_core::types::StructureForest>)
 pub devboy_executor::ToolOutput::StructureValues(alloc::boxed::Box<devboy_core::types::StructureValues>)

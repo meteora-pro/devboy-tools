@@ -61,6 +61,35 @@ pub struct Issue {
     /// Subtasks / child issues
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subtasks: Vec<Issue>,
+    /// Provider-specific custom fields. **Key is always the
+    /// provider-stable id** (Jira `customfield_10014`, ClickUp field
+    /// uuid) so downstream consumers can join with metadata from
+    /// `get_custom_fields` regardless of provider. Display name
+    /// rides along inside the value when the provider returns it
+    /// on the issue payload — Jira leaves `name` empty (do a
+    /// follow-up `get_custom_fields` call if you need it), ClickUp
+    /// fills it from `task.custom_fields[].name`. GitHub and GitLab
+    /// don't have a customfield concept and always return an empty
+    /// map here.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub custom_fields: std::collections::HashMap<String, CustomFieldValue>,
+}
+
+/// Value of a single entry in [`Issue::custom_fields`]. Splits the
+/// raw provider value from the optional human-readable name so
+/// downstream consumers don't have to parse one out of the other.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct CustomFieldValue {
+    /// Human-readable field name (e.g. `"Epic Link"`,
+    /// `"Severity"`). `None` when the issue payload didn't carry a
+    /// name — Jira's `/issue/{key}` returns customfield values
+    /// keyed only by id, so the mapper leaves this empty and
+    /// relies on `get_custom_fields` for resolution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Raw provider value. Shape varies — string for text, number
+    /// for numeric, object/array for selects and multi-selects.
+    pub value: Value,
 }
 
 /// A link between two issues.
@@ -95,6 +124,14 @@ pub struct IssueRelations {
     /// Duplicate issues
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub duplicates: Vec<IssueLink>,
+    /// Parent epic key (Jira-only). Populated when the issue has an
+    /// `Epic Link` customfield value — covers Server/DC and Cloud
+    /// company-managed projects. Cloud team-managed Epics use the
+    /// system `parent` field instead and surface there. Lightweight
+    /// key-only field on purpose: a full `Issue` lookup for every
+    /// relations call would be too expensive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_key: Option<String>,
 }
 
 /// Filter parameters for listing issues.
@@ -167,6 +204,34 @@ pub struct CreateIssueInput {
     /// first-class Components concept (GitHub/GitLab/ClickUp).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub components: Vec<String>,
+    /// Fix version **names** to associate with the issue (Jira-only).
+    /// Each entry is a release name from the project's versions
+    /// (`ProjectVersion.name`, e.g. `"3.18.0"`). Jira accepts both id-
+    /// and name-based references in `fields.fixVersions`; names line up
+    /// with the schema enricher and stay portable across Cloud and
+    /// Self-Hosted. Ignored by providers without first-class fix
+    /// versions (GitHub/GitLab/ClickUp).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fix_versions: Vec<String>,
+    /// Parent epic key (Jira-only). Maps to the instance's `Epic Link`
+    /// custom field — id resolved at runtime, no need for callers to
+    /// know the `customfield_*` number. On Cloud team-managed projects
+    /// the canonical Epic Link is the system `parent` field; passing
+    /// the same value via `epic_key` works there too because Jira
+    /// accepts the customfield as an alias.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_key: Option<String>,
+    /// Sprint id (Jira-only). Maps to the instance's `Sprint` custom
+    /// field. Numeric, not name — Jira's Sprint field stores agile
+    /// board sprint ids; use `get_board_sprints` to discover them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sprint_id: Option<i64>,
+    /// Epic name (Jira-only, required when `issue_type == "Epic"` on
+    /// Server/DC and Cloud company-managed projects). Maps to the
+    /// instance's `Epic Name` custom field. Cloud team-managed
+    /// projects use the regular `summary` and ignore this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_name: Option<String>,
 }
 
 impl Default for CreateIssueInput {
@@ -183,6 +248,10 @@ impl Default for CreateIssueInput {
             issue_type: None,
             custom_fields: None,
             components: Vec::new(),
+            fix_versions: Vec::new(),
+            epic_key: None,
+            sprint_id: None,
+            epic_name: None,
         }
     }
 }
@@ -223,6 +292,27 @@ pub struct UpdateIssueInput {
     /// **names** (see [`CreateIssueInput::components`] for rationale).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub components: Option<Vec<String>>,
+    /// Replace fix versions on the issue (Jira-only).
+    /// `None` leaves fix versions untouched. `Some(vec![])` clears all
+    /// fix versions. `Some(vec![...])` replaces with the given release
+    /// **names** (see [`CreateIssueInput::fix_versions`] for rationale).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix_versions: Option<Vec<String>>,
+    /// Set the parent epic (Jira-only). `None` leaves the link
+    /// untouched. `Some("PROJ-1")` replaces it. To detach an issue
+    /// from its epic, pass `customFields: { "<epic-link-cf>": null }`
+    /// — the `epic_key` slot is for setting, not clearing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_key: Option<String>,
+    /// Move the issue to a sprint (Jira-only). `None` leaves the
+    /// sprint untouched. See [`CreateIssueInput::sprint_id`] for the
+    /// id-vs-name rationale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sprint_id: Option<i64>,
+    /// Set the Epic Name (Jira-only, applies to Epic-typed issues).
+    /// `None` leaves it untouched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_name: Option<String>,
 }
 
 impl Default for UpdateIssueInput {
@@ -238,6 +328,10 @@ impl Default for UpdateIssueInput {
             markdown: true,
             custom_fields: None,
             components: None,
+            fix_versions: None,
+            epic_key: None,
+            sprint_id: None,
+            epic_name: None,
         }
     }
 }
@@ -779,6 +873,50 @@ pub struct ListProjectVersionsParams {
     /// Whether to fetch per-version `issue_count` (extra round-trip
     /// or `?expand=issuesstatus` on Cloud).
     pub include_issue_count: bool,
+}
+
+/// Provider-agnostic descriptor for a custom field on an issue
+/// tracker — Jira's `customfield_*` numbers, GitLab's resource
+/// labels, ClickUp's "custom field" entities. Only the lowest common
+/// denominator (`id`, `name`, `field_type`) is unified; provider
+/// specifics live under `native` so callers that need them (e.g.
+/// downstream codegen) can read them without losing fidelity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomFieldDescriptor {
+    /// Provider-specific id (e.g. `"customfield_10014"` on Jira).
+    pub id: String,
+    /// Human-readable name (e.g. `"Epic Link"`).
+    pub name: String,
+    /// Normalised type tag (`"string"`, `"array"`, `"number"`, ...).
+    /// Empty string when the provider didn't expose a schema.
+    pub field_type: String,
+    /// Optional description copied from the provider, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Provider-native schema details preserved verbatim — Jira's
+    /// `JiraFieldSchema` (custom URI, customId), ClickUp's option
+    /// list, GitHub's enum values. Opaque to the unified layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<Value>,
+}
+
+/// Filters / pagination for `IssueProvider::list_custom_fields`.
+#[derive(Debug, Clone, Default)]
+pub struct ListCustomFieldsParams {
+    /// Project key to scope the query — used by providers that
+    /// expose project-scoped customfields. Ignored on Jira global
+    /// `/field` endpoint.
+    pub project: Option<String>,
+    /// Issue type to scope the query (Jira create-screen contexts).
+    /// Ignored when the provider returns a flat global list.
+    pub issue_type: Option<String>,
+    /// Case-insensitive substring filter on the field name. Useful
+    /// for "find the Epic Link customfield" without listing every
+    /// field on the instance.
+    pub search: Option<String>,
+    /// Maximum results after filtering. Tool layer caps this at 200
+    /// to honour Paper-1 token budgets.
+    pub limit: Option<u32>,
 }
 
 /// Input to `IssueProvider::upsert_project_version`.

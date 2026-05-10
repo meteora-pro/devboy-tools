@@ -384,6 +384,7 @@ fn map_issue(gl_issue: &GitLabIssue, base_url: &str) -> Issue {
         .filter(|&c| c > 0);
 
     Issue {
+        custom_fields: std::collections::HashMap::new(),
         key: format!("gitlab#{}", gl_issue.iid),
         title: gl_issue.title.clone(),
         description: gl_issue.description.clone(),
