@@ -1,0 +1,41 @@
+{
+  "$schema": "../schema/v1.json",
+  "schema_version": 1,
+  "provider_id": "ollama",
+  "display_name": "Ollama",
+  "description": "Local LLM runtime. The hosted variant at ollama.com/turbo serves API keys for paid inference; the self-hosted server at `localhost:11434` (or wherever you run it) accepts an optional bearer token via `OLLAMA_API_KEY` when the operator pins one. The framework only stores the value — the key shape is provider-defined free-form because self-hosted operators set their own.",
+  "variants": [
+    {
+      "id": "ollama-api-key",
+      "display_name": "Ollama API key",
+      "description": "Bearer token for hosted Ollama Turbo or a self-hosted server protected by `OLLAMA_API_KEY`. The hosted shape is `ollama-...` (provider docs are sparse on the exact length); self-hosted operators pick whatever string they like, so the catalog accepts any non-empty value.",
+      "format_hint": "free-form bearer token (provider does not pin a shape; self-hosted operators choose their own)",
+      "retrieval": {
+        "console_url": "https://ollama.com/settings/keys",
+        "steps": [
+          "For hosted Ollama Turbo: open https://ollama.com/settings/keys, sign in, click Create API key, copy the value.",
+          "For self-hosted: pick any opaque string (e.g. `openssl rand -hex 32`) and set it on the server via `OLLAMA_API_KEY=<value>`. The same value goes here in devboy."
+        ],
+        "notes": "Hosted Turbo billing follows the Ollama account; self-hosted has no billing surface. Self-hosted servers behind a network firewall can run with no key at all — devboy only stores a value if the user provides one."
+      },
+      "liveness": {
+        "kind": "http",
+        "url": "http://localhost:11434/api/tags",
+        "method": "GET",
+        "auth": { "kind": "bearer" },
+        "expect_status": 200
+      },
+      "rotation": { "method": "manual", "every_days": 180 }
+    }
+  ],
+  "env_var_patterns": [
+    { "matches": ["OLLAMA_API_KEY"], "variant": "ollama-api-key" }
+  ],
+  "env_var_skip": [
+    "OLLAMA_BASE_URL",
+    "OLLAMA_HOST",
+    "OLLAMA_MODEL",
+    "OLLAMA_*_URL",
+    "OLLAMA_*_TIMEOUT"
+  ]
+}
