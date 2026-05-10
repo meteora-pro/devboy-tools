@@ -344,12 +344,51 @@ pub fn propose_one(var: &str, known_providers: &[String]) -> ProposedPath {
     let var_lower = var.to_lowercase();
     let (provider, provider_known) = pick_provider(&var_lower, known_providers);
     let purpose = pick_purpose(&var_lower, &provider);
+    // P5 — when the provider segment OR the purpose collapses
+    // to a generic word (`api`, `service`, `app`, `bot`,
+    // `worker`, …), the resulting `personal/<x>/...` path
+    // carries false confidence — the user has no real
+    // provider hint to act on. Skip with an actionable nudge:
+    // rename the env var (`SERVICE_TOKEN` → `STRIPE_TOKEN`)
+    // or pick the provider segment by hand. Demo on
+    // devboy-env-1 surfaced `SERVICE_TOKEN`,
+    // `MEET_SERVICE_TOKEN`, `API_KEY`, `BOT_IMAGE` as exactly
+    // this case.
+    //
+    // Only fires when `provider_known == false`: a real
+    // catalog match (`OPENAI_API_KEY` → `openai`) is never
+    // ambiguous, even if the purpose happens to be a
+    // generic-shaped word.
+    if !provider_known
+        && (is_generic_provider_segment(&provider) || is_generic_provider_segment(&purpose))
+    {
+        return ProposedPath::Skip {
+            env_var: var.to_owned(),
+            reason: "ambiguous provider segment — rename the env var to include a real provider \
+                     (e.g. `STRIPE_TOKEN` instead of `SERVICE_TOKEN`) or add the path manually"
+                .to_owned(),
+        };
+    }
     let scope = if provider_known { "team" } else { "personal" };
     ProposedPath::Path {
         env_var: var.to_owned(),
         path: format!("{scope}/{provider}/{purpose}"),
         provider_known,
     }
+}
+
+/// Provider-segment names that are too generic to anchor an
+/// ADR-020 path on. An env var like `SERVICE_TOKEN` carries
+/// no real provider hint; pretending it does writes a
+/// confidently-wrong `personal/service/api-key` entry. The
+/// proposer treats these as ambiguous and prompts the user
+/// to rename or add the path manually.
+fn is_generic_provider_segment(seg: &str) -> bool {
+    const GENERIC: &[&str] = &[
+        "api", "app", "bot", "core", "data", "db", "key", "main", "secret", "server", "service",
+        "system", "test", "token", "web", "worker",
+    ];
+    GENERIC.iter().any(|g| seg.eq_ignore_ascii_case(g))
 }
 
 /// Names that are clearly NOT secrets — usernames, emails,
@@ -1726,6 +1765,33 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
         assert_skip(&propose_one("HOME", &known()));
         assert_skip(&propose_one("PATH", &known()));
         assert_skip(&propose_one("PORT", &known()));
+    }
+
+    #[test]
+    fn proposer_skips_ambiguous_generic_segments() {
+        // P5 — `SERVICE_TOKEN`, `MEET_SERVICE_TOKEN`,
+        // `API_KEY`, `BOT_IMAGE` etc carry no real provider
+        // hint. Demo on devboy-env-1 had these landing as
+        // `personal/service/api-key`, `personal/api/key`,
+        // `personal/bot/image` — all confidently wrong.
+        // Now they Skip with an actionable rename hint.
+        assert_skip(&propose_one("SERVICE_TOKEN", &known()));
+        assert_skip(&propose_one("MEET_SERVICE_TOKEN", &known()));
+        assert_skip(&propose_one("API_KEY", &known()));
+        assert_skip(&propose_one("BOT_IMAGE", &known()));
+        assert_skip(&propose_one("WORKER_TOKEN", &known()));
+        assert_skip(&propose_one("CORE_SECRET", &known()));
+        assert_skip(&propose_one("DB_PASSWORD", &known()));
+    }
+
+    #[test]
+    fn proposer_keeps_ambiguous_when_provider_actually_known() {
+        // Sanity: a known provider passes through even if the
+        // purpose collapses to a "generic" word, because
+        // `provider_known` is true and the ambiguity gate
+        // only fires on unknown providers.
+        let p = propose_one("OPENAI_API_KEY", &known());
+        assert_path(&p, "team/openai/api-key", true);
     }
 
     #[test]
