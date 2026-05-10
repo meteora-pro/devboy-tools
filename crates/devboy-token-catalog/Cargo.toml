@@ -16,7 +16,6 @@ categories = ["authentication", "configuration"]
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 dirs.workspace = true
 toml.workspace = true
 # `blocking` is the URL fetcher's transport. JSON / TLS bits come

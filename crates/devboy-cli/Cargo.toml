@@ -46,7 +46,6 @@ eframe = { version = "0.34", default-features = false, features = ["default_font
 devboy-secret-keychain = { workspace = true }
 devboy-secret-local-vault = { workspace = true }
 devboy-secret-1password = { workspace = true }
-devboy-secret-vault = { workspace = true }
 devboy-secret-env-store = { workspace = true }
 devboy-github = { workspace = true }
 devboy-gitlab = { workspace = true }

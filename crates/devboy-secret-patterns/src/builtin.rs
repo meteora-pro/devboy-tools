@@ -251,17 +251,12 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
                 "moonshot",
                 "https://platform.moonshot.cn/console/api-keys",
             )),
+            // Liveness lives in `devboy-token-catalog/data/kimi.json`
+            // (see ADR-023 §3.4) — the rust pattern catalogue stays
+            // shape-only at v1 per the `rotation_and_liveness_are_unset_in_v1`
+            // invariant. The catalog tier carries the per-variant probe.
             rotation: None,
-            liveness: Some(LivenessSpec {
-                kind: LivenessKind::Http {
-                    // GET /v1/models — cheapest authenticated probe
-                    // that returns 200 only when the key is valid.
-                    url: "https://api.moonshot.cn/v1/models",
-                    method: HttpMethod::Get,
-                    auth: LivenessAuth::Bearer,
-                    expect_status: 200,
-                },
-            }),
+            liveness: None,
         },
         // ── Slack ───────────────────────────────────────────────────────────
         Builtin {

@@ -22,11 +22,14 @@ default = ["tui"]
 tui = []
 gui = ["dep:egui"]
 
+[package.metadata.cargo-machete]
+# `crossterm` is referenced via the `ratatui` `crossterm` feature, not
+# directly imported in any source file — keep it as a direct dep so
+# version bumps are visible here, but tell machete it's a true
+# pin-the-feature-graph dep, not a leak.
+ignored = ["crossterm"]
+
 [dependencies]
-thiserror.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-tracing.workspace = true
 secrecy.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 # `ratatui` and `crossterm` are pulled in unconditionally and gated

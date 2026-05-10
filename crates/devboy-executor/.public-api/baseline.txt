@@ -2,6 +2,78 @@ pub mod devboy_executor
 pub use devboy_executor::ToolEnricher
 pub use devboy_executor::ToolSchema
 pub use devboy_executor::sanitize_field_name
+pub mod devboy_executor::argv_secrets
+pub enum devboy_executor::argv_secrets::ArgvRewriteError
+pub devboy_executor::argv_secrets::ArgvRewriteError::Resolve
+pub devboy_executor::argv_secrets::ArgvRewriteError::Resolve::path: alloc::string::String
+pub devboy_executor::argv_secrets::ArgvRewriteError::Resolve::source_error: devboy_core::alias::AliasResolverError
+impl core::error::Error for devboy_executor::argv_secrets::ArgvRewriteError
+pub fn devboy_executor::argv_secrets::ArgvRewriteError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for devboy_executor::argv_secrets::ArgvRewriteError
+pub fn devboy_executor::argv_secrets::ArgvRewriteError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_executor::argv_secrets::ArgvRewriteError
+pub fn devboy_executor::argv_secrets::ArgvRewriteError::fmt(&self, __formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_executor::argv_secrets::ArgvRewriteError
+impl core::marker::Send for devboy_executor::argv_secrets::ArgvRewriteError
+impl core::marker::Sync for devboy_executor::argv_secrets::ArgvRewriteError
+impl core::marker::Unpin for devboy_executor::argv_secrets::ArgvRewriteError
+impl core::marker::UnsafeUnpin for devboy_executor::argv_secrets::ArgvRewriteError
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::argv_secrets::ArgvRewriteError
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::argv_secrets::ArgvRewriteError
+pub enum devboy_executor::argv_secrets::SubstitutionStrategy
+pub devboy_executor::argv_secrets::SubstitutionStrategy::Argv
+pub devboy_executor::argv_secrets::SubstitutionStrategy::Stdin
+impl core::clone::Clone for devboy_executor::argv_secrets::SubstitutionStrategy
+pub fn devboy_executor::argv_secrets::SubstitutionStrategy::clone(&self) -> devboy_executor::argv_secrets::SubstitutionStrategy
+impl core::cmp::Eq for devboy_executor::argv_secrets::SubstitutionStrategy
+impl core::cmp::PartialEq for devboy_executor::argv_secrets::SubstitutionStrategy
+pub fn devboy_executor::argv_secrets::SubstitutionStrategy::eq(&self, other: &devboy_executor::argv_secrets::SubstitutionStrategy) -> bool
+impl core::fmt::Debug for devboy_executor::argv_secrets::SubstitutionStrategy
+pub fn devboy_executor::argv_secrets::SubstitutionStrategy::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_executor::argv_secrets::SubstitutionStrategy
+impl core::marker::StructuralPartialEq for devboy_executor::argv_secrets::SubstitutionStrategy
+impl core::marker::Freeze for devboy_executor::argv_secrets::SubstitutionStrategy
+impl core::marker::Send for devboy_executor::argv_secrets::SubstitutionStrategy
+impl core::marker::Sync for devboy_executor::argv_secrets::SubstitutionStrategy
+impl core::marker::Unpin for devboy_executor::argv_secrets::SubstitutionStrategy
+impl core::marker::UnsafeUnpin for devboy_executor::argv_secrets::SubstitutionStrategy
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::argv_secrets::SubstitutionStrategy
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::argv_secrets::SubstitutionStrategy
+pub struct devboy_executor::argv_secrets::RewritePlan
+pub devboy_executor::argv_secrets::RewritePlan::argv: alloc::vec::Vec<alloc::string::String>
+pub devboy_executor::argv_secrets::RewritePlan::argv_visible: bool
+pub devboy_executor::argv_secrets::RewritePlan::stdin_payload: core::option::Option<secrecy::SecretString>
+pub devboy_executor::argv_secrets::RewritePlan::substitutions: alloc::vec::Vec<devboy_executor::argv_secrets::Substitution>
+impl core::fmt::Debug for devboy_executor::argv_secrets::RewritePlan
+pub fn devboy_executor::argv_secrets::RewritePlan::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_executor::argv_secrets::RewritePlan
+impl core::marker::Send for devboy_executor::argv_secrets::RewritePlan
+impl core::marker::Sync for devboy_executor::argv_secrets::RewritePlan
+impl core::marker::Unpin for devboy_executor::argv_secrets::RewritePlan
+impl core::marker::UnsafeUnpin for devboy_executor::argv_secrets::RewritePlan
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::argv_secrets::RewritePlan
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::argv_secrets::RewritePlan
+pub struct devboy_executor::argv_secrets::Substitution
+pub devboy_executor::argv_secrets::Substitution::argv_index: usize
+pub devboy_executor::argv_secrets::Substitution::path: alloc::string::String
+pub devboy_executor::argv_secrets::Substitution::strategy: devboy_executor::argv_secrets::SubstitutionStrategy
+impl core::clone::Clone for devboy_executor::argv_secrets::Substitution
+pub fn devboy_executor::argv_secrets::Substitution::clone(&self) -> devboy_executor::argv_secrets::Substitution
+impl core::cmp::Eq for devboy_executor::argv_secrets::Substitution
+impl core::cmp::PartialEq for devboy_executor::argv_secrets::Substitution
+pub fn devboy_executor::argv_secrets::Substitution::eq(&self, other: &devboy_executor::argv_secrets::Substitution) -> bool
+impl core::fmt::Debug for devboy_executor::argv_secrets::Substitution
+pub fn devboy_executor::argv_secrets::Substitution::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_executor::argv_secrets::Substitution
+impl core::marker::Freeze for devboy_executor::argv_secrets::Substitution
+impl core::marker::Send for devboy_executor::argv_secrets::Substitution
+impl core::marker::Sync for devboy_executor::argv_secrets::Substitution
+impl core::marker::Unpin for devboy_executor::argv_secrets::Substitution
+impl core::marker::UnsafeUnpin for devboy_executor::argv_secrets::Substitution
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::argv_secrets::Substitution
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::argv_secrets::Substitution
+pub fn devboy_executor::argv_secrets::apply_plan_to_command(plan: &devboy_executor::argv_secrets::RewritePlan, cmd: &mut tokio::process::Command)
+pub fn devboy_executor::argv_secrets::rewrite_argv(program: &str, argv: &[alloc::string::String], resolver: &dyn devboy_core::alias::SecretResolver) -> core::result::Result<devboy_executor::argv_secrets::RewritePlan, devboy_executor::argv_secrets::ArgvRewriteError>
 pub mod devboy_executor::context
 pub enum devboy_executor::context::ClickUpScope
 pub devboy_executor::context::ClickUpScope::List
