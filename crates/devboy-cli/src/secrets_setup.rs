@@ -460,6 +460,9 @@ fn non_secret_reason(var: &str) -> Option<&'static str> {
         "GOOGLE_CLOUD_",
         "GCP_PROJECT_",
         "FUNCTION_",
+        // P3 — Windows CPU / processor metadata. Surface
+        // identical on every Windows host; never a credential.
+        "PROCESSOR_",
     ];
     for pre in NON_SECRET_PREFIXES {
         if v.starts_with(pre) {
@@ -487,7 +490,43 @@ fn non_secret_reason(var: &str) -> Option<&'static str> {
         | "CONTINUOUS_INTEGRATION"
         | "GITHUB_ACTIONS"
         | "GITLAB_CI"
-        | "BUILD_ID" => Some("not a secret — environment / machine variable"),
+        | "BUILD_ID"
+        // P3 — Windows machine environment. Set by the OS or
+        // by Cygwin / MSYS / WSL bootstrap; never user-typed
+        // credentials. Demo on devboy-env-1 surfaced
+        // COMPUTERNAME / APPDATA as fake secrets.
+        | "COMPUTERNAME"
+        | "APPDATA"
+        | "LOCALAPPDATA"
+        | "HOMEDRIVE"
+        | "HOMEPATH"
+        | "USERPROFILE"
+        | "USERDOMAIN"
+        | "USERDOMAIN_ROAMINGPROFILE"
+        | "OS"
+        | "SYSTEMROOT"
+        | "SYSTEMDRIVE"
+        | "WINDIR"
+        | "PROGRAMFILES"
+        | "PROGRAMFILES(X86)"
+        | "PROGRAMW6432"
+        | "PROGRAMDATA"
+        | "PUBLIC"
+        | "ALLUSERSPROFILE"
+        | "COMMONPROGRAMFILES"
+        | "COMMONPROGRAMFILES(X86)"
+        | "COMMONPROGRAMW6432"
+        | "COMSPEC"
+        | "TEMP"
+        | "TMP"
+        | "PSMODULEPATH"
+        | "PATHEXT"
+        | "SESSIONNAME"
+        | "LOGONSERVER"
+        | "DRIVERDATA"
+        | "ONEDRIVE"
+        | "ONEDRIVECONSUMER"
+        | "ONEDRIVECOMMERCIAL" => Some("not a secret — environment / machine variable"),
         _ => None,
     }
 }
@@ -1661,6 +1700,30 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
         assert_skip(&propose_one("HOME", &known()));
         assert_skip(&propose_one("PATH", &known()));
         assert_skip(&propose_one("PORT", &known()));
+    }
+
+    #[test]
+    fn proposer_skips_windows_machine_vars() {
+        // P3 — Windows / Cygwin / MSYS / WSL exact-match
+        // exact list. Demo on devboy-env-1 hit COMPUTERNAME +
+        // APPDATA as fake secrets — both correctly skipped now.
+        assert_skip(&propose_one("COMPUTERNAME", &known()));
+        assert_skip(&propose_one("APPDATA", &known()));
+        assert_skip(&propose_one("LOCALAPPDATA", &known()));
+        assert_skip(&propose_one("USERPROFILE", &known()));
+        assert_skip(&propose_one("HOMEDRIVE", &known()));
+        assert_skip(&propose_one("HOMEPATH", &known()));
+        assert_skip(&propose_one("OS", &known()));
+        assert_skip(&propose_one("SYSTEMROOT", &known()));
+        assert_skip(&propose_one("WINDIR", &known()));
+        assert_skip(&propose_one("PROGRAMFILES", &known()));
+        assert_skip(&propose_one("TEMP", &known()));
+        assert_skip(&propose_one("TMP", &known()));
+        assert_skip(&propose_one("ONEDRIVE", &known()));
+        // PROCESSOR_* prefix.
+        assert_skip(&propose_one("PROCESSOR_ARCHITECTURE", &known()));
+        assert_skip(&propose_one("PROCESSOR_IDENTIFIER", &known()));
+        assert_skip(&propose_one("PROCESSOR_LEVEL", &known()));
     }
 
     #[test]
