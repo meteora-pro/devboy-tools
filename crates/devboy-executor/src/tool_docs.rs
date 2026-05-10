@@ -368,6 +368,16 @@ fn render_tool_entry(
 }
 
 fn format_type(prop: &PropertySchema) -> String {
+    if let Some(variants) = &prop.any_of {
+        // Render `anyOf` as a `|`-joined list of variant types.
+        // Pipes are escaped for markdown table cells (`\|`).
+        let inner = variants
+            .iter()
+            .map(format_type)
+            .collect::<Vec<_>>()
+            .join(" \\| ");
+        return inner;
+    }
     match prop.schema_type.as_str() {
         "array" => {
             let inner = prop
@@ -377,6 +387,7 @@ fn format_type(prop: &PropertySchema) -> String {
                 .unwrap_or_else(|| "any".into());
             format!("array&lt;{}&gt;", inner)
         }
+        "" => "any".into(),
         other => other.to_string(),
     }
 }
@@ -470,16 +481,28 @@ fn parameters_to_json(schema: &devboy_core::ToolSchema) -> Vec<Value> {
         .into_iter()
         .map(|name| {
             let prop = &schema.properties[name];
-            let mut entry = json!({
-                "name": name,
-                "type": prop.schema_type,
-                "required": schema.required.contains(name),
-            });
+            let mut entry = if prop.schema_type.is_empty() {
+                // `anyOf` schemas have no top-level `type`.
+                json!({
+                    "name": name,
+                    "required": schema.required.contains(name),
+                })
+            } else {
+                json!({
+                    "name": name,
+                    "type": prop.schema_type,
+                    "required": schema.required.contains(name),
+                })
+            };
             if let Some(desc) = &prop.description {
                 entry["description"] = Value::String(desc.clone());
             }
             if let Some(values) = &prop.enum_values {
                 entry["enum"] = json!(values);
+            }
+            if let Some(variants) = &prop.any_of {
+                entry["anyOf"] =
+                    serde_json::to_value(variants).unwrap_or_else(|_| Value::Array(vec![]));
             }
             if let Some(min) = prop.minimum {
                 entry["minimum"] = json!(min);

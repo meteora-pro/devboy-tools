@@ -194,6 +194,7 @@ fn map_issue(gh_issue: &GitHubIssue) -> Issue {
         .filter(|&c| c > 0);
 
     Issue {
+        custom_fields: std::collections::HashMap::new(),
         key: format!("gh#{}", gh_issue.number),
         title: gh_issue.title.clone(),
         description: gh_issue.body.clone(),

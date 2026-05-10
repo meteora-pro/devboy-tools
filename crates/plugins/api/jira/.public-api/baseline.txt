@@ -64,6 +64,23 @@ impl core::marker::Unpin for devboy_jira::metadata::JiraFlavor
 impl core::marker::UnsafeUnpin for devboy_jira::metadata::JiraFlavor
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::metadata::JiraFlavor
 impl core::panic::unwind_safe::UnwindSafe for devboy_jira::metadata::JiraFlavor
+pub enum devboy_jira::metadata::MetadataLoadStrategy
+pub devboy_jira::metadata::MetadataLoadStrategy::All
+pub devboy_jira::metadata::MetadataLoadStrategy::Configured(alloc::vec::Vec<alloc::string::String>)
+pub devboy_jira::metadata::MetadataLoadStrategy::MyProjects
+pub devboy_jira::metadata::MetadataLoadStrategy::RecentActivity
+pub devboy_jira::metadata::MetadataLoadStrategy::RecentActivity::days: u32
+impl core::clone::Clone for devboy_jira::metadata::MetadataLoadStrategy
+pub fn devboy_jira::metadata::MetadataLoadStrategy::clone(&self) -> devboy_jira::metadata::MetadataLoadStrategy
+impl core::fmt::Debug for devboy_jira::metadata::MetadataLoadStrategy
+pub fn devboy_jira::metadata::MetadataLoadStrategy::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_jira::metadata::MetadataLoadStrategy
+impl core::marker::Send for devboy_jira::metadata::MetadataLoadStrategy
+impl core::marker::Sync for devboy_jira::metadata::MetadataLoadStrategy
+impl core::marker::Unpin for devboy_jira::metadata::MetadataLoadStrategy
+impl core::marker::UnsafeUnpin for devboy_jira::metadata::MetadataLoadStrategy
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::metadata::MetadataLoadStrategy
+impl core::panic::unwind_safe::UnwindSafe for devboy_jira::metadata::MetadataLoadStrategy
 pub struct devboy_jira::metadata::JiraComponent
 pub devboy_jira::metadata::JiraComponent::id: alloc::string::String
 pub devboy_jira::metadata::JiraComponent::name: alloc::string::String
@@ -168,9 +185,12 @@ pub devboy_jira::metadata::JiraMetadata::projects: std::collections::hash::map::
 pub devboy_jira::metadata::JiraMetadata::structures: alloc::vec::Vec<devboy_jira::metadata::JiraStructureRef>
 impl devboy_jira::metadata::JiraMetadata
 pub fn devboy_jira::metadata::JiraMetadata::all_components(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn devboy_jira::metadata::JiraMetadata::all_custom_fields(&self) -> alloc::vec::Vec<devboy_jira::metadata::JiraCustomField>
 pub fn devboy_jira::metadata::JiraMetadata::all_issue_types(&self) -> alloc::vec::Vec<alloc::string::String>
 pub fn devboy_jira::metadata::JiraMetadata::all_link_types(&self) -> alloc::vec::Vec<alloc::string::String>
 pub fn devboy_jira::metadata::JiraMetadata::all_priorities(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn devboy_jira::metadata::JiraMetadata::custom_field_for_project(&self, project_key: &str, field_name: &str) -> core::option::Option<&devboy_jira::metadata::JiraCustomField>
+pub fn devboy_jira::metadata::JiraMetadata::custom_field_groups(&self) -> alloc::vec::Vec<(alloc::string::String, alloc::vec::Vec<devboy_jira::metadata::JiraCustomField>)>
 pub fn devboy_jira::metadata::JiraMetadata::is_single_project(&self) -> bool
 pub fn devboy_jira::metadata::JiraMetadata::project_keys(&self) -> alloc::vec::Vec<&str>
 impl core::clone::Clone for devboy_jira::metadata::JiraMetadata
@@ -250,6 +270,7 @@ impl core::marker::Unpin for devboy_jira::metadata::JiraStructureRef
 impl core::marker::UnsafeUnpin for devboy_jira::metadata::JiraStructureRef
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::metadata::JiraStructureRef
 impl core::panic::unwind_safe::UnwindSafe for devboy_jira::metadata::JiraStructureRef
+pub const devboy_jira::metadata::MAX_ENRICHMENT_PROJECTS: usize
 pub enum devboy_jira::JiraFlavor
 pub devboy_jira::JiraFlavor::Cloud
 pub devboy_jira::JiraFlavor::SelfHosted
@@ -272,203 +293,14 @@ impl core::marker::Unpin for devboy_jira::JiraFlavor
 impl core::marker::UnsafeUnpin for devboy_jira::JiraFlavor
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraFlavor
 impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraFlavor
-pub struct devboy_jira::AddCommentPayload
-pub devboy_jira::AddCommentPayload::body: serde_json::value::Value
-impl core::clone::Clone for devboy_jira::AddCommentPayload
-pub fn devboy_jira::AddCommentPayload::clone(&self) -> devboy_jira::AddCommentPayload
-impl core::fmt::Debug for devboy_jira::AddCommentPayload
-pub fn devboy_jira::AddCommentPayload::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::AddCommentPayload
-pub fn devboy_jira::AddCommentPayload::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl core::marker::Freeze for devboy_jira::AddCommentPayload
-impl core::marker::Send for devboy_jira::AddCommentPayload
-impl core::marker::Sync for devboy_jira::AddCommentPayload
-impl core::marker::Unpin for devboy_jira::AddCommentPayload
-impl core::marker::UnsafeUnpin for devboy_jira::AddCommentPayload
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::AddCommentPayload
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::AddCommentPayload
-pub struct devboy_jira::ComponentRef
-pub devboy_jira::ComponentRef::name: alloc::string::String
-impl core::clone::Clone for devboy_jira::ComponentRef
-pub fn devboy_jira::ComponentRef::clone(&self) -> devboy_jira::ComponentRef
-impl core::fmt::Debug for devboy_jira::ComponentRef
-pub fn devboy_jira::ComponentRef::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::ComponentRef
-pub fn devboy_jira::ComponentRef::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::ComponentRef
-pub fn devboy_jira::ComponentRef::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::ComponentRef
-impl core::marker::Send for devboy_jira::ComponentRef
-impl core::marker::Sync for devboy_jira::ComponentRef
-impl core::marker::Unpin for devboy_jira::ComponentRef
-impl core::marker::UnsafeUnpin for devboy_jira::ComponentRef
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::ComponentRef
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::ComponentRef
-pub struct devboy_jira::CreateIssueFields
-pub devboy_jira::CreateIssueFields::assignee: core::option::Option<serde_json::value::Value>
-pub devboy_jira::CreateIssueFields::components: core::option::Option<alloc::vec::Vec<devboy_jira::ComponentRef>>
-pub devboy_jira::CreateIssueFields::description: core::option::Option<serde_json::value::Value>
-pub devboy_jira::CreateIssueFields::issuetype: devboy_jira::IssueType
-pub devboy_jira::CreateIssueFields::labels: core::option::Option<alloc::vec::Vec<alloc::string::String>>
-pub devboy_jira::CreateIssueFields::parent: core::option::Option<devboy_jira::IssueKeyRef>
-pub devboy_jira::CreateIssueFields::priority: core::option::Option<devboy_jira::PriorityName>
-pub devboy_jira::CreateIssueFields::project: devboy_jira::ProjectKey
-pub devboy_jira::CreateIssueFields::summary: alloc::string::String
-impl core::clone::Clone for devboy_jira::CreateIssueFields
-pub fn devboy_jira::CreateIssueFields::clone(&self) -> devboy_jira::CreateIssueFields
-impl core::fmt::Debug for devboy_jira::CreateIssueFields
-pub fn devboy_jira::CreateIssueFields::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::CreateIssueFields
-pub fn devboy_jira::CreateIssueFields::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl core::marker::Freeze for devboy_jira::CreateIssueFields
-impl core::marker::Send for devboy_jira::CreateIssueFields
-impl core::marker::Sync for devboy_jira::CreateIssueFields
-impl core::marker::Unpin for devboy_jira::CreateIssueFields
-impl core::marker::UnsafeUnpin for devboy_jira::CreateIssueFields
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::CreateIssueFields
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::CreateIssueFields
-pub struct devboy_jira::CreateIssueLinkPayload
-pub devboy_jira::CreateIssueLinkPayload::inward_issue: devboy_jira::IssueKeyRef
-pub devboy_jira::CreateIssueLinkPayload::link_type: devboy_jira::IssueLinkTypeName
-pub devboy_jira::CreateIssueLinkPayload::outward_issue: devboy_jira::IssueKeyRef
-impl core::clone::Clone for devboy_jira::CreateIssueLinkPayload
-pub fn devboy_jira::CreateIssueLinkPayload::clone(&self) -> devboy_jira::CreateIssueLinkPayload
-impl core::fmt::Debug for devboy_jira::CreateIssueLinkPayload
-pub fn devboy_jira::CreateIssueLinkPayload::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::CreateIssueLinkPayload
-pub fn devboy_jira::CreateIssueLinkPayload::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl core::marker::Freeze for devboy_jira::CreateIssueLinkPayload
-impl core::marker::Send for devboy_jira::CreateIssueLinkPayload
-impl core::marker::Sync for devboy_jira::CreateIssueLinkPayload
-impl core::marker::Unpin for devboy_jira::CreateIssueLinkPayload
-impl core::marker::UnsafeUnpin for devboy_jira::CreateIssueLinkPayload
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::CreateIssueLinkPayload
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::CreateIssueLinkPayload
-pub struct devboy_jira::CreateIssuePayload
-pub devboy_jira::CreateIssuePayload::fields: devboy_jira::CreateIssueFields
-impl core::clone::Clone for devboy_jira::CreateIssuePayload
-pub fn devboy_jira::CreateIssuePayload::clone(&self) -> devboy_jira::CreateIssuePayload
-impl core::fmt::Debug for devboy_jira::CreateIssuePayload
-pub fn devboy_jira::CreateIssuePayload::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::CreateIssuePayload
-pub fn devboy_jira::CreateIssuePayload::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl core::marker::Freeze for devboy_jira::CreateIssuePayload
-impl core::marker::Send for devboy_jira::CreateIssuePayload
-impl core::marker::Sync for devboy_jira::CreateIssuePayload
-impl core::marker::Unpin for devboy_jira::CreateIssuePayload
-impl core::marker::UnsafeUnpin for devboy_jira::CreateIssuePayload
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::CreateIssuePayload
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::CreateIssuePayload
-pub struct devboy_jira::CreateIssueResponse
-pub devboy_jira::CreateIssueResponse::id: alloc::string::String
-pub devboy_jira::CreateIssueResponse::key: alloc::string::String
-impl core::clone::Clone for devboy_jira::CreateIssueResponse
-pub fn devboy_jira::CreateIssueResponse::clone(&self) -> devboy_jira::CreateIssueResponse
-impl core::fmt::Debug for devboy_jira::CreateIssueResponse
-pub fn devboy_jira::CreateIssueResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::CreateIssueResponse
-pub fn devboy_jira::CreateIssueResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::CreateIssueResponse
-impl core::marker::Send for devboy_jira::CreateIssueResponse
-impl core::marker::Sync for devboy_jira::CreateIssueResponse
-impl core::marker::Unpin for devboy_jira::CreateIssueResponse
-impl core::marker::UnsafeUnpin for devboy_jira::CreateIssueResponse
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::CreateIssueResponse
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::CreateIssueResponse
-pub struct devboy_jira::CreateVersionPayload
-pub devboy_jira::CreateVersionPayload::archived: core::option::Option<bool>
-pub devboy_jira::CreateVersionPayload::description: core::option::Option<alloc::string::String>
-pub devboy_jira::CreateVersionPayload::name: alloc::string::String
-pub devboy_jira::CreateVersionPayload::project: core::option::Option<alloc::string::String>
-pub devboy_jira::CreateVersionPayload::project_id: core::option::Option<u64>
-pub devboy_jira::CreateVersionPayload::release_date: core::option::Option<alloc::string::String>
-pub devboy_jira::CreateVersionPayload::released: core::option::Option<bool>
-pub devboy_jira::CreateVersionPayload::start_date: core::option::Option<alloc::string::String>
-impl core::clone::Clone for devboy_jira::CreateVersionPayload
-pub fn devboy_jira::CreateVersionPayload::clone(&self) -> devboy_jira::CreateVersionPayload
-impl core::default::Default for devboy_jira::CreateVersionPayload
-pub fn devboy_jira::CreateVersionPayload::default() -> devboy_jira::CreateVersionPayload
-impl core::fmt::Debug for devboy_jira::CreateVersionPayload
-pub fn devboy_jira::CreateVersionPayload::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::CreateVersionPayload
-pub fn devboy_jira::CreateVersionPayload::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl core::marker::Freeze for devboy_jira::CreateVersionPayload
-impl core::marker::Send for devboy_jira::CreateVersionPayload
-impl core::marker::Sync for devboy_jira::CreateVersionPayload
-impl core::marker::Unpin for devboy_jira::CreateVersionPayload
-impl core::marker::UnsafeUnpin for devboy_jira::CreateVersionPayload
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::CreateVersionPayload
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::CreateVersionPayload
-pub struct devboy_jira::IssueKeyRef
-pub devboy_jira::IssueKeyRef::key: alloc::string::String
-impl core::clone::Clone for devboy_jira::IssueKeyRef
-pub fn devboy_jira::IssueKeyRef::clone(&self) -> devboy_jira::IssueKeyRef
-impl core::fmt::Debug for devboy_jira::IssueKeyRef
-pub fn devboy_jira::IssueKeyRef::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::IssueKeyRef
-pub fn devboy_jira::IssueKeyRef::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl core::marker::Freeze for devboy_jira::IssueKeyRef
-impl core::marker::Send for devboy_jira::IssueKeyRef
-impl core::marker::Sync for devboy_jira::IssueKeyRef
-impl core::marker::Unpin for devboy_jira::IssueKeyRef
-impl core::marker::UnsafeUnpin for devboy_jira::IssueKeyRef
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::IssueKeyRef
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::IssueKeyRef
-pub struct devboy_jira::IssueLinkTypeName
-pub devboy_jira::IssueLinkTypeName::name: alloc::string::String
-impl core::clone::Clone for devboy_jira::IssueLinkTypeName
-pub fn devboy_jira::IssueLinkTypeName::clone(&self) -> devboy_jira::IssueLinkTypeName
-impl core::fmt::Debug for devboy_jira::IssueLinkTypeName
-pub fn devboy_jira::IssueLinkTypeName::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::IssueLinkTypeName
-pub fn devboy_jira::IssueLinkTypeName::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl core::marker::Freeze for devboy_jira::IssueLinkTypeName
-impl core::marker::Send for devboy_jira::IssueLinkTypeName
-impl core::marker::Sync for devboy_jira::IssueLinkTypeName
-impl core::marker::Unpin for devboy_jira::IssueLinkTypeName
-impl core::marker::UnsafeUnpin for devboy_jira::IssueLinkTypeName
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::IssueLinkTypeName
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::IssueLinkTypeName
-pub struct devboy_jira::IssueType
-pub devboy_jira::IssueType::name: alloc::string::String
-impl core::clone::Clone for devboy_jira::IssueType
-pub fn devboy_jira::IssueType::clone(&self) -> devboy_jira::IssueType
-impl core::fmt::Debug for devboy_jira::IssueType
-pub fn devboy_jira::IssueType::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::IssueType
-pub fn devboy_jira::IssueType::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl core::marker::Freeze for devboy_jira::IssueType
-impl core::marker::Send for devboy_jira::IssueType
-impl core::marker::Sync for devboy_jira::IssueType
-impl core::marker::Unpin for devboy_jira::IssueType
-impl core::marker::UnsafeUnpin for devboy_jira::IssueType
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::IssueType
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::IssueType
-pub struct devboy_jira::JiraAttachment
-pub devboy_jira::JiraAttachment::author: core::option::Option<devboy_jira::JiraUser>
-pub devboy_jira::JiraAttachment::content: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraAttachment::created: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraAttachment::filename: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraAttachment::id: alloc::string::String
-pub devboy_jira::JiraAttachment::mime_type: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraAttachment::size: core::option::Option<u64>
-impl core::clone::Clone for devboy_jira::JiraAttachment
-pub fn devboy_jira::JiraAttachment::clone(&self) -> devboy_jira::JiraAttachment
-impl core::fmt::Debug for devboy_jira::JiraAttachment
-pub fn devboy_jira::JiraAttachment::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraAttachment
-pub fn devboy_jira::JiraAttachment::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraAttachment
-impl core::marker::Send for devboy_jira::JiraAttachment
-impl core::marker::Sync for devboy_jira::JiraAttachment
-impl core::marker::Unpin for devboy_jira::JiraAttachment
-impl core::marker::UnsafeUnpin for devboy_jira::JiraAttachment
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraAttachment
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraAttachment
 pub struct devboy_jira::JiraClient
 impl devboy_jira::JiraClient
+pub async fn devboy_jira::JiraClient::build_project_metadata(&self, project_key: &str) -> devboy_core::error::Result<devboy_jira::metadata::JiraProjectMetadata>
+pub async fn devboy_jira::JiraClient::fetch_fields(&self) -> devboy_core::error::Result<alloc::vec::Vec<devboy_jira::JiraField>>
 pub async fn devboy_jira::JiraClient::list_structures_for_metadata(&self) -> devboy_core::error::Result<alloc::vec::Vec<devboy_jira::metadata::JiraStructureRef>>
+pub async fn devboy_jira::JiraClient::load_default_metadata(&self, strategy: devboy_jira::metadata::MetadataLoadStrategy) -> devboy_core::error::Result<devboy_jira::metadata::JiraMetadata>
 pub fn devboy_jira::JiraClient::new(url: impl core::convert::Into<alloc::string::String>, project_key: impl core::convert::Into<alloc::string::String>, email: impl core::convert::Into<alloc::string::String>, token: secrecy::SecretString) -> Self
+pub async fn devboy_jira::JiraClient::resolve_field_id_by_name(&self, name: &str) -> devboy_core::error::Result<core::option::Option<alloc::string::String>>
 pub fn devboy_jira::JiraClient::with_base_url(base_url: impl core::convert::Into<alloc::string::String>, project_key: impl core::convert::Into<alloc::string::String>, email: impl core::convert::Into<alloc::string::String>, token: secrecy::SecretString, flavor: bool) -> Self
 pub fn devboy_jira::JiraClient::with_flavor(self, flavor: devboy_jira::JiraFlavor) -> Self
 pub fn devboy_jira::JiraClient::with_instance_url(self, url: impl core::convert::Into<alloc::string::String>) -> Self
@@ -498,6 +330,7 @@ pub fn devboy_jira::JiraClient::get_structure_views<'life0, 'async_trait>(&'life
 pub fn devboy_jira::JiraClient::get_structures<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::Structure>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_jira::JiraClient::get_users<'life0, 'async_trait>(&'life0 self, options: devboy_core::types::GetUsersOptions) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::User>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_jira::JiraClient::link_issues<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, source_key: &'life1 str, target_key: &'life2 str, link_type: &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn devboy_jira::JiraClient::list_custom_fields<'life0, 'async_trait>(&'life0 self, params: devboy_core::types::ListCustomFieldsParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::CustomFieldDescriptor>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_jira::JiraClient::list_project_versions<'life0, 'async_trait>(&'life0 self, params: devboy_core::types::ListProjectVersionsParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::ProjectVersion>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_jira::JiraClient::move_structure_rows<'life0, 'async_trait>(&'life0 self, structure_id: u64, input: devboy_core::types::MoveStructureRowsInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ForestModifyResult>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_jira::JiraClient::provider_name(&self) -> &'static str
@@ -519,218 +352,66 @@ impl devboy_core::provider::UserProvider for devboy_jira::JiraClient
 pub fn devboy_jira::JiraClient::get_user_profile<'life0, 'life1, 'async_trait>(&'life0 self, user_id: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::User>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn devboy_jira::JiraClient::lookup_user_by_email<'life0, 'life1, 'async_trait>(&'life0 self, email: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<core::option::Option<devboy_core::types::User>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn devboy_jira::JiraClient::provider_name(&self) -> &'static str
-impl core::marker::Freeze for devboy_jira::JiraClient
+impl !core::marker::Freeze for devboy_jira::JiraClient
 impl core::marker::Send for devboy_jira::JiraClient
 impl core::marker::Sync for devboy_jira::JiraClient
 impl core::marker::Unpin for devboy_jira::JiraClient
 impl core::marker::UnsafeUnpin for devboy_jira::JiraClient
 impl !core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraClient
 impl !core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraClient
-pub struct devboy_jira::JiraCloudSearchResponse
-pub devboy_jira::JiraCloudSearchResponse::issues: alloc::vec::Vec<devboy_jira::JiraIssue>
-pub devboy_jira::JiraCloudSearchResponse::next_page_token: core::option::Option<alloc::string::String>
-impl core::clone::Clone for devboy_jira::JiraCloudSearchResponse
-pub fn devboy_jira::JiraCloudSearchResponse::clone(&self) -> devboy_jira::JiraCloudSearchResponse
-impl core::fmt::Debug for devboy_jira::JiraCloudSearchResponse
-pub fn devboy_jira::JiraCloudSearchResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraCloudSearchResponse
-pub fn devboy_jira::JiraCloudSearchResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraCloudSearchResponse
-impl core::marker::Send for devboy_jira::JiraCloudSearchResponse
-impl core::marker::Sync for devboy_jira::JiraCloudSearchResponse
-impl core::marker::Unpin for devboy_jira::JiraCloudSearchResponse
-impl core::marker::UnsafeUnpin for devboy_jira::JiraCloudSearchResponse
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraCloudSearchResponse
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraCloudSearchResponse
-pub struct devboy_jira::JiraComment
-pub devboy_jira::JiraComment::author: core::option::Option<devboy_jira::JiraUser>
-pub devboy_jira::JiraComment::body: core::option::Option<serde_json::value::Value>
-pub devboy_jira::JiraComment::created: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraComment::id: alloc::string::String
-pub devboy_jira::JiraComment::updated: core::option::Option<alloc::string::String>
-impl core::clone::Clone for devboy_jira::JiraComment
-pub fn devboy_jira::JiraComment::clone(&self) -> devboy_jira::JiraComment
-impl core::fmt::Debug for devboy_jira::JiraComment
-pub fn devboy_jira::JiraComment::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraComment
-pub fn devboy_jira::JiraComment::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraComment
-impl core::marker::Send for devboy_jira::JiraComment
-impl core::marker::Sync for devboy_jira::JiraComment
-impl core::marker::Unpin for devboy_jira::JiraComment
-impl core::marker::UnsafeUnpin for devboy_jira::JiraComment
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraComment
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraComment
-pub struct devboy_jira::JiraCommentsResponse
-pub devboy_jira::JiraCommentsResponse::comments: alloc::vec::Vec<devboy_jira::JiraComment>
-impl core::clone::Clone for devboy_jira::JiraCommentsResponse
-pub fn devboy_jira::JiraCommentsResponse::clone(&self) -> devboy_jira::JiraCommentsResponse
-impl core::fmt::Debug for devboy_jira::JiraCommentsResponse
-pub fn devboy_jira::JiraCommentsResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraCommentsResponse
-pub fn devboy_jira::JiraCommentsResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraCommentsResponse
-impl core::marker::Send for devboy_jira::JiraCommentsResponse
-impl core::marker::Sync for devboy_jira::JiraCommentsResponse
-impl core::marker::Unpin for devboy_jira::JiraCommentsResponse
-impl core::marker::UnsafeUnpin for devboy_jira::JiraCommentsResponse
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraCommentsResponse
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraCommentsResponse
-pub struct devboy_jira::JiraForestModifyResponse
-pub devboy_jira::JiraForestModifyResponse::rows: alloc::vec::Vec<devboy_jira::JiraForestRow>
-pub devboy_jira::JiraForestModifyResponse::version: u64
-impl core::clone::Clone for devboy_jira::JiraForestModifyResponse
-pub fn devboy_jira::JiraForestModifyResponse::clone(&self) -> devboy_jira::JiraForestModifyResponse
-impl core::fmt::Debug for devboy_jira::JiraForestModifyResponse
-pub fn devboy_jira::JiraForestModifyResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraForestModifyResponse
-pub fn devboy_jira::JiraForestModifyResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraForestModifyResponse
-impl core::marker::Send for devboy_jira::JiraForestModifyResponse
-impl core::marker::Sync for devboy_jira::JiraForestModifyResponse
-impl core::marker::Unpin for devboy_jira::JiraForestModifyResponse
-impl core::marker::UnsafeUnpin for devboy_jira::JiraForestModifyResponse
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraForestModifyResponse
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraForestModifyResponse
-pub struct devboy_jira::JiraForestResponse
-pub devboy_jira::JiraForestResponse::depths: alloc::vec::Vec<u32>
-pub devboy_jira::JiraForestResponse::rows: alloc::vec::Vec<devboy_jira::JiraForestRow>
-pub devboy_jira::JiraForestResponse::total_count: core::option::Option<u64>
-pub devboy_jira::JiraForestResponse::version: u64
-impl core::clone::Clone for devboy_jira::JiraForestResponse
-pub fn devboy_jira::JiraForestResponse::clone(&self) -> devboy_jira::JiraForestResponse
-impl core::fmt::Debug for devboy_jira::JiraForestResponse
-pub fn devboy_jira::JiraForestResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraForestResponse
-pub fn devboy_jira::JiraForestResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraForestResponse
-impl core::marker::Send for devboy_jira::JiraForestResponse
-impl core::marker::Sync for devboy_jira::JiraForestResponse
-impl core::marker::Unpin for devboy_jira::JiraForestResponse
-impl core::marker::UnsafeUnpin for devboy_jira::JiraForestResponse
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraForestResponse
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraForestResponse
-pub struct devboy_jira::JiraForestRow
-pub devboy_jira::JiraForestRow::id: u64
-pub devboy_jira::JiraForestRow::item_id: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraForestRow::item_type: core::option::Option<alloc::string::String>
-impl core::clone::Clone for devboy_jira::JiraForestRow
-pub fn devboy_jira::JiraForestRow::clone(&self) -> devboy_jira::JiraForestRow
-impl core::fmt::Debug for devboy_jira::JiraForestRow
-pub fn devboy_jira::JiraForestRow::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraForestRow
-pub fn devboy_jira::JiraForestRow::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraForestRow
-impl core::marker::Send for devboy_jira::JiraForestRow
-impl core::marker::Sync for devboy_jira::JiraForestRow
-impl core::marker::Unpin for devboy_jira::JiraForestRow
-impl core::marker::UnsafeUnpin for devboy_jira::JiraForestRow
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraForestRow
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraForestRow
-pub struct devboy_jira::JiraIssue
-pub devboy_jira::JiraIssue::fields: devboy_jira::JiraIssueFields
-pub devboy_jira::JiraIssue::id: alloc::string::String
-pub devboy_jira::JiraIssue::key: alloc::string::String
-impl core::clone::Clone for devboy_jira::JiraIssue
-pub fn devboy_jira::JiraIssue::clone(&self) -> devboy_jira::JiraIssue
-impl core::fmt::Debug for devboy_jira::JiraIssue
-pub fn devboy_jira::JiraIssue::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraIssue
-pub fn devboy_jira::JiraIssue::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraIssue
-impl core::marker::Send for devboy_jira::JiraIssue
-impl core::marker::Sync for devboy_jira::JiraIssue
-impl core::marker::Unpin for devboy_jira::JiraIssue
-impl core::marker::UnsafeUnpin for devboy_jira::JiraIssue
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraIssue
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraIssue
-pub struct devboy_jira::JiraIssueFields
-pub devboy_jira::JiraIssueFields::assignee: core::option::Option<devboy_jira::JiraUser>
-pub devboy_jira::JiraIssueFields::attachment: alloc::vec::Vec<devboy_jira::JiraAttachment>
-pub devboy_jira::JiraIssueFields::created: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraIssueFields::description: core::option::Option<serde_json::value::Value>
-pub devboy_jira::JiraIssueFields::issuelinks: alloc::vec::Vec<devboy_jira::JiraIssueLink>
-pub devboy_jira::JiraIssueFields::labels: alloc::vec::Vec<alloc::string::String>
-pub devboy_jira::JiraIssueFields::parent: core::option::Option<alloc::boxed::Box<devboy_jira::JiraIssue>>
-pub devboy_jira::JiraIssueFields::priority: core::option::Option<devboy_jira::JiraPriority>
-pub devboy_jira::JiraIssueFields::reporter: core::option::Option<devboy_jira::JiraUser>
-pub devboy_jira::JiraIssueFields::status: core::option::Option<devboy_jira::JiraStatus>
-pub devboy_jira::JiraIssueFields::subtasks: alloc::vec::Vec<devboy_jira::JiraIssue>
-pub devboy_jira::JiraIssueFields::summary: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraIssueFields::updated: core::option::Option<alloc::string::String>
-impl core::clone::Clone for devboy_jira::JiraIssueFields
-pub fn devboy_jira::JiraIssueFields::clone(&self) -> devboy_jira::JiraIssueFields
-impl core::fmt::Debug for devboy_jira::JiraIssueFields
-pub fn devboy_jira::JiraIssueFields::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraIssueFields
-pub fn devboy_jira::JiraIssueFields::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraIssueFields
-impl core::marker::Send for devboy_jira::JiraIssueFields
-impl core::marker::Sync for devboy_jira::JiraIssueFields
-impl core::marker::Unpin for devboy_jira::JiraIssueFields
-impl core::marker::UnsafeUnpin for devboy_jira::JiraIssueFields
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraIssueFields
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraIssueFields
-pub struct devboy_jira::JiraIssueLink
-pub devboy_jira::JiraIssueLink::id: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraIssueLink::inward_issue: core::option::Option<alloc::boxed::Box<devboy_jira::JiraIssue>>
-pub devboy_jira::JiraIssueLink::link_type: devboy_jira::JiraIssueLinkType
-pub devboy_jira::JiraIssueLink::outward_issue: core::option::Option<alloc::boxed::Box<devboy_jira::JiraIssue>>
-impl core::clone::Clone for devboy_jira::JiraIssueLink
-pub fn devboy_jira::JiraIssueLink::clone(&self) -> devboy_jira::JiraIssueLink
-impl core::fmt::Debug for devboy_jira::JiraIssueLink
-pub fn devboy_jira::JiraIssueLink::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraIssueLink
-pub fn devboy_jira::JiraIssueLink::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraIssueLink
-impl core::marker::Send for devboy_jira::JiraIssueLink
-impl core::marker::Sync for devboy_jira::JiraIssueLink
-impl core::marker::Unpin for devboy_jira::JiraIssueLink
-impl core::marker::UnsafeUnpin for devboy_jira::JiraIssueLink
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraIssueLink
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraIssueLink
-pub struct devboy_jira::JiraIssueLinkType
-pub devboy_jira::JiraIssueLinkType::inward: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraIssueLinkType::name: alloc::string::String
-pub devboy_jira::JiraIssueLinkType::outward: core::option::Option<alloc::string::String>
-impl core::clone::Clone for devboy_jira::JiraIssueLinkType
-pub fn devboy_jira::JiraIssueLinkType::clone(&self) -> devboy_jira::JiraIssueLinkType
-impl core::fmt::Debug for devboy_jira::JiraIssueLinkType
-pub fn devboy_jira::JiraIssueLinkType::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraIssueLinkType
-pub fn devboy_jira::JiraIssueLinkType::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraIssueLinkType
-impl core::marker::Send for devboy_jira::JiraIssueLinkType
-impl core::marker::Sync for devboy_jira::JiraIssueLinkType
-impl core::marker::Unpin for devboy_jira::JiraIssueLinkType
-impl core::marker::UnsafeUnpin for devboy_jira::JiraIssueLinkType
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraIssueLinkType
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraIssueLinkType
-pub struct devboy_jira::JiraIssueTypeStatuses
-pub devboy_jira::JiraIssueTypeStatuses::name: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraIssueTypeStatuses::statuses: alloc::vec::Vec<devboy_jira::JiraProjectStatus>
-impl core::clone::Clone for devboy_jira::JiraIssueTypeStatuses
-pub fn devboy_jira::JiraIssueTypeStatuses::clone(&self) -> devboy_jira::JiraIssueTypeStatuses
-impl core::fmt::Debug for devboy_jira::JiraIssueTypeStatuses
-pub fn devboy_jira::JiraIssueTypeStatuses::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraIssueTypeStatuses
-pub fn devboy_jira::JiraIssueTypeStatuses::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraIssueTypeStatuses
-impl core::marker::Send for devboy_jira::JiraIssueTypeStatuses
-impl core::marker::Sync for devboy_jira::JiraIssueTypeStatuses
-impl core::marker::Unpin for devboy_jira::JiraIssueTypeStatuses
-impl core::marker::UnsafeUnpin for devboy_jira::JiraIssueTypeStatuses
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraIssueTypeStatuses
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraIssueTypeStatuses
+pub struct devboy_jira::JiraField
+pub devboy_jira::JiraField::custom: bool
+pub devboy_jira::JiraField::id: alloc::string::String
+pub devboy_jira::JiraField::name: alloc::string::String
+pub devboy_jira::JiraField::schema: core::option::Option<devboy_jira::JiraFieldSchema>
+impl core::clone::Clone for devboy_jira::JiraField
+pub fn devboy_jira::JiraField::clone(&self) -> devboy_jira::JiraField
+impl core::fmt::Debug for devboy_jira::JiraField
+pub fn devboy_jira::JiraField::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_jira::JiraField
+pub fn devboy_jira::JiraField::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraField
+pub fn devboy_jira::JiraField::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_jira::JiraField
+impl core::marker::Send for devboy_jira::JiraField
+impl core::marker::Sync for devboy_jira::JiraField
+impl core::marker::Unpin for devboy_jira::JiraField
+impl core::marker::UnsafeUnpin for devboy_jira::JiraField
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraField
+impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraField
+pub struct devboy_jira::JiraFieldSchema
+pub devboy_jira::JiraFieldSchema::custom: core::option::Option<alloc::string::String>
+pub devboy_jira::JiraFieldSchema::custom_id: core::option::Option<i64>
+pub devboy_jira::JiraFieldSchema::field_type: core::option::Option<alloc::string::String>
+pub devboy_jira::JiraFieldSchema::items: core::option::Option<alloc::string::String>
+pub devboy_jira::JiraFieldSchema::system: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_jira::JiraFieldSchema
+pub fn devboy_jira::JiraFieldSchema::clone(&self) -> devboy_jira::JiraFieldSchema
+impl core::fmt::Debug for devboy_jira::JiraFieldSchema
+pub fn devboy_jira::JiraFieldSchema::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_jira::JiraFieldSchema
+pub fn devboy_jira::JiraFieldSchema::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraFieldSchema
+pub fn devboy_jira::JiraFieldSchema::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_jira::JiraFieldSchema
+impl core::marker::Send for devboy_jira::JiraFieldSchema
+impl core::marker::Sync for devboy_jira::JiraFieldSchema
+impl core::marker::Unpin for devboy_jira::JiraFieldSchema
+impl core::marker::UnsafeUnpin for devboy_jira::JiraFieldSchema
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraFieldSchema
+impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraFieldSchema
 pub struct devboy_jira::JiraMetadata
 pub devboy_jira::JiraMetadata::flavor: devboy_jira::metadata::JiraFlavor
 pub devboy_jira::JiraMetadata::projects: std::collections::hash::map::HashMap<alloc::string::String, devboy_jira::metadata::JiraProjectMetadata>
 pub devboy_jira::JiraMetadata::structures: alloc::vec::Vec<devboy_jira::metadata::JiraStructureRef>
 impl devboy_jira::metadata::JiraMetadata
 pub fn devboy_jira::metadata::JiraMetadata::all_components(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn devboy_jira::metadata::JiraMetadata::all_custom_fields(&self) -> alloc::vec::Vec<devboy_jira::metadata::JiraCustomField>
 pub fn devboy_jira::metadata::JiraMetadata::all_issue_types(&self) -> alloc::vec::Vec<alloc::string::String>
 pub fn devboy_jira::metadata::JiraMetadata::all_link_types(&self) -> alloc::vec::Vec<alloc::string::String>
 pub fn devboy_jira::metadata::JiraMetadata::all_priorities(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn devboy_jira::metadata::JiraMetadata::custom_field_for_project(&self, project_key: &str, field_name: &str) -> core::option::Option<&devboy_jira::metadata::JiraCustomField>
+pub fn devboy_jira::metadata::JiraMetadata::custom_field_groups(&self) -> alloc::vec::Vec<(alloc::string::String, alloc::vec::Vec<devboy_jira::metadata::JiraCustomField>)>
 pub fn devboy_jira::metadata::JiraMetadata::is_single_project(&self) -> bool
 pub fn devboy_jira::metadata::JiraMetadata::project_keys(&self) -> alloc::vec::Vec<&str>
 impl core::clone::Clone for devboy_jira::metadata::JiraMetadata
@@ -748,38 +429,6 @@ impl core::marker::Unpin for devboy_jira::metadata::JiraMetadata
 impl core::marker::UnsafeUnpin for devboy_jira::metadata::JiraMetadata
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::metadata::JiraMetadata
 impl core::panic::unwind_safe::UnwindSafe for devboy_jira::metadata::JiraMetadata
-pub struct devboy_jira::JiraPriority
-pub devboy_jira::JiraPriority::name: alloc::string::String
-impl core::clone::Clone for devboy_jira::JiraPriority
-pub fn devboy_jira::JiraPriority::clone(&self) -> devboy_jira::JiraPriority
-impl core::fmt::Debug for devboy_jira::JiraPriority
-pub fn devboy_jira::JiraPriority::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraPriority
-pub fn devboy_jira::JiraPriority::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraPriority
-impl core::marker::Send for devboy_jira::JiraPriority
-impl core::marker::Sync for devboy_jira::JiraPriority
-impl core::marker::Unpin for devboy_jira::JiraPriority
-impl core::marker::UnsafeUnpin for devboy_jira::JiraPriority
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraPriority
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraPriority
-pub struct devboy_jira::JiraProjectStatus
-pub devboy_jira::JiraProjectStatus::id: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraProjectStatus::name: alloc::string::String
-pub devboy_jira::JiraProjectStatus::status_category: core::option::Option<devboy_jira::JiraStatusCategory>
-impl core::clone::Clone for devboy_jira::JiraProjectStatus
-pub fn devboy_jira::JiraProjectStatus::clone(&self) -> devboy_jira::JiraProjectStatus
-impl core::fmt::Debug for devboy_jira::JiraProjectStatus
-pub fn devboy_jira::JiraProjectStatus::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraProjectStatus
-pub fn devboy_jira::JiraProjectStatus::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraProjectStatus
-impl core::marker::Send for devboy_jira::JiraProjectStatus
-impl core::marker::Sync for devboy_jira::JiraProjectStatus
-impl core::marker::Unpin for devboy_jira::JiraProjectStatus
-impl core::marker::UnsafeUnpin for devboy_jira::JiraProjectStatus
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraProjectStatus
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraProjectStatus
 pub struct devboy_jira::JiraSchemaEnricher
 impl devboy_jira::enricher::JiraSchemaEnricher
 pub fn devboy_jira::enricher::JiraSchemaEnricher::new(metadata: devboy_jira::metadata::JiraMetadata) -> Self
@@ -796,389 +445,3 @@ impl core::marker::Unpin for devboy_jira::enricher::JiraSchemaEnricher
 impl core::marker::UnsafeUnpin for devboy_jira::enricher::JiraSchemaEnricher
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::enricher::JiraSchemaEnricher
 impl core::panic::unwind_safe::UnwindSafe for devboy_jira::enricher::JiraSchemaEnricher
-pub struct devboy_jira::JiraSearchResponse
-pub devboy_jira::JiraSearchResponse::issues: alloc::vec::Vec<devboy_jira::JiraIssue>
-pub devboy_jira::JiraSearchResponse::max_results: core::option::Option<u32>
-pub devboy_jira::JiraSearchResponse::start_at: core::option::Option<u32>
-pub devboy_jira::JiraSearchResponse::total: core::option::Option<u32>
-impl core::clone::Clone for devboy_jira::JiraSearchResponse
-pub fn devboy_jira::JiraSearchResponse::clone(&self) -> devboy_jira::JiraSearchResponse
-impl core::fmt::Debug for devboy_jira::JiraSearchResponse
-pub fn devboy_jira::JiraSearchResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraSearchResponse
-pub fn devboy_jira::JiraSearchResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraSearchResponse
-impl core::marker::Send for devboy_jira::JiraSearchResponse
-impl core::marker::Sync for devboy_jira::JiraSearchResponse
-impl core::marker::Unpin for devboy_jira::JiraSearchResponse
-impl core::marker::UnsafeUnpin for devboy_jira::JiraSearchResponse
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraSearchResponse
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraSearchResponse
-pub struct devboy_jira::JiraStatus
-pub devboy_jira::JiraStatus::name: alloc::string::String
-pub devboy_jira::JiraStatus::status_category: core::option::Option<devboy_jira::JiraStatusCategory>
-impl core::clone::Clone for devboy_jira::JiraStatus
-pub fn devboy_jira::JiraStatus::clone(&self) -> devboy_jira::JiraStatus
-impl core::fmt::Debug for devboy_jira::JiraStatus
-pub fn devboy_jira::JiraStatus::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraStatus
-pub fn devboy_jira::JiraStatus::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraStatus
-impl core::marker::Send for devboy_jira::JiraStatus
-impl core::marker::Sync for devboy_jira::JiraStatus
-impl core::marker::Unpin for devboy_jira::JiraStatus
-impl core::marker::UnsafeUnpin for devboy_jira::JiraStatus
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraStatus
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraStatus
-pub struct devboy_jira::JiraStatusCategory
-pub devboy_jira::JiraStatusCategory::key: alloc::string::String
-impl core::clone::Clone for devboy_jira::JiraStatusCategory
-pub fn devboy_jira::JiraStatusCategory::clone(&self) -> devboy_jira::JiraStatusCategory
-impl core::fmt::Debug for devboy_jira::JiraStatusCategory
-pub fn devboy_jira::JiraStatusCategory::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraStatusCategory
-pub fn devboy_jira::JiraStatusCategory::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraStatusCategory
-impl core::marker::Send for devboy_jira::JiraStatusCategory
-impl core::marker::Sync for devboy_jira::JiraStatusCategory
-impl core::marker::Unpin for devboy_jira::JiraStatusCategory
-impl core::marker::UnsafeUnpin for devboy_jira::JiraStatusCategory
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraStatusCategory
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraStatusCategory
-pub struct devboy_jira::JiraStructure
-pub devboy_jira::JiraStructure::description: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraStructure::id: u64
-pub devboy_jira::JiraStructure::name: alloc::string::String
-impl core::clone::Clone for devboy_jira::JiraStructure
-pub fn devboy_jira::JiraStructure::clone(&self) -> devboy_jira::JiraStructure
-impl core::fmt::Debug for devboy_jira::JiraStructure
-pub fn devboy_jira::JiraStructure::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraStructure
-pub fn devboy_jira::JiraStructure::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraStructure
-impl core::marker::Send for devboy_jira::JiraStructure
-impl core::marker::Sync for devboy_jira::JiraStructure
-impl core::marker::Unpin for devboy_jira::JiraStructure
-impl core::marker::UnsafeUnpin for devboy_jira::JiraStructure
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraStructure
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraStructure
-pub struct devboy_jira::JiraStructureListResponse
-pub devboy_jira::JiraStructureListResponse::structures: alloc::vec::Vec<devboy_jira::JiraStructure>
-impl core::clone::Clone for devboy_jira::JiraStructureListResponse
-pub fn devboy_jira::JiraStructureListResponse::clone(&self) -> devboy_jira::JiraStructureListResponse
-impl core::fmt::Debug for devboy_jira::JiraStructureListResponse
-pub fn devboy_jira::JiraStructureListResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraStructureListResponse
-pub fn devboy_jira::JiraStructureListResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraStructureListResponse
-impl core::marker::Send for devboy_jira::JiraStructureListResponse
-impl core::marker::Sync for devboy_jira::JiraStructureListResponse
-impl core::marker::Unpin for devboy_jira::JiraStructureListResponse
-impl core::marker::UnsafeUnpin for devboy_jira::JiraStructureListResponse
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraStructureListResponse
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraStructureListResponse
-pub struct devboy_jira::JiraStructureValueEntry
-pub devboy_jira::JiraStructureValueEntry::column_id: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraStructureValueEntry::row_id: u64
-pub devboy_jira::JiraStructureValueEntry::value: serde_json::value::Value
-impl core::clone::Clone for devboy_jira::JiraStructureValueEntry
-pub fn devboy_jira::JiraStructureValueEntry::clone(&self) -> devboy_jira::JiraStructureValueEntry
-impl core::fmt::Debug for devboy_jira::JiraStructureValueEntry
-pub fn devboy_jira::JiraStructureValueEntry::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraStructureValueEntry
-pub fn devboy_jira::JiraStructureValueEntry::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraStructureValueEntry
-impl core::marker::Send for devboy_jira::JiraStructureValueEntry
-impl core::marker::Sync for devboy_jira::JiraStructureValueEntry
-impl core::marker::Unpin for devboy_jira::JiraStructureValueEntry
-impl core::marker::UnsafeUnpin for devboy_jira::JiraStructureValueEntry
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraStructureValueEntry
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraStructureValueEntry
-pub struct devboy_jira::JiraStructureValuesResponse
-pub devboy_jira::JiraStructureValuesResponse::values: alloc::vec::Vec<devboy_jira::JiraStructureValueEntry>
-impl core::clone::Clone for devboy_jira::JiraStructureValuesResponse
-pub fn devboy_jira::JiraStructureValuesResponse::clone(&self) -> devboy_jira::JiraStructureValuesResponse
-impl core::fmt::Debug for devboy_jira::JiraStructureValuesResponse
-pub fn devboy_jira::JiraStructureValuesResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraStructureValuesResponse
-pub fn devboy_jira::JiraStructureValuesResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraStructureValuesResponse
-impl core::marker::Send for devboy_jira::JiraStructureValuesResponse
-impl core::marker::Sync for devboy_jira::JiraStructureValuesResponse
-impl core::marker::Unpin for devboy_jira::JiraStructureValuesResponse
-impl core::marker::UnsafeUnpin for devboy_jira::JiraStructureValuesResponse
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraStructureValuesResponse
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraStructureValuesResponse
-pub struct devboy_jira::JiraStructureView
-pub devboy_jira::JiraStructureView::columns: alloc::vec::Vec<devboy_jira::JiraStructureViewColumn>
-pub devboy_jira::JiraStructureView::filter: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraStructureView::group_by: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraStructureView::id: u64
-pub devboy_jira::JiraStructureView::name: alloc::string::String
-pub devboy_jira::JiraStructureView::sort_by: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraStructureView::structure_id: u64
-impl core::clone::Clone for devboy_jira::JiraStructureView
-pub fn devboy_jira::JiraStructureView::clone(&self) -> devboy_jira::JiraStructureView
-impl core::fmt::Debug for devboy_jira::JiraStructureView
-pub fn devboy_jira::JiraStructureView::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraStructureView
-pub fn devboy_jira::JiraStructureView::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraStructureView
-impl core::marker::Send for devboy_jira::JiraStructureView
-impl core::marker::Sync for devboy_jira::JiraStructureView
-impl core::marker::Unpin for devboy_jira::JiraStructureView
-impl core::marker::UnsafeUnpin for devboy_jira::JiraStructureView
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraStructureView
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraStructureView
-pub struct devboy_jira::JiraStructureViewColumn
-pub devboy_jira::JiraStructureViewColumn::field: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraStructureViewColumn::formula: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraStructureViewColumn::id: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraStructureViewColumn::width: core::option::Option<u32>
-impl core::clone::Clone for devboy_jira::JiraStructureViewColumn
-pub fn devboy_jira::JiraStructureViewColumn::clone(&self) -> devboy_jira::JiraStructureViewColumn
-impl core::fmt::Debug for devboy_jira::JiraStructureViewColumn
-pub fn devboy_jira::JiraStructureViewColumn::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::JiraStructureViewColumn
-pub fn devboy_jira::JiraStructureViewColumn::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraStructureViewColumn
-pub fn devboy_jira::JiraStructureViewColumn::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraStructureViewColumn
-impl core::marker::Send for devboy_jira::JiraStructureViewColumn
-impl core::marker::Sync for devboy_jira::JiraStructureViewColumn
-impl core::marker::Unpin for devboy_jira::JiraStructureViewColumn
-impl core::marker::UnsafeUnpin for devboy_jira::JiraStructureViewColumn
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraStructureViewColumn
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraStructureViewColumn
-pub struct devboy_jira::JiraStructureViewListResponse
-pub devboy_jira::JiraStructureViewListResponse::views: alloc::vec::Vec<devboy_jira::JiraStructureView>
-impl core::clone::Clone for devboy_jira::JiraStructureViewListResponse
-pub fn devboy_jira::JiraStructureViewListResponse::clone(&self) -> devboy_jira::JiraStructureViewListResponse
-impl core::fmt::Debug for devboy_jira::JiraStructureViewListResponse
-pub fn devboy_jira::JiraStructureViewListResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraStructureViewListResponse
-pub fn devboy_jira::JiraStructureViewListResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraStructureViewListResponse
-impl core::marker::Send for devboy_jira::JiraStructureViewListResponse
-impl core::marker::Sync for devboy_jira::JiraStructureViewListResponse
-impl core::marker::Unpin for devboy_jira::JiraStructureViewListResponse
-impl core::marker::UnsafeUnpin for devboy_jira::JiraStructureViewListResponse
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraStructureViewListResponse
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraStructureViewListResponse
-pub struct devboy_jira::JiraTransition
-pub devboy_jira::JiraTransition::id: alloc::string::String
-pub devboy_jira::JiraTransition::name: alloc::string::String
-pub devboy_jira::JiraTransition::to: devboy_jira::JiraStatus
-impl core::clone::Clone for devboy_jira::JiraTransition
-pub fn devboy_jira::JiraTransition::clone(&self) -> devboy_jira::JiraTransition
-impl core::fmt::Debug for devboy_jira::JiraTransition
-pub fn devboy_jira::JiraTransition::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraTransition
-pub fn devboy_jira::JiraTransition::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraTransition
-impl core::marker::Send for devboy_jira::JiraTransition
-impl core::marker::Sync for devboy_jira::JiraTransition
-impl core::marker::Unpin for devboy_jira::JiraTransition
-impl core::marker::UnsafeUnpin for devboy_jira::JiraTransition
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraTransition
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraTransition
-pub struct devboy_jira::JiraTransitionsResponse
-pub devboy_jira::JiraTransitionsResponse::transitions: alloc::vec::Vec<devboy_jira::JiraTransition>
-impl core::clone::Clone for devboy_jira::JiraTransitionsResponse
-pub fn devboy_jira::JiraTransitionsResponse::clone(&self) -> devboy_jira::JiraTransitionsResponse
-impl core::fmt::Debug for devboy_jira::JiraTransitionsResponse
-pub fn devboy_jira::JiraTransitionsResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraTransitionsResponse
-pub fn devboy_jira::JiraTransitionsResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraTransitionsResponse
-impl core::marker::Send for devboy_jira::JiraTransitionsResponse
-impl core::marker::Sync for devboy_jira::JiraTransitionsResponse
-impl core::marker::Unpin for devboy_jira::JiraTransitionsResponse
-impl core::marker::UnsafeUnpin for devboy_jira::JiraTransitionsResponse
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraTransitionsResponse
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraTransitionsResponse
-pub struct devboy_jira::JiraUser
-pub devboy_jira::JiraUser::account_id: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraUser::display_name: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraUser::email_address: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraUser::name: core::option::Option<alloc::string::String>
-impl core::clone::Clone for devboy_jira::JiraUser
-pub fn devboy_jira::JiraUser::clone(&self) -> devboy_jira::JiraUser
-impl core::fmt::Debug for devboy_jira::JiraUser
-pub fn devboy_jira::JiraUser::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraUser
-pub fn devboy_jira::JiraUser::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraUser
-impl core::marker::Send for devboy_jira::JiraUser
-impl core::marker::Sync for devboy_jira::JiraUser
-impl core::marker::Unpin for devboy_jira::JiraUser
-impl core::marker::UnsafeUnpin for devboy_jira::JiraUser
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraUser
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraUser
-pub struct devboy_jira::JiraVersionDto
-pub devboy_jira::JiraVersionDto::archived: bool
-pub devboy_jira::JiraVersionDto::description: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraVersionDto::id: alloc::string::String
-pub devboy_jira::JiraVersionDto::issues_status_for_fix_version: core::option::Option<devboy_jira::JiraVersionIssueStatusCounts>
-pub devboy_jira::JiraVersionDto::issues_unresolved_count: core::option::Option<u32>
-pub devboy_jira::JiraVersionDto::name: alloc::string::String
-pub devboy_jira::JiraVersionDto::overdue: core::option::Option<bool>
-pub devboy_jira::JiraVersionDto::project: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraVersionDto::project_id: core::option::Option<u64>
-pub devboy_jira::JiraVersionDto::release_date: core::option::Option<alloc::string::String>
-pub devboy_jira::JiraVersionDto::released: bool
-pub devboy_jira::JiraVersionDto::start_date: core::option::Option<alloc::string::String>
-impl core::clone::Clone for devboy_jira::JiraVersionDto
-pub fn devboy_jira::JiraVersionDto::clone(&self) -> devboy_jira::JiraVersionDto
-impl core::fmt::Debug for devboy_jira::JiraVersionDto
-pub fn devboy_jira::JiraVersionDto::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraVersionDto
-pub fn devboy_jira::JiraVersionDto::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraVersionDto
-impl core::marker::Send for devboy_jira::JiraVersionDto
-impl core::marker::Sync for devboy_jira::JiraVersionDto
-impl core::marker::Unpin for devboy_jira::JiraVersionDto
-impl core::marker::UnsafeUnpin for devboy_jira::JiraVersionDto
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraVersionDto
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraVersionDto
-pub struct devboy_jira::JiraVersionIssueStatusCounts
-pub devboy_jira::JiraVersionIssueStatusCounts::done: u32
-pub devboy_jira::JiraVersionIssueStatusCounts::in_progress: u32
-pub devboy_jira::JiraVersionIssueStatusCounts::to_do: u32
-pub devboy_jira::JiraVersionIssueStatusCounts::unmapped: u32
-impl devboy_jira::JiraVersionIssueStatusCounts
-pub fn devboy_jira::JiraVersionIssueStatusCounts::total(&self) -> u32
-impl core::clone::Clone for devboy_jira::JiraVersionIssueStatusCounts
-pub fn devboy_jira::JiraVersionIssueStatusCounts::clone(&self) -> devboy_jira::JiraVersionIssueStatusCounts
-impl core::default::Default for devboy_jira::JiraVersionIssueStatusCounts
-pub fn devboy_jira::JiraVersionIssueStatusCounts::default() -> devboy_jira::JiraVersionIssueStatusCounts
-impl core::fmt::Debug for devboy_jira::JiraVersionIssueStatusCounts
-pub fn devboy_jira::JiraVersionIssueStatusCounts::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'de> serde_core::de::Deserialize<'de> for devboy_jira::JiraVersionIssueStatusCounts
-pub fn devboy_jira::JiraVersionIssueStatusCounts::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-impl core::marker::Freeze for devboy_jira::JiraVersionIssueStatusCounts
-impl core::marker::Send for devboy_jira::JiraVersionIssueStatusCounts
-impl core::marker::Sync for devboy_jira::JiraVersionIssueStatusCounts
-impl core::marker::Unpin for devboy_jira::JiraVersionIssueStatusCounts
-impl core::marker::UnsafeUnpin for devboy_jira::JiraVersionIssueStatusCounts
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraVersionIssueStatusCounts
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraVersionIssueStatusCounts
-pub struct devboy_jira::PriorityName
-pub devboy_jira::PriorityName::name: alloc::string::String
-impl core::clone::Clone for devboy_jira::PriorityName
-pub fn devboy_jira::PriorityName::clone(&self) -> devboy_jira::PriorityName
-impl core::fmt::Debug for devboy_jira::PriorityName
-pub fn devboy_jira::PriorityName::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::PriorityName
-pub fn devboy_jira::PriorityName::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl core::marker::Freeze for devboy_jira::PriorityName
-impl core::marker::Send for devboy_jira::PriorityName
-impl core::marker::Sync for devboy_jira::PriorityName
-impl core::marker::Unpin for devboy_jira::PriorityName
-impl core::marker::UnsafeUnpin for devboy_jira::PriorityName
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::PriorityName
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::PriorityName
-pub struct devboy_jira::ProjectKey
-pub devboy_jira::ProjectKey::key: alloc::string::String
-impl core::clone::Clone for devboy_jira::ProjectKey
-pub fn devboy_jira::ProjectKey::clone(&self) -> devboy_jira::ProjectKey
-impl core::fmt::Debug for devboy_jira::ProjectKey
-pub fn devboy_jira::ProjectKey::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::ProjectKey
-pub fn devboy_jira::ProjectKey::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl core::marker::Freeze for devboy_jira::ProjectKey
-impl core::marker::Send for devboy_jira::ProjectKey
-impl core::marker::Sync for devboy_jira::ProjectKey
-impl core::marker::Unpin for devboy_jira::ProjectKey
-impl core::marker::UnsafeUnpin for devboy_jira::ProjectKey
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::ProjectKey
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::ProjectKey
-pub struct devboy_jira::TransitionId
-pub devboy_jira::TransitionId::id: alloc::string::String
-impl core::clone::Clone for devboy_jira::TransitionId
-pub fn devboy_jira::TransitionId::clone(&self) -> devboy_jira::TransitionId
-impl core::fmt::Debug for devboy_jira::TransitionId
-pub fn devboy_jira::TransitionId::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::TransitionId
-pub fn devboy_jira::TransitionId::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl core::marker::Freeze for devboy_jira::TransitionId
-impl core::marker::Send for devboy_jira::TransitionId
-impl core::marker::Sync for devboy_jira::TransitionId
-impl core::marker::Unpin for devboy_jira::TransitionId
-impl core::marker::UnsafeUnpin for devboy_jira::TransitionId
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::TransitionId
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::TransitionId
-pub struct devboy_jira::TransitionPayload
-pub devboy_jira::TransitionPayload::transition: devboy_jira::TransitionId
-impl core::clone::Clone for devboy_jira::TransitionPayload
-pub fn devboy_jira::TransitionPayload::clone(&self) -> devboy_jira::TransitionPayload
-impl core::fmt::Debug for devboy_jira::TransitionPayload
-pub fn devboy_jira::TransitionPayload::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::TransitionPayload
-pub fn devboy_jira::TransitionPayload::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl core::marker::Freeze for devboy_jira::TransitionPayload
-impl core::marker::Send for devboy_jira::TransitionPayload
-impl core::marker::Sync for devboy_jira::TransitionPayload
-impl core::marker::Unpin for devboy_jira::TransitionPayload
-impl core::marker::UnsafeUnpin for devboy_jira::TransitionPayload
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::TransitionPayload
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::TransitionPayload
-pub struct devboy_jira::UpdateIssueFields
-pub devboy_jira::UpdateIssueFields::assignee: core::option::Option<serde_json::value::Value>
-pub devboy_jira::UpdateIssueFields::components: core::option::Option<alloc::vec::Vec<devboy_jira::ComponentRef>>
-pub devboy_jira::UpdateIssueFields::description: core::option::Option<serde_json::value::Value>
-pub devboy_jira::UpdateIssueFields::labels: core::option::Option<alloc::vec::Vec<alloc::string::String>>
-pub devboy_jira::UpdateIssueFields::priority: core::option::Option<devboy_jira::PriorityName>
-pub devboy_jira::UpdateIssueFields::summary: core::option::Option<alloc::string::String>
-impl core::clone::Clone for devboy_jira::UpdateIssueFields
-pub fn devboy_jira::UpdateIssueFields::clone(&self) -> devboy_jira::UpdateIssueFields
-impl core::default::Default for devboy_jira::UpdateIssueFields
-pub fn devboy_jira::UpdateIssueFields::default() -> devboy_jira::UpdateIssueFields
-impl core::fmt::Debug for devboy_jira::UpdateIssueFields
-pub fn devboy_jira::UpdateIssueFields::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::UpdateIssueFields
-pub fn devboy_jira::UpdateIssueFields::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl core::marker::Freeze for devboy_jira::UpdateIssueFields
-impl core::marker::Send for devboy_jira::UpdateIssueFields
-impl core::marker::Sync for devboy_jira::UpdateIssueFields
-impl core::marker::Unpin for devboy_jira::UpdateIssueFields
-impl core::marker::UnsafeUnpin for devboy_jira::UpdateIssueFields
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::UpdateIssueFields
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::UpdateIssueFields
-pub struct devboy_jira::UpdateIssuePayload
-pub devboy_jira::UpdateIssuePayload::fields: devboy_jira::UpdateIssueFields
-impl core::clone::Clone for devboy_jira::UpdateIssuePayload
-pub fn devboy_jira::UpdateIssuePayload::clone(&self) -> devboy_jira::UpdateIssuePayload
-impl core::fmt::Debug for devboy_jira::UpdateIssuePayload
-pub fn devboy_jira::UpdateIssuePayload::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::UpdateIssuePayload
-pub fn devboy_jira::UpdateIssuePayload::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl core::marker::Freeze for devboy_jira::UpdateIssuePayload
-impl core::marker::Send for devboy_jira::UpdateIssuePayload
-impl core::marker::Sync for devboy_jira::UpdateIssuePayload
-impl core::marker::Unpin for devboy_jira::UpdateIssuePayload
-impl core::marker::UnsafeUnpin for devboy_jira::UpdateIssuePayload
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::UpdateIssuePayload
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::UpdateIssuePayload
-pub struct devboy_jira::UpdateVersionPayload
-pub devboy_jira::UpdateVersionPayload::archived: core::option::Option<bool>
-pub devboy_jira::UpdateVersionPayload::description: core::option::Option<alloc::string::String>
-pub devboy_jira::UpdateVersionPayload::name: core::option::Option<alloc::string::String>
-pub devboy_jira::UpdateVersionPayload::release_date: core::option::Option<alloc::string::String>
-pub devboy_jira::UpdateVersionPayload::released: core::option::Option<bool>
-pub devboy_jira::UpdateVersionPayload::start_date: core::option::Option<alloc::string::String>
-impl core::clone::Clone for devboy_jira::UpdateVersionPayload
-pub fn devboy_jira::UpdateVersionPayload::clone(&self) -> devboy_jira::UpdateVersionPayload
-impl core::default::Default for devboy_jira::UpdateVersionPayload
-pub fn devboy_jira::UpdateVersionPayload::default() -> devboy_jira::UpdateVersionPayload
-impl core::fmt::Debug for devboy_jira::UpdateVersionPayload
-pub fn devboy_jira::UpdateVersionPayload::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl serde_core::ser::Serialize for devboy_jira::UpdateVersionPayload
-pub fn devboy_jira::UpdateVersionPayload::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl core::marker::Freeze for devboy_jira::UpdateVersionPayload
-impl core::marker::Send for devboy_jira::UpdateVersionPayload
-impl core::marker::Sync for devboy_jira::UpdateVersionPayload
-impl core::marker::Unpin for devboy_jira::UpdateVersionPayload
-impl core::marker::UnsafeUnpin for devboy_jira::UpdateVersionPayload
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::UpdateVersionPayload
-impl core::panic::unwind_safe::UnwindSafe for devboy_jira::UpdateVersionPayload
