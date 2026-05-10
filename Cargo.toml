@@ -24,7 +24,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.27.0"
+version = "0.28.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/meteora-pro/devboy-tools"
@@ -94,20 +94,20 @@ secrecy = { version = "0.10", features = ["serde"] }
 # Internal workspace crates — `version` lets crates.io resolve them when
 # the package is published; `path` keeps local builds resolving in-tree.
 # Keep `version` synced with `[workspace.package].version`.
-devboy-core = { version = "0.27.0", path = "crates/devboy-core" }
-devboy-storage = { version = "0.27.0", path = "crates/devboy-storage" }
-devboy-assets = { version = "0.27.0", path = "crates/devboy-assets" }
-devboy-executor = { version = "0.27.0", path = "crates/devboy-executor" }
-devboy-mcp = { version = "0.27.0", path = "crates/devboy-mcp" }
-devboy-skills = { version = "0.27.0", path = "crates/devboy-skills" }
-devboy-format-pipeline = { version = "0.27.0", path = "crates/plugins/format-pipeline" }
-devboy-gitlab = { version = "0.27.0", path = "crates/plugins/api/gitlab" }
-devboy-github = { version = "0.27.0", path = "crates/plugins/api/github" }
-devboy-clickup = { version = "0.27.0", path = "crates/plugins/api/clickup" }
-devboy-jira = { version = "0.27.0", path = "crates/plugins/api/jira" }
-devboy-confluence = { version = "0.27.0", path = "crates/plugins/api/confluence" }
-devboy-fireflies = { version = "0.27.0", path = "crates/plugins/api/fireflies" }
-devboy-slack = { version = "0.27.0", path = "crates/plugins/api/slack" }
+devboy-core = { version = "0.28.0", path = "crates/devboy-core" }
+devboy-storage = { version = "0.28.0", path = "crates/devboy-storage" }
+devboy-assets = { version = "0.28.0", path = "crates/devboy-assets" }
+devboy-executor = { version = "0.28.0", path = "crates/devboy-executor" }
+devboy-mcp = { version = "0.28.0", path = "crates/devboy-mcp" }
+devboy-skills = { version = "0.28.0", path = "crates/devboy-skills" }
+devboy-format-pipeline = { version = "0.28.0", path = "crates/plugins/format-pipeline" }
+devboy-gitlab = { version = "0.28.0", path = "crates/plugins/api/gitlab" }
+devboy-github = { version = "0.28.0", path = "crates/plugins/api/github" }
+devboy-clickup = { version = "0.28.0", path = "crates/plugins/api/clickup" }
+devboy-jira = { version = "0.28.0", path = "crates/plugins/api/jira" }
+devboy-confluence = { version = "0.28.0", path = "crates/plugins/api/confluence" }
+devboy-fireflies = { version = "0.28.0", path = "crates/plugins/api/fireflies" }
+devboy-slack = { version = "0.28.0", path = "crates/plugins/api/slack" }
 
 [profile.release]
 lto = true
