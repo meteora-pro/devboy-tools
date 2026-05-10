@@ -923,12 +923,54 @@ impl JiraClient {
                     structures: vec![],
                 })
             }
-            MetadataLoadStrategy::MyProjects
-            | MetadataLoadStrategy::RecentActivity { .. }
-            | MetadataLoadStrategy::All => Err(Error::ProviderUnsupported {
-                provider: "jira".into(),
-                operation: "load_default_metadata".into(),
-            }),
+            MetadataLoadStrategy::All => {
+                // `GET /project` returns every project the user can
+                // read on both Cloud (paginated, but the first page
+                // is usually enough — total > cap is treated as a
+                // hard error anyway) and Server/DC.
+                let url = format!("{}/project", self.base_url);
+                let raw: Vec<serde_json::Value> = self.get(&url).await?;
+                let keys: Vec<String> = raw
+                    .iter()
+                    .filter_map(|v| v.get("key").and_then(|k| k.as_str()).map(str::to_string))
+                    .collect();
+
+                if keys.len() > MAX_ENRICHMENT_PROJECTS {
+                    // `All` is semantically "give me everything";
+                    // silent truncation would hide projects the
+                    // caller asked for. Error out with a usable
+                    // hint instead.
+                    return Err(Error::InvalidData(format!(
+                        "Jira instance has {} accessible projects, more than the \
+                         enrichment cap of {}. Switch to \
+                         `MetadataLoadStrategy::MyProjects` (recently-touched) or \
+                         `RecentActivity {{ days }}` (recent issue activity) or \
+                         `Configured(vec![...])` to narrow the selection.",
+                        keys.len(),
+                        MAX_ENRICHMENT_PROJECTS,
+                    )));
+                }
+
+                let mut projects = std::collections::HashMap::new();
+                for key in keys {
+                    let project_meta = self.build_project_metadata(&key).await?;
+                    projects.insert(key, project_meta);
+                }
+                Ok(crate::metadata::JiraMetadata {
+                    flavor: match self.flavor {
+                        JiraFlavor::Cloud => crate::metadata::JiraFlavor::Cloud,
+                        JiraFlavor::SelfHosted => crate::metadata::JiraFlavor::SelfHosted,
+                    },
+                    projects,
+                    structures: vec![],
+                })
+            }
+            MetadataLoadStrategy::MyProjects | MetadataLoadStrategy::RecentActivity { .. } => {
+                Err(Error::ProviderUnsupported {
+                    provider: "jira".into(),
+                    operation: "load_default_metadata".into(),
+                })
+            }
         }
     }
 
@@ -5405,6 +5447,99 @@ mod tests {
                 .unwrap();
 
             assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// `All` strategy lists every project from `GET /project`
+        /// and assembles metadata for each, as long as the count
+        /// stays within `MAX_ENRICHMENT_PROJECTS`.
+        #[tokio::test]
+        async fn test_load_default_metadata_all_strategy_under_cap() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/project");
+                then.status(200).json_body(serde_json::json!([
+                    {"key": "PROJ", "name": "Platform"},
+                    {"key": "INFRA", "name": "Infrastructure"}
+                ]));
+            });
+
+            for key in &["PROJ", "INFRA"] {
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}"));
+                    then.status(200).json_body(serde_json::json!({
+                        "key": key,
+                        "issueTypes": [{"id": "1", "name": "Task", "subtask": false}]
+                    }));
+                });
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}/components"));
+                    then.status(200).json_body(serde_json::json!([]));
+                });
+            }
+
+            server.mock(|when, then| {
+                when.method(GET).path("/priority");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/issueLinkType");
+                then.status(200)
+                    .json_body(serde_json::json!({"issueLinkTypes": []}));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let meta = client
+                .load_default_metadata(crate::metadata::MetadataLoadStrategy::All)
+                .await
+                .unwrap();
+            assert_eq!(meta.projects.len(), 2);
+            assert!(meta.projects.contains_key("PROJ"));
+            assert!(meta.projects.contains_key("INFRA"));
+        }
+
+        /// Over-cap rejection: `All` won't silently truncate — it
+        /// surfaces an `InvalidData` error listing each alternative
+        /// strategy a caller could switch to.
+        #[tokio::test]
+        async fn test_load_default_metadata_all_strategy_errors_over_cap() {
+            let server = MockServer::start();
+
+            // 31 projects > MAX_ENRICHMENT_PROJECTS = 30.
+            let projects: Vec<serde_json::Value> = (1..=31)
+                .map(
+                    |i| serde_json::json!({"key": format!("P{i}"), "name": format!("Project {i}")}),
+                )
+                .collect();
+            server.mock(|when, then| {
+                when.method(GET).path("/project");
+                then.status(200).json_body(serde_json::json!(projects));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let err = client
+                .load_default_metadata(crate::metadata::MetadataLoadStrategy::All)
+                .await
+                .unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("31"), "missing count: {msg}");
+            assert!(msg.contains("30"), "missing cap: {msg}");
+            assert!(
+                msg.contains("MyProjects"),
+                "missing alternative hint: {msg}"
+            );
+            assert!(
+                msg.contains("RecentActivity"),
+                "missing alternative hint: {msg}"
+            );
+            assert!(
+                msg.contains("Configured"),
+                "missing alternative hint: {msg}"
+            );
         }
 
         /// `Configured` strategy loops the explicit project list,
