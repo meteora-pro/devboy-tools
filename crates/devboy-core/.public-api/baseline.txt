@@ -1793,6 +1793,29 @@ impl core::marker::Unpin for devboy_core::types::CustomFieldDescriptor
 impl core::marker::UnsafeUnpin for devboy_core::types::CustomFieldDescriptor
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::CustomFieldDescriptor
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::CustomFieldDescriptor
+pub struct devboy_core::types::CustomFieldValue
+pub devboy_core::types::CustomFieldValue::name: core::option::Option<alloc::string::String>
+pub devboy_core::types::CustomFieldValue::value: serde_json::value::Value
+impl core::clone::Clone for devboy_core::types::CustomFieldValue
+pub fn devboy_core::types::CustomFieldValue::clone(&self) -> devboy_core::types::CustomFieldValue
+impl core::cmp::PartialEq for devboy_core::types::CustomFieldValue
+pub fn devboy_core::types::CustomFieldValue::eq(&self, other: &devboy_core::types::CustomFieldValue) -> bool
+impl core::default::Default for devboy_core::types::CustomFieldValue
+pub fn devboy_core::types::CustomFieldValue::default() -> devboy_core::types::CustomFieldValue
+impl core::fmt::Debug for devboy_core::types::CustomFieldValue
+pub fn devboy_core::types::CustomFieldValue::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_core::types::CustomFieldValue
+impl serde_core::ser::Serialize for devboy_core::types::CustomFieldValue
+pub fn devboy_core::types::CustomFieldValue::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::types::CustomFieldValue
+pub fn devboy_core::types::CustomFieldValue::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::types::CustomFieldValue
+impl core::marker::Send for devboy_core::types::CustomFieldValue
+impl core::marker::Sync for devboy_core::types::CustomFieldValue
+impl core::marker::Unpin for devboy_core::types::CustomFieldValue
+impl core::marker::UnsafeUnpin for devboy_core::types::CustomFieldValue
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::CustomFieldValue
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::CustomFieldValue
 pub struct devboy_core::types::Discussion
 pub devboy_core::types::Discussion::comments: alloc::vec::Vec<devboy_core::types::Comment>
 pub devboy_core::types::Discussion::id: alloc::string::String
@@ -2021,7 +2044,7 @@ pub devboy_core::types::Issue::assignees: alloc::vec::Vec<devboy_core::types::Us
 pub devboy_core::types::Issue::attachments_count: core::option::Option<u32>
 pub devboy_core::types::Issue::author: core::option::Option<devboy_core::types::User>
 pub devboy_core::types::Issue::created_at: core::option::Option<alloc::string::String>
-pub devboy_core::types::Issue::custom_fields: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_core::types::Issue::custom_fields: std::collections::hash::map::HashMap<alloc::string::String, devboy_core::types::CustomFieldValue>
 pub devboy_core::types::Issue::description: core::option::Option<alloc::string::String>
 pub devboy_core::types::Issue::key: alloc::string::String
 pub devboy_core::types::Issue::labels: alloc::vec::Vec<alloc::string::String>
@@ -4387,6 +4410,29 @@ impl core::marker::Unpin for devboy_core::types::CustomFieldDescriptor
 impl core::marker::UnsafeUnpin for devboy_core::types::CustomFieldDescriptor
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::CustomFieldDescriptor
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::CustomFieldDescriptor
+pub struct devboy_core::CustomFieldValue
+pub devboy_core::CustomFieldValue::name: core::option::Option<alloc::string::String>
+pub devboy_core::CustomFieldValue::value: serde_json::value::Value
+impl core::clone::Clone for devboy_core::types::CustomFieldValue
+pub fn devboy_core::types::CustomFieldValue::clone(&self) -> devboy_core::types::CustomFieldValue
+impl core::cmp::PartialEq for devboy_core::types::CustomFieldValue
+pub fn devboy_core::types::CustomFieldValue::eq(&self, other: &devboy_core::types::CustomFieldValue) -> bool
+impl core::default::Default for devboy_core::types::CustomFieldValue
+pub fn devboy_core::types::CustomFieldValue::default() -> devboy_core::types::CustomFieldValue
+impl core::fmt::Debug for devboy_core::types::CustomFieldValue
+pub fn devboy_core::types::CustomFieldValue::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_core::types::CustomFieldValue
+impl serde_core::ser::Serialize for devboy_core::types::CustomFieldValue
+pub fn devboy_core::types::CustomFieldValue::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::types::CustomFieldValue
+pub fn devboy_core::types::CustomFieldValue::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::types::CustomFieldValue
+impl core::marker::Send for devboy_core::types::CustomFieldValue
+impl core::marker::Sync for devboy_core::types::CustomFieldValue
+impl core::marker::Unpin for devboy_core::types::CustomFieldValue
+impl core::marker::UnsafeUnpin for devboy_core::types::CustomFieldValue
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::CustomFieldValue
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::CustomFieldValue
 pub struct devboy_core::Discussion
 pub devboy_core::Discussion::comments: alloc::vec::Vec<devboy_core::types::Comment>
 pub devboy_core::Discussion::id: alloc::string::String
@@ -4738,7 +4784,7 @@ pub devboy_core::Issue::assignees: alloc::vec::Vec<devboy_core::types::User>
 pub devboy_core::Issue::attachments_count: core::option::Option<u32>
 pub devboy_core::Issue::author: core::option::Option<devboy_core::types::User>
 pub devboy_core::Issue::created_at: core::option::Option<alloc::string::String>
-pub devboy_core::Issue::custom_fields: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_core::Issue::custom_fields: std::collections::hash::map::HashMap<alloc::string::String, devboy_core::types::CustomFieldValue>
 pub devboy_core::Issue::description: core::option::Option<alloc::string::String>
 pub devboy_core::Issue::key: alloc::string::String
 pub devboy_core::Issue::labels: alloc::vec::Vec<alloc::string::String>

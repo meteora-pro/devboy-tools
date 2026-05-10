@@ -51,7 +51,7 @@ pub use provider::{
 pub use types::{
     AddStructureGeneratorInput, AddStructureRowsInput, AssignToSprintInput, CodePosition, Comment,
     CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, CreatePageParams,
-    CreateStructureInput, CustomFieldDescriptor, Discussion, FailedJob, FileDiff,
+    CreateStructureInput, CustomFieldDescriptor, CustomFieldValue, Discussion, FailedJob, FileDiff,
     ForestModifyResult, GetChatsParams, GetForestOptions, GetMessagesParams, GetPipelineInput,
     GetStructureValuesInput, GetUsersOptions, Issue, IssueFilter, IssueLink, IssueRelations,
     IssueStatus, JobLogMode, JobLogOptions, JobLogOutput, KbComment, KbPage, KbPageContent,
