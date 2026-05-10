@@ -358,8 +358,16 @@ pub fn propose_one(var: &str, known_providers: &[String]) -> ProposedPath {
 /// see the rejected name and confirm.
 fn non_secret_reason(var: &str) -> Option<&'static str> {
     let v = var.to_uppercase();
-    // Suffix-based: e.g. `JIRA_USER`, `JIRA_USERNAME`.
+    // Suffix-based: e.g. `JIRA_USER`, `JIRA_USERNAME`,
+    // `OPENAI_API_BASE`, `LLM_MODEL`. Names ending with one
+    // of these are configuration / connection metadata, not
+    // credentials. Real-world data from `meteora/devboy-env-1`
+    // (P26 demo) had ~50 of these slipping through as fake
+    // secrets — `OPENAI_API_BASE`, `BAML_LOG`,
+    // `ANTHROPIC_CONCURRENCY`, `EMBEDDING_MODEL`,
+    // `REDIS_HOST`, `REDIS_DB`, … — all were noise.
     const NON_SECRET_SUFFIXES: &[&str] = &[
+        // Identity / addressability
         "_USER",
         "_USERNAME",
         "_LOGIN",
@@ -368,15 +376,45 @@ fn non_secret_reason(var: &str) -> Option<&'static str> {
         "_HOSTNAME",
         "_PORT",
         "_URL",
+        "_ENDPOINT",
         "_REGION",
         "_PROJECT",
         "_BUCKET",
         "_NAMESPACE",
         "_ID",
+        "_NAME",
+        // Configuration / tunables
+        "_BASE",
+        "_MODEL",
+        "_LOG",
+        "_LEVEL",
+        "_DEBUG",
+        "_VERBOSE",
+        "_CONCURRENCY",
+        "_LIMIT",
+        "_SIZE",
+        "_TIMEOUT",
+        "_RATE",
+        "_INTERVAL",
+        "_RETRIES",
+        "_FORMAT",
+        // Filesystem / connection metadata
+        "_DB",
+        "_DSN",
+        "_PATH",
+        "_DIR",
+        "_FILE",
+        "_FILENAME",
+        // Service / role hints (not credentials themselves)
+        "_SERVICE",
+        "_ENV",
+        "_MODE",
+        "_KIND",
+        "_TYPE",
     ];
     for suf in NON_SECRET_SUFFIXES {
         if v.ends_with(suf) {
-            return Some("not a secret — usually a username / hostname / id");
+            return Some("not a secret — usually configuration / connection metadata");
         }
     }
     // Exact-match list for short standalone names.
@@ -1558,6 +1596,26 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
         assert_skip(&propose_one("HOME", &known()));
         assert_skip(&propose_one("PATH", &known()));
         assert_skip(&propose_one("PORT", &known()));
+    }
+
+    #[test]
+    fn proposer_skips_configuration_suffixes() {
+        // P1 — extended suffix list. Real-world examples from
+        // the live demo on meteora/devboy-env-1.
+        assert_skip(&propose_one("OPENAI_API_BASE", &known()));
+        assert_skip(&propose_one("ANTHROPIC_MODEL", &known()));
+        assert_skip(&propose_one("ANTHROPIC_CONCURRENCY", &known()));
+        assert_skip(&propose_one("BAML_LOG", &known()));
+        assert_skip(&propose_one("EMBEDDING_MODEL", &known()));
+        assert_skip(&propose_one("LLM_MODEL", &known()));
+        assert_skip(&propose_one("REDIS_HOST", &known()));
+        assert_skip(&propose_one("REDIS_PORT", &known()));
+        assert_skip(&propose_one("REDIS_DB", &known()));
+        assert_skip(&propose_one("LOG_LEVEL", &known()));
+        assert_skip(&propose_one("HTTP_TIMEOUT", &known()));
+        assert_skip(&propose_one("CACHE_DIR", &known()));
+        assert_skip(&propose_one("S3_ENDPOINT", &known()));
+        assert_skip(&propose_one("MEET_SERVICE", &known()));
     }
 
     #[test]
