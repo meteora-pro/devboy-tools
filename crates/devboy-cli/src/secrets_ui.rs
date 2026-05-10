@@ -609,6 +609,7 @@ fn load_token_catalogs() -> (
         .and_then(|body| devboy_token_catalog::parse_sources_toml(&body).ok());
     let known_hashes_path = devboy_token_catalog::default_known_hashes_path();
     let cache_dir = devboy_token_catalog::default_catalog_cache_dir();
+    let audit_log_path = devboy_token_catalog::default_catalog_audit_log_path();
     devboy_token_catalog::load_all_with_urls(
         &bundled,
         user_dir.as_deref(),
@@ -617,6 +618,7 @@ fn load_token_catalogs() -> (
         known_hashes_path.as_deref(),
         cache_dir.as_deref(),
         devboy_token_catalog::FirstFetchPolicy::RequireConfirmation,
+        audit_log_path.as_deref(),
     )
 }
 

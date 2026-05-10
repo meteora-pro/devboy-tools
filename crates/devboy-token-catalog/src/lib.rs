@@ -293,6 +293,12 @@ pub fn load_all(
 /// repo. The fetcher is opt-in: when
 /// [`CatalogSourcesConfig::enable_url_catalogs`] is `false` (the
 /// default), URL sources are silently skipped.
+///
+/// The 8-arg signature is the union of every URL-source policy
+/// knob (sha-pin / cache / first-fetch / audit). A bundled
+/// config struct would be tidier — left as a follow-up so the
+/// `#247` epic can land without another API churn.
+#[allow(clippy::too_many_arguments)]
 pub fn load_all_with_urls(
     bundled: &[ProviderCatalog],
     user_dir: Option<&Path>,
@@ -301,13 +307,20 @@ pub fn load_all_with_urls(
     known_hashes_path: Option<&Path>,
     cache_dir: Option<&Path>,
     first_fetch: FirstFetchPolicy,
+    audit_log_path: Option<&Path>,
 ) -> (Vec<LoadedCatalog>, Vec<CatalogError>) {
     let (mut loaded, mut errors) = load_all(bundled, user_dir, project_dir);
     if let Some(cfg) = url_config
         && cfg.enable_url_catalogs
     {
         for src in &cfg.sources {
-            match fetch_url_source(src, known_hashes_path, cache_dir, first_fetch) {
+            match fetch_url_source(
+                src,
+                known_hashes_path,
+                cache_dir,
+                first_fetch,
+                audit_log_path,
+            ) {
                 Ok(catalog) => {
                     let url_source = CatalogSource::Url {
                         url: src.url.clone(),
@@ -417,6 +430,11 @@ pub enum FetchError {
     },
     #[error("first fetch from `{url}` requires user confirmation (sha256 = {sha256})")]
     FirstFetchNeedsConfirmation { url: String, sha256: String },
+    #[error("URL refused by SSRF guard: {source}")]
+    Ssrf {
+        #[source]
+        source: SsrfError,
+    },
 }
 
 /// What the loader does when a URL has neither a pinned sha256
@@ -454,11 +472,22 @@ pub fn fetch_url_source(
     known_hashes_path: Option<&Path>,
     cache_dir: Option<&Path>,
     first_fetch: FirstFetchPolicy,
+    audit_log_path: Option<&Path>,
 ) -> Result<ProviderCatalog, FetchError> {
+    let audit = AuditCtx {
+        log_path: audit_log_path,
+        url: &source.url,
+    };
     if !source.url.starts_with("https://") {
+        let detail = format!("non-https URL: {}", source.url);
+        audit.record(AuditOutcome::BlockedHttpsRequired, None, None, detail);
         return Err(FetchError::HttpsRequired {
             url: source.url.clone(),
         });
+    }
+    if let Err(e) = check_ssrf_safe(&source.url) {
+        audit.record(AuditOutcome::BlockedSsrf, None, None, e.to_string());
+        return Err(FetchError::Ssrf { source: e });
     }
     let client = reqwest::blocking::Client::builder()
         .timeout(FETCH_TIMEOUT)
@@ -471,6 +500,7 @@ pub fn fetch_url_source(
         cache_dir,
         first_fetch,
         unix_now(),
+        audit_log_path,
     )
 }
 
@@ -478,7 +508,7 @@ pub fn fetch_url_source(
 /// the client, time source, and cache plumbing so tests can
 /// drive it against an `http://` mock server (httpmock does
 /// not speak TLS) and against synthetic clock values without
-/// sleeping.
+/// sleeping. Audit events are emitted at every decision point.
 fn fetch_inner_with_client(
     client: &reqwest::blocking::Client,
     source: &UrlSource,
@@ -486,7 +516,12 @@ fn fetch_inner_with_client(
     cache_dir: Option<&Path>,
     first_fetch: FirstFetchPolicy,
     now_secs: u64,
+    audit_log_path: Option<&Path>,
 ) -> Result<ProviderCatalog, FetchError> {
+    let audit = AuditCtx {
+        log_path: audit_log_path,
+        url: &source.url,
+    };
     let cache_paths = cache_dir.map(|d| cache_paths_for(d, &source.url));
 
     // Cache hit within TTL — no network at all.
@@ -495,8 +530,21 @@ fn fetch_inner_with_client(
         && now_secs.saturating_sub(meta.fetched_at) < source.refresh_seconds
     {
         let actual = sha256_hex(&bytes);
-        enforce_pin_or_tofu(source, known_hashes_path, &actual, first_fetch)?;
-        return parse_catalog_bytes(&bytes);
+        match enforce_pin_or_tofu(source, known_hashes_path, &actual, first_fetch) {
+            Ok(()) => {
+                audit.record(
+                    AuditOutcome::LoadedFromCache,
+                    None,
+                    Some(actual.clone()),
+                    "",
+                );
+                return parse_catalog_bytes(&bytes);
+            }
+            Err(e) => {
+                audit_pin_or_tofu_error(&audit, &e, &actual);
+                return Err(e);
+            }
+        }
     }
 
     // Outside TTL (or no cache) — go back to the wire. If we
@@ -513,8 +561,12 @@ fn fetch_inner_with_client(
             // Server says nothing changed — bump fetched_at on
             // the existing meta and serve the cached body.
             let Some((body_path, meta_path)) = cache_paths.as_ref() else {
-                // Without a cache directory, 304 is unexpected — we
-                // never sent If-None-Match. Treat as protocol error.
+                audit.record(
+                    AuditOutcome::BlockedHttpStatus,
+                    Some(304),
+                    None,
+                    "server returned 304 but we have no cache",
+                );
                 return Err(FetchError::Status { status: 304 });
             };
             let Some((mut meta, bytes)) = read_cache(meta_path, body_path) else {
@@ -535,15 +587,28 @@ fn fetch_inner_with_client(
                         return Err(FetchError::Status { status: 304 });
                     }
                 };
-                let actual = sha256_hex(&bytes);
-                enforce_pin_or_tofu(source, known_hashes_path, &actual, first_fetch)?;
-                return parse_catalog_bytes(&bytes);
+                return finalize_after_fetch(
+                    &audit,
+                    source,
+                    known_hashes_path,
+                    first_fetch,
+                    &bytes,
+                    Some(200),
+                );
             };
             meta.fetched_at = now_secs;
             let _ = write_meta(meta_path, &meta);
             let actual = sha256_hex(&bytes);
-            enforce_pin_or_tofu(source, known_hashes_path, &actual, first_fetch)?;
-            parse_catalog_bytes(&bytes)
+            match enforce_pin_or_tofu(source, known_hashes_path, &actual, first_fetch) {
+                Ok(()) => {
+                    audit.record(AuditOutcome::LoadedFromCache, Some(304), Some(actual), "");
+                    parse_catalog_bytes(&bytes)
+                }
+                Err(e) => {
+                    audit_pin_or_tofu_error(&audit, &e, &actual);
+                    Err(e)
+                }
+            }
         }
         Ok(HttpFetch::Body { bytes, etag }) => {
             // Fresh body — write through cache (best-effort: a
@@ -557,9 +622,14 @@ fn fetch_inner_with_client(
                 };
                 let _ = write_cache(body_path, meta_path, &m, &bytes);
             }
-            let actual = sha256_hex(&bytes);
-            enforce_pin_or_tofu(source, known_hashes_path, &actual, first_fetch)?;
-            parse_catalog_bytes(&bytes)
+            finalize_after_fetch(
+                &audit,
+                source,
+                known_hashes_path,
+                first_fetch,
+                &bytes,
+                Some(200),
+            )
         }
         Err(e) => {
             // Network failed. If we have a stale cache, serve
@@ -569,12 +639,77 @@ fn fetch_inner_with_client(
                 && let Some((_meta, bytes)) = read_cache(meta_path, body_path)
             {
                 let actual = sha256_hex(&bytes);
-                enforce_pin_or_tofu(source, known_hashes_path, &actual, first_fetch)?;
-                return parse_catalog_bytes(&bytes);
+                match enforce_pin_or_tofu(source, known_hashes_path, &actual, first_fetch) {
+                    Ok(()) => {
+                        audit.record(
+                            AuditOutcome::ServedStaleCache,
+                            None,
+                            Some(actual),
+                            e.to_string(),
+                        );
+                        return parse_catalog_bytes(&bytes);
+                    }
+                    Err(pin_err) => {
+                        audit_pin_or_tofu_error(&audit, &pin_err, &actual);
+                        return Err(pin_err);
+                    }
+                }
             }
+            audit_network_error(&audit, &e);
             Err(e)
         }
     }
+}
+
+/// Run pin/TOFU + parse, emit the right audit outcome.
+fn finalize_after_fetch(
+    audit: &AuditCtx<'_>,
+    source: &UrlSource,
+    known_hashes_path: Option<&Path>,
+    first_fetch: FirstFetchPolicy,
+    bytes: &[u8],
+    status_code: Option<u16>,
+) -> Result<ProviderCatalog, FetchError> {
+    let actual = sha256_hex(bytes);
+    if let Err(e) = enforce_pin_or_tofu(source, known_hashes_path, &actual, first_fetch) {
+        audit_pin_or_tofu_error(audit, &e, &actual);
+        return Err(e);
+    }
+    match parse_catalog_bytes(bytes) {
+        Ok(cat) => {
+            audit.record(AuditOutcome::Loaded, status_code, Some(actual), "");
+            Ok(cat)
+        }
+        Err(e) => {
+            let outcome = match &e {
+                FetchError::SchemaVersion { .. } => AuditOutcome::BlockedSchemaVersion,
+                FetchError::Parse { .. } => AuditOutcome::BlockedParse,
+                _ => AuditOutcome::BlockedParse,
+            };
+            audit.record(outcome, status_code, Some(actual), e.to_string());
+            Err(e)
+        }
+    }
+}
+
+fn audit_pin_or_tofu_error(audit: &AuditCtx<'_>, err: &FetchError, actual_sha: &str) {
+    let outcome = match err {
+        FetchError::ShaMismatch { .. } => AuditOutcome::BlockedPin,
+        FetchError::TofuMismatch { .. } => AuditOutcome::BlockedTofuMismatch,
+        FetchError::FirstFetchNeedsConfirmation { .. } => AuditOutcome::FirstFetchPending,
+        _ => AuditOutcome::BlockedParse,
+    };
+    audit.record(outcome, None, Some(actual_sha.to_owned()), err.to_string());
+}
+
+fn audit_network_error(audit: &AuditCtx<'_>, err: &FetchError) {
+    let (outcome, status) = match err {
+        FetchError::Status { status } => (AuditOutcome::BlockedHttpStatus, Some(*status)),
+        FetchError::BadContentType { .. } => (AuditOutcome::BlockedContentType, None),
+        FetchError::BodyTooLarge { .. } => (AuditOutcome::BlockedSize, None),
+        _ => (AuditOutcome::NetworkError, None),
+    };
+    audit.record(outcome, status, None, err.to_string());
 }
 
 /// Outcome of one HTTP body fetch — either fresh body bytes or
@@ -890,6 +1025,143 @@ pub fn default_known_hashes_path() -> Option<PathBuf> {
 /// `~/.devboy/secrets/catalog/cache/`.
 pub fn default_catalog_cache_dir() -> Option<PathBuf> {
     default_user_catalog_dir().map(|d| d.join("cache"))
+}
+
+/// Default append-only audit log for URL-catalog fetches:
+/// `~/.devboy/secrets/catalog/audit.log`. One JSONL event per
+/// fetch attempt (P23.7). Honoured by the loader when wired
+/// through `load_all_with_urls` (CLI / GUI both pass it).
+pub fn default_catalog_audit_log_path() -> Option<PathBuf> {
+    default_user_catalog_dir().map(|d| d.join("audit.log"))
+}
+
+// =============================================================================
+// Audit log for URL-loaded catalogs (P23.7)
+// =============================================================================
+
+/// One row of the audit log. Serialised to JSONL — one event
+/// per line — so external tools can `tail -f` and grep without
+/// any custom parser.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuditEvent {
+    /// RFC3339 timestamp with offset, e.g.
+    /// `2026-05-10T12:34:56+00:00`.
+    pub timestamp: String,
+    /// Original `[[source]].url` from sources.toml.
+    pub url: String,
+    /// HTTP status the upstream returned, when there was a
+    /// response. `None` for events that fail before the wire
+    /// (https-only refusal, SSRF guard, etc.) and for cache
+    /// hits that did not touch the network.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    /// SHA256 of the body the loader saw, lowercase hex.
+    /// `None` when no body was decided (early refusals, network
+    /// errors with no cache fallback).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    /// Outcome class — one of the [`AuditOutcome`] variants.
+    pub outcome: AuditOutcome,
+    /// Free-form detail message — the underlying error string
+    /// for blocked outcomes, empty for the happy paths.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub detail: String,
+}
+
+/// Enumerated outcomes for the audit log. Designed so a `grep`
+/// for any `kebab-case` token from this list pulls every
+/// matching event out of the JSONL file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AuditOutcome {
+    /// URL fetched, hash recorded/matched, catalog activated.
+    Loaded,
+    /// Cache hit within TTL — no network at all.
+    LoadedFromCache,
+    /// Network failed but a cached body was served.
+    ServedStaleCache,
+    /// First-fetch awaiting user confirmation
+    /// ([`FirstFetchPolicy::RequireConfirmation`]).
+    FirstFetchPending,
+    /// Pinned `sources.toml` SHA256 mismatch.
+    BlockedPin,
+    /// `known_hashes.toml` mismatch — TOFU broken.
+    BlockedTofuMismatch,
+    /// SSRF guard refused the URL host / IP.
+    BlockedSsrf,
+    /// Body exceeded `MAX_CATALOG_BODY_BYTES`.
+    BlockedSize,
+    /// `https://` guard fired.
+    BlockedHttpsRequired,
+    /// Content-Type wasn't `application/json`.
+    BlockedContentType,
+    /// Server returned a non-2xx, non-304 status.
+    BlockedHttpStatus,
+    /// Body parsed but `schema_version` was wrong.
+    BlockedSchemaVersion,
+    /// Body did not parse as JSON / `ProviderCatalog`.
+    BlockedParse,
+    /// Network call itself failed (timeout, DNS, TCP).
+    NetworkError,
+}
+
+/// Append a JSON-encoded event to the audit log. Best-effort:
+/// any I/O failure on the audit path is swallowed silently —
+/// losing an audit line is preferable to refusing to load the
+/// catalog because the disk is full.
+pub fn append_audit_event(audit_log_path: &Path, event: &AuditEvent) {
+    use std::io::Write;
+    if let Some(parent) = audit_log_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        let _ = fs::create_dir_all(parent);
+    }
+    let Ok(line) = serde_json::to_string(event) else {
+        return;
+    };
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(audit_log_path)
+    {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
+fn rfc3339_now() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+/// Bundles per-event audit context so the deep call chain
+/// inside `fetch_inner_with_client` doesn't grow another arg.
+struct AuditCtx<'a> {
+    log_path: Option<&'a Path>,
+    url: &'a str,
+}
+
+impl AuditCtx<'_> {
+    fn record(
+        &self,
+        outcome: AuditOutcome,
+        status_code: Option<u16>,
+        sha256: Option<String>,
+        detail: impl Into<String>,
+    ) {
+        let Some(path) = self.log_path else {
+            return;
+        };
+        append_audit_event(
+            path,
+            &AuditEvent {
+                timestamp: rfc3339_now(),
+                url: self.url.to_owned(),
+                status_code,
+                sha256,
+                outcome,
+                detail: detail.into(),
+            },
+        );
+    }
 }
 
 // =============================================================================
@@ -1410,7 +1682,8 @@ mod tests {
             sha256: None,
             refresh_seconds: 60,
         };
-        let err = fetch_url_source(&src, None, None, FirstFetchPolicy::AutoRecord).unwrap_err();
+        let err =
+            fetch_url_source(&src, None, None, FirstFetchPolicy::AutoRecord, None).unwrap_err();
         assert!(matches!(err, FetchError::HttpsRequired { .. }));
     }
 
@@ -1559,6 +1832,7 @@ mod tests {
             None,
             FirstFetchPolicy::AutoRecord,
             unix_now(),
+            None,
         )
     }
 
@@ -1746,6 +2020,7 @@ mod tests {
             cache_dir,
             FirstFetchPolicy::AutoRecord,
             now_secs,
+            None,
         )
     }
 
@@ -1771,6 +2046,7 @@ mod tests {
             None,
             FirstFetchPolicy::RequireConfirmation,
             1_000,
+            None,
         )
         .unwrap_err();
         let (url, sha) = match err {
@@ -1791,6 +2067,7 @@ mod tests {
             None,
             FirstFetchPolicy::RequireConfirmation,
             1_000,
+            None,
         )
         .unwrap();
     }
@@ -1905,6 +2182,166 @@ mod tests {
     }
 
     #[test]
+    fn audit_log_records_loaded_event_on_success() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method("GET").path("/k.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(fixture_json());
+        });
+        let dir = TempDir::new().unwrap();
+        let log_path = dir.path().join("audit.log");
+        let src = fixture_url_source(&server.base_url(), "/k.json", None);
+
+        fetch_inner_with_client(
+            &test_client(),
+            &src,
+            None,
+            None,
+            FirstFetchPolicy::AutoRecord,
+            1_000,
+            Some(&log_path),
+        )
+        .unwrap();
+
+        let body = std::fs::read_to_string(&log_path).unwrap();
+        let line = body
+            .lines()
+            .next()
+            .expect("audit log should have at least one line");
+        let event: AuditEvent = serde_json::from_str(line).expect("each line is JSON");
+        assert_eq!(event.url, src.url);
+        assert_eq!(event.outcome, AuditOutcome::Loaded);
+        assert!(event.sha256.is_some());
+        assert_eq!(event.status_code, Some(200));
+        // RFC3339 format check: starts with year + dash.
+        assert!(
+            event.timestamp.len() >= 19 && event.timestamp.chars().nth(4) == Some('-'),
+            "timestamp not RFC3339-ish: {}",
+            event.timestamp
+        );
+    }
+
+    #[test]
+    fn audit_log_records_blocked_size_event() {
+        let server = httpmock::MockServer::start();
+        let payload = "x".repeat(MAX_CATALOG_BODY_BYTES + 1);
+        server.mock(|when, then| {
+            when.method("GET").path("/big.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(payload);
+        });
+        let dir = TempDir::new().unwrap();
+        let log_path = dir.path().join("audit.log");
+        let src = fixture_url_source(&server.base_url(), "/big.json", None);
+
+        let _ = fetch_inner_with_client(
+            &test_client(),
+            &src,
+            None,
+            None,
+            FirstFetchPolicy::AutoRecord,
+            1_000,
+            Some(&log_path),
+        );
+
+        let body = std::fs::read_to_string(&log_path).unwrap();
+        let event: AuditEvent = serde_json::from_str(body.lines().next().unwrap()).unwrap();
+        assert_eq!(event.outcome, AuditOutcome::BlockedSize);
+    }
+
+    #[test]
+    fn audit_log_records_blocked_pin_event() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method("GET").path("/k.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(fixture_json());
+        });
+        let dir = TempDir::new().unwrap();
+        let log_path = dir.path().join("audit.log");
+        let bogus_pin = "0".repeat(64);
+        let src = fixture_url_source(&server.base_url(), "/k.json", Some(bogus_pin));
+
+        let _ = fetch_inner_with_client(
+            &test_client(),
+            &src,
+            None,
+            None,
+            FirstFetchPolicy::AutoRecord,
+            1_000,
+            Some(&log_path),
+        );
+
+        let body = std::fs::read_to_string(&log_path).unwrap();
+        let event: AuditEvent = serde_json::from_str(body.lines().next().unwrap()).unwrap();
+        assert_eq!(event.outcome, AuditOutcome::BlockedPin);
+    }
+
+    #[test]
+    fn audit_log_appends_each_call() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method("GET").path("/k.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(fixture_json());
+        });
+        let dir = TempDir::new().unwrap();
+        let log_path = dir.path().join("audit.log");
+        let src = fixture_url_source(&server.base_url(), "/k.json", None);
+
+        for _ in 0..3 {
+            fetch_inner_with_client(
+                &test_client(),
+                &src,
+                None,
+                None,
+                FirstFetchPolicy::AutoRecord,
+                1_000,
+                Some(&log_path),
+            )
+            .unwrap();
+        }
+
+        let body = std::fs::read_to_string(&log_path).unwrap();
+        assert_eq!(
+            body.lines().count(),
+            3,
+            "expected 3 appended lines, got {body:?}"
+        );
+    }
+
+    #[test]
+    fn ssrf_blocks_catalog_url_at_fetch_time() {
+        // Direct call to fetch_url_source — exercises the
+        // public-API SSRF guard for catalog URLs (P23.7 added
+        // it; previously SSRF only fired on liveness probes).
+        let src = UrlSource {
+            url: "https://127.0.0.1/x.json".to_owned(),
+            sha256: None,
+            refresh_seconds: 60,
+        };
+        let dir = TempDir::new().unwrap();
+        let log_path = dir.path().join("audit.log");
+        let err = fetch_url_source(
+            &src,
+            None,
+            None,
+            FirstFetchPolicy::AutoRecord,
+            Some(&log_path),
+        )
+        .unwrap_err();
+        assert!(matches!(err, FetchError::Ssrf { .. }));
+        let body = std::fs::read_to_string(&log_path).unwrap();
+        let event: AuditEvent = serde_json::from_str(body.lines().next().unwrap()).unwrap();
+        assert_eq!(event.outcome, AuditOutcome::BlockedSsrf);
+    }
+
+    #[test]
     fn load_all_with_urls_skips_when_disabled() {
         let cfg = CatalogSourcesConfig {
             enable_url_catalogs: false,
@@ -1922,6 +2359,7 @@ mod tests {
             None,
             None,
             FirstFetchPolicy::AutoRecord,
+            None,
         );
         assert!(loaded.is_empty());
         assert!(errors.is_empty(), "fetch should be skipped, no errors");

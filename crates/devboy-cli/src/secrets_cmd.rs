@@ -213,9 +213,9 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
 /// one line per provider. Read-only, no flags.
 fn catalog_list() -> Result<()> {
     use devboy_token_catalog::{
-        CatalogSource, FirstFetchPolicy, bundled_catalogs, default_catalog_cache_dir,
-        default_known_hashes_path, default_sources_toml_path, default_user_catalog_dir,
-        load_all_with_urls, parse_sources_toml,
+        CatalogSource, FirstFetchPolicy, bundled_catalogs, default_catalog_audit_log_path,
+        default_catalog_cache_dir, default_known_hashes_path, default_sources_toml_path,
+        default_user_catalog_dir, load_all_with_urls, parse_sources_toml,
     };
 
     let bundled = bundled_catalogs();
@@ -233,6 +233,7 @@ fn catalog_list() -> Result<()> {
         .and_then(|body| parse_sources_toml(&body).ok());
     let known_hashes_path = default_known_hashes_path();
     let cache_dir = default_catalog_cache_dir();
+    let audit_log_path = default_catalog_audit_log_path();
     let (loaded, errors) = load_all_with_urls(
         &bundled,
         user_dir.as_deref(),
@@ -243,6 +244,7 @@ fn catalog_list() -> Result<()> {
         // CLI is unattended — auto-record on first fetch. The
         // GUI uses `RequireConfirmation` and surfaces a prompt.
         FirstFetchPolicy::AutoRecord,
+        audit_log_path.as_deref(),
     );
 
     if loaded.is_empty() && errors.is_empty() {
