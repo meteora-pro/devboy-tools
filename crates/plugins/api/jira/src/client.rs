@@ -1016,10 +1016,59 @@ impl JiraClient {
                     structures: vec![],
                 })
             }
-            MetadataLoadStrategy::RecentActivity { .. } => Err(Error::ProviderUnsupported {
-                provider: "jira".into(),
-                operation: "load_default_metadata".into(),
-            }),
+            MetadataLoadStrategy::RecentActivity { days } => {
+                // Broader net than `MyProjects`: any project with
+                // issue activity in the window, regardless of who
+                // touched it. JQL search across `updated`, fetch
+                // just the `project` field, dedupe keys in result
+                // order so the freshest activity wins under the cap.
+                let jql = format!("updated >= -{days}d ORDER BY updated DESC");
+                let url = format!("{}/search", self.base_url);
+                let response: serde_json::Value = self
+                    .request(reqwest::Method::GET, &url)
+                    .query(&[
+                        ("jql", jql.as_str()),
+                        ("fields", "project"),
+                        ("maxResults", "100"),
+                    ])
+                    .send()
+                    .await
+                    .map_err(|e| Error::Http(e.to_string()))?
+                    .json()
+                    .await
+                    .map_err(|e| Error::Http(e.to_string()))?;
+
+                let mut seen = std::collections::HashSet::new();
+                let mut keys: Vec<String> = Vec::new();
+                if let Some(issues) = response.get("issues").and_then(|v| v.as_array()) {
+                    for issue in issues {
+                        if let Some(project_key) = issue
+                            .pointer("/fields/project/key")
+                            .and_then(|v| v.as_str())
+                            && seen.insert(project_key.to_string())
+                        {
+                            keys.push(project_key.to_string());
+                            if keys.len() >= MAX_ENRICHMENT_PROJECTS {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                let mut projects = std::collections::HashMap::new();
+                for key in keys {
+                    let project_meta = self.build_project_metadata(&key).await?;
+                    projects.insert(key, project_meta);
+                }
+                Ok(crate::metadata::JiraMetadata {
+                    flavor: match self.flavor {
+                        JiraFlavor::Cloud => crate::metadata::JiraFlavor::Cloud,
+                        JiraFlavor::SelfHosted => crate::metadata::JiraFlavor::SelfHosted,
+                    },
+                    projects,
+                    structures: vec![],
+                })
+            }
         }
     }
 
@@ -5496,6 +5545,69 @@ mod tests {
                 .unwrap();
 
             assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// `RecentActivity { days }` finds projects via JQL search
+        /// for issues updated in the window, dedupes keys preserving
+        /// activity order, and assembles metadata for each.
+        #[tokio::test]
+        async fn test_load_default_metadata_recent_activity_strategy() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "updated >= -7d")
+                    .query_param("fields", "project");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [
+                        {"key": "ACTIVE-1", "fields": {"project": {"key": "ACTIVE"}}},
+                        // Same project surfaces twice — dedupe.
+                        {"key": "ACTIVE-2", "fields": {"project": {"key": "ACTIVE"}}},
+                        {"key": "QUIET-1", "fields": {"project": {"key": "QUIET"}}}
+                    ],
+                    "total": 3
+                }));
+            });
+
+            for key in &["ACTIVE", "QUIET"] {
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}"));
+                    then.status(200).json_body(serde_json::json!({
+                        "key": key,
+                        "issueTypes": [{"id": "1", "name": "Task", "subtask": false}]
+                    }));
+                });
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}/components"));
+                    then.status(200).json_body(serde_json::json!([]));
+                });
+            }
+            server.mock(|when, then| {
+                when.method(GET).path("/priority");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/issueLinkType");
+                then.status(200)
+                    .json_body(serde_json::json!({"issueLinkTypes": []}));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let meta = client
+                .load_default_metadata(crate::metadata::MetadataLoadStrategy::RecentActivity {
+                    days: 7,
+                })
+                .await
+                .unwrap();
+            // ACTIVE appeared twice in search results; dedupe.
+            assert_eq!(meta.projects.len(), 2);
+            assert!(meta.projects.contains_key("ACTIVE"));
+            assert!(meta.projects.contains_key("QUIET"));
         }
 
         /// `MyProjects` on Server/DC uses flat `/project?recent=N`.
