@@ -5547,6 +5547,124 @@ mod tests {
             assert_eq!(issue.key, "jira#PROJ-1");
         }
 
+        /// End-to-end: `load_default_metadata` feeds a real
+        /// `JiraSchemaEnricher`, and the resulting schema reflects
+        /// the customfields actually present on the instance — Epic
+        /// Link promoted to the `epicKey` alias, Story Points
+        /// surfacing as `cf_story_points`, priority/components
+        /// enums hydrated from per-project metadata. Validates the
+        /// full API → metadata → enricher → schema loop in one
+        /// test rather than only the slices each strategy commit
+        /// pins.
+        #[tokio::test]
+        async fn test_load_default_metadata_then_enrich_schema_e2e() {
+            use crate::JiraSchemaEnricher;
+            use devboy_core::{ToolEnricher, ToolSchema};
+            use serde_json::json;
+
+            let server = MockServer::start();
+
+            // MyProjects strategy on Server/DC: `/project?recent=30`.
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/project")
+                    .query_param("recent", "30");
+                then.status(200).json_body(json!([
+                    {"key": "PROJ", "name": "Platform"}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ");
+                then.status(200).json_body(json!({
+                    "key": "PROJ",
+                    "issueTypes": [
+                        {"id": "1", "name": "Task", "subtask": false},
+                        {"id": "10000", "name": "Epic", "subtask": false}
+                    ]
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/components");
+                then.status(200).json_body(json!([
+                    {"id": "100", "name": "Backend"}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/priority");
+                then.status(200).json_body(json!([
+                    {"id": "1", "name": "High"},
+                    {"id": "2", "name": "Medium"}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issueLinkType");
+                then.status(200).json_body(json!({
+                    "issueLinkTypes": [
+                        {"id": "1", "name": "Blocks", "outward": "blocks", "inward": "is blocked by"}
+                    ]
+                }));
+            });
+
+            // Instance-wide fields list — Story Points (custom) +
+            // Epic Link (custom, well-known alias) + a system
+            // field that must be filtered out.
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(json!([
+                    {"id": "summary", "name": "Summary", "custom": false},
+                    {"id": "customfield_10014", "name": "Epic Link", "custom": true,
+                     "schema": {"type": "any"}},
+                    {"id": "customfield_10001", "name": "Story Points", "custom": true,
+                     "schema": {"type": "number"}}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let metadata = client
+                .load_default_metadata(crate::metadata::MetadataLoadStrategy::MyProjects)
+                .await
+                .expect("metadata loads");
+            assert!(metadata.projects.contains_key("PROJ"));
+
+            // Feed the loaded metadata into the schema enricher
+            // and assert the customfield expansion actually fires.
+            let enricher = JiraSchemaEnricher::new(metadata);
+            let mut schema = ToolSchema::from_json(&json!({
+                "type": "object",
+                "properties": {
+                    "customFields": { "type": "object" },
+                    "priority": { "type": "string" },
+                    "components": { "type": "array" }
+                }
+            }));
+            enricher.enrich_schema("create_issue", &mut schema);
+
+            // Well-known alias takes the place of cf_epic_link.
+            assert!(
+                schema.properties.contains_key("epicKey"),
+                "Epic Link customfield should promote to canonical `epicKey` alias"
+            );
+            assert!(!schema.properties.contains_key("cf_epic_link"));
+            // Non-well-known customfield falls back to cf_*.
+            assert!(
+                schema.properties.contains_key("cf_story_points"),
+                "Story Points should surface as cf_story_points"
+            );
+            // Priorities / components also enriched from loaded
+            // metadata.
+            let priority = schema.properties.get("priority").unwrap();
+            assert_eq!(
+                priority.enum_values,
+                Some(vec!["High".into(), "Medium".into()])
+            );
+            let components = schema.properties.get("components").unwrap();
+            assert_eq!(components.enum_values, Some(vec!["Backend".into()]));
+        }
+
         /// `RecentActivity { days }` finds projects via JQL search
         /// for issues updated in the window, dedupes keys preserving
         /// activity order, and assembles metadata for each.
