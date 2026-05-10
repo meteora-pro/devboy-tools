@@ -107,6 +107,21 @@ pub enum CatalogCommands {
     /// network. Optional positional `<filter>` matches as a
     /// case-insensitive substring against the source URL.
     Refresh(CatalogRefreshArgs),
+    /// Drop URL entries from `known_hashes.toml` so the next
+    /// fetch re-establishes TOFU. Positional `<filter>` is a
+    /// case-insensitive URL substring; without it, every
+    /// recorded entry is dropped (with confirmation unless
+    /// `--yes` is set). Use this after a deliberate upstream
+    /// rotation that you want devboy to re-trust.
+    Forget(CatalogForgetArgs),
+    /// Promote a TOFU entry to a hard SHA pin in
+    /// `sources.toml`. Positional `<filter>` is a case-
+    /// insensitive URL substring matching the source to
+    /// pin. With explicit `<sha>` argument, that exact value
+    /// is written; without it, the current `known_hashes.toml`
+    /// entry is read and copied. Future fetches from this
+    /// source refuse any mismatch.
+    Pin(CatalogPinArgs),
     /// Validate a single catalog JSON file. Loads the file,
     /// runs schema deserialisation (`deny_unknown_fields` is
     /// strict), then per-variant checks that the regex compiles
@@ -166,6 +181,35 @@ pub struct CatalogRefreshArgs {
     /// a stale body.
     #[arg(long)]
     pub force: bool,
+}
+
+/// Flags for `devboy secrets catalog forget`.
+#[derive(Args, Debug, Default)]
+pub struct CatalogForgetArgs {
+    /// Optional case-insensitive substring against the URL.
+    /// Without this argument, every recorded TOFU entry is
+    /// dropped (subject to `--yes`).
+    pub filter: Option<String>,
+    /// Skip the interactive confirmation prompt. Required
+    /// when no filter is given (bulk-clearing all TOFU
+    /// entries is destructive enough to warrant explicit
+    /// opt-in).
+    #[arg(long)]
+    pub yes: bool,
+}
+
+/// Flags for `devboy secrets catalog pin`.
+#[derive(Args, Debug)]
+pub struct CatalogPinArgs {
+    /// Case-insensitive URL substring identifying the source
+    /// to pin. Must match exactly one source; ambiguity is an
+    /// error.
+    pub filter: String,
+    /// Explicit lower-case-hex SHA256 to write to
+    /// `sources.toml`. When omitted, the current TOFU entry
+    /// for the matched source is read from
+    /// `known_hashes.toml` and copied.
+    pub sha: Option<String>,
 }
 
 /// Flags for `devboy secrets catalog validate`.
@@ -327,6 +371,8 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
             CatalogCommands::Status(args) => catalog_status(args),
             CatalogCommands::AddUrl(args) => catalog_add_url(args),
             CatalogCommands::Refresh(args) => catalog_refresh(args),
+            CatalogCommands::Forget(args) => catalog_forget(args),
+            CatalogCommands::Pin(args) => catalog_pin(args),
             CatalogCommands::Validate(args) => catalog_validate(args),
         },
         SecretsCommands::Setup(args) => crate::secrets_setup::handle_cli(args),
@@ -763,6 +809,159 @@ fn catalog_refresh(args: CatalogRefreshArgs) -> Result<()> {
     if failed > 0 {
         anyhow::bail!("{failed} URL source(s) failed — see errors above");
     }
+    Ok(())
+}
+
+/// Drop URL entries from `known_hashes.toml` so the next
+/// fetch re-establishes TOFU. Recovery flow for a deliberate
+/// upstream rotation that the loader is currently refusing
+/// (BlockedTofuMismatch).
+fn catalog_forget(args: CatalogForgetArgs) -> Result<()> {
+    use devboy_token_catalog::{default_known_hashes_path, read_known_hashes, write_known_hashes};
+    use std::io::IsTerminal;
+
+    let path = default_known_hashes_path()
+        .ok_or_else(|| anyhow::anyhow!("could not resolve default known_hashes.toml path"))?;
+    let mut known = read_known_hashes(&path).context("could not read known_hashes.toml")?;
+    if known.url.is_empty() {
+        println!("known_hashes.toml is empty — nothing to forget");
+        return Ok(());
+    }
+
+    let filter = args.filter.as_deref().map(|s| s.to_lowercase());
+    let to_drop: Vec<String> = known
+        .url
+        .keys()
+        .filter(|u| match filter.as_deref() {
+            Some(needle) => u.to_lowercase().contains(needle),
+            None => true,
+        })
+        .cloned()
+        .collect();
+
+    if to_drop.is_empty() {
+        println!(
+            "no URLs in known_hashes.toml match `{}`",
+            args.filter.as_deref().unwrap_or("(all)")
+        );
+        return Ok(());
+    }
+
+    if filter.is_none() && !args.yes {
+        if !std::io::stdin().is_terminal() {
+            anyhow::bail!(
+                "refusing to drop ALL TOFU entries from a non-tty invocation. Re-run with --yes \
+                 or pass a substring filter to scope the operation."
+            );
+        }
+        let answer = dialoguer::Confirm::new()
+            .with_prompt(format!(
+                "Drop ALL {} TOFU entries from known_hashes.toml?",
+                to_drop.len()
+            ))
+            .default(false)
+            .interact()
+            .unwrap_or(false);
+        if !answer {
+            anyhow::bail!("user declined — known_hashes.toml unchanged");
+        }
+    }
+
+    for url in &to_drop {
+        println!("forget {url}");
+        known.url.remove(url);
+    }
+    write_known_hashes(&path, &known).context("could not write known_hashes.toml back to disk")?;
+    println!(
+        "\n{} entr{} dropped from {}",
+        to_drop.len(),
+        if to_drop.len() == 1 { "y" } else { "ies" },
+        path.display()
+    );
+    Ok(())
+}
+
+/// Promote a TOFU entry to a hard SHA pin in `sources.toml`.
+/// Without an explicit `<sha>` the current TOFU value is read
+/// from `known_hashes.toml`.
+fn catalog_pin(args: CatalogPinArgs) -> Result<()> {
+    use devboy_token_catalog::{
+        CatalogSourcesConfig, default_known_hashes_path, default_sources_toml_path,
+        parse_sources_toml, read_known_hashes,
+    };
+    use std::fs;
+
+    let sources_path = default_sources_toml_path()
+        .ok_or_else(|| anyhow::anyhow!("could not resolve default sources.toml path"))?;
+    if !sources_path.exists() {
+        anyhow::bail!(
+            "no sources.toml at {} — add a URL source first via `devboy secrets catalog add-url`",
+            sources_path.display()
+        );
+    }
+    let body = fs::read_to_string(&sources_path)
+        .with_context(|| format!("could not read {}", sources_path.display()))?;
+    let mut cfg: CatalogSourcesConfig = parse_sources_toml(&body)
+        .with_context(|| format!("malformed {}", sources_path.display()))?;
+
+    let needle = args.filter.to_lowercase();
+    let matching: Vec<usize> = cfg
+        .sources
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.url.to_lowercase().contains(&needle))
+        .map(|(i, _)| i)
+        .collect();
+    let idx = match matching.len() {
+        0 => anyhow::bail!("no source URL contains `{}`", args.filter),
+        1 => matching[0],
+        n => anyhow::bail!(
+            "filter `{}` matches {n} sources — narrow it: {}",
+            args.filter,
+            cfg.sources
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| matching.contains(i))
+                .map(|(_, s)| s.url.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+
+    let sha = match args.sha {
+        Some(s) => {
+            if s.len() != 64 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
+                anyhow::bail!("sha must be 64 lower-case hex chars (got {})", s.len());
+            }
+            s.to_lowercase()
+        }
+        None => {
+            let known_path = default_known_hashes_path()
+                .ok_or_else(|| anyhow::anyhow!("could not resolve known_hashes.toml path"))?;
+            let known =
+                read_known_hashes(&known_path).context("could not read known_hashes.toml")?;
+            known
+                .url
+                .get(&cfg.sources[idx].url)
+                .cloned()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "no TOFU entry recorded for {} — fetch it first via `devboy secrets \
+                         catalog refresh` (without --pin), then re-run pin to promote it",
+                        cfg.sources[idx].url
+                    )
+                })?
+        }
+    };
+
+    let url = cfg.sources[idx].url.clone();
+    cfg.sources[idx].sha256 = Some(sha.clone());
+    let new_body = toml::to_string_pretty(&cfg).context("could not serialise sources.toml")?;
+    fs::write(&sources_path, new_body)
+        .with_context(|| format!("could not write {}", sources_path.display()))?;
+    println!("pinned {url}");
+    println!("       sha256 = {sha}");
+    println!("\nwrote {}", sources_path.display());
     Ok(())
 }
 

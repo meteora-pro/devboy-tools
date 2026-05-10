@@ -62,6 +62,8 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets catalog status`↴](#devboy-secrets-catalog-status)
 * [`devboy secrets catalog add-url`↴](#devboy-secrets-catalog-add-url)
 * [`devboy secrets catalog refresh`↴](#devboy-secrets-catalog-refresh)
+* [`devboy secrets catalog forget`↴](#devboy-secrets-catalog-forget)
+* [`devboy secrets catalog pin`↴](#devboy-secrets-catalog-pin)
 * [`devboy secrets catalog validate`↴](#devboy-secrets-catalog-validate)
 * [`devboy secrets setup`↴](#devboy-secrets-setup)
 * [`devboy hooks`↴](#devboy-hooks)
@@ -908,6 +910,8 @@ Manage the token catalog (provider procedure files the `secrets ui` form binds t
 * `status` — Inspect every catalog at every active source — bundled, user, project, AND URL — with origin, variant count, and (for URL sources) cache state. Replaces the older `list` command for the URL-loaded catalog flow (P23)
 * `add-url` — Subscribe to a remote catalog by URL. Fetches once through every P23 defence layer (HTTPS-only, SSRF guard, size cap, content-type, schema version), prints the body SHA256 + variant summary, asks for trust confirmation (or accepts a `--pin` for unattended use), then appends a `[[source]]` entry to `~/.devboy/secrets/catalog/sources.toml`
 * `refresh` — Re-fetch URL catalogs from `sources.toml`. Without `--force` the loader honours each source's `refresh_seconds` TTL — sources within their window are reported as "fresh" and not re-fetched. With `--force` the cache for matching sources is dropped before the fetch so every source goes back to the network. Optional positional `<filter>` matches as a case-insensitive substring against the source URL
+* `forget` — Drop URL entries from `known_hashes.toml` so the next fetch re-establishes TOFU. Positional `<filter>` is a case-insensitive URL substring; without it, every recorded entry is dropped (with confirmation unless `--yes` is set). Use this after a deliberate upstream rotation that you want devboy to re-trust
+* `pin` — Promote a TOFU entry to a hard SHA pin in `sources.toml`. Positional `<filter>` is a case- insensitive URL substring matching the source to pin. With explicit `<sha>` argument, that exact value is written; without it, the current `known_hashes.toml` entry is read and copied. Future fetches from this source refuse any mismatch
 * `validate` — Validate a single catalog JSON file. Loads the file, runs schema deserialisation (`deny_unknown_fields` is strict), then per-variant checks that the regex compiles and that every URL parses. Exit non-zero on any failure
 
 
@@ -966,6 +970,35 @@ Re-fetch URL catalogs from `sources.toml`. Without `--force` the loader honours 
 ###### **Options:**
 
 * `--force` — Bypass each source's `refresh_seconds` TTL and force a re-fetch over the network. Cache for matching sources is removed before the fetch so the loader cannot serve a stale body
+
+
+
+## `devboy secrets catalog forget`
+
+Drop URL entries from `known_hashes.toml` so the next fetch re-establishes TOFU. Positional `<filter>` is a case-insensitive URL substring; without it, every recorded entry is dropped (with confirmation unless `--yes` is set). Use this after a deliberate upstream rotation that you want devboy to re-trust
+
+**Usage:** `devboy secrets catalog forget [OPTIONS] [FILTER]`
+
+###### **Arguments:**
+
+* `<FILTER>` — Optional case-insensitive substring against the URL. Without this argument, every recorded TOFU entry is dropped (subject to `--yes`)
+
+###### **Options:**
+
+* `--yes` — Skip the interactive confirmation prompt. Required when no filter is given (bulk-clearing all TOFU entries is destructive enough to warrant explicit opt-in)
+
+
+
+## `devboy secrets catalog pin`
+
+Promote a TOFU entry to a hard SHA pin in `sources.toml`. Positional `<filter>` is a case- insensitive URL substring matching the source to pin. With explicit `<sha>` argument, that exact value is written; without it, the current `known_hashes.toml` entry is read and copied. Future fetches from this source refuse any mismatch
+
+**Usage:** `devboy secrets catalog pin <FILTER> [SHA]`
+
+###### **Arguments:**
+
+* `<FILTER>` — Case-insensitive URL substring identifying the source to pin. Must match exactly one source; ambiguity is an error
+* `<SHA>` — Explicit lower-case-hex SHA256 to write to `sources.toml`. When omitted, the current TOFU entry for the matched source is read from `known_hashes.toml` and copied
 
 
 
