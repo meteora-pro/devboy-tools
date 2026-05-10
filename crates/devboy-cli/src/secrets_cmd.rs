@@ -78,6 +78,18 @@ pub enum CatalogCommands {
     /// debug which override is winning when a team has its own
     /// project-scope file shadowing the bundled default.
     List,
+    /// Validate a single catalog JSON file. Loads the file,
+    /// runs schema deserialisation (`deny_unknown_fields` is
+    /// strict), then per-variant checks that the regex compiles
+    /// and that every URL parses. Exit non-zero on any failure.
+    Validate(CatalogValidateArgs),
+}
+
+/// Flags for `devboy secrets catalog validate`.
+#[derive(Args, Debug)]
+pub struct CatalogValidateArgs {
+    /// Path to the JSON catalog file. Use `-` to read from stdin.
+    pub path: PathBuf,
 }
 
 /// `devboy secrets agent <subcommand>` family.
@@ -187,6 +199,7 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
         SecretsCommands::Rotate(args) => crate::secrets_rotate::handle(args).await,
         SecretsCommands::Catalog { command } => match command {
             CatalogCommands::List => catalog_list(),
+            CatalogCommands::Validate(args) => catalog_validate(args),
         },
     }
 }
@@ -232,6 +245,64 @@ fn catalog_list() -> Result<()> {
         for e in &errors {
             eprintln!("  - {e}");
         }
+    }
+    Ok(())
+}
+
+/// Load a single catalog file and run per-variant integrity
+/// checks: regex compiles, every URL parses. Returns
+/// `Err(_)` (non-zero exit) when any variant fails so it can
+/// gate CI.
+fn catalog_validate(args: CatalogValidateArgs) -> Result<()> {
+    let cat = devboy_token_catalog::load_file(&args.path)
+        .with_context(|| format!("could not load {}", args.path.display()))?;
+
+    println!(
+        "{}: {} ({} {})",
+        args.path.display(),
+        cat.provider_id,
+        cat.variants.len(),
+        if cat.variants.len() == 1 {
+            "variant"
+        } else {
+            "variants"
+        }
+    );
+
+    let mut total_problems = 0usize;
+    for v in &cat.variants {
+        let mut problems: Vec<String> = Vec::new();
+
+        if let Some(re) = v.format_regex.as_deref() {
+            if let Err(e) = regex::Regex::new(re) {
+                problems.push(format!("format_regex does not compile: {e}"));
+            }
+        }
+        if let Err(e) = reqwest::Url::parse(&v.retrieval.console_url) {
+            problems.push(format!("retrieval.console_url not a valid URL: {e}"));
+        }
+        if let Some(spec) = v.liveness.as_ref()
+            && let Err(e) = reqwest::Url::parse(&spec.url)
+        {
+            problems.push(format!("liveness.url not a valid URL: {e}"));
+        }
+
+        if problems.is_empty() {
+            println!("  ✓ {} — regex ok, URLs ok", v.id);
+        } else {
+            total_problems += problems.len();
+            println!("  ✗ {}", v.id);
+            for p in &problems {
+                println!("      - {p}");
+            }
+        }
+    }
+
+    if total_problems > 0 {
+        anyhow::bail!(
+            "catalog validation failed: {total_problems} problem(s) across {} variant(s)",
+            cat.variants.len()
+        );
     }
     Ok(())
 }

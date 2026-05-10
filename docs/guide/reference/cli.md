@@ -59,6 +59,7 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets rotate`↴](#devboy-secrets-rotate)
 * [`devboy secrets catalog`↴](#devboy-secrets-catalog)
 * [`devboy secrets catalog list`↴](#devboy-secrets-catalog-list)
+* [`devboy secrets catalog validate`↴](#devboy-secrets-catalog-validate)
 * [`devboy hooks`↴](#devboy-hooks)
 * [`devboy hooks install`↴](#devboy-hooks-install)
 * [`devboy hooks check`↴](#devboy-hooks-check)
@@ -899,6 +900,7 @@ Manage the token catalog (provider procedure files the `secrets ui` form binds t
 ###### **Subcommands:**
 
 * `list` — List every loaded provider catalog with its source (bundled / user / project) and variant count. Useful to debug which override is winning when a team has its own project-scope file shadowing the bundled default
+* `validate` — Validate a single catalog JSON file. Loads the file, runs schema deserialisation (`deny_unknown_fields` is strict), then per-variant checks that the regex compiles and that every URL parses. Exit non-zero on any failure
 
 
 
@@ -907,6 +909,18 @@ Manage the token catalog (provider procedure files the `secrets ui` form binds t
 List every loaded provider catalog with its source (bundled / user / project) and variant count. Useful to debug which override is winning when a team has its own project-scope file shadowing the bundled default
 
 **Usage:** `devboy secrets catalog list`
+
+
+
+## `devboy secrets catalog validate`
+
+Validate a single catalog JSON file. Loads the file, runs schema deserialisation (`deny_unknown_fields` is strict), then per-variant checks that the regex compiles and that every URL parses. Exit non-zero on any failure
+
+**Usage:** `devboy secrets catalog validate <PATH>`
+
+###### **Arguments:**
+
+* `<PATH>` — Path to the JSON catalog file. Use `-` to read from stdin
 
 
 
