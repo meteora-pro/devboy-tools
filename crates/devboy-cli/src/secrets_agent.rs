@@ -62,6 +62,7 @@ pub const SPAWN_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// Default cap on the wait-for-socket loop in [`ensure_agent_running`].
 pub const DEFAULT_SPAWN_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[cfg(unix)]
 const CONNECT_PROBE_TIMEOUT: Duration = Duration::from_millis(200);
 
 // =============================================================================

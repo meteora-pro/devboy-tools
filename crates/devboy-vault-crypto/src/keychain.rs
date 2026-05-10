@@ -65,13 +65,14 @@
 //! [ADR-023]: https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md
 
 // On non-macOS targets the keychain envelope only ships stub
-// `Unsupported` errors, so the helpers below + a couple of
-// imports are dead code (used exclusively by the
-// `#[cfg(target_os = "macos")]` block and the `#[cfg(test)]`
-// module). Suppressing here keeps the helpers visible to tests
-// on any platform without the cross-compile rustdoc / clippy
-// job tripping on the workspace's `-D warnings`.
-#![cfg_attr(not(any(target_os = "macos", test)), allow(dead_code, unused_imports))]
+// `Unsupported` errors, so several helpers below plus a couple
+// of imports are dead code (used exclusively by the
+// `#[cfg(target_os = "macos")]` block, with only a subset
+// referenced from tests — `parse_envelope_payload` and
+// `aead::self` stay unused even under `cfg(test)`). The gate
+// is "non-macOS, period" so the cross-compile rustdoc / clippy
+// / coverage jobs stop tripping the workspace `-D warnings`.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
 
 use thiserror::Error;
 use zeroize::Zeroizing;
