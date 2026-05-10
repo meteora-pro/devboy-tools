@@ -791,9 +791,9 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
             input_schema: {
                 let mut s = ToolSchema::new();
                 s.add_property("project", PropertySchema::string("Jira project key (e.g., \"PROJ\"). Defaults to the configured project."));
-                s.add_property("released", PropertySchema::string_enum(&["true", "false", "all"], "Filter by release state: \"true\" → only released, \"false\" → only unreleased, \"all\" → both (default: \"all\")."));
-                s.add_property("archived", PropertySchema::string_enum(&["true", "false", "all"], "Filter by archived flag (default: \"false\" — hides archival noise)."));
-                s.add_property("limit", PropertySchema::integer("Max versions to return (default: 20). Sorted by releaseDate desc; oldest archival entries trimmed first.", Some(1.0), Some(200.0)));
+                s.add_property("released", PropertySchema::string_enum(&["true", "false", "all"], "Filter by release state: \"true\" → only released, \"false\" → only unreleased, \"all\" → both (default: \"all\")"));
+                s.add_property("archived", PropertySchema::string_enum(&["true", "false", "all"], "Filter by archived flag (default: \"false\" — hides archival noise)"));
+                s.add_property("limit", PropertySchema::integer("Max versions to return (default: 20). Sorted by releaseDate desc; oldest archival entries trimmed first", Some(1.0), Some(200.0)));
                 s.add_property("includeIssueCount", PropertySchema::boolean("Fetch issue counts per version via Cloud `?expand=issuesstatus` (default: false). Adds latency on large projects."));
                 s
             },
@@ -836,7 +836,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                     "state",
                     PropertySchema::string_enum(
                         &["active", "future", "closed", "all"],
-                        "Filter by sprint state. Default `all` returns every sprint on the board.",
+                        "Filter by sprint state. Default `all` returns every sprint on the board",
                     ),
                 );
                 s.set_required("boardId", true);
@@ -900,7 +900,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property(
                     "limit",
                     PropertySchema::integer(
-                        "Max fields to return after filtering (default 50). Sorted by name asc.",
+                        "Max fields to return after filtering (default 50). Sorted by name asc",
                         Some(1.0),
                         Some(200.0),
                     ),

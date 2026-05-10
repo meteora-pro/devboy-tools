@@ -1520,9 +1520,11 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// `task.custom_fields` populates `issue.custom_fields` keyed by
-    /// the human-readable name. Unset fields (`value == None`) are
-    /// filtered; the id-only fallback covers anonymous fields.
+    /// `task.custom_fields` populates `issue.custom_fields` keyed
+    /// by ClickUp's stable field **id** (matches the homogeneous
+    /// shape `JOIN`able with `get_custom_fields` across providers).
+    /// Display name rides along inside `CustomFieldValue.name`.
+    /// Unset fields (`value == None`) are filtered.
     #[test]
     fn test_map_task_surfaces_custom_field_values() {
         let task = ClickUpTask {

@@ -205,7 +205,14 @@ impl ToolEnricher for JiraSchemaEnricher {
         if tool_name == "create_issue" || tool_name == "update_issue" {
             let groups = self.metadata.custom_field_groups();
             if !groups.is_empty() {
-                schema.remove_params(&["customFields"]);
+                // Keep `customFields` as a raw escape hatch so
+                // callers who want to set an instance-specific
+                // `customfield_NNNNN` directly (e.g. one not yet
+                // discovered through `get_custom_fields`) still
+                // can — the schema gains the typed `cf_*` /
+                // canonical-alias slots **in addition to**, not
+                // **instead of**, the escape hatch (Copilot review
+                // on PR #260).
 
                 for (name, variants) in &groups {
                     let representative = &variants[0];
@@ -341,7 +348,20 @@ impl ToolEnricher for JiraSchemaEnricher {
             obj.remove(&key);
         }
         if !custom_fields.is_empty() {
-            obj.insert("customFields".into(), Value::Object(custom_fields));
+            // Merge into an existing `customFields` object if the
+            // caller already supplied one — otherwise replace would
+            // clobber raw `customfield_*` ids passed through the
+            // escape hatch (Copilot review on PR #260).
+            match obj.get_mut("customFields") {
+                Some(Value::Object(existing)) => {
+                    for (k, v) in custom_fields {
+                        existing.entry(k).or_insert(v);
+                    }
+                }
+                _ => {
+                    obj.insert("customFields".into(), Value::Object(custom_fields));
+                }
+            }
         }
     }
 
@@ -640,7 +660,9 @@ mod tests {
 
         enricher.enrich_schema("create_issue", &mut schema);
 
-        assert!(!schema.properties.contains_key("customFields"));
+        // `customFields` is kept as a raw escape hatch alongside
+        // the expanded `cf_*` slots (Copilot review on PR #260).
+        assert!(schema.properties.contains_key("customFields"));
         assert!(schema.properties.contains_key("cf_story_points"));
         assert_eq!(schema.properties["cf_story_points"].schema_type, "number");
     }
@@ -823,11 +845,11 @@ mod tests {
         assert!(project_enum.contains(&"PROJ".to_string()));
         assert!(project_enum.contains(&"INFRA".to_string()));
 
-        // customFields IS replaced in multi-project — the union of
-        // customfields across projects gets expanded to typed
-        // params. `customFields` raw escape-hatch goes away when
-        // any project has customfields.
-        assert!(!schema.properties.contains_key("customFields"));
+        // Multi-project mode keeps `customFields` raw escape hatch
+        // alongside the expanded `cf_*` slots so callers can still
+        // pass instance-specific ids not in metadata (Copilot
+        // review on PR #260).
+        assert!(schema.properties.contains_key("customFields"));
         assert!(schema.properties.contains_key("cf_story_points"));
     }
 
