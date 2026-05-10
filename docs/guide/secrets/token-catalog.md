@@ -132,6 +132,47 @@ Read [the JSON file](https://github.com/meteora-pro/devboy-tools/blob/main/crate
 
 `schema_version: 1` is stable. Future major bumps land as `v2.json` alongside, and the loader keeps reading both for at least one minor release before old files become an error. Authors can pin their files to a known schema by URL and get notified when they need to migrate.
 
+## Sharing catalogs across a team or community
+
+Once you have a working catalog file, the typical next step is sharing it with teammates so they don't have to re-author the same metadata. There are three layered options:
+
+1. **Disk-share** — drop the JSON file into `~/.devboy/secrets/catalog/` on each developer machine (Ansible, dotfiles, `make install`). Simplest path; downside is keeping copies in sync after every edit.
+
+2. **Project-scope override** — commit `<project>/.devboy/secrets/catalog/<provider>.json` to the project repo. Anyone who clones inherits the catalog automatically; the project-scope copy wins over user / bundled per the override precedence in [`token-catalog.md` §discovery-sources](#discovery-sources).
+
+3. **URL source** — host the JSON on a Git provider's raw endpoint (or any HTTPS server) and let `devboy secrets catalog add-url` subscribe each developer machine. The `[[source]]` entry lands in `~/.devboy/secrets/catalog/sources.toml`; the loader fetches with sha-pin or TOFU, caches, and refreshes at the configured TTL. Right when more than one team uses the same provider knowledge.
+
+### Recommended layout for a community / team catalog repo
+
+If you're standing up a shared repo (think `devboy-catalog`, `<team>-secrets-catalog`, …), keep the layout simple so any consumer can `add-url` against any file without touching the repo:
+
+```
+your-org/devboy-catalog/
+├── README.md          ← short pitch + the canonical raw URL pattern
+├── LICENSE
+├── anthropic.json
+├── openai.json
+├── gitlab.json
+├── slack.json
+├── …                  ← one file per provider, mirrors crates/devboy-token-catalog/data/
+└── .github/workflows/
+    └── validate.yml   ← runs `devboy secrets catalog validate <file>` on every PR
+```
+
+The `README.md` should give the consumer the exact subscribe command:
+
+```bash
+devboy secrets catalog add-url \
+  https://raw.githubusercontent.com/your-org/devboy-catalog/main/anthropic.json \
+  --pin <sha256>            # recommended for prod; or omit for TOFU
+  --refresh-seconds 86400   # 24h is the default; lower for fast iteration
+  --enable                  # only if this is the user's first URL source
+```
+
+Catalogs validated against the same `schema/v1.json` shipped here load cleanly into any `devboy` ≥ 0.27. Consumers see the URL-source entries as `url` origin in `devboy secrets catalog status`, alongside a `[pin:<sha8>…]` or `[tofu]` marker for the trust state.
+
+**A separate canonical reference repo is tracked as issue #258** ([token-reference repo + crawler](https://github.com/meteora-pro/devboy-tools/issues/258)) — that effort owns the markdown-first procedure docs (where to obtain / rotate / revoke each token) plus a scheduled crawler to keep them fresh. The catalog JSONs documented here can live alongside or in their own repo; both are first-class.
+
 ## See also
 
 - [`onboarding.md`](./onboarding.md) — first-run install + manifest setup.

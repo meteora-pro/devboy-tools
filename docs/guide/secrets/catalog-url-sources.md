@@ -156,7 +156,7 @@ When the GUI surfaces a TOFU mismatch warning (or the CLI logs `blocked-tofu-mis
 
 ## See also
 
-- [`token-catalog.md`](./token-catalog.md) — authoring the JSON catalog files.
+- [`token-catalog.md`](./token-catalog.md) — authoring the JSON catalog files, plus the recommended layout for sharing them across a team or community via a Git repo.
 - [`onboarding.md`](./onboarding.md) — first-run setup of the secret framework.
 - [`agent-protocol.md`](./agent-protocol.md) — MCP-side surface that consumes the catalog.
 - ADR-023 §3.4 — UX layer architecture (provision dialog driven by the catalog).
