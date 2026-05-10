@@ -1112,18 +1112,27 @@ fn render_context_card(
 
     // Variant block — when the active path resolved to a
     // catalog variant, render the source-origin chip followed
-    // by `description` as a paragraph and `retrieval.steps` as
-    // a numbered procedure. The grid below skips its own
-    // "Description" row in that case to avoid duplication.
+    // by `description`, the `console_url` hyperlink, the
+    // `retrieval.steps` as a numbered procedure, and finally
+    // `retrieval.notes` (if any) as a small italic footnote.
+    // The grid below skips rows it would duplicate
+    // (Description, Where to take from) when a variant is
+    // present.
     if let Some((v, source)) = variant {
         ui.horizontal(|ui| {
             ui.label(RichText::new(&v.display_name).strong());
             ui.label(catalog_source_chip(source));
         });
         ui.label(&v.description);
+        ui.add_space(2.0);
+        ui.hyperlink_to("Where to take from →", &v.retrieval.console_url);
         ui.add_space(4.0);
         for (idx, step) in v.retrieval.steps.iter().enumerate() {
             ui.label(format!("{}. {}", idx + 1, step));
+        }
+        if let Some(notes) = v.retrieval.notes.as_deref() {
+            ui.add_space(4.0);
+            ui.label(RichText::new(notes).small().italics());
         }
         ui.add_space(6.0);
     }
@@ -1144,7 +1153,9 @@ fn render_context_card(
                     ui.label(desc);
                     ui.end_row();
                 }
-                if let Some(url) = e.retrieval_url.as_deref() {
+                if variant.is_none()
+                    && let Some(url) = e.retrieval_url.as_deref()
+                {
                     ui.label(RichText::new("Where to take from").strong());
                     ui.hyperlink(url);
                     ui.end_row();
