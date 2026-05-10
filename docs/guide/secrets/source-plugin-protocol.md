@@ -1,45 +1,47 @@
-# Source plugin protocol: пишем собственный SecretSource
+# Source plugin protocol: writing your own `SecretSource`
 
-Документ для авторов community-плагинов, которые расширяют список источников секретов в `devboy-tools` за пределами поставляемых из коробки (keychain, local-vault, 1Password, Vault, env-store). Описывает stdio JSON-RPC wire-format, sidecar manifest, discovery и контракт жизненного цикла.
+A guide for community plugin authors who want to extend the list of secret sources in `devboy-tools` beyond what ships in the box (keychain, local-vault, 1Password, Vault, env-store). Covers the stdio JSON-RPC wire format, the sidecar manifest, discovery, and the lifecycle contract.
 
-См. [ADR-021](../architecture/adr/ADR-021-secret-source-router.md) §6 (трейт `SecretSource`) и §10 (subprocess plugin extension), а также `crates/devboy-storage/src/plugin_protocol.rs`, `plugin_manifest.rs`, `plugin_client.rs` для эталонной реализации хоста.
+See [ADR-021](../architecture/adr/ADR-021-secret-source-router.md) §6 (the `SecretSource` trait) and §10 (subprocess plugin extension), plus `crates/devboy-storage/src/plugin_protocol.rs`, `plugin_manifest.rs`, and `plugin_client.rs` for the reference host implementation.
+
+> Russian translation: [`ru/source-plugin-protocol.md`](./ru/source-plugin-protocol.md).
 
 ---
 
-## Зачем это нужно
+## Why this exists
 
-Стандартные источники покрывают типичные кейсы, но если ваша команда хранит секреты в:
+The standard sources cover typical setups, but if your team stores secrets in:
 
-- внутреннем self-hosted KV-сервере, не совместимом с Vault HTTP API,
-- проприетарном HSM с CLI-обёрткой,
-- legacy-pipeline'е, где значения берутся из специфичной БД,
+- an internal self-hosted KV server that doesn't speak the Vault HTTP API,
+- a proprietary HSM with a CLI wrapper,
+- a legacy pipeline that pulls values from a domain-specific DB,
 
-то вместо ожидания фичи в upstream-репозитории удобнее написать subprocess-плагин. Хост запускает плагин лениво и общается с ним через stdio JSON-RPC; плагин может быть на любом языке (Python, Go, shell — что угодно, что умеет читать stdin построчно и писать в stdout).
+it's faster to ship a subprocess plugin than wait for an upstream feature. The host launches the plugin lazily and talks to it over stdio JSON-RPC; the plugin can be in any language (Python, Go, shell — anything that reads stdin line-by-line and writes to stdout).
 
-## High-level архитектура
+## High-level architecture
 
 ```text
 ┌──────────────────────────────────┐
 │ devboy host (CLI / daemon / MCP) │
 └──────────────────────────────────┘
                  │
-                 ▼ ленивый spawn по первому запросу
+                 ▼ lazy spawn on first request
 ┌──────────────────────────────────────────────────┐
 │ ~/.devboy/plugins/secrets/devboy-source-<name>   │
-│  ↑↓  newline-delimited JSON-RPC по stdin/stdout  │
+│  ↑↓  newline-delimited JSON-RPC over stdin/stdout│
 └──────────────────────────────────────────────────┘
                  │
                  ▼
-       реальное хранилище (HSM, custom KV, …)
+       real backend (HSM, custom KV, …)
 ```
 
-Хост держит один subprocess на плагин на всё время сессии (с idle-reaper'ом — см. лайфтайм), отправляет команды через stdin и читает ответы из stdout. Никаких сетевых сокетов, никакого FFI — только труба.
+The host keeps one subprocess per plugin alive for the session (with an idle reaper — see lifecycle), sends commands over stdin, reads replies from stdout. No network sockets, no FFI — only a pipe.
 
-## Wire-format: JSON-RPC 2.0 поверх stdin/stdout
+## Wire format: JSON-RPC 2.0 over stdin/stdout
 
-Каждый кадр — одна строка с одним JSON-объектом, заканчивающаяся `\n`. Запросы и ответы шлются строго в порядке (один запрос — один ответ; конкурентность не предусмотрена).
+Each frame is one line containing one JSON object, terminated by `\n`. Requests and replies are strictly serial (one request → one reply; no concurrency).
 
-### Запрос (host → plugin)
+### Request (host → plugin)
 
 ```json
 {
@@ -54,12 +56,12 @@
 }
 ```
 
-- `jsonrpc` — всегда строка `"2.0"`. Любое другое значение — ответ должен быть error.
-- `id` — целое число (u64). Хост гарантирует уникальность в пределах одного процесса.
-- `method` — одно из пяти имён ниже.
-- `params` — объект, специфичный для метода. Пустой объект (`{}`) или отсутствие поля для методов без параметров.
+- `jsonrpc` — always the string `"2.0"`. Any other value must reply with an error.
+- `id` — integer (u64). The host guarantees uniqueness within a single process.
+- `method` — one of the five names below.
+- `params` — method-specific object. Empty object (`{}`) or omitted for parameter-less methods.
 
-### Успешный ответ (plugin → host)
+### Successful reply (plugin → host)
 
 ```json
 {
@@ -73,9 +75,9 @@
 }
 ```
 
-`id` обязан соответствовать `id` запроса. Хост сравнивает их и падает, если не сходится.
+`id` must echo the request's `id`. The host checks and aborts if they don't match.
 
-### Ответ с ошибкой
+### Error reply
 
 ```json
 {
@@ -88,20 +90,20 @@
 }
 ```
 
-Поле `result` и `error` взаимоисключающие — ровно одно из них в каждом ответе.
+`result` and `error` are mutually exclusive — exactly one is present in each reply.
 
-## Пять методов
+## The five methods
 
 ### `secret_source.init`
 
-Первый вызов после spawn. Хост передаёт имя источника и конфиг из `sources.toml`; плагин возвращает свои capabilities.
+The first call after spawn. The host hands the source name and config from `sources.toml`; the plugin returns its capabilities.
 
 **Request params**:
 
 ```json
 {
   "source_name": "<name>",
-  "config": { "<arbitrary": "<config>" },
+  "config": { "<arbitrary>": "<config>" },
   "protocol_version": "1.0"
 }
 ```
@@ -116,27 +118,27 @@
 }
 ```
 
-`capabilities_bits` — битовая маска (см. `crates/devboy-storage/src/source.rs::Capabilities`):
+`capabilities_bits` is a bit mask (see `crates/devboy-storage/src/source.rs::Capabilities`):
 
-| Bit | Capability | Что заявляете |
+| Bit | Capability | What you're claiming |
 |---|---|---|
-| `0b0000_0001` | `READ` | Поддерживаете `secret_source.get` |
-| `0b0000_0010` | `LIST` | Поддерживаете `secret_source.list` |
-| `0b0000_0100` | `VALIDATE` | Поддерживаете `secret_source.validate` |
-| `0b0000_1000` | `WRITE` | Резерв (зарегистрирован, ещё не используется) |
-| `0b0001_0000` | `ROTATE` | Резерв |
-| `0b0010_0000` | `BIOMETRIC_PROMPT` | Источник может запросить биометрию (1Password Touch ID) |
-| `0b0100_0000` | `AUDIT_LOGGED` | Источник пишет audit log при каждом доступе |
+| `0b0000_0001` | `READ` | Supports `secret_source.get` |
+| `0b0000_0010` | `LIST` | Supports `secret_source.list` |
+| `0b0000_0100` | `VALIDATE` | Supports `secret_source.validate` |
+| `0b0000_1000` | `WRITE` | Reserved (registered, not yet used) |
+| `0b0001_0000` | `ROTATE` | Reserved |
+| `0b0010_0000` | `BIOMETRIC_PROMPT` | Source may prompt for biometrics (1Password Touch ID) |
+| `0b0100_0000` | `AUDIT_LOGGED` | Source writes an audit log on every access |
 
-Если плагин поддерживает только READ — отправляйте `"capabilities_bits": 1`.
+If the plugin only supports READ — send `"capabilities_bits": 1`.
 
-Хост отказывается продолжать, если `protocol_version` в запросе старше major-версии, чем плагин понимает.
+The host refuses to continue if the request's `protocol_version` is older than the plugin understands at the major version.
 
 ### `secret_source.is_available`
 
-Проверка готовности. Дёшевая операция, должна возвращаться быстро (< 100 мс желательно).
+Readiness check. Cheap operation, must return quickly (< 100 ms is the target).
 
-**Request params**: нет (пустой объект `{}` или отсутствие поля).
+**Request params**: none (empty object `{}` or omitted).
 
 **Response result**:
 
@@ -147,15 +149,15 @@
 }
 ```
 
-Возможные `status`:
+Possible `status` values:
 
-- `available` — плагин готов отвечать на `get`/`list`/`validate`.
-- `unavailable` — backend недоступен (network down, файл повреждён). `detail` — короткое описание для `doctor`.
-- `needs-credential` — плагин запущен, но его credential отсутствует или истёк (`op signin` нужен). `detail` — что именно сделать.
+- `available` — plugin is ready to answer `get` / `list` / `validate`.
+- `unavailable` — backend down (network down, file corrupt). `detail` — short description for `doctor`.
+- `needs-credential` — plugin is up, but its credential is missing or expired (`op signin` required). `detail` — exactly what to do.
 
 ### `secret_source.get`
 
-Получить значение по reference.
+Fetch a value by reference.
 
 **Request params**:
 
@@ -172,17 +174,17 @@
 }
 ```
 
-`value` — plaintext. **Это единственное место в протоколе, где значение проходит по wire**. Хост сразу оборачивает его в `secrecy::SecretString` и zeroize-ит после использования. Плагин обязан не логировать `value`.
+`value` is plaintext. **This is the only place in the protocol where a value crosses the wire.** The host wraps it in `secrecy::SecretString` immediately and zeroizes after use. The plugin must not log `value`.
 
-`lease_seconds` — опционально, если backend поддерживает leases (Vault dynamic secrets). Хост использует это значение как верхнюю границу TTL для своего cache.
+`lease_seconds` is optional — for backends with leases (Vault dynamic secrets). The host uses it as the upper bound for its cache TTL.
 
-Если значения нет — возвращайте `error.kind = "bad-reference"` с полем `reference: "<reference>"` и `reason: "not found"`.
+If the value isn't there, return `error.kind = "bad-reference"` with `reference: "<reference>"` and `reason: "not found"`.
 
 ### `secret_source.list`
 
-Перечислить inventory backend'а. Используется discovery-flow в TUI/GUI и `secrets_propose_new_path` MCP-инструментом.
+List the backend's inventory. Used by the discovery flow in TUI/GUI and by the `secrets_propose_new_path` MCP tool.
 
-**Request params**: нет.
+**Request params**: none.
 
 **Response result**:
 
@@ -201,11 +203,11 @@
 }
 ```
 
-Если backend не поддерживает enumeration — верните `error.kind = "unsupported-capability"` с `capability: "list"`.
+If the backend doesn't support enumeration, return `error.kind = "unsupported-capability"` with `capability: "list"`.
 
 ### `secret_source.validate`
 
-Проверить, что reference хорошо сформирован, без round-trip за значением. Дешёвый sanity-check.
+Check that a reference is well-formed without round-tripping for the value. Cheap sanity check.
 
 **Request params**:
 
@@ -219,23 +221,23 @@
 { "ok": true }
 ```
 
-`ok = false` — нештатно; ошибки сообщаются через `error.kind = "bad-reference"`.
+`ok = false` is unusual; report errors via `error.kind = "bad-reference"` instead.
 
-## Error-варианты
+## Error variants
 
 ```json
-{ "kind": "unavailable",          "detail": "<...>" }
+{ "kind": "unavailable",            "detail": "<...>" }
 { "kind": "unsupported-capability", "capability": "<list|write|...>" }
-{ "kind": "bad-reference",        "reference": "<r>", "reason": "<...>" }
-{ "kind": "needs-credential",     "detail": "<...>" }
-{ "kind": "other",                "detail": "<...>" }
+{ "kind": "bad-reference",          "reference": "<r>", "reason": "<...>" }
+{ "kind": "needs-credential",       "detail": "<...>" }
+{ "kind": "other",                  "detail": "<...>" }
 ```
 
-Хост маппит их на свой `SourceError` enum один-в-один. `other` — для всего, что не подпадает под остальные варианты (transport timeout, parse error, …).
+The host maps these one-to-one onto its `SourceError` enum. `other` is a catch-all for anything that doesn't fit the others (transport timeout, parse error, …).
 
 ## Sidecar manifest
 
-Для каждого плагина рядом с исполняемым файлом лежит TOML-описание:
+Every plugin sits next to a TOML descriptor:
 
 ```text
 ~/.devboy/plugins/secrets/
@@ -243,7 +245,7 @@
 └── devboy-source-<name>           # executable
 ```
 
-### Формат `devboy-source-<name>.toml`
+### `devboy-source-<name>.toml` format
 
 ```toml
 name = "<name>"
@@ -253,66 +255,68 @@ allowed_env_vars = ["HOME", "PATH"]
 checksum_sha256 = "<lower-case-hex-digest-of-executable>"
 ```
 
-Поля:
+Fields:
 
-- `name` — короткое идентификационное имя. Должно совпадать с `<name>` в имени файла manifest'а — иначе хост откажется загружать.
-- `version` — advisory; логируется и показывается в `doctor`. Не используется для семантической совместимости.
-- `executable` — путь относительно директории манифеста (или абсолютный). Хост канонизирует и проверяет, что файл существует.
-- `allowed_env_vars` — единственные env-vars, которые попадут в дочерний процесс. Хост вызывает `Command::env_clear()` перед exec, потом добавляет ровно эти переменные. Всё остальное (включая `$AWS_SECRET_KEY`) скрыто.
-- `checksum_sha256` — SHA-256 hex (case-insensitive) от байтов executable. Хост пересчитывает и отказывается запускать при несоответствии.
+- `name` — short identifier. Must equal `<name>` in the manifest filename — the host refuses to load otherwise.
+- `version` — advisory; logged and shown in `doctor`. Not used for semantic compatibility.
+- `executable` — path relative to the manifest directory (or absolute). The host canonicalises and checks the file exists.
+- `allowed_env_vars` — the only env vars that reach the child process. The host calls `Command::env_clear()` before exec, then injects exactly these variables. Everything else (including `$AWS_SECRET_KEY`) is hidden.
+- `checksum_sha256` — SHA-256 hex (case-insensitive) of the executable bytes. The host re-hashes and refuses to launch on mismatch.
 
-### Где лежит
+### Where it lives
 
-Дефолтная директория discovery — `$HOME/.devboy/plugins/secrets/`. Хост сканирует её при старте, ищет файлы, начинающиеся на `devboy-source-` и заканчивающиеся на `.toml`. Каждый найденный manifest парсится независимо — одна сломанная конфигурация не отключает остальные плагины.
+The default discovery directory is `$HOME/.devboy/plugins/secrets/`. The host scans it at startup, looks for files starting with `devboy-source-` and ending in `.toml`. Each manifest parses independently — one broken config does not disable the rest of the plugins.
 
-## Контракт жизненного цикла
+## Lifecycle contract
 
-См. ADR-021 §10 для полной формулировки. Кратко:
+See ADR-021 §10 for the full statement. In short:
 
-| Параметр | Default | Описание |
+| Parameter | Default | Description |
 |---|---|---|
-| **Lazy spawn** | — | Плагин не запускается, пока хосту реально не понадобится первый запрос. |
-| **Idle timeout** | 60 секунд | Если плагин не использовался дольше — хост убивает процесс перед следующим запросом и спавнит заново. |
-| **Shutdown grace** | 10 секунд | При остановке хост сначала шлёт `SIGTERM`, ждёт grace, потом `SIGKILL`. |
-| **Restart cap** | 3 крэша / 60 секунд | Если плагин падает чаще — переходит в state `Disabled`. Дальнейшие запросы отказываются без spawn. Сброс — оператором через `doctor`. |
-| **Env restriction** | `allowed_env_vars` из манифеста | Дочерний процесс видит только перечисленные переменные. |
+| **Lazy spawn** | — | The plugin is not launched until the host actually needs the first request. |
+| **Idle timeout** | 60 seconds | If unused for longer, the host kills the process before the next request and respawns. |
+| **Shutdown grace** | 10 seconds | On stop, the host sends `SIGTERM`, waits the grace, then `SIGKILL`. |
+| **Restart cap** | 3 crashes / 60 seconds | Crash above the cap → state `Disabled`. Further requests refuse without spawn. Reset by the operator via `doctor`. |
+| **Env restriction** | `allowed_env_vars` from manifest | The child process sees only the listed variables. |
 
-Что это значит для автора плагина:
+What this means for the plugin author:
 
-- **Не предполагайте долгого uptime**. Любой долговременный state хранится во внешнем backend'е (KV-сервере, файле), а не в памяти процесса. После idle-reap state теряется.
-- **Init должен быть дешёвым**. Каждый ленивый spawn — это `init` + первая операция. Если init читает 100 МБ кеша с диска — пользователь увидит лаг при каждом первом обращении.
-- **Crash-безопасность**. Падение интерпретируется хостом как краш, считается в restart cap. Ловите exception'ы в плагине и возвращайте `error.kind = "other"` с понятным `detail` вместо паники.
-- **Корректный shutdown**. Когда хост закроет ваш stdin — это сигнал к graceful exit. Очистите ресурсы и вернитесь из main loop.
+- **Don't assume long uptime.** Any long-lived state lives in the external backend (KV server, file), not the process memory. After idle-reap, in-memory state is gone.
+- **Init must be cheap.** Every lazy spawn is `init` + first operation. If init reads a 100 MB cache from disk, the user notices a lag on every cold call.
+- **Crash safety.** A panic counts as a crash against the restart cap. Catch exceptions in the plugin and return `error.kind = "other"` with a useful `detail` instead of letting the process die.
+- **Clean shutdown.** When the host closes your stdin, that's the signal for graceful exit. Release resources and return from main.
 
 ## Sample plugin: echo-source
 
-В репозитории есть рабочий пример `examples/secrets-source-echo/`. Это Python-скрипт, который:
+The repo ships a working example at `examples/secrets-source-echo/`. A Python script that:
 
-- Принимает init и заявляет capabilities `READ | LIST | VALIDATE`.
-- На `get` возвращает `value = format!("echo:{reference}")` — то есть значение совпадает с reference. Удобно для smoke-тестов и обучения протоколу.
-- На `list` отдаёт три фейковых entries.
-- На `validate` принимает любые непустые references.
+- Accepts init and claims `READ | LIST | VALIDATE` capabilities.
+- On `get`, returns `value = format!("echo:{reference}")` — i.e. value mirrors reference. Convenient for smoke tests and learning the protocol.
+- On `list`, returns three fake entries.
+- On `validate`, accepts any non-empty reference.
 
-См. [`examples/secrets-source-echo/README.md`](../../../examples/secrets-source-echo/README.md) для инструкций по сборке + установке + проверке.
+See [`examples/secrets-source-echo/README.md`](../../../examples/secrets-source-echo/README.md) for build + install + smoke-test instructions.
 
-## Чек-лист для нового плагина
+## New-plugin checklist
 
-1. [ ] Реализуйте main loop: построчное чтение stdin, парс JSON, dispatch по `method`, печать одной строки JSON ответа в stdout.
-2. [ ] Покройте все пять методов или возвращайте `unsupported-capability` для тех, что не поддерживаете.
-3. [ ] Заявите честный `capabilities_bits` в ответ на `init` — иначе хост попросит то, что вы не сделаете.
-4. [ ] Никогда не логируйте `value` из `secret_source.get`. Никогда.
-5. [ ] Обработайте signal (SIGTERM / Ctrl+D) корректно — graceful exit без зависаний.
-6. [ ] Напишите sidecar TOML с правильным `name`, `executable`, `allowed_env_vars`, `checksum_sha256`.
-7. [ ] Положите оба файла в `~/.devboy/plugins/secrets/`.
-8. [ ] Прогоните `devboy doctor --secrets`. Должен увидеть ваш плагин в списке источников.
-9. [ ] Прогоните `devboy secrets describe --source <name>` (когда метод появится) или MCP-инструмент `secrets_request_provision` против пути, который роутится в ваш плагин.
+1. [ ] Implement the main loop: read stdin line-by-line, parse JSON, dispatch by `method`, print one line of JSON reply to stdout.
+2. [ ] Cover all five methods or return `unsupported-capability` for ones you don't.
+3. [ ] Declare honest `capabilities_bits` in the `init` reply — otherwise the host will ask for things you don't deliver.
+4. [ ] Never log the `value` from `secret_source.get`. Never.
+5. [ ] Handle signals (SIGTERM / Ctrl+D) cleanly — graceful exit, no hangs.
+6. [ ] Write the sidecar TOML with correct `name`, `executable`, `allowed_env_vars`, `checksum_sha256`.
+7. [ ] Drop both files into `~/.devboy/plugins/secrets/`.
+8. [ ] Run `devboy doctor --secrets`. Your plugin should show up in the source list.
+9. [ ] Run `devboy secrets describe --source <name>` (when the flag lands) or trigger the `secrets_request_provision` MCP tool against a path that routes into your plugin.
 
-## См. также
+## See also
 
-- [`onboarding.md`](./onboarding.md) — как добавить custom-источник в `sources.toml`, чтобы router его использовал.
-- [`agent-protocol.md`](./agent-protocol.md) — как агент видит ваш источник через MCP-инструменты.
-- ADR-021 §6 — формальный контракт `SecretSource` trait, на который маппится этот wire-protocol.
-- ADR-021 §10 — лайфтайм-контракт subprocess plugin'ов с обоснованием defaults.
-- `crates/devboy-storage/src/plugin_protocol.rs` — типы wire-format в Rust.
+- [`onboarding.md`](./onboarding.md) — how to add a custom source to `sources.toml` so the router uses it.
+- [`agent-protocol.md`](./agent-protocol.md) — how the agent sees your source through MCP tools.
+- [`token-catalog.md`](./token-catalog.md) — JSON catalogs that fill the GUI's "where do I get this token" panel; orthogonal to the source plugin protocol but you may want both.
+- [`catalog-url-sources.md`](./catalog-url-sources.md) — serving catalogs over the network with sha-pinning + audit log.
+- ADR-021 §6 — formal `SecretSource` trait this wire protocol maps onto.
+- ADR-021 §10 — subprocess plugin lifecycle contract with rationale for the defaults.
+- `crates/devboy-storage/src/plugin_protocol.rs` — wire-format types in Rust.
 - `crates/devboy-storage/src/plugin_manifest.rs` — sidecar parser + checksum verification.
-- `crates/devboy-storage/src/plugin_client.rs` — host-side supervisor с lazy spawn / idle reap / restart cap.
+- `crates/devboy-storage/src/plugin_client.rs` — host-side supervisor with lazy spawn / idle reap / restart cap.
