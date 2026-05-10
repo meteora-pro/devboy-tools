@@ -1,45 +1,47 @@
-# Agent protocol: работа с секретами через MCP
+# Agent protocol: secrets through MCP
 
-Для авторов AI-агентов и MCP-клиентов. Документ объясняет инвариант «agent never sees the value» (ADR-023 §3.7), полный перечень MCP-инструментов в семействе `secrets_*`, их семантику, лайфтайм запросов и формат ответов.
+For authors of AI agents and MCP clients. This document explains the "agent never sees the value" invariant (ADR-023 §3.7), the full list of MCP tools in the `secrets_*` family, their semantics, request lifetimes, and response shapes.
 
-См. [ADR-023](../architecture/adr/ADR-023-secret-store-ux-layer.md) §3.7 для формальной спецификации и `crates/devboy-mcp/src/secrets_tool.rs` + `secrets_provision.rs` для реализации.
+See [ADR-023](../architecture/adr/ADR-023-secret-store-ux-layer.md) §3.7 for the formal spec and `crates/devboy-mcp/src/secrets_tool.rs` + `secrets_provision.rs` for the implementation.
 
----
-
-## Базовый инвариант
-
-> **Агент никогда не видит значения секретов. Только метаданные.**
-
-Это не «лучшая практика» и не runtime-проверка — это типовая граница в коде. Reply-структуры всех инструментов `secrets_*` физически не имеют поля `value`. Если в будущем рефакторинг добавит `SecretString` в reply — компиляция упадёт на маркерном трейте `AgentSafeReply`. Дополнительно работают:
-
-- **CI grep gate** в `crates/devboy-mcp/tests/no_expose_secret_outside_allowlist.rs`. Любой `.expose_secret()` вне allowlist → fail.
-- **Negative integration test** в `crates/devboy-mcp/tests/secret_tool_responses_never_leak_value.rs`. Прогоняет фикстурный sentinel через каждый `secrets_*` инструмент и проверяет, что значения нет в ответе.
-
-На стороне агента это значит: **нельзя написать `secrets.get`** и получить токен. Если нужно использовать значение — оно достаётся через high-level provider tool (например, `get_issues` с уже разрешённым в proxy токеном). Обход доступен только пользователю — через UI-диалог, который никогда не возвращается агенту в виде строки.
+> Russian translation: [`ru/agent-protocol.md`](./ru/agent-protocol.md).
 
 ---
 
-## Перечень инструментов
+## Core invariant
 
-| Tool name | Назначение | Возвращает | Lifecycle |
+> **The agent never sees secret values. Metadata only.**
+
+This is not a "best practice" or a runtime check — it is a typed boundary in the code. The reply structs of every `secrets_*` tool physically have no `value` field. If a future refactor tries to add a `SecretString` to a reply, compilation fails on the `AgentSafeReply` marker trait. On top of that:
+
+- **CI grep gate** in `crates/devboy-mcp/tests/no_expose_secret_outside_allowlist.rs`. Any `.expose_secret()` outside the allowlist → fail.
+- **Negative integration test** in `crates/devboy-mcp/tests/secret_tool_responses_never_leak_value.rs`. Pumps a fixture sentinel through every `secrets_*` tool and asserts the value never appears in the reply.
+
+For the agent side this means: **you cannot write `secrets.get`** and receive a token. If you need a value, it reaches the work through a high-level provider tool (e.g. `get_issues` with the token already wired into a proxy alias). The bypass is available only to the user — through the UI dialog, which never returns a string back to the agent.
+
+---
+
+## Tool list
+
+| Tool name | Purpose | Returns | Lifecycle |
 |---|---|---|---|
-| `secrets_list` | Просмотр inventory активного контекста | Список метаданных | Синхронный |
-| `secrets_describe` | Детальная карточка одного пути | Метаданные одного пути | Синхронный |
-| `secrets_request_provision` | Открыть UI-диалог для первичного ввода значения | `request_id` | Асинхронный, polling |
-| `secrets_request_rotation` | То же, но с destructive-confirm для замены | `request_id` | Асинхронный, polling |
-| `secrets_propose_metadata` | Предложить правки метаданных существующего пути | `request_id` | Асинхронный, polling |
-| `secrets_propose_new_path` | Предложить регистрацию нового пути в манифест | `request_id` | Асинхронный, polling |
-| `secrets_poll_status` | Получить статус выданного `request_id` | `{kind, status, age_seconds, …}` | Синхронный |
+| `secrets_list` | Browse the inventory of the active context | List of metadata records | Synchronous |
+| `secrets_describe` | Detail card for one path | Metadata for one path | Synchronous |
+| `secrets_request_provision` | Open the UI dialog for first-time provision | `request_id` | Asynchronous, polling |
+| `secrets_request_rotation` | Same with destructive-confirm for replacement | `request_id` | Asynchronous, polling |
+| `secrets_propose_metadata` | Suggest metadata edits for an existing path | `request_id` | Asynchronous, polling |
+| `secrets_propose_new_path` | Suggest registering a new path in the manifest | `request_id` | Asynchronous, polling |
+| `secrets_poll_status` | Get the status of a previously issued `request_id` | `{kind, status, age_seconds, …}` | Synchronous |
 
-Запросы UI-диалогов — асинхронные: агент инициирует диалог и опрашивает статус. Пользователь в свободном темпе вводит значение в окно/TUI; агент видит только ход событий.
+UI-dialog requests are asynchronous: the agent kicks off the dialog and polls for status. The user types into the window/TUI at their own pace; the agent only sees the event flow.
 
 ---
 
 ## `secrets_list`
 
-Перечислить пути, объявленные в манифесте активного контекста.
+List the paths declared in the active context's manifest.
 
-### Запрос
+### Request
 
 ```json
 {
@@ -53,9 +55,9 @@
 }
 ```
 
-Все аргументы опциональны. Фильтры комбинируются по AND. `include_internal` по умолчанию `false` — внутренние пути (`__sys/...`) скрыты.
+All arguments are optional. Filters AND-combine. `include_internal` defaults to `false` — internal paths (`__sys/...`) are hidden.
 
-### Ответ
+### Response
 
 ```json
 [
@@ -69,23 +71,23 @@
 ]
 ```
 
-Поля:
+Fields:
 
-- `path` — ADR-020 путь (`<scope>/<provider>/<purpose>`).
-- `status` — `registered` / `expiring` (≤14 дней до истечения) / `expired`. Считается по `expires_at`, не по live-probe источника. Это умышленно: probe мог бы случайно раскрыть факт отзыва токена пользователем.
-- `expires_at` — ISO-8601 (`YYYY-MM-DD`) или `null`.
-- `source_name` — на текущий момент всегда `null` (роутер не пробрасывается в MCP-сервер; field зарезервирован в wire-format).
-- `capabilities_hint` — `"read"` (manual rotation) или `"read,rotate"` (provider-ui / provider-api).
+- `path` — ADR-020 path (`<scope>/<provider>/<purpose>`).
+- `status` — `registered` / `expiring` (≤14 days to expiry) / `expired`. Computed from `expires_at`, **not** from a live source probe. This is intentional: a probe could accidentally reveal that the user has already revoked the token.
+- `expires_at` — ISO-8601 (`YYYY-MM-DD`) or `null`.
+- `source_name` — currently always `null` (the router is not exposed to the MCP server; the field is reserved in the wire format).
+- `capabilities_hint` — `"read"` (manual rotation) or `"read,rotate"` (provider-ui / provider-api).
 
-Ответ отсортирован по `path` для стабильности тестов.
+The response is sorted by `path` for test stability.
 
 ---
 
 ## `secrets_describe`
 
-Карточка одного пути.
+Detail card for one path.
 
-### Запрос
+### Request
 
 ```json
 {
@@ -94,9 +96,9 @@
 }
 ```
 
-### Ответ
+### Response
 
-Строгий superset `secrets_list` элемента + дополнительные поля метаданных:
+A strict superset of a `secrets_list` element plus extra metadata fields:
 
 ```json
 {
@@ -114,21 +116,21 @@
 }
 ```
 
-Ошибки:
+Errors:
 
-- `not-found` — путь не виден в активном контексте (ни в проектном манифесте, ни в глобальном индексе с overrides).
-- `invalid-path` — синтаксис не соответствует ADR-020.
-- `merge-failed` — конфликт в манифесте (дубликат entry, недопустимая структура).
+- `not-found` — path not visible in the active context (neither in the project manifest nor in the global index with overrides).
+- `invalid-path` — syntax doesn't match ADR-020.
+- `merge-failed` — manifest conflict (duplicate entry, invalid structure).
 
-> **Manifest-gating**: видны только пути, на которые ссылается активный проектный манифест. Глобальный индекс не утекает целиком.
+> **Manifest-gating**: only paths the active project manifest references are visible. The global index is not leaked wholesale.
 
 ---
 
 ## `secrets_request_provision`
 
-Попросить framework открыть UI-диалог, в который пользователь введёт **новое** значение секрета.
+Ask the framework to open a UI dialog where the user types a **new** value for the secret.
 
-### Запрос
+### Request
 
 ```json
 {
@@ -140,40 +142,40 @@
 }
 ```
 
-`mode` опционален, по умолчанию `"provision"`. Допустимое значение `"rotation"` форсирует destructive-confirm — но обычно для ротации удобнее использовать отдельный `secrets_request_rotation` (см. ниже).
+`mode` is optional, defaulting to `"provision"`. The value `"rotation"` forces destructive-confirm — but for rotation the dedicated `secrets_request_rotation` (below) is usually clearer.
 
-### Ответ
+### Response
 
 ```json
 { "request_id": "prov-1f9b3a2c5e7d" }
 ```
 
-`request_id` — opaque строка вида `prov-<12-hex>`. Хранить и опрашивать через `secrets_poll_status`.
+`request_id` is an opaque string of the form `prov-<12-hex>`. Store it and poll via `secrets_poll_status`.
 
 ### Lifecycle
 
 ```
 secrets_request_provision  ──►  request_id, status = pending
                                        │
-                                       │  (пользователь вводит значение в диалоге)
+                                       │  (user types the value into the dialog)
                                        ▼
                                 daemon stores value, status = ok
                                        │
 secrets_poll_status(request_id) ──►   status = ok
                                        │
 agent ──► high-level provider tool (e.g. get_issues),
-          token уже доступен через proxy alias
+          token already available through the proxy alias
 ```
 
-Запрос expirится через **5 минут**, если пользователь не нажал ни Save, ни Cancel. Агент должен предусмотреть таймаут на свой polling.
+The request expires after **5 minutes** if the user hits neither Save nor Cancel. The agent should add a polling timeout of its own.
 
 ---
 
 ## `secrets_request_rotation`
 
-Та же семантика, что `request_provision { mode: "rotation" }`, но без двусмысленности на стороне вызова. Инструмент сам передаёт `mode = Rotation` в registry; UI поднимает диалог с явным destructive-confirm checkbox («I understand this overwrites the current secret»).
+Same semantics as `request_provision { mode: "rotation" }`, but without ambiguity at the call site. The tool passes `mode = Rotation` to the registry; the UI shows a dialog with an explicit destructive-confirm checkbox ("I understand this overwrites the current secret").
 
-### Запрос
+### Request
 
 ```json
 {
@@ -182,21 +184,21 @@ agent ──► high-level provider tool (e.g. get_issues),
 }
 ```
 
-### Ответ
+### Response
 
 ```json
 { "request_id": "prov-7c3e5a2d8b9f" }
 ```
 
-Lifecycle — идентичен `secrets_request_provision`. Используйте `secrets_poll_status` для отслеживания.
+Lifecycle is identical to `secrets_request_provision`. Use `secrets_poll_status` to watch progress.
 
 ---
 
 ## `secrets_propose_metadata`
 
-Предложить пользователю правки метаданных существующего пути. Открывается edit-metadata диалог с **diff preview**: текущие значения слева читаются из манифеста (надёжный источник), proposed — справа из payload агента.
+Ask the user to apply edits to the metadata of an existing path. An edit-metadata dialog opens with a **diff preview**: current values on the left are read from the manifest (the trusted source), proposed values on the right come from the agent's payload.
 
-### Запрос
+### Request
 
 ```json
 {
@@ -214,31 +216,31 @@ Lifecycle — идентичен `secrets_request_provision`. Используй
 }
 ```
 
-Поля в `fields` — все опциональные. Опущенные поля не предлагаются к изменению; в diff они остаются прежними.
+Fields in `fields` are all optional. Omitted fields are not proposed for change; they stay at their current value in the diff.
 
-### Ответ
+### Response
 
 ```json
 { "request_id": "prov-9a2b8c4f7e1d" }
 ```
 
-### Trust boundary против prompt injection
+### Trust boundary against prompt injection
 
-Это критическая часть протокола. UI рендерит **только** `current` колонку из манифеста — строки агента появляются исключительно в `proposed`. Это значит:
+This is a critical part of the protocol. The UI renders **only** the `current` column from the manifest — agent strings appear exclusively in `proposed`. That means:
 
-- Агент не может «переписать» метаданные через хитро составленные значения, которые выглядят как существующие.
-- Пользователь видит точно, что предложено к изменению.
-- Любая попытка «подменить» путь через description со специальными символами разбивается о то, что путь рендерится из `manifest`, а не из payload.
+- The agent cannot "rewrite" metadata via cleverly composed values that pretend to be existing.
+- The user sees exactly what is being proposed.
+- Any attempt to "swap in" a path through a description with special characters fails because the path itself is rendered from the `manifest`, not from the payload.
 
-Для деталей — секция «Trust boundary» в `crates/devboy-mcp/src/secrets_provision.rs`.
+For details, see the "Trust boundary" section in `crates/devboy-mcp/src/secrets_provision.rs`.
 
 ---
 
 ## `secrets_propose_new_path`
 
-Предложить **регистрацию нового пути** в манифесте проекта. UI открывает discovery-style диалог с `suggested_path` как редактируемой стартовой точкой.
+Suggest **registering a new path** in the project manifest. The UI opens a discovery-style dialog with `suggested_path` as an editable starting point.
 
-### Запрос
+### Request
 
 ```json
 {
@@ -256,21 +258,21 @@ Lifecycle — идентичен `secrets_request_provision`. Используй
 }
 ```
 
-### Ответ
+### Response
 
 ```json
 { "request_id": "prov-2e4f6a8c1b3d" }
 ```
 
-В отличие от `propose_metadata`, путь редактируем — пользователь может отказаться от предложения агента и выбрать собственное имя. Финальное решение остаётся за человеком.
+Unlike `propose_metadata`, the path is editable — the user can decline the agent's suggestion and pick a name of their own. The final decision stays with the human.
 
 ---
 
 ## `secrets_poll_status`
 
-Опрос статуса любого `request_id` от любого `request_*` или `propose_*` инструмента. Один endpoint — общая семантика лайфтайма.
+Status check for any `request_id` from any `request_*` or `propose_*` tool. One endpoint — uniform lifecycle semantics.
 
-### Запрос
+### Request
 
 ```json
 {
@@ -279,7 +281,7 @@ Lifecycle — идентичен `secrets_request_provision`. Используй
 }
 ```
 
-### Ответ
+### Response
 
 ```json
 {
@@ -291,20 +293,20 @@ Lifecycle — идентичен `secrets_request_provision`. Используй
 }
 ```
 
-Поля:
+Fields:
 
-- `request_id` — эхо запроса.
-- `path` — путь, по которому изначально открылся диалог. Эхо для подтверждения.
+- `request_id` — echo of the request.
+- `path` — the path the dialog originally opened on. Echoed for confirmation.
 - `kind` — `provision` / `rotation` / `metadata-proposal` / `new-path-proposal`.
-- `status.kind` — один из:
-  - `pending` — диалог открыт, пользователь ещё не нажал Save или Cancel.
-  - `ok` — пользователь сохранил значение / принял proposal.
-  - `cancelled` — пользователь закрыл диалог без сохранения.
-  - `expired` — 5-минутный TTL истёк, registry пометил запись как Expired.
-  - `failed { reason }` — диалог не открылся (нет launcher'а, daemon down и т.п.) или provider отклонил submission.
-- `age_seconds` — сколько времени прошло с момента создания запроса.
+- `status.kind` — one of:
+  - `pending` — dialog is open, the user has not hit Save or Cancel yet.
+  - `ok` — user saved the value / accepted the proposal.
+  - `cancelled` — user closed the dialog without saving.
+  - `expired` — the 5-minute TTL elapsed; the registry marked the entry as Expired.
+  - `failed { reason }` — the dialog failed to open (no launcher, daemon down) or the provider rejected the submission.
+- `age_seconds` — how long ago the request was created.
 
-Если `request_id` не существует (был sweep'нут), ответ — error `unknown request_id: <id>`.
+If the `request_id` does not exist (was swept), the response is an error: `unknown request_id: <id>`.
 
 ### Polling pattern
 
@@ -318,16 +320,16 @@ loop:
 
 handle resp.status.kind:
   ok        → proceed (e.g. retry the high-level tool that needed this secret)
-  cancelled → ask user "what now?" — retry, abandon, etc.
-  expired   → tell user the dialog timed out; offer a fresh request
+  cancelled → ask the user "what now?" — retry, abandon, etc.
+  expired   → tell the user the dialog timed out; offer a fresh request
   failed    → show resp.status.reason; suggest devboy secrets agent start
 ```
 
-Не делайте polling чаще раза в 2 секунды — диалог не быстрее, чем человек печатает. Tight loop разогревает CPU и telemetry, но не приближает результат.
+Do not poll faster than once every 2 seconds — the dialog is no faster than a human types. A tight loop heats up CPU and telemetry without speeding anything up.
 
 ---
 
-## Полный сценарий: provision + retry
+## End-to-end scenario: provision + retry
 
 ```text
 User: "Use Jira to fetch the latest issues."
@@ -348,7 +350,7 @@ Agent → User: "I've opened a dialog for the missing token. Paste the value
 # Agent polls every ~3 seconds
 Agent: secrets_poll_status({"request_id": "prov-1f9b3a2c5e7d"})
        → { ..., "status": { "kind": "pending" }, "age_seconds": 12 }
-... (повтор) ...
+... (repeat) ...
 Agent: secrets_poll_status(...)
        → { ..., "status": { "kind": "ok" }, "age_seconds": 47 }
 
@@ -357,48 +359,51 @@ Agent: get_issues({"limit": 10})
        → 10 issues returned
 ```
 
-Обратите внимание: агент **никогда** не запрашивает значение токена. Он узнаёт только то, что save случился; токен попал из диалога в daemon, оттуда — в proxy alias, и `get_issues` подхватил его через тот же proxy без участия агента.
+Note: the agent **never** asks for the token's value. It only learns that a save happened; the token went from the dialog into the daemon, from the daemon into a proxy alias, and `get_issues` picked it up through the same proxy without the agent's involvement.
 
 ---
 
-## Чего на agent surface **нет**
+## What is **not** on the agent surface
 
-Эти инструменты **не существуют** и не появятся:
+These tools **do not exist** and will not appear:
 
-- ❌ `secrets_get` / `secret.get` — выдача значения агенту. Замена: high-level provider tool с алиасом.
-- ❌ `secrets_set` / `secret.put` — прямая запись из payload агента. Замена: `secrets_request_provision` → пользователь вводит руками.
-- ❌ `secrets_export` / dump — массовая выгрузка. Не предусмотрено архитектурой.
+- ❌ `secrets_get` / `secret.get` — handing the value to the agent. Replacement: a high-level provider tool with a proxy alias.
+- ❌ `secrets_set` / `secret.put` — writing directly from the agent's payload. Replacement: `secrets_request_provision` → user types it themselves.
+- ❌ `secrets_export` / dump — bulk export. Not in the architecture.
 
-Если new-tool кажется удобной упрощалкой — посмотрите ещё раз. Удобство «передать токен напрямую» противоречит инварианту, и framework не предложит обходного пути.
+If a "convenience" tool seems like a shortcut, look again. The convenience of "passing the token directly" violates the invariant; the framework will not offer a workaround.
 
-## Допустимые operational tools (не агентский surface)
+## Operational tools that are NOT in the agent surface
 
-Для DevOps / setup-сценариев, где удобство выше, чем agent-safety, есть отдельные CLI-команды (доступные только локально, не через MCP):
+For DevOps / setup scenarios where convenience outweighs agent-safety, separate CLI commands exist (locally only — never via MCP):
 
-- `devboy secrets validate` — формат-чек манифеста и live-probe источников.
-- `devboy secrets rotate <path>` — интерактивная ротация для разработчика (P13.1).
-- `devboy secrets ui` — открыть TUI/GUI inventory для ручного просмотра/правок (P12.2).
+- `devboy secrets validate` — manifest format check + live source probe.
+- `devboy secrets rotate <path>` — interactive rotation for a developer (P13.1).
+- `devboy secrets ui` — open the TUI/GUI inventory for manual review/edits (P12.2).
+- `devboy secrets catalog list` / `validate` — token-catalog inspection (P20.9 / P20.10).
 
-Эти команды требуют присутствия человека за терминалом и не доступны через JSON-RPC. Агент может *рекомендовать* пользователю их запустить, но сам выполнить не может.
-
----
-
-## Версионирование протокола
-
-`PROTOCOL_VERSION = "1.0"` (см. `crates/devboy-storage/src/plugin_protocol.rs`). Семантический breakdown:
-
-- **Major bump (2.0)** — поля reply убраны/переименованы, поведение `kind` enum не совместимо. Старые агенты получат ошибку при попытке использовать новый сервер.
-- **Minor bump (1.x)** — добавление новых полей (всегда optional), новых вариантов status (агент должен трактовать неизвестные kind как `failed`), новых инструментов в семейство `secrets_*`.
-- **Patch (1.x.y)** — bugfix без изменения wire-format.
-
-Для агентского кода рекомендация: парсите ответы tolerant — игнорируйте неизвестные поля, неизвестные `status.kind` интерпретируйте как `failed`. Это даёт совместимость с будущими minor-версиями без обновления агента.
+These commands require a human at the terminal and are not callable through JSON-RPC. The agent can *recommend* the user run them, but cannot run them itself.
 
 ---
 
-## См. также
+## Protocol versioning
 
-- [`onboarding.md`](./onboarding.md) — настройка манифеста и роутера, без которой `secrets_list` ничего не покажет.
-- [`local-vault.md`](./local-vault.md) — где значения физически живут после save из диалога.
-- [`source-plugin-protocol.md`](./source-plugin-protocol.md) — как добавить собственный источник, который видят агентские инструменты.
-- ADR-023 §3.7 — формальная спецификация trust boundary и инвариантов.
-- `crates/devboy-mcp/src/secrets_tool.rs` + `secrets_provision.rs` — исходный код реализации.
+`PROTOCOL_VERSION = "1.0"` (see `crates/devboy-storage/src/plugin_protocol.rs`). Semantic breakdown:
+
+- **Major bump (2.0)** — reply fields removed/renamed, `kind` enum semantics not back-compatible. Old agents get an error trying to use the new server.
+- **Minor bump (1.x)** — new fields added (always optional), new status variants (the agent should treat unknown `kind` as `failed`), new tools in the `secrets_*` family.
+- **Patch (1.x.y)** — bugfix, no wire-format change.
+
+Recommendation for agent code: parse responses tolerantly — ignore unknown fields, interpret unknown `status.kind` as `failed`. That gives compatibility with future minor versions without an agent update.
+
+---
+
+## See also
+
+- [`onboarding.md`](./onboarding.md) — manifest + router setup, without which `secrets_list` returns nothing.
+- [`local-vault.md`](./local-vault.md) — where values physically live after a save from the dialog.
+- [`token-catalog.md`](./token-catalog.md) — the JSON catalog that drives the dialog's "where to take from" / "how to validate" content.
+- [`catalog-url-sources.md`](./catalog-url-sources.md) — serving the catalog over the network with sha-pinning + audit log.
+- [`source-plugin-protocol.md`](./source-plugin-protocol.md) — how to add your own source that the agent tools can see.
+- ADR-023 §3.7 — formal spec of the trust boundary and invariants.
+- `crates/devboy-mcp/src/secrets_tool.rs` + `secrets_provision.rs` — implementation source.
