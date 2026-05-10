@@ -1,175 +1,177 @@
-# Local Vault: формат файла, recovery и резервное копирование
+# Local Vault: file format, recovery, and backup
 
-Local vault — собственное локальное хранилище зашифрованных секретов из `devboy-tools`. Один файл, три способа разблокировки, recovery-фраза для аварий. Документ объясняет формат, когда выбирать local-vault вместо OS keychain или внешних источников, и как правильно бэкапить.
+Local vault is `devboy-tools`'s own encrypted local secret store. One file, three unlock paths, a recovery phrase for emergencies. This document explains the format, when to pick local-vault over the OS keychain or external sources, and how to back it up safely.
 
-См. [ADR-023](../architecture/adr/ADR-023-secret-store-ux-layer.md) §3.1–§3.3 и [ADR-021](../architecture/adr/ADR-021-secret-source-router.md) §4 для полной спецификации.
+See [ADR-023](../architecture/adr/ADR-023-secret-store-ux-layer.md) §3.1–§3.3 and [ADR-021](../architecture/adr/ADR-021-secret-source-router.md) §4 for the full specification.
+
+> Russian translation: [`ru/local-vault.md`](./ru/local-vault.md).
 
 ---
 
-## Когда использовать local-vault
+## When to use local-vault
 
-| Сценарий | Рекомендуемый источник | Почему |
+| Scenario | Recommended source | Why |
 |---|---|---|
-| Один разработчик, одна машина, macOS/Win/Linux | **OS keychain** | Уже есть, ничего ставить не нужно, биометрия из коробки. |
-| Команда разработчиков с общими токенами (CI, deploy) | **1Password / Vault** | Централизованное управление, аудит, ротация. |
-| Серверный CI без интерактивного логина | **env-store** (env vars) или **vault** (HTTP KV v2) | Без UI, без интерактивности. |
-| Локальный playground без доступа в keychain (контейнер, devcontainer, bare Linux без gnome-keyring) | **local-vault** | Один файл — легко прокинуть в контейнер, не зависит от системных сервисов. |
-| Разработчик, переключающийся между несколькими identity (work / personal / sandbox) | **local-vault** + несколько файлов | По vault на context, перебор без пересоздания keychain-записей. |
-| Авто-агент в headless-окружении, где OS keychain требует разблокировки экрана | **local-vault** + passphrase из safe env-var | Нет UI-prompt'а, можно скриптовать unlock. |
+| One developer, one machine, macOS / Win / Linux | **OS keychain** | Already there, nothing to install, biometric unlock out of the box. |
+| A team with shared tokens (CI, deploy) | **1Password / Vault** | Centralised access, audit, rotation. |
+| Server-side CI without an interactive login | **env-store** (env vars) or **vault** (HTTP KV v2) | No UI, no interactivity. |
+| Local playground without keychain access (containers, devcontainers, bare Linux without gnome-keyring) | **local-vault** | One file — easy to mount into a container, no system-service dependency. |
+| Developer juggling several identities (work / personal / sandbox) | **local-vault** + several files | One vault per context, switch without rewriting keychain entries. |
+| Auto-agent in a headless environment where the OS keychain wants the screen unlocked | **local-vault** + passphrase from a safe env-var | No UI prompt, scriptable unlock. |
 
-> **Главный критерий**: local-vault — это для случаев, когда *нет* подходящего системного хранилища. Если OS keychain или 1Password доступны — берите их. Local-vault даёт переносимость и контроль над файлом ценой того, что бэкап и rotate ключей становятся вашей ответственностью.
+> **Main criterion**: local-vault is for cases where there is *no* good system store. If the OS keychain or 1Password is available, prefer them. Local-vault gives you portability and file-level control at the cost of owning backups and key rotation yourself.
 
-## Формат файла
+## File format
 
-Файл живёт по умолчанию в `~/.devboy/secrets/local-vault.dvb`. Бинарный layout (см. `crates/devboy-vault-crypto/src/format.rs`):
+The file lives at `~/.devboy/secrets/local-vault.dvb` by default. Binary layout (see `crates/devboy-vault-crypto/src/format.rs`):
 
 ```text
-HEADER (53 байта, фиксированный)
-  MAGIC       [4]   = b"DVB1"          // sanity-check + версия формата
+HEADER (53 bytes, fixed)
+  MAGIC       [4]   = b"DVB1"          // sanity check + format version
   VERSION     [1]   = 0x01
   KDF_PARAMS [16]   = m_cost u32 LE,    // Argon2id memory cost (KiB)
                       t_cost u32 LE,    // iterations
                       p_cost u32 LE,    // parallelism
                       salt_len u32 LE
-  SALT       [32]   = случайные 32 байта (KDF salt для passphrase envelope)
+  SALT       [32]   = random 32 bytes (KDF salt for the passphrase envelope)
 
 UNLOCK_ENVELOPES (length-prefixed TOML)
   [envelopes_len: u32 LE][envelopes_bytes...]
-  // По одной envelope на способ разблокировки. Каждая envelope
-  // независимо хранит зашифрованную копию vault-key.
+  // One envelope per unlock method. Each envelope independently
+  // stores an encrypted copy of the vault-key.
 
-ENTRIES_INDEX (length-prefixed TOML, метаданные)
+ENTRIES_INDEX (length-prefixed TOML, metadata)
   [entries_len: u32 LE][entries_bytes...]
   // path, description, retrieval_url, expires_at, pattern_id, …
-  // Значений в индексе НЕТ — он читается без unlock.
+  // No values in the index — it is read without unlock.
 
-AEAD_BLOBS (length-prefixed бинарный поток)
+AEAD_BLOBS (length-prefixed binary stream)
   [blobs_len: u64 LE][blob_bytes...]
-  // Зашифрованные значения, по одному на entry. AEAD — XChaCha20-Poly1305,
-  // AAD привязан к kind envelope, чтобы blob нельзя было перебросить
-  // между несовместимыми ключами.
+  // Encrypted values, one per entry. AEAD: XChaCha20-Poly1305.
+  // AAD is bound to the envelope kind so a blob cannot be moved
+  // between incompatible keys.
 ```
 
-Магия `DVB1` фиксирована — её достаточно, чтобы `file local-vault.dvb` отличил vault от случайных байтов.
+The `DVB1` magic is enough for `file local-vault.dvb` to tell a vault from random bytes.
 
-### Метаданные читаются без unlock
+### Metadata is readable without unlock
 
-`description`, `retrieval_url`, `expires_at`, `rotation_method`, `pattern_id` лежат в открытом виде. Это умышленно — `secrets list`, `doctor` и discovery-флоу должны работать без PIN-prompt'а. Угрозовая модель: локальный процесс с правами на чтение файла уже видит то, что система отдаёт через `ls -la`. Шифровать метаданные — добавить prompt без реальной защиты.
+`description`, `retrieval_url`, `expires_at`, `rotation_method`, and `pattern_id` are stored in the clear. This is intentional — `secrets list`, `doctor`, and discovery flows must work without a PIN prompt. Threat model: a local process with read access to the file already sees what `ls -la` exposes. Encrypting the metadata would add a prompt with no real protection.
 
-## Способы разблокировки (envelopes)
+## Unlock paths (envelopes)
 
-Один vault может одновременно поддерживать несколько способов разблокировки. Каждый способ — отдельная envelope, которая независимо хранит зашифрованную копию `vault-key`. Любая из них разблокирует те же blobs.
+One vault can support several unlock methods at once. Each method is a separate envelope that independently stores an encrypted copy of the `vault-key`. Any envelope unlocks the same blobs.
 
-### 1. Passphrase envelope (по умолчанию)
+### 1. Passphrase envelope (default)
 
 ```text
-unlock-key = HKDF(Argon2id(passphrase, salt, KDF_PARAMS), info="devboy-vault-envelope:passphrase:v1")
+unlock-key  = HKDF(Argon2id(passphrase, salt, KDF_PARAMS), info="devboy-vault-envelope:passphrase:v1")
 wrapped_key = XChaCha20-Poly1305(unlock-key).encrypt(vault-key, aad="devboy-vault-envelope:passphrase:v1")
 ```
 
-Параметры Argon2id по умолчанию (`KdfParams::DEFAULT`): m=64 MiB, t=3, p=1, salt 32 B. На 2024-class hardware один разблок занимает ~250 ms. Менять параметры можно через `devboy secrets vault rekey` — старая salt сохраняется, чтобы все остальные envelope продолжали работать.
+Default Argon2id parameters (`KdfParams::DEFAULT`): m=64 MiB, t=3, p=1, salt 32 B. On 2024-class hardware one unlock takes ~250 ms. Change parameters via `devboy secrets vault rekey` — the old salt is preserved so other envelopes keep working.
 
-### 2. Keychain envelope (опционально)
+### 2. Keychain envelope (optional)
 
-OS keychain хранит fresh случайный 32-byte ключ; envelope wrapped_key — это `XChaCha20-Poly1305(keychain_key).encrypt(vault-key)`. Удобно: vault разблокируется одним fingerprint/PIN-prompt'ом из системы, без ввода passphrase.
+The OS keychain stores a fresh random 32-byte key; the envelope's `wrapped_key` is `XChaCha20-Poly1305(keychain_key).encrypt(vault-key)`. Convenient: the vault unlocks via a single fingerprint / PIN prompt from the OS, no passphrase typing.
 
-Доступно только на macOS / Windows / Linux с gnome-keyring; другие платформы — passphrase + recovery phrase.
+Available on macOS / Windows / Linux with gnome-keyring; other platforms — passphrase + recovery phrase only.
 
 ### 3. Recovery phrase envelope (BIP39)
 
-12-слов BIP39, генерируется при создании vault. Envelope использует `HKDF(BIP39_seed)` без Argon2id (фраза сама по себе высокоэнтропийная). Recovery phrase — запасной ключ от vault на случай, когда:
+12-word BIP39 mnemonic, generated when the vault is created. The envelope uses `HKDF(BIP39_seed)` without Argon2id (the phrase is high-entropy on its own). The recovery phrase is the spare key for cases where:
 
-- Passphrase забыта.
-- Keychain-запись стёрта (новая ОС, переустановка).
-- Файл vault мигрирует на машину без keychain.
+- The passphrase is forgotten.
+- The keychain entry is wiped (new OS, reinstall).
+- The vault file moves to a machine without a keychain.
 
-Recovery phrase **никогда** не хранится автоматически. CLI печатает её один раз при создании vault, и пользователь сам решает, куда её положить (бумажный список, password manager, sealed envelope).
+The recovery phrase is **never** stored automatically. The CLI prints it once when the vault is created; you decide where to put it (paper list, password manager, sealed envelope).
 
-> **⚠ Без recovery phrase potentially permanent loss**: если passphrase забыта *и* keychain недоступен *и* recovery phrase не сохранена — vault не разблокировать. Дубликата ключа в системе нет, brute-force Argon2id с дефолтными параметрами займёт годы. Бэкапьте recovery phrase отдельно от vault-файла.
+> **⚠ Without the recovery phrase: potentially permanent loss**: if the passphrase is forgotten *and* the keychain is unavailable *and* the recovery phrase was never saved — the vault cannot be unlocked. There is no key escrow in the system; brute-forcing Argon2id with default parameters takes years. Back up the recovery phrase separately from the vault file.
 
-## Recovery: что делать, когда всё пошло не так
+## Recovery: what to do when something breaks
 
-### Сценарий A — забыта passphrase
+### Scenario A — passphrase forgotten
 
-1. Если есть keychain envelope → разблок через keychain:
+1. If a keychain envelope exists → unlock via keychain:
 
    ```bash
    devboy secrets agent start --use-keychain
    devboy secrets vault rekey --new-passphrase
    ```
 
-   `rekey` пересоздаёт passphrase envelope с новой фразой; keychain envelope остаётся в силе.
+   `rekey` recreates the passphrase envelope with a new phrase; the keychain envelope stays valid.
 
-2. Если keychain тоже недоступен → recovery phrase:
+2. If the keychain is also gone → recovery phrase:
 
    ```bash
    devboy secrets vault unlock --recovery
-   # Введите 12-слов BIP39
+   # Type the 12 BIP39 words
    devboy secrets vault rekey --new-passphrase
    ```
 
-3. Если ни keychain, ни recovery phrase → восстанавливаете из бэкапа vault-файла, сделанного *до* потери ключа.
+3. If neither keychain nor recovery phrase is available → restore from a vault-file backup taken *before* the key was lost.
 
-### Сценарий B — повреждён vault-файл
+### Scenario B — vault file is corrupt
 
-Магия не сходится / TOML не парсится / blob не декодируется:
+The magic is wrong / the TOML doesn't parse / a blob fails to decrypt:
 
-1. Не паникуйте — не пишите ничего поверх повреждённого файла.
-2. Скопируйте `~/.devboy/secrets/local-vault.dvb` в безопасное место (`local-vault.dvb.broken`).
-3. Восстановите файл из последнего бэкапа.
-4. Прогоните `devboy secrets validate`. Если зелёный — продолжайте работу.
-5. Проанализируйте, что повредило файл: full disk, `kill -9` во время записи, ручное редактирование. Атомарная запись (`tmpfile + rename`) исключает повреждение от прерывания, но не от внешнего вмешательства.
+1. Don't panic — do not write anything over the corrupt file.
+2. Copy `~/.devboy/secrets/local-vault.dvb` somewhere safe (`local-vault.dvb.broken`).
+3. Restore from the latest backup.
+4. Run `devboy secrets validate`. Green → continue.
+5. Investigate what corrupted the file: full disk, `kill -9` mid-write, manual editing. Atomic writes (`tmpfile + rename`) rule out interrupt-based corruption but not external tampering.
 
-### Сценарий C — мигрируете vault на новую машину
+### Scenario C — migrate the vault to a new machine
 
-Поскольку vault — это один файл, миграция тривиальна:
+The vault is one file, so migration is trivial:
 
 ```bash
-# На старой машине
+# On the old machine
 cp ~/.devboy/secrets/local-vault.dvb /tmp/vault-export.dvb
 
-# Перенести через защищённый канал (не email, не Slack)
+# Move over a secure channel (not email, not Slack)
 scp /tmp/vault-export.dvb new-host:/tmp/
 
-# На новой машине
+# On the new machine
 mkdir -p ~/.devboy/secrets
 mv /tmp/vault-export.dvb ~/.devboy/secrets/local-vault.dvb
 chmod 600 ~/.devboy/secrets/local-vault.dvb
-devboy secrets vault unlock --passphrase   # если passphrase знаете
-# или
-devboy secrets vault unlock --recovery     # если только recovery
+devboy secrets vault unlock --passphrase   # if you know the passphrase
+# or
+devboy secrets vault unlock --recovery     # recovery only
 ```
 
-После разблокировки на новой машине добавьте новую keychain envelope:
+After unlocking on the new machine, add a fresh keychain envelope:
 
 ```bash
 devboy secrets vault add-envelope --kind keychain
 ```
 
-## Резервное копирование
+## Backups
 
-Vault — один файл, поэтому бэкап = регулярная копия + хранение recovery phrase отдельно.
+The vault is one file, so backup = regular copy + recovery phrase stored separately.
 
-### Минимальная политика (один разработчик)
+### Minimum policy (one developer)
 
-1. Раз в сутки cron / `systemd --user` копирует `~/.devboy/secrets/local-vault.dvb` в зашифрованное хранилище (Time Machine, Backblaze, Restic-репозиторий с собственным паролем).
-2. Recovery phrase — на бумаге в физически безопасном месте *И* в личном password manager (например, 1Password Personal). Никогда вместе с vault-файлом.
-3. Раз в квартал — тестовое восстановление: разворачиваете бэкап на чистую машину/контейнер и пытаетесь разблокировать через recovery phrase.
+1. Once a day, cron / `systemd --user` copies `~/.devboy/secrets/local-vault.dvb` to encrypted storage (Time Machine, Backblaze, a Restic repo with its own password).
+2. Recovery phrase on paper in a physically secure place *and* in a personal password manager (e.g. 1Password Personal). Never with the vault file.
+3. Once a quarter — restore drill: deploy the backup to a clean machine/container and try unlocking through the recovery phrase.
 
-### Что **не** делать
+### What **not** to do
 
-- ❌ Положить vault и recovery phrase в один и тот же бэкап-каталог. Если бэкап утечёт — утечёт всё.
-- ❌ Хранить recovery phrase в plain-text файле в репозитории / на git-сервере. BIP39 — высокоэнтропийная, но публичная утечка превращает её в тривиальный unlock-key.
-- ❌ Отправлять vault-файл через email / мессенджеры. AEAD защищает значения, но KDF salt в header утекает, что облегчает offline-перебор passphrase. Защищённые каналы (`scp`, `magic-wormhole`, S3 with KMS) — обязательно.
-- ❌ Использовать слабую passphrase. Argon2id замедляет brute-force, но `password123` всё равно перебирается. Минимум 4 случайных слова через `diceware`/`xkpasswd` или 16+ символов из password manager.
+- ❌ Put the vault and the recovery phrase in the same backup directory. If the backup leaks, everything leaks.
+- ❌ Store the recovery phrase as a plaintext file in a repo / on a Git server. BIP39 is high-entropy, but a public leak turns it into a one-step unlock key.
+- ❌ Send the vault file over email / messengers. AEAD protects values, but the KDF salt in the header leaks, which speeds up offline passphrase brute-force. Use a secure channel (`scp`, `magic-wormhole`, S3 with KMS).
+- ❌ Use a weak passphrase. Argon2id slows brute-force, but `password123` still falls. Minimum: 4 random `diceware`/`xkpasswd` words or 16+ characters from a password manager.
 
-### Хороший workflow
+### A good workflow
 
 ```bash
-# Бэкап (через restic для прозрачности дедупликации)
+# Backup (Restic for transparent dedup)
 restic -r s3:s3.amazonaws.com/<bucket>/<prefix> backup ~/.devboy/secrets/local-vault.dvb
 
-# Раз в квартал — drill
+# Quarterly drill
 restic -r s3:... restore latest --target /tmp/restore
 DEVBOY_VAULT_PATH=/tmp/restore/local-vault.dvb devboy secrets vault unlock --recovery
 DEVBOY_VAULT_PATH=/tmp/restore/local-vault.dvb devboy secrets list
@@ -178,18 +180,20 @@ rm -rf /tmp/restore
 
 ## Security boundary
 
-- **AEAD выбор**: XChaCha20-Poly1305. Длинный nonce (24 байта) → можно генерировать случайно без счётчика. По производительности эквивалент ChaCha20.
-- **AAD**: каждый ciphertext привязан к kind envelope (`passphrase` / `keychain` / `recovery`). Перенос blob между несовместимыми envelope'ами обнаруживается на этапе декрипта.
-- **Zeroize**: `vault-key` и `unlock-key` обёрнуты в `secrecy::SecretBox`, который вызывает `zeroize` на drop. Передача через FFI к keychain backend'ам делается через minimal lifetime.
-- **Lock posture**: после `idle_timeout` (по умолчанию 60 секунд без запросов) daemon zeroize'ит in-memory ключи. Разблок требуется заново.
-- **Не защищает от**:
-  - root/admin локального процесса с правами на чтение vault-файла + перехват envelope unlock-key из памяти daemon'а.
-  - Side-channel-атак на CPU (Spectre-class).
-  - Социальной инженерии (фишинг recovery phrase).
+- **AEAD choice**: XChaCha20-Poly1305. The long nonce (24 bytes) lets us pick it randomly without a counter. Throughput is on par with ChaCha20.
+- **AAD**: every ciphertext is bound to its envelope kind (`passphrase` / `keychain` / `recovery`). Moving a blob between incompatible envelopes is detected at decrypt time.
+- **Zeroize**: `vault-key` and `unlock-key` are wrapped in `secrecy::SecretBox`, which calls `zeroize` on drop. Hand-off through FFI to keychain backends uses minimal lifetimes.
+- **Lock posture**: after `idle_timeout` (default 60 s with no requests) the daemon zeroizes the in-memory keys. Unlock is required again.
+- **Does NOT protect against**:
+  - A root/admin local process that can read the vault file *and* scrape envelope unlock-keys from the daemon's memory.
+  - CPU side-channel attacks (Spectre-class).
+  - Social engineering (phishing the recovery phrase).
 
-## См. также
+## See also
 
-- [`onboarding.md`](./onboarding.md) — первичная установка и настройка sources.
-- [`agent-protocol.md`](./agent-protocol.md) — как AI-агенты взаимодействуют с vault через MCP.
-- ADR-023 §3.1 (формат) и §3.2–§3.3 (envelopes) — формальная спецификация.
-- `crates/devboy-vault-crypto/` — исходный код формата + AEAD + KDF.
+- [`onboarding.md`](./onboarding.md) — first-run install + source setup.
+- [`token-catalog.md`](./token-catalog.md) — author per-provider procedure files (`kimi.json`, `openai.json`) the GUI binds to.
+- [`catalog-url-sources.md`](./catalog-url-sources.md) — serve catalogs over the network with sha-pinning + audit log.
+- [`agent-protocol.md`](./agent-protocol.md) — how AI agents talk to the vault through MCP.
+- ADR-023 §3.1 (format) and §3.2–§3.3 (envelopes) — the formal spec.
+- `crates/devboy-vault-crypto/` — source for the format, AEAD, and KDF.
