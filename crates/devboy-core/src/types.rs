@@ -61,15 +61,34 @@ pub struct Issue {
     /// Subtasks / child issues
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subtasks: Vec<Issue>,
-    /// Provider-specific custom fields. Key is a human-readable name
-    /// (Jira customfield id like `customfield_10014`, ClickUp field
-    /// name, GitLab resource label key); value is the raw JSON the
-    /// provider returned. Lets agents and downstream consumers see
-    /// every custom-field value on a single `get_issue` /
-    /// `get_issues` call without follow-up enrichment (Paper 3).
-    /// Empty map for providers that don't expose custom fields.
+    /// Provider-specific custom fields. **Key is always the
+    /// provider-stable id** (Jira `customfield_10014`, ClickUp field
+    /// uuid, etc.) so downstream consumers can join with metadata
+    /// from `get_custom_fields` regardless of provider. Display name
+    /// rides along inside the value when the provider returns it on
+    /// the issue payload — Jira leaves `name` empty (do a follow-up
+    /// `get_custom_fields` call if you need it), ClickUp fills it
+    /// from `task.custom_fields[].name`. Empty map for providers
+    /// that don't expose custom fields (GitHub, GitLab).
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
-    pub custom_fields: std::collections::HashMap<String, Value>,
+    pub custom_fields: std::collections::HashMap<String, CustomFieldValue>,
+}
+
+/// Value of a single entry in [`Issue::custom_fields`]. Splits the
+/// raw provider value from the optional human-readable name so
+/// downstream consumers don't have to parse one out of the other.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct CustomFieldValue {
+    /// Human-readable field name (e.g. `"Epic Link"`,
+    /// `"Severity"`). `None` when the issue payload didn't carry a
+    /// name — Jira's `/issue/{key}` returns customfield values
+    /// keyed only by id, so the mapper leaves this empty and
+    /// relies on `get_custom_fields` for resolution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Raw provider value. Shape varies — string for text, number
+    /// for numeric, object/array for selects and multi-selects.
+    pub value: Value,
 }
 
 /// A link between two issues.

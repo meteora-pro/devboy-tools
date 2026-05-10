@@ -1,7 +1,17 @@
 //! Jira API response types.
 //!
 //! These types represent the raw JSON responses from Jira API v2/v3.
-//! They are deserialized and then mapped to unified types.
+//! They are deserialized and then mapped to unified types. Most are
+//! internal — only `JiraField` and `JiraFieldSchema` are re-exported
+//! at the crate root for downstream consumers.
+//!
+//! `dead_code` is allowed at the module level because some fields
+//! exist purely so serde captures them off the wire (for forward
+//! compatibility with logs and debug dumps) without the mapper
+//! reading them yet. They are not unused — they pin the JSON shape
+//! the API returns and surface in `Debug` impls.
+
+#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 

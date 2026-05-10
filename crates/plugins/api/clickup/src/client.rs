@@ -443,17 +443,23 @@ fn map_timestamp(ts: &Option<String>) -> Option<String> {
 }
 
 fn map_task(task: &ClickUpTask) -> Issue {
-    // Surface set custom fields keyed by name (falling back to id
-    // when name is missing) so downstream consumers can read them
-    // without a follow-up ClickUp call. Unset fields (`value: None`)
-    // are skipped to keep the map noise-free.
-    let custom_fields: std::collections::HashMap<String, serde_json::Value> = task
+    // Surface set custom fields keyed by ClickUp's stable field id
+    // (matches `get_custom_fields` output across providers). Display
+    // name rides along inside `CustomFieldValue.name` so consumers
+    // don't lose it. Unset fields (`value: None`) are skipped to
+    // keep the map noise-free.
+    let custom_fields: std::collections::HashMap<String, devboy_core::CustomFieldValue> = task
         .custom_fields
         .iter()
         .filter_map(|cf| {
             cf.value.as_ref().map(|v| {
-                let key = cf.name.clone().unwrap_or_else(|| cf.id.clone());
-                (key, v.clone())
+                (
+                    cf.id.clone(),
+                    devboy_core::CustomFieldValue {
+                        name: cf.name.clone(),
+                        value: v.clone(),
+                    },
+                )
             })
         })
         .collect();
@@ -1564,15 +1570,17 @@ mod tests {
         };
 
         let issue = map_task(&task);
-        assert_eq!(
-            issue.custom_fields.get("Severity"),
-            Some(&serde_json::json!("High"))
-        );
-        assert!(!issue.custom_fields.contains_key("Sprint"));
-        assert_eq!(
-            issue.custom_fields.get("cf-3"),
-            Some(&serde_json::json!(42))
-        );
+        // Keyed by id; display name rides along in
+        // `CustomFieldValue.name`.
+        let severity = issue.custom_fields.get("cf-1").expect("cf-1 present");
+        assert_eq!(severity.name.as_deref(), Some("Severity"));
+        assert_eq!(severity.value, serde_json::json!("High"));
+        // Unset value (`cf-2`) is filtered out entirely.
+        assert!(!issue.custom_fields.contains_key("cf-2"));
+        // Anonymous field (no name) keeps `name: None`.
+        let anon = issue.custom_fields.get("cf-3").expect("cf-3 present");
+        assert!(anon.name.is_none());
+        assert_eq!(anon.value, serde_json::json!(42));
     }
 
     #[test]

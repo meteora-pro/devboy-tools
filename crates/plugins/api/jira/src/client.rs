@@ -1265,13 +1265,25 @@ fn map_issue(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> Issue
     // Surface every `customfield_*` slot that came back in the
     // payload — keys keep their raw `customfield_NNNNN` form so
     // downstream consumers can correlate with `get_custom_fields`.
-    // Non-empty values only; nulls are filtered to avoid noise.
-    let custom_fields: std::collections::HashMap<String, serde_json::Value> = issue
+    // Non-empty values only; nulls are filtered. `name` is left
+    // empty: Jira's `/issue/{key}` returns customfields keyed only
+    // by id, so name resolution belongs to a separate
+    // `get_custom_fields` call (Paper 3 — minimise enrichment per
+    // call).
+    let custom_fields: std::collections::HashMap<String, devboy_core::CustomFieldValue> = issue
         .fields
         .extras
         .iter()
         .filter(|(k, v)| k.starts_with("customfield_") && !v.is_null())
-        .map(|(k, v)| (k.clone(), v.clone()))
+        .map(|(k, v)| {
+            (
+                k.clone(),
+                devboy_core::CustomFieldValue {
+                    name: None,
+                    value: v.clone(),
+                },
+            )
+        })
         .collect();
     Issue {
         custom_fields,
@@ -5224,14 +5236,20 @@ mod tests {
 
             let client = create_self_hosted_client(&server);
             let issue = client.get_issue("PROJ-1").await.unwrap();
-            assert_eq!(
-                issue.custom_fields.get("customfield_10999"),
-                Some(&serde_json::json!("tenant-a"))
+            let cf1 = issue
+                .custom_fields
+                .get("customfield_10999")
+                .expect("cf 10999 present");
+            assert!(
+                cf1.name.is_none(),
+                "Jira mapper leaves name resolution to get_custom_fields"
             );
-            assert_eq!(
-                issue.custom_fields.get("customfield_10888"),
-                Some(&serde_json::json!(42))
-            );
+            assert_eq!(cf1.value, serde_json::json!("tenant-a"));
+            let cf2 = issue
+                .custom_fields
+                .get("customfield_10888")
+                .expect("cf 10888 present");
+            assert_eq!(cf2.value, serde_json::json!(42));
             // null values are filtered out
             assert!(!issue.custom_fields.contains_key("customfield_10777"));
         }
