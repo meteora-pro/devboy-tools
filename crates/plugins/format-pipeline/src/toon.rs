@@ -226,6 +226,7 @@ mod tests {
             attachments_count: None,
             parent: None,
             subtasks: vec![],
+            custom_fields: std::collections::HashMap::new(),
         }
     }
 
@@ -388,6 +389,7 @@ mod tests {
                 attachments_count: None,
                 parent: None,
                 subtasks: vec![],
+                custom_fields: std::collections::HashMap::new(),
             })
             .collect();
 
@@ -427,6 +429,7 @@ mod tests {
             attachments_count: None,
             parent: None,
             subtasks: vec![],
+            custom_fields: std::collections::HashMap::new(),
         }).collect();
 
         let full = encode_issues(&issues, TrimLevel::Full).unwrap();

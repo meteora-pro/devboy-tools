@@ -61,6 +61,15 @@ pub struct Issue {
     /// Subtasks / child issues
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subtasks: Vec<Issue>,
+    /// Provider-specific custom fields. Key is a human-readable name
+    /// (Jira customfield id like `customfield_10014`, ClickUp field
+    /// name, GitLab resource label key); value is the raw JSON the
+    /// provider returned. Lets agents and downstream consumers see
+    /// every custom-field value on a single `get_issue` /
+    /// `get_issues` call without follow-up enrichment (Paper 3).
+    /// Empty map for providers that don't expose custom fields.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub custom_fields: std::collections::HashMap<String, Value>,
 }
 
 /// A link between two issues.

@@ -443,7 +443,22 @@ fn map_timestamp(ts: &Option<String>) -> Option<String> {
 }
 
 fn map_task(task: &ClickUpTask) -> Issue {
+    // Surface set custom fields keyed by name (falling back to id
+    // when name is missing) so downstream consumers can read them
+    // without a follow-up ClickUp call. Unset fields (`value: None`)
+    // are skipped to keep the map noise-free.
+    let custom_fields: std::collections::HashMap<String, serde_json::Value> = task
+        .custom_fields
+        .iter()
+        .filter_map(|cf| {
+            cf.value.as_ref().map(|v| {
+                let key = cf.name.clone().unwrap_or_else(|| cf.id.clone());
+                (key, v.clone())
+            })
+        })
+        .collect();
     Issue {
+        custom_fields,
         key: map_task_key(task),
         title: task.name.clone(),
         description: task
@@ -1499,6 +1514,67 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// `task.custom_fields` populates `issue.custom_fields` keyed by
+    /// the human-readable name. Unset fields (`value == None`) are
+    /// filtered; the id-only fallback covers anonymous fields.
+    #[test]
+    fn test_map_task_surfaces_custom_field_values() {
+        let task = ClickUpTask {
+            id: "abc123".to_string(),
+            custom_id: None,
+            name: "T".to_string(),
+            description: None,
+            text_content: None,
+            status: ClickUpStatus {
+                status: "open".to_string(),
+                status_type: Some("open".to_string()),
+            },
+            priority: None,
+            tags: vec![],
+            assignees: vec![],
+            creator: None,
+            url: "https://app.clickup.com/t/abc123".to_string(),
+            date_created: None,
+            date_updated: None,
+            parent: None,
+            subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
+            attachments: Vec::new(),
+            custom_fields: vec![
+                crate::types::ClickUpCustomField {
+                    id: "cf-1".to_string(),
+                    name: Some("Severity".to_string()),
+                    field_type: Some("drop_down".to_string()),
+                    value: Some(serde_json::json!("High")),
+                },
+                crate::types::ClickUpCustomField {
+                    id: "cf-2".to_string(),
+                    name: Some("Sprint".to_string()),
+                    field_type: Some("text".to_string()),
+                    value: None, // unset → must be skipped
+                },
+                crate::types::ClickUpCustomField {
+                    id: "cf-3".to_string(),
+                    name: None, // anonymous → falls back to id
+                    field_type: Some("number".to_string()),
+                    value: Some(serde_json::json!(42)),
+                },
+            ],
+        };
+
+        let issue = map_task(&task);
+        assert_eq!(
+            issue.custom_fields.get("Severity"),
+            Some(&serde_json::json!("High"))
+        );
+        assert!(!issue.custom_fields.contains_key("Sprint"));
+        assert_eq!(
+            issue.custom_fields.get("cf-3"),
+            Some(&serde_json::json!(42))
+        );
+    }
+
     #[test]
     fn test_map_task() {
         let task = ClickUpTask {
@@ -1539,6 +1615,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1586,6 +1663,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1616,6 +1694,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1886,6 +1965,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1916,6 +1996,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1946,6 +2027,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1977,6 +2059,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let task = ClickUpTask {
@@ -2003,6 +2086,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -2038,6 +2122,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
