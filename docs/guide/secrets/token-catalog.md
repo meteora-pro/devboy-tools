@@ -135,6 +135,7 @@ Read [the JSON file](../../../crates/devboy-token-catalog/data/kimi.json) end-to
 ## See also
 
 - [`onboarding.md`](./onboarding.md) — first-run install + manifest setup.
+- [`catalog-url-sources.md`](./catalog-url-sources.md) — serving the catalog over the network: opt-in flag, threat model, SHA pinning, TOFU, audit log.
 - [`agent-protocol.md`](./agent-protocol.md) — MCP-side surface that consumes the catalog metadata.
 - ADR-020 — secret manifest format (catalog is downstream of `pattern_id` declared there).
 - ADR-023 §3.4 — UI provision dialog (where the catalog drives the form).
