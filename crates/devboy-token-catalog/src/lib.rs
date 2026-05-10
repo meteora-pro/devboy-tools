@@ -565,6 +565,126 @@ fn enforce_pin_or_tofu(
 }
 
 // =============================================================================
+// SSRF guard for liveness probes (P23.4)
+// =============================================================================
+//
+// The catalog gets to declare *where* the GUI ships a freshly-typed
+// secret to liveness-check it. A malicious or compromised catalog
+// could point that URL at private infrastructure (`http://10.0.0.5/`,
+// `http://169.254.169.254/latest/meta-data/`, `http://localhost:9090/`),
+// turning the user's machine into an SSRF probe with the secret
+// piggybacking. The guard below resolves the URL's hostname to every
+// IP it would dial, refuses any blocked range, and refuses well-known
+// cloud-metadata hostnames before DNS even runs.
+
+/// Reasons [`check_ssrf_safe`] can refuse a URL.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum SsrfError {
+    #[error("URL is malformed: {0}")]
+    InvalidUrl(String),
+    #[error("DNS resolution failed for `{0}`")]
+    DnsResolutionFailed(String),
+    #[error(
+        "host `{host}` resolves to {ip}, which is in a blocked range (private / loopback / link-local / multicast)"
+    )]
+    BlockedAddress { host: String, ip: std::net::IpAddr },
+    #[error("hostname `{host}` matches a known cloud-metadata service — refused")]
+    CloudMetadata { host: String },
+}
+
+/// Hostnames that name cloud-instance metadata services. Any of
+/// these resolves to a link-local IP (`169.254.169.254` or
+/// similar), but a hostile DNS server could resolve them to a
+/// public address — so we reject by name *before* DNS, then
+/// recheck the IP afterwards.
+const CLOUD_METADATA_HOSTS: &[&str] = &[
+    "metadata.google.internal",
+    "metadata.aws.internal",
+    "metadata.azure.com",
+    "metadata",
+    "169.254.169.254",
+];
+
+/// Resolve `url`'s hostname and refuse to dial it when the
+/// resulting IP, or the hostname itself, hits a known
+/// SSRF-relevant range. Production callers — both the rust-
+/// catalogue and the catalog-driven liveness probe paths —
+/// invoke this immediately before constructing a request.
+pub fn check_ssrf_safe(url: &str) -> Result<(), SsrfError> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| SsrfError::InvalidUrl(url.to_owned()))?;
+    let Some(host) = parsed.host_str() else {
+        return Err(SsrfError::InvalidUrl(url.to_owned()));
+    };
+
+    let host_lower = host.to_ascii_lowercase();
+    if CLOUD_METADATA_HOSTS
+        .iter()
+        .any(|blocked| host_lower == *blocked)
+    {
+        return Err(SsrfError::CloudMetadata {
+            host: host.to_owned(),
+        });
+    }
+
+    // `Url::socket_addrs` walks the OS resolver and handles
+    // IPv6 brackets / IDN / default ports in one call. We
+    // refuse if *any* returned IP hits a blocked range —
+    // partial defence against DNS rebinding (a hostile DNS
+    // returning multiple IPs, only some safe).
+    let addrs = parsed
+        .socket_addrs(|| Some(443))
+        .map_err(|_| SsrfError::DnsResolutionFailed(host.to_owned()))?;
+    for addr in addrs {
+        if is_blocked_ip(addr.ip()) {
+            return Err(SsrfError::BlockedAddress {
+                host: host.to_owned(),
+                ip: addr.ip(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Classify an IP as "must not dial". Covers:
+///
+/// - IPv4 loopback (`127.0.0.0/8`), private (`10/8`, `172.16/12`,
+///   `192.168/16`), link-local (`169.254/16`), broadcast,
+///   unspecified, multicast.
+/// - IPv6 loopback (`::1`), unspecified (`::`), multicast,
+///   ULA (`fc00::/7`), link-local (`fe80::/10`).
+///
+/// Conservative: anything not clearly a public host gets rejected.
+fn is_blocked_ip(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+        }
+        IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+                return true;
+            }
+            let segs = v6.segments();
+            // ULA fc00::/7 — first byte 0xfc or 0xfd.
+            let high_byte = (segs[0] >> 8) as u8;
+            if high_byte == 0xfc || high_byte == 0xfd {
+                return true;
+            }
+            // Link-local fe80::/10 — top 10 bits == 1111111010.
+            if (segs[0] & 0xffc0) == 0xfe80 {
+                return true;
+            }
+            false
+        }
+    }
+}
+
+// =============================================================================
 // known_hashes.toml — TOFU store for URL-loaded catalogs (P23.3)
 // =============================================================================
 
@@ -1226,6 +1346,77 @@ mod tests {
         write_known_hashes(&path, &original).unwrap();
         let back = read_known_hashes(&path).unwrap();
         assert_eq!(original, back);
+    }
+
+    #[test]
+    fn ssrf_blocks_loopback_v4() {
+        let err = check_ssrf_safe("https://127.0.0.1/v1/models").unwrap_err();
+        assert!(matches!(err, SsrfError::BlockedAddress { .. }));
+    }
+
+    #[test]
+    fn ssrf_blocks_loopback_v6() {
+        let err = check_ssrf_safe("https://[::1]/v1/models").unwrap_err();
+        assert!(matches!(err, SsrfError::BlockedAddress { .. }));
+    }
+
+    #[test]
+    fn ssrf_blocks_rfc1918_10_dot() {
+        let err = check_ssrf_safe("https://10.0.0.5/health").unwrap_err();
+        assert!(matches!(err, SsrfError::BlockedAddress { .. }));
+    }
+
+    #[test]
+    fn ssrf_blocks_rfc1918_192_168() {
+        let err = check_ssrf_safe("https://192.168.1.1/").unwrap_err();
+        assert!(matches!(err, SsrfError::BlockedAddress { .. }));
+    }
+
+    #[test]
+    fn ssrf_blocks_rfc1918_172_16() {
+        let err = check_ssrf_safe("https://172.16.5.10/").unwrap_err();
+        assert!(matches!(err, SsrfError::BlockedAddress { .. }));
+    }
+
+    #[test]
+    fn ssrf_blocks_link_local_v4() {
+        let err = check_ssrf_safe("https://169.254.169.254/latest/meta-data/").unwrap_err();
+        // Either the hostname-list path (literal IP listed) or
+        // the IP-classification path will fire. Both are
+        // SsrfError variants — accept either.
+        assert!(matches!(
+            err,
+            SsrfError::BlockedAddress { .. } | SsrfError::CloudMetadata { .. }
+        ));
+    }
+
+    #[test]
+    fn ssrf_blocks_cloud_metadata_hostnames() {
+        for host in [
+            "metadata.google.internal",
+            "metadata.aws.internal",
+            "metadata.azure.com",
+            "Metadata.Google.Internal", // case-insensitive
+        ] {
+            let url = format!("https://{host}/computeMetadata/v1/instance/");
+            let err = check_ssrf_safe(&url).unwrap_err();
+            assert!(
+                matches!(err, SsrfError::CloudMetadata { .. }),
+                "expected CloudMetadata, got {err:?} for {host}"
+            );
+        }
+    }
+
+    #[test]
+    fn ssrf_allows_public_ipv4() {
+        // 1.1.1.1 — Cloudflare, public anycast. No DNS needed.
+        check_ssrf_safe("https://1.1.1.1/").unwrap();
+    }
+
+    #[test]
+    fn ssrf_rejects_malformed_url() {
+        let err = check_ssrf_safe("not-a-url").unwrap_err();
+        assert!(matches!(err, SsrfError::InvalidUrl(_)));
     }
 
     #[test]

@@ -1007,6 +1007,13 @@ fn liveness_probe(
         expect_status,
     } = &spec.kind;
 
+    // SSRF guard — refuse to dial private / loopback / link-local
+    // / cloud-metadata addresses even when the rust-catalogue
+    // ships them (defence in depth: same check fires in
+    // `run_catalog_liveness`). See P23.4.
+    devboy_token_catalog::check_ssrf_safe(url)
+        .map_err(|e| format!("liveness URL refused for safety: {e}"))?;
+
     // Blocking client — we run inside an egui frame so async
     // wouldn't help anyway. 5-second timeout.
     let client = match reqwest::blocking::Client::builder()
@@ -1051,6 +1058,15 @@ fn run_catalog_liveness(
     if spec.kind != "http" {
         return Err(format!("unsupported liveness kind: {}", spec.kind));
     }
+
+    // SSRF guard — same check the rust-catalogue path runs.
+    // The catalog gets to declare *where* the GUI ships a
+    // freshly-typed secret, so this is the most security-
+    // critical chokepoint in the URL-source threat model. See
+    // P23.4 / `project_url_catalog_design.md`.
+    devboy_token_catalog::check_ssrf_safe(&spec.url)
+        .map_err(|e| format!("liveness URL refused for safety: {e}"))?;
+
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
