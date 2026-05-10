@@ -759,6 +759,37 @@ impl JiraClient {
         })
     }
 
+    /// Read the Epic Description customfield as a fallback when an
+    /// Epic-typed issue's system `description` is empty. Many
+    /// Server/DC instances and older Cloud company-managed projects
+    /// store Epic body text in a separate customfield (`Epic
+    /// Description`) and leave the system field blank — the mapper
+    /// otherwise returns `None`, which forces follow-up `get_issue`
+    /// calls (Paper 3, context enrichment).
+    ///
+    /// Returns `Ok(None)` when the issue isn't an Epic, when the
+    /// customfield isn't configured on this instance, or when the
+    /// slot itself is empty. Errors only on transport failures.
+    async fn read_epic_description_fallback(&self, issue: &JiraIssue) -> Result<Option<String>> {
+        let is_epic = issue
+            .fields
+            .issuetype
+            .as_ref()
+            .is_some_and(|t| t.name.eq_ignore_ascii_case("Epic"));
+        if !is_epic {
+            return Ok(None);
+        }
+        let cf_id = match self.resolve_field_id_by_name("Epic Description").await? {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+        let raw = match issue.fields.extras.get(&cf_id) {
+            Some(value) => value,
+            None => return Ok(None),
+        };
+        Ok(read_description(&Some(raw.clone()), self.flavor))
+    }
+
     /// Inject the three agile-track customfields (`Epic Link`,
     /// `Sprint`, `Epic Name`) into a serialised create/update payload.
     /// Each input is optional and only resolved when `Some(_)`.
@@ -1650,7 +1681,7 @@ impl IssueProvider for JiraClient {
                 // Explicitly request required fields — without this, Jira Cloud
                 // may return minimal responses (only `id`) for certain JQL queries
                 // (e.g., label filters), causing deserialization failures.
-                let fields = "summary,status,priority,assignee,reporter,labels,created,updated,parent,subtasks".to_string();
+                let fields = "summary,description,status,priority,assignee,reporter,labels,created,updated,parent,subtasks,issuetype,*navigable".to_string();
 
                 loop {
                     let mut params: Vec<(&str, String)> = vec![
@@ -1681,7 +1712,14 @@ impl IssueProvider for JiraClient {
                     let page_len = search_resp.issues.len() as u32;
                     for issue in &search_resp.issues {
                         if fetched_count >= offset && all_issues.len() < limit as usize {
-                            all_issues.push(map_issue(issue, self.flavor, instance_url));
+                            let mut mapped = map_issue(issue, self.flavor, instance_url);
+                            if mapped.description.as_deref().is_none_or(str::is_empty)
+                                && let Some(epic_desc) =
+                                    self.read_epic_description_fallback(issue).await?
+                            {
+                                mapped.description = Some(epic_desc);
+                            }
+                            all_issues.push(mapped);
                         }
                         fetched_count += 1;
                     }
@@ -1724,7 +1762,7 @@ impl IssueProvider for JiraClient {
                     ("jql", jql_with_order),
                     ("startAt", offset.to_string()),
                     ("maxResults", limit.to_string()),
-                    ("fields", "summary,status,priority,assignee,reporter,labels,created,updated,parent,subtasks".to_string()),
+                    ("fields", "summary,description,status,priority,assignee,reporter,labels,created,updated,parent,subtasks,issuetype,*navigable".to_string()),
                 ];
 
                 let param_refs: Vec<(&str, &str)> =
@@ -1747,11 +1785,16 @@ impl IssueProvider for JiraClient {
                     _ => false,
                 };
 
-                let issues: Vec<Issue> = search_resp
-                    .issues
-                    .iter()
-                    .map(|i| map_issue(i, self.flavor, instance_url))
-                    .collect();
+                let mut issues: Vec<Issue> = Vec::with_capacity(search_resp.issues.len());
+                for raw in &search_resp.issues {
+                    let mut mapped = map_issue(raw, self.flavor, instance_url);
+                    if mapped.description.as_deref().is_none_or(str::is_empty)
+                        && let Some(epic_desc) = self.read_epic_description_fallback(raw).await?
+                    {
+                        mapped.description = Some(epic_desc);
+                    }
+                    issues.push(mapped);
+                }
 
                 let mut result = ProviderResult::new(issues);
                 result.pagination = Some(devboy_core::Pagination {
@@ -1778,7 +1821,13 @@ impl IssueProvider for JiraClient {
         let jira_key = parse_jira_key(key);
         let url = format!("{}/issue/{}", self.base_url, jira_key);
         let issue: JiraIssue = self.get(&url).await?;
-        Ok(map_issue(&issue, self.flavor, &self.instance_url))
+        let mut mapped = map_issue(&issue, self.flavor, &self.instance_url);
+        if mapped.description.as_deref().is_none_or(str::is_empty)
+            && let Some(epic_desc) = self.read_epic_description_fallback(&issue).await?
+        {
+            mapped.description = Some(epic_desc);
+        }
+        Ok(mapped)
     }
 
     async fn create_issue(&self, input: CreateIssueInput) -> Result<Issue> {
@@ -3701,6 +3750,8 @@ mod tests {
                 subtasks: vec![],
                 issuelinks: vec![],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -3760,6 +3811,8 @@ mod tests {
                 subtasks: vec![],
                 issuelinks: vec![],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -3786,6 +3839,8 @@ mod tests {
                 subtasks: vec![],
                 issuelinks: vec![],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -5052,6 +5107,108 @@ mod tests {
                 .unwrap();
 
             assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// Epic-typed issues whose system `description` is empty fall
+        /// back to the `Epic Description` customfield. This is the
+        /// classic Server/DC + older Cloud company-managed shape that
+        /// otherwise leaves agents with `description: null` and forces
+        /// a follow-up call (Paper 3).
+        #[tokio::test]
+        async fn test_get_issue_epic_description_fallback() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "customfield_10017", "name": "Epic Description", "custom": true,
+                     "schema": {"type": "string"}}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/EPIC-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "EPIC-1",
+                    "fields": {
+                        "summary": "Q4 platform epic",
+                        "description": null,
+                        "issuetype": {"name": "Epic"},
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000",
+                        "customfield_10017": "Roll out the new pricing tier across all products."
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client.get_issue("EPIC-1").await.unwrap();
+            assert_eq!(
+                issue.description.as_deref(),
+                Some("Roll out the new pricing tier across all products.")
+            );
+        }
+
+        /// Non-Epic issues never trigger the fallback — even when the
+        /// instance happens to have an Epic Description customfield
+        /// configured, a Task with `description: null` stays `null`.
+        #[tokio::test]
+        async fn test_get_issue_no_fallback_for_non_epic() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "summary": "Regular task",
+                        "description": null,
+                        "issuetype": {"name": "Task"},
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000",
+                        "customfield_10017": "ignored"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client.get_issue("PROJ-1").await.unwrap();
+            // No /field call should happen for a Task — the resolver
+            // is short-circuited before any HTTP. Description stays
+            // None.
+            assert_eq!(issue.description, None);
+        }
+
+        /// When an Epic already has a system description, the
+        /// fallback must not override it.
+        #[tokio::test]
+        async fn test_get_issue_epic_keeps_existing_description() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/EPIC-2");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10002",
+                    "key": "EPIC-2",
+                    "fields": {
+                        "summary": "Epic with system description",
+                        "description": "Top-level epic body.",
+                        "issuetype": {"name": "Epic"},
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000",
+                        "customfield_10017": "Should not be used."
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client.get_issue("EPIC-2").await.unwrap();
+            assert_eq!(issue.description.as_deref(), Some("Top-level epic body."));
         }
 
         /// list_custom_fields filters out system fields, sorts by
@@ -6419,6 +6576,8 @@ mod tests {
                 subtasks: vec![],
                 issuelinks: vec![],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -6454,6 +6613,8 @@ mod tests {
                 subtasks: vec![],
                 issuelinks: vec![],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         });
 
@@ -6474,6 +6635,8 @@ mod tests {
                 subtasks: vec![],
                 issuelinks: vec![],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -6522,6 +6685,8 @@ mod tests {
                             subtasks: vec![],
                             issuelinks: vec![],
                             attachment: vec![],
+                            issuetype: None,
+                            extras: std::collections::HashMap::new(),
                         },
                     },
                     JiraIssue {
@@ -6541,11 +6706,15 @@ mod tests {
                             subtasks: vec![],
                             issuelinks: vec![],
                             attachment: vec![],
+                            issuetype: None,
+                            extras: std::collections::HashMap::new(),
                         },
                     },
                 ],
                 issuelinks: vec![],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -6601,6 +6770,8 @@ mod tests {
                                 subtasks: vec![],
                                 issuelinks: vec![],
                                 attachment: vec![],
+                                issuetype: None,
+                                extras: std::collections::HashMap::new(),
                             },
                         })),
                         inward_issue: None,
@@ -6631,11 +6802,15 @@ mod tests {
                                 subtasks: vec![],
                                 issuelinks: vec![],
                                 attachment: vec![],
+                                issuetype: None,
+                                extras: std::collections::HashMap::new(),
                             },
                         })),
                     },
                 ],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -6691,6 +6866,8 @@ mod tests {
                                 subtasks: vec![],
                                 issuelinks: vec![],
                                 attachment: vec![],
+                                issuetype: None,
+                                extras: std::collections::HashMap::new(),
                             },
                         })),
                         inward_issue: None,
@@ -6721,11 +6898,15 @@ mod tests {
                                 subtasks: vec![],
                                 issuelinks: vec![],
                                 attachment: vec![],
+                                issuetype: None,
+                                extras: std::collections::HashMap::new(),
                             },
                         })),
                     },
                 ],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -6778,11 +6959,15 @@ mod tests {
                             subtasks: vec![],
                             issuelinks: vec![],
                             attachment: vec![],
+                            issuetype: None,
+                            extras: std::collections::HashMap::new(),
                         },
                     })),
                     inward_issue: None,
                 }],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -6825,6 +7010,8 @@ mod tests {
                         subtasks: vec![],
                         issuelinks: vec![],
                         attachment: vec![],
+                        issuetype: None,
+                        extras: std::collections::HashMap::new(),
                     },
                 })),
                 subtasks: vec![JiraIssue {
@@ -6844,6 +7031,8 @@ mod tests {
                         subtasks: vec![],
                         issuelinks: vec![],
                         attachment: vec![],
+                        issuetype: None,
+                        extras: std::collections::HashMap::new(),
                     },
                 }],
                 issuelinks: vec![JiraIssueLink {
@@ -6870,11 +7059,15 @@ mod tests {
                             subtasks: vec![],
                             issuelinks: vec![],
                             attachment: vec![],
+                            issuetype: None,
+                            extras: std::collections::HashMap::new(),
                         },
                     })),
                     inward_issue: None,
                 }],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
