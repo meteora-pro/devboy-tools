@@ -417,12 +417,77 @@ fn non_secret_reason(var: &str) -> Option<&'static str> {
             return Some("not a secret — usually configuration / connection metadata");
         }
     }
+    // Prefix-based: CI runner / build agent env-vars. The
+    // live demo on meteora/devboy-env-1 (P26) saw 30+ matches
+    // for `CI_COMMIT_*`, `CI_PIPELINE_*`, `BUILD_*`, `BAML_*`
+    // — all of them runner / build metadata published by the
+    // CI system, never user-typed credentials. Match the
+    // prefix and short-circuit before the provider heuristic
+    // runs.
+    const NON_SECRET_PREFIXES: &[&str] = &[
+        "CI_COMMIT_",
+        "CI_PIPELINE_",
+        "CI_JOB_",
+        "CI_PAGES_",
+        "CI_RUNNER_",
+        "CI_PROJECT_",
+        "CI_BUILD_",
+        "CI_MERGE_REQUEST_",
+        "BUILD_",
+        "BAML_",
+        "GITHUB_ACTIONS_",
+        "GITHUB_WORKFLOW_",
+        "GITHUB_RUN_",
+        "GITHUB_REF_",
+        "GITHUB_HEAD_",
+        "GITHUB_BASE_",
+        "GITHUB_EVENT_",
+        "RUNNER_",
+        "BUILDKITE_",
+        "JENKINS_",
+        "TRAVIS_",
+        "CIRCLECI_",
+        "DRONE_",
+        "TEAMCITY_",
+        "SEMAPHORE_",
+        "VERCEL_",
+        "NETLIFY_",
+        "RAILWAY_",
+        "HEROKU_",
+        "AWS_LAMBDA_",
+        "AWS_EXECUTION_",
+        "K_SERVICE_",
+        "GOOGLE_CLOUD_",
+        "GCP_PROJECT_",
+        "FUNCTION_",
+    ];
+    for pre in NON_SECRET_PREFIXES {
+        if v.starts_with(pre) {
+            return Some("not a secret — CI runner / build agent / cloud metadata");
+        }
+    }
     // Exact-match list for short standalone names.
     match v.as_str() {
-        "USER" | "USERNAME" | "EMAIL" | "HOST" | "HOSTNAME" | "PORT" | "URL" | "LANG"
-        | "LOCALE" | "TZ" | "HOME" | "PATH" | "PWD" | "SHELL" | "TERM" => {
-            Some("not a secret — environment / machine variable")
-        }
+        "USER"
+        | "USERNAME"
+        | "EMAIL"
+        | "HOST"
+        | "HOSTNAME"
+        | "PORT"
+        | "URL"
+        | "LANG"
+        | "LOCALE"
+        | "TZ"
+        | "HOME"
+        | "PATH"
+        | "PWD"
+        | "SHELL"
+        | "TERM"
+        | "CI"
+        | "CONTINUOUS_INTEGRATION"
+        | "GITHUB_ACTIONS"
+        | "GITLAB_CI"
+        | "BUILD_ID" => Some("not a secret — environment / machine variable"),
         _ => None,
     }
 }
@@ -1596,6 +1661,27 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
         assert_skip(&propose_one("HOME", &known()));
         assert_skip(&propose_one("PATH", &known()));
         assert_skip(&propose_one("PORT", &known()));
+    }
+
+    #[test]
+    fn proposer_skips_ci_runner_prefixes() {
+        // P2 — CI / build / cloud-platform metadata prefixes.
+        // None of these are user credentials.
+        assert_skip(&propose_one("CI_COMMIT_BRANCH", &known()));
+        assert_skip(&propose_one("CI_COMMIT_SHA", &known()));
+        assert_skip(&propose_one("CI_PIPELINE_ID", &known()));
+        assert_skip(&propose_one("CI_JOB_NAME", &known()));
+        assert_skip(&propose_one("CI_RUNNER_ID", &known()));
+        assert_skip(&propose_one("CI_PROJECT_PATH", &known()));
+        assert_skip(&propose_one("BUILD_DATE", &known()));
+        assert_skip(&propose_one("BUILD_NUMBER", &known()));
+        assert_skip(&propose_one("BAML_LOG_LEVEL", &known()));
+        assert_skip(&propose_one("GITHUB_ACTIONS_RUNNER_VERSION", &known()));
+        assert_skip(&propose_one("GITHUB_RUN_ID", &known()));
+        assert_skip(&propose_one("GITHUB_REF_NAME", &known()));
+        assert_skip(&propose_one("RUNNER_OS", &known()));
+        assert_skip(&propose_one("VERCEL_URL_INTERNAL", &known()));
+        assert_skip(&propose_one("CI", &known()));
     }
 
     #[test]
