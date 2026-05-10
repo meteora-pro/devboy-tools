@@ -334,12 +334,24 @@ struct InventoryApp {
     /// provision-dialog hidden input. Off by default — only
     /// flip on when the user wants to verify what they typed.
     reveal_value: bool,
+    /// Backend-driven token catalogs loaded at startup.
+    /// Sources: bundled (compiled in), user
+    /// (`~/.devboy/secrets/catalog/`), project
+    /// (`<cwd>/.devboy/secrets/catalog/`). Drives the variant
+    /// picker, retrieval steps, and on-Save liveness probes
+    /// in subsequent P20.x tasks.
+    catalogs: Vec<devboy_token_catalog::LoadedCatalog>,
+    /// Per-file errors from catalog loading. Empty on the
+    /// happy path; surfaced as a banner above inventory when
+    /// non-empty so authors know which file is broken.
+    catalog_errors: Vec<devboy_token_catalog::CatalogError>,
 }
 
 impl InventoryApp {
     fn new_with_initial(initial_path: Option<String>) -> Self {
         let backend = StorageBackend::detect_from_env();
         let (rows, metadata_by_path) = load_inventory_or_empty(&backend);
+        let (catalogs, catalog_errors) = load_token_catalogs();
         let mut app = Self {
             state: devboy_secrets_ui::InventoryState::new(rows),
             metadata_by_path,
@@ -349,6 +361,8 @@ impl InventoryApp {
             backend,
             recovery_phrase_to_show: None,
             reveal_value: false,
+            catalogs,
+            catalog_errors,
         };
         if let Some(path) = initial_path {
             app.open_dialog_for(&path);
@@ -501,12 +515,29 @@ impl StorageBackend {
     }
 }
 
-/// Walk global index + project manifest in CWD, merge them, and
-/// return:
+/// Load token catalogs from every configured source and merge them.
 ///
-/// - the inventory rows for `InventoryState::replace_rows`
-/// - a `path → IndexEntry` map the dialog uses to populate its
-///   metadata fields
+/// Sources walked, least-to-most specific: bundled (compiled in),
+/// user (`~/.devboy/secrets/catalog/`), project
+/// (`<cwd>/.devboy/secrets/catalog/`). Later sources override earlier
+/// ones on `provider_id` collision — see
+/// `devboy_token_catalog::load_all` for the full precedence rule.
+fn load_token_catalogs() -> (
+    Vec<devboy_token_catalog::LoadedCatalog>,
+    Vec<devboy_token_catalog::CatalogError>,
+) {
+    let bundled = devboy_token_catalog::bundled_catalogs();
+    let user_dir = devboy_token_catalog::default_user_catalog_dir();
+    let project_dir = std::env::current_dir()
+        .ok()
+        .map(|cwd| devboy_token_catalog::default_project_catalog_dir(&cwd));
+    devboy_token_catalog::load_all(&bundled, user_dir.as_deref(), project_dir.as_deref())
+}
+
+/// Walk global index + project manifest in CWD, merge them, and
+/// return inventory rows ready for `InventoryState::replace_rows`
+/// plus a `path → IndexEntry` map the dialog uses to populate
+/// its metadata fields.
 fn load_inventory_or_empty(
     backend: &StorageBackend,
 ) -> (
@@ -614,6 +645,19 @@ impl eframe::App for InventoryApp {
             if ui.button("Reload from manifest").clicked() {
                 self.reload();
             }
+            // Surface the catalog count so the operator knows
+            // how many providers + errors are loaded. The
+            // variant-picker widget and per-variant rendering
+            // land in P20.2+; for P20.1 this is the only proof
+            // the data path actually works.
+            ui.label(
+                eframe::egui::RichText::new(format!(
+                    "catalogs: {} loaded, {} error(s)",
+                    self.catalogs.len(),
+                    self.catalog_errors.len()
+                ))
+                .small(),
+            );
         });
 
         // Detect click that changed selection → auto-open dialog
