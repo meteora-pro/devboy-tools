@@ -768,20 +768,26 @@ impl eframe::App for InventoryApp {
                     }
 
                     // Live regex feedback — visible to the user
-                    // while they're typing. Pulled from
-                    // `format_regex` (manifest-inline) or the
-                    // pattern in the catalogue.
+                    // while they're typing. Resolution order:
+                    //   variant.format_regex (catalog override),
+                    //   entry.format_regex (manifest-inline),
+                    //   pattern_id → rust catalogue.
+                    let variant_format_regex: Option<String> = self
+                        .current_provider_and_variant()
+                        .and_then(|(_, v)| v.format_regex.clone());
                     if let Some(d) = self.dialog.as_ref() {
                         let val = d.value_clone_for_edit();
-                        let pattern = entry.as_ref().and_then(|e| {
-                            if let Some(re) = e.format_regex.as_deref() {
-                                Some(re.to_owned())
-                            } else if let Some(pid) = e.pattern_id.as_deref() {
-                                let cat = devboy_secret_patterns::Catalogue::builtins_only();
-                                cat.find(pid).map(|p| p.format_regex().as_str().to_owned())
-                            } else {
-                                None
-                            }
+                        let pattern = variant_format_regex.clone().or_else(|| {
+                            entry.as_ref().and_then(|e| {
+                                if let Some(re) = e.format_regex.as_deref() {
+                                    Some(re.to_owned())
+                                } else if let Some(pid) = e.pattern_id.as_deref() {
+                                    let cat = devboy_secret_patterns::Catalogue::builtins_only();
+                                    cat.find(pid).map(|p| p.format_regex().as_str().to_owned())
+                                } else {
+                                    None
+                                }
+                            })
                         });
                         match pattern {
                             Some(re) if !val.is_empty() => match regex::Regex::new(&re) {
@@ -852,25 +858,42 @@ impl eframe::App for InventoryApp {
             if let (Some(value), Some(path)) = (submitted_value, submitted_path) {
                 use secrecy::ExposeSecret;
                 let entry = self.metadata_by_path.get(&path).cloned();
-                // Stage 1 — format validation. Cheap, never
-                // round-trips. Reuses the same `validate_format`
-                // the CLI's `secrets validate` runs on CI, so a
-                // value rejected here would also be rejected
-                // there.
-                let format_check = entry.as_ref().map(|e| {
-                    let catalogue = devboy_secret_patterns::Catalogue::builtins_only();
-                    devboy_storage::validate_format(e, value.expose_secret(), &catalogue)
-                });
-                let format_problem: Option<String> = match &format_check {
-                    Some(devboy_storage::FormatCheck::Mismatch { source, expected }) => {
-                        Some(format!(
-                            "value does not match the declared format ({source:?}, expected `{expected}`)"
-                        ))
+                // Snapshot the variant slot up-front: format
+                // regex AND liveness spec. The catalog wins over
+                // the rust pattern catalogue when both apply.
+                let (variant_regex, variant_liveness) = self
+                    .current_provider_and_variant()
+                    .map(|(_, v)| (v.format_regex.clone(), v.liveness.clone()))
+                    .unwrap_or((None, None));
+
+                // Stage 1 — format validation. Catalog regex
+                // wins; otherwise reuse `validate_format` (the
+                // same path `secrets validate` walks on CI).
+                let format_problem: Option<String> = if let Some(re_str) = variant_regex.as_deref()
+                {
+                    match regex::Regex::new(re_str) {
+                        Ok(re) if !re.is_match(value.expose_secret()) => Some(format!(
+                            "value does not match the catalog format (`{re_str}`)"
+                        )),
+                        Ok(_) => None,
+                        Err(e) => Some(format!("catalog format rule could not be compiled: {e}")),
                     }
-                    Some(devboy_storage::FormatCheck::Error { message }) => {
-                        Some(format!("format rule could not be evaluated: {message}"))
+                } else {
+                    let format_check = entry.as_ref().map(|e| {
+                        let catalogue = devboy_secret_patterns::Catalogue::builtins_only();
+                        devboy_storage::validate_format(e, value.expose_secret(), &catalogue)
+                    });
+                    match &format_check {
+                        Some(devboy_storage::FormatCheck::Mismatch { source, expected }) => {
+                            Some(format!(
+                                "value does not match the declared format ({source:?}, expected `{expected}`)"
+                            ))
+                        }
+                        Some(devboy_storage::FormatCheck::Error { message }) => {
+                            Some(format!("format rule could not be evaluated: {message}"))
+                        }
+                        _ => None,
                     }
-                    _ => None,
                 };
 
                 if let Some(reason) = format_problem {
@@ -880,7 +903,9 @@ impl eframe::App for InventoryApp {
                             reason,
                         });
                     }
-                } else if let Some(reason) = liveness_probe(entry.as_ref(), &value).err() {
+                } else if let Some(reason) =
+                    liveness_probe(entry.as_ref(), variant_liveness.as_ref(), &value).err()
+                {
                     // Stage 2 — actually call the provider's
                     // endpoint (when the pattern declares one).
                     // Synchronous blocking probe — UI hangs for
@@ -934,23 +959,31 @@ impl eframe::App for InventoryApp {
 /// `IndexEntry` so the user sees everything the manifest knows
 /// about the path before they have to type anything.
 /// Try to call the provider's liveness endpoint with the
-/// given value. Returns `Ok(())` when:
+/// given value. Resolution order:
 ///
-/// - the entry has no `pattern_id` (nothing to probe), OR
-/// - the pattern has no `LivenessSpec` (catalog doesn't ship
-///   one for this provider), OR
-/// - the HTTP probe returned the expected status code.
+/// 1. `catalog_liveness` (the variant's JSON-declared probe) —
+///    catalog wins because the user explicitly picked a variant.
+/// 2. `entry.pattern_id` → rust catalogue's `LivenessSpec`.
 ///
-/// Returns `Err(reason)` when the probe ran and the upstream
-/// rejected the value. Network errors are also `Err` — we'd
-/// rather block save on a transient than silently land a dead
-/// token.
+/// Returns `Ok(())` when no probe is declared (nothing to do),
+/// when the probe returned the expected HTTP status, or when
+/// neither resolution path yields a spec. Returns `Err(reason)`
+/// when the probe ran and the upstream rejected the value, or
+/// when the network call itself failed — we'd rather block save
+/// on a transient than silently land a dead token.
 fn liveness_probe(
     entry: Option<&devboy_storage::IndexEntry>,
+    catalog_liveness: Option<&devboy_token_catalog::LivenessSpec>,
     value: &secrecy::SecretString,
 ) -> Result<(), String> {
     use devboy_secret_patterns::{HttpMethod, LivenessAuth, LivenessKind};
     use secrecy::ExposeSecret;
+
+    // Catalog override path — variant's JSON-declared probe.
+    if let Some(spec) = catalog_liveness {
+        return run_catalog_liveness(spec, value);
+    }
+
     let Some(entry) = entry else { return Ok(()) };
     let Some(pid) = entry.pattern_id.as_deref() else {
         return Ok(());
@@ -997,6 +1030,47 @@ fn liveness_probe(
     } else {
         Err(format!(
             "upstream returned HTTP {status} (expected {expect_status})"
+        ))
+    }
+}
+
+/// Run an HTTP liveness probe defined in a `devboy-token-catalog`
+/// JSON entry. Mirrors the rust-catalogue path in
+/// [`liveness_probe`] but reads its config from the
+/// string-typed JSON shape instead.
+fn run_catalog_liveness(
+    spec: &devboy_token_catalog::LivenessSpec,
+    value: &secrecy::SecretString,
+) -> Result<(), String> {
+    use secrecy::ExposeSecret;
+    if spec.kind != "http" {
+        return Err(format!("unsupported liveness kind: {}", spec.kind));
+    }
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("could not build HTTP client: {e}"))?;
+    let mut req = match spec.method.to_ascii_uppercase().as_str() {
+        "GET" => client.get(&spec.url),
+        "POST" => client.post(&spec.url),
+        "HEAD" => client.head(&spec.url),
+        m => return Err(format!("unsupported HTTP method: {m}")),
+    };
+    let raw = value.expose_secret();
+    req = match &spec.auth {
+        devboy_token_catalog::AuthSpec::Bearer => req.bearer_auth(raw),
+        devboy_token_catalog::AuthSpec::BasicUser => req.basic_auth(raw, None::<&str>),
+        devboy_token_catalog::AuthSpec::BasicPassword => req.basic_auth("", Some(raw)),
+        devboy_token_catalog::AuthSpec::Header { name } => req.header(name.as_str(), raw),
+    };
+    let resp = req.send().map_err(|e| format!("network: {e}"))?;
+    let status = resp.status();
+    if status.as_u16() == spec.expect_status {
+        Ok(())
+    } else {
+        Err(format!(
+            "upstream returned HTTP {} (expected {})",
+            status, spec.expect_status
         ))
     }
 }
