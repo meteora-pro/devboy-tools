@@ -16,9 +16,12 @@
 
 pub mod idle;
 pub mod rpc;
+#[cfg(unix)]
 pub mod server;
+#[cfg(unix)]
 pub mod socket;
 
+#[cfg(unix)]
 pub use idle::{
     DEFAULT_IDLE_TIMEOUT, IdleClock, IdleTracker, ManualClock, SIGTERM_GRACE, SystemClock,
     install_sigterm_handler,
@@ -29,8 +32,40 @@ pub use rpc::{
     NO_MATCHING_ENVELOPE, PARSE_ERROR, VAULT_LOCKED, read_request, read_response, write_request,
     write_response,
 };
+#[cfg(unix)]
 pub use server::VaultServer;
+#[cfg(unix)]
 pub use socket::{
     AgentError, AgentListener, SECRETS_SUBDIR, SOCKET_FILENAME, SOCKET_MODE,
     SOCKET_PARENT_DIR_MODE, SOCKET_PATH_ENV, default_socket_path,
 };
+
+// Cross-platform stubs for the items downstream crates
+// (`devboy-secret-local-vault`) need to import unconditionally.
+// On Windows the daemon protocol is unavailable, so the stubs
+// surface that as `AgentError::Unsupported` / `default_socket_path`
+// returning the same error.
+#[cfg(not(unix))]
+mod windows_stub {
+    use std::path::PathBuf;
+
+    use thiserror::Error;
+
+    #[derive(Debug, Error)]
+    pub enum AgentError {
+        #[error("agent socket I/O error: {0}")]
+        Io(#[from] std::io::Error),
+        #[error(
+            "the agent daemon is unavailable on this platform — \
+             UNIX domain sockets are required"
+        )]
+        Unsupported,
+    }
+
+    pub fn default_socket_path() -> Result<PathBuf, AgentError> {
+        Err(AgentError::Unsupported)
+    }
+}
+
+#[cfg(not(unix))]
+pub use windows_stub::{AgentError, default_socket_path};

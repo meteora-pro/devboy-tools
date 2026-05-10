@@ -46,9 +46,7 @@
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use devboy_secrets_agent::{
-    ENTRY_NOT_FOUND, JsonRpcResponse, VAULT_LOCKED, default_socket_path,
-};
+use devboy_secrets_agent::{ENTRY_NOT_FOUND, JsonRpcResponse, VAULT_LOCKED, default_socket_path};
 #[cfg(unix)]
 use devboy_secrets_agent::{
     FramingError, JSONRPC_VERSION, JsonRpcRequest, read_response, write_request,

@@ -24,20 +24,39 @@
 //!
 //! [ADR-023]: https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md
 
+#[cfg(not(unix))]
+fn main() {
+    eprintln!(
+        "devboy-secrets-agent runs on UNIX-like targets only (the daemon \
+         protocol uses UNIX domain sockets). On Windows, use the OS \
+         credential manager via the keychain source instead."
+    );
+    std::process::exit(1);
+}
+
+#[cfg(unix)]
 use std::path::PathBuf;
+#[cfg(unix)]
 use std::sync::Arc;
 
+#[cfg(unix)]
 use devboy_secrets_agent::rpc::{FramingError, JsonRpcError, PARSE_ERROR};
+#[cfg(unix)]
 use devboy_secrets_agent::{
     AgentListener, JsonRpcResponse, VaultServer, default_socket_path, install_sigterm_handler,
     read_request, write_response,
 };
+#[cfg(unix)]
 use serde_json::Value;
+#[cfg(unix)]
 use tokio::io::BufReader;
+#[cfg(unix)]
 use tokio::sync::{Mutex, Notify};
 
+#[cfg(unix)]
 const VAULT_PATH_ENV: &str = "DEVBOY_VAULT_PATH";
 
+#[cfg(unix)]
 fn resolve_vault_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     if let Ok(s) = std::env::var(VAULT_PATH_ENV)
         && !s.is_empty()
@@ -65,9 +84,7 @@ fn detach_from_controlling_terminal() {
     }
 }
 
-#[cfg(not(unix))]
-fn detach_from_controlling_terminal() {}
-
+#[cfg(unix)]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     detach_from_controlling_terminal();
@@ -126,6 +143,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(unix)]
 async fn handle_one_connection(
     server: Arc<Mutex<VaultServer>>,
     stream: tokio::net::UnixStream,

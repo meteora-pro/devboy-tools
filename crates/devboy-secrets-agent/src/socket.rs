@@ -1,6 +1,11 @@
 //! UNIX-domain-socket binding for the secret-store agent per
 //! [ADR-023] §3.3.
 //!
+//! UNIX-only: the whole module is gated `#![cfg(unix)]`. The
+//! agent lib provides a stub `socket_stub` module on non-unix
+//! targets so callers (e.g. `local-vault`) can still import
+//! `AgentError` / `default_socket_path` cross-platform.
+//!
 //! This module is the *transport* layer of the daemon: it owns the
 //! [`tokio::net::UnixListener`] backing `~/.devboy/secrets/agent.sock`,
 //! tightens the filesystem permissions on the socket file (and its
@@ -41,6 +46,8 @@
 //! across the workspace.
 //!
 //! [ADR-023]: https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md
+
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 
