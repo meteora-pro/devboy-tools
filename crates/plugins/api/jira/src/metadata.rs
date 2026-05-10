@@ -304,6 +304,24 @@ impl JiraMetadata {
             .iter()
             .find(|cf| cf.name == field_name)
     }
+
+    /// Group customfields across capped projects by display name —
+    /// returns `(name, [variants])` pairs sorted by name. A name
+    /// with two entries that have different `field_type`s flags a
+    /// cross-project shape conflict the enricher resolves with
+    /// `anyOf` instead of first-wins.
+    pub fn custom_field_groups(&self) -> Vec<(String, Vec<JiraCustomField>)> {
+        let mut groups: std::collections::HashMap<String, Vec<JiraCustomField>> =
+            std::collections::HashMap::new();
+        for proj in self.projects.values().take(MAX_ENRICHMENT_PROJECTS) {
+            for cf in &proj.custom_fields {
+                groups.entry(cf.name.clone()).or_default().push(cf.clone());
+            }
+        }
+        let mut result: Vec<(String, Vec<JiraCustomField>)> = groups.into_iter().collect();
+        result.sort_by(|a, b| a.0.cmp(&b.0));
+        result
+    }
 }
 
 /// Cap on how many projects the schema enricher walks when building

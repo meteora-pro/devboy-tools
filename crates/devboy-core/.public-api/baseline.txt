@@ -996,6 +996,7 @@ pub fn devboy_core::config::matches_glob(pattern: &str, name: &str) -> bool
 pub fn devboy_core::config::routing_strategy_slug(s: devboy_core::config::RoutingStrategy) -> alloc::string::String
 pub mod devboy_core::enricher
 pub struct devboy_core::enricher::PropertySchema
+pub devboy_core::enricher::PropertySchema::any_of: core::option::Option<alloc::vec::Vec<devboy_core::enricher::PropertySchema>>
 pub devboy_core::enricher::PropertySchema::default: core::option::Option<serde_json::value::Value>
 pub devboy_core::enricher::PropertySchema::description: core::option::Option<alloc::string::String>
 pub devboy_core::enricher::PropertySchema::enriched: core::option::Option<bool>
@@ -1005,6 +1006,7 @@ pub devboy_core::enricher::PropertySchema::maximum: core::option::Option<f64>
 pub devboy_core::enricher::PropertySchema::minimum: core::option::Option<f64>
 pub devboy_core::enricher::PropertySchema::schema_type: alloc::string::String
 impl devboy_core::enricher::PropertySchema
+pub fn devboy_core::enricher::PropertySchema::any_of(description: &str, schemas: alloc::vec::Vec<devboy_core::enricher::PropertySchema>) -> Self
 pub fn devboy_core::enricher::PropertySchema::array(items: devboy_core::enricher::PropertySchema, description: &str) -> Self
 pub fn devboy_core::enricher::PropertySchema::boolean(description: &str) -> Self
 pub fn devboy_core::enricher::PropertySchema::integer(description: &str, min: core::option::Option<f64>, max: core::option::Option<f64>) -> Self
@@ -5612,6 +5614,7 @@ impl core::marker::UnsafeUnpin for devboy_core::types::ProjectVersion
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::ProjectVersion
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::ProjectVersion
 pub struct devboy_core::PropertySchema
+pub devboy_core::PropertySchema::any_of: core::option::Option<alloc::vec::Vec<devboy_core::enricher::PropertySchema>>
 pub devboy_core::PropertySchema::default: core::option::Option<serde_json::value::Value>
 pub devboy_core::PropertySchema::description: core::option::Option<alloc::string::String>
 pub devboy_core::PropertySchema::enriched: core::option::Option<bool>
@@ -5621,6 +5624,7 @@ pub devboy_core::PropertySchema::maximum: core::option::Option<f64>
 pub devboy_core::PropertySchema::minimum: core::option::Option<f64>
 pub devboy_core::PropertySchema::schema_type: alloc::string::String
 impl devboy_core::enricher::PropertySchema
+pub fn devboy_core::enricher::PropertySchema::any_of(description: &str, schemas: alloc::vec::Vec<devboy_core::enricher::PropertySchema>) -> Self
 pub fn devboy_core::enricher::PropertySchema::array(items: devboy_core::enricher::PropertySchema, description: &str) -> Self
 pub fn devboy_core::enricher::PropertySchema::boolean(description: &str) -> Self
 pub fn devboy_core::enricher::PropertySchema::integer(description: &str, min: core::option::Option<f64>, max: core::option::Option<f64>) -> Self
