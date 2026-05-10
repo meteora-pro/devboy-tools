@@ -840,6 +840,24 @@ impl eframe::App for InventoryApp {
                     );
                     ui.separator();
 
+                    // Format hint (P22.1). Human-readable shape
+                    // ("starts with sk-, 32+ alphanumeric") sourced
+                    // from the catalog variant's `format_hint`.
+                    // Distinct from the regex feedback rendered
+                    // *below* the input: the hint is a shape the
+                    // user reads BEFORE typing; the feedback
+                    // confirms what they typed AFTER.
+                    let variant_format_hint: Option<String> = self
+                        .current_provider_and_variant()
+                        .and_then(|(_, v)| v.format_hint.clone());
+                    if let Some(hint) = variant_format_hint {
+                        ui.label(
+                            eframe::egui::RichText::new(format!("Format: {hint}"))
+                                .small()
+                                .italics(),
+                        );
+                    }
+
                     // Reveal-toggle for the value below. Echoes
                     // chars in plaintext when on. Off by default
                     // — turn on only when you need to spot-check
