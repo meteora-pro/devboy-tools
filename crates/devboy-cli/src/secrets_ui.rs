@@ -351,6 +351,16 @@ struct InventoryApp {
     /// happy path; surfaced as a banner above inventory when
     /// non-empty so authors know which file is broken.
     catalog_errors: Vec<devboy_token_catalog::CatalogError>,
+    /// URLs that are listed in `sources.toml` but have no entry
+    /// in `known_hashes.toml` — the user must explicitly trust
+    /// them via the confirm dialog (P23.6) before the catalog
+    /// activates. Each tuple is `(url, sha256-of-fetched-body)`.
+    pending_url_confirms: Vec<(String, String)>,
+    /// URLs whose body now hashes to a value different from
+    /// `known_hashes.toml`. The user must explicitly accept the
+    /// new hash via the warning dialog or reject the load.
+    /// Tuple: `(url, known_sha, actual_sha)`.
+    pending_url_warnings: Vec<(String, String, String)>,
 }
 
 impl InventoryApp {
@@ -358,6 +368,8 @@ impl InventoryApp {
         let backend = StorageBackend::detect_from_env();
         let (rows, metadata_by_path) = load_inventory_or_empty(&backend);
         let (catalogs, catalog_errors) = load_token_catalogs();
+        let (pending_url_confirms, pending_url_warnings) =
+            partition_url_trust_errors(&catalog_errors);
         let mut app = Self {
             state: devboy_secrets_ui::InventoryState::new(rows),
             metadata_by_path,
@@ -370,11 +382,27 @@ impl InventoryApp {
             selected_variant_id: None,
             catalogs,
             catalog_errors,
+            pending_url_confirms,
+            pending_url_warnings,
         };
         if let Some(path) = initial_path {
             app.open_dialog_for(&path);
         }
         app
+    }
+
+    /// Re-walk the catalog sources after the user has accepted
+    /// or rejected an outstanding URL prompt. Side-effect-free
+    /// in the happy path: nothing changes if the resolution
+    /// did not affect any source.
+    fn reload_catalogs(&mut self) {
+        let (catalogs, catalog_errors) = load_token_catalogs();
+        let (pending_url_confirms, pending_url_warnings) =
+            partition_url_trust_errors(&catalog_errors);
+        self.catalogs = catalogs;
+        self.catalog_errors = catalog_errors;
+        self.pending_url_confirms = pending_url_confirms;
+        self.pending_url_warnings = pending_url_warnings;
     }
 
     fn reload(&mut self) {
@@ -522,13 +550,51 @@ impl StorageBackend {
     }
 }
 
+/// `(url, sha256)` for a URL whose trust must be confirmed
+/// for the first time.
+type FirstFetchPrompt = (String, String);
+/// `(url, known_sha, current_sha)` for a URL whose body now
+/// hashes to a different value than `known_hashes.toml` records.
+type TofuPrompt = (String, String, String);
+
+/// Split catalog-load errors into the two trust-related lists
+/// the GUI needs: first-fetch URLs awaiting user confirmation
+/// and TOFU mismatches awaiting a "trust the new sha?" decision.
+/// Anything else stays in `catalog_errors` for the inline banner.
+fn partition_url_trust_errors(
+    errors: &[devboy_token_catalog::CatalogError],
+) -> (Vec<FirstFetchPrompt>, Vec<TofuPrompt>) {
+    use devboy_token_catalog::{CatalogError, FetchError};
+    let mut confirms = Vec::new();
+    let mut warnings = Vec::new();
+    for e in errors {
+        if let CatalogError::Fetch { source, .. } = e {
+            match source {
+                FetchError::FirstFetchNeedsConfirmation { url, sha256 } => {
+                    confirms.push((url.clone(), sha256.clone()));
+                }
+                FetchError::TofuMismatch { url, known, actual } => {
+                    warnings.push((url.clone(), known.clone(), actual.clone()));
+                }
+                _ => {}
+            }
+        }
+    }
+    (confirms, warnings)
+}
+
 /// Load token catalogs from every configured source and merge them.
 ///
 /// Sources walked, least-to-most specific: bundled (compiled in),
 /// user (`~/.devboy/secrets/catalog/`), project
-/// (`<cwd>/.devboy/secrets/catalog/`). Later sources override earlier
-/// ones on `provider_id` collision — see
-/// `devboy_token_catalog::load_all` for the full precedence rule.
+/// (`<cwd>/.devboy/secrets/catalog/`), URL (`sources.toml`, opt-in).
+/// Later sources override earlier ones on `provider_id` collision —
+/// see `devboy_token_catalog::load_all_with_urls` for the rule.
+///
+/// First-fetch policy is `RequireConfirmation`: a URL whose hash
+/// has not yet been recorded in `known_hashes.toml` surfaces a
+/// `FirstFetchNeedsConfirmation` error instead of being silently
+/// trusted. The GUI catches it and shows a confirm dialog.
 fn load_token_catalogs() -> (
     Vec<devboy_token_catalog::LoadedCatalog>,
     Vec<devboy_token_catalog::CatalogError>,
@@ -538,7 +604,20 @@ fn load_token_catalogs() -> (
     let project_dir = std::env::current_dir()
         .ok()
         .map(|cwd| devboy_token_catalog::default_project_catalog_dir(&cwd));
-    devboy_token_catalog::load_all(&bundled, user_dir.as_deref(), project_dir.as_deref())
+    let url_config = devboy_token_catalog::default_sources_toml_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|body| devboy_token_catalog::parse_sources_toml(&body).ok());
+    let known_hashes_path = devboy_token_catalog::default_known_hashes_path();
+    let cache_dir = devboy_token_catalog::default_catalog_cache_dir();
+    devboy_token_catalog::load_all_with_urls(
+        &bundled,
+        user_dir.as_deref(),
+        project_dir.as_deref(),
+        url_config.as_ref(),
+        known_hashes_path.as_deref(),
+        cache_dir.as_deref(),
+        devboy_token_catalog::FirstFetchPolicy::RequireConfirmation,
+    )
 }
 
 /// Walk global index + project manifest in CWD, merge them, and
@@ -601,6 +680,17 @@ impl eframe::App for InventoryApp {
                 .color(eframe::egui::Color32::from_rgb(0x55, 0xaa, 0xff)),
         );
         ui.separator();
+
+        // URL trust prompts (P23.6). Surface as modeless `egui::Window`s
+        // so the user can compare against the inventory before deciding.
+        // Each is rendered through `render_url_trust_prompts`, which
+        // returns the user's decision + the URL it concerns; we apply
+        // it before the rest of the frame so the next reload reflects
+        // the new state.
+        let trust_decisions = self.render_url_trust_prompts(ui.ctx());
+        if !trust_decisions.is_empty() {
+            self.apply_trust_decisions(trust_decisions);
+        }
 
         // Recovery phrase — surfaced exactly once after first
         // vault create. The user must save this somewhere; we
@@ -1319,6 +1409,167 @@ impl InventoryApp {
         }
         None
     }
+
+    /// Render every outstanding URL trust prompt and collect
+    /// the user's responses. Modeless `egui::Window`s — the
+    /// user can compare against the rest of the GUI before
+    /// deciding. Returned tuples are applied by
+    /// [`apply_trust_decisions`].
+    fn render_url_trust_prompts(&mut self, ctx: &eframe::egui::Context) -> Vec<UrlTrustDecision> {
+        use eframe::egui::{Color32, RichText};
+        let mut out: Vec<UrlTrustDecision> = Vec::new();
+
+        // First-fetch confirms — orange chip; "Trust this catalog"
+        // accepts and persists the SHA into known_hashes.toml.
+        for (url, sha) in self.pending_url_confirms.clone() {
+            let title = format!("Trust new URL catalog: {url}");
+            eframe::egui::Window::new(&title)
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.label(
+                        RichText::new(
+                            "This URL is listed in sources.toml but has not been seen before.",
+                        )
+                        .strong(),
+                    );
+                    ui.label("Verify the URL is one your team operates before accepting.");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("URL:").strong());
+                        ui.hyperlink(&url);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("SHA256:").strong());
+                        ui.label(RichText::new(&sha).monospace());
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(
+                                RichText::new("Trust this catalog")
+                                    .color(Color32::from_rgb(0x55, 0xaa, 0x55)),
+                            )
+                            .clicked()
+                        {
+                            out.push(UrlTrustDecision::Accept {
+                                url: url.clone(),
+                                sha256: sha.clone(),
+                            });
+                        }
+                        if ui
+                            .button(
+                                RichText::new("Reject").color(Color32::from_rgb(0xcc, 0x44, 0x44)),
+                            )
+                            .clicked()
+                        {
+                            out.push(UrlTrustDecision::Reject { url: url.clone() });
+                        }
+                    });
+                });
+        }
+
+        // SHA mismatch — red chip; far stronger language. The
+        // legitimate-rotation case is recoverable via the
+        // "Trust the new SHA" button, but the typical reason
+        // for surfacing this is upstream compromise — so the
+        // copy leans toward suspicion.
+        for (url, known, actual) in self.pending_url_warnings.clone() {
+            let title = format!("⚠ Catalog SHA changed: {url}");
+            eframe::egui::Window::new(&title)
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.label(
+                        RichText::new("This URL's body has changed since you last trusted it.")
+                            .color(Color32::from_rgb(0xcc, 0x44, 0x44))
+                            .strong(),
+                    );
+                    ui.label(
+                        "Most often this is the upstream rotating its file legitimately, \
+                         but it is also exactly what an upstream compromise looks like. \
+                         When in doubt, refuse and verify out-of-band before accepting.",
+                    );
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("URL:").strong());
+                        ui.hyperlink(&url);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Known SHA256:").strong());
+                        ui.label(RichText::new(&known).monospace());
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Current SHA256:").strong());
+                        ui.label(
+                            RichText::new(&actual)
+                                .monospace()
+                                .color(Color32::from_rgb(0xcc, 0x44, 0x44)),
+                        );
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("Trust the new SHA")).clicked() {
+                            out.push(UrlTrustDecision::Accept {
+                                url: url.clone(),
+                                sha256: actual.clone(),
+                            });
+                        }
+                        if ui
+                            .button(
+                                RichText::new("Reject and keep old SHA")
+                                    .color(Color32::from_rgb(0xcc, 0x44, 0x44)),
+                            )
+                            .clicked()
+                        {
+                            out.push(UrlTrustDecision::Reject { url: url.clone() });
+                        }
+                    });
+                });
+        }
+
+        out
+    }
+
+    /// Apply user decisions from
+    /// [`render_url_trust_prompts`] to `known_hashes.toml`,
+    /// then re-walk the catalog sources so accepted catalogs
+    /// activate (or rejected ones drop from the pending list).
+    fn apply_trust_decisions(&mut self, decisions: Vec<UrlTrustDecision>) {
+        if decisions.is_empty() {
+            return;
+        }
+        let Some(known_hashes_path) = devboy_token_catalog::default_known_hashes_path() else {
+            self.last_save_error = Some("could not resolve known_hashes.toml path".to_owned());
+            return;
+        };
+        for decision in decisions {
+            match decision {
+                UrlTrustDecision::Accept { url, sha256 } => {
+                    if let Err(e) =
+                        devboy_token_catalog::record_url_trust(&known_hashes_path, &url, &sha256)
+                    {
+                        self.last_save_error =
+                            Some(format!("could not record trust for {url}: {e}"));
+                    }
+                }
+                UrlTrustDecision::Reject { url } => {
+                    self.pending_url_confirms.retain(|(u, _)| u != &url);
+                    self.pending_url_warnings.retain(|(u, _, _)| u != &url);
+                }
+            }
+        }
+        self.reload_catalogs();
+    }
+}
+
+/// One decision the user made about a pending URL trust prompt.
+/// Emitted by [`InventoryApp::render_url_trust_prompts`] and
+/// consumed by [`InventoryApp::apply_trust_decisions`].
+#[derive(Debug, Clone)]
+enum UrlTrustDecision {
+    Accept { url: String, sha256: String },
+    Reject { url: String },
 }
 
 // =============================================================================

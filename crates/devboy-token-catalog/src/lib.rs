@@ -300,13 +300,14 @@ pub fn load_all_with_urls(
     url_config: Option<&CatalogSourcesConfig>,
     known_hashes_path: Option<&Path>,
     cache_dir: Option<&Path>,
+    first_fetch: FirstFetchPolicy,
 ) -> (Vec<LoadedCatalog>, Vec<CatalogError>) {
     let (mut loaded, mut errors) = load_all(bundled, user_dir, project_dir);
     if let Some(cfg) = url_config
         && cfg.enable_url_catalogs
     {
         for src in &cfg.sources {
-            match fetch_url_source(src, known_hashes_path, cache_dir) {
+            match fetch_url_source(src, known_hashes_path, cache_dir, first_fetch) {
                 Ok(catalog) => {
                     let url_source = CatalogSource::Url {
                         url: src.url.clone(),
@@ -414,6 +415,24 @@ pub enum FetchError {
         #[source]
         source: toml::de::Error,
     },
+    #[error("first fetch from `{url}` requires user confirmation (sha256 = {sha256})")]
+    FirstFetchNeedsConfirmation { url: String, sha256: String },
+}
+
+/// What the loader does when a URL has neither a pinned sha256
+/// nor an existing entry in `known_hashes.toml`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FirstFetchPolicy {
+    /// Record the hash silently on first successful fetch
+    /// (TOFU happy path). Right for unattended CLI runs.
+    #[default]
+    AutoRecord,
+    /// Surface
+    /// [`FetchError::FirstFetchNeedsConfirmation`] so the
+    /// caller (e.g. the GUI) can prompt the user before
+    /// activating the catalog. The caller is then expected to
+    /// call [`record_url_trust`] before re-running the loader.
+    RequireConfirmation,
 }
 
 /// Fetch one [`UrlSource`] over HTTPS and decode the body as a
@@ -434,6 +453,7 @@ pub fn fetch_url_source(
     source: &UrlSource,
     known_hashes_path: Option<&Path>,
     cache_dir: Option<&Path>,
+    first_fetch: FirstFetchPolicy,
 ) -> Result<ProviderCatalog, FetchError> {
     if !source.url.starts_with("https://") {
         return Err(FetchError::HttpsRequired {
@@ -444,7 +464,14 @@ pub fn fetch_url_source(
         .timeout(FETCH_TIMEOUT)
         .build()
         .map_err(|source| FetchError::Client { source })?;
-    fetch_inner_with_client(&client, source, known_hashes_path, cache_dir, unix_now())
+    fetch_inner_with_client(
+        &client,
+        source,
+        known_hashes_path,
+        cache_dir,
+        first_fetch,
+        unix_now(),
+    )
 }
 
 /// Internal entry point for [`fetch_url_source`]. Splits out
@@ -457,6 +484,7 @@ fn fetch_inner_with_client(
     source: &UrlSource,
     known_hashes_path: Option<&Path>,
     cache_dir: Option<&Path>,
+    first_fetch: FirstFetchPolicy,
     now_secs: u64,
 ) -> Result<ProviderCatalog, FetchError> {
     let cache_paths = cache_dir.map(|d| cache_paths_for(d, &source.url));
@@ -467,7 +495,7 @@ fn fetch_inner_with_client(
         && now_secs.saturating_sub(meta.fetched_at) < source.refresh_seconds
     {
         let actual = sha256_hex(&bytes);
-        enforce_pin_or_tofu(source, known_hashes_path, &actual)?;
+        enforce_pin_or_tofu(source, known_hashes_path, &actual, first_fetch)?;
         return parse_catalog_bytes(&bytes);
     }
 
@@ -508,13 +536,13 @@ fn fetch_inner_with_client(
                     }
                 };
                 let actual = sha256_hex(&bytes);
-                enforce_pin_or_tofu(source, known_hashes_path, &actual)?;
+                enforce_pin_or_tofu(source, known_hashes_path, &actual, first_fetch)?;
                 return parse_catalog_bytes(&bytes);
             };
             meta.fetched_at = now_secs;
             let _ = write_meta(meta_path, &meta);
             let actual = sha256_hex(&bytes);
-            enforce_pin_or_tofu(source, known_hashes_path, &actual)?;
+            enforce_pin_or_tofu(source, known_hashes_path, &actual, first_fetch)?;
             parse_catalog_bytes(&bytes)
         }
         Ok(HttpFetch::Body { bytes, etag }) => {
@@ -530,7 +558,7 @@ fn fetch_inner_with_client(
                 let _ = write_cache(body_path, meta_path, &m, &bytes);
             }
             let actual = sha256_hex(&bytes);
-            enforce_pin_or_tofu(source, known_hashes_path, &actual)?;
+            enforce_pin_or_tofu(source, known_hashes_path, &actual, first_fetch)?;
             parse_catalog_bytes(&bytes)
         }
         Err(e) => {
@@ -541,7 +569,7 @@ fn fetch_inner_with_client(
                 && let Some((_meta, bytes)) = read_cache(meta_path, body_path)
             {
                 let actual = sha256_hex(&bytes);
-                enforce_pin_or_tofu(source, known_hashes_path, &actual)?;
+                enforce_pin_or_tofu(source, known_hashes_path, &actual, first_fetch)?;
                 return parse_catalog_bytes(&bytes);
             }
             Err(e)
@@ -666,6 +694,7 @@ fn enforce_pin_or_tofu(
     source: &UrlSource,
     known_hashes_path: Option<&Path>,
     actual_sha: &str,
+    first_fetch: FirstFetchPolicy,
 ) -> Result<(), FetchError> {
     if let Some(expected) = source.sha256.as_deref() {
         if expected.eq_ignore_ascii_case(actual_sha) {
@@ -690,12 +719,41 @@ fn enforce_pin_or_tofu(
             actual: actual_sha.to_owned(),
         });
     }
-    // First-fetch: record and persist. A failed write is fatal
-    // so the next run isn't lulled into thinking nothing was
-    // recorded — better to surface the I/O error now.
-    known.url.insert(source.url.clone(), actual_sha.to_owned());
-    write_known_hashes(path, &known)?;
-    Ok(())
+    match first_fetch {
+        FirstFetchPolicy::AutoRecord => {
+            // First-fetch: record and persist. A failed write
+            // is fatal so the next run isn't lulled into
+            // thinking nothing was recorded — better to
+            // surface the I/O error now.
+            known.url.insert(source.url.clone(), actual_sha.to_owned());
+            write_known_hashes(path, &known)?;
+            Ok(())
+        }
+        FirstFetchPolicy::RequireConfirmation => {
+            // Defer: caller (GUI) must surface a confirm
+            // dialog and call `record_url_trust` before
+            // re-running the loader.
+            Err(FetchError::FirstFetchNeedsConfirmation {
+                url: source.url.clone(),
+                sha256: actual_sha.to_owned(),
+            })
+        }
+    }
+}
+
+/// Persist a TOFU entry into `known_hashes.toml` after the
+/// user has confirmed they trust the URL. Idempotent —
+/// overwrites any existing entry, which is also how the GUI
+/// resolves a `TofuMismatch` warning when the user accepts
+/// the new hash.
+pub fn record_url_trust(
+    known_hashes_path: &Path,
+    url: &str,
+    sha256: &str,
+) -> Result<(), FetchError> {
+    let mut known = read_known_hashes(known_hashes_path)?;
+    known.url.insert(url.to_owned(), sha256.to_owned());
+    write_known_hashes(known_hashes_path, &known)
 }
 
 // =============================================================================
@@ -1352,7 +1410,7 @@ mod tests {
             sha256: None,
             refresh_seconds: 60,
         };
-        let err = fetch_url_source(&src, None, None).unwrap_err();
+        let err = fetch_url_source(&src, None, None, FirstFetchPolicy::AutoRecord).unwrap_err();
         assert!(matches!(err, FetchError::HttpsRequired { .. }));
     }
 
@@ -1494,7 +1552,14 @@ mod tests {
         source: &UrlSource,
         known_hashes_path: Option<&Path>,
     ) -> Result<ProviderCatalog, FetchError> {
-        fetch_inner_with_client(&test_client(), source, known_hashes_path, None, unix_now())
+        fetch_inner_with_client(
+            &test_client(),
+            source,
+            known_hashes_path,
+            None,
+            FirstFetchPolicy::AutoRecord,
+            unix_now(),
+        )
     }
 
     #[test]
@@ -1674,7 +1739,60 @@ mod tests {
         cache_dir: Option<&Path>,
         now_secs: u64,
     ) -> Result<ProviderCatalog, FetchError> {
-        fetch_inner_with_client(&test_client(), source, None, cache_dir, now_secs)
+        fetch_inner_with_client(
+            &test_client(),
+            source,
+            None,
+            cache_dir,
+            FirstFetchPolicy::AutoRecord,
+            now_secs,
+        )
+    }
+
+    #[test]
+    fn strict_first_fetch_returns_confirmation_error_then_record_lets_it_through() {
+        let server = httpmock::MockServer::start();
+        let body = fixture_json();
+        server.mock(|when, then| {
+            when.method("GET").path("/k.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(body.clone());
+        });
+        let dir = TempDir::new().unwrap();
+        let kh_path = dir.path().join("known_hashes.toml");
+        let src = fixture_url_source(&server.base_url(), "/k.json", None);
+
+        // Strict mode + unknown URL → confirmation needed.
+        let err = fetch_inner_with_client(
+            &test_client(),
+            &src,
+            Some(&kh_path),
+            None,
+            FirstFetchPolicy::RequireConfirmation,
+            1_000,
+        )
+        .unwrap_err();
+        let (url, sha) = match err {
+            FetchError::FirstFetchNeedsConfirmation { url, sha256 } => (url, sha256),
+            other => panic!("expected FirstFetchNeedsConfirmation, got {other:?}"),
+        };
+        assert_eq!(url, src.url);
+        assert_eq!(sha, sha256_hex(body.as_bytes()));
+
+        // GUI confirms → records the trust.
+        record_url_trust(&kh_path, &url, &sha).unwrap();
+
+        // Strict mode again — now URL is known, fetch succeeds.
+        fetch_inner_with_client(
+            &test_client(),
+            &src,
+            Some(&kh_path),
+            None,
+            FirstFetchPolicy::RequireConfirmation,
+            1_000,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -1796,7 +1914,15 @@ mod tests {
                 refresh_seconds: 60,
             }],
         };
-        let (loaded, errors) = load_all_with_urls(&[], None, None, Some(&cfg), None, None);
+        let (loaded, errors) = load_all_with_urls(
+            &[],
+            None,
+            None,
+            Some(&cfg),
+            None,
+            None,
+            FirstFetchPolicy::AutoRecord,
+        );
         assert!(loaded.is_empty());
         assert!(errors.is_empty(), "fetch should be skipped, no errors");
     }
