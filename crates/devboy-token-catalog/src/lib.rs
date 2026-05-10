@@ -190,6 +190,12 @@ pub enum CatalogError {
         "schema version mismatch in {path}: file declares {found}, this build supports {SCHEMA_VERSION}"
     )]
     SchemaVersion { path: PathBuf, found: u32 },
+    #[error("URL source `{url}` failed to load: {source}")]
+    Fetch {
+        url: String,
+        #[source]
+        source: FetchError,
+    },
 }
 
 /// Default user-scope catalog directory:
@@ -263,16 +269,55 @@ pub fn load_all(
     if let Some(dir) = user_dir {
         let (cats, errs) = load_dir(dir);
         for c in cats {
-            override_or_push(&mut loaded, c, CatalogSource::User, dir.to_path_buf());
+            let path = Some(dir.join(format!("{}.json", c.provider_id)));
+            override_or_push(&mut loaded, c, CatalogSource::User, path);
         }
         errors.extend(errs);
     }
     if let Some(dir) = project_dir {
         let (cats, errs) = load_dir(dir);
         for c in cats {
-            override_or_push(&mut loaded, c, CatalogSource::Project, dir.to_path_buf());
+            let path = Some(dir.join(format!("{}.json", c.provider_id)));
+            override_or_push(&mut loaded, c, CatalogSource::Project, path);
         }
         errors.extend(errs);
+    }
+    (loaded, errors)
+}
+
+/// Same as [`load_all`] but with a fourth tier — remote-URL
+/// sources from `sources.toml` (P23). URL sources fall **after**
+/// project-scope, i.e. they win on `provider_id` collision —
+/// the assumption being that a team operating a shared remote
+/// catalog wants it to override anything checked into the local
+/// repo. The fetcher is opt-in: when
+/// [`CatalogSourcesConfig::enable_url_catalogs`] is `false` (the
+/// default), URL sources are silently skipped.
+pub fn load_all_with_urls(
+    bundled: &[ProviderCatalog],
+    user_dir: Option<&Path>,
+    project_dir: Option<&Path>,
+    url_config: Option<&CatalogSourcesConfig>,
+) -> (Vec<LoadedCatalog>, Vec<CatalogError>) {
+    let (mut loaded, mut errors) = load_all(bundled, user_dir, project_dir);
+    if let Some(cfg) = url_config
+        && cfg.enable_url_catalogs
+    {
+        for src in &cfg.sources {
+            match fetch_url_source(src) {
+                Ok(catalog) => {
+                    let url_source = CatalogSource::Url {
+                        url: src.url.clone(),
+                        sha256: src.sha256.clone(),
+                    };
+                    override_or_push(&mut loaded, catalog, url_source, None);
+                }
+                Err(source) => errors.push(CatalogError::Fetch {
+                    url: src.url.clone(),
+                    source,
+                }),
+            }
+        }
     }
     (loaded, errors)
 }
@@ -281,9 +326,8 @@ fn override_or_push(
     loaded: &mut Vec<LoadedCatalog>,
     catalog: ProviderCatalog,
     source: CatalogSource,
-    dir: PathBuf,
+    path: Option<PathBuf>,
 ) {
-    let path = Some(dir.join(format!("{}.json", catalog.provider_id)));
     if let Some(slot) = loaded
         .iter_mut()
         .find(|l| l.catalog.provider_id == catalog.provider_id)
@@ -298,6 +342,128 @@ fn override_or_push(
             path,
         });
     }
+}
+
+// =============================================================================
+// URL fetcher (P23.2)
+// =============================================================================
+
+/// Hard cap on the body of a fetched catalog. Defends against
+/// memory exhaustion when a misconfigured (or hostile) server
+/// streams gigabytes of garbage at the loader. 256 KB is plenty
+/// for a real provider catalog — the bundled Kimi file is well
+/// under 4 KB.
+pub const MAX_CATALOG_BODY_BYTES: usize = 256 * 1024;
+
+/// Per-request timeout for the URL fetcher. The TLS handshake
+/// alone can chew several seconds on a cold network path, so
+/// 10 s is the floor below which legitimate requests start
+/// timing out.
+pub const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Reasons the URL fetcher can refuse a request.
+#[derive(Debug, Error)]
+pub enum FetchError {
+    #[error("URL must use https:// (got `{url}`)")]
+    HttpsRequired { url: String },
+    #[error("could not build the HTTP client: {source}")]
+    Client {
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("HTTP request failed: {source}")]
+    Request {
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("HTTP {status}")]
+    Status { status: u16 },
+    #[error("body too large: server reported {bytes} bytes, cap is {MAX_CATALOG_BODY_BYTES}")]
+    BodyTooLarge { bytes: u64 },
+    #[error("Content-Type must be application/json (got `{got}`)")]
+    BadContentType { got: String },
+    #[error("body did not parse as a ProviderCatalog: {source}")]
+    Parse {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("schema version mismatch: body declares {found}, this build supports {SCHEMA_VERSION}")]
+    SchemaVersion { found: u32 },
+}
+
+/// Fetch one [`UrlSource`] over HTTPS and decode the body as a
+/// [`ProviderCatalog`]. Performs the full P23.2 guard chain —
+/// HTTPS-only, 10 s timeout, 256 KB body cap, JSON-only
+/// Content-Type, schema-version match. Pure: no caching, no
+/// SHA pinning (those are P23.3 / P23.5).
+pub fn fetch_url_source(source: &UrlSource) -> Result<ProviderCatalog, FetchError> {
+    if !source.url.starts_with("https://") {
+        return Err(FetchError::HttpsRequired {
+            url: source.url.clone(),
+        });
+    }
+    let client = reqwest::blocking::Client::builder()
+        .timeout(FETCH_TIMEOUT)
+        .build()
+        .map_err(|source| FetchError::Client { source })?;
+    fetch_with_client(&client, &source.url)
+}
+
+/// Body of [`fetch_url_source`] split out so tests can drive
+/// it against a plain-`http://` mock server (httpmock does not
+/// speak TLS). The `https://` guard sits in the public entry
+/// point — every production code path goes through it.
+fn fetch_with_client(
+    client: &reqwest::blocking::Client,
+    url: &str,
+) -> Result<ProviderCatalog, FetchError> {
+    let resp = client
+        .get(url)
+        .send()
+        .map_err(|source| FetchError::Request { source })?;
+
+    if !resp.status().is_success() {
+        return Err(FetchError::Status {
+            status: resp.status().as_u16(),
+        });
+    }
+
+    if let Some(ct) = resp.headers().get(reqwest::header::CONTENT_TYPE) {
+        let got = ct.to_str().unwrap_or("<non-ascii>").to_owned();
+        let main_type = got
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        if main_type != "application/json" {
+            return Err(FetchError::BadContentType { got });
+        }
+    }
+
+    if let Some(cl) = resp.content_length()
+        && (cl as usize) > MAX_CATALOG_BODY_BYTES
+    {
+        return Err(FetchError::BodyTooLarge { bytes: cl });
+    }
+
+    let bytes = resp
+        .bytes()
+        .map_err(|source| FetchError::Request { source })?;
+    if bytes.len() > MAX_CATALOG_BODY_BYTES {
+        return Err(FetchError::BodyTooLarge {
+            bytes: bytes.len() as u64,
+        });
+    }
+
+    let cat: ProviderCatalog =
+        serde_json::from_slice(&bytes).map_err(|source| FetchError::Parse { source })?;
+    if cat.schema_version != SCHEMA_VERSION {
+        return Err(FetchError::SchemaVersion {
+            found: cat.schema_version,
+        });
+    }
+    Ok(cat)
 }
 
 /// Bundled provider catalogs shipped in the binary itself.
@@ -659,6 +825,130 @@ mod tests {
         "#;
         let err = parse_sources_toml(body).unwrap_err();
         assert!(matches!(err, SourcesConfigError::InvalidSha256 { .. }));
+    }
+
+    #[test]
+    fn fetch_rejects_http_scheme_directly() {
+        let src = UrlSource {
+            url: "http://example.invalid/x.json".into(),
+            sha256: None,
+            refresh_seconds: 60,
+        };
+        let err = fetch_url_source(&src).unwrap_err();
+        assert!(matches!(err, FetchError::HttpsRequired { .. }));
+    }
+
+    fn test_client() -> reqwest::blocking::Client {
+        reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap()
+    }
+
+    fn fixture_json() -> String {
+        serde_json::to_string(&fixture()).unwrap()
+    }
+
+    #[test]
+    fn fetch_with_client_happy_path() {
+        let server = httpmock::MockServer::start();
+        let m = server.mock(|when, then| {
+            when.method("GET").path("/kimi.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(fixture_json());
+        });
+        let url = format!("{}/kimi.json", server.base_url());
+        let cat = fetch_with_client(&test_client(), &url).unwrap();
+        m.assert();
+        assert_eq!(cat.provider_id, "kimi");
+    }
+
+    #[test]
+    fn fetch_with_client_rejects_non_2xx() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method("GET").path("/x.json");
+            then.status(404);
+        });
+        let url = format!("{}/x.json", server.base_url());
+        let err = fetch_with_client(&test_client(), &url).unwrap_err();
+        assert!(matches!(err, FetchError::Status { status: 404 }));
+    }
+
+    #[test]
+    fn fetch_with_client_rejects_html_content_type() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method("GET").path("/x.json");
+            then.status(200)
+                .header("content-type", "text/html; charset=utf-8")
+                .body("<html>oops</html>");
+        });
+        let url = format!("{}/x.json", server.base_url());
+        let err = fetch_with_client(&test_client(), &url).unwrap_err();
+        assert!(matches!(err, FetchError::BadContentType { .. }));
+    }
+
+    #[test]
+    fn fetch_with_client_rejects_oversize_body() {
+        let server = httpmock::MockServer::start();
+        // 257 KB of `x`s — one byte over the cap.
+        let payload = "x".repeat(MAX_CATALOG_BODY_BYTES + 1);
+        server.mock(|when, then| {
+            when.method("GET").path("/big.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(payload);
+        });
+        let url = format!("{}/big.json", server.base_url());
+        let err = fetch_with_client(&test_client(), &url).unwrap_err();
+        assert!(matches!(err, FetchError::BodyTooLarge { .. }));
+    }
+
+    #[test]
+    fn fetch_with_client_rejects_malformed_json() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method("GET").path("/bad.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("{ not json");
+        });
+        let url = format!("{}/bad.json", server.base_url());
+        let err = fetch_with_client(&test_client(), &url).unwrap_err();
+        assert!(matches!(err, FetchError::Parse { .. }));
+    }
+
+    #[test]
+    fn fetch_with_client_rejects_schema_mismatch() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method("GET").path("/v99.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{"schema_version":99,"provider_id":"x","display_name":"X","variants":[]}"#,
+                );
+        });
+        let url = format!("{}/v99.json", server.base_url());
+        let err = fetch_with_client(&test_client(), &url).unwrap_err();
+        assert!(matches!(err, FetchError::SchemaVersion { found: 99 }));
+    }
+
+    #[test]
+    fn load_all_with_urls_skips_when_disabled() {
+        let cfg = CatalogSourcesConfig {
+            enable_url_catalogs: false,
+            sources: vec![UrlSource {
+                url: "https://example.invalid/should-not-be-fetched.json".into(),
+                sha256: None,
+                refresh_seconds: 60,
+            }],
+        };
+        let (loaded, errors) = load_all_with_urls(&[], None, None, Some(&cfg));
+        assert!(loaded.is_empty());
+        assert!(errors.is_empty(), "fetch should be skipped, no errors");
     }
 
     #[test]

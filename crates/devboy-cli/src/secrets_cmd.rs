@@ -208,11 +208,13 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
 // catalog
 // =============================================================================
 
-/// Walk the bundled / user / project catalog sources and print
+/// Walk every configured catalog source — bundled / user /
+/// project / URL (when opt-in via `sources.toml`) — and print
 /// one line per provider. Read-only, no flags.
 fn catalog_list() -> Result<()> {
     use devboy_token_catalog::{
-        CatalogSource, bundled_catalogs, default_user_catalog_dir, load_all,
+        CatalogSource, bundled_catalogs, default_sources_toml_path, default_user_catalog_dir,
+        load_all_with_urls, parse_sources_toml,
     };
 
     let bundled = bundled_catalogs();
@@ -223,7 +225,17 @@ fn catalog_list() -> Result<()> {
     let project_dir = std::env::current_dir()
         .ok()
         .map(|d| d.join(".devboy").join("secrets").join("catalog"));
-    let (loaded, errors) = load_all(&bundled, user_dir.as_deref(), project_dir.as_deref());
+    // sources.toml is optional. A missing file just means "no
+    // URL sources" — never an error.
+    let url_config = default_sources_toml_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|body| parse_sources_toml(&body).ok());
+    let (loaded, errors) = load_all_with_urls(
+        &bundled,
+        user_dir.as_deref(),
+        project_dir.as_deref(),
+        url_config.as_ref(),
+    );
 
     if loaded.is_empty() && errors.is_empty() {
         println!("no catalogs loaded");

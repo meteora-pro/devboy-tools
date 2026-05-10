@@ -19,9 +19,13 @@ thiserror.workspace = true
 tracing.workspace = true
 dirs.workspace = true
 toml.workspace = true
+# `blocking` is the URL fetcher's transport. JSON / TLS bits come
+# from the workspace-level reqwest feature set.
+reqwest = { workspace = true, features = ["blocking"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+httpmock.workspace = true
 
 [lints]
 workspace = true
