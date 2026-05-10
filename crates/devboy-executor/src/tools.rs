@@ -98,6 +98,16 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                     PropertySchema::string("fix version name"),
                     "Jira fix-version (release) names to associate with the issue. Each entry is a `ProjectVersion.name` (e.g., \"3.18.0\"). Ignored by providers without fix versions (GitHub/GitLab/ClickUp).",
                 ));
+                s.add_property("epicKey", PropertySchema::string(
+                    "Jira parent epic key (e.g. \"PROJ-12\"). Resolved at runtime to the instance's `Epic Link` customfield id, no need to know `customfield_*` numbers. Ignored by non-Jira providers.",
+                ));
+                s.add_property("sprintId", PropertySchema::integer(
+                    "Jira sprint id (numeric agile-board sprint id; use `get_board_sprints` to discover available ids). Ignored by non-Jira providers.",
+                    None, None,
+                ));
+                s.add_property("epicName", PropertySchema::string(
+                    "Jira Epic Name (required when `issueType` is `Epic` on Server/DC and Cloud company-managed projects). Ignored by non-Jira providers.",
+                ));
                 s.set_required("title", true);
                 s
             },
@@ -125,6 +135,16 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("fixVersions", PropertySchema::array(
                     PropertySchema::string("fix version name"),
                     "Replace fix versions with these Jira release names. Omit the field to leave existing fix versions untouched; pass an empty array to clear.",
+                ));
+                s.add_property("epicKey", PropertySchema::string(
+                    "Set the parent epic (Jira-only). Pass an issue key like `PROJ-12`. Omit to leave the link untouched. To clear an Epic Link, use `customFields` with the Epic Link customfield set to `null`.",
+                ));
+                s.add_property("sprintId", PropertySchema::integer(
+                    "Move the issue to a sprint by numeric id (Jira-only). Omit to leave the sprint untouched.",
+                    None, None,
+                ));
+                s.add_property("epicName", PropertySchema::string(
+                    "Set the Epic Name (Jira-only, applies to Epic-typed issues). Omit to leave it untouched.",
                 ));
                 s.set_required("key", true);
                 s
