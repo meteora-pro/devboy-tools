@@ -1315,28 +1315,37 @@ pub fn write_known_hashes(path: &Path, known: &KnownHashes) -> Result<(), FetchE
 }
 
 /// Bundled provider catalogs shipped in the binary itself.
-/// New providers land here as their canonical references
-/// mature; downstream catalogs at user / project scope can
-/// override any of these by `provider_id`.
+///
+/// Backed by [`rust_embed`] auto-discovery: every `*.json`
+/// under `crates/devboy-token-catalog/data/` is included at
+/// compile time. **Adding a new provider is one file drop —
+/// no source change required**, which keeps PRs that add
+/// different catalogs free of merge conflicts on a shared
+/// registry.
+///
+/// Files that fail to parse against the schema are silently
+/// dropped here; CI runs `devboy secrets catalog validate`
+/// against every bundled file so a malformed JSON is caught
+/// before merge, not at runtime. Output is sorted by
+/// `provider_id` for deterministic ordering.
 pub fn bundled_catalogs() -> Vec<ProviderCatalog> {
-    let mut out = Vec::new();
-    for body in BUNDLED_SOURCES {
-        if let Ok(c) = serde_json::from_str::<ProviderCatalog>(body) {
-            out.push(c);
-        }
-    }
+    let mut out: Vec<ProviderCatalog> = BundledCatalogAssets::iter()
+        .filter_map(|name| {
+            let asset = BundledCatalogAssets::get(name.as_ref())?;
+            serde_json::from_slice::<ProviderCatalog>(&asset.data).ok()
+        })
+        .collect();
+    out.sort_by(|a, b| a.provider_id.cmp(&b.provider_id));
     out
 }
 
-const BUNDLED_KIMI: &str = include_str!("../data/kimi.json");
-const BUNDLED_OPENAI: &str = include_str!("../data/openai.json");
-const BUNDLED_GITHUB: &str = include_str!("../data/github.json");
-
-/// Every bundled JSON catalog shipped in the binary. Order is
-/// not load-bearing — `load_all` resolves overrides by source
-/// scope (bundled < user < project), and within a scope
-/// duplicate `provider_id`s would surface as a load error.
-const BUNDLED_SOURCES: &[&str] = &[BUNDLED_KIMI, BUNDLED_OPENAI, BUNDLED_GITHUB];
+/// rust-embed handle for the on-disk `data/` tree. The folder
+/// path is relative to the crate root; `include` filters down
+/// to the JSON catalog files we ship.
+#[derive(rust_embed::Embed)]
+#[folder = "data/"]
+#[include = "*.json"]
+struct BundledCatalogAssets;
 
 /// Load every `*.json` file under `dir` as a [`ProviderCatalog`].
 /// Errors are isolated per-file: one bad JSON file doesn't hide
@@ -2386,8 +2395,10 @@ mod tests {
                 "expected `{expected}` bundled, got {ids:?}"
             );
         }
-        for body in BUNDLED_SOURCES {
-            serde_json::from_str::<ProviderCatalog>(body)
+        for asset_path in BundledCatalogAssets::iter() {
+            let asset = BundledCatalogAssets::get(asset_path.as_ref())
+                .expect("rust-embed asset must be retrievable");
+            serde_json::from_slice::<ProviderCatalog>(&asset.data)
                 .expect("bundled catalog must parse cleanly");
         }
     }

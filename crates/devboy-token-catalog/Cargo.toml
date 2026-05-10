@@ -26,6 +26,10 @@ reqwest = { workspace = true, features = ["blocking"] }
 sha2.workspace = true
 # RFC3339 timestamps for the audit log (P23.7).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+# Auto-discovery for bundled JSON catalogs under `data/` so
+# adding a new provider is one file drop with zero source
+# changes (mirrors the same pattern in devboy-skills).
+rust-embed = { version = "8", default-features = false, features = ["include-exclude"] }
 
 [dev-dependencies]
 tempfile.workspace = true
