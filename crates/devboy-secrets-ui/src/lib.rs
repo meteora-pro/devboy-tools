@@ -12,6 +12,7 @@ pub mod gui;
 pub mod inventory;
 pub mod metadata_editor;
 pub mod provision_dialog;
+pub mod use_approval_dialog;
 
 #[cfg(feature = "tui")]
 pub use inventory::render as render_inventory;
@@ -38,3 +39,5 @@ pub use discovery_import::{
     DiscoveryItem, ImportFocus, ImportRow, ImportRowStatus, ImportState, ImportSubmission,
     suggest_path,
 };
+
+pub use use_approval_dialog::{UseApprovalDecision, UseApprovalState, UseApprovalStatus};

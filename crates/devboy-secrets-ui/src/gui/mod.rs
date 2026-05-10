@@ -28,3 +28,4 @@ pub mod discovery_import;
 pub mod inventory;
 pub mod metadata_editor;
 pub mod provision_dialog;
+pub mod use_approval_dialog;
