@@ -878,18 +878,58 @@ impl JiraClient {
     /// callers think about which N projects make sense for their
     /// surface area.
     ///
-    /// Currently a stub — concrete strategies land in follow-up
-    /// commits within the same epic. Returns
-    /// `Error::ProviderUnsupported` until each variant is wired up.
+    /// Strategy-driven entry point. Concrete strategies land
+    /// behind a `match` here; unwired variants still return
+    /// `ProviderUnsupported` so downstream callers can probe
+    /// safely.
     pub async fn load_default_metadata(
         &self,
         strategy: crate::metadata::MetadataLoadStrategy,
     ) -> Result<crate::metadata::JiraMetadata> {
-        let _ = strategy;
-        Err(Error::ProviderUnsupported {
-            provider: "jira".into(),
-            operation: "load_default_metadata".into(),
-        })
+        use crate::metadata::{MAX_ENRICHMENT_PROJECTS, MetadataLoadStrategy};
+
+        match strategy {
+            MetadataLoadStrategy::Configured(keys) => {
+                // Truncate-with-warn rather than error on over-cap
+                // input: the operator already typed an explicit
+                // list, surfacing an error here is more annoying
+                // than just doing the right thing and letting the
+                // tracing log carry the receipt.
+                let effective_keys: Vec<String> = if keys.len() > MAX_ENRICHMENT_PROJECTS {
+                    tracing::warn!(
+                        requested = keys.len(),
+                        cap = MAX_ENRICHMENT_PROJECTS,
+                        "Configured project list exceeds enrichment cap; \
+                         truncating to the first {} — narrow the list to \
+                         silence this warning.",
+                        MAX_ENRICHMENT_PROJECTS
+                    );
+                    keys.into_iter().take(MAX_ENRICHMENT_PROJECTS).collect()
+                } else {
+                    keys
+                };
+
+                let mut projects = std::collections::HashMap::new();
+                for key in effective_keys {
+                    let project_meta = self.build_project_metadata(&key).await?;
+                    projects.insert(key, project_meta);
+                }
+                Ok(crate::metadata::JiraMetadata {
+                    flavor: match self.flavor {
+                        JiraFlavor::Cloud => crate::metadata::JiraFlavor::Cloud,
+                        JiraFlavor::SelfHosted => crate::metadata::JiraFlavor::SelfHosted,
+                    },
+                    projects,
+                    structures: vec![],
+                })
+            }
+            MetadataLoadStrategy::MyProjects
+            | MetadataLoadStrategy::RecentActivity { .. }
+            | MetadataLoadStrategy::All => Err(Error::ProviderUnsupported {
+                provider: "jira".into(),
+                operation: "load_default_metadata".into(),
+            }),
+        }
     }
 
     /// Fetch and assemble [`crate::metadata::JiraProjectMetadata`]
@@ -5365,6 +5405,74 @@ mod tests {
                 .unwrap();
 
             assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// `Configured` strategy loops the explicit project list,
+        /// builds a `JiraMetadata` keyed by project key. Instance-
+        /// wide endpoints (`/priority`, `/issueLinkType`, `/field`)
+        /// are called once per project — caching across iterations
+        /// is a separate optimisation but mock asserts the wire
+        /// behaviour works either way.
+        #[tokio::test]
+        async fn test_load_default_metadata_configured_strategy() {
+            let server = MockServer::start();
+
+            for key in &["PROJ", "INFRA"] {
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}"));
+                    then.status(200).json_body(serde_json::json!({
+                        "key": key,
+                        "issueTypes": [
+                            {"id": "1", "name": "Task", "subtask": false}
+                        ]
+                    }));
+                });
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}/components"));
+                    then.status(200).json_body(serde_json::json!([]));
+                });
+            }
+
+            server.mock(|when, then| {
+                when.method(GET).path("/priority");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "1", "name": "High"}
+                ]));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/issueLinkType");
+                then.status(200).json_body(serde_json::json!({
+                    "issueLinkTypes": [
+                        {"id": "1", "name": "Blocks", "outward": "blocks", "inward": "is blocked by"}
+                    ]
+                }));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "customfield_10001", "name": "Story Points", "custom": true,
+                     "schema": {"type": "number"}}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let meta = client
+                .load_default_metadata(crate::metadata::MetadataLoadStrategy::Configured(vec![
+                    "PROJ".into(),
+                    "INFRA".into(),
+                ]))
+                .await
+                .unwrap();
+
+            assert_eq!(meta.projects.len(), 2);
+            assert!(meta.projects.contains_key("PROJ"));
+            assert!(meta.projects.contains_key("INFRA"));
+            assert_eq!(meta.flavor, crate::metadata::JiraFlavor::SelfHosted);
+            // Both projects see the same instance-wide customfield.
+            for project in meta.projects.values() {
+                assert_eq!(project.custom_fields.len(), 1);
+                assert_eq!(project.custom_fields[0].id, "customfield_10001");
+            }
         }
 
         /// `build_project_metadata` assembles per-project metadata
