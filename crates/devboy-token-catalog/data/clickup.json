@@ -1,0 +1,63 @@
+{
+  "$schema": "../schema/v1.json",
+  "schema_version": 1,
+  "provider_id": "clickup",
+  "display_name": "ClickUp",
+  "description": "ClickUp Personal API token (`pk_<userid>_<random>`). One token per user — workspace permissions follow the user. ClickUp also has OAuth client credentials for app integrations, which use a different credential family stored as a (client-id, client-secret) pair.",
+  "variants": [
+    {
+      "id": "clickup-api-key",
+      "display_name": "ClickUp API token",
+      "description": "User-scoped Personal API token. Authenticates every endpoint under api.clickup.com/api/v2 via the bare value in the `Authorization` header (no `Bearer` prefix). Inherits the user's workspace + space + folder permissions; rotating the token does NOT invalidate active sessions, only API access.",
+      "format_regex": "^pk_[0-9]+_[A-Z0-9]+$",
+      "format_hint": "starts with `pk_`, then `<numeric user id>_<uppercase alnum>`",
+      "retrieval": {
+        "console_url": "https://app.clickup.com/settings/apps",
+        "steps": [
+          "Open https://app.clickup.com/settings/apps",
+          "Sign in",
+          "Scroll to API Token, click Generate (or Regenerate to rotate)",
+          "Copy the value — shown in the field, no one-time-only constraint, but rotating invalidates the previous one immediately"
+        ],
+        "notes": "ClickUp's API expects the token in the `Authorization` header WITHOUT a `Bearer` prefix — just the raw value. The token never expires unless you rotate it; lean on the framework's `rotate_every_days` to set a hygiene cadence."
+      },
+      "liveness": {
+        "kind": "http",
+        "url": "https://api.clickup.com/api/v2/team",
+        "method": "GET",
+        "auth": { "kind": "header", "name": "Authorization" },
+        "expect_status": 200
+      },
+      "rotation": { "method": "manual", "every_days": 90 }
+    },
+    {
+      "id": "clickup-oauth-client-secret",
+      "display_name": "ClickUp OAuth client secret",
+      "description": "OAuth app credential for server-to-server integrations. Pairs with a public client_id (NOT stored as a secret) to issue user-context tokens via the OAuth code flow.",
+      "format_hint": "opaque secret string (provider does not pin a shape)",
+      "retrieval": {
+        "console_url": "https://app.clickup.com/settings/integrations",
+        "steps": [
+          "Open https://app.clickup.com/settings/integrations → Apps",
+          "Pick the OAuth app (or Create app if none)",
+          "Copy the Client Secret — shown once at creation, regenerate to rotate"
+        ],
+        "notes": "OAuth client secrets are workspace-level; team admins manage them. Do NOT use a Personal API token for production integrations — OAuth tokens carry the user's revocation surface and audit trail."
+      },
+      "rotation": { "method": "manual", "every_days": 180 }
+    }
+  ],
+  "env_var_patterns": [
+    { "matches": ["CLICKUP_TOKEN"], "variant": "clickup-api-key" },
+    { "matches": ["CLICKUP_API_KEY"], "variant": "clickup-api-key" },
+    { "matches": ["CLICKUP_API_TOKEN"], "variant": "clickup-api-key" },
+    { "matches": ["CLICKUP_OAUTH_CLIENT_SECRET"], "variant": "clickup-oauth-client-secret" }
+  ],
+  "env_var_skip": [
+    "CLICKUP_TEAM_ID",
+    "CLICKUP_BASE_URL",
+    "CLICKUP_OAUTH_CLIENT_ID",
+    "CLICKUP_OAUTH_REDIRECT_URI",
+    "CLICKUP_*_URL"
+  ]
+}

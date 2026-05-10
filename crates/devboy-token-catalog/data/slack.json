@@ -1,0 +1,85 @@
+{
+  "$schema": "../schema/v1.json",
+  "schema_version": 1,
+  "provider_id": "slack",
+  "display_name": "Slack",
+  "description": "Slack tokens come in three shapes: bot (`xoxb-...`), user (`xoxp-...`), and app-level (`xapp-...`). Bot tokens are the right default — they survive workspace member changes and carry workspace-scoped permissions. User tokens authenticate as a human and inherit their channel membership. App-level tokens are for Socket Mode connections.",
+  "variants": [
+    {
+      "id": "slack-bot-token",
+      "display_name": "Slack bot token",
+      "description": "`xoxb-...` token issued under a bot identity. Authenticates web API calls (chat.postMessage, files.upload, etc) via `Authorization: Bearer`. Right default for service-to-Slack integrations — the bot's permissions follow the OAuth scopes you granted at install time.",
+      "format_regex": "^xoxb-[0-9]+-[0-9]+-[A-Za-z0-9]+$",
+      "format_hint": "starts with `xoxb-`, then `<workspace_id>-<bot_id>-<random>` segments",
+      "retrieval": {
+        "console_url": "https://api.slack.com/apps",
+        "steps": [
+          "Open https://api.slack.com/apps",
+          "Pick the app (or Create New App)",
+          "OAuth & Permissions → Scopes → add the Bot Token Scopes you need (`chat:write`, `channels:read`, …)",
+          "Install to Workspace (or Reinstall after scope changes)",
+          "Copy the Bot User OAuth Token (starts with `xoxb-`)"
+        ],
+        "notes": "Bot tokens are workspace-scoped; the same Slack app installed in a different workspace gets a different token. Reinstall after adding scopes — the existing token does NOT auto-grant new scopes."
+      },
+      "liveness": {
+        "kind": "http",
+        "url": "https://slack.com/api/auth.test",
+        "method": "POST",
+        "auth": { "kind": "bearer" },
+        "expect_status": 200
+      },
+      "rotation": { "method": "manual", "every_days": 180 }
+    },
+    {
+      "id": "slack-user-token",
+      "display_name": "Slack user token",
+      "description": "`xoxp-...` token authenticating as a user. Inherits the human's channel membership and DMs — sensitive. Use only when a bot scope can't cover the action (e.g. `users.profile.write`).",
+      "format_regex": "^xoxp-[0-9]+-[0-9]+-[0-9]+-[A-Za-z0-9]+$",
+      "format_hint": "starts with `xoxp-`, then `<workspace>-<user>-<install>-<random>` segments",
+      "retrieval": {
+        "console_url": "https://api.slack.com/apps",
+        "steps": [
+          "Open https://api.slack.com/apps → your app",
+          "OAuth & Permissions → Scopes → add the User Token Scopes",
+          "Install to Workspace",
+          "Copy the User OAuth Token (starts with `xoxp-`)"
+        ],
+        "notes": "User tokens leak the human's full channel surface — treat as sensitive even for read-only scopes. Prefer the bot variant whenever possible."
+      },
+      "rotation": { "method": "manual", "every_days": 90 }
+    },
+    {
+      "id": "slack-app-token",
+      "display_name": "Slack app-level token",
+      "description": "`xapp-...` token for Socket Mode (and a small set of admin endpoints). NOT a substitute for bot / user tokens — pairs with them.",
+      "format_regex": "^xapp-[0-9]+-[A-Z0-9]+-[0-9]+-[a-f0-9]+$",
+      "format_hint": "starts with `xapp-`, then `<level>-<app_id>-<install>-<hex>` segments",
+      "retrieval": {
+        "console_url": "https://api.slack.com/apps",
+        "steps": [
+          "Open https://api.slack.com/apps → your app",
+          "Basic Information → App-Level Tokens → Generate Token and Scopes",
+          "Pick the connection scopes (`connections:write` for Socket Mode)",
+          "Copy the value (starts with `xapp-`)"
+        ],
+        "notes": "App-level tokens authenticate the Socket Mode WebSocket connection itself; the per-event payload still carries a separate bot or user token for the action."
+      },
+      "rotation": { "method": "manual", "every_days": 180 }
+    }
+  ],
+  "env_var_patterns": [
+    { "matches": ["SLACK_BOT_TOKEN"], "variant": "slack-bot-token" },
+    { "matches": ["SLACK_USER_TOKEN"], "variant": "slack-user-token" },
+    { "matches": ["SLACK_APP_TOKEN"], "variant": "slack-app-token" },
+    { "matches": ["SLACK_TOKEN"], "variant": "slack-bot-token" }
+  ],
+  "env_var_skip": [
+    "SLACK_WORKSPACE",
+    "SLACK_CHANNEL",
+    "SLACK_TEAM_ID",
+    "SLACK_SIGNING_SECRET",
+    "SLACK_*_URL",
+    "SLACK_DEFAULT_*"
+  ]
+}

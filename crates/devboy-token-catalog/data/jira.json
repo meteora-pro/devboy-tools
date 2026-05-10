@@ -1,0 +1,68 @@
+{
+  "$schema": "../schema/v1.json",
+  "schema_version": 1,
+  "provider_id": "jira",
+  "display_name": "Atlassian Jira",
+  "description": "Atlassian API token paired with the user's email — the two together make up the basic-auth credential for every Cloud REST endpoint (Jira, Confluence, Jira Service Management). The email is metadata (never stored as a secret); the token is the value devboy holds.",
+  "variants": [
+    {
+      "id": "jira-api-token",
+      "display_name": "Atlassian API token",
+      "description": "Cloud-only API token (`ATATT3xFf...`). Authenticates as the issuing user against Jira / Confluence / JSM via basic auth where username = the user's Atlassian email and password = this token. Self-managed Server / DC instances use Personal Access Tokens (`PATs`) instead — that's a separate variant.",
+      "format_regex": "^ATATT[A-Za-z0-9_-]+$",
+      "format_hint": "starts with `ATATT` (Atlassian's prefix), variable-length tail of [A-Za-z0-9_-]",
+      "retrieval": {
+        "console_url": "https://id.atlassian.com/manage-profile/security/api-tokens",
+        "steps": [
+          "Open https://id.atlassian.com/manage-profile/security/api-tokens",
+          "Sign in with your Atlassian account",
+          "Click Create API token",
+          "Pick a label describing where the token will live",
+          "Copy the value — shown once and never again"
+        ],
+        "notes": "API tokens follow the user, not a project. Revoking one breaks every integration that authenticates as you. The matching email is set via `JIRA_EMAIL` (or `<provider>_USER` etc) — devboy treats those as metadata and skips them via the suffix list."
+      },
+      "liveness": {
+        "kind": "http",
+        "url": "https://your-site.atlassian.net/rest/api/3/myself",
+        "method": "GET",
+        "auth": { "kind": "basic-password" },
+        "expect_status": 200
+      },
+      "rotation": { "method": "manual", "every_days": 90 }
+    },
+    {
+      "id": "jira-pat",
+      "display_name": "Jira Server / DC Personal Access Token",
+      "description": "On-prem Jira Server / Data Center variant. PAT issued under user identity, sent as `Authorization: Bearer <token>`. Cloud customers should use the API-token variant above.",
+      "format_hint": "opaque alnum string (length and prefix are server-version dependent)",
+      "retrieval": {
+        "console_url": "https://your-jira.example.com/secure/ViewProfile.jspa",
+        "steps": [
+          "Open your Jira Server / DC profile → Personal Access Tokens",
+          "Click Create token",
+          "Pick a name + expiration (Server enforces an admin-set max)",
+          "Copy the value — shown once"
+        ],
+        "notes": "Server / DC PATs are NOT cross-compatible with Cloud — using one against api.atlassian.com authenticates as `null`. Pick the right variant for the deployment style."
+      },
+      "rotation": { "method": "manual", "every_days": 90 }
+    }
+  ],
+  "env_var_patterns": [
+    { "matches": ["JIRA_API_TOKEN"], "variant": "jira-api-token" },
+    { "matches": ["JIRA_TOKEN"], "variant": "jira-api-token" },
+    { "matches": ["ATLASSIAN_API_TOKEN"], "variant": "jira-api-token" },
+    { "matches": ["JIRA_PAT"], "variant": "jira-pat" }
+  ],
+  "env_var_skip": [
+    "JIRA_BASE_URL",
+    "JIRA_HOST",
+    "JIRA_EMAIL",
+    "JIRA_USER",
+    "JIRA_USERNAME",
+    "JIRA_PROJECT",
+    "JIRA_PROJECT_KEY",
+    "JIRA_*_URL"
+  ]
+}
