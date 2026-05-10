@@ -22,6 +22,9 @@ toml.workspace = true
 # `blocking` is the URL fetcher's transport. JSON / TLS bits come
 # from the workspace-level reqwest feature set.
 reqwest = { workspace = true, features = ["blocking"] }
+# Body fingerprinting for the SHA256 pin (P23.3) and the
+# disk-cache key (P23.5).
+sha2.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

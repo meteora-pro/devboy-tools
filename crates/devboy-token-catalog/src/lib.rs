@@ -298,13 +298,14 @@ pub fn load_all_with_urls(
     user_dir: Option<&Path>,
     project_dir: Option<&Path>,
     url_config: Option<&CatalogSourcesConfig>,
+    known_hashes_path: Option<&Path>,
 ) -> (Vec<LoadedCatalog>, Vec<CatalogError>) {
     let (mut loaded, mut errors) = load_all(bundled, user_dir, project_dir);
     if let Some(cfg) = url_config
         && cfg.enable_url_catalogs
     {
         for src in &cfg.sources {
-            match fetch_url_source(src) {
+            match fetch_url_source(src, known_hashes_path) {
                 Ok(catalog) => {
                     let url_source = CatalogSource::Url {
                         url: src.url.clone(),
@@ -389,6 +390,29 @@ pub enum FetchError {
     },
     #[error("schema version mismatch: body declares {found}, this build supports {SCHEMA_VERSION}")]
     SchemaVersion { found: u32 },
+    #[error(
+        "pinned SHA256 mismatch: sources.toml declares `{expected}` but the body hashes to `{actual}`"
+    )]
+    ShaMismatch { expected: String, actual: String },
+    #[error(
+        "TOFU mismatch for {url}: known_hashes.toml records `{known}` but the body now hashes to `{actual}` — refusing to load. If the upstream changed legitimately, remove the URL from known_hashes.toml or pin the new sha256 in sources.toml."
+    )]
+    TofuMismatch {
+        url: String,
+        known: String,
+        actual: String,
+    },
+    #[error("known_hashes.toml I/O failed at {path}: {source}")]
+    KnownHashesIo {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("known_hashes.toml is malformed: {source}")]
+    KnownHashesParse {
+        #[source]
+        source: toml::de::Error,
+    },
 }
 
 /// Fetch one [`UrlSource`] over HTTPS and decode the body as a
@@ -396,7 +420,10 @@ pub enum FetchError {
 /// HTTPS-only, 10 s timeout, 256 KB body cap, JSON-only
 /// Content-Type, schema-version match. Pure: no caching, no
 /// SHA pinning (those are P23.3 / P23.5).
-pub fn fetch_url_source(source: &UrlSource) -> Result<ProviderCatalog, FetchError> {
+pub fn fetch_url_source(
+    source: &UrlSource,
+    known_hashes_path: Option<&Path>,
+) -> Result<ProviderCatalog, FetchError> {
     if !source.url.starts_with("https://") {
         return Err(FetchError::HttpsRequired {
             url: source.url.clone(),
@@ -406,17 +433,20 @@ pub fn fetch_url_source(source: &UrlSource) -> Result<ProviderCatalog, FetchErro
         .timeout(FETCH_TIMEOUT)
         .build()
         .map_err(|source| FetchError::Client { source })?;
-    fetch_with_client(&client, &source.url)
+    let bytes = fetch_bytes_with_client(&client, &source.url)?;
+    let actual_sha = sha256_hex(&bytes);
+    enforce_pin_or_tofu(source, known_hashes_path, &actual_sha)?;
+    parse_catalog_bytes(&bytes)
 }
 
-/// Body of [`fetch_url_source`] split out so tests can drive
-/// it against a plain-`http://` mock server (httpmock does not
-/// speak TLS). The `https://` guard sits in the public entry
-/// point — every production code path goes through it.
-fn fetch_with_client(
+/// Body fetch only — the HTTP / Content-Type / size guards.
+/// Returns the raw bytes so the caller can hash them before
+/// parsing. Split out so tests can drive it against an
+/// `http://` mock server (httpmock does not speak TLS).
+fn fetch_bytes_with_client(
     client: &reqwest::blocking::Client,
     url: &str,
-) -> Result<ProviderCatalog, FetchError> {
+) -> Result<Vec<u8>, FetchError> {
     let resp = client
         .get(url)
         .send()
@@ -456,14 +486,141 @@ fn fetch_with_client(
         });
     }
 
+    Ok(bytes.to_vec())
+}
+
+/// Parse already-fetched body bytes as a [`ProviderCatalog`].
+/// Public so the disk-cache (P23.5) can reuse it without
+/// re-hitting the network.
+pub fn parse_catalog_bytes(bytes: &[u8]) -> Result<ProviderCatalog, FetchError> {
     let cat: ProviderCatalog =
-        serde_json::from_slice(&bytes).map_err(|source| FetchError::Parse { source })?;
+        serde_json::from_slice(bytes).map_err(|source| FetchError::Parse { source })?;
     if cat.schema_version != SCHEMA_VERSION {
         return Err(FetchError::SchemaVersion {
             found: cat.schema_version,
         });
     }
     Ok(cat)
+}
+
+/// Hex-encoded SHA256 of the input. Public so the rest of the
+/// catalog stack (cache / audit) can compute the same digest.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(64);
+    for b in digest {
+        use std::fmt::Write;
+        let _ = write!(&mut out, "{b:02x}");
+    }
+    out
+}
+
+/// Enforce the P23.3 trust policy:
+///
+/// 1. **Pin**: when `source.sha256` is set, compare and reject
+///    on mismatch.
+/// 2. **TOFU**: when no pin and a `known_hashes_path` is given,
+///    look the URL up in `known_hashes.toml`. If known and
+///    matching → ok. If known and mismatched → reject with a
+///    `TofuMismatch`. If unknown → record on first successful
+///    fetch.
+/// 3. When neither pin nor known_hashes_path is configured →
+///    no trust check (the caller has explicitly chosen the
+///    permissive path).
+fn enforce_pin_or_tofu(
+    source: &UrlSource,
+    known_hashes_path: Option<&Path>,
+    actual_sha: &str,
+) -> Result<(), FetchError> {
+    if let Some(expected) = source.sha256.as_deref() {
+        if expected.eq_ignore_ascii_case(actual_sha) {
+            return Ok(());
+        }
+        return Err(FetchError::ShaMismatch {
+            expected: expected.to_owned(),
+            actual: actual_sha.to_owned(),
+        });
+    }
+    let Some(path) = known_hashes_path else {
+        return Ok(());
+    };
+    let mut known = read_known_hashes(path)?;
+    if let Some(stored) = known.url.get(&source.url) {
+        if stored.eq_ignore_ascii_case(actual_sha) {
+            return Ok(());
+        }
+        return Err(FetchError::TofuMismatch {
+            url: source.url.clone(),
+            known: stored.clone(),
+            actual: actual_sha.to_owned(),
+        });
+    }
+    // First-fetch: record and persist. A failed write is fatal
+    // so the next run isn't lulled into thinking nothing was
+    // recorded — better to surface the I/O error now.
+    known.url.insert(source.url.clone(), actual_sha.to_owned());
+    write_known_hashes(path, &known)?;
+    Ok(())
+}
+
+// =============================================================================
+// known_hashes.toml — TOFU store for URL-loaded catalogs (P23.3)
+// =============================================================================
+
+/// Default `known_hashes.toml` path. Lives next to
+/// `sources.toml` so all URL-source state is in one directory.
+pub fn default_known_hashes_path() -> Option<PathBuf> {
+    default_user_catalog_dir().map(|d| d.join("known_hashes.toml"))
+}
+
+/// On-disk shape of `known_hashes.toml`:
+///
+/// ```toml
+/// [url]
+/// "https://example.invalid/catalog.json" = "abc123…"
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct KnownHashes {
+    /// Map of URL → lowercase-hex SHA256 of the most recent
+    /// body the loader accepted at that URL.
+    #[serde(default)]
+    pub url: std::collections::BTreeMap<String, String>,
+}
+
+/// Read `known_hashes.toml`. A missing file is *not* an error —
+/// it just means TOFU has not recorded anything yet.
+pub fn read_known_hashes(path: &Path) -> Result<KnownHashes, FetchError> {
+    let body = match fs::read_to_string(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(KnownHashes::default()),
+        Err(source) => {
+            return Err(FetchError::KnownHashesIo {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    toml::from_str(&body).map_err(|source| FetchError::KnownHashesParse { source })
+}
+
+/// Persist `known_hashes.toml`. Creates parent directories
+/// when needed.
+pub fn write_known_hashes(path: &Path, known: &KnownHashes) -> Result<(), FetchError> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|source| FetchError::KnownHashesIo {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let body = toml::to_string_pretty(known).expect("KnownHashes always serializes");
+    fs::write(path, body).map_err(|source| FetchError::KnownHashesIo {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// Bundled provider catalogs shipped in the binary itself.
@@ -834,7 +991,7 @@ mod tests {
             sha256: None,
             refresh_seconds: 60,
         };
-        let err = fetch_url_source(&src).unwrap_err();
+        let err = fetch_url_source(&src, None).unwrap_err();
         assert!(matches!(err, FetchError::HttpsRequired { .. }));
     }
 
@@ -843,6 +1000,17 @@ mod tests {
             .timeout(std::time::Duration::from_secs(2))
             .build()
             .unwrap()
+    }
+
+    /// Convenience for the body+parse tests: combines the two
+    /// post-P23.3 internal stages (`fetch_bytes_with_client` →
+    /// `parse_catalog_bytes`) so existing test logic stays as-is.
+    fn fetch_with_client(
+        client: &reqwest::blocking::Client,
+        url: &str,
+    ) -> Result<ProviderCatalog, FetchError> {
+        let bytes = fetch_bytes_with_client(client, url)?;
+        parse_catalog_bytes(&bytes)
     }
 
     fn fixture_json() -> String {
@@ -937,6 +1105,138 @@ mod tests {
     }
 
     #[test]
+    fn sha256_hex_known_vector() {
+        // RFC 6234 vector #1: SHA256("abc") = ba7816bf...
+        let h = sha256_hex(b"abc");
+        assert_eq!(
+            h,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    fn fixture_url_source(server_url: &str, path: &str, sha256: Option<String>) -> UrlSource {
+        UrlSource {
+            url: format!("{server_url}{path}"),
+            sha256,
+            refresh_seconds: 60,
+        }
+    }
+
+    /// Like fetch_url_source but skips the https:// guard so
+    /// httpmock can serve over http://. Re-implements the
+    /// exact public flow.
+    fn fetch_no_https_guard(
+        source: &UrlSource,
+        known_hashes_path: Option<&Path>,
+    ) -> Result<ProviderCatalog, FetchError> {
+        let bytes = fetch_bytes_with_client(&test_client(), &source.url)?;
+        let actual = sha256_hex(&bytes);
+        enforce_pin_or_tofu(source, known_hashes_path, &actual)?;
+        parse_catalog_bytes(&bytes)
+    }
+
+    #[test]
+    fn pinned_sha_match_succeeds() {
+        let server = httpmock::MockServer::start();
+        let body = fixture_json();
+        server.mock(|when, then| {
+            when.method("GET").path("/k.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(body.clone());
+        });
+        let expected = sha256_hex(body.as_bytes());
+        let src = fixture_url_source(&server.base_url(), "/k.json", Some(expected));
+        let cat = fetch_no_https_guard(&src, None).unwrap();
+        assert_eq!(cat.provider_id, "kimi");
+    }
+
+    #[test]
+    fn pinned_sha_mismatch_rejects() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method("GET").path("/k.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(fixture_json());
+        });
+        let bogus = "0".repeat(64);
+        let src = fixture_url_source(&server.base_url(), "/k.json", Some(bogus));
+        let err = fetch_no_https_guard(&src, None).unwrap_err();
+        assert!(matches!(err, FetchError::ShaMismatch { .. }));
+    }
+
+    #[test]
+    fn tofu_records_on_first_fetch_and_accepts_on_second() {
+        let server = httpmock::MockServer::start();
+        let body = fixture_json();
+        server.mock(|when, then| {
+            when.method("GET").path("/k.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(body.clone());
+        });
+        let dir = TempDir::new().unwrap();
+        let kh_path = dir.path().join("known_hashes.toml");
+        let src = fixture_url_source(&server.base_url(), "/k.json", None);
+
+        // First fetch — records the hash.
+        fetch_no_https_guard(&src, Some(&kh_path)).unwrap();
+        let known = read_known_hashes(&kh_path).unwrap();
+        assert_eq!(
+            known.url.get(&src.url).unwrap(),
+            &sha256_hex(body.as_bytes())
+        );
+
+        // Second fetch — same hash, accepted silently.
+        fetch_no_https_guard(&src, Some(&kh_path)).unwrap();
+    }
+
+    #[test]
+    fn tofu_rejects_when_known_hash_changes() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method("GET").path("/k.json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(fixture_json());
+        });
+        let dir = TempDir::new().unwrap();
+        let kh_path = dir.path().join("known_hashes.toml");
+        let src = fixture_url_source(&server.base_url(), "/k.json", None);
+
+        // Pre-record a different hash → next fetch must reject.
+        let mut seeded = KnownHashes::default();
+        seeded.url.insert(src.url.clone(), "0".repeat(64));
+        write_known_hashes(&kh_path, &seeded).unwrap();
+
+        let err = fetch_no_https_guard(&src, Some(&kh_path)).unwrap_err();
+        assert!(matches!(err, FetchError::TofuMismatch { .. }));
+    }
+
+    #[test]
+    fn known_hashes_roundtrip_through_disk() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("known_hashes.toml");
+        let mut original = KnownHashes::default();
+        original.url.insert(
+            "https://example.invalid/x.json".into(),
+            sha256_hex(b"some bytes"),
+        );
+        write_known_hashes(&path, &original).unwrap();
+        let back = read_known_hashes(&path).unwrap();
+        assert_eq!(original, back);
+    }
+
+    #[test]
+    fn read_known_hashes_returns_empty_when_file_missing() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nope.toml");
+        let kh = read_known_hashes(&path).unwrap();
+        assert!(kh.url.is_empty());
+    }
+
+    #[test]
     fn load_all_with_urls_skips_when_disabled() {
         let cfg = CatalogSourcesConfig {
             enable_url_catalogs: false,
@@ -946,7 +1246,7 @@ mod tests {
                 refresh_seconds: 60,
             }],
         };
-        let (loaded, errors) = load_all_with_urls(&[], None, None, Some(&cfg));
+        let (loaded, errors) = load_all_with_urls(&[], None, None, Some(&cfg), None);
         assert!(loaded.is_empty());
         assert!(errors.is_empty(), "fetch should be skipped, no errors");
     }
