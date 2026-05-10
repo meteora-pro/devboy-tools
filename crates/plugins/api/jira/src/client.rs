@@ -865,6 +865,32 @@ impl JiraClient {
         }
         Ok(())
     }
+
+    /// Build a [`crate::metadata::JiraMetadata`] cache the schema
+    /// enricher can consume, with project selection driven by the
+    /// caller-supplied [`crate::metadata::MetadataLoadStrategy`].
+    ///
+    /// This is the supported entry point for downstream consumers
+    /// that don't already have metadata loaded — they pick a
+    /// strategy, this method handles project discovery, per-project
+    /// metadata fetches, and `MAX_ENRICHMENT_PROJECTS` enforcement.
+    /// Strategies are intentionally explicit (no auto-default) so
+    /// callers think about which N projects make sense for their
+    /// surface area.
+    ///
+    /// Currently a stub — concrete strategies land in follow-up
+    /// commits within the same epic. Returns
+    /// `Error::ProviderUnsupported` until each variant is wired up.
+    pub async fn load_default_metadata(
+        &self,
+        strategy: crate::metadata::MetadataLoadStrategy,
+    ) -> Result<crate::metadata::JiraMetadata> {
+        let _ = strategy;
+        Err(Error::ProviderUnsupported {
+            provider: "jira".into(),
+            operation: "load_default_metadata".into(),
+        })
+    }
 }
 
 /// Install hint shown when the Structure plugin may not be detected on the

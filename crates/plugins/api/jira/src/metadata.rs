@@ -331,10 +331,48 @@ impl JiraMetadata {
 /// without overflowing token budgets.
 pub const MAX_ENRICHMENT_PROJECTS: usize = 30;
 
+/// Strategy for choosing which Jira projects' metadata to fetch
+/// when building the enricher cache. Different deployments need
+/// different selection logic — a 5-project team wants `All`, a
+/// 1000-project enterprise wants `RecentActivity` or
+/// `Configured` so the enricher stays inside the
+/// `MAX_ENRICHMENT_PROJECTS` budget.
+#[derive(Debug, Clone)]
+pub enum MetadataLoadStrategy {
+    /// Explicit list of project keys (e.g. from app config).
+    /// Fastest path: skips Jira-side filtering entirely.
+    Configured(Vec<String>),
+    /// Projects the authenticated user has interacted with most
+    /// recently. Resolves through Jira's `/project/search?recent=N`
+    /// (Cloud) or the `recent` flag on `/project` (Server/DC).
+    /// Best default when the operator hasn't picked a list.
+    MyProjects,
+    /// Projects with issues updated in the last `days`. Uses a
+    /// JQL search across `lastIssueUpdateTime`. Picks up
+    /// stale-but-still-active projects that `MyProjects` may miss.
+    RecentActivity { days: u32 },
+    /// Every project the user can read. Errors out (with a
+    /// suggestion to switch strategies) if total >
+    /// [`MAX_ENRICHMENT_PROJECTS`] — loading 1000 projects'
+    /// metadata is rarely what anyone wanted.
+    All,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_metadata_load_strategy_variants_construct() {
+        // Smoke test: every variant constructs with realistic args.
+        // Concrete behaviour lives in `JiraClient::load_default_metadata`
+        // strategy implementations (follow-up commits).
+        let _configured = MetadataLoadStrategy::Configured(vec!["PROJ".into()]);
+        let _my_projects = MetadataLoadStrategy::MyProjects;
+        let _recent = MetadataLoadStrategy::RecentActivity { days: 90 };
+        let _all = MetadataLoadStrategy::All;
+    }
 
     fn sample_option_field() -> JiraCustomField {
         JiraCustomField {
