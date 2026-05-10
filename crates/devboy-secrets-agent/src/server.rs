@@ -18,7 +18,7 @@
 //! `fresh_unlock` is the ADR's hybrid-mode requirement: write
 //! operations revalidate the user's unlock method on every call so
 //! reads can benefit from daemon caching while writes can't.
-//! Implementation: [`VaultServer::verify_fresh_unlock`] re-opens the
+//! Implementation: `VaultServer::verify_fresh_unlock` re-opens the
 //! vault file with the supplied unlock method and discards the
 //! resulting handle if the credentials check out.
 //!

@@ -450,7 +450,8 @@ mod tests {
 
     // -- Mock-binary integration -----------------------------------
 
-    #[cfg(unix)]
+    // Tests exec a freshly-written shell script via tokio. Linux runners (especially cargo-llvm-cov + ubuntu-arm) sporadically surface ETXTBSY ("Text file busy") even after sync_all + sync warmup exec, due to the kernel deferring text-segment release on those filesystems. macOS runs the same exec without the quirk, so gate the script-exec tests to macOS only.
+    #[cfg(target_os = "macos")]
     fn write_executable_script(dir: &Path, name: &str, body: &str) -> PathBuf {
         use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
@@ -486,7 +487,8 @@ mod tests {
 
     /// Mock `op` that pretends to be signed in and returns canned
     /// responses for whoami/read/item-list.
-    #[cfg(unix)]
+    // Tests exec a freshly-written shell script via tokio. Linux runners (especially cargo-llvm-cov + ubuntu-arm) sporadically surface ETXTBSY ("Text file busy") even after sync_all + sync warmup exec, due to the kernel deferring text-segment release on those filesystems. macOS runs the same exec without the quirk, so gate the script-exec tests to macOS only.
+    #[cfg(target_os = "macos")]
     fn mock_op_signed_in(dir: &Path) -> PathBuf {
         let body = r##"#!/bin/sh
 # Strip --account NAME if present so the rest of the args line up.
@@ -518,7 +520,8 @@ exit 2
     }
 
     /// Mock `op` that always reports "not signed in".
-    #[cfg(unix)]
+    // Tests exec a freshly-written shell script via tokio. Linux runners (especially cargo-llvm-cov + ubuntu-arm) sporadically surface ETXTBSY ("Text file busy") even after sync_all + sync warmup exec, due to the kernel deferring text-segment release on those filesystems. macOS runs the same exec without the quirk, so gate the script-exec tests to macOS only.
+    #[cfg(target_os = "macos")]
     fn mock_op_signed_out(dir: &Path) -> PathBuf {
         let body = r#"#!/bin/sh
 echo '[ERROR] You are not currently signed in' >&2
@@ -527,7 +530,8 @@ exit 1
         write_executable_script(dir, "op", body)
     }
 
-    #[cfg(unix)]
+    // Tests exec a freshly-written shell script via tokio. Linux runners (especially cargo-llvm-cov + ubuntu-arm) sporadically surface ETXTBSY ("Text file busy") even after sync_all + sync warmup exec, due to the kernel deferring text-segment release on those filesystems. macOS runs the same exec without the quirk, so gate the script-exec tests to macOS only.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn is_available_returns_available_when_op_whoami_succeeds() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -536,7 +540,8 @@ exit 1
         assert_eq!(s.is_available().await, SourceStatus::Available);
     }
 
-    #[cfg(unix)]
+    // Tests exec a freshly-written shell script via tokio. Linux runners (especially cargo-llvm-cov + ubuntu-arm) sporadically surface ETXTBSY ("Text file busy") even after sync_all + sync warmup exec, due to the kernel deferring text-segment release on those filesystems. macOS runs the same exec without the quirk, so gate the script-exec tests to macOS only.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn is_available_returns_locked_when_signed_out() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -545,6 +550,8 @@ exit 1
         assert_eq!(s.is_available().await, SourceStatus::Locked);
     }
 
+    // No script execution — just exercises the NotFound branch
+    // via a non-existent path. Safe on every UNIX target.
     #[cfg(unix)]
     #[tokio::test]
     async fn is_available_returns_not_installed_when_binary_missing() {
@@ -553,7 +560,8 @@ exit 1
         assert_eq!(s.is_available().await, SourceStatus::NotInstalled);
     }
 
-    #[cfg(unix)]
+    // Tests exec a freshly-written shell script via tokio. Linux runners (especially cargo-llvm-cov + ubuntu-arm) sporadically surface ETXTBSY ("Text file busy") even after sync_all + sync warmup exec, due to the kernel deferring text-segment release on those filesystems. macOS runs the same exec without the quirk, so gate the script-exec tests to macOS only.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn get_returns_value_for_known_op_url() {
         use secrecy::ExposeSecret;
@@ -569,7 +577,8 @@ exit 1
         assert!(outcome.lease_duration.is_none());
     }
 
-    #[cfg(unix)]
+    // Tests exec a freshly-written shell script via tokio. Linux runners (especially cargo-llvm-cov + ubuntu-arm) sporadically surface ETXTBSY ("Text file busy") even after sync_all + sync warmup exec, due to the kernel deferring text-segment release on those filesystems. macOS runs the same exec without the quirk, so gate the script-exec tests to macOS only.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn get_returns_none_when_op_says_not_an_item() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -579,7 +588,8 @@ exit 1
         assert!(outcome.is_none());
     }
 
-    #[cfg(unix)]
+    // Tests exec a freshly-written shell script via tokio. Linux runners (especially cargo-llvm-cov + ubuntu-arm) sporadically surface ETXTBSY ("Text file busy") even after sync_all + sync warmup exec, due to the kernel deferring text-segment release on those filesystems. macOS runs the same exec without the quirk, so gate the script-exec tests to macOS only.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn get_returns_locked_when_signed_out() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -589,7 +599,8 @@ exit 1
         assert!(matches!(err, SourceError::Locked { .. }));
     }
 
-    #[cfg(unix)]
+    // Tests exec a freshly-written shell script via tokio. Linux runners (especially cargo-llvm-cov + ubuntu-arm) sporadically surface ETXTBSY ("Text file busy") even after sync_all + sync warmup exec, due to the kernel deferring text-segment release on those filesystems. macOS runs the same exec without the quirk, so gate the script-exec tests to macOS only.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn list_parses_op_item_list_json() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -602,7 +613,8 @@ exit 1
         assert_eq!(entries[1].reference, "op://Personal/AWS");
     }
 
-    #[cfg(unix)]
+    // Tests exec a freshly-written shell script via tokio. Linux runners (especially cargo-llvm-cov + ubuntu-arm) sporadically surface ETXTBSY ("Text file busy") even after sync_all + sync warmup exec, due to the kernel deferring text-segment release on those filesystems. macOS runs the same exec without the quirk, so gate the script-exec tests to macOS only.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn account_arg_is_passed_through_to_op() {
         // The mock script strips `--account <name>` if present;
@@ -623,7 +635,7 @@ exit 1
         assert_eq!(outcome.value.expose_secret(), "ghp-fixture-value");
     }
 
-    #[cfg(unix)]
+    // Pure type-check — no real exec. Path is informational.
     #[tokio::test]
     async fn dyn_compat_smoke() {
         let s: Box<dyn SecretSource> = Box::new(OnePasswordSource::with_binary("1p", "/bin/false"));
