@@ -1463,7 +1463,6 @@ fn state_file_path() -> anyhow::Result<PathBuf> {
     Ok(home.join(".devboy/secrets/setup-state.toml"))
 }
 
-
 fn serialise_proposal(p: &ProposedPath) -> serde_json::Value {
     match p {
         ProposedPath::Path {
@@ -2019,11 +2018,7 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
 
     // ====== Catalog patterns / skip (S2) ===========================
 
-    fn catalog_with_pattern(
-        provider_id: &str,
-        matches: &[&str],
-        scope: &str,
-    ) -> ProviderCatalog {
+    fn catalog_with_pattern(provider_id: &str, matches: &[&str], scope: &str) -> ProviderCatalog {
         use devboy_token_catalog::EnvVarPattern;
         let mut cat = catalog_stub(provider_id);
         cat.env_var_patterns.push(EnvVarPattern {
@@ -2052,13 +2047,13 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
 
     #[test]
     fn proposer_catalog_pattern_supports_glob_wildcard() {
-        let cat = catalog_with_pattern("openai", &["OPENAI_*_KEY"], "team");
-        let p = propose_one("OPENAI_PROD_KEY", &[cat.clone()]);
+        let cats = vec![catalog_with_pattern("openai", &["OPENAI_*_KEY"], "team")];
+        let p = propose_one("OPENAI_PROD_KEY", &cats);
         assert_path(&p, "team/openai/openai-default", true);
         // Single segment between * — `OPENAI_API_KEY` does
         // not match `OPENAI_*_KEY` because `*` requires at
         // least one segment between underscores.
-        let p2 = propose_one("OPENAI_API_KEY", &[cat]);
+        let p2 = propose_one("OPENAI_API_KEY", &cats);
         assert_path(&p2, "team/openai/openai-default", true);
     }
 
@@ -2067,8 +2062,8 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
         // `OPENAI_API_BASE` would normally hit P1's `_BASE`
         // suffix skip — but the catalog-supplied skip fires
         // first and gives a more specific reason.
-        let cat = catalog_with_skip("openai", &["OPENAI_*_URL", "OPENAI_API_BASE"]);
-        let p = propose_one("OPENAI_API_BASE", &[cat.clone()]);
+        let cats = vec![catalog_with_skip("openai", &["OPENAI_*_URL", "OPENAI_API_BASE"])];
+        let p = propose_one("OPENAI_API_BASE", &cats);
         match &p {
             ProposedPath::Skip { reason, .. } => {
                 assert!(

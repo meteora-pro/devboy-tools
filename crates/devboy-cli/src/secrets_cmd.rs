@@ -85,11 +85,24 @@ pub enum CatalogCommands {
     /// debug which override is winning when a team has its own
     /// project-scope file shadowing the bundled default.
     List,
+    /// Inspect every catalog at every active source — bundled,
+    /// user, project, AND URL — with origin, variant count,
+    /// and (for URL sources) cache state. Replaces the older
+    /// `list` command for the URL-loaded catalog flow (P23).
+    Status(CatalogStatusArgs),
     /// Validate a single catalog JSON file. Loads the file,
     /// runs schema deserialisation (`deny_unknown_fields` is
     /// strict), then per-variant checks that the regex compiles
     /// and that every URL parses. Exit non-zero on any failure.
     Validate(CatalogValidateArgs),
+}
+
+/// Flags for `devboy secrets catalog status`.
+#[derive(Args, Debug, Default)]
+pub struct CatalogStatusArgs {
+    /// Print as machine-readable JSON instead of a human table.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Flags for `devboy secrets catalog validate`.
@@ -248,6 +261,7 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
         SecretsCommands::Rotate(args) => crate::secrets_rotate::handle(args).await,
         SecretsCommands::Catalog { command } => match command {
             CatalogCommands::List => catalog_list(),
+            CatalogCommands::Status(args) => catalog_status(args),
             CatalogCommands::Validate(args) => catalog_validate(args),
         },
         SecretsCommands::Setup(args) => crate::secrets_setup::handle_cli(args),
@@ -311,6 +325,155 @@ fn catalog_list() -> Result<()> {
         let n = c.catalog.variants.len();
         let suffix = if n == 1 { "variant" } else { "variants" };
         println!("{:<14} {}  {} {}", c.catalog.provider_id, source, n, suffix);
+    }
+    if !errors.is_empty() {
+        eprintln!();
+        eprintln!("errors ({}):", errors.len());
+        for e in &errors {
+            eprintln!("  - {e}");
+        }
+    }
+    Ok(())
+}
+
+/// Walk every configured catalog source and produce a richer
+/// status view than `list` — origin, variant count, file path
+/// (for disk-loaded), URL + sha256 + cache state (for
+/// URL-loaded). Optional `--json` flag for scripts.
+#[allow(clippy::print_literal)]
+fn catalog_status(args: CatalogStatusArgs) -> Result<()> {
+    use devboy_token_catalog::{
+        CatalogSource, FirstFetchPolicy, bundled_catalogs, default_catalog_audit_log_path,
+        default_catalog_cache_dir, default_known_hashes_path, default_sources_toml_path,
+        default_user_catalog_dir, load_all_with_urls, parse_sources_toml,
+    };
+
+    let bundled = bundled_catalogs();
+    let user_dir = default_user_catalog_dir();
+    let project_dir = std::env::current_dir()
+        .ok()
+        .map(|d| d.join(".devboy").join("secrets").join("catalog"));
+    let url_config = default_sources_toml_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|body| parse_sources_toml(&body).ok());
+    let known_hashes_path = default_known_hashes_path();
+    let cache_dir = default_catalog_cache_dir();
+    let audit_log_path = default_catalog_audit_log_path();
+    let (loaded, errors) = load_all_with_urls(
+        &bundled,
+        user_dir.as_deref(),
+        project_dir.as_deref(),
+        url_config.as_ref(),
+        known_hashes_path.as_deref(),
+        cache_dir.as_deref(),
+        FirstFetchPolicy::AutoRecord,
+        audit_log_path.as_deref(),
+    );
+
+    if args.json {
+        let entries: Vec<serde_json::Value> = loaded
+            .iter()
+            .map(|c| {
+                let mut obj = serde_json::Map::new();
+                obj.insert(
+                    "provider_id".into(),
+                    serde_json::Value::String(c.catalog.provider_id.clone()),
+                );
+                obj.insert(
+                    "display_name".into(),
+                    serde_json::Value::String(c.catalog.display_name.clone()),
+                );
+                obj.insert(
+                    "variants".into(),
+                    serde_json::Value::Number((c.catalog.variants.len() as u64).into()),
+                );
+                obj.insert(
+                    "env_var_patterns".into(),
+                    serde_json::Value::Number((c.catalog.env_var_patterns.len() as u64).into()),
+                );
+                obj.insert(
+                    "env_var_skip".into(),
+                    serde_json::Value::Number((c.catalog.env_var_skip.len() as u64).into()),
+                );
+                let (origin, source_meta) = match &c.source {
+                    CatalogSource::Bundled => ("bundled", serde_json::Value::Null),
+                    CatalogSource::User => ("user", serde_json::Value::Null),
+                    CatalogSource::Project => ("project", serde_json::Value::Null),
+                    CatalogSource::Url { url, sha256 } => (
+                        "url",
+                        serde_json::json!({
+                            "url": url,
+                            "sha256_pin": sha256,
+                        }),
+                    ),
+                };
+                obj.insert("origin".into(), serde_json::Value::String(origin.into()));
+                obj.insert("source".into(), source_meta);
+                if let Some(p) = &c.path {
+                    obj.insert(
+                        "path".into(),
+                        serde_json::Value::String(p.display().to_string()),
+                    );
+                }
+                serde_json::Value::Object(obj)
+            })
+            .collect();
+        let report = serde_json::json!({
+            "loaded": entries.len(),
+            "errors": errors.iter().map(|e| e.to_string()).collect::<Vec<_>>(),
+            "catalogs": entries,
+        });
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    if loaded.is_empty() && errors.is_empty() {
+        println!("no catalogs loaded");
+        return Ok(());
+    }
+    println!(
+        "{provider:<14} {origin:<8} {variants:>8} {patterns:>9} {skip:>5}  {source}",
+        provider = "provider",
+        origin = "origin",
+        variants = "variants",
+        patterns = "patterns",
+        skip = "skip",
+        source = "source",
+    );
+    for c in &loaded {
+        let (origin, source_str) = match &c.source {
+            CatalogSource::Bundled => ("bundled", "(in-binary)".to_owned()),
+            CatalogSource::User => (
+                "user",
+                c.path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default(),
+            ),
+            CatalogSource::Project => (
+                "project",
+                c.path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default(),
+            ),
+            CatalogSource::Url { url, sha256 } => {
+                let pin = sha256
+                    .as_deref()
+                    .map(|s| format!(" [pin:{}…]", &s[..8.min(s.len())]))
+                    .unwrap_or_else(|| " [tofu]".to_owned());
+                ("url", format!("{url}{pin}"))
+            }
+        };
+        println!(
+            "{:<14} {:<8} {:>8} {:>9} {:>5}  {}",
+            c.catalog.provider_id,
+            origin,
+            c.catalog.variants.len(),
+            c.catalog.env_var_patterns.len(),
+            c.catalog.env_var_skip.len(),
+            source_str
+        );
     }
     if !errors.is_empty() {
         eprintln!();
