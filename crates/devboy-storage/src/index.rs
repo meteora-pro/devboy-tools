@@ -127,6 +127,33 @@ pub enum Gate {
 ///
 /// `Manual` is the only method that ships in the first release;
 /// `ProviderUi` and `ProviderApi` are reserved for future ADRs (see
+/// Per-path policy for AI-agent secret USE (not provision).
+///
+/// Controls whether the framework demands an interactive user
+/// approval each time an agent's high-level provider tool resolves
+/// a `@secret:<path>` alias backed by this entry. Designed for the
+/// case where the user wants to provision once but still wants
+/// fine-grained control over which agent calls "spend" sensitive
+/// credentials. See ADR-023 §3.7 (P25 phase) for the protocol.
+///
+/// Default — `Never` — preserves the existing zero-prompt
+/// resolve path so most paths stay frictionless.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApproveOnUse {
+    /// No approval required — alias resolves silently. The
+    /// default for every existing manifest.
+    #[default]
+    Never,
+    /// First use this session opens an approval dialog; once
+    /// the user clicks "Allow always (this session)" further
+    /// uses skip the prompt for the remainder of the session.
+    Session,
+    /// Every use opens an approval dialog. Right for high-
+    /// stakes paths (prod DB password, signing keys).
+    PerCall,
+}
+
 /// ADR-023 §3.5 — provider-driven rotation is deferred).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -219,6 +246,11 @@ pub struct IndexEntry {
     /// TTL. Cannot raise it above the source default — see ADR-021 §7.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_ttl_seconds_max: Option<u64>,
+
+    /// Approve-on-use policy (P25). Defaults to `Never` at the
+    /// consumer side when absent — see [`ApproveOnUse`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approve_on_use: Option<ApproveOnUse>,
 }
 
 /// In-memory representation of the global index.
@@ -622,6 +654,46 @@ retrieval_hint = "wrong field name"
         assert_eq!(idx.len(), reparsed.len());
         let p: SecretPath = "team/gitlab/token-deploy".parse().unwrap();
         assert_eq!(idx.get(&p), reparsed.get(&p));
+    }
+
+    #[test]
+    fn approve_on_use_round_trips_through_toml() {
+        // Default (None) round-trips as missing field.
+        let mut idx = GlobalIndex::new();
+        let p: SecretPath = "team/gitlab/token-deploy".parse().unwrap();
+        idx.insert(p.clone(), IndexEntry::default());
+        let body = idx.to_toml_string().unwrap();
+        assert!(
+            !body.contains("approve_on_use"),
+            "missing approve_on_use should not be serialised: {body}"
+        );
+
+        // Per-call policy round-trips.
+        let entry = IndexEntry {
+            approve_on_use: Some(ApproveOnUse::PerCall),
+            ..IndexEntry::default()
+        };
+        let mut idx = GlobalIndex::new();
+        idx.insert(p.clone(), entry.clone());
+        let body = idx.to_toml_string().unwrap();
+        assert!(
+            body.contains("approve_on_use = \"per-call\""),
+            "expected kebab-case `per-call` in: {body}"
+        );
+        let reparsed = GlobalIndex::from_toml_str(&body).unwrap();
+        assert_eq!(reparsed.get(&p), Some(&entry));
+
+        // Session policy round-trips.
+        let entry = IndexEntry {
+            approve_on_use: Some(ApproveOnUse::Session),
+            ..IndexEntry::default()
+        };
+        let mut idx = GlobalIndex::new();
+        idx.insert(p.clone(), entry.clone());
+        let body = idx.to_toml_string().unwrap();
+        assert!(body.contains("approve_on_use = \"session\""));
+        let reparsed = GlobalIndex::from_toml_str(&body).unwrap();
+        assert_eq!(reparsed.get(&p), Some(&entry));
     }
 
     #[test]

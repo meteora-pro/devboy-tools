@@ -67,6 +67,8 @@ pub enum OverrideField {
     RotateEveryDays,
     /// The `description` field.
     Description,
+    /// The `approve_on_use` field (P25).
+    ApproveOnUse,
 }
 
 /// Where the resolved metadata for a path came from.
@@ -335,6 +337,18 @@ fn apply_overrides(
         metadata.description = Some(desc.clone());
         applied.push(OverrideField::Description);
     }
+    if let Some(policy) = over.approve_on_use {
+        if metadata.approve_on_use == Some(policy) {
+            warnings.push(MergeWarning {
+                kind: MergeWarningKind::NoOpOverride {
+                    field: OverrideField::ApproveOnUse,
+                },
+                path: path.clone(),
+            });
+        }
+        metadata.approve_on_use = Some(policy);
+        applied.push(OverrideField::ApproveOnUse);
+    }
 }
 
 // =============================================================================
@@ -405,6 +419,7 @@ mod tests {
                     gate: Some(Gate::Touchid),
                     rotate_every_days: Some(30),
                     description: Some("Staging deploy only".to_owned()),
+                    ..OverrideEntry::default()
                 },
             )]),
             ..ProjectManifest::default()
@@ -601,6 +616,7 @@ mod tests {
                     gate: Some(Gate::Touchid),
                     rotate_every_days: Some(30),
                     description: Some("matches".to_owned()),
+                    ..OverrideEntry::default()
                 },
             )]),
             ..ProjectManifest::default()
@@ -676,6 +692,82 @@ mod tests {
         assert!(matches!(
             out.warnings[0].kind,
             MergeWarningKind::ProjectLocalForUndeclaredPath
+        ));
+    }
+
+    // -- approve_on_use (P25) --------------------------------------------------
+
+    #[test]
+    fn override_applies_approve_on_use_over_global_index() {
+        use crate::index::ApproveOnUse;
+
+        let mut global = GlobalIndex::new();
+        global.insert(
+            p("team/gitlab/token-deploy"),
+            IndexEntry {
+                approve_on_use: Some(ApproveOnUse::Never),
+                ..IndexEntry::default()
+            },
+        );
+        let manifest = ProjectManifest {
+            required: vec![p("team/gitlab/token-deploy")],
+            overrides: BTreeMap::from([(
+                p("team/gitlab/token-deploy"),
+                OverrideEntry {
+                    approve_on_use: Some(ApproveOnUse::PerCall),
+                    ..OverrideEntry::default()
+                },
+            )]),
+            ..ProjectManifest::default()
+        };
+
+        let out = merge_manifest(&global, &manifest).unwrap();
+        let resolved = out.secrets.get(&p("team/gitlab/token-deploy")).unwrap();
+        assert_eq!(
+            resolved.metadata.approve_on_use,
+            Some(ApproveOnUse::PerCall)
+        );
+        match &resolved.origin {
+            SecretOrigin::Global { overrides_applied } => assert!(
+                overrides_applied.contains(&OverrideField::ApproveOnUse),
+                "expected ApproveOnUse in applied list: {overrides_applied:?}"
+            ),
+            other => panic!("expected Global origin, got {other:?}"),
+        }
+        assert!(out.warnings.is_empty());
+    }
+
+    #[test]
+    fn override_approve_on_use_matching_global_emits_noop_warning() {
+        use crate::index::ApproveOnUse;
+
+        let mut global = GlobalIndex::new();
+        global.insert(
+            p("team/foo/token"),
+            IndexEntry {
+                approve_on_use: Some(ApproveOnUse::Session),
+                ..IndexEntry::default()
+            },
+        );
+        let manifest = ProjectManifest {
+            required: vec![p("team/foo/token")],
+            overrides: BTreeMap::from([(
+                p("team/foo/token"),
+                OverrideEntry {
+                    approve_on_use: Some(ApproveOnUse::Session),
+                    ..OverrideEntry::default()
+                },
+            )]),
+            ..ProjectManifest::default()
+        };
+
+        let out = merge_manifest(&global, &manifest).unwrap();
+        assert_eq!(out.warnings.len(), 1);
+        assert!(matches!(
+            out.warnings[0].kind,
+            MergeWarningKind::NoOpOverride {
+                field: OverrideField::ApproveOnUse
+            }
         ));
     }
 

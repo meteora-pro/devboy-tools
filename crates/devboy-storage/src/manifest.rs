@@ -159,6 +159,13 @@ pub struct OverrideEntry {
     /// (e.g. "in this repo this is the staging deploy token").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+
+    /// Approve-on-use policy override (P25). Lets a project
+    /// tighten (or relax) the global index's `approve_on_use`
+    /// without rewriting the index entry. See
+    /// [`crate::index::ApproveOnUse`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approve_on_use: Option<crate::index::ApproveOnUse>,
 }
 
 impl OverrideEntry {
@@ -166,7 +173,10 @@ impl OverrideEntry {
     /// no-op-override warning (`doctor` flags blocks where every
     /// override matches the global value).
     pub fn is_empty(&self) -> bool {
-        self.gate.is_none() && self.rotate_every_days.is_none() && self.description.is_none()
+        self.gate.is_none()
+            && self.rotate_every_days.is_none()
+            && self.description.is_none()
+            && self.approve_on_use.is_none()
     }
 }
 
