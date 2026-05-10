@@ -6,7 +6,7 @@ This page shows how to pull them out of the published [`devboy-executor`](https:
 
 ## Cargo dependency
 
-`devboy-executor` is published on crates.io as part of the workspace release ([ADR-022](../architecture/adr/ADR-022-crates-io-publishing.md)). Pin a minor version — the public surface follows SemVer:
+`devboy-executor` is published on crates.io as part of the workspace release ([ADR-022](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-022-crates-io-publishing.md)). Pin a minor version — the public surface follows SemVer:
 
 ```toml
 [dependencies]
@@ -67,7 +67,7 @@ The base list is provider-agnostic. Some categories are conditionally available 
 
 ## Stability guarantees
 
-`base_tool_definitions()` is part of the published `devboy-executor` API. Per [ADR-022](../architecture/adr/ADR-022-crates-io-publishing.md):
+`base_tool_definitions()` is part of the published `devboy-executor` API. Per [ADR-022](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-022-crates-io-publishing.md):
 
 - **Tool name and category** never change without a major-version bump.
 - **Tool descriptions and schema field descriptions** may evolve in patch releases — they're prose for LLMs.
@@ -87,4 +87,4 @@ If you're caching the schemas at build time, refresh on minor bumps; if you're r
 
 - [Tool reference](./tools.md) — human-readable Markdown for the same data.
 - [Architecture → Executor](../architecture/executor.md) — how tool execution is structured.
-- [ADR-022](../architecture/adr/ADR-022-crates-io-publishing.md) — what's published and why.
+- [ADR-022](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-022-crates-io-publishing.md) — what's published and why.
