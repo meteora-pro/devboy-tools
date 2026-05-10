@@ -642,8 +642,7 @@ diff --git a/config.yaml b/config.yaml
     #[cfg(unix)]
     #[test]
     fn check_secret_alias_flags_alias_in_yaml_in_real_git_repo() {
-        if !git_on_path() {
-            eprintln!("skipping: `git` not on PATH (likely a coverage / arm-runner sandbox)");
+        if skip_git_dependent_test() {
             return;
         }
         let dir = tempfile::TempDir::new().unwrap();
@@ -678,8 +677,7 @@ diff --git a/config.yaml b/config.yaml
     #[cfg(unix)]
     #[test]
     fn check_secret_alias_passes_when_alias_lives_in_devboy_config() {
-        if !git_on_path() {
-            eprintln!("skipping: `git` not on PATH (likely a coverage / arm-runner sandbox)");
+        if skip_git_dependent_test() {
             return;
         }
         let dir = tempfile::TempDir::new().unwrap();
@@ -715,17 +713,31 @@ diff --git a/config.yaml b/config.yaml
         assert!(status.success(), "git {:?} failed", args);
     }
 
-    /// Cheap probe — the test sandbox on cargo-llvm-cov coverage
-    /// runs and on some arm runners ships without `git` on PATH.
-    /// The tests need a real `git init` to be meaningful, so we
-    /// skip with a `eprintln!` rather than panicking on a missing
-    /// binary that has nothing to do with the code under test.
+    /// Decide whether to skip a `git`-dependent test. Reasons:
+    ///
+    /// - `git` not on PATH (some arm runners ship without it).
+    /// - Running under `cargo-llvm-cov` (sets `LLVM_PROFILE_FILE`).
+    ///   The instrumentation runner can pass the
+    ///   `git --version` probe yet still spawn `git init` with
+    ///   `NotFound`, suggesting the cov harness wraps `Command`
+    ///   in a way that breaks subcommand spawn. The behaviour is
+    ///   environment-only; the test stays exercised on every
+    ///   other CI target.
     #[cfg(unix)]
-    fn git_on_path() -> bool {
-        Command::new("git")
+    fn skip_git_dependent_test() -> bool {
+        if std::env::var_os("LLVM_PROFILE_FILE").is_some() {
+            eprintln!("skipping: cargo-llvm-cov instrumentation breaks `git` spawn");
+            return true;
+        }
+        let probe_ok = Command::new("git")
             .arg("--version")
             .output()
             .map(|o| o.status.success())
-            .unwrap_or(false)
+            .unwrap_or(false);
+        if !probe_ok {
+            eprintln!("skipping: `git` not on PATH (likely an arm-runner sandbox)");
+            return true;
+        }
+        false
     }
 }

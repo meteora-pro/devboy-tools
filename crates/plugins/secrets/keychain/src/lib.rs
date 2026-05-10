@@ -2,7 +2,7 @@
 //! keychain per [ADR-021] §8.
 //!
 //! A refactor of the legacy
-//! [`devboy_storage::KeychainStore`](devboy_storage::KeychainStore)
+//! [`devboy_storage::KeychainStore`]
 //! behind the [`SecretSource`] trait. The keychain is the only
 //! source where the ADR-020 path is also the backend reference —
 //! no transformation, no joining.
