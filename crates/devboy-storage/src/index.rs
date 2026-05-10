@@ -154,6 +154,17 @@ pub enum ApproveOnUse {
     PerCall,
 }
 
+impl From<ApproveOnUse> for devboy_core::secret_approval::ApproveOnUsePolicy {
+    fn from(v: ApproveOnUse) -> Self {
+        use devboy_core::secret_approval::ApproveOnUsePolicy as Policy;
+        match v {
+            ApproveOnUse::Never => Policy::Never,
+            ApproveOnUse::Session => Policy::Session,
+            ApproveOnUse::PerCall => Policy::PerCall,
+        }
+    }
+}
+
 /// ADR-023 §3.5 — provider-driven rotation is deferred).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

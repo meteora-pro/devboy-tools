@@ -33,6 +33,7 @@ pub mod enricher;
 pub mod error;
 pub mod liveness;
 pub mod provider;
+pub mod secret_approval;
 
 pub use liveness::{LivenessProbe, LivenessResult, LivenessStatus};
 pub mod remote_config;
