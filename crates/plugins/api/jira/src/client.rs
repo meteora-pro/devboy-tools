@@ -32,7 +32,7 @@ use tracing::{debug, warn};
 use crate::types::{
     AddCommentPayload, CreateIssueFields, CreateIssueLinkPayload, CreateIssuePayload,
     CreateIssueResponse, CreateVersionPayload, IssueKeyRef, IssueLinkTypeName, IssueType,
-    JiraAttachment, JiraCloudSearchResponse, JiraComment, JiraCommentsResponse,
+    JiraAttachment, JiraCloudSearchResponse, JiraComment, JiraCommentsResponse, JiraField,
     JiraForestModifyResponse, JiraForestResponse, JiraIssue, JiraIssueTypeStatuses, JiraPriority,
     JiraProjectStatus, JiraSearchResponse, JiraStatus, JiraStructure, JiraStructureListResponse,
     JiraStructureValuesResponse, JiraStructureView, JiraStructureViewListResponse, JiraTransition,
@@ -61,6 +61,14 @@ pub struct JiraClient {
     flavor: JiraFlavor,
     proxy_headers: Option<std::collections::HashMap<String, String>>,
     client: reqwest::Client,
+    /// Lazy-loaded `name → field id` map populated from
+    /// `GET /rest/api/{v}/field` on first lookup. Used to translate
+    /// human-readable Jira field names (e.g. `"Epic Link"`) to the
+    /// instance-specific `customfield_*` ids without forcing callers
+    /// to know them. `tokio::sync::OnceCell` provides `&self` interior
+    /// mutability + race-free initialisation under concurrent
+    /// `tools/call`s.
+    field_cache: tokio::sync::OnceCell<std::collections::HashMap<String, String>>,
 }
 
 impl JiraClient {
@@ -87,6 +95,7 @@ impl JiraClient {
                 .user_agent("devboy-tools")
                 .build()
                 .expect("Failed to create HTTP client"),
+            field_cache: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -145,6 +154,7 @@ impl JiraClient {
                 .user_agent("devboy-tools")
                 .build()
                 .expect("Failed to create HTTP client"),
+            field_cache: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -685,6 +695,52 @@ impl JiraClient {
             Err(Error::NotFound(_)) => Ok(vec![]),
             Err(other) => Err(other),
         }
+    }
+
+    // --- Field discovery ------------------------------------------------
+    //
+    // `customfield_*` ids vary across instances, so the public-facing
+    // tools (`epic_key`, `sprint_id`, `epic_name` on create/update_issue
+    // and the future `get_custom_fields` tool) need a way to map field
+    // *names* to ids at runtime. We list every field once via
+    // `GET /rest/api/{v}/field` and cache the result in `field_cache`
+    // for the lifetime of this client.
+
+    /// Fetch every field (system + custom) on the Jira instance.
+    /// Single round-trip — Jira returns all fields in one unpaginated
+    /// response. Caller is responsible for caching if it plans to call
+    /// repeatedly; for `name → id` lookups, prefer
+    /// [`resolve_field_id_by_name`](Self::resolve_field_id_by_name)
+    /// which caches internally.
+    pub async fn fetch_fields(&self) -> Result<Vec<JiraField>> {
+        let url = format!("{}/field", self.base_url);
+        self.get(&url).await
+    }
+
+    /// Resolve a Jira field name (e.g. `"Epic Link"`, `"Sprint"`,
+    /// `"Epic Name"`) to its id (e.g. `"customfield_10014"`).
+    ///
+    /// Returns `Ok(None)` when no field with this exact name exists on
+    /// the instance — most often because the field is disabled,
+    /// renamed, or localised. Callers that depend on a specific field
+    /// should treat `None` as a hard error and surface a hint pointing
+    /// users at `get_custom_fields` for discovery.
+    ///
+    /// The first lookup populates an in-memory cache (`field_cache`)
+    /// from `GET /rest/api/{v}/field`; subsequent lookups are
+    /// allocation-free and don't hit the network. Concurrent first-time
+    /// lookups race-free thanks to `tokio::sync::OnceCell`.
+    pub async fn resolve_field_id_by_name(&self, name: &str) -> Result<Option<String>> {
+        let cache = self
+            .field_cache
+            .get_or_try_init(|| async {
+                let fields = self.fetch_fields().await?;
+                let map: std::collections::HashMap<String, String> =
+                    fields.into_iter().map(|f| (f.name, f.id)).collect();
+                Ok::<_, Error>(map)
+            })
+            .await?;
+        Ok(cache.get(name).cloned())
     }
 }
 
@@ -4721,6 +4777,55 @@ mod tests {
                 .unwrap();
 
             assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// `resolve_field_id_by_name` finds the customfield id for a
+        /// well-known Jira field name and caches the lookup so that
+        /// subsequent calls don't re-issue the request.
+        #[tokio::test]
+        async fn test_resolve_field_id_by_name_caches_and_resolves() {
+            let server = MockServer::start();
+
+            // `times(1)` asserts the second lookup hits the cache.
+            let field_mock = server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "summary", "name": "Summary", "custom": false},
+                    {"id": "customfield_10014", "name": "Epic Link", "custom": true,
+                     "schema": {"type": "any", "custom": "com.pyxis.greenhopper.jira:gh-epic-link"}},
+                    {"id": "customfield_10020", "name": "Sprint", "custom": true},
+                    {"id": "customfield_10011", "name": "Epic Name", "custom": true}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+
+            let epic_link = client.resolve_field_id_by_name("Epic Link").await.unwrap();
+            assert_eq!(epic_link, Some("customfield_10014".to_string()));
+
+            // Cached — second call must not hit the network.
+            let sprint = client.resolve_field_id_by_name("Sprint").await.unwrap();
+            assert_eq!(sprint, Some("customfield_10020".to_string()));
+
+            field_mock.assert_calls(1);
+        }
+
+        /// `resolve_field_id_by_name` returns `None` for unknown names,
+        /// letting callers report a friendly error instead of guessing.
+        #[tokio::test]
+        async fn test_resolve_field_id_by_name_returns_none_for_missing() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "summary", "name": "Summary", "custom": false}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let resolved = client.resolve_field_id_by_name("Epic Link").await.unwrap();
+            assert_eq!(resolved, None);
         }
 
         #[tokio::test]
