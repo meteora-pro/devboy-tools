@@ -567,7 +567,14 @@ mod tests {
     }
 
     // -- install / uninstall round-trip --------------------------------
+    //
+    // These exercise the macOS / Linux launchd / systemd glue.
+    // On Windows the public install API returns
+    // `service install is only supported on macOS and Linux`,
+    // so the tests would need a different code path entirely —
+    // gate to the supported platforms instead.
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn install_writes_unit_file_under_synthetic_home() {
         let home = TempDir::new().unwrap();
@@ -582,6 +589,7 @@ mod tests {
         assert_eq!(content, expected);
     }
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn install_creates_parent_directories() {
         // Synthetic HOME is a fresh tempdir — neither
@@ -599,6 +607,7 @@ mod tests {
         assert!(parent.is_dir(), "parent dir not created: {parent:?}");
     }
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn uninstall_removes_the_unit_file() {
         let home = TempDir::new().unwrap();
@@ -618,6 +627,7 @@ mod tests {
         assert!(!path.exists(), "unit file should be gone after uninstall");
     }
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn uninstall_is_idempotent_when_unit_is_absent() {
         let home = TempDir::new().unwrap();

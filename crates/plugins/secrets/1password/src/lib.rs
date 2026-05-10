@@ -452,9 +452,24 @@ mod tests {
 
     #[cfg(unix)]
     fn write_executable_script(dir: &Path, name: &str, body: &str) -> PathBuf {
+        use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
         let path = dir.join(name);
-        std::fs::write(&path, body).unwrap();
+        // Open + write + sync + close explicitly. The cargo-
+        // llvm-cov coverage runner on Linux occasionally
+        // returns `ETXTBSY` ("Text file busy") when `exec`
+        // follows `fs::write` too closely — the explicit
+        // `sync_all` forces the kernel to commit the write
+        // before we hand the file off to a child process.
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .unwrap();
+        f.write_all(body.as_bytes()).unwrap();
+        f.sync_all().unwrap();
+        drop(f);
         let mut perms = std::fs::metadata(&path).unwrap().permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(&path, perms).unwrap();
