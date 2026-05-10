@@ -1244,7 +1244,19 @@ fn parse_jira_key(key: &str) -> &str {
 }
 
 fn map_issue(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> Issue {
+    // Surface every `customfield_*` slot that came back in the
+    // payload — keys keep their raw `customfield_NNNNN` form so
+    // downstream consumers can correlate with `get_custom_fields`.
+    // Non-empty values only; nulls are filtered to avoid noise.
+    let custom_fields: std::collections::HashMap<String, serde_json::Value> = issue
+        .fields
+        .extras
+        .iter()
+        .filter(|(k, v)| k.starts_with("customfield_") && !v.is_null())
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     Issue {
+        custom_fields,
         key: format!("jira#{}", issue.key),
         title: issue.fields.summary.clone().unwrap_or_default(),
         description: read_description(&issue.fields.description, flavor),
@@ -5156,6 +5168,46 @@ mod tests {
                 .unwrap();
 
             assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// Customfield values from `fields.extras` surface on
+        /// `issue.custom_fields` keyed by the raw `customfield_*` id —
+        /// agents see every customfield on a single get_issue call
+        /// (Paper 3, context enrichment).
+        #[tokio::test]
+        async fn test_get_issue_surfaces_customfield_values() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "summary": "Issue with cf",
+                        "issuetype": {"name": "Task"},
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000",
+                        "customfield_10999": "tenant-a",
+                        "customfield_10888": 42,
+                        "customfield_10777": null
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client.get_issue("PROJ-1").await.unwrap();
+            assert_eq!(
+                issue.custom_fields.get("customfield_10999"),
+                Some(&serde_json::json!("tenant-a"))
+            );
+            assert_eq!(
+                issue.custom_fields.get("customfield_10888"),
+                Some(&serde_json::json!(42))
+            );
+            // null values are filtered out
+            assert!(!issue.custom_fields.contains_key("customfield_10777"));
         }
 
         /// `link_issues("Implements", ...)` and other canonical Jira

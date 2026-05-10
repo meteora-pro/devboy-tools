@@ -1130,6 +1130,7 @@ mod tests {
             attachments_count: None,
             parent: None,
             subtasks: vec![],
+            custom_fields: std::collections::HashMap::new(),
         }
     }
 
