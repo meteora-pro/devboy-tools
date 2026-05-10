@@ -103,7 +103,7 @@ List sprints visible on a Jira agile board. Use to discover the numeric `sprintI
 | Parameter | Type | Required | Description |
 |---|---|:---:|---|
 | `boardId` | integer | ✅ | Numeric Jira board id. The Agile / Boards REST endpoint returns sprints scoped to one board — there is no global sprint list. Min: 0 |
-| `state` | string | — | Filter by sprint state. Default `all` returns every sprint on the board.. Allowed values: `active`, `future`, `closed`, `all` |
+| `state` | string | — | Filter by sprint state. Default `all` returns every sprint on the board. Allowed values: `active`, `future`, `closed`, `all` |
 
 ### `get_custom_fields`
 
@@ -112,7 +112,7 @@ List custom fields available on the issue tracker, with their id, name, and fiel
 | Parameter | Type | Required | Description |
 |---|---|:---:|---|
 | `issueType` | string | — | Optional issue type. Reserved for providers that scope custom fields per create-screen context. |
-| `limit` | integer | — | Max fields to return after filtering (default 50). Sorted by name asc.. Range: 1 – 200 |
+| `limit` | integer | — | Max fields to return after filtering (default 50). Sorted by name asc. Range: 1 – 200 |
 | `project` | string | — | Optional project key. Reserved for providers that scope custom fields per project; ignored on Jira's global `/field` endpoint. |
 | `search` | string | — | Case-insensitive substring filter on the field name (e.g. `"Epic"` to find `Epic Link` and `Epic Name`). |
 
@@ -186,11 +186,11 @@ List Jira project versions / fixVersion targets (releases). Returns rich per-ver
 
 | Parameter | Type | Required | Description |
 |---|---|:---:|---|
-| `archived` | string | — | Filter by archived flag (default: "false" — hides archival noise).. Allowed values: `true`, `false`, `all` |
+| `archived` | string | — | Filter by archived flag (default: "false" — hides archival noise). Allowed values: `true`, `false`, `all` |
 | `includeIssueCount` | boolean | — | Fetch issue counts per version via Cloud `?expand=issuesstatus` (default: false). Adds latency on large projects. |
-| `limit` | integer | — | Max versions to return (default: 20). Sorted by releaseDate desc; oldest archival entries trimmed first.. Range: 1 – 200 |
+| `limit` | integer | — | Max versions to return (default: 20). Sorted by releaseDate desc; oldest archival entries trimmed first. Range: 1 – 200 |
 | `project` | string | — | Jira project key (e.g., "PROJ"). Defaults to the configured project. |
-| `released` | string | — | Filter by release state: "true" → only released, "false" → only unreleased, "all" → both (default: "all").. Allowed values: `true`, `false`, `all` |
+| `released` | string | — | Filter by release state: "true" → only released, "false" → only unreleased, "all" → both (default: "all"). Allowed values: `true`, `false`, `all` |
 
 ### `unlink_issues`
 
