@@ -2,7 +2,7 @@
 
 A guide for community plugin authors who want to extend the list of secret sources in `devboy-tools` beyond what ships in the box (keychain, local-vault, 1Password, Vault, env-store). Covers the stdio JSON-RPC wire format, the sidecar manifest, discovery, and the lifecycle contract.
 
-See [ADR-021](../architecture/adr/ADR-021-secret-source-router.md) §6 (the `SecretSource` trait) and §10 (subprocess plugin extension), plus `crates/devboy-storage/src/plugin_protocol.rs`, `plugin_manifest.rs`, and `plugin_client.rs` for the reference host implementation.
+See [ADR-021](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-021-secret-source-router.md) §6 (the `SecretSource` trait) and §10 (subprocess plugin extension), plus `crates/devboy-storage/src/plugin_protocol.rs`, `plugin_manifest.rs`, and `plugin_client.rs` for the reference host implementation.
 
 > Russian translation: [`ru/source-plugin-protocol.md`](./ru/source-plugin-protocol.md).
 
@@ -295,7 +295,7 @@ The repo ships a working example at `examples/secrets-source-echo/`. A Python sc
 - On `list`, returns three fake entries.
 - On `validate`, accepts any non-empty reference.
 
-See [`examples/secrets-source-echo/README.md`](../../../examples/secrets-source-echo/README.md) for build + install + smoke-test instructions.
+See [`examples/secrets-source-echo/README.md`](https://github.com/meteora-pro/devboy-tools/blob/main/examples/secrets-source-echo/README.md) for build + install + smoke-test instructions.
 
 ## New-plugin checklist
 

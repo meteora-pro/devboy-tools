@@ -102,7 +102,7 @@ pattern_id = "generic-bearer"
 rotation_method = "manual"
 ```
 
-Structure (see [ADR-020](../architecture/adr/ADR-020-secret-manifest-and-alias-resolution.md)):
+Structure (see [ADR-020](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-020-secret-manifest-and-alias-resolution.md)):
 
 - `required` — list of paths in ADR-020 form (`<scope>/<provider>/<purpose>`); the project does not work without their values.
 - `optional` — paths that improve UX (mailers, feature flags) but don't block the build.
@@ -205,4 +205,4 @@ If anything is red, `doctor` prints the exact code and suggests a fix command. N
 - [`source-plugin-protocol.md`](./source-plugin-protocol.md) — add your own source via the subprocess plugin protocol.
 - ADR-020 / ADR-021 / ADR-023 — the formal specs of the manifest, the router, and the UX layer.
 
-[ADR-021]: ../architecture/adr/ADR-021-secret-source-router.md
+[ADR-021]: https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-021-secret-source-router.md

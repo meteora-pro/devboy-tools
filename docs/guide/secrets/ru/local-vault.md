@@ -4,7 +4,7 @@
 
 Local vault — собственное локальное хранилище зашифрованных секретов из `devboy-tools`. Один файл, три способа разблокировки, recovery-фраза для аварий. Документ объясняет формат, когда выбирать local-vault вместо OS keychain или внешних источников, и как правильно бэкапить.
 
-См. [ADR-023](../../architecture/adr/ADR-023-secret-store-ux-layer.md) §3.1–§3.3 и [ADR-021](../../architecture/adr/ADR-021-secret-source-router.md) §4 для полной спецификации.
+См. [ADR-023](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md) §3.1–§3.3 и [ADR-021](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-021-secret-source-router.md) §4 для полной спецификации.
 
 ---
 

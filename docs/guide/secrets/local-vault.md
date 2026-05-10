@@ -2,7 +2,7 @@
 
 Local vault is `devboy-tools`'s own encrypted local secret store. One file, three unlock paths, a recovery phrase for emergencies. This document explains the format, when to pick local-vault over the OS keychain or external sources, and how to back it up safely.
 
-See [ADR-023](../architecture/adr/ADR-023-secret-store-ux-layer.md) §3.1–§3.3 and [ADR-021](../architecture/adr/ADR-021-secret-source-router.md) §4 for the full specification.
+See [ADR-023](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md) §3.1–§3.3 and [ADR-021](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-021-secret-source-router.md) §4 for the full specification.
 
 > Russian translation: [`ru/local-vault.md`](./ru/local-vault.md).
 

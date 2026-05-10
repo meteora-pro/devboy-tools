@@ -4,7 +4,7 @@
 
 Документ для авторов community-плагинов, которые расширяют список источников секретов в `devboy-tools` за пределами поставляемых из коробки (keychain, local-vault, 1Password, Vault, env-store). Описывает stdio JSON-RPC wire-format, sidecar manifest, discovery и контракт жизненного цикла.
 
-См. [ADR-021](../../architecture/adr/ADR-021-secret-source-router.md) §6 (трейт `SecretSource`) и §10 (subprocess plugin extension), а также `crates/devboy-storage/src/plugin_protocol.rs`, `plugin_manifest.rs`, `plugin_client.rs` для эталонной реализации хоста.
+См. [ADR-021](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-021-secret-source-router.md) §6 (трейт `SecretSource`) и §10 (subprocess plugin extension), а также `crates/devboy-storage/src/plugin_protocol.rs`, `plugin_manifest.rs`, `plugin_client.rs` для эталонной реализации хоста.
 
 ---
 
@@ -295,7 +295,7 @@ checksum_sha256 = "<lower-case-hex-digest-of-executable>"
 - На `list` отдаёт три фейковых entries.
 - На `validate` принимает любые непустые references.
 
-См. [`examples/secrets-source-echo/README.md`](../../../../examples/secrets-source-echo/README.md) для инструкций по сборке + установке + проверке.
+См. [`examples/secrets-source-echo/README.md`](https://github.com/meteora-pro/devboy-tools/blob/main/examples/secrets-source-echo/README.md) для инструкций по сборке + установке + проверке.
 
 ## Чек-лист для нового плагина
 

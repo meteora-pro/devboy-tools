@@ -102,7 +102,7 @@ pattern_id = "generic-bearer"
 rotation_method = "manual"
 ```
 
-Структура (см. [ADR-020](../../architecture/adr/ADR-020-secret-manifest-and-alias-resolution.md)):
+Структура (см. [ADR-020](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-020-secret-manifest-and-alias-resolution.md)):
 
 - `required` — список путей в формате ADR-020 (`<scope>/<provider>/<purpose>`), без значений которых проект не работает.
 - `optional` — пути, которые улучшают опыт (рассылки, фича-флаги), но не блокируют сборку.
@@ -203,4 +203,4 @@ devboy doctor --secrets
 - [`source-plugin-protocol.md`](../source-plugin-protocol.md) — добавление собственного источника через subprocess-плагин.
 - ADR-020 / ADR-021 / ADR-023 — формальные спецификации манифеста, роутера и UX-слоя.
 
-[ADR-021]: ../architecture/adr/ADR-021-secret-source-router.md
+[ADR-021]: https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-021-secret-source-router.md

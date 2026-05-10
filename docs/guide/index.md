@@ -215,12 +215,12 @@ Provider tokens, deploy keys, API tokens — `devboy-tools` ships a first-class 
 - **Agent-safe by construction** — MCP `secrets_*` tools return metadata only. Trust boundary is enforced by a marker trait, a CI grep gate, and a sentinel-based negative test (ADR-023 §3.7).
 - **Three deployment modes** — desktop (OS keychain), team (local-vault), CI (env-store). End-to-end smoke tests cover all three on every PR.
 
-Four guides for the framework live under [`docs/guide/secrets/`](./secrets/):
+Four guides for the framework live under [`docs/guide/secrets/`](./secrets/onboarding):
 
 - [Onboarding](./secrets/onboarding) — manual install → first source → manifest → validate → doctor.
 - [Local Vault](./secrets/local-vault) — file format, recovery flow, backup recommendations.
 - [Agent Protocol (MCP)](./secrets/agent-protocol) — every `secrets_*` tool, examples, the "no `secrets.get`" rule.
-- [Source Plugin Protocol](./secrets/source-plugin-protocol) — stdio JSON-RPC reference + working echo-source example in [`examples/secrets-source-echo/`](examples/secrets-source-echo/).
+- [Source Plugin Protocol](./secrets/source-plugin-protocol) — stdio JSON-RPC reference + working echo-source example in [`examples/secrets-source-echo/`](https://github.com/meteora-pro/devboy-tools/blob/main/examples/secrets-source-echo/).
 
 ```bash
 devboy secrets list                # see what the active context expects
@@ -326,7 +326,7 @@ Architecture details: [executor](./architecture/executor), [enrichers](./archite
 - **Tool reference** (auto-generated) — [`docs/guide/reference/tools.md`](./reference/tools)
 - **Skills user guide** — [`docs/guide/skills/`](./skills/)
 - **Configuration** (env vars, contexts, doctor, proxy, format pipeline) — [`docs/guide/configuration/`](./configuration/)
-- **Secret management** (onboarding, local-vault, agent protocol, source plugins) — [`docs/guide/secrets/`](./secrets/)
+- **Secret management** (onboarding, local-vault, agent protocol, source plugins) — [`docs/guide/secrets/`](./secrets/onboarding)
 - **Architecture** — [`docs/guide/architecture/`](./architecture/)
 - **ADRs** — [`docs/architecture/adr/INDEX.md`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/INDEX.md) (18 decisions logged)
 - **Research papers** — [`docs/research/INDEX.md`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/research/INDEX.md)

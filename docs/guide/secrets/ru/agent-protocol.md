@@ -4,7 +4,7 @@
 
 Для авторов AI-агентов и MCP-клиентов. Документ объясняет инвариант «agent never sees the value» (ADR-023 §3.7), полный перечень MCP-инструментов в семействе `secrets_*`, их семантику, лайфтайм запросов и формат ответов.
 
-См. [ADR-023](../../architecture/adr/ADR-023-secret-store-ux-layer.md) §3.7 для формальной спецификации и `crates/devboy-mcp/src/secrets_tool.rs` + `secrets_provision.rs` для реализации.
+См. [ADR-023](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md) §3.7 для формальной спецификации и `crates/devboy-mcp/src/secrets_tool.rs` + `secrets_provision.rs` для реализации.
 
 ---
 

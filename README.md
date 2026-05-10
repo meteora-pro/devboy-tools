@@ -210,12 +210,12 @@ Provider tokens, deploy keys, API tokens — `devboy-tools` ships a first-class 
 - **Agent-safe by construction** — MCP `secrets_*` tools return metadata only. Trust boundary is enforced by a marker trait, a CI grep gate, and a sentinel-based negative test (ADR-023 §3.7).
 - **Three deployment modes** — desktop (OS keychain), team (local-vault), CI (env-store). End-to-end smoke tests cover all three on every PR.
 
-Four guides for the framework live under [`docs/guide/secrets/`](docs/guide/secrets/):
+Four guides for the framework live under [`docs/guide/secrets/`](docs/guide/secrets/onboarding.md):
 
 - [Onboarding](docs/guide/secrets/onboarding.md) — manual install → first source → manifest → validate → doctor.
 - [Local Vault](docs/guide/secrets/local-vault.md) — file format, recovery flow, backup recommendations.
 - [Agent Protocol (MCP)](docs/guide/secrets/agent-protocol.md) — every `secrets_*` tool, examples, the "no `secrets.get`" rule.
-- [Source Plugin Protocol](docs/guide/secrets/source-plugin-protocol.md) — stdio JSON-RPC reference + working echo-source example in [`examples/secrets-source-echo/`](examples/secrets-source-echo/).
+- [Source Plugin Protocol](docs/guide/secrets/source-plugin-protocol.md) — stdio JSON-RPC reference + working echo-source example in [`examples/secrets-source-echo/`](https://github.com/meteora-pro/devboy-tools/blob/main/examples/secrets-source-echo/).
 
 ```bash
 devboy secrets list                # see what the active context expects
@@ -321,7 +321,7 @@ Architecture details: [executor](docs/guide/architecture/executor.md), [enricher
 - **Tool reference** (auto-generated) — [`docs/guide/reference/tools.md`](docs/guide/reference/tools.md)
 - **Skills user guide** — [`docs/guide/skills/`](docs/guide/skills/)
 - **Configuration** (env vars, contexts, doctor, proxy, format pipeline) — [`docs/guide/configuration/`](docs/guide/configuration/)
-- **Secret management** (onboarding, local-vault, agent protocol, source plugins) — [`docs/guide/secrets/`](docs/guide/secrets/)
+- **Secret management** (onboarding, local-vault, agent protocol, source plugins) — [`docs/guide/secrets/`](docs/guide/secrets/onboarding.md)
 - **Architecture** — [`docs/guide/architecture/`](docs/guide/architecture/)
 - **ADRs** — [`docs/architecture/adr/INDEX.md`](docs/architecture/adr/INDEX.md) (18 decisions logged)
 - **Research papers** — [`docs/research/INDEX.md`](docs/research/INDEX.md)

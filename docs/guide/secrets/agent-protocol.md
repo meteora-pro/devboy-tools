@@ -2,7 +2,7 @@
 
 For authors of AI agents and MCP clients. This document explains the "agent never sees the value" invariant (ADR-023 §3.7), the full list of MCP tools in the `secrets_*` family, their semantics, request lifetimes, and response shapes.
 
-See [ADR-023](../architecture/adr/ADR-023-secret-store-ux-layer.md) §3.7 for the formal spec and `crates/devboy-mcp/src/secrets_tool.rs` + `secrets_provision.rs` for the implementation.
+See [ADR-023](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md) §3.7 for the formal spec and `crates/devboy-mcp/src/secrets_tool.rs` + `secrets_provision.rs` for the implementation.
 
 > Russian translation: [`ru/agent-protocol.md`](./ru/agent-protocol.md).
 

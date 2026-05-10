@@ -4,7 +4,7 @@ The token catalog is a backend-driven UI feed: each provider lives in a JSON fil
 
 This guide is for **catalog authors**: anyone shipping a provider entry, either upstream as a contribution to `devboy-tools` or downstream in their own team's repo.
 
-> Schema reference: [`crates/devboy-token-catalog/schema/v1.json`](../../../crates/devboy-token-catalog/schema/v1.json) (JSON Schema 2020-12, point your IDE at it for autocomplete + inline validation).
+> Schema reference: [`crates/devboy-token-catalog/schema/v1.json`](https://github.com/meteora-pro/devboy-tools/blob/main/crates/devboy-token-catalog/schema/v1.json) (JSON Schema 2020-12, point your IDE at it for autocomplete + inline validation).
 
 ## Why this exists
 
@@ -119,7 +119,7 @@ Project-scope is the one most teams will touch. It's safe to commit alongside th
 - `liveness.url` — `api.moonshot.cn` vs `api.moonshot.ai` vs `api.kimi.com/coding`.
 - `retrieval.notes` — gotcha about not crossing keys between hosts (CN key against Global host = 401).
 
-Read [the JSON file](../../../crates/devboy-token-catalog/data/kimi.json) end-to-end — it's the canonical reference for what a polished provider entry looks like.
+Read [the JSON file](https://github.com/meteora-pro/devboy-tools/blob/main/crates/devboy-token-catalog/data/kimi.json) end-to-end — it's the canonical reference for what a polished provider entry looks like.
 
 ## What the GUI does with it
 

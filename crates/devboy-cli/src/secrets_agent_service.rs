@@ -443,6 +443,10 @@ fn xml_escape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `TempDir` is only used by the macOS / Linux install /
+    // uninstall round-trip tests below; on Windows those are
+    // gated out, so the import would otherwise be flagged.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     use tempfile::TempDir;
 
     fn fixture_layout() -> UserServiceLayout {
