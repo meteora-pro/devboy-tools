@@ -248,7 +248,70 @@ impl JiraMetadata {
         types.dedup();
         types
     }
+
+    /// Union of customfields visible across the first
+    /// [`MAX_ENRICHMENT_PROJECTS`] projects, deduplicated by `name`.
+    /// First-write-wins on collisions — if `Severity` exists in
+    /// multiple projects with different ids, the schema is built
+    /// from the earliest project's definition (matches HashMap
+    /// iteration order; not deterministic across runs but stable
+    /// within one). Per-project resolution at dispatch time is done
+    /// by [`Self::custom_field_for_project`], which reads the
+    /// current project's metadata directly.
+    ///
+    /// The cap protects token budgets on enterprise instances with
+    /// hundreds of projects: enrichment beyond 30 projects emits a
+    /// `tracing::warn!` and silently truncates rather than letting
+    /// the schema explode. Selecting the relevant 30 (most-recent
+    /// activity, allowlist, etc.) is the metadata loader's job, not
+    /// this crate's.
+    pub fn all_custom_fields(&self) -> Vec<JiraCustomField> {
+        if self.projects.len() > MAX_ENRICHMENT_PROJECTS {
+            tracing::warn!(
+                project_count = self.projects.len(),
+                cap = MAX_ENRICHMENT_PROJECTS,
+                "Jira metadata carries more projects than the enrichment cap; \
+                 customfield schema will only reflect the first {} — narrow \
+                 the metadata loader's project selection (top-N by recency, \
+                 allowlist, etc.) for full coverage.",
+                MAX_ENRICHMENT_PROJECTS
+            );
+        }
+        let mut by_name: std::collections::HashMap<String, JiraCustomField> =
+            std::collections::HashMap::new();
+        for proj in self.projects.values().take(MAX_ENRICHMENT_PROJECTS) {
+            for cf in &proj.custom_fields {
+                by_name.entry(cf.name.clone()).or_insert_with(|| cf.clone());
+            }
+        }
+        let mut result: Vec<JiraCustomField> = by_name.into_values().collect();
+        result.sort_by(|a, b| a.name.cmp(&b.name));
+        result
+    }
+
+    /// Resolve a customfield by display name **within a specific
+    /// project** — used by `transform_args` to pick the right
+    /// `customfield_*` id when the same name maps to different ids
+    /// across projects in multi-project mode.
+    pub fn custom_field_for_project(
+        &self,
+        project_key: &str,
+        field_name: &str,
+    ) -> Option<&JiraCustomField> {
+        self.projects
+            .get(project_key)?
+            .custom_fields
+            .iter()
+            .find(|cf| cf.name == field_name)
+    }
 }
+
+/// Cap on how many projects the schema enricher walks when building
+/// the customfield union. Higher values trade richer cross-project
+/// coverage for fatter `tools/list` payloads — 30 is empirically
+/// enough to surface common agile fields on enterprise instances
+/// without overflowing token budgets.
+pub const MAX_ENRICHMENT_PROJECTS: usize = 30;
 
 #[cfg(test)]
 mod tests {
