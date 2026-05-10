@@ -47,15 +47,27 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use devboy_secrets_agent::{
-    ENTRY_NOT_FOUND, FramingError, JSONRPC_VERSION, JsonRpcRequest, JsonRpcResponse, VAULT_LOCKED,
-    default_socket_path, read_response, write_request,
+    ENTRY_NOT_FOUND, JsonRpcResponse, VAULT_LOCKED, default_socket_path,
+};
+#[cfg(unix)]
+use devboy_secrets_agent::{
+    FramingError, JSONRPC_VERSION, JsonRpcRequest, read_response, write_request,
 };
 use devboy_storage::{
     Capabilities, GetOutcome, RemoteRef, SecretSource, SourceError, SourceStatus,
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
+#[cfg(unix)]
 use tokio::io::BufReader;
+// `tokio::net::UnixStream` is unavailable on Windows. The
+// daemon protocol is UNIX-domain-socket only by design (per
+// ADR-023 §3.3 — the socket is `<config_dir>/devboy-tools/
+// secrets/agent.sock`). On Windows this source compiles into a
+// stub whose `rpc_call` returns `SourceError::Upstream`; the
+// rest of the workspace still depends on this crate so the type
+// must exist on every platform.
+#[cfg(unix)]
 use tokio::net::UnixStream;
 
 /// `SecretSource` backed by the encrypted local-vault daemon.
@@ -94,7 +106,9 @@ impl LocalVaultSource {
     }
 
     /// Send one request, await one response. New connection per
-    /// call.
+    /// call. UNIX-only — see the `tokio::net::UnixStream` import
+    /// note above.
+    #[cfg(unix)]
     async fn rpc_call(&self, method: &str, params: Value) -> Result<JsonRpcResponse, SourceError> {
         let stream = UnixStream::connect(&self.socket_path)
             .await
@@ -121,8 +135,27 @@ impl LocalVaultSource {
             .await
             .map_err(|e| framing_to_source(self, e))
     }
+
+    /// Windows stub — UNIX domain sockets do not exist here.
+    /// The whole crate compiles into the same shape as on UNIX
+    /// so consumers need no `#[cfg]` at the call site, but every
+    /// RPC short-circuits to `Unsupported`.
+    #[cfg(not(unix))]
+    async fn rpc_call(
+        &self,
+        _method: &str,
+        _params: Value,
+    ) -> Result<JsonRpcResponse, SourceError> {
+        Err(SourceError::Upstream {
+            name: self.name.clone(),
+            message: "local-vault source requires UNIX domain sockets — \
+                      not available on this platform"
+                .to_owned(),
+        })
+    }
 }
 
+#[cfg(unix)]
 fn framing_to_source(src: &LocalVaultSource, e: FramingError) -> SourceError {
     match e {
         FramingError::Io(io) => SourceError::Io {
@@ -287,7 +320,10 @@ fn map_rpc_error(src: &LocalVaultSource, err: devboy_secrets_agent::JsonRpcError
 // Tests
 // =============================================================================
 
-#[cfg(test)]
+// Tests spin up a real `AgentListener` over a UNIX domain
+// socket, so the module is gated to UNIX targets — the daemon
+// protocol itself is UNIX-only by design (see header note).
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

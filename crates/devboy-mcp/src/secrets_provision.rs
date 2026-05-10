@@ -110,15 +110,17 @@ impl fmt::Display for RequestId {
 }
 
 impl RequestId {
-    /// Build a fresh id. Uses the current `Instant` plus a
-    /// simple per-process counter so concurrent calls from the
-    /// same registry don't collide.
+    /// Build a fresh id from a coarse time component plus the
+    /// per-process counter. The low 8 bits are reserved for
+    /// `seq`, guaranteeing two requests issued within the same
+    /// `Instant::elapsed()` resolution window still collide-
+    /// free (which `Instant::now().elapsed()` alone does not on
+    /// platforms whose clock resolution is coarser than the
+    /// inter-call overhead).
     fn fresh(seq: u64) -> Self {
-        let nanos = Instant::now()
-            .elapsed()
-            .as_nanos()
-            .wrapping_add(u128::from(seq));
-        Self(format!("prov-{:012x}", nanos & 0xFFFF_FFFF_FFFF))
+        let nanos = Instant::now().elapsed().as_nanos() as u64;
+        let id = nanos.wrapping_shl(8).wrapping_add(seq) & 0xFFFF_FFFF_FFFF;
+        Self(format!("prov-{:012x}", id))
     }
 }
 
