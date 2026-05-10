@@ -61,14 +61,17 @@ pub struct JiraClient {
     flavor: JiraFlavor,
     proxy_headers: Option<std::collections::HashMap<String, String>>,
     client: reqwest::Client,
-    /// Lazy-loaded `name → field id` map populated from
+    /// Lazy-loaded `name → [field id, …]` map populated from
     /// `GET /rest/api/{v}/field` on first lookup. Used to translate
     /// human-readable Jira field names (e.g. `"Epic Link"`) to the
     /// instance-specific `customfield_*` ids without forcing callers
-    /// to know them. `tokio::sync::OnceCell` provides `&self` interior
-    /// mutability + race-free initialisation under concurrent
-    /// `tools/call`s.
-    field_cache: tokio::sync::OnceCell<std::collections::HashMap<String, String>>,
+    /// to know them. `Vec<String>` rather than `String` so that
+    /// instances with two custom fields sharing a display name (which
+    /// Jira allows) don't silently collapse with last-write-wins —
+    /// `resolve_field_id_by_name` surfaces ambiguity as an error.
+    /// `tokio::sync::OnceCell` provides `&self` interior mutability +
+    /// race-free initialisation under concurrent `tools/call`s.
+    field_cache: tokio::sync::OnceCell<std::collections::HashMap<String, Vec<String>>>,
 }
 
 impl JiraClient {
@@ -735,12 +738,27 @@ impl JiraClient {
             .field_cache
             .get_or_try_init(|| async {
                 let fields = self.fetch_fields().await?;
-                let map: std::collections::HashMap<String, String> =
-                    fields.into_iter().map(|f| (f.name, f.id)).collect();
+                let mut map: std::collections::HashMap<String, Vec<String>> =
+                    std::collections::HashMap::new();
+                for f in fields {
+                    map.entry(f.name).or_default().push(f.id);
+                }
                 Ok::<_, Error>(map)
             })
             .await?;
-        Ok(cache.get(name).cloned())
+        match cache.get(name).map(Vec::as_slice) {
+            None | Some([]) => Ok(None),
+            Some([id]) => Ok(Some(id.clone())),
+            Some(ids) => Err(Error::InvalidData(format!(
+                "Jira field name `{name}` is ambiguous on this instance — \
+                 {n} fields share this name (ids: {joined}). \
+                 Use `get_custom_fields` to inspect each field's schema, \
+                 then disambiguate by passing the desired id explicitly via \
+                 `customFields: {{ \"<id>\": <value> }}`.",
+                n = ids.len(),
+                joined = ids.join(", "),
+            ))),
+        }
     }
 
     /// Convenience wrapper around
@@ -2205,11 +2223,19 @@ impl IssueProvider for JiraClient {
         };
 
         // Reversed-direction aliases: source/target swap so the link
-        // reads correctly. The set must stay in sync with the match
-        // above — only the `*_by` variants of two-sided link types.
+        // reads correctly. Every `*_by` alias above flips direction —
+        // adding a new `*_by` alias must also add it here, otherwise
+        // the link reads backward (e.g. without `created_by` listed,
+        // `link_issues(A, B, "created_by")` would create "A creates B"
+        // instead of "A is created by B"). Codex review on PR #260.
         let reversed = matches!(
             link_type,
-            "blocked_by" | "duplicated_by" | "cloned_by" | "caused_by" | "implemented_by"
+            "blocked_by"
+                | "duplicated_by"
+                | "cloned_by"
+                | "caused_by"
+                | "implemented_by"
+                | "created_by"
         );
         let (outward_key, inward_key) = if reversed {
             (target_jira_key, source_jira_key)
@@ -5254,6 +5280,30 @@ mod tests {
                 .unwrap();
         }
 
+        /// `created_by` flips direction: source A is created by
+        /// target B, so B becomes outward and A becomes inward.
+        /// Codex review on PR #260 — this alias was missing from the
+        /// reversed-direction set, causing the link to read backward.
+        #[tokio::test]
+        async fn test_link_issues_created_by_flips_direction() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issueLink")
+                    .body_includes("\"name\":\"Created By\"")
+                    .body_includes("\"outwardIssue\":{\"key\":\"PROJ-2\"}")
+                    .body_includes("\"inwardIssue\":{\"key\":\"PROJ-1\"}");
+                then.status(201);
+            });
+
+            let client = create_self_hosted_client(&server);
+            client
+                .link_issues("PROJ-1", "PROJ-2", "created_by")
+                .await
+                .unwrap();
+        }
+
         /// Reversed alias `caused_by` maps to canonical `Causes` and
         /// flips source/target so the resulting link reads correctly.
         #[tokio::test]
@@ -5561,6 +5611,39 @@ mod tests {
             assert_eq!(sprint, Some("customfield_10020".to_string()));
 
             field_mock.assert_calls(1);
+        }
+
+        /// Two custom fields on the same instance are allowed to
+        /// share a display name (Jira admins can create them in
+        /// different contexts). `resolve_field_id_by_name` must not
+        /// silently pick one — it surfaces the ambiguity as an error
+        /// listing every matching id so callers can disambiguate via
+        /// raw `customFields`. Codex review on PR #260.
+        #[tokio::test]
+        async fn test_resolve_field_id_by_name_errors_on_duplicate_names() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "customfield_10100", "name": "Severity", "custom": true},
+                    {"id": "customfield_10200", "name": "Severity", "custom": true}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let err = client
+                .resolve_field_id_by_name("Severity")
+                .await
+                .unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("Severity"), "missing field name: {msg}");
+            assert!(msg.contains("ambiguous"), "missing ambiguity hint: {msg}");
+            assert!(msg.contains("customfield_10100"), "missing first id: {msg}");
+            assert!(
+                msg.contains("customfield_10200"),
+                "missing second id: {msg}"
+            );
         }
 
         /// `resolve_field_id_by_name` returns `None` for unknown names,
