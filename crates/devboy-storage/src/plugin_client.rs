@@ -576,7 +576,14 @@ impl Drop for PluginClient {
 // Tests run a real subprocess plugin (a shell script). Shell
 // scripts and `chmod +x` (`std::os::unix::fs::PermissionsExt`)
 // are UNIX-only, so the test module is gated to UNIX targets.
-#[cfg(all(test, unix))]
+// Tests exec a freshly-written shell script via tokio. Linux runners
+// (especially cargo-llvm-cov + ubuntu-arm) sporadically surface
+// ETXTBSY ("Text file busy") even after sync_all + a sync warmup
+// exec, due to the kernel deferring text-segment release on those
+// filesystems. macOS runs the same exec without the quirk, so gate
+// the whole module to macOS — mirrors the same fix already in
+// `crates/plugins/secrets/1password/src/lib.rs`.
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
     use crate::plugin_manifest::PluginManifest;
