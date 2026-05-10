@@ -31,6 +31,7 @@ For the agent side this means: **you cannot write `secrets.get`** and receive a 
 | `secrets_request_rotation` | Same with destructive-confirm for replacement | `request_id` | Asynchronous, polling |
 | `secrets_propose_metadata` | Suggest metadata edits for an existing path | `request_id` | Asynchronous, polling |
 | `secrets_propose_new_path` | Suggest registering a new path in the manifest | `request_id` | Asynchronous, polling |
+| `secrets_request_use_approval` | Ask for approval to *use* a path whose `approve_on_use` is `session` / `per-call` | `request_id` | Asynchronous, polling |
 | `secrets_poll_status` | Get the status of a previously issued `request_id` | `{kind, status, age_seconds, …}` | Synchronous |
 
 UI-dialog requests are asynchronous: the agent kicks off the dialog and polls for status. The user types into the window/TUI at their own pace; the agent only sees the event flow.
@@ -268,6 +269,73 @@ Unlike `propose_metadata`, the path is editable — the user can decline the age
 
 ---
 
+## `secrets_request_use_approval`
+
+Ask the user for permission to **use** a secret whose manifest entry sets `approve_on_use` to `session` or `per-call`. This is *not* a provision step — the value already exists; the user is approving the *resolve*. Paths with the default `approve_on_use = never` resolve silently and never need this tool.
+
+### Request
+
+```json
+{
+  "name": "secrets_request_use_approval",
+  "arguments": {
+    "path": "team/<provider>/api-key",
+    "reason": "pushing image to staging registry",
+    "ttl_seconds": 60
+  }
+}
+```
+
+- `path` — the path the agent intends to resolve.
+- `reason` — short human-facing string rendered verbatim in the dialog (no markdown, no HTML). Mandatory and non-empty; the dialog uses it to explain *why* the agent wants the value.
+- `ttl_seconds` (optional) — narrow the per-request lifetime below the default 5 minutes. Capped server-side at the registry-wide TTL — agents cannot enlarge the window.
+
+### Response
+
+```json
+{ "request_id": "prov-b8d7f9c1a3e5" }
+```
+
+Status flows through `secrets_poll_status` like the other request_* tools. The `kind` field is `use-approval`; the `status` settles to one of `once` / `session` / `denied` (in addition to the universal `pending` / `expired` / `failed` and unlike provision/rotation, *not* `ok` / `cancelled`).
+
+### Lifecycle
+
+```text
+secrets_request_use_approval(path, reason)
+       │
+       ▼
+   request_id, status = pending
+       │
+       │ user picks a button in the dialog
+       ▼
+   poll_status ──► one of:
+       │  status = once     — resolve permitted this once, no caching
+       │  status = session  — resolve permitted; cached for the session
+       │  status = denied   — agent must surface a hard error
+       │  status = expired  — TTL elapsed without a click
+       │  status = failed   — dialog launcher returned an error
+       ▼
+agent proceeds (or aborts) accordingly
+```
+
+`once` and `denied` are **not cached**. Only `session` populates the in-process `SessionApprovalCache` (`devboy-core::secret_approval`); subsequent resolves of the same path within the cached window observe `ApprovalGate::AlreadyApproved` and skip the dialog.
+
+### Threat model: agent cannot escalate a deny
+
+The dialog is the only way to flip the decision. There is no MCP tool — and never will be — for the agent to *override* a `denied`, *extend* a TTL, or *forge* an approval. `ttl_seconds` is the one client-side knob, and it can only narrow the window. If the user clicks Deny, the agent's only path forward is to ask the user (via chat) and have them re-issue a fresh request from the UI.
+
+### When this tool fires
+
+The orchestration layer (alias resolver / proxy MCP) inspects the manifest's `approve_on_use` field. The tool **only** fires on resolves whose policy is `session` or `per-call`:
+
+- `never` (default) → resolve silently; `secrets_request_use_approval` is never called.
+- `session` → first resolve in the process surfaces the dialog; subsequent resolves consult the cache.
+- `per-call` → every resolve surfaces the dialog (cache is bypassed even if a matching session entry exists).
+
+The agent generally does not call this tool by hand. The proxy alias resolver invokes it on the agent's behalf when a high-level provider tool ("get_issues", "send_message") tries to resolve a gated path. Agents authoring custom resolves (rare) call it directly.
+
+---
+
 ## `secrets_poll_status`
 
 Status check for any `request_id` from any `request_*` or `propose_*` tool. One endpoint — uniform lifecycle semantics.
@@ -297,13 +365,16 @@ Fields:
 
 - `request_id` — echo of the request.
 - `path` — the path the dialog originally opened on. Echoed for confirmation.
-- `kind` — `provision` / `rotation` / `metadata-proposal` / `new-path-proposal`.
+- `kind` — `provision` / `rotation` / `metadata-proposal` / `new-path-proposal` / `use-approval`.
 - `status.kind` — one of:
-  - `pending` — dialog is open, the user has not hit Save or Cancel yet.
-  - `ok` — user saved the value / accepted the proposal.
-  - `cancelled` — user closed the dialog without saving.
+  - `pending` — dialog is open, the user has not picked yet.
+  - `ok` — user saved the value / accepted the proposal (provision / rotation / proposals).
+  - `cancelled` — user closed a provision / rotation / proposal dialog without saving.
   - `expired` — the 5-minute TTL elapsed; the registry marked the entry as Expired.
   - `failed { reason }` — the dialog failed to open (no launcher, daemon down) or the provider rejected the submission.
+  - `once` — use-approval: user approved this resolve only, no caching.
+  - `session` — use-approval: user approved for the rest of the session; the orchestration layer caches the decision.
+  - `denied` — use-approval: user refused; agent must surface a hard error.
 - `age_seconds` — how long ago the request was created.
 
 If the `request_id` does not exist (was swept), the response is an error: `unknown request_id: <id>`.
@@ -323,6 +394,9 @@ handle resp.status.kind:
   cancelled → ask the user "what now?" — retry, abandon, etc.
   expired   → tell the user the dialog timed out; offer a fresh request
   failed    → show resp.status.reason; suggest devboy secrets agent start
+  once      → resolve once; do NOT cache the approval (use-approval only)
+  session   → resolve and cache; further resolves of this path skip the dialog (use-approval only)
+  denied    → surface a hard error; do NOT retry without user input (use-approval only)
 ```
 
 Do not poll faster than once every 2 seconds — the dialog is no faster than a human types. A tight loop heats up CPU and telemetry without speeding anything up.

@@ -94,6 +94,9 @@ optional = [
 [overrides."team/<provider>/api-key"]
 description = "Used by the CI pipeline when publishing artefacts."
 rotate_every_days = 90
+# Force agents to confirm every USE of this token, not just its
+# provision. See "Step 4b. Approve-on-use policy" below.
+approve_on_use = "per-call"
 
 [secret."sandbox/<provider>/local-token"]
 description = "Local smoke tests only; never committed."
@@ -134,6 +137,36 @@ Wire the command into a pre-commit hook or CI pipeline:
 ```
 
 `--strict` promotes warnings about non-conformant paths (P10.1) to errors.
+
+## Step 4b. Approve-on-use policy (optional)
+
+Most paths resolve silently — the proxy alias resolver swaps `@secret:<path>` for the value with no agent prompt. For high-stakes credentials (production database password, signing key, billing API token), the manifest can require the *user* to confirm each *use* even after the value has been provisioned. This is **separate** from rotation gating: rotation already requires a destructive-confirm dialog; approve-on-use covers reads.
+
+Three policies live on the `approve_on_use` field of an `IndexEntry` or `OverrideEntry`:
+
+| Policy | Behaviour | Right for |
+|---|---|---|
+| `never` (default) | Resolve silently — no dialog. | Most paths. |
+| `session` | Prompt on first resolve in the process; cache the approval for the rest of the session. | Stage credentials you don't want to log every five minutes but still want logged once. |
+| `per-call` | Prompt on every resolve; cache is bypassed. | Production credentials, signing keys, anything destructive. |
+
+Examples:
+
+```toml
+# ~/.devboy/secrets/index.toml — global default for a path
+[secret."team/prod-db/password"]
+description = "Production DB password — approve every use."
+rotation_method = "manual"
+approve_on_use = "per-call"
+
+# <project>/.devboy/secrets.toml — project-level tightening
+[overrides."team/<provider>/api-key"]
+approve_on_use = "session"
+```
+
+Override precedence per [ADR-020] §4: `[overrides."<path>"].approve_on_use` wins over the global index entry. The project can therefore tighten (move from `never` to `per-call`) without rewriting the global index. Loosening (`per-call` → `never`) works the same way and is the contract — the project owner has the authority to relax their own copy.
+
+What the dialog looks like is in [`agent-protocol.md`](./agent-protocol.md#secrets_request_use_approval). The cache that holds `session` approvals is `devboy-core::secret_approval::SessionApprovalCache`, scoped per-process; closing the agent session clears it.
 
 ## Step 5. Inspect what the framework sees
 
