@@ -295,6 +295,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::JiraFlavor
 impl core::panic::unwind_safe::UnwindSafe for devboy_jira::JiraFlavor
 pub struct devboy_jira::JiraClient
 impl devboy_jira::JiraClient
+pub async fn devboy_jira::JiraClient::build_project_metadata(&self, project_key: &str) -> devboy_core::error::Result<devboy_jira::metadata::JiraProjectMetadata>
 pub async fn devboy_jira::JiraClient::fetch_fields(&self) -> devboy_core::error::Result<alloc::vec::Vec<devboy_jira::JiraField>>
 pub async fn devboy_jira::JiraClient::list_structures_for_metadata(&self) -> devboy_core::error::Result<alloc::vec::Vec<devboy_jira::metadata::JiraStructureRef>>
 pub async fn devboy_jira::JiraClient::load_default_metadata(&self, strategy: devboy_jira::metadata::MetadataLoadStrategy) -> devboy_core::error::Result<devboy_jira::metadata::JiraMetadata>
