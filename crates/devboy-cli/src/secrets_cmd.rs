@@ -98,6 +98,15 @@ pub enum CatalogCommands {
     /// then appends a `[[source]]` entry to
     /// `~/.devboy/secrets/catalog/sources.toml`.
     AddUrl(CatalogAddUrlArgs),
+    /// Re-fetch URL catalogs from `sources.toml`. Without
+    /// `--force` the loader honours each source's
+    /// `refresh_seconds` TTL — sources within their window
+    /// are reported as "fresh" and not re-fetched. With
+    /// `--force` the cache for matching sources is dropped
+    /// before the fetch so every source goes back to the
+    /// network. Optional positional `<filter>` matches as a
+    /// case-insensitive substring against the source URL.
+    Refresh(CatalogRefreshArgs),
     /// Validate a single catalog JSON file. Loads the file,
     /// runs schema deserialisation (`deny_unknown_fields` is
     /// strict), then per-variant checks that the regex compiles
@@ -142,6 +151,21 @@ pub struct CatalogAddUrlArgs {
     /// Required for non-tty / CI invocations.
     #[arg(long)]
     pub yes: bool,
+}
+
+/// Flags for `devboy secrets catalog refresh`.
+#[derive(Args, Debug, Default)]
+pub struct CatalogRefreshArgs {
+    /// Optional case-insensitive substring; only sources whose
+    /// URL matches are re-fetched. Without this argument every
+    /// URL source is processed.
+    pub filter: Option<String>,
+    /// Bypass each source's `refresh_seconds` TTL and force a
+    /// re-fetch over the network. Cache for matching sources
+    /// is removed before the fetch so the loader cannot serve
+    /// a stale body.
+    #[arg(long)]
+    pub force: bool,
 }
 
 /// Flags for `devboy secrets catalog validate`.
@@ -302,6 +326,7 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
             CatalogCommands::List => catalog_list(),
             CatalogCommands::Status(args) => catalog_status(args),
             CatalogCommands::AddUrl(args) => catalog_add_url(args),
+            CatalogCommands::Refresh(args) => catalog_refresh(args),
             CatalogCommands::Validate(args) => catalog_validate(args),
         },
         SecretsCommands::Setup(args) => crate::secrets_setup::handle_cli(args),
@@ -638,6 +663,105 @@ fn catalog_add_url(args: CatalogAddUrlArgs) -> Result<()> {
             "note: enable_url_catalogs is still `false` — pass --enable to flip the master \
              switch, or edit sources.toml by hand."
         );
+    }
+    Ok(())
+}
+
+/// Re-fetch URL catalogs from `sources.toml`. Without
+/// `--force` the loader honours each source's
+/// `refresh_seconds` TTL — fresh sources are reported but
+/// not re-fetched. With `--force` the cache for matching
+/// sources is dropped before the call so every match goes
+/// back to the network.
+fn catalog_refresh(args: CatalogRefreshArgs) -> Result<()> {
+    use devboy_token_catalog::{
+        FirstFetchPolicy, default_catalog_audit_log_path, default_catalog_cache_dir,
+        default_known_hashes_path, default_sources_toml_path, fetch_url_source, parse_sources_toml,
+        sha256_hex,
+    };
+    use std::fs;
+
+    let sources_path = default_sources_toml_path()
+        .ok_or_else(|| anyhow::anyhow!("could not resolve default sources.toml path"))?;
+    if !sources_path.exists() {
+        println!(
+            "no sources.toml at {} — nothing to refresh",
+            sources_path.display()
+        );
+        return Ok(());
+    }
+    let body = fs::read_to_string(&sources_path)
+        .with_context(|| format!("could not read {}", sources_path.display()))?;
+    let cfg = parse_sources_toml(&body)
+        .with_context(|| format!("malformed {}", sources_path.display()))?;
+
+    if cfg.sources.is_empty() {
+        println!("sources.toml has no [[source]] entries — nothing to refresh");
+        return Ok(());
+    }
+    if !cfg.enable_url_catalogs {
+        println!(
+            "note: enable_url_catalogs = false in {} — fetched bodies will not affect runtime \
+             until the master switch is flipped on (`add-url --enable` or edit by hand).",
+            sources_path.display()
+        );
+    }
+
+    let filter = args.filter.as_deref().map(|s| s.to_lowercase());
+    let known_hashes_path = default_known_hashes_path();
+    let cache_dir = default_catalog_cache_dir();
+    let audit_log_path = default_catalog_audit_log_path();
+
+    let mut fetched = 0usize;
+    let mut skipped = 0usize;
+    let mut failed = 0usize;
+    for source in &cfg.sources {
+        if let Some(needle) = filter.as_deref()
+            && !source.url.to_lowercase().contains(needle)
+        {
+            skipped += 1;
+            continue;
+        }
+        if args.force {
+            // Drop the matching cache files so the loader
+            // cannot serve a stale body. The cache key is
+            // sha256(url) per the P23.5 layout — same logic
+            // as `cache_paths_for` in the catalog crate.
+            if let Some(cdir) = cache_dir.as_deref() {
+                let key = sha256_hex(source.url.as_bytes());
+                let body_path = cdir.join(format!("{key}.json"));
+                let meta_path = cdir.join(format!("{key}.meta.toml"));
+                let _ = fs::remove_file(&body_path);
+                let _ = fs::remove_file(&meta_path);
+            }
+        }
+        print!("→ {} … ", source.url);
+        match fetch_url_source(
+            source,
+            known_hashes_path.as_deref(),
+            cache_dir.as_deref(),
+            FirstFetchPolicy::AutoRecord,
+            audit_log_path.as_deref(),
+        ) {
+            Ok(catalog) => {
+                println!(
+                    "ok ({} variants, provider={})",
+                    catalog.variants.len(),
+                    catalog.provider_id
+                );
+                fetched += 1;
+            }
+            Err(e) => {
+                println!("FAILED");
+                eprintln!("    {e}");
+                failed += 1;
+            }
+        }
+    }
+
+    println!("\nrefresh complete: {fetched} fetched, {skipped} skipped (filter), {failed} failed",);
+    if failed > 0 {
+        anyhow::bail!("{failed} URL source(s) failed — see errors above");
     }
     Ok(())
 }
