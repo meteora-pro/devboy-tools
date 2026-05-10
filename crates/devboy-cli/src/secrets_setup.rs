@@ -463,6 +463,19 @@ fn non_secret_reason(var: &str) -> Option<&'static str> {
         // P3 — Windows CPU / processor metadata. Surface
         // identical on every Windows host; never a credential.
         "PROCESSOR_",
+        // P4 — POSIX locale + XDG base-dir + GPG agent
+        // metadata. `LC_*` is the locale category family;
+        // `XDG_*` are the base-dir spec keys
+        // (XDG_CONFIG_HOME, XDG_DATA_HOME, etc); `GPG_*`
+        // mostly point at the agent socket and TTY hint.
+        // None are user-typed credentials. SSH agents have
+        // their own socket-only contract — `SSH_AUTH_SOCK`,
+        // `SSH_AGENT_PID`, `SSH_CONNECTION`, `SSH_TTY` —
+        // also config, never values.
+        "LC_",
+        "XDG_",
+        "GPG_",
+        "SSH_",
     ];
     for pre in NON_SECRET_PREFIXES {
         if v.starts_with(pre) {
@@ -526,7 +539,20 @@ fn non_secret_reason(var: &str) -> Option<&'static str> {
         | "DRIVERDATA"
         | "ONEDRIVE"
         | "ONEDRIVECONSUMER"
-        | "ONEDRIVECOMMERCIAL" => Some("not a secret — environment / machine variable"),
+        | "ONEDRIVECOMMERCIAL"
+        // P4 — POSIX shell / editor / pager toggles. Set by
+        // shell init (zshrc, bashrc, profile) and inherited
+        // through every subprocess; never user credentials.
+        | "LANGUAGE"
+        | "EDITOR"
+        | "VISUAL"
+        | "PAGER"
+        | "MANPAGER"
+        | "MANPATH"
+        | "INFOPATH"
+        | "BROWSER"
+        | "OLDPWD"
+        | "_" => Some("not a secret — environment / machine variable"),
         _ => None,
     }
 }
@@ -1700,6 +1726,30 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
         assert_skip(&propose_one("HOME", &known()));
         assert_skip(&propose_one("PATH", &known()));
         assert_skip(&propose_one("PORT", &known()));
+    }
+
+    #[test]
+    fn proposer_skips_posix_locale_and_xdg() {
+        // P4 — POSIX locale family.
+        assert_skip(&propose_one("LC_ALL", &known()));
+        assert_skip(&propose_one("LC_CTYPE", &known()));
+        assert_skip(&propose_one("LC_MESSAGES", &known()));
+        // XDG base-dir spec.
+        assert_skip(&propose_one("XDG_CONFIG_HOME", &known()));
+        assert_skip(&propose_one("XDG_DATA_HOME", &known()));
+        assert_skip(&propose_one("XDG_RUNTIME_DIR", &known()));
+        // GPG agent metadata (sockets, TTY hint, never values).
+        assert_skip(&propose_one("GPG_TTY", &known()));
+        assert_skip(&propose_one("GPG_AGENT_INFO", &known()));
+        // SSH agent metadata.
+        assert_skip(&propose_one("SSH_AUTH_SOCK", &known()));
+        assert_skip(&propose_one("SSH_AGENT_PID", &known()));
+        assert_skip(&propose_one("SSH_CONNECTION", &known()));
+        // Shell / editor / pager toggles.
+        assert_skip(&propose_one("EDITOR", &known()));
+        assert_skip(&propose_one("VISUAL", &known()));
+        assert_skip(&propose_one("PAGER", &known()));
+        assert_skip(&propose_one("OLDPWD", &known()));
     }
 
     #[test]
