@@ -94,6 +94,10 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                     PropertySchema::string("component name"),
                     "Jira component names to associate with the issue. Ignored by providers that don't have Components (GitHub/GitLab/ClickUp).",
                 ));
+                s.add_property("fixVersions", PropertySchema::array(
+                    PropertySchema::string("fix version name"),
+                    "Jira fix-version (release) names to associate with the issue. Each entry is a `ProjectVersion.name` (e.g., \"3.18.0\"). Ignored by providers without fix versions (GitHub/GitLab/ClickUp).",
+                ));
                 s.set_required("title", true);
                 s
             },
@@ -117,6 +121,10 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("components", PropertySchema::array(
                     PropertySchema::string("component name"),
                     "Replace components with these Jira component names. Omit the field to leave existing components untouched; pass an empty array to clear.",
+                ));
+                s.add_property("fixVersions", PropertySchema::array(
+                    PropertySchema::string("fix version name"),
+                    "Replace fix versions with these Jira release names. Omit the field to leave existing fix versions untouched; pass an empty array to clear.",
                 ));
                 s.set_required("key", true);
                 s
