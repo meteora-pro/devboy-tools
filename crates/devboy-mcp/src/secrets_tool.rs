@@ -28,8 +28,8 @@
 
 use chrono::{Local, NaiveDate};
 use devboy_storage::{
-    GlobalIndex, IndexEntry, MergeOutput, ProjectManifest, ResolvedSecret, RotationMethod,
-    SecretPath, merge_manifest,
+    ApproveOnUse, GlobalIndex, IndexEntry, MergeOutput, ProjectManifest, ResolvedSecret,
+    RotationMethod, SecretPath, merge_manifest,
 };
 use serde::{Deserialize, Serialize};
 
@@ -99,6 +99,14 @@ pub struct SecretsListItem {
     /// [`IndexEntry::rotation_method`]: always includes `read`,
     /// adds `rotate` when the rotation method is non-manual.
     pub capabilities_hint: String,
+    /// Approve-on-use policy (P25). `None` is wire-equivalent
+    /// to `"never"` — the field is omitted from the reply when
+    /// the manifest leaves it at the default to keep the wire
+    /// format minimal. Agents pre-filtering the inventory can
+    /// rely on `Some("session" | "per-call")` to spot paths
+    /// that will surface a dialog on resolve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approve_on_use: Option<ApproveOnUse>,
 }
 
 impl crate::agent_safety::AgentSafeReply for SecretsListItem {}
@@ -119,6 +127,12 @@ pub struct SecretsDescribeReply {
     pub last_rotated_at: Option<String>,
     pub rotate_every_days: Option<u32>,
     pub pattern_id: Option<String>,
+    /// Approve-on-use policy (P25). Mirrored from the merged
+    /// `IndexEntry`. `None` is wire-equivalent to `"never"` —
+    /// see [`SecretsListItem::approve_on_use`] for the
+    /// rationale of skipping the default on the wire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approve_on_use: Option<ApproveOnUse>,
 }
 
 impl crate::agent_safety::AgentSafeReply for SecretsDescribeReply {}
@@ -223,6 +237,7 @@ fn build_list_item(row: &ResolvedSecret, today: NaiveDate) -> SecretsListItem {
         expires_at: row.metadata.expires_at.clone(),
         source_name: None,
         capabilities_hint: capabilities_hint(&row.metadata),
+        approve_on_use: surface_policy(row.metadata.approve_on_use),
     }
 }
 
@@ -242,6 +257,18 @@ fn build_describe(row: &ResolvedSecret, today: NaiveDate) -> SecretsDescribeRepl
         last_rotated_at: row.metadata.last_rotated_at.clone(),
         rotate_every_days: row.metadata.rotate_every_days,
         pattern_id: row.metadata.pattern_id.clone(),
+        approve_on_use: surface_policy(row.metadata.approve_on_use),
+    }
+}
+
+/// Project the manifest's `approve_on_use` value to the wire-
+/// format. `Never` (the default) is mapped to `None` so the
+/// reply does not carry a redundant field — agents can treat
+/// "absent" and `"never"` as equivalent.
+fn surface_policy(p: Option<ApproveOnUse>) -> Option<ApproveOnUse> {
+    match p {
+        None | Some(ApproveOnUse::Never) => None,
+        Some(other) => Some(other),
     }
 }
 
@@ -614,5 +641,65 @@ mod tests {
     fn filter_admits_normal_paths_regardless_of_include_internal_flag() {
         let row = synth_row("team/jira/api-key", false);
         assert!(filter_matches(&row, &SecretsListFilter::default(), today()));
+    }
+
+    // -- approve_on_use surfacing (P25 / agent-protocol gap) --------
+
+    fn build_index_with_policy(path: &str, policy: ApproveOnUse) -> GlobalIndex {
+        let body = format!(
+            "[secret.\"{path}\"]\nrotation_method = \"manual\"\napprove_on_use = \"{}\"\n",
+            match policy {
+                ApproveOnUse::Never => "never",
+                ApproveOnUse::Session => "session",
+                ApproveOnUse::PerCall => "per-call",
+            }
+        );
+        GlobalIndex::from_toml_str(&body).unwrap()
+    }
+
+    #[test]
+    fn describe_surfaces_session_policy_to_agent() {
+        let idx = build_index_with_policy("team/jira/api-key", ApproveOnUse::Session);
+        let manifest = manifest_with("team/jira/api-key");
+        let reply = describe(&idx, &manifest, "team/jira/api-key", today()).unwrap();
+        assert_eq!(reply.approve_on_use, Some(ApproveOnUse::Session));
+        let json = serde_json::to_value(&reply).unwrap();
+        assert_eq!(json["approve_on_use"], "session");
+    }
+
+    #[test]
+    fn describe_surfaces_per_call_policy_to_agent() {
+        let idx = build_index_with_policy("team/prod-db/password", ApproveOnUse::PerCall);
+        let manifest = manifest_with("team/prod-db/password");
+        let reply = describe(&idx, &manifest, "team/prod-db/password", today()).unwrap();
+        assert_eq!(reply.approve_on_use, Some(ApproveOnUse::PerCall));
+        let json = serde_json::to_value(&reply).unwrap();
+        assert_eq!(json["approve_on_use"], "per-call");
+    }
+
+    #[test]
+    fn describe_omits_never_policy_from_wire_format() {
+        // Default policy → field absent from the JSON reply
+        // so the wire-format stays minimal. Agents treat
+        // "missing" and `"never"` as equivalent (per
+        // agent-protocol.md).
+        let idx = build_index_with_policy("team/jira/api-key", ApproveOnUse::Never);
+        let manifest = manifest_with("team/jira/api-key");
+        let reply = describe(&idx, &manifest, "team/jira/api-key", today()).unwrap();
+        assert_eq!(reply.approve_on_use, None);
+        let json = serde_json::to_value(&reply).unwrap();
+        assert!(
+            json.get("approve_on_use").is_none(),
+            "approve_on_use must be omitted when policy is Never: {json}"
+        );
+    }
+
+    #[test]
+    fn list_surfaces_policy_in_each_row() {
+        let idx = build_index_with_policy("team/jira/api-key", ApproveOnUse::Session);
+        let manifest = manifest_with("team/jira/api-key");
+        let rows = list(&idx, &manifest, &SecretsListFilter::default(), today()).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].approve_on_use, Some(ApproveOnUse::Session));
     }
 }

@@ -1039,6 +1039,7 @@ impl core::marker::UnsafeUnpin for devboy_mcp::secrets_tool::SecretsToolError
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_tool::SecretsToolError
 impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_tool::SecretsToolError
 pub struct devboy_mcp::secrets_tool::SecretsDescribeReply
+pub devboy_mcp::secrets_tool::SecretsDescribeReply::approve_on_use: core::option::Option<devboy_storage::index::ApproveOnUse>
 pub devboy_mcp::secrets_tool::SecretsDescribeReply::capabilities_hint: alloc::string::String
 pub devboy_mcp::secrets_tool::SecretsDescribeReply::description: core::option::Option<alloc::string::String>
 pub devboy_mcp::secrets_tool::SecretsDescribeReply::expires_at: core::option::Option<alloc::string::String>
@@ -1091,6 +1092,7 @@ impl core::marker::UnsafeUnpin for devboy_mcp::secrets_tool::SecretsListFilter
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_tool::SecretsListFilter
 impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_tool::SecretsListFilter
 pub struct devboy_mcp::secrets_tool::SecretsListItem
+pub devboy_mcp::secrets_tool::SecretsListItem::approve_on_use: core::option::Option<devboy_storage::index::ApproveOnUse>
 pub devboy_mcp::secrets_tool::SecretsListItem::capabilities_hint: alloc::string::String
 pub devboy_mcp::secrets_tool::SecretsListItem::expires_at: core::option::Option<alloc::string::String>
 pub devboy_mcp::secrets_tool::SecretsListItem::path: alloc::string::String

@@ -79,6 +79,7 @@ Fields:
 - `expires_at` — ISO-8601 (`YYYY-MM-DD`) or `null`.
 - `source_name` — currently always `null` (the router is not exposed to the MCP server; the field is reserved in the wire format).
 - `capabilities_hint` — `"read"` (manual rotation) or `"read,rotate"` (provider-ui / provider-api).
+- `approve_on_use` — `"session"` / `"per-call"`. Omitted from the reply when the manifest leaves the path at the default `"never"` so that "absent" and `"never"` are wire-equivalent. Lets the agent pre-filter the inventory and warn the user up-front about paths that will surface a dialog on resolve.
 
 The response is sorted by `path` for test stability.
 
@@ -113,7 +114,8 @@ A strict superset of a `secrets_list` element plus extra metadata fields:
   "rotation_method": "manual",
   "last_rotated_at": "2026-04-15",
   "rotate_every_days": 90,
-  "pattern_id": "<pattern-id>"
+  "pattern_id": "<pattern-id>",
+  "approve_on_use": "session"
 }
 ```
 
@@ -124,6 +126,8 @@ Errors:
 - `merge-failed` — manifest conflict (duplicate entry, invalid structure).
 
 > **Manifest-gating**: only paths the active project manifest references are visible. The global index is not leaked wholesale.
+
+The `approve_on_use` field is omitted from the reply when the manifest leaves the path at the default `"never"`. Otherwise it carries `"session"` or `"per-call"` so the agent can pre-warn the user about paths that will surface a dialog at resolve time.
 
 ---
 
