@@ -2172,17 +2172,34 @@ impl IssueProvider for JiraClient {
         let source_jira_key = parse_jira_key(source_key).to_string();
         let target_jira_key = parse_jira_key(target_key).to_string();
 
+        // Map snake_case aliases to Jira's canonical link-type names.
+        // Reversed-direction aliases (`*_by`) flip source/target below
+        // so the resulting link reads correctly. Anything not in this
+        // table passes through verbatim — Jira accepts any link type
+        // configured on the instance, including custom names like
+        // `Implements`, `Causes`, `Created By`, `Discovered while
+        // testing` etc., and rejects unknown ones with a 400 that the
+        // caller will surface as-is.
         let link_type_name = match link_type {
             "blocks" => "Blocks",
-            "blocked_by" => "Blocks", // reversed direction
+            "blocked_by" => "Blocks",
             "relates_to" => "Relates",
-            "duplicates" => "Duplicate",
-            "clones" => "Cloners",
+            "duplicates" | "duplicated_by" => "Duplicate",
+            "clones" | "cloned_by" => "Cloners",
+            "causes" | "caused_by" => "Causes",
+            "implements" | "implemented_by" => "Implements",
+            "created_by" | "creates" => "Created By",
             other => other,
         };
 
-        // For "blocked_by", swap source and target so the direction is correct
-        let (outward_key, inward_key) = if link_type == "blocked_by" {
+        // Reversed-direction aliases: source/target swap so the link
+        // reads correctly. The set must stay in sync with the match
+        // above — only the `*_by` variants of two-sided link types.
+        let reversed = matches!(
+            link_type,
+            "blocked_by" | "duplicated_by" | "cloned_by" | "caused_by" | "implemented_by"
+        );
+        let (outward_key, inward_key) = if reversed {
             (target_jira_key, source_jira_key)
         } else {
             (source_jira_key, target_jira_key)
@@ -5139,6 +5156,74 @@ mod tests {
                 .unwrap();
 
             assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// `link_issues("Implements", ...)` and other canonical Jira
+        /// link names go through to `POST /issueLink` verbatim — no
+        /// alias mapping clobbers them.
+        #[tokio::test]
+        async fn test_link_issues_implements_canonical_name() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issueLink")
+                    .body_includes("\"name\":\"Implements\"")
+                    .body_includes("\"outwardIssue\":{\"key\":\"PROJ-1\"}")
+                    .body_includes("\"inwardIssue\":{\"key\":\"PROJ-2\"}");
+                then.status(201);
+            });
+
+            let client = create_self_hosted_client(&server);
+            client
+                .link_issues("PROJ-1", "PROJ-2", "Implements")
+                .await
+                .unwrap();
+        }
+
+        /// snake_case alias `causes` maps to canonical `Causes`.
+        #[tokio::test]
+        async fn test_link_issues_causes_alias_maps_to_canonical() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issueLink")
+                    .body_includes("\"name\":\"Causes\"")
+                    .body_includes("\"outwardIssue\":{\"key\":\"PROJ-1\"}")
+                    .body_includes("\"inwardIssue\":{\"key\":\"PROJ-2\"}");
+                then.status(201);
+            });
+
+            let client = create_self_hosted_client(&server);
+            client
+                .link_issues("PROJ-1", "PROJ-2", "causes")
+                .await
+                .unwrap();
+        }
+
+        /// Reversed alias `caused_by` maps to canonical `Causes` and
+        /// flips source/target so the resulting link reads correctly.
+        #[tokio::test]
+        async fn test_link_issues_caused_by_flips_direction() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issueLink")
+                    .body_includes("\"name\":\"Causes\"")
+                    // source PROJ-1 becomes inwardIssue (the
+                    // "caused by" side); target PROJ-2 is the cause.
+                    .body_includes("\"outwardIssue\":{\"key\":\"PROJ-2\"}")
+                    .body_includes("\"inwardIssue\":{\"key\":\"PROJ-1\"}");
+                then.status(201);
+            });
+
+            let client = create_self_hosted_client(&server);
+            client
+                .link_issues("PROJ-1", "PROJ-2", "caused_by")
+                .await
+                .unwrap();
         }
 
         /// On Server/DC and Cloud company-managed projects, the

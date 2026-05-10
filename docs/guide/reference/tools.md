@@ -179,7 +179,7 @@ Link two issues together (blocks, relates_to, etc.).
 
 | Parameter | Type | Required | Description |
 |---|---|:---:|---|
-| `linkType` | string | ✅ | Link type (e.g., blocks, relates_to) |
+| `linkType` | string | ✅ | Issue link type. Accepts canonical Jira names (`Blocks`, `Relates`, `Causes`, `Implements`, `Created By`, `Duplicate`, `Cloners`) and snake_case aliases (`blocks`, `blocked_by`, `relates_to`, `causes`, `caused_by`, `implements`, `implemented_by`, `created_by`, `creates`, `duplicates`, `duplicated_by`, `clones`, `cloned_by`). The `*_by` variants flip direction. Custom link types configured on the instance also work — pass the exact name. GitHub/GitLab providers ignore this field. |
 | `sourceIssueKey` | string | ✅ | Source issue key |
 | `targetIssueKey` | string | ✅ | Target issue key |
 
@@ -201,7 +201,7 @@ Remove a link between two issues.
 
 | Parameter | Type | Required | Description |
 |---|---|:---:|---|
-| `linkType` | string | ✅ | Link type to remove (e.g., blocks, relates_to, subtask) |
+| `linkType` | string | ✅ | Issue link type to remove. Accepts the same canonical names and snake_case aliases as `link_issues` (`Blocks`, `Causes`, `Implements`, `Created By`, `Duplicate`, `Cloners`, plus `*_by` direction flips and `subtask`). Custom link types pass through as-is. |
 | `sourceIssueKey` | string | ✅ | Source issue key |
 | `targetIssueKey` | string | ✅ | Target issue key |
 

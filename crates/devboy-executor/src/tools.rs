@@ -316,7 +316,9 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 let mut s = ToolSchema::new();
                 s.add_property("sourceIssueKey", PropertySchema::string("Source issue key"));
                 s.add_property("targetIssueKey", PropertySchema::string("Target issue key"));
-                s.add_property("linkType", PropertySchema::string("Link type (e.g., blocks, relates_to)"));
+                s.add_property("linkType", PropertySchema::string(
+                    "Issue link type. Accepts canonical Jira names (`Blocks`, `Relates`, `Causes`, `Implements`, `Created By`, `Duplicate`, `Cloners`) and snake_case aliases (`blocks`, `blocked_by`, `relates_to`, `causes`, `caused_by`, `implements`, `implemented_by`, `created_by`, `creates`, `duplicates`, `duplicated_by`, `clones`, `cloned_by`). The `*_by` variants flip direction. Custom link types configured on the instance also work — pass the exact name. GitHub/GitLab providers ignore this field.",
+                ));
                 s.set_required("sourceIssueKey", true);
                 s.set_required("targetIssueKey", true);
                 s.set_required("linkType", true);
@@ -331,7 +333,9 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 let mut s = ToolSchema::new();
                 s.add_property("sourceIssueKey", PropertySchema::string("Source issue key"));
                 s.add_property("targetIssueKey", PropertySchema::string("Target issue key"));
-                s.add_property("linkType", PropertySchema::string("Link type to remove (e.g., blocks, relates_to, subtask)"));
+                s.add_property("linkType", PropertySchema::string(
+                    "Issue link type to remove. Accepts the same canonical names and snake_case aliases as `link_issues` (`Blocks`, `Causes`, `Implements`, `Created By`, `Duplicate`, `Cloners`, plus `*_by` direction flips and `subtask`). Custom link types pass through as-is.",
+                ));
                 s.set_required("sourceIssueKey", true);
                 s.set_required("targetIssueKey", true);
                 s.set_required("linkType", true);
