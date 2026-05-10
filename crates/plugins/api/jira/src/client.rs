@@ -759,6 +759,26 @@ impl JiraClient {
         })
     }
 
+    /// Read the `Epic Link` customfield value off an issue's `extras`
+    /// map. Returns the parent epic key (e.g. `"PROJ-1"`) when the
+    /// instance has the customfield configured and the slot is set;
+    /// `None` otherwise. Cloud team-managed Epics use the system
+    /// `parent` field instead, so callers should still check
+    /// `relations.parent` first.
+    async fn read_epic_link_key(&self, issue: &JiraIssue) -> Result<Option<String>> {
+        let cf_id = match self.resolve_field_id_by_name("Epic Link").await? {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+        Ok(issue
+            .fields
+            .extras
+            .get(&cf_id)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string))
+    }
+
     /// Read the Epic Description customfield as a fallback when an
     /// Epic-typed issue's system `description` is empty. Many
     /// Server/DC instances and older Cloud company-managed projects
@@ -2184,12 +2204,24 @@ impl IssueProvider for JiraClient {
 
     async fn get_issue_relations(&self, issue_key: &str) -> Result<IssueRelations> {
         let jira_key = parse_jira_key(issue_key);
+        // Request `*navigable` so the `Epic Link` customfield lands
+        // in `fields.extras` for the post-map enrichment below.
         let url = format!(
-            "{}/issue/{}?fields=parent,subtasks,issuelinks,summary,status,priority",
+            "{}/issue/{}?fields=parent,subtasks,issuelinks,summary,status,priority,issuetype,*navigable",
             self.base_url, jira_key
         );
         let issue: JiraIssue = self.get(&url).await?;
-        Ok(map_relations(&issue, self.flavor, &self.instance_url))
+        let mut relations = map_relations(&issue, self.flavor, &self.instance_url);
+        // System `parent` (Cloud team-managed) takes precedence —
+        // skip the customfield path when it's already populated to
+        // avoid an unnecessary `/field` round-trip.
+        if relations.parent.is_none()
+            && relations.epic_key.is_none()
+            && let Some(epic_key) = self.read_epic_link_key(&issue).await?
+        {
+            relations.epic_key = Some(epic_key);
+        }
+        Ok(relations)
     }
 
     async fn upload_attachment(
@@ -5107,6 +5139,87 @@ mod tests {
                 .unwrap();
 
             assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// On Server/DC and Cloud company-managed projects, the
+        /// parent epic is in the `Epic Link` customfield rather than
+        /// in `fields.parent`. `get_issue_relations` populates
+        /// `relations.epic_key` from the customfield so agents can
+        /// see the link without a follow-up call.
+        #[tokio::test]
+        async fn test_get_issue_relations_includes_epic_link_customfield() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "customfield_10014", "name": "Epic Link", "custom": true,
+                     "schema": {"type": "any"}}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-100");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10100",
+                    "key": "PROJ-100",
+                    "fields": {
+                        "summary": "Story under epic",
+                        "issuetype": {"name": "Story"},
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-05T10:00:00.000+0000",
+                        "customfield_10014": "PROJ-1"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let relations = client.get_issue_relations("PROJ-100").await.unwrap();
+            assert_eq!(relations.epic_key.as_deref(), Some("PROJ-1"));
+            assert!(relations.parent.is_none());
+        }
+
+        /// Cloud team-managed projects keep the parent epic in the
+        /// system `parent` field. `relations.parent` populates,
+        /// `epic_key` stays `None` (no customfield needed).
+        #[tokio::test]
+        async fn test_get_issue_relations_cloud_team_managed_uses_parent() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-200");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10200",
+                    "key": "PROJ-200",
+                    "fields": {
+                        "summary": "Story under epic (team-managed)",
+                        "issuetype": {"name": "Story"},
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-05T10:00:00.000+0000",
+                        "parent": {
+                            "id": "9000",
+                            "key": "PROJ-1",
+                            "fields": {
+                                "summary": "Parent epic",
+                                "status": {"name": "Open"},
+                                "labels": [],
+                                "created": "2024-01-01T10:00:00.000+0000"
+                            }
+                        }
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let relations = client.get_issue_relations("PROJ-200").await.unwrap();
+            assert!(relations.parent.is_some());
+            assert_eq!(relations.parent.as_ref().unwrap().key, "jira#PROJ-1");
+            // No customfield call should have been made — there's no
+            // /field mock and the test would fail if the code tried
+            // to make the request.
+            assert_eq!(relations.epic_key, None);
         }
 
         /// Epic-typed issues whose system `description` is empty fall

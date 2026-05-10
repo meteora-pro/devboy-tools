@@ -95,6 +95,14 @@ pub struct IssueRelations {
     /// Duplicate issues
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub duplicates: Vec<IssueLink>,
+    /// Parent epic key (Jira-only). Populated when the issue has an
+    /// `Epic Link` customfield value — covers Server/DC and Cloud
+    /// company-managed projects. Cloud team-managed Epics use the
+    /// system `parent` field instead and surface there. Lightweight
+    /// key-only field on purpose: a full `Issue` lookup for every
+    /// relations call would be too expensive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_key: Option<String>,
 }
 
 /// Filter parameters for listing issues.

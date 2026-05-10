@@ -2038,6 +2038,7 @@ mod tests {
             blocked_by: vec![],
             related_to: vec![],
             duplicates: vec![],
+            epic_key: None,
         };
         let output = ToolOutput::Relations(Box::new(relations));
         let result = format_output(output, None, None, None).unwrap().content;
