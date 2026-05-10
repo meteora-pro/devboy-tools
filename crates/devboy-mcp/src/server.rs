@@ -779,6 +779,9 @@ impl McpServer {
             "secrets_describe" => Some(self.handle_secrets_describe(params)),
             "secrets_request_provision" => Some(self.handle_secrets_request_provision(params)),
             "secrets_request_rotation" => Some(self.handle_secrets_request_rotation(params)),
+            "secrets_request_use_approval" => {
+                Some(self.handle_secrets_request_use_approval(params))
+            }
             "secrets_propose_metadata" => Some(self.handle_secrets_propose_metadata(params)),
             "secrets_propose_new_path" => Some(self.handle_secrets_propose_new_path(params)),
             "secrets_poll_status" => Some(self.handle_secrets_poll_status(params)),
@@ -930,6 +933,57 @@ impl McpServer {
                 Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
             },
             Err(e) => ToolCallResult::error(format!("secrets_request_rotation failed: {e}")),
+        }
+    }
+
+    fn handle_secrets_request_use_approval(&self, params: &ToolCallParams) -> ToolCallResult {
+        use devboy_storage::SecretPath;
+
+        #[derive(Deserialize)]
+        struct UseApprovalParams {
+            path: String,
+            reason: String,
+            #[serde(default)]
+            ttl_seconds: Option<u64>,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<UseApprovalParams>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => {
+                return ToolCallResult::error(
+                    "missing required parameters: path, reason".to_string(),
+                );
+            }
+        };
+
+        let path = match SecretPath::parse(&args.path) {
+            Ok(p) => p,
+            Err(e) => {
+                return ToolCallResult::error(format!(
+                    "`{}` is not a valid ADR-020 path: {e}",
+                    args.path
+                ));
+            }
+        };
+
+        if args.reason.trim().is_empty() {
+            return ToolCallResult::error(
+                "`reason` must be a non-empty human-facing explanation".to_string(),
+            );
+        }
+
+        match self
+            .secrets_provision
+            .request_use_approval(path, args.reason, args.ttl_seconds)
+        {
+            Ok(id) => match serde_json::to_value(serde_json::json!({ "request_id": id.0 })) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            Err(e) => ToolCallResult::error(format!("secrets_request_use_approval failed: {e}")),
         }
     }
 
@@ -1241,6 +1295,7 @@ impl McpServer {
                 | "secrets_describe"
                 | "secrets_request_provision"
                 | "secrets_request_rotation"
+                | "secrets_request_use_approval"
                 | "secrets_propose_metadata"
                 | "secrets_propose_new_path"
                 | "secrets_poll_status"
@@ -2074,6 +2129,56 @@ mod tests {
         // Tool-level error (not protocol error) — `result` is set
         // with `is_error: true`.
         assert!(resp.result.is_some(), "result should still be set");
+    }
+
+    #[tokio::test]
+    async fn secrets_request_use_approval_dispatches_to_use_approval_launcher() {
+        use crate::secrets_provision::{FakeUiLauncher, ProvisionRegistry};
+
+        let fake = Arc::new(FakeUiLauncher::new());
+        let registry = Arc::new(ProvisionRegistry::with_launcher(fake.clone()));
+        let mut server = McpServer::new();
+        server.set_secrets_provision_registry(registry);
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "secrets_request_use_approval",
+                "arguments": {
+                    "path": "team/jira/api-key",
+                    "reason": "pushing image to staging"
+                }
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none(), "got error {:?}", resp.error);
+
+        let calls = fake.use_approval_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1.as_str(), "team/jira/api-key");
+        assert_eq!(calls[0].2, "pushing image to staging");
+    }
+
+    #[tokio::test]
+    async fn secrets_request_use_approval_rejects_empty_reason() {
+        let mut server = McpServer::new();
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "secrets_request_use_approval",
+                "arguments": {
+                    "path": "team/jira/api-key",
+                    "reason": "   "
+                }
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        assert!(resp.result.is_some());
     }
 
     #[test]

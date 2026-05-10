@@ -946,6 +946,48 @@ pub fn mcp_only_tools() -> Vec<McpOnlyTool> {
             },
         },
         McpOnlyTool {
+            name: "secrets_request_use_approval".into(),
+            description: "Open the use-approval dialog for an ADR-020 path \
+                whose `approve_on_use` is set to `session` or `per-call`. \
+                The agent supplies a short human-facing `reason` that the \
+                dialog renders verbatim alongside the path; the user picks \
+                `once`, `session`, or `denied`. Returns a `request_id` to \
+                poll via `secrets_poll_status`. Pending requests expire 5 \
+                minutes after issuance; `ttl_seconds` may shorten the \
+                window but never extend it. The agent never sees the \
+                secret — only whether the user approved its use."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "path",
+                    PropertySchema::string("Full ADR-020 path the agent intends to resolve."),
+                );
+                s.add_property(
+                    "reason",
+                    PropertySchema::string(
+                        "Short human-facing reason rendered in the dialog \
+                         (e.g. 'pushing image to staging registry').",
+                    ),
+                );
+                s.add_property(
+                    "ttl_seconds",
+                    PropertySchema {
+                        schema_type: "integer".into(),
+                        description: Some(
+                            "Optional lifetime in seconds; capped at the \
+                             registry-wide TTL (5 minutes)."
+                                .into(),
+                        ),
+                        ..Default::default()
+                    },
+                );
+                s.set_required("path", true);
+                s.set_required("reason", true);
+                s
+            },
+        },
+        McpOnlyTool {
             name: "secrets_propose_metadata".into(),
             description: "Suggest metadata edits for an existing ADR-020 \
                 path. The dialog renders the manifest's current values as the \

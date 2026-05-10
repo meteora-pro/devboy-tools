@@ -68,6 +68,12 @@ pub enum ProvisionMode {
 
 /// Status surfaced to the agent. Stable strings — pinned by
 /// snapshot tests so a future client can rely on them.
+///
+/// `Once`, `Session`, `Denied` are produced exclusively by the
+/// use-approval dialog (P25 / `secrets_request_use_approval`).
+/// `Ok`, `Cancelled` are produced by the provision / rotation /
+/// proposal dialogs. `Pending`, `Expired`, `Failed` are common
+/// to all dialog kinds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "kind")]
 pub enum ProvisionStatus {
@@ -82,6 +88,16 @@ pub enum ProvisionStatus {
     /// Dialog couldn't be opened — typically because the
     /// daemon is down or the launcher misconfigured.
     Failed { reason: String },
+    /// Use-approval dialog: user approved the request for one
+    /// resolve only — the consumer must not cache.
+    Once,
+    /// Use-approval dialog: user approved the request for the
+    /// rest of the session — the consumer should cache the
+    /// decision for that window only.
+    Session,
+    /// Use-approval dialog: user denied the request. The
+    /// consumer must surface a hard error to the agent.
+    Denied,
 }
 
 impl ProvisionStatus {
@@ -92,6 +108,9 @@ impl ProvisionStatus {
             Self::Cancelled => "cancelled",
             Self::Expired => "expired",
             Self::Failed { .. } => "failed",
+            Self::Once => "once",
+            Self::Session => "session",
+            Self::Denied => "denied",
         }
     }
 }
@@ -155,6 +174,10 @@ pub enum RequestKind {
     Rotation,
     MetadataProposal,
     NewPathProposal,
+    /// Use-approval dialog (P25 / ADR-023 §3.7) — gates a
+    /// resolve-time decision for paths whose `approve_on_use`
+    /// is set to `Session` or `PerCall`.
+    UseApproval,
 }
 
 impl RequestKind {
@@ -164,6 +187,7 @@ impl RequestKind {
             Self::Rotation => "rotation",
             Self::MetadataProposal => "metadata-proposal",
             Self::NewPathProposal => "new-path-proposal",
+            Self::UseApproval => "use-approval",
         }
     }
 
@@ -220,6 +244,24 @@ pub trait UiDialogLauncher: Send + Sync + fmt::Debug {
     ) -> Result<(), String> {
         Err("new-path-proposal launcher is not wired into this MCP server build".to_owned())
     }
+
+    /// Open the use-approval dialog (P25 / ADR-023 §3.7). The
+    /// agent supplies a short human-facing reason that the
+    /// dialog renders verbatim — like all proposed text it has
+    /// no power over the trusted manifest.
+    ///
+    /// The dialog offers three settle paths: `Once`, `Session`,
+    /// `Denied`. Default impl returns Failed for embedders that
+    /// haven't wired the dialog yet — the agent gets a precise
+    /// error rather than a stuck pending request.
+    fn open_use_approval(
+        &self,
+        _request_id: &RequestId,
+        _path: &SecretPath,
+        _reason: &str,
+    ) -> Result<(), String> {
+        Err("use-approval launcher is not wired into this MCP server build".to_owned())
+    }
 }
 
 /// No-op launcher used as the default until the daemon socket
@@ -251,6 +293,10 @@ struct Entry {
     kind: RequestKind,
     status: ProvisionStatus,
     created_at: Instant,
+    /// Per-entry TTL override — used by the use-approval flow
+    /// where the caller asks for a shorter window. `None` means
+    /// "use the registry-wide TTL".
+    ttl_override: Option<Duration>,
 }
 
 /// Per-server in-memory registry of in-flight provision
@@ -392,6 +438,43 @@ impl ProvisionRegistry {
         }
     }
 
+    /// Open the use-approval dialog (P25 / ADR-023 §3.7). The
+    /// agent supplies a short human-facing reason that the
+    /// dialog will render verbatim. `ttl_seconds`, when
+    /// provided, narrows the per-request lifetime below the
+    /// registry default (capped server-side at the registry's
+    /// own TTL — agents cannot enlarge the window).
+    pub fn request_use_approval(
+        &self,
+        path: SecretPath,
+        reason: String,
+        ttl_seconds: Option<u64>,
+    ) -> Result<RequestId, String> {
+        let id = self.next_id();
+        match self.launcher.open_use_approval(&id, &path, &reason) {
+            Ok(()) => {
+                self.record_with_ttl(
+                    &id,
+                    path,
+                    RequestKind::UseApproval,
+                    ProvisionStatus::Pending,
+                    ttl_seconds,
+                );
+                Ok(id)
+            }
+            Err(e) => {
+                self.record_with_ttl(
+                    &id,
+                    path,
+                    RequestKind::UseApproval,
+                    ProvisionStatus::Failed { reason: e.clone() },
+                    ttl_seconds,
+                );
+                Err(e)
+            }
+        }
+    }
+
     fn next_id(&self) -> RequestId {
         let mut state = self.inner.lock().expect("registry poisoned");
         state.seq = state.seq.wrapping_add(1);
@@ -399,7 +482,25 @@ impl ProvisionRegistry {
     }
 
     fn record(&self, id: &RequestId, path: SecretPath, kind: RequestKind, status: ProvisionStatus) {
+        self.record_with_ttl(id, path, kind, status, None);
+    }
+
+    fn record_with_ttl(
+        &self,
+        id: &RequestId,
+        path: SecretPath,
+        kind: RequestKind,
+        status: ProvisionStatus,
+        ttl_override_secs: Option<u64>,
+    ) {
         let mut state = self.inner.lock().expect("registry poisoned");
+        let registry_ttl = self.ttl;
+        // Agents cannot enlarge the window past the registry's
+        // own TTL — `min` enforces that contract regardless of
+        // the value passed by the caller.
+        let entry_ttl = ttl_override_secs
+            .map(Duration::from_secs)
+            .map(|t| t.min(registry_ttl));
         state.entries.insert(
             id.clone(),
             Entry {
@@ -407,6 +508,7 @@ impl ProvisionRegistry {
                 kind,
                 status,
                 created_at: Instant::now(),
+                ttl_override: entry_ttl,
             },
         );
     }
@@ -433,8 +535,9 @@ impl ProvisionRegistry {
     pub fn poll_status(&self, id: &RequestId) -> Option<ProvisionStatusReply> {
         let mut state = self.inner.lock().expect("registry poisoned");
         let entry = state.entries.get_mut(id)?;
+        let effective_ttl = entry.ttl_override.unwrap_or(self.ttl);
         if matches!(entry.status, ProvisionStatus::Pending)
-            && entry.created_at.elapsed() >= self.ttl
+            && entry.created_at.elapsed() >= effective_ttl
         {
             entry.status = ProvisionStatus::Expired;
         }
@@ -457,7 +560,12 @@ impl ProvisionRegistry {
         state.entries.retain(|_, e| {
             !matches!(
                 e.status,
-                ProvisionStatus::Ok | ProvisionStatus::Cancelled | ProvisionStatus::Expired
+                ProvisionStatus::Ok
+                    | ProvisionStatus::Cancelled
+                    | ProvisionStatus::Expired
+                    | ProvisionStatus::Once
+                    | ProvisionStatus::Session
+                    | ProvisionStatus::Denied
             ) || e.created_at.elapsed() < older_than
         });
         before - state.entries.len()
@@ -513,6 +621,7 @@ struct FakeInner {
     calls: Vec<(RequestId, SecretPath, ProvisionMode)>,
     metadata_calls: Vec<(RequestId, SecretPath, ProposedMetadata)>,
     new_path_calls: Vec<(RequestId, SecretPath, ProposedMetadata)>,
+    use_approval_calls: Vec<(RequestId, SecretPath, String)>,
     next_error: Option<String>,
 }
 
@@ -539,6 +648,10 @@ impl FakeUiLauncher {
 
     pub fn new_path_calls(&self) -> Vec<(RequestId, SecretPath, ProposedMetadata)> {
         self.inner.lock().unwrap().new_path_calls.clone()
+    }
+
+    pub fn use_approval_calls(&self) -> Vec<(RequestId, SecretPath, String)> {
+        self.inner.lock().unwrap().use_approval_calls.clone()
     }
 }
 
@@ -586,6 +699,22 @@ impl UiDialogLauncher for FakeUiLauncher {
         state
             .new_path_calls
             .push((request_id.clone(), suggested_path.clone(), proposed.clone()));
+        Ok(())
+    }
+
+    fn open_use_approval(
+        &self,
+        request_id: &RequestId,
+        path: &SecretPath,
+        reason: &str,
+    ) -> Result<(), String> {
+        let mut state = self.inner.lock().unwrap();
+        if let Some(e) = state.next_error.take() {
+            return Err(e);
+        }
+        state
+            .use_approval_calls
+            .push((request_id.clone(), path.clone(), reason.to_owned()));
         Ok(())
     }
 }
@@ -783,6 +912,9 @@ mod tests {
             ProvisionStatus::Failed { reason: "x".into() }.label(),
             "failed"
         );
+        assert_eq!(ProvisionStatus::Once.label(), "once");
+        assert_eq!(ProvisionStatus::Session.label(), "session");
+        assert_eq!(ProvisionStatus::Denied.label(), "denied");
     }
 
     #[test]
@@ -791,6 +923,7 @@ mod tests {
         assert_eq!(RequestKind::Rotation.label(), "rotation");
         assert_eq!(RequestKind::MetadataProposal.label(), "metadata-proposal");
         assert_eq!(RequestKind::NewPathProposal.label(), "new-path-proposal");
+        assert_eq!(RequestKind::UseApproval.label(), "use-approval");
     }
 
     // -- Metadata proposal -------------------------------------
@@ -901,5 +1034,90 @@ mod tests {
             .request_new_path_proposal(path(), ProposedMetadata::default())
             .unwrap_err();
         assert!(err.contains("new-path-proposal launcher"));
+    }
+
+    // -- Use-approval (P25) ------------------------------------
+
+    #[test]
+    fn request_use_approval_records_pending_with_kind_and_reason() {
+        let fake = Arc::new(FakeUiLauncher::new());
+        let registry = ProvisionRegistry::with_launcher(fake.clone());
+        let id = registry
+            .request_use_approval(path(), "pushing image to staging".into(), None)
+            .unwrap();
+        assert!(id.0.starts_with("prov-"));
+        let reply = registry.poll_status(&id).unwrap();
+        assert_eq!(reply.kind, RequestKind::UseApproval);
+        assert_eq!(reply.status, ProvisionStatus::Pending);
+        assert_eq!(reply.path, "team/jira/api-key");
+
+        let calls = fake.use_approval_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].2, "pushing image to staging");
+    }
+
+    #[test]
+    fn use_approval_resolves_to_each_terminal_status() {
+        for terminal in [
+            ProvisionStatus::Once,
+            ProvisionStatus::Session,
+            ProvisionStatus::Denied,
+        ] {
+            let registry = ProvisionRegistry::with_launcher(Arc::new(FakeUiLauncher::new()));
+            let id = registry
+                .request_use_approval(path(), "deploy".into(), None)
+                .unwrap();
+            registry.resolve(&id, terminal.clone());
+            assert_eq!(registry.poll_status(&id).unwrap().status, terminal);
+        }
+    }
+
+    #[test]
+    fn use_approval_ttl_seconds_caps_at_registry_ttl() {
+        // Registry-wide TTL is 50ms. The agent asks for 60s —
+        // the cap clamps it back to the registry TTL, so the
+        // entry expires after ~50ms of pending.
+        let registry = ProvisionRegistry::with_launcher(Arc::new(FakeUiLauncher::new()))
+            .with_ttl(Duration::from_millis(50));
+        let id = registry
+            .request_use_approval(path(), "deploy".into(), Some(60))
+            .unwrap();
+        sleep(Duration::from_millis(80));
+        let reply = registry.poll_status(&id).unwrap();
+        assert_eq!(reply.status, ProvisionStatus::Expired);
+    }
+
+    #[test]
+    fn use_approval_ttl_seconds_can_shorten_window() {
+        // Registry default 5min, but caller asks for ~0s —
+        // entry expires immediately on first poll past 0.
+        let registry = ProvisionRegistry::with_launcher(Arc::new(FakeUiLauncher::new()));
+        let id = registry
+            .request_use_approval(path(), "deploy".into(), Some(0))
+            .unwrap();
+        // Even a tight sleep is enough — TTL is 0.
+        sleep(Duration::from_millis(5));
+        let reply = registry.poll_status(&id).unwrap();
+        assert_eq!(reply.status, ProvisionStatus::Expired);
+    }
+
+    #[test]
+    fn use_approval_records_failed_on_launcher_error() {
+        let fake = Arc::new(FakeUiLauncher::new());
+        fake.fail_next_with("daemon down");
+        let registry = ProvisionRegistry::with_launcher(fake);
+        let err = registry
+            .request_use_approval(path(), "deploy".into(), None)
+            .unwrap_err();
+        assert_eq!(err, "daemon down");
+    }
+
+    #[test]
+    fn default_launcher_rejects_use_approval() {
+        let registry = ProvisionRegistry::new();
+        let err = registry
+            .request_use_approval(path(), "deploy".into(), None)
+            .unwrap_err();
+        assert!(err.contains("use-approval launcher"));
     }
 }
