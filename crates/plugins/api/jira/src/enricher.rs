@@ -3,8 +3,8 @@
 //! Dynamic enricher supporting single-project and multi-project configurations.
 
 use devboy_core::{
-    CostModel, FollowUpLink, SideEffectClass, ToolCategory, ToolEnricher, ToolSchema,
-    ToolValueModel, ValueClass, sanitize_field_name,
+    CostModel, FollowUpLink, PropertySchema, SideEffectClass, ToolCategory, ToolEnricher,
+    ToolSchema, ToolValueModel, ValueClass, sanitize_field_name,
 };
 use serde_json::{Value, json};
 
@@ -197,29 +197,61 @@ impl ToolEnricher for JiraSchemaEnricher {
         }
 
         // Customfields: union across projects, capped by
-        // `MAX_ENRICHMENT_PROJECTS`. Single-project mode and
-        // multi-project mode go through the same code path — the
-        // only difference is `all_custom_fields()` returns one
-        // project's set vs the union.
+        // `MAX_ENRICHMENT_PROJECTS`. Single-project and multi-
+        // project modes share one path — the difference is
+        // `custom_field_groups()` returns one entry per name in
+        // single-project mode, multiple entries (one per project
+        // carrying that name) in multi-project mode.
         if tool_name == "create_issue" || tool_name == "update_issue" {
-            let unified_fields = self.metadata.all_custom_fields();
-            if !unified_fields.is_empty() {
+            let groups = self.metadata.custom_field_groups();
+            if !groups.is_empty() {
                 schema.remove_params(&["customFields"]);
 
-                for field in &unified_fields {
-                    match well_known_alias(&field.name) {
+                for (name, variants) in &groups {
+                    let representative = &variants[0];
+                    let conflict = variants
+                        .iter()
+                        .skip(1)
+                        .any(|v| v.field_type != representative.field_type);
+
+                    match well_known_alias(name) {
                         Some(alias) => {
                             // Replace the raw `cf_*` slot with a
                             // canonical typed parameter — agents work
                             // with `epicKey` / `sprintId` /
                             // `epicName` instead of the instance-
                             // specific `customfield_NNNNN` id.
-                            let alias_schema = well_known_alias_schema(alias, field);
+                            let alias_schema = well_known_alias_schema(alias, representative);
                             schema.add_param(alias, alias_schema);
                         }
+                        None if conflict => {
+                            // Cross-project shape conflict — emit a
+                            // JSON Schema `anyOf` listing each
+                            // project's variant so an LLM-side
+                            // validator accepts whichever shape
+                            // matches the target project.
+                            let param_name = sanitize_field_name(name);
+                            let sub_schemas: Vec<PropertySchema> = variants
+                                .iter()
+                                .map(|cf| {
+                                    let raw = jira_custom_field_to_schema(cf);
+                                    serde_json::from_value(raw).unwrap_or_default()
+                                })
+                                .collect();
+                            let desc = format!(
+                                "Custom field: {} (varies per project — {} shapes detected).",
+                                name,
+                                sub_schemas.len()
+                            );
+                            schema.add_param(
+                                &param_name,
+                                serde_json::to_value(PropertySchema::any_of(&desc, sub_schemas))
+                                    .unwrap_or_default(),
+                            );
+                        }
                         None => {
-                            let param_name = sanitize_field_name(&field.name);
-                            let field_schema = jira_custom_field_to_schema(field);
+                            let param_name = sanitize_field_name(name);
+                            let field_schema = jira_custom_field_to_schema(representative);
                             schema.add_param(&param_name, field_schema);
                         }
                     }
@@ -822,6 +854,80 @@ mod tests {
         let mut args = json!({"title": "T", "priority": "Highest"});
         enricher.transform_args("create_issue", &mut args);
         assert_eq!(args["priority"], "Highest"); // pass-through
+    }
+
+    /// When the same customfield name has different shapes across
+    /// projects (e.g. `Severity` is a dropdown in PROJ but free
+    /// text in INFRA), the enricher emits a JSON Schema `anyOf`
+    /// listing each variant instead of silently picking one.
+    #[test]
+    fn test_jira_enricher_multi_project_conflict_emits_any_of() {
+        let mut meta = single_project_metadata();
+        // PROJ has Severity as Option (dropdown).
+        meta.projects
+            .get_mut("PROJ")
+            .unwrap()
+            .custom_fields
+            .push(JiraCustomField {
+                id: "customfield_50001".into(),
+                name: "Severity".into(),
+                field_type: JiraFieldType::Option,
+                required: false,
+                options: vec![
+                    crate::metadata::JiraFieldOption {
+                        id: "1".into(),
+                        name: "High".into(),
+                    },
+                    crate::metadata::JiraFieldOption {
+                        id: "2".into(),
+                        name: "Low".into(),
+                    },
+                ],
+            });
+        // INFRA has Severity as plain String.
+        meta.projects.insert(
+            "INFRA".into(),
+            JiraProjectMetadata {
+                issue_types: vec![],
+                priorities: vec![],
+                components: vec![],
+                link_types: vec![],
+                custom_fields: vec![JiraCustomField {
+                    id: "customfield_60001".into(),
+                    name: "Severity".into(),
+                    field_type: JiraFieldType::String,
+                    required: false,
+                    options: vec![],
+                }],
+            },
+        );
+
+        let enricher = JiraSchemaEnricher::new(meta);
+        let mut schema = ToolSchema::from_json(&json!({
+            "type": "object",
+            "properties": { "customFields": { "type": "object" } },
+        }));
+
+        enricher.enrich_schema("create_issue", &mut schema);
+
+        let severity = schema
+            .properties
+            .get("cf_severity")
+            .expect("cf_severity present");
+        assert_eq!(severity.schema_type, "");
+        let variants = severity.any_of.as_ref().expect("anyOf set");
+        assert_eq!(variants.len(), 2);
+        // One variant must be the dropdown (with options), the
+        // other a plain string. Order isn't guaranteed.
+        let has_dropdown = variants.iter().any(|v| v.enum_values.is_some());
+        let has_plain_string = variants
+            .iter()
+            .any(|v| v.schema_type == "string" && v.enum_values.is_none());
+        assert!(has_dropdown, "missing dropdown variant: {variants:?}");
+        assert!(
+            has_plain_string,
+            "missing plain-string variant: {variants:?}"
+        );
     }
 
     /// Multi-project mode: `transform_args` resolves customfield ids
