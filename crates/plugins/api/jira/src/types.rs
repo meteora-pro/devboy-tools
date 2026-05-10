@@ -1,7 +1,17 @@
 //! Jira API response types.
 //!
 //! These types represent the raw JSON responses from Jira API v2/v3.
-//! They are deserialized and then mapped to unified types.
+//! They are deserialized and then mapped to unified types. Most are
+//! internal — only `JiraField` and `JiraFieldSchema` are re-exported
+//! at the crate root for downstream consumers.
+//!
+//! `dead_code` is allowed at the module level because some fields
+//! exist purely so serde captures them off the wire (for forward
+//! compatibility with logs and debug dumps) without the mapper
+//! reading them yet. They are not unused — they pin the JSON shape
+//! the API returns and surface in `Debug` impls.
+
+#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 
@@ -59,6 +69,11 @@ pub struct JiraIssueFields {
     /// Updated timestamp
     #[serde(default)]
     pub updated: Option<String>,
+    /// Issue type reference. Read-only — captures `issuetype.name` so
+    /// callers can branch on `"Epic"` / `"Story"` / `"Sub-task"` without
+    /// re-parsing the raw payload.
+    #[serde(default)]
+    pub issuetype: Option<JiraIssueTypeRef>,
     /// Parent issue (for subtasks)
     #[serde(default)]
     pub parent: Option<Box<JiraIssue>>,
@@ -71,6 +86,20 @@ pub struct JiraIssueFields {
     /// `fields=attachment` or uses `fields=*all`).
     #[serde(default)]
     pub attachment: Vec<JiraAttachment>,
+    /// Catch-all for everything else Jira returns under `fields` —
+    /// most importantly the instance-specific `customfield_*` slots.
+    /// Lets the mapper read e.g. an Epic Description customfield
+    /// without forcing every customfield to be modelled as a typed
+    /// field.
+    #[serde(flatten, default)]
+    pub extras: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// Lightweight read-only reference to an issue type — only the name
+/// is captured because that's what mapping logic branches on.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JiraIssueTypeRef {
+    pub name: String,
 }
 
 /// Jira attachment as returned inside `fields.attachment`.
@@ -255,6 +284,10 @@ pub struct CreateIssueFields {
     /// Components (issue #197).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub components: Option<Vec<ComponentRef>>,
+    /// Fix versions / release targets. Serialised as
+    /// `[{ "name": "..." }, ...]` into Jira's `fields.fixVersions`.
+    #[serde(rename = "fixVersions", skip_serializing_if = "Option::is_none")]
+    pub fix_versions: Option<Vec<VersionRef>>,
     /// Parent issue reference. Required by Jira when `issuetype` is a
     /// sub-task or any "is_subtask" hierarchical type — the API rejects
     /// the request with a 400 otherwise (issue #214). Serialised as
@@ -276,6 +309,17 @@ pub struct CreateIssueFields {
 /// This is addressed in Copilot review on PR #205.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentRef {
+    pub name: String,
+}
+
+/// Fix-version reference used in create/update issue payloads.
+///
+/// Same shape and rationale as [`ComponentRef`]: name-based reference
+/// that works across Cloud and Self-Hosted without callers having to
+/// resolve numeric ids first. Pairs with the `fix_versions` field in
+/// [`devboy_core::CreateIssueInput`] / [`devboy_core::UpdateIssueInput`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionRef {
     pub name: String,
 }
 
@@ -326,6 +370,11 @@ pub struct UpdateIssueFields {
     /// `Some(vec![])` clears all components.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub components: Option<Vec<ComponentRef>>,
+    /// Fix versions. `None` leaves them untouched. `Some(vec![])` clears
+    /// all fix versions. `Some(vec![...])` replaces with the given
+    /// release names.
+    #[serde(rename = "fixVersions", skip_serializing_if = "Option::is_none")]
+    pub fix_versions: Option<Vec<VersionRef>>,
 }
 
 /// Request body for transitioning an issue.
@@ -356,6 +405,56 @@ pub struct CreateIssueResponse {
 pub struct AddCommentPayload {
     /// Comment body — plain text (v2) or ADF (v3)
     pub body: serde_json::Value,
+}
+
+// =============================================================================
+// Field discovery
+// =============================================================================
+
+/// Entry from `GET /rest/api/{v}/field` — every field (system + custom)
+/// available on the Jira instance.
+///
+/// Used to resolve human-readable field names (e.g. `"Epic Link"`,
+/// `"Sprint"`, `"Epic Name"`) to their numeric `customfield_*` ids,
+/// which vary across instances. Cached inside [`crate::JiraClient`] to
+/// avoid repeating the request for every issue mutation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JiraField {
+    /// Field id, e.g. `"customfield_10014"` for customs or `"summary"`
+    /// for system fields.
+    pub id: String,
+    /// Human-readable name, e.g. `"Epic Link"`.
+    pub name: String,
+    /// Whether this is a custom field (`true`) or a system field
+    /// (`false`).
+    #[serde(default)]
+    pub custom: bool,
+    /// Optional schema descriptor.
+    #[serde(default)]
+    pub schema: Option<JiraFieldSchema>,
+}
+
+/// `schema` block of a [`JiraField`] entry. All fields optional —
+/// shape varies between system and custom fields and across Jira
+/// flavors.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JiraFieldSchema {
+    /// Top-level type, e.g. `"string"`, `"array"`, `"any"`.
+    #[serde(default, rename = "type")]
+    pub field_type: Option<String>,
+    /// Element type when `field_type == "array"`.
+    #[serde(default)]
+    pub items: Option<String>,
+    /// Custom field type URI, e.g.
+    /// `"com.pyxis.greenhopper.jira:gh-epic-link"`.
+    #[serde(default)]
+    pub custom: Option<String>,
+    /// Numeric custom field id (when `custom == true`).
+    #[serde(default, rename = "customId")]
+    pub custom_id: Option<i64>,
+    /// System field name when this is a system field.
+    #[serde(default)]
+    pub system: Option<String>,
 }
 
 // =============================================================================

@@ -647,6 +647,7 @@ mod tests {
                 attachments_count: None,
                 parent: None,
                 subtasks: vec![],
+                custom_fields: std::collections::HashMap::new(),
             })
             .collect()
     }
@@ -1193,6 +1194,7 @@ mod tests {
                 attachments_count: None,
             parent: None,
                 subtasks: vec![],
+                custom_fields: std::collections::HashMap::new(),
             })
             .collect();
 

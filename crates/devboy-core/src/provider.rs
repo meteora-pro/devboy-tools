@@ -12,16 +12,17 @@ use crate::types::JobLogMode;
 use crate::types::{
     AddStructureGeneratorInput, AddStructureRowsInput, AssignToSprintInput, Comment,
     CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, CreatePageParams,
-    CreateStructureInput, Discussion, FileDiff, ForestModifyResult, GetChatsParams,
-    GetForestOptions, GetMessagesParams, GetPipelineInput, GetStructureValuesInput,
+    CreateStructureInput, CustomFieldDescriptor, Discussion, FileDiff, ForestModifyResult,
+    GetChatsParams, GetForestOptions, GetMessagesParams, GetPipelineInput, GetStructureValuesInput,
     GetUsersOptions, Issue, IssueFilter, IssueRelations, IssueStatus, JobLogOptions, JobLogOutput,
-    KbPage, KbPageContent, KbSpace, ListPagesParams, ListProjectVersionsParams, MeetingFilter,
-    MeetingNote, MeetingTranscript, MergeRequest, MessengerChat, MessengerMessage,
-    MoveStructureRowsInput, MrFilter, PipelineInfo, ProjectVersion, ProviderResult, Release,
-    SaveStructureViewInput, SearchKbParams, SearchMessagesParams, SendMessageParams, Sprint,
-    SprintState, Structure, StructureForest, StructureGenerator, StructureValues, StructureView,
-    SyncStructureGeneratorInput, UpdateIssueInput, UpdateMergeRequestInput, UpdatePageParams,
-    UpdateStructureAutomationInput, UpsertProjectVersionInput, User,
+    KbPage, KbPageContent, KbSpace, ListCustomFieldsParams, ListPagesParams,
+    ListProjectVersionsParams, MeetingFilter, MeetingNote, MeetingTranscript, MergeRequest,
+    MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, PipelineInfo,
+    ProjectVersion, ProviderResult, Release, SaveStructureViewInput, SearchKbParams,
+    SearchMessagesParams, SendMessageParams, Sprint, SprintState, Structure, StructureForest,
+    StructureGenerator, StructureValues, StructureView, SyncStructureGeneratorInput,
+    UpdateIssueInput, UpdateMergeRequestInput, UpdatePageParams, UpdateStructureAutomationInput,
+    UpsertProjectVersionInput, User,
 };
 
 /// Provider for working with issues.
@@ -371,6 +372,21 @@ pub trait IssueProvider: Send + Sync {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "assign_to_sprint".to_string(),
+        })
+    }
+
+    /// List provider-side custom fields. Lets agents (and downstream
+    /// codegen) discover the `customfield_*` ids of an instance
+    /// without hardcoding them. Default impl returns
+    /// `ProviderUnsupported` — providers without a real customfield
+    /// concept (GitHub, GitLab) keep that default.
+    async fn list_custom_fields(
+        &self,
+        _params: ListCustomFieldsParams,
+    ) -> Result<ProviderResult<CustomFieldDescriptor>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "list_custom_fields".to_string(),
         })
     }
 

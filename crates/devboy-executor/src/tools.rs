@@ -86,14 +86,12 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("markdown", PropertySchema::boolean("Whether the description is markdown (default: true). When true, ClickUp renders formatted text."));
                 s.add_property("projectId", PropertySchema::string("Jira project key (not numeric ID) for issue creation (e.g., \"PROJ\"). Optional — overrides the default project."));
                 s.add_property("issueType", PropertySchema::string("Issue type (e.g., \"Task\", \"Bug\", \"Story\"). Default: \"Task\". Removed by providers that don't support it."));
-                // Issue #197 — component names. The Jira enricher
-                // populates an enum at metadata-assembly time so schema
-                // consumers see the valid values; here we just declare
-                // the property exists (Codex review on PR #205).
-                s.add_property("components", PropertySchema::array(
-                    PropertySchema::string("component name"),
-                    "Jira component names to associate with the issue. Ignored by providers that don't have Components (GitHub/GitLab/ClickUp).",
-                ));
+                // Jira-specific slots (`components`, `fixVersions`,
+                // `epicKey`, `sprintId`, `epicName`) are *not* in
+                // the base schema — `JiraSchemaEnricher` adds them
+                // dynamically so non-Jira providers
+                // (GitHub/GitLab/ClickUp) don't see them and can't
+                // think they're applicable.
                 s.set_required("title", true);
                 s
             },
@@ -112,12 +110,9 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("assignees", PropertySchema::array(PropertySchema::string("assignee"), "New assignees"));
                 s.add_property("parentId", PropertySchema::string("Parent issue key to move task as subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp."));
                 s.add_property("markdown", PropertySchema::boolean("Whether the description is markdown (default: true). When true, ClickUp renders formatted text."));
-                // Issue #197 — `None` leaves components untouched, empty
-                // array clears them, array with names replaces them.
-                s.add_property("components", PropertySchema::array(
-                    PropertySchema::string("component name"),
-                    "Replace components with these Jira component names. Omit the field to leave existing components untouched; pass an empty array to clear.",
-                ));
+                // Jira-specific slots are added dynamically by
+                // `JiraSchemaEnricher` — see the create_issue
+                // schema comment above.
                 s.set_required("key", true);
                 s
             },
@@ -288,7 +283,9 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 let mut s = ToolSchema::new();
                 s.add_property("sourceIssueKey", PropertySchema::string("Source issue key"));
                 s.add_property("targetIssueKey", PropertySchema::string("Target issue key"));
-                s.add_property("linkType", PropertySchema::string("Link type (e.g., blocks, relates_to)"));
+                s.add_property("linkType", PropertySchema::string(
+                    "Issue link type. Accepts canonical Jira names (`Blocks`, `Relates`, `Causes`, `Implements`, `Created By`, `Duplicate`, `Cloners`) and snake_case aliases (`blocks`, `blocked_by`, `relates_to`, `causes`, `caused_by`, `implements`, `implemented_by`, `created_by`, `creates`, `duplicates`, `duplicated_by`, `clones`, `cloned_by`). The `*_by` variants flip direction. Custom link types configured on the instance also work — pass the exact name. GitHub/GitLab providers ignore this field.",
+                ));
                 s.set_required("sourceIssueKey", true);
                 s.set_required("targetIssueKey", true);
                 s.set_required("linkType", true);
@@ -303,7 +300,9 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 let mut s = ToolSchema::new();
                 s.add_property("sourceIssueKey", PropertySchema::string("Source issue key"));
                 s.add_property("targetIssueKey", PropertySchema::string("Target issue key"));
-                s.add_property("linkType", PropertySchema::string("Link type to remove (e.g., blocks, relates_to, subtask)"));
+                s.add_property("linkType", PropertySchema::string(
+                    "Issue link type to remove. Accepts the same canonical names and snake_case aliases as `link_issues` (`Blocks`, `Causes`, `Implements`, `Created By`, `Duplicate`, `Cloners`, plus `*_by` direction flips and `subtask`). Custom link types pass through as-is.",
+                ));
                 s.set_required("sourceIssueKey", true);
                 s.set_required("targetIssueKey", true);
                 s.set_required("linkType", true);
@@ -769,9 +768,9 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
             input_schema: {
                 let mut s = ToolSchema::new();
                 s.add_property("project", PropertySchema::string("Jira project key (e.g., \"PROJ\"). Defaults to the configured project."));
-                s.add_property("released", PropertySchema::string_enum(&["true", "false", "all"], "Filter by release state: \"true\" → only released, \"false\" → only unreleased, \"all\" → both (default: \"all\")."));
-                s.add_property("archived", PropertySchema::string_enum(&["true", "false", "all"], "Filter by archived flag (default: \"false\" — hides archival noise)."));
-                s.add_property("limit", PropertySchema::integer("Max versions to return (default: 20). Sorted by releaseDate desc; oldest archival entries trimmed first.", Some(1.0), Some(200.0)));
+                s.add_property("released", PropertySchema::string_enum(&["true", "false", "all"], "Filter by release state: \"true\" → only released, \"false\" → only unreleased, \"all\" → both (default: \"all\")"));
+                s.add_property("archived", PropertySchema::string_enum(&["true", "false", "all"], "Filter by archived flag (default: \"false\" — hides archival noise)"));
+                s.add_property("limit", PropertySchema::integer("Max versions to return (default: 20). Sorted by releaseDate desc; oldest archival entries trimmed first", Some(1.0), Some(200.0)));
                 s.add_property("includeIssueCount", PropertySchema::boolean("Fetch issue counts per version via Cloud `?expand=issuesstatus` (default: false). Adds latency on large projects."));
                 s
             },
@@ -790,6 +789,99 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("released", PropertySchema::boolean("Mark released (true) / unreleased (false). Pair with `releaseDate` when closing a release."));
                 s.add_property("archived", PropertySchema::boolean("Archive (true) / unarchive (false) the version."));
                 s.set_required("name", true);
+                s
+            },
+        },
+        // Agile / Sprint (issue #198). Pairs with the `sprintId` slot on
+        // create_issue / update_issue: `get_board_sprints` is how callers
+        // discover available sprint ids on a board.
+        ToolDefinition {
+            name: "get_board_sprints".into(),
+            description: "List sprints visible on a Jira agile board. Use to discover the numeric `sprintId` accepted by `create_issue` / `update_issue` and `assign_to_sprint`. Returns name, state (active/future/closed), planned start/end, and goal — enough for the agent to pick the right sprint without a follow-up call.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "boardId",
+                    PropertySchema::integer(
+                        "Numeric Jira board id. The Agile / Boards REST endpoint returns sprints scoped to one board — there is no global sprint list",
+                        Some(0.0),
+                        None,
+                    ),
+                );
+                s.add_property(
+                    "state",
+                    PropertySchema::string_enum(
+                        &["active", "future", "closed", "all"],
+                        "Filter by sprint state. Default `all` returns every sprint on the board",
+                    ),
+                );
+                s.set_required("boardId", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "assign_to_sprint".into(),
+            description: "Move one or more issues onto a Jira sprint. Pair with `get_board_sprints` to look up the numeric `sprintId`. Issues already on a sprint are silently moved.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "sprintId",
+                    PropertySchema::integer(
+                        "Numeric sprint id. Use `get_board_sprints` to discover ids on a board",
+                        Some(0.0),
+                        None,
+                    ),
+                );
+                s.add_property(
+                    "issueKeys",
+                    PropertySchema::array(
+                        PropertySchema::string("issue key (e.g., \"PROJ-1\")"),
+                        "Issue keys to move onto the sprint. Must contain at least one key.",
+                    ),
+                );
+                s.set_required("sprintId", true);
+                s.set_required("issueKeys", true);
+                s
+            },
+        },
+        // Custom-field discovery — pairs with the `epicKey` / `sprintId` /
+        // `epicName` slots on create/update_issue and the raw `customFields`
+        // escape hatch. Returns a name → id mapping so agents stop guessing
+        // `customfield_*` numbers.
+        ToolDefinition {
+            name: "get_custom_fields".into(),
+            description: "List custom fields available on the issue tracker, with their id, name, and field type. Use to discover the `customfield_*` id of a Jira instance — names like `Epic Link`, `Sprint`, `Epic Name` map to different ids on every deployment. Pair with `customFields: { \"<id>\": <value> }` on `create_issue` / `update_issue` for fields not yet exposed as first-class params.".into(),
+            category: ToolCategory::IssueTracker,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "project",
+                    PropertySchema::string(
+                        "Optional project key. Reserved for providers that scope custom fields per project; ignored on Jira's global `/field` endpoint.",
+                    ),
+                );
+                s.add_property(
+                    "issueType",
+                    PropertySchema::string(
+                        "Optional issue type. Reserved for providers that scope custom fields per create-screen context.",
+                    ),
+                );
+                s.add_property(
+                    "search",
+                    PropertySchema::string(
+                        "Case-insensitive substring filter on the field name (e.g. `\"Epic\"` to find `Epic Link` and `Epic Name`).",
+                    ),
+                );
+                s.add_property(
+                    "limit",
+                    PropertySchema::integer(
+                        "Max fields to return after filtering (default 50). Sorted by name asc",
+                        Some(1.0),
+                        Some(200.0),
+                    ),
+                );
                 s
             },
         },
@@ -1056,7 +1148,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 51);
+        assert_eq!(tools.len(), 54);
     }
 
     #[test]
@@ -1089,6 +1181,9 @@ mod tests {
             "delete_asset",
             "list_project_versions",
             "upsert_project_version",
+            "get_board_sprints",
+            "assign_to_sprint",
+            "get_custom_fields",
         ];
         let git_repository_tools = [
             "get_merge_requests",

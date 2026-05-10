@@ -224,6 +224,26 @@ impl core::marker::Unpin for devboy_clickup::ClickUpCommentList
 impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpCommentList
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpCommentList
 impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpCommentList
+pub struct devboy_clickup::ClickUpCustomField
+pub devboy_clickup::ClickUpCustomField::field_type: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpCustomField::id: alloc::string::String
+pub devboy_clickup::ClickUpCustomField::name: core::option::Option<alloc::string::String>
+pub devboy_clickup::ClickUpCustomField::value: core::option::Option<serde_json::value::Value>
+impl core::clone::Clone for devboy_clickup::ClickUpCustomField
+pub fn devboy_clickup::ClickUpCustomField::clone(&self) -> devboy_clickup::ClickUpCustomField
+impl core::fmt::Debug for devboy_clickup::ClickUpCustomField
+pub fn devboy_clickup::ClickUpCustomField::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_clickup::ClickUpCustomField
+pub fn devboy_clickup::ClickUpCustomField::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_clickup::ClickUpCustomField
+pub fn devboy_clickup::ClickUpCustomField::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_clickup::ClickUpCustomField
+impl core::marker::Send for devboy_clickup::ClickUpCustomField
+impl core::marker::Sync for devboy_clickup::ClickUpCustomField
+impl core::marker::Unpin for devboy_clickup::ClickUpCustomField
+impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpCustomField
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpCustomField
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpCustomField
 pub struct devboy_clickup::ClickUpDependencyResponse
 pub devboy_clickup::ClickUpDependencyResponse::dependency: core::option::Option<serde_json::value::Value>
 impl core::clone::Clone for devboy_clickup::ClickUpDependencyResponse
@@ -398,6 +418,7 @@ pub struct devboy_clickup::ClickUpTask
 pub devboy_clickup::ClickUpTask::assignees: alloc::vec::Vec<devboy_clickup::ClickUpUser>
 pub devboy_clickup::ClickUpTask::attachments: alloc::vec::Vec<devboy_clickup::ClickUpAttachment>
 pub devboy_clickup::ClickUpTask::creator: core::option::Option<devboy_clickup::ClickUpUser>
+pub devboy_clickup::ClickUpTask::custom_fields: alloc::vec::Vec<devboy_clickup::ClickUpCustomField>
 pub devboy_clickup::ClickUpTask::custom_id: core::option::Option<alloc::string::String>
 pub devboy_clickup::ClickUpTask::date_created: core::option::Option<alloc::string::String>
 pub devboy_clickup::ClickUpTask::date_updated: core::option::Option<alloc::string::String>

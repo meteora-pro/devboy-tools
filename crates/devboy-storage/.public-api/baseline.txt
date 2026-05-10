@@ -1882,6 +1882,34 @@ impl core::marker::UnsafeUnpin for devboy_storage::validation::FormatRuleSource
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::validation::FormatRuleSource
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::validation::FormatRuleSource
 pub fn devboy_storage::validation::validate_format(entry: &devboy_storage::index::IndexEntry, value: &str, catalogue: &devboy_secret_patterns::user::Catalogue) -> devboy_storage::validation::FormatCheck
+pub enum devboy_storage::ApproveOnUse
+pub devboy_storage::ApproveOnUse::Never
+pub devboy_storage::ApproveOnUse::PerCall
+pub devboy_storage::ApproveOnUse::Session
+impl core::clone::Clone for devboy_storage::index::ApproveOnUse
+pub fn devboy_storage::index::ApproveOnUse::clone(&self) -> devboy_storage::index::ApproveOnUse
+impl core::cmp::Eq for devboy_storage::index::ApproveOnUse
+impl core::cmp::PartialEq for devboy_storage::index::ApproveOnUse
+pub fn devboy_storage::index::ApproveOnUse::eq(&self, other: &devboy_storage::index::ApproveOnUse) -> bool
+impl core::convert::From<devboy_storage::index::ApproveOnUse> for devboy_core::secret_approval::ApproveOnUsePolicy
+pub fn devboy_core::secret_approval::ApproveOnUsePolicy::from(v: devboy_storage::index::ApproveOnUse) -> Self
+impl core::default::Default for devboy_storage::index::ApproveOnUse
+pub fn devboy_storage::index::ApproveOnUse::default() -> devboy_storage::index::ApproveOnUse
+impl core::fmt::Debug for devboy_storage::index::ApproveOnUse
+pub fn devboy_storage::index::ApproveOnUse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_storage::index::ApproveOnUse
+impl core::marker::StructuralPartialEq for devboy_storage::index::ApproveOnUse
+impl serde_core::ser::Serialize for devboy_storage::index::ApproveOnUse
+pub fn devboy_storage::index::ApproveOnUse::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_storage::index::ApproveOnUse
+pub fn devboy_storage::index::ApproveOnUse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_storage::index::ApproveOnUse
+impl core::marker::Send for devboy_storage::index::ApproveOnUse
+impl core::marker::Sync for devboy_storage::index::ApproveOnUse
+impl core::marker::Unpin for devboy_storage::index::ApproveOnUse
+impl core::marker::UnsafeUnpin for devboy_storage::index::ApproveOnUse
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::index::ApproveOnUse
+impl core::panic::unwind_safe::UnwindSafe for devboy_storage::index::ApproveOnUse
 pub enum devboy_storage::CiActivation
 pub devboy_storage::CiActivation::CliFlag
 pub devboy_storage::CiActivation::ContextConfig

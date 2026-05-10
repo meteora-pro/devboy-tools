@@ -59,7 +59,11 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets rotate`↴](#devboy-secrets-rotate)
 * [`devboy secrets catalog`↴](#devboy-secrets-catalog)
 * [`devboy secrets catalog list`↴](#devboy-secrets-catalog-list)
+* [`devboy secrets catalog status`↴](#devboy-secrets-catalog-status)
+* [`devboy secrets catalog add-url`↴](#devboy-secrets-catalog-add-url)
+* [`devboy secrets catalog refresh`↴](#devboy-secrets-catalog-refresh)
 * [`devboy secrets catalog validate`↴](#devboy-secrets-catalog-validate)
+* [`devboy secrets setup`↴](#devboy-secrets-setup)
 * [`devboy hooks`↴](#devboy-hooks)
 * [`devboy hooks install`↴](#devboy-hooks-install)
 * [`devboy hooks check`↴](#devboy-hooks-check)
@@ -720,6 +724,7 @@ Discover and inspect declared secrets (metadata only — values are never shown)
 * `ui` — Open the native UI (TUI in a terminal, GUI in a window). Backend autodetected from `$DISPLAY` / `$WAYLAND_DISPLAY` on Linux and the OS on macOS / Windows; override with `--tui` or `--gui`. See ADR-023 §3.4
 * `rotate` — Rotate a secret: open the provider URL in the browser, destructive-confirm, read the new value, format-validate, and record `last_rotated_at`. See ADR-023 §3.4
 * `catalog` — Manage the token catalog (provider procedure files the `secrets ui` form binds to). See ADR-023 §3.4
+* `setup` — Run the setup-secrets wizard against the current directory. Default mode is `--scan-only` — read-only preview of what the wizard would propose. Pass `--write-manifest` to commit the proposals to `<repo>/.devboy/secrets.toml`. See ADR-023 §3.8 and `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/`
 
 
 
@@ -900,6 +905,9 @@ Manage the token catalog (provider procedure files the `secrets ui` form binds t
 ###### **Subcommands:**
 
 * `list` — List every loaded provider catalog with its source (bundled / user / project) and variant count. Useful to debug which override is winning when a team has its own project-scope file shadowing the bundled default
+* `status` — Inspect every catalog at every active source — bundled, user, project, AND URL — with origin, variant count, and (for URL sources) cache state. Replaces the older `list` command for the URL-loaded catalog flow (P23)
+* `add-url` — Subscribe to a remote catalog by URL. Fetches once through every P23 defence layer (HTTPS-only, SSRF guard, size cap, content-type, schema version), prints the body SHA256 + variant summary, asks for trust confirmation (or accepts a `--pin` for unattended use), then appends a `[[source]]` entry to `~/.devboy/secrets/catalog/sources.toml`
+* `refresh` — Re-fetch URL catalogs from `sources.toml`. Without `--force` the loader honours each source's `refresh_seconds` TTL — sources within their window are reported as "fresh" and not re-fetched. With `--force` the cache for matching sources is dropped before the fetch so every source goes back to the network. Optional positional `<filter>` matches as a case-insensitive substring against the source URL
 * `validate` — Validate a single catalog JSON file. Loads the file, runs schema deserialisation (`deny_unknown_fields` is strict), then per-variant checks that the regex compiles and that every URL parses. Exit non-zero on any failure
 
 
@@ -912,6 +920,55 @@ List every loaded provider catalog with its source (bundled / user / project) an
 
 
 
+## `devboy secrets catalog status`
+
+Inspect every catalog at every active source — bundled, user, project, AND URL — with origin, variant count, and (for URL sources) cache state. Replaces the older `list` command for the URL-loaded catalog flow (P23)
+
+**Usage:** `devboy secrets catalog status [OPTIONS]`
+
+###### **Options:**
+
+* `--json` — Print as machine-readable JSON instead of a human table
+
+
+
+## `devboy secrets catalog add-url`
+
+Subscribe to a remote catalog by URL. Fetches once through every P23 defence layer (HTTPS-only, SSRF guard, size cap, content-type, schema version), prints the body SHA256 + variant summary, asks for trust confirmation (or accepts a `--pin` for unattended use), then appends a `[[source]]` entry to `~/.devboy/secrets/catalog/sources.toml`
+
+**Usage:** `devboy secrets catalog add-url [OPTIONS] <URL>`
+
+###### **Arguments:**
+
+* `<URL>` — HTTPS URL of the JSON catalog (e.g. a GitHub raw link). `http://` is rejected outright by the fetcher's first defence layer
+
+###### **Options:**
+
+* `--pin <HEX>` — Pin the body to this SHA256 (lower-case hex, no `sha256:` prefix). Future fetches refuse any mismatch. When omitted, the loader falls back to TOFU and records the body's SHA in `known_hashes.toml` on first fetch
+* `--refresh-seconds <REFRESH_SECONDS>` — How long the cached body stays fresh before the loader re-fetches. Defaults to 24 hours
+
+  Default value: `86400`
+* `--enable` — Also flip `enable_url_catalogs = true` in the same `sources.toml`. Without this flag the entry is added but the master kill-switch remains off — the URL is not loaded until the user explicitly enables it
+* `--yes` — Skip the interactive trust-confirm prompt. Implied when `--pin` is set (the pin already locks the body). Required for non-tty / CI invocations
+
+
+
+## `devboy secrets catalog refresh`
+
+Re-fetch URL catalogs from `sources.toml`. Without `--force` the loader honours each source's `refresh_seconds` TTL — sources within their window are reported as "fresh" and not re-fetched. With `--force` the cache for matching sources is dropped before the fetch so every source goes back to the network. Optional positional `<filter>` matches as a case-insensitive substring against the source URL
+
+**Usage:** `devboy secrets catalog refresh [OPTIONS] [FILTER]`
+
+###### **Arguments:**
+
+* `<FILTER>` — Optional case-insensitive substring; only sources whose URL matches are re-fetched. Without this argument every URL source is processed
+
+###### **Options:**
+
+* `--force` — Bypass each source's `refresh_seconds` TTL and force a re-fetch over the network. Cache for matching sources is removed before the fetch so the loader cannot serve a stale body
+
+
+
 ## `devboy secrets catalog validate`
 
 Validate a single catalog JSON file. Loads the file, runs schema deserialisation (`deny_unknown_fields` is strict), then per-variant checks that the regex compiles and that every URL parses. Exit non-zero on any failure
@@ -921,6 +978,23 @@ Validate a single catalog JSON file. Loads the file, runs schema deserialisation
 ###### **Arguments:**
 
 * `<PATH>` — Path to the JSON catalog file. Use `-` to read from stdin
+
+
+
+## `devboy secrets setup`
+
+Run the setup-secrets wizard against the current directory. Default mode is `--scan-only` — read-only preview of what the wizard would propose. Pass `--write-manifest` to commit the proposals to `<repo>/.devboy/secrets.toml`. See ADR-023 §3.8 and `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/`
+
+**Usage:** `devboy secrets setup [OPTIONS]`
+
+###### **Options:**
+
+* `--root <ROOT>` — Project root to scan. Defaults to the current directory
+* `--scan-only` — Print the scan + propose preview without touching disk. This is the default mode — included as an explicit flag for self-documenting scripts
+* `--write-manifest` — Commit the proposed paths to `<root>/.devboy/secrets.toml`. Refuses to overwrite an existing manifest unless `--force` is passed too — drift in the manifest is the user's own authoritative copy and the wizard treats it as opaque
+* `--force` — Allow `--write-manifest` to overwrite an existing `<root>/.devboy/secrets.toml`. No-op without `--write-manifest`
+* `--resume` — Resume the wizard from the recorded state file (`~/.devboy/secrets/setup-state.toml`). Skips phases already marked `done` / `skipped`. Implies a full wizard run, not just the scan preview
+* `--json` — Emit JSON-lines events to stdout instead of human prose. One event per line with shape `{"phase":"scan","status":"completed","summary":"…"}` — designed for the AI agent driving the skill
 
 
 

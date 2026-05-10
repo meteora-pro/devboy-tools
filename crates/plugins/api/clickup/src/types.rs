@@ -64,6 +64,29 @@ pub struct ClickUpTask {
     /// It may be absent for older tasks or tasks without uploads.
     #[serde(default)]
     pub attachments: Vec<ClickUpAttachment>,
+    /// Custom fields configured on the list this task lives in. Each
+    /// entry has a stable id, a human-readable name, and an arbitrary
+    /// JSON value (string for text, number for numeric, object for
+    /// dropdown / labels). Empty for tasks in lists without custom
+    /// fields.
+    #[serde(default)]
+    pub custom_fields: Vec<ClickUpCustomField>,
+}
+
+/// ClickUp custom-field entry as returned on the task payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClickUpCustomField {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Field type — `"text"`, `"number"`, `"drop_down"`, `"labels"`,
+    /// `"users"`, `"date"`, …
+    #[serde(default, rename = "type")]
+    pub field_type: Option<String>,
+    /// Raw value as returned by ClickUp. Shape varies by `field_type`.
+    /// Absent when the user hasn't set the field.
+    #[serde(default)]
+    pub value: Option<serde_json::Value>,
 }
 
 /// ClickUp task attachment entry as returned on the task payload.
