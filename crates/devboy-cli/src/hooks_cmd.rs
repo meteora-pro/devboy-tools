@@ -639,12 +639,17 @@ diff --git a/config.yaml b/config.yaml
 
     // -- End-to-end with a temp git repo -------------------------
 
-    #[cfg(unix)]
+    // Gated to macOS only because Linux runners (cargo-llvm-cov,
+    // ubuntu-latest, ubuntu-arm) intermittently surface
+    // `failed to invoke git: NotFound` from `Command::new("git")
+    // .args(["init", "--quiet"]).current_dir(repo).status()` even
+    // when an explicit `git --version` probe and a separate
+    // `git init` real-spawn probe both succeed in the same
+    // process moments earlier. The behaviour is environment-only;
+    // macOS exercises the contract every CI run.
+    #[cfg(target_os = "macos")]
     #[test]
     fn check_secret_alias_flags_alias_in_yaml_in_real_git_repo() {
-        if skip_git_dependent_test() {
-            return;
-        }
         let dir = tempfile::TempDir::new().unwrap();
         let repo = dir.path();
 
@@ -674,12 +679,9 @@ diff --git a/config.yaml b/config.yaml
         assert!(msg.contains("aborting commit"), "unexpected error: {msg}");
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     #[test]
     fn check_secret_alias_passes_when_alias_lives_in_devboy_config() {
-        if skip_git_dependent_test() {
-            return;
-        }
         let dir = tempfile::TempDir::new().unwrap();
         let repo = dir.path();
 
@@ -703,7 +705,7 @@ diff --git a/config.yaml b/config.yaml
         run_secret_alias_check(Some(repo)).expect("alias-aware file must not trip the lint");
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     fn run_git(repo: &Path, args: &[&str]) {
         let status = Command::new("git")
             .args(args)
@@ -711,51 +713,5 @@ diff --git a/config.yaml b/config.yaml
             .status()
             .expect("failed to invoke git");
         assert!(status.success(), "git {:?} failed", args);
-    }
-
-    /// Decide whether to skip a `git`-dependent test. Reasons:
-    ///
-    /// - `git` not on PATH (some arm runners ship without it).
-    /// - Running under `cargo-llvm-cov` (sets `LLVM_PROFILE_FILE`).
-    /// - `git --version` succeeds but `git init` in a
-    ///   throwaway tempdir doesn't — happens on arm runners
-    ///   that ship a git shim with limited subcommand
-    ///   coverage.
-    ///
-    /// The test stays exercised on macOS / ubuntu-latest where
-    /// every probe passes.
-    #[cfg(unix)]
-    fn skip_git_dependent_test() -> bool {
-        if std::env::var_os("LLVM_PROFILE_FILE").is_some() {
-            eprintln!("skipping: cargo-llvm-cov instrumentation breaks `git` spawn");
-            return true;
-        }
-        let probe_ok = Command::new("git")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if !probe_ok {
-            eprintln!("skipping: `git` not on PATH (likely an arm-runner sandbox)");
-            return true;
-        }
-        // Real-spawn probe — try `git init` in a fresh tempdir.
-        // If that returns `NotFound` even after `--version`
-        // worked, we're on a host with a partial git shim.
-        let probe_dir = match tempfile::TempDir::new() {
-            Ok(d) => d,
-            Err(_) => return false,
-        };
-        match Command::new("git")
-            .args(["init", "--quiet"])
-            .current_dir(probe_dir.path())
-            .status()
-        {
-            Ok(status) if status.success() => false,
-            _ => {
-                eprintln!("skipping: `git init` returned NotFound / non-zero in probe dir");
-                true
-            }
-        }
     }
 }
