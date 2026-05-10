@@ -59,6 +59,11 @@ pub struct JiraIssueFields {
     /// Updated timestamp
     #[serde(default)]
     pub updated: Option<String>,
+    /// Issue type reference. Read-only — captures `issuetype.name` so
+    /// callers can branch on `"Epic"` / `"Story"` / `"Sub-task"` without
+    /// re-parsing the raw payload.
+    #[serde(default)]
+    pub issuetype: Option<JiraIssueTypeRef>,
     /// Parent issue (for subtasks)
     #[serde(default)]
     pub parent: Option<Box<JiraIssue>>,
@@ -71,6 +76,20 @@ pub struct JiraIssueFields {
     /// `fields=attachment` or uses `fields=*all`).
     #[serde(default)]
     pub attachment: Vec<JiraAttachment>,
+    /// Catch-all for everything else Jira returns under `fields` —
+    /// most importantly the instance-specific `customfield_*` slots.
+    /// Lets the mapper read e.g. an Epic Description customfield
+    /// without forcing every customfield to be modelled as a typed
+    /// field.
+    #[serde(flatten, default)]
+    pub extras: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// Lightweight read-only reference to an issue type — only the name
+/// is captured because that's what mapping logic branches on.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JiraIssueTypeRef {
+    pub name: String,
 }
 
 /// Jira attachment as returned inside `fields.attachment`.
