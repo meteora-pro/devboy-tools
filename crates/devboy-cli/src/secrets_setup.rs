@@ -473,6 +473,423 @@ fn pick_purpose(var_lower: &str, provider: &str) -> String {
 }
 
 // =============================================================================
+// Wizard runner (P26.4)
+// =============================================================================
+
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
+/// Pure-data progress events emitted by [`run_wizard`]. Drivers
+/// render them however they like — the CLI prints one event per
+/// line; integration tests collect them and assert sequence /
+/// counts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WizardEvent {
+    PhaseStarted {
+        phase: WizardPhase,
+    },
+    PhaseProgress {
+        phase: WizardPhase,
+        message: String,
+    },
+    PhaseCompleted {
+        phase: WizardPhase,
+        summary: String,
+    },
+    PhaseSkipped {
+        phase: WizardPhase,
+        reason: String,
+    },
+    PhaseFailed {
+        phase: WizardPhase,
+        reason: String,
+    },
+    /// Final event when every phase settled `done` / `skipped`.
+    /// Absent when the wizard short-circuits on a failure.
+    Completed,
+}
+
+/// The four phases the wizard walks. Stored as `[steps.<key>]`
+/// entries in `~/.devboy/secrets/setup-state.toml` so a re-run
+/// jumps straight to the first non-`done` phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum WizardPhase {
+    /// Scan the repo for env-var references.
+    Scan,
+    /// Turn hits into ADR-020 path proposals.
+    Propose,
+    /// For each path the manifest declares as required-but-
+    /// missing, open the provision dialog and wait for the
+    /// user.
+    Provision,
+    /// Final `devboy doctor --secrets` validation.
+    Doctor,
+}
+
+impl WizardPhase {
+    pub const ALL: [Self; 4] = [Self::Scan, Self::Propose, Self::Provision, Self::Doctor];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Scan => "scan",
+            Self::Propose => "propose",
+            Self::Provision => "provision",
+            Self::Doctor => "doctor",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Scan => "Scan repo for env-var references",
+            Self::Propose => "Propose ADR-020 paths from env-vars",
+            Self::Provision => "Provision missing required values",
+            Self::Doctor => "Run `devboy doctor --secrets`",
+        }
+    }
+}
+
+/// Outcome of one provision request from the wizard's
+/// perspective. Mirrors the agent-side `ProvisionStatus`
+/// terminal variants.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProvisionOutcome {
+    Saved,
+    Cancelled,
+    Expired,
+    Failed { reason: String },
+}
+
+/// Outcome of the final `doctor` run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DoctorOutcome {
+    Green,
+    Red { summary: String },
+}
+
+/// Injection seam for IO. Production wires the real scanner +
+/// `devboy doctor --secrets` exec + an MCP client; tests pass a
+/// fake.
+pub trait WizardIo {
+    fn scan(&self, root: &Path) -> std::io::Result<Vec<EnvVarHit>>;
+    fn known_providers(&self) -> Vec<String>;
+    /// Paths declared as `required` in the project manifest
+    /// whose value has not yet landed in any source. The
+    /// wizard provisions exactly these.
+    fn missing_required_paths(&self) -> std::io::Result<Vec<String>>;
+    fn provision(&mut self, path: &str) -> ProvisionOutcome;
+    fn doctor(&self) -> DoctorOutcome;
+    /// Wall-clock timestamp in ISO-8601, embedded into the
+    /// state file. Injectable so tests can pin the value.
+    fn now_iso8601(&self) -> String;
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+struct PersistedState {
+    #[serde(default)]
+    schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    started_at: Option<String>,
+    #[serde(default)]
+    last_step: u32,
+    #[serde(default)]
+    steps: BTreeMap<String, StepRecord>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+struct StepRecord {
+    /// `pending` / `in-progress` / `done` / `skipped` / `failed`.
+    status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    completed_at: Option<String>,
+}
+
+impl StepRecord {
+    fn is_settled(&self) -> bool {
+        matches!(self.status.as_str(), "done" | "skipped")
+    }
+}
+
+fn load_state(path: &Path) -> PersistedState {
+    match fs::read_to_string(path) {
+        Ok(body) => toml::from_str::<PersistedState>(&body).unwrap_or_default(),
+        Err(_) => PersistedState {
+            schema_version: 1,
+            ..PersistedState::default()
+        },
+    }
+}
+
+fn save_state(path: &Path, state: &PersistedState) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let body = toml::to_string(state).map_err(|e| std::io::Error::other(e.to_string()))?;
+    fs::write(path, body)
+}
+
+fn ensure_started(state: &mut PersistedState, io: &impl WizardIo) {
+    if state.schema_version == 0 {
+        state.schema_version = 1;
+    }
+    if state.started_at.is_none() {
+        state.started_at = Some(io.now_iso8601());
+    }
+}
+
+fn phase_settled(state: &PersistedState, phase: WizardPhase) -> bool {
+    state
+        .steps
+        .get(phase.key())
+        .map(|r| r.is_settled())
+        .unwrap_or(false)
+}
+
+fn record_status(
+    state: &mut PersistedState,
+    phase: WizardPhase,
+    status: &str,
+    note: Option<String>,
+    io: &impl WizardIo,
+) {
+    let entry = state.steps.entry(phase.key().to_owned()).or_default();
+    entry.status = status.to_owned();
+    entry.note = note;
+    entry.completed_at = Some(io.now_iso8601());
+    let phase_idx = WizardPhase::ALL
+        .iter()
+        .position(|p| *p == phase)
+        .map(|p| (p + 1) as u32)
+        .unwrap_or(state.last_step);
+    if phase_idx > state.last_step {
+        state.last_step = phase_idx;
+    }
+}
+
+/// Drive the wizard from scan to doctor. Resume-aware: phases
+/// already marked `done` / `skipped` in `state_path` are not
+/// re-run. The wizard short-circuits on the first failure;
+/// unsettled phases stay `pending` so the next run picks them
+/// up.
+pub fn run_wizard<I: WizardIo>(
+    repo_root: &Path,
+    state_path: &Path,
+    io: &mut I,
+) -> Vec<WizardEvent> {
+    let mut events = Vec::new();
+    let mut state = load_state(state_path);
+    ensure_started(&mut state, io);
+
+    // ---- Phase 1: Scan -------------------------------------------
+    let hits = if phase_settled(&state, WizardPhase::Scan) {
+        events.push(WizardEvent::PhaseSkipped {
+            phase: WizardPhase::Scan,
+            reason: "already done".to_owned(),
+        });
+        Vec::new()
+    } else {
+        events.push(WizardEvent::PhaseStarted {
+            phase: WizardPhase::Scan,
+        });
+        match io.scan(repo_root) {
+            Ok(hits) => {
+                events.push(WizardEvent::PhaseCompleted {
+                    phase: WizardPhase::Scan,
+                    summary: format!("{} env-var references found", hits.len()),
+                });
+                record_status(
+                    &mut state,
+                    WizardPhase::Scan,
+                    "done",
+                    Some(format!("hits={}", hits.len())),
+                    io,
+                );
+                hits
+            }
+            Err(e) => {
+                let reason = format!("{e}");
+                events.push(WizardEvent::PhaseFailed {
+                    phase: WizardPhase::Scan,
+                    reason: reason.clone(),
+                });
+                record_status(&mut state, WizardPhase::Scan, "failed", Some(reason), io);
+                let _ = save_state(state_path, &state);
+                return events;
+            }
+        }
+    };
+
+    // ---- Phase 2: Propose ----------------------------------------
+    if phase_settled(&state, WizardPhase::Propose) {
+        events.push(WizardEvent::PhaseSkipped {
+            phase: WizardPhase::Propose,
+            reason: "already done".to_owned(),
+        });
+    } else {
+        events.push(WizardEvent::PhaseStarted {
+            phase: WizardPhase::Propose,
+        });
+        let proposals = propose_paths(&hits, &io.known_providers());
+        let path_count = proposals
+            .iter()
+            .filter(|p| matches!(p, ProposedPath::Path { .. }))
+            .count();
+        let skip_count = proposals.len() - path_count;
+        events.push(WizardEvent::PhaseCompleted {
+            phase: WizardPhase::Propose,
+            summary: format!("{path_count} proposed paths, {skip_count} skipped"),
+        });
+        record_status(
+            &mut state,
+            WizardPhase::Propose,
+            "done",
+            Some(format!("paths={path_count}, skipped={skip_count}")),
+            io,
+        );
+    }
+
+    // ---- Phase 3: Provision --------------------------------------
+    if phase_settled(&state, WizardPhase::Provision) {
+        events.push(WizardEvent::PhaseSkipped {
+            phase: WizardPhase::Provision,
+            reason: "already done".to_owned(),
+        });
+    } else {
+        events.push(WizardEvent::PhaseStarted {
+            phase: WizardPhase::Provision,
+        });
+        let missing = match io.missing_required_paths() {
+            Ok(v) => v,
+            Err(e) => {
+                let reason = format!("manifest read failed: {e}");
+                events.push(WizardEvent::PhaseFailed {
+                    phase: WizardPhase::Provision,
+                    reason: reason.clone(),
+                });
+                record_status(
+                    &mut state,
+                    WizardPhase::Provision,
+                    "failed",
+                    Some(reason),
+                    io,
+                );
+                let _ = save_state(state_path, &state);
+                return events;
+            }
+        };
+        if missing.is_empty() {
+            events.push(WizardEvent::PhaseSkipped {
+                phase: WizardPhase::Provision,
+                reason: "no missing required paths".to_owned(),
+            });
+            record_status(
+                &mut state,
+                WizardPhase::Provision,
+                "skipped",
+                Some("no missing required".to_owned()),
+                io,
+            );
+        } else {
+            let mut saved = 0usize;
+            let mut bail: Option<String> = None;
+            for path in &missing {
+                events.push(WizardEvent::PhaseProgress {
+                    phase: WizardPhase::Provision,
+                    message: format!("requesting provision for {path}"),
+                });
+                match io.provision(path) {
+                    ProvisionOutcome::Saved => {
+                        saved += 1;
+                        events.push(WizardEvent::PhaseProgress {
+                            phase: WizardPhase::Provision,
+                            message: format!("{path}: saved"),
+                        });
+                    }
+                    ProvisionOutcome::Cancelled => {
+                        bail = Some(format!("user cancelled provision for {path}"));
+                        break;
+                    }
+                    ProvisionOutcome::Expired => {
+                        bail = Some(format!("provision dialog expired for {path}"));
+                        break;
+                    }
+                    ProvisionOutcome::Failed { reason } => {
+                        bail = Some(format!("provision failed for {path}: {reason}"));
+                        break;
+                    }
+                }
+            }
+            match bail {
+                None => {
+                    events.push(WizardEvent::PhaseCompleted {
+                        phase: WizardPhase::Provision,
+                        summary: format!("{saved}/{} provisioned", missing.len()),
+                    });
+                    record_status(
+                        &mut state,
+                        WizardPhase::Provision,
+                        "done",
+                        Some(format!("provisioned={saved}")),
+                        io,
+                    );
+                }
+                Some(reason) => {
+                    events.push(WizardEvent::PhaseFailed {
+                        phase: WizardPhase::Provision,
+                        reason: reason.clone(),
+                    });
+                    record_status(
+                        &mut state,
+                        WizardPhase::Provision,
+                        "failed",
+                        Some(reason),
+                        io,
+                    );
+                    let _ = save_state(state_path, &state);
+                    return events;
+                }
+            }
+        }
+    }
+
+    // ---- Phase 4: Doctor -----------------------------------------
+    if phase_settled(&state, WizardPhase::Doctor) {
+        events.push(WizardEvent::PhaseSkipped {
+            phase: WizardPhase::Doctor,
+            reason: "already done".to_owned(),
+        });
+    } else {
+        events.push(WizardEvent::PhaseStarted {
+            phase: WizardPhase::Doctor,
+        });
+        match io.doctor() {
+            DoctorOutcome::Green => {
+                events.push(WizardEvent::PhaseCompleted {
+                    phase: WizardPhase::Doctor,
+                    summary: "doctor green".to_owned(),
+                });
+                record_status(&mut state, WizardPhase::Doctor, "done", None, io);
+            }
+            DoctorOutcome::Red { summary } => {
+                events.push(WizardEvent::PhaseFailed {
+                    phase: WizardPhase::Doctor,
+                    reason: summary.clone(),
+                });
+                record_status(&mut state, WizardPhase::Doctor, "failed", Some(summary), io);
+                let _ = save_state(state_path, &state);
+                return events;
+            }
+        }
+    }
+
+    events.push(WizardEvent::Completed);
+    let _ = save_state(state_path, &state);
+    events
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -768,5 +1185,222 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
         // trailing `_SECRET`).
         let p = propose_one("STRIPE_WEBHOOK_SIGNING_SECRET", &known());
         assert_path(&p, "personal/stripe/webhook-signing", false);
+    }
+
+    // ====== Wizard runner fixtures (P26.4) ======================
+
+    /// Test double — records calls and lets the test pre-script
+    /// outcomes. `provision` is the only mutating call; the
+    /// rest are read-only.
+    struct FakeIo {
+        scan_result: Vec<EnvVarHit>,
+        known: Vec<String>,
+        missing: Vec<String>,
+        provision_outcomes: Vec<ProvisionOutcome>,
+        provision_calls: Vec<String>,
+        doctor: DoctorOutcome,
+    }
+
+    impl FakeIo {
+        fn new() -> Self {
+            Self {
+                scan_result: Vec::new(),
+                known: Vec::new(),
+                missing: Vec::new(),
+                provision_outcomes: Vec::new(),
+                provision_calls: Vec::new(),
+                doctor: DoctorOutcome::Green,
+            }
+        }
+    }
+
+    impl WizardIo for FakeIo {
+        fn scan(&self, _root: &Path) -> std::io::Result<Vec<EnvVarHit>> {
+            Ok(self.scan_result.clone())
+        }
+        fn known_providers(&self) -> Vec<String> {
+            self.known.clone()
+        }
+        fn missing_required_paths(&self) -> std::io::Result<Vec<String>> {
+            Ok(self.missing.clone())
+        }
+        fn provision(&mut self, path: &str) -> ProvisionOutcome {
+            self.provision_calls.push(path.to_owned());
+            // Pop the next pre-scripted outcome; default to
+            // `Saved` when the test exhausted the queue.
+            if !self.provision_outcomes.is_empty() {
+                self.provision_outcomes.remove(0)
+            } else {
+                ProvisionOutcome::Saved
+            }
+        }
+        fn doctor(&self) -> DoctorOutcome {
+            self.doctor.clone()
+        }
+        fn now_iso8601(&self) -> String {
+            "2026-05-10T17:30:00Z".to_owned()
+        }
+    }
+
+    fn state_path(dir: &Path) -> PathBuf {
+        dir.join("setup-state.toml")
+    }
+
+    fn phase_kinds(events: &[WizardEvent]) -> Vec<&'static str> {
+        events
+            .iter()
+            .map(|e| match e {
+                WizardEvent::PhaseStarted { .. } => "started",
+                WizardEvent::PhaseProgress { .. } => "progress",
+                WizardEvent::PhaseCompleted { .. } => "completed",
+                WizardEvent::PhaseSkipped { .. } => "skipped",
+                WizardEvent::PhaseFailed { .. } => "failed",
+                WizardEvent::Completed => "wizard-completed",
+            })
+            .collect()
+    }
+
+    #[test]
+    fn wizard_happy_path_runs_all_four_phases_and_emits_completed() {
+        let dir = TempDir::new().unwrap();
+        let mut io = FakeIo::new();
+        io.missing = vec!["team/jira/api-key".into()];
+        let events = run_wizard(dir.path(), &state_path(dir.path()), &mut io);
+        // 4 started + 4 completed + 2 progress (request + saved)
+        // + Completed.
+        assert_eq!(io.provision_calls, vec!["team/jira/api-key"]);
+        assert!(events.last() == Some(&WizardEvent::Completed));
+        let kinds = phase_kinds(&events);
+        assert_eq!(
+            kinds.iter().filter(|k| **k == "completed").count(),
+            4,
+            "all four phases should complete: {events:?}"
+        );
+    }
+
+    #[test]
+    fn wizard_skips_provision_when_nothing_missing() {
+        let dir = TempDir::new().unwrap();
+        let mut io = FakeIo::new();
+        // missing empty — provision gets `Skipped`, not `Failed`.
+        let events = run_wizard(dir.path(), &state_path(dir.path()), &mut io);
+        let kinds = phase_kinds(&events);
+        let skipped = events.iter().any(|e| {
+            matches!(
+                e,
+                WizardEvent::PhaseSkipped {
+                    phase: WizardPhase::Provision,
+                    ..
+                }
+            )
+        });
+        assert!(skipped, "expected Provision to be skipped: {events:?}");
+        assert!(kinds.contains(&"wizard-completed"));
+        // Doctor must still run.
+        assert!(events.iter().any(|e| {
+            matches!(
+                e,
+                WizardEvent::PhaseCompleted {
+                    phase: WizardPhase::Doctor,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn wizard_short_circuits_on_provision_cancel() {
+        let dir = TempDir::new().unwrap();
+        let mut io = FakeIo::new();
+        io.missing = vec!["team/jira/api-key".into(), "team/openai/api-key".into()];
+        io.provision_outcomes = vec![ProvisionOutcome::Cancelled];
+        let events = run_wizard(dir.path(), &state_path(dir.path()), &mut io);
+        // First path was attempted; second was not.
+        assert_eq!(io.provision_calls, vec!["team/jira/api-key"]);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            WizardEvent::PhaseFailed {
+                phase: WizardPhase::Provision,
+                ..
+            }
+        )));
+        // No `Completed` event after a failure.
+        assert!(!events.contains(&WizardEvent::Completed));
+        // Doctor never ran.
+        assert!(!events.iter().any(|e| matches!(
+            e,
+            WizardEvent::PhaseStarted {
+                phase: WizardPhase::Doctor
+            }
+        )));
+    }
+
+    #[test]
+    fn wizard_short_circuits_on_doctor_red() {
+        let dir = TempDir::new().unwrap();
+        let mut io = FakeIo::new();
+        io.doctor = DoctorOutcome::Red {
+            summary: "vault unavailable".into(),
+        };
+        let events = run_wizard(dir.path(), &state_path(dir.path()), &mut io);
+        let failed = events.iter().any(|e| {
+            matches!(
+                e,
+                WizardEvent::PhaseFailed {
+                    phase: WizardPhase::Doctor,
+                    ..
+                }
+            )
+        });
+        assert!(failed);
+        assert!(!events.contains(&WizardEvent::Completed));
+    }
+
+    #[test]
+    fn wizard_resume_skips_done_phases_on_second_run() {
+        let dir = TempDir::new().unwrap();
+        let path = state_path(dir.path());
+        // First run — happy path settles every phase.
+        {
+            let mut io = FakeIo::new();
+            io.missing = vec!["team/jira/api-key".into()];
+            let _ = run_wizard(dir.path(), &path, &mut io);
+        }
+        // Second run — every phase already `done`. Wizard
+        // should emit one `Skipped` per phase plus a final
+        // `Completed`. provision must NOT be re-attempted.
+        let mut io2 = FakeIo::new();
+        io2.missing = vec!["team/jira/api-key".into()];
+        let events = run_wizard(dir.path(), &path, &mut io2);
+        assert!(
+            io2.provision_calls.is_empty(),
+            "resume must not re-provision"
+        );
+        let skip_count = events
+            .iter()
+            .filter(|e| matches!(e, WizardEvent::PhaseSkipped { .. }))
+            .count();
+        assert_eq!(skip_count, 4);
+        assert!(events.contains(&WizardEvent::Completed));
+    }
+
+    #[test]
+    fn wizard_state_file_written_with_done_statuses() {
+        let dir = TempDir::new().unwrap();
+        let path = state_path(dir.path());
+        let mut io = FakeIo::new();
+        io.missing = vec!["team/jira/api-key".into()];
+        let _ = run_wizard(dir.path(), &path, &mut io);
+        let body = std::fs::read_to_string(&path).unwrap();
+        // Every phase should appear in the file as `done`.
+        for phase in WizardPhase::ALL {
+            let key = phase.key();
+            assert!(
+                body.contains(&format!("[steps.{key}]")),
+                "missing section [steps.{key}] in: {body}"
+            );
+        }
+        assert!(body.contains("status = \"done\""));
+        assert!(body.contains("schema_version = 1"));
     }
 }
