@@ -891,6 +891,139 @@ impl JiraClient {
             operation: "load_default_metadata".into(),
         })
     }
+
+    /// Fetch and assemble [`crate::metadata::JiraProjectMetadata`]
+    /// for a single project — issue types, components, priorities,
+    /// link types, customfields. Building block reused by every
+    /// concrete `MetadataLoadStrategy`.
+    ///
+    /// Issuance breakdown (5 round-trips, sequential since the
+    /// instance-wide ones can be amortised across projects when
+    /// callers loop):
+    /// - `GET /project/{key}` for `issueTypes`
+    /// - `GET /project/{key}/components`
+    /// - `GET /priority` (instance-wide; same payload for every
+    ///   project but small)
+    /// - `GET /issueLinkType` (instance-wide)
+    /// - `GET /field` (instance-wide; cached via
+    ///   `JiraClient::fetch_fields` so subsequent project calls
+    ///   reuse the response)
+    pub async fn build_project_metadata(
+        &self,
+        project_key: &str,
+    ) -> Result<crate::metadata::JiraProjectMetadata> {
+        let project_url = format!("{}/project/{}", self.base_url, project_key);
+        let project_value: serde_json::Value = self.get(&project_url).await?;
+        let issue_types: Vec<crate::metadata::JiraIssueType> = project_value
+            .get("issueTypes")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|it| {
+                        Some(crate::metadata::JiraIssueType {
+                            id: it.get("id")?.as_str()?.to_string(),
+                            name: it.get("name")?.as_str()?.to_string(),
+                            subtask: it.get("subtask").and_then(|v| v.as_bool()).unwrap_or(false),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let comp_url = format!("{}/project/{}/components", self.base_url, project_key);
+        let comp_raw: Vec<serde_json::Value> = self.get(&comp_url).await?;
+        let components: Vec<crate::metadata::JiraComponent> = comp_raw
+            .into_iter()
+            .filter_map(|v| {
+                Some(crate::metadata::JiraComponent {
+                    id: v.get("id")?.as_str()?.to_string(),
+                    name: v.get("name")?.as_str()?.to_string(),
+                })
+            })
+            .collect();
+
+        let prio_url = format!("{}/priority", self.base_url);
+        let prio_raw: Vec<serde_json::Value> = self.get(&prio_url).await?;
+        let priorities: Vec<crate::metadata::JiraPriority> = prio_raw
+            .into_iter()
+            .filter_map(|v| {
+                Some(crate::metadata::JiraPriority {
+                    id: v.get("id")?.as_str()?.to_string(),
+                    name: v.get("name")?.as_str()?.to_string(),
+                })
+            })
+            .collect();
+
+        let lt_url = format!("{}/issueLinkType", self.base_url);
+        let lt_raw: serde_json::Value = self.get(&lt_url).await?;
+        let link_types: Vec<crate::metadata::JiraLinkType> = lt_raw
+            .get("issueLinkTypes")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        Some(crate::metadata::JiraLinkType {
+                            id: v.get("id")?.as_str()?.to_string(),
+                            name: v.get("name")?.as_str()?.to_string(),
+                            outward: v
+                                .get("outward")
+                                .and_then(|s| s.as_str())
+                                .map(str::to_string),
+                            inward: v.get("inward").and_then(|s| s.as_str()).map(str::to_string),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let fields = self.fetch_fields().await?;
+        let custom_fields: Vec<crate::metadata::JiraCustomField> = fields
+            .into_iter()
+            .filter(|f| f.custom)
+            .map(|f| {
+                let field_type = infer_jira_field_type(f.schema.as_ref());
+                crate::metadata::JiraCustomField {
+                    id: f.id,
+                    name: f.name,
+                    field_type,
+                    required: false,
+                    options: vec![],
+                }
+            })
+            .collect();
+
+        Ok(crate::metadata::JiraProjectMetadata {
+            issue_types,
+            components,
+            priorities,
+            link_types,
+            custom_fields,
+        })
+    }
+}
+
+/// Translate the `schema` block on a `JiraField` into the
+/// project-metadata `JiraFieldType` enum. Falls back to
+/// [`JiraFieldType::Any`] when the schema is missing or unfamiliar
+/// — the enricher will still emit a usable `cf_*` slot, just
+/// without a typed constraint.
+fn infer_jira_field_type(
+    schema: Option<&crate::types::JiraFieldSchema>,
+) -> crate::metadata::JiraFieldType {
+    use crate::metadata::JiraFieldType;
+    let schema = match schema {
+        Some(s) => s,
+        None => return JiraFieldType::Any,
+    };
+    match schema.field_type.as_deref() {
+        Some("array") => JiraFieldType::Array,
+        Some("number") => JiraFieldType::Number,
+        Some("string") => JiraFieldType::String,
+        Some("date") => JiraFieldType::Date,
+        Some("datetime") => JiraFieldType::DateTime,
+        Some("option") => JiraFieldType::Option,
+        _ => JiraFieldType::Any,
+    }
 }
 
 /// Install hint shown when the Structure plugin may not be detected on the
@@ -5232,6 +5365,83 @@ mod tests {
                 .unwrap();
 
             assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// `build_project_metadata` assembles per-project metadata
+        /// from five Jira endpoints (project, components, priority,
+        /// issueLinkType, field). Validates the wire-to-DTO mapping
+        /// for each — issue type subtask flag, components round-trip,
+        /// link-type direction labels, customfield filter (system
+        /// `Summary` dropped, custom kept).
+        #[tokio::test]
+        async fn test_build_project_metadata_assembles_from_five_endpoints() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ");
+                then.status(200).json_body(serde_json::json!({
+                    "key": "PROJ",
+                    "issueTypes": [
+                        {"id": "1", "name": "Task", "subtask": false},
+                        {"id": "5", "name": "Sub-task", "subtask": true}
+                    ]
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/components");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "10", "name": "API"},
+                    {"id": "11", "name": "Frontend"}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/priority");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "1", "name": "Highest"},
+                    {"id": "2", "name": "Medium"}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issueLinkType");
+                then.status(200).json_body(serde_json::json!({
+                    "issueLinkTypes": [
+                        {"id": "1", "name": "Blocks", "outward": "blocks", "inward": "is blocked by"}
+                    ]
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "summary", "name": "Summary", "custom": false},
+                    {"id": "customfield_10001", "name": "Story Points", "custom": true,
+                     "schema": {"type": "number"}}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let meta = client.build_project_metadata("PROJ").await.unwrap();
+
+            assert_eq!(meta.issue_types.len(), 2);
+            assert!(
+                meta.issue_types
+                    .iter()
+                    .any(|it| it.name == "Sub-task" && it.subtask)
+            );
+            assert_eq!(meta.components.len(), 2);
+            assert_eq!(meta.priorities.len(), 2);
+            assert_eq!(meta.link_types.len(), 1);
+            assert_eq!(meta.link_types[0].outward.as_deref(), Some("blocks"));
+            // System `Summary` filtered out; Story Points kept.
+            assert_eq!(meta.custom_fields.len(), 1);
+            assert_eq!(meta.custom_fields[0].id, "customfield_10001");
+            assert_eq!(
+                meta.custom_fields[0].field_type,
+                crate::metadata::JiraFieldType::Number
+            );
         }
 
         /// Customfield values from `fields.extras` surface on
