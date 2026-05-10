@@ -1,0 +1,46 @@
+{
+  "$schema": "../schema/v1.json",
+  "schema_version": 1,
+  "provider_id": "gemini",
+  "display_name": "Google Gemini",
+  "description": "Gemini API keys issued via Google AI Studio (`aistudio.google.com`). Used for generative-language endpoints under `generativelanguage.googleapis.com`. Vertex-AI customers authenticate via service-account JSON instead — that lives under a separate path family (`team/gcp/...`).",
+  "variants": [
+    {
+      "id": "gemini-api-key",
+      "display_name": "Gemini API key",
+      "description": "Project-scoped key from Google AI Studio. Authenticates `generativelanguage.googleapis.com` chat / embed / file endpoints via the `?key=…` query param or `x-goog-api-key` header. Does NOT cover Vertex AI — that's a separate auth path through service-account credentials.",
+      "format_regex": "^[A-Za-z0-9_-]{39}$",
+      "format_hint": "39 chars of [A-Za-z0-9_-]; no prefix",
+      "retrieval": {
+        "console_url": "https://aistudio.google.com/app/apikey",
+        "steps": [
+          "Open https://aistudio.google.com/app/apikey",
+          "Sign in with the Google account that owns the GCP project",
+          "Click Create API key",
+          "Pick the GCP project the key bills to (or Create new project)",
+          "Copy the value — shown once on this page; you can revoke later from the same page"
+        ],
+        "notes": "Gemini API keys are project-scoped: revoking one does not affect other keys in the same project. Quotas and billing follow the linked GCP project. For server workloads, prefer Vertex AI service-account credentials over a Studio key — Studio keys are intended for prototypes and personal accounts."
+      },
+      "liveness": {
+        "kind": "http",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models",
+        "method": "GET",
+        "auth": { "kind": "header", "name": "x-goog-api-key" },
+        "expect_status": 200
+      },
+      "rotation": { "method": "manual", "every_days": 90 }
+    }
+  ],
+  "env_var_patterns": [
+    { "matches": ["GEMINI_API_KEY"], "variant": "gemini-api-key" },
+    { "matches": ["GOOGLE_GENERATIVE_AI_API_KEY"], "variant": "gemini-api-key" },
+    { "matches": ["E2E_GEMINI_API_KEY"], "variant": "gemini-api-key", "scope": "personal" }
+  ],
+  "env_var_skip": [
+    "GEMINI_BASE_URL",
+    "GEMINI_MODEL",
+    "GEMINI_*_URL",
+    "GEMINI_*_TIMEOUT"
+  ]
+}
