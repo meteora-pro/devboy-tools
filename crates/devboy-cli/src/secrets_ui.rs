@@ -1161,14 +1161,12 @@ fn liveness_probe(
         .map_err(|e| format!("liveness URL refused for safety: {e}"))?;
 
     // Blocking client — we run inside an egui frame so async
-    // wouldn't help anyway. 5-second timeout.
-    let client = match reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => return Err(format!("could not build HTTP client: {e}")),
-    };
+    // wouldn't help anyway. 5-second timeout. The SSRF-safe
+    // builder re-checks every redirect target so an HTTPS
+    // upstream cannot 30x into RFC1918 / cloud-metadata after
+    // the original-URL guard passes.
+    let client = devboy_token_catalog::ssrf_safe_blocking_client(std::time::Duration::from_secs(5))
+        .map_err(|e| format!("could not build HTTP client: {e}"))?;
     let mut req = match method {
         HttpMethod::Get => client.get(*url),
         HttpMethod::Post => client.post(*url),
@@ -1213,9 +1211,10 @@ fn run_catalog_liveness(
     devboy_token_catalog::check_ssrf_safe(&spec.url)
         .map_err(|e| format!("liveness URL refused for safety: {e}"))?;
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
+    // SSRF-safe blocking client — re-checks redirects so the
+    // catalog-declared liveness URL cannot 30x into private
+    // / loopback / cloud-metadata space.
+    let client = devboy_token_catalog::ssrf_safe_blocking_client(std::time::Duration::from_secs(5))
         .map_err(|e| format!("could not build HTTP client: {e}"))?;
     let mut req = match spec.method.to_ascii_uppercase().as_str() {
         "GET" => client.get(&spec.url),

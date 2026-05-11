@@ -424,6 +424,50 @@ pub const MAX_CATALOG_BODY_BYTES: usize = 256 * 1024;
 /// timing out.
 pub const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// Build a `reqwest::blocking::Client` that re-checks
+/// [`check_ssrf_safe`] on every redirect target. Without this,
+/// the original-URL SSRF check is trivially bypassable: a
+/// public HTTPS endpoint can return a 30x to
+/// `http://169.254.169.254/...` (cloud metadata),
+/// `http://10.0.0.5/...` (RFC1918), or any other unsafe address
+/// and the default `reqwest` policy will happily follow up to
+/// 10 hops before delivering the response. That defeats the
+/// whole P23 catalog-fetch + GUI liveness-probe threat model
+/// — the user's freshly-typed secret would land on the wrong
+/// host.
+///
+/// This helper is the canonical client constructor for every
+/// catalog-fetcher and liveness-probe call site. Callers must
+/// NOT build their own `reqwest::blocking::Client` for these
+/// flows; the type system can't enforce that, but every
+/// existing call site lives in this workspace and is grep-able.
+///
+/// The redirect callback uses `Action::error` so a refused hop
+/// surfaces as a hard error in the calling fetcher, not as a
+/// silent 3xx response.
+pub fn ssrf_safe_blocking_client(
+    timeout: std::time::Duration,
+) -> Result<reqwest::blocking::Client, reqwest::Error> {
+    reqwest::blocking::Client::builder()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            // Refuse runaway redirect chains in addition to the
+            // SSRF check — even when every hop is "safe" in
+            // isolation, 50 chained ones is not.
+            if attempt.previous().len() >= 10 {
+                return attempt.error("too many redirects (10 hops cap)");
+            }
+            let url = attempt.url().to_string();
+            match check_ssrf_safe(&url) {
+                Ok(()) => attempt.follow(),
+                Err(e) => attempt.error(format!(
+                    "redirect target refused by SSRF guard ({url}): {e}"
+                )),
+            }
+        }))
+        .build()
+}
+
 /// Reasons the URL fetcher can refuse a request.
 #[derive(Debug, Error)]
 pub enum FetchError {
@@ -536,10 +580,8 @@ pub fn fetch_url_source(
         audit.record(AuditOutcome::BlockedSsrf, None, None, e.to_string());
         return Err(FetchError::Ssrf { source: e });
     }
-    let client = reqwest::blocking::Client::builder()
-        .timeout(FETCH_TIMEOUT)
-        .build()
-        .map_err(|source| FetchError::Client { source })?;
+    let client =
+        ssrf_safe_blocking_client(FETCH_TIMEOUT).map_err(|source| FetchError::Client { source })?;
     fetch_inner_with_client(
         &client,
         source,
@@ -1964,6 +2006,106 @@ mod tests {
             unix_now(),
             None,
         )
+    }
+
+    // -- F1: SSRF-safe client refuses redirects into unsafe space --
+
+    /// Walk the std::error::Error::source chain and concatenate
+    /// every layer's display string. Reqwest wraps custom
+    /// redirect-policy errors deep inside a generic "error
+    /// following redirect" message; the inner cause carries our
+    /// SSRF text.
+    fn collect_error_chain(err: &dyn std::error::Error) -> String {
+        let mut out = err.to_string();
+        let mut cause = err.source();
+        while let Some(c) = cause {
+            out.push_str(" :: ");
+            out.push_str(&c.to_string());
+            cause = c.source();
+        }
+        out
+    }
+
+    #[test]
+    fn ssrf_safe_client_refuses_redirect_to_link_local_metadata() {
+        // httpmock listens on 127.0.0.1 (loopback) but we ask the
+        // ssrf-safe client to FOLLOW it. The first hop is not
+        // checked by the redirect callback — only subsequent
+        // Location targets are. Our 302 sends the client at
+        // 169.254.169.254 (AWS / GCP cloud-metadata) which the
+        // SSRF guard refuses → the policy returns
+        // `Action::error(...)` → reqwest surfaces it.
+        let server = httpmock::MockServer::start();
+        let m = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/catalog.json");
+            then.status(302)
+                .header("Location", "http://169.254.169.254/latest/meta-data");
+        });
+
+        let client =
+            ssrf_safe_blocking_client(std::time::Duration::from_secs(2)).unwrap();
+        let res = client.get(format!("{}/catalog.json", server.base_url())).send();
+        m.assert();
+        let err = res.expect_err("SSRF-safe client must refuse the 302 to 169.254.169.254");
+        let chain = collect_error_chain(&err);
+        assert!(
+            chain.contains("SSRF guard") || chain.contains("169.254"),
+            "error chain must blame the SSRF guard, got: {chain}"
+        );
+    }
+
+    #[test]
+    fn ssrf_safe_client_refuses_redirect_to_rfc1918() {
+        let server = httpmock::MockServer::start();
+        let m = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/catalog.json");
+            then.status(301).header("Location", "http://10.0.0.5/internal");
+        });
+
+        let client =
+            ssrf_safe_blocking_client(std::time::Duration::from_secs(2)).unwrap();
+        let res = client.get(format!("{}/catalog.json", server.base_url())).send();
+        m.assert();
+        let err =
+            res.expect_err("SSRF-safe client must refuse a 301 redirect into RFC1918 space");
+        let chain = collect_error_chain(&err);
+        assert!(
+            chain.contains("SSRF guard") || chain.contains("10.0.0.5"),
+            "error chain must blame the SSRF guard, got: {chain}"
+        );
+    }
+
+    #[test]
+    fn ssrf_safe_client_refuses_runaway_redirect_chain() {
+        // Httpmock that redirects to itself indefinitely.
+        let server = httpmock::MockServer::start();
+        let _m = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/loop");
+            // Note: the Location header points back at /loop on
+            // the same server — every hop stays on 127.0.0.1
+            // (loopback). check_ssrf_safe accepts the loopback
+            // here (the callback isn't invoked for the very
+            // first hop; only subsequent ones). After 10 hops
+            // the `previous().len() >= 10` guard fires.
+            then.status(302)
+                .header("Location", format!("{}/loop", server.base_url()));
+        });
+
+        let client =
+            ssrf_safe_blocking_client(std::time::Duration::from_secs(2)).unwrap();
+        let res = client.get(format!("{}/loop", server.base_url())).send();
+        let err = res.expect_err(
+            "SSRF-safe client must refuse a redirect chain that exceeds the 10-hop cap",
+        );
+        // The error may come from EITHER our guard (loopback
+        // refused) OR the 10-hop cap, depending on whether the
+        // first internal-redirect hop's loopback IP gets a
+        // pass. Both wordings are acceptable for this test.
+        let chain = collect_error_chain(&err);
+        assert!(
+            chain.contains("too many redirects") || chain.contains("SSRF guard"),
+            "error must blame the cap or the guard, got: {chain}"
+        );
     }
 
     #[test]
