@@ -603,9 +603,9 @@ fn catalog_status(args: CatalogStatusArgs) -> Result<()> {
 /// `[[source]]` entry into `~/.devboy/secrets/catalog/sources.toml`.
 fn catalog_add_url(args: CatalogAddUrlArgs) -> Result<()> {
     use devboy_token_catalog::{
-        CatalogSourcesConfig, FirstFetchPolicy, UrlSource, default_catalog_audit_log_path,
-        default_catalog_cache_dir, default_known_hashes_path, default_sources_toml_path,
-        fetch_url_source, parse_sources_toml, sha256_hex,
+        CatalogSourcesConfig, FetchError, FirstFetchPolicy, UrlSource,
+        default_catalog_audit_log_path, default_catalog_cache_dir, default_known_hashes_path,
+        default_sources_toml_path, fetch_url_source, parse_sources_toml, record_url_trust,
     };
     use std::fs;
     use std::io::IsTerminal;
@@ -626,52 +626,132 @@ fn catalog_add_url(args: CatalogAddUrlArgs) -> Result<()> {
     let audit_log_path = default_catalog_audit_log_path();
 
     println!("fetching {} …", source.url);
-    // The CLI is unattended for the fetch step itself —
-    // FirstFetchPolicy::AutoRecord is fine because the
-    // caller is the one running this command and we surface
-    // the SHA back to them before persisting sources.toml.
-    let catalog = fetch_url_source(
+    // F2 — use `RequireConfirmation` so the loader does NOT
+    // touch known_hashes.toml until the user has confirmed
+    // the trust prompt. The error path
+    // `FirstFetchNeedsConfirmation { url, sha256 }` carries
+    // the REAL fetched-body SHA the loader would record —
+    // we print THAT, not a re-serialised round-trip hash that
+    // can drift from the actual pin target.
+    let fetched = fetch_url_source(
         &source,
         known_hashes_path.as_deref(),
         cache_dir.as_deref(),
-        FirstFetchPolicy::AutoRecord,
+        FirstFetchPolicy::RequireConfirmation,
         audit_log_path.as_deref(),
-    )
-    .context("URL catalog fetch failed")?;
+    );
 
-    // Re-hash the body for the human-facing print so the
-    // user sees the same SHA the loader recorded.
-    let body = serde_json::to_vec(&catalog).context("could not re-encode catalog for SHA print")?;
-    let sha = sha256_hex(&body);
-
-    println!();
-    println!("provider:   {}", catalog.provider_id);
-    println!("display:    {}", catalog.display_name);
-    println!("variants:   {}", catalog.variants.len());
-    println!("patterns:   {}", catalog.env_var_patterns.len());
-    println!("skip rules: {}", catalog.env_var_skip.len());
-    println!("body sha256 (re-hashed locally): {sha}");
-    println!();
-
-    if !pin_set && !args.yes {
-        if !std::io::stdin().is_terminal() {
-            anyhow::bail!(
-                "no --pin and no --yes; refusing to record an unpinned URL source from a non-tty \
-                 invocation. Re-run with --yes to accept TOFU, or with --pin <sha256> to lock the \
-                 body."
-            );
+    // Three cases:
+    //   1. `Ok(catalog)` — known_hashes already trusts this
+    //      URL (or `sha256` pin matched). The loader has
+    //      recorded nothing new; we only need to write
+    //      sources.toml.
+    //   2. `Err(FirstFetchNeedsConfirmation{url,sha256})` — new
+    //      URL, no pin / TOFU yet. Surface the SHA, get the
+    //      user's confirmation, THEN record trust + write
+    //      sources.toml.
+    //   3. Any other Err — propagate.
+    let (catalog, fetched_sha, needs_trust) = match fetched {
+        Ok(c) => {
+            let sha_for_display = known_hashes_path
+                .as_deref()
+                .and_then(|p| devboy_token_catalog::read_known_hashes(p).ok())
+                .and_then(|kh| kh.url.get(&source.url).cloned())
+                .unwrap_or_else(|| args.pin.clone().unwrap_or_default());
+            (c, sha_for_display, false)
         }
-        let prompt = format!(
-            "Trust catalog `{}` from {} ? [y/N] ",
-            catalog.provider_id, source.url
-        );
-        let answer: bool = dialoguer::Confirm::new()
-            .with_prompt(prompt)
-            .default(false)
-            .interact()
-            .unwrap_or(false);
-        if !answer {
-            anyhow::bail!("user declined trust prompt — sources.toml unchanged");
+        Err(FetchError::FirstFetchNeedsConfirmation { url: _, sha256 }) => {
+            // Re-fetch with AutoRecord ONLY after we know the
+            // user is going to accept. To get the catalog
+            // object for the summary print, we run the
+            // loader once more — but using AutoRecord on this
+            // call WILL persist the trust, which is what we
+            // want once the user has said yes. So: first
+            // print + prompt, then re-fetch with AutoRecord
+            // to commit.
+            //
+            // Build a placeholder ProviderCatalog so the
+            // summary print works before the second fetch.
+            // We don't have the variants count until we've
+            // parsed the body, so we make the print SHA-only
+            // for the confirmation step.
+            (
+                // dummy zero-variant catalog for the print
+                devboy_token_catalog::ProviderCatalog {
+                    schema: None,
+                    schema_version: 1,
+                    provider_id: "<not parsed yet>".into(),
+                    display_name: source.url.clone(),
+                    description: None,
+                    variants: Vec::new(),
+                    env_var_patterns: Vec::new(),
+                    env_var_skip: Vec::new(),
+                },
+                sha256,
+                true,
+            )
+        }
+        Err(e) => return Err(e).context("URL catalog fetch failed"),
+    };
+
+    println!();
+    println!("source:        {}", source.url);
+    if !needs_trust {
+        println!("provider:      {}", catalog.provider_id);
+        println!("display:       {}", catalog.display_name);
+        println!("variants:      {}", catalog.variants.len());
+        println!("patterns:      {}", catalog.env_var_patterns.len());
+        println!("skip rules:    {}", catalog.env_var_skip.len());
+    }
+    println!("body sha256:   {fetched_sha}");
+    println!();
+
+    if needs_trust {
+        if pin_set {
+            // User passed --pin but the loader still wants
+            // confirmation — that means the pin did NOT match
+            // the fetched SHA. This is a hard refusal.
+            if Some(&fetched_sha) != args.pin.as_ref() {
+                anyhow::bail!(
+                    "--pin sha256 does not match the fetched body sha256 (got `{fetched_sha}`, \
+                     pinned `{}`); refusing to record an inconsistent trust state",
+                    args.pin.as_deref().unwrap_or("")
+                );
+            }
+            // Pin matched — proceed without an interactive
+            // confirm.
+        } else if !args.yes {
+            if !std::io::stdin().is_terminal() {
+                anyhow::bail!(
+                    "no --pin and no --yes; refusing to record an unpinned URL source from a \
+                     non-tty invocation. Re-run with --yes to accept TOFU, or with --pin <sha256> \
+                     to lock the body."
+                );
+            }
+            let prompt = format!(
+                "Trust this catalog body and record it under TOFU for {} ? [y/N] ",
+                source.url
+            );
+            let answer: bool = dialoguer::Confirm::new()
+                .with_prompt(prompt)
+                .default(false)
+                .interact()
+                .unwrap_or(false);
+            if !answer {
+                anyhow::bail!(
+                    "user declined trust prompt — known_hashes.toml AND sources.toml left untouched"
+                );
+            }
+        }
+
+        // Persist trust under TOFU. `record_url_trust` writes
+        // (url → sha256) into known_hashes.toml; it's the
+        // same writer the loader uses under AutoRecord, so the
+        // file the next refresh checks matches what we just
+        // showed the user.
+        if let Some(p) = known_hashes_path.as_deref() {
+            record_url_trust(p, &source.url, &fetched_sha)
+                .context("could not record URL trust in known_hashes.toml")?;
         }
     }
 
