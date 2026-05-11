@@ -1340,7 +1340,7 @@ pub fn handle_cli(args: crate::secrets_cmd::SetupArgs) -> anyhow::Result<()> {
 
     // Otherwise the default mode is the read-only preview.
     let hits = scan_repo(&root)?;
-    let catalogs = devboy_token_catalog::bundled_catalogs();
+    let catalogs = active_catalogs_for_wizard();
     let proposals = propose_paths(&hits, &catalogs);
     let path_count = proposals
         .iter()
@@ -1463,6 +1463,45 @@ fn state_file_path() -> anyhow::Result<PathBuf> {
     Ok(home.join(".devboy/secrets/setup-state.toml"))
 }
 
+/// Active catalog set for the wizard — bundled + user +
+/// project + any URL source enabled in `sources.toml`. This is
+/// what the proposer actually consults; F4 closes the gap that
+/// the previous build of this fn only returned `bundled_catalogs`.
+///
+/// URL sources are loaded with `FirstFetchPolicy::AutoRecord`
+/// because the wizard runs unattended — any first-time-trust
+/// prompt belongs on the dedicated `devboy secrets catalog
+/// add-url` command, not buried inside a setup flow.
+fn active_catalogs_for_wizard() -> Vec<ProviderCatalog> {
+    use devboy_token_catalog::{
+        FirstFetchPolicy, bundled_catalogs, default_catalog_audit_log_path,
+        default_catalog_cache_dir, default_known_hashes_path, default_sources_toml_path,
+        default_user_catalog_dir, load_all_with_urls, parse_sources_toml,
+    };
+    let bundled = bundled_catalogs();
+    let user_dir = default_user_catalog_dir();
+    let project_dir = std::env::current_dir()
+        .ok()
+        .map(|d| d.join(".devboy").join("secrets").join("catalog"));
+    let url_config = default_sources_toml_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|body| parse_sources_toml(&body).ok());
+    let known_hashes_path = default_known_hashes_path();
+    let cache_dir = default_catalog_cache_dir();
+    let audit_log_path = default_catalog_audit_log_path();
+    let (loaded, _errors) = load_all_with_urls(
+        &bundled,
+        user_dir.as_deref(),
+        project_dir.as_deref(),
+        url_config.as_ref(),
+        known_hashes_path.as_deref(),
+        cache_dir.as_deref(),
+        FirstFetchPolicy::AutoRecord,
+        audit_log_path.as_deref(),
+    );
+    loaded.into_iter().map(|c| c.catalog).collect()
+}
+
 fn serialise_proposal(p: &ProposedPath) -> serde_json::Value {
     match p {
         ProposedPath::Path {
@@ -1538,7 +1577,13 @@ impl WizardIo for ProductionWizardIo {
         scan_repo(root)
     }
     fn catalogs(&self) -> Vec<ProviderCatalog> {
-        devboy_token_catalog::bundled_catalogs()
+        // F4 — consult every active catalog source (bundled,
+        // user, project, URL) so authored env_var_patterns +
+        // env_var_skip from external catalogs reach the
+        // proposer. Without this, the wizard only ever sees
+        // bundled coverage and ignores anything the user / team
+        // / community catalogs ship.
+        active_catalogs_for_wizard()
     }
     fn missing_required_paths(&self) -> std::io::Result<Vec<String>> {
         // Conservative first cut: read the manifest and report
@@ -1552,17 +1597,28 @@ impl WizardIo for ProductionWizardIo {
         };
         Ok(manifest.required.iter().map(|p| p.to_string()).collect())
     }
-    fn provision(&mut self, _path: &str) -> ProvisionOutcome {
-        // The CLI cannot open the dialog directly — the daemon
-        // owns the UI surface. For the first cut, we surface a
-        // clear failure that nudges the user to run
-        // `devboy secrets ui` (interactive) or to start the
-        // daemon and re-run the wizard from an MCP-aware host.
+    fn provision(&mut self, path: &str) -> ProvisionOutcome {
+        // F4 — the CLI does not own the provision dialog
+        // (that belongs to `devboy-secrets-agent` which speaks
+        // a separate UNIX-socket protocol). Until the CLI
+        // gains an MCP-stdio client that can talk to a
+        // `devboy mcp` subprocess and drive
+        // `secrets_request_provision`, the practical path is
+        // the documented "manual provision then resume" flow:
+        //
+        //   1. devboy secrets ui --tui     # type the value
+        //   2. devboy secrets setup --resume  # picks up cleanly
+        //
+        // The error message names the specific path so the
+        // user can navigate directly to it inside the TUI.
         ProvisionOutcome::Failed {
-            reason: "CLI cannot open the provision dialog directly — \
-                     run `devboy secrets ui` to provision interactively, \
-                     then re-run `devboy secrets setup --resume`."
-                .to_owned(),
+            reason: format!(
+                "no in-process daemon RPC client is wired into this build — \
+                 provision `{path}` interactively with `devboy secrets ui --tui`, \
+                 then re-run `devboy secrets setup --resume` to continue the wizard. \
+                 (Tracking issue: real MCP-stdio dispatch lands after the \
+                 inter-process protocol stabilises.)"
+            ),
         }
     }
     fn doctor(&self) -> DoctorOutcome {
