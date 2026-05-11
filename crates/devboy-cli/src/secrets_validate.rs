@@ -660,4 +660,359 @@ mod tests {
             "expired"
         );
     }
+
+    // ===========================================================
+    // T3 — labels for the remaining variants, map_liveness, more
+    //      fold_severity branches, build_row happy + edge cases
+    // ===========================================================
+
+    #[test]
+    fn liveness_label_covers_throttled_not_implemented_and_error() {
+        // The existing test only exercised the first three
+        // variants; pin the rest so a future rename of the
+        // user-facing strings (which docs / scripts grep for)
+        // shows up as a test failure.
+        assert_eq!(
+            liveness_label(Some(&LivenessRowStatus::Throttled { detail: None })),
+            "throttled"
+        );
+        assert_eq!(
+            liveness_label(Some(&LivenessRowStatus::NotImplemented {
+                provider: "exotic".into()
+            })),
+            "not-impl"
+        );
+        assert_eq!(
+            liveness_label(Some(&LivenessRowStatus::Error { detail: None })),
+            "error"
+        );
+    }
+
+    #[test]
+    fn severity_label_covers_all_four_variants() {
+        assert_eq!(severity_label(RowSeverity::Pass), "pass");
+        assert_eq!(severity_label(RowSeverity::Warning), "warn");
+        assert_eq!(severity_label(RowSeverity::Error), "FAIL");
+        assert_eq!(severity_label(RowSeverity::Skipped), "skip");
+    }
+
+    // -- map_liveness ---------------------------------------------
+
+    #[test]
+    fn map_liveness_live_preserves_detail_and_expires_at() {
+        let r = LivenessResult {
+            status: LivenessStatus::Live,
+            detail: Some("alice/repo".into()),
+            expires_at: Some("2026-12-31".into()),
+        };
+        match map_liveness(Some("github"), &r) {
+            LivenessRowStatus::Live { detail, expires_at } => {
+                assert_eq!(detail.as_deref(), Some("alice/repo"));
+                assert_eq!(expires_at.as_deref(), Some("2026-12-31"));
+            }
+            other => panic!("expected Live row status, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_liveness_revoked_keeps_only_detail() {
+        let r = LivenessResult::revoked("token has been revoked");
+        match map_liveness(Some("gitlab"), &r) {
+            LivenessRowStatus::Revoked { detail } => {
+                assert_eq!(detail.as_deref(), Some("token has been revoked"));
+            }
+            other => panic!("expected Revoked row status, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_liveness_expired_keeps_only_expires_at() {
+        let r = LivenessResult::expired("2026-01-01");
+        match map_liveness(Some("github"), &r) {
+            LivenessRowStatus::Expired { expires_at } => {
+                assert_eq!(expires_at.as_deref(), Some("2026-01-01"));
+            }
+            other => panic!("expected Expired row status, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_liveness_throttled_keeps_detail() {
+        let r = LivenessResult::throttled("Retry-After: 60");
+        match map_liveness(Some("gitlab"), &r) {
+            LivenessRowStatus::Throttled { detail } => {
+                assert_eq!(detail.as_deref(), Some("Retry-After: 60"));
+            }
+            other => panic!("expected Throttled row status, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_liveness_not_implemented_uses_provider_arg_not_result_detail() {
+        // The mapper's `provider` arg wins over whatever the
+        // LivenessResult convenience filled in — this is the
+        // ADR-021 §6 contract: `NotImplemented` rows surface
+        // the provider name the manifest derived, not the
+        // probe's own self-description.
+        let r = LivenessResult::not_implemented("self-named");
+        match map_liveness(Some("slack"), &r) {
+            LivenessRowStatus::NotImplemented { provider } => {
+                assert_eq!(provider, "slack");
+            }
+            other => panic!("expected NotImplemented row status, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_liveness_not_implemented_falls_back_to_unknown_when_provider_is_none() {
+        let r = LivenessResult::not_implemented("any");
+        match map_liveness(None, &r) {
+            LivenessRowStatus::NotImplemented { provider } => {
+                assert_eq!(provider, "unknown");
+            }
+            other => panic!("expected NotImplemented row status, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_liveness_error_keeps_detail() {
+        let r = LivenessResult::error("connection reset");
+        match map_liveness(Some("github"), &r) {
+            LivenessRowStatus::Error { detail } => {
+                assert_eq!(detail.as_deref(), Some("connection reset"));
+            }
+            other => panic!("expected Error row status, got {other:?}"),
+        }
+    }
+
+    // -- fold_severity, remaining branches -----------------------
+
+    #[test]
+    fn pass_format_with_live_liveness_is_pass() {
+        let r = resolved("a/b/c", true, IndexEntry::default());
+        let s = fold_severity(
+            &r,
+            &FormatRowStatus::Pass {
+                source: "inline".into(),
+            },
+            Some(&LivenessRowStatus::Live {
+                detail: None,
+                expires_at: None,
+            }),
+        );
+        assert_eq!(s, RowSeverity::Pass);
+    }
+
+    #[test]
+    fn optional_expired_liveness_is_warning() {
+        // Required-expired is already covered by the existing
+        // `liveness_revoked_on_required_is_error_even_if_format_passed`
+        // test (Revoked and Expired share a branch in
+        // fold_severity). This pins the OPTIONAL side of that
+        // branch — same severity rule but a warn outcome.
+        let r = resolved("a/b/c", false, IndexEntry::default());
+        let s = fold_severity(
+            &r,
+            &FormatRowStatus::Pass {
+                source: "inline".into(),
+            },
+            Some(&LivenessRowStatus::Expired {
+                expires_at: Some("2026-01-01".into()),
+            }),
+        );
+        assert_eq!(s, RowSeverity::Warning);
+    }
+
+    #[test]
+    fn not_implemented_liveness_is_warning_regardless_of_required_flag() {
+        // NotImplemented is a "we couldn't tell" signal. Both
+        // required and optional rows surface it as a warning,
+        // never as an error, so unsupported providers don't
+        // gate CI by accident.
+        for required in [true, false] {
+            let r = resolved("a/b/c", required, IndexEntry::default());
+            let s = fold_severity(
+                &r,
+                &FormatRowStatus::Pass {
+                    source: "inline".into(),
+                },
+                Some(&LivenessRowStatus::NotImplemented {
+                    provider: "exotic".into(),
+                }),
+            );
+            assert_eq!(
+                s,
+                RowSeverity::Warning,
+                "NotImplemented liveness with required={required} must be Warning",
+            );
+        }
+    }
+
+    #[test]
+    fn error_liveness_is_warning_regardless_of_required_flag() {
+        // Mirror of `not_implemented_liveness_is_warning_*`:
+        // a transient probe failure must not gate CI.
+        for required in [true, false] {
+            let r = resolved("a/b/c", required, IndexEntry::default());
+            let s = fold_severity(
+                &r,
+                &FormatRowStatus::Pass {
+                    source: "inline".into(),
+                },
+                Some(&LivenessRowStatus::Error {
+                    detail: Some("dns failed".into()),
+                }),
+            );
+            assert_eq!(
+                s,
+                RowSeverity::Warning,
+                "Error liveness with required={required} must be Warning",
+            );
+        }
+    }
+
+    // -- build_row ------------------------------------------------
+
+    /// Build a runtime that drives one `build_row` call so the
+    /// async surface gets coverage without spinning up a full
+    /// `#[tokio::test]` everywhere.
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(f)
+    }
+
+    #[test]
+    fn build_row_missing_required_value_renders_as_error() {
+        // No env var set → MissingValue + required ⇒ Error.
+        // Use a uniquely-named path so concurrent tests can't
+        // collide on the convention env var.
+        let path = "team/buildrow/missing-req-1";
+        let env = convention_name(path);
+        // Sanity: the env var must not be set in the host env.
+        // Tests run in arbitrary order so we cannot trust the
+        // global env here — if some other test set it for any
+        // reason, fail loudly rather than silently passing the
+        // wrong branch.
+        assert!(
+            std::env::var(&env).is_err(),
+            "test pollution: {env} is set in the host env"
+        );
+
+        let r = resolved(path, true, IndexEntry::default());
+        let catalogue = Catalogue::builtins_only();
+        let row = block_on(build_row(&r, &catalogue, false));
+        assert_eq!(row.overall, RowSeverity::Error);
+        assert!(matches!(row.format, FormatRowStatus::MissingValue));
+        assert!(row.liveness.is_none(), "no liveness without --liveness");
+        assert!(!row.value_present);
+        assert_eq!(row.env_var, env);
+        assert_eq!(row.provider.as_deref(), Some("buildrow"));
+    }
+
+    #[test]
+    fn build_row_optional_missing_value_renders_as_skipped() {
+        let path = "team/buildrow/missing-opt-2";
+        let env = convention_name(path);
+        assert!(std::env::var(&env).is_err());
+        let r = resolved(path, false, IndexEntry::default());
+        let catalogue = Catalogue::builtins_only();
+        let row = block_on(build_row(&r, &catalogue, false));
+        assert_eq!(row.overall, RowSeverity::Skipped);
+        assert!(matches!(row.format, FormatRowStatus::MissingValue));
+    }
+
+    #[test]
+    fn build_row_format_pass_when_value_matches_inline_regex() {
+        // Path-specific env var lets this test set / unset
+        // safely under temp_env without colliding with siblings.
+        let path = "team/buildrow/format-pass-3";
+        let env = convention_name(path);
+        let entry = IndexEntry {
+            format_regex: Some("^glpat-[a-z0-9]{6}$".into()),
+            ..IndexEntry::default()
+        };
+        let r = resolved(path, true, entry);
+        let catalogue = Catalogue::builtins_only();
+
+        temp_env::with_var(&env, Some("glpat-abc123"), || {
+            let row = block_on(build_row(&r, &catalogue, false));
+            assert_eq!(row.overall, RowSeverity::Pass);
+            match &row.format {
+                FormatRowStatus::Pass { source } => {
+                    // The Display of FormatCheckSource::Inline
+                    // gets lowercased on the way out; just
+                    // assert it's non-empty.
+                    assert!(!source.is_empty(), "format source must be set");
+                }
+                other => panic!("expected Pass, got {other:?}"),
+            }
+            assert!(row.value_present);
+        });
+    }
+
+    #[test]
+    fn build_row_format_mismatch_renders_as_warning_when_optional() {
+        // Mismatch + optional ⇒ Warning (not Error). Pins the
+        // optional-relaxation branch.
+        let path = "team/buildrow/format-mismatch-4";
+        let env = convention_name(path);
+        let entry = IndexEntry {
+            format_regex: Some("^glpat-[a-z0-9]{6}$".into()),
+            ..IndexEntry::default()
+        };
+        let r = resolved(path, false, entry);
+        let catalogue = Catalogue::builtins_only();
+
+        temp_env::with_var(&env, Some("wrong-shape"), || {
+            let row = block_on(build_row(&r, &catalogue, false));
+            assert_eq!(row.overall, RowSeverity::Warning);
+            match &row.format {
+                FormatRowStatus::Mismatch { expected } => {
+                    assert_eq!(expected, "^glpat-[a-z0-9]{6}$");
+                }
+                other => panic!("expected Mismatch, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn build_row_no_rule_keeps_required_row_at_skipped() {
+        // No format_regex / pattern_id but a value is present
+        // → NoRule format status, and overall Skipped because
+        // there's nothing to assert against.
+        let path = "team/buildrow/no-rule-5";
+        let env = convention_name(path);
+        let r = resolved(path, true, IndexEntry::default());
+        let catalogue = Catalogue::builtins_only();
+
+        temp_env::with_var(&env, Some("any-value-survives"), || {
+            let row = block_on(build_row(&r, &catalogue, false));
+            assert_eq!(row.overall, RowSeverity::Skipped);
+            assert!(matches!(row.format, FormatRowStatus::NoRule));
+            assert!(row.value_present);
+        });
+    }
+
+    #[test]
+    fn build_row_empty_env_var_is_treated_as_unset() {
+        // Convention: an empty-string env var is *as if* the
+        // var wasn't set at all (see `build_row`'s
+        // `.filter(|v| !v.is_empty())`). This pins that
+        // behaviour so CI containers that pre-export every
+        // expected variable to "" don't accidentally validate.
+        let path = "team/buildrow/empty-env-6";
+        let env = convention_name(path);
+        let r = resolved(path, true, IndexEntry::default());
+        let catalogue = Catalogue::builtins_only();
+
+        temp_env::with_var(&env, Some(""), || {
+            let row = block_on(build_row(&r, &catalogue, false));
+            assert!(matches!(row.format, FormatRowStatus::MissingValue));
+            assert_eq!(row.overall, RowSeverity::Error);
+            assert!(!row.value_present);
+        });
+    }
 }
