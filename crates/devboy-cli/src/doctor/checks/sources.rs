@@ -516,4 +516,288 @@ mod tests {
         let h = one_password_hint(&SourceStatus::Locked).unwrap();
         assert!(h.contains("op signin"));
     }
+
+    // ===========================================================
+    // T4 — uncovered branches: probe_source dispatcher,
+    //      unprobed/unknown cards, env-store probe, JSON
+    //      renderer, status_message
+    // ===========================================================
+
+    use std::collections::BTreeMap;
+
+    /// Stub a `SourceDefinition` with the given name + type, no
+    /// extra settings. The probe / card constructors only ever
+    /// read `name`, `source_type`, and (for 1password) the
+    /// `account` setting — every other test path doesn't need
+    /// the settings map populated.
+    fn def(name: &str, source_type: &str) -> SourceDefinition {
+        SourceDefinition {
+            name: name.to_owned(),
+            source_type: source_type.to_owned(),
+            settings: BTreeMap::new(),
+        }
+    }
+
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(f)
+    }
+
+    // -- unprobed_card / unknown_type_card -----------------------
+
+    #[test]
+    fn unprobed_card_preserves_name_type_and_caps_and_reports_skipped() {
+        // The vault branch in probe_source calls into this with
+        // the §11+ "credentials wiring lands later" reason. Pin
+        // every field that lands on the JSON card so a future
+        // refactor of the SourceCard struct shape is caught.
+        let d = def("team-vault", "vault");
+        let caps = Capabilities::READ
+            | Capabilities::LIST
+            | Capabilities::VALIDATE
+            | Capabilities::WRITE
+            | Capabilities::ROTATE
+            | Capabilities::AUDIT_LOGGED;
+        let card = unprobed_card(&d, caps, "auth wiring pending");
+        assert_eq!(card.name, "team-vault");
+        assert_eq!(card.source_type, "vault");
+        assert_eq!(card.capabilities, caps);
+        assert_eq!(card.status_label, "Skipped");
+        assert_eq!(card.check_status, CheckStatus::Skipped);
+        assert!(card.hint.is_none());
+        let msg = card
+            .status_message
+            .as_ref()
+            .expect("unprobed card must carry a reason in status_message");
+        assert!(
+            msg.contains("not probed yet") && msg.contains("auth wiring pending"),
+            "status_message must surface the reason: {msg}"
+        );
+    }
+
+    #[test]
+    fn unknown_type_card_reports_error_with_actionable_hint() {
+        let d = def("typo", "typoed-type");
+        let card = unknown_type_card(&d, "typoed-type");
+        assert_eq!(card.status_label, "Error");
+        assert_eq!(card.check_status, CheckStatus::Error);
+        assert_eq!(card.capabilities, Capabilities::empty());
+        let hint = card.hint.as_ref().expect("unknown_type_card needs a hint");
+        // The actionable copy must mention BOTH the place to
+        // edit and the alternative (install a plugin).
+        assert!(
+            hint.contains("[[source]].type") && hint.contains("plugin"),
+            "hint must direct the user to sources.toml AND mention plugins: {hint}"
+        );
+        let msg = card.status_message.as_ref().unwrap();
+        assert!(
+            msg.contains("typoed-type"),
+            "status_message names the typoed type: {msg}"
+        );
+    }
+
+    // -- card_to_json --------------------------------------------
+
+    #[test]
+    fn card_to_json_serialises_every_field_in_the_documented_shape() {
+        let card = SourceCard {
+            name: "personal-1p".into(),
+            source_type: "1password".into(),
+            capabilities: Capabilities::READ
+                | Capabilities::LIST
+                | Capabilities::BIOMETRIC_PROMPT
+                | Capabilities::AUDIT_LOGGED,
+            status_label: "Available",
+            status_message: None,
+            hint: None,
+            check_status: CheckStatus::Pass,
+        };
+        let v = card_to_json(&card);
+        assert_eq!(v["name"], "personal-1p");
+        assert_eq!(v["type"], "1password");
+        assert_eq!(v["status"], "Available");
+        // status_message + hint serialise as JSON `null` when
+        // None — pin that so downstream JSON consumers don't
+        // need to special-case missing keys.
+        assert!(v["status_message"].is_null());
+        assert!(v["hint"].is_null());
+        // Capabilities sub-object must carry both lists.
+        assert!(v["capabilities"]["all"].is_array());
+        assert!(v["capabilities"]["ux_flags"].is_array());
+    }
+
+    #[test]
+    fn card_to_json_surfaces_status_message_and_hint_when_set() {
+        let card = SourceCard {
+            name: "broken".into(),
+            source_type: "1password".into(),
+            capabilities: Capabilities::empty(),
+            status_label: "NotInstalled",
+            status_message: Some("`op` CLI not found".into()),
+            hint: Some("install the 1Password CLI".into()),
+            check_status: CheckStatus::Warning,
+        };
+        let v = card_to_json(&card);
+        assert_eq!(v["status_message"], "`op` CLI not found");
+        assert_eq!(v["hint"], "install the 1Password CLI");
+    }
+
+    // -- probe_source dispatcher ---------------------------------
+
+    #[test]
+    fn probe_source_with_vault_type_routes_to_unprobed_card() {
+        // The vault branch is hardcoded — credentials wiring
+        // arrives later (ADR-021 §11+). Pin the routing so the
+        // §11 work can replace it without surprising downstream
+        // JSON consumers.
+        let d = def("team-vault", "vault");
+        let card = block_on(probe_source(&d));
+        assert_eq!(card.check_status, CheckStatus::Skipped);
+        assert_eq!(card.status_label, "Skipped");
+        assert!(card.capabilities.contains(Capabilities::WRITE));
+        assert!(card.capabilities.contains(Capabilities::ROTATE));
+        assert!(card.capabilities.contains(Capabilities::AUDIT_LOGGED));
+        assert!(
+            card.status_message
+                .as_ref()
+                .unwrap()
+                .contains("router orchestration"),
+            "vault card must mention router orchestration as the gating work"
+        );
+    }
+
+    #[test]
+    fn probe_source_with_unknown_type_routes_to_error_card() {
+        let d = def("typo", "no-such-source-type");
+        let card = block_on(probe_source(&d));
+        assert_eq!(card.check_status, CheckStatus::Error);
+        assert_eq!(card.status_label, "Error");
+        assert_eq!(card.capabilities, Capabilities::empty());
+        let msg = card.status_message.as_ref().unwrap();
+        assert!(
+            msg.contains("no-such-source-type"),
+            "error card must echo the unknown type: {msg}"
+        );
+    }
+
+    #[test]
+    fn probe_source_with_env_store_type_reports_available_pass() {
+        // EnvStoreSource::is_available() returns Available
+        // unconditionally (its plugin tests cover that). The
+        // dispatcher must wire that into a Pass row with no
+        // hint — the env-store source is the always-on fallback
+        // per ADR-021 §2.
+        let d = def("ci-env", "env-store");
+        let card = block_on(probe_source(&d));
+        assert_eq!(card.status_label, "Available");
+        assert_eq!(card.check_status, CheckStatus::Pass);
+        assert!(card.hint.is_none(), "env-store has no actionable hint");
+        assert!(card.status_message.is_none());
+        // env-store advertises READ + LIST + VALIDATE.
+        assert!(card.capabilities.contains(Capabilities::READ));
+    }
+
+    // -- probe_env_store direct ----------------------------------
+
+    #[test]
+    fn probe_env_store_directly_yields_available_card() {
+        // Same outcome as the dispatcher route, but exercises
+        // probe_env_store's symbol directly so dead-code
+        // analysers can't strip it.
+        let d = def("ci-env", "env-store");
+        let card = block_on(probe_env_store(&d));
+        assert_eq!(card.status_label, "Available");
+        assert_eq!(card.check_status, CheckStatus::Pass);
+        assert_eq!(card.name, "ci-env");
+        assert_eq!(card.source_type, "env-store");
+    }
+
+    // -- status_message ------------------------------------------
+
+    #[test]
+    fn status_message_returns_payload_only_for_error_variant() {
+        // The other three variants intentionally collapse to
+        // `None` so the card doesn't echo redundant copy already
+        // captured by `status_label`. Pin that.
+        assert!(status_message(&SourceStatus::Available).is_none());
+        assert!(status_message(&SourceStatus::Locked).is_none());
+        assert!(status_message(&SourceStatus::NotInstalled).is_none());
+        assert_eq!(
+            status_message(&SourceStatus::Error("disk full".into())),
+            Some("disk full".to_owned())
+        );
+    }
+
+    // -- capabilities_to_json full surface -----------------------
+
+    #[test]
+    fn capabilities_to_json_handles_every_named_bit_when_all_set() {
+        let all = Capabilities::READ
+            | Capabilities::LIST
+            | Capabilities::VALIDATE
+            | Capabilities::WRITE
+            | Capabilities::ROTATE
+            | Capabilities::BIOMETRIC_PROMPT
+            | Capabilities::AUDIT_LOGGED;
+        let v = capabilities_to_json(all);
+        let names: Vec<&str> = v["all"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "READ",
+                "LIST",
+                "VALIDATE",
+                "WRITE",
+                "ROTATE",
+                "BIOMETRIC_PROMPT",
+                "AUDIT_LOGGED"
+            ]
+        );
+        let flags: Vec<&str> = v["ux_flags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n.as_str().unwrap())
+            .collect();
+        assert_eq!(flags, vec!["BIOMETRIC_PROMPT", "AUDIT_LOGGED"]);
+    }
+
+    // -- worst() Skipped neutrality ------------------------------
+
+    #[test]
+    fn worst_treats_skipped_as_neutral_against_warning_and_error() {
+        // Skipped does NOT lower a non-Skipped status. The
+        // existing `worst_picks_more_severe_status` test only
+        // covered Pass-vs-Skipped; pin the other directions too.
+        assert_eq!(
+            worst(CheckStatus::Skipped, CheckStatus::Warning),
+            CheckStatus::Warning
+        );
+        assert_eq!(
+            worst(CheckStatus::Skipped, CheckStatus::Error),
+            CheckStatus::Error
+        );
+        assert_eq!(
+            worst(CheckStatus::Warning, CheckStatus::Skipped),
+            CheckStatus::Warning
+        );
+        assert_eq!(
+            worst(CheckStatus::Error, CheckStatus::Skipped),
+            CheckStatus::Error
+        );
+        // Skipped self-comparison stays Skipped (least-severe
+        // floor).
+        assert_eq!(
+            worst(CheckStatus::Skipped, CheckStatus::Skipped),
+            CheckStatus::Skipped
+        );
+    }
 }
