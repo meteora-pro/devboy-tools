@@ -73,7 +73,7 @@ impl core::marker::UnsafeUnpin for devboy_executor::argv_secrets::Substitution
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::argv_secrets::Substitution
 impl core::panic::unwind_safe::UnwindSafe for devboy_executor::argv_secrets::Substitution
 pub fn devboy_executor::argv_secrets::apply_plan_to_command(plan: &devboy_executor::argv_secrets::RewritePlan, cmd: &mut tokio::process::Command)
-pub fn devboy_executor::argv_secrets::rewrite_argv(program: &str, argv: &[alloc::string::String], resolver: &dyn devboy_core::alias::SecretResolver) -> core::result::Result<devboy_executor::argv_secrets::RewritePlan, devboy_executor::argv_secrets::ArgvRewriteError>
+pub fn devboy_executor::argv_secrets::rewrite_argv<R, F>(program: &str, argv: &[alloc::string::String], resolver: &devboy_core::secret_approval::ApprovalGatedResolver<R, F>) -> core::result::Result<devboy_executor::argv_secrets::RewritePlan, devboy_executor::argv_secrets::ArgvRewriteError> where R: devboy_core::alias::SecretResolver, F: core::ops::function::Fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy + core::marker::Send + core::marker::Sync
 pub mod devboy_executor::context
 pub enum devboy_executor::context::ClickUpScope
 pub devboy_executor::context::ClickUpScope::List

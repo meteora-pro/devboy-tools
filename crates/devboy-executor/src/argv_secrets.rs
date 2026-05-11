@@ -61,6 +61,7 @@
 use std::path::Path;
 
 use devboy_core::alias::{AliasResolverError, SecretResolver, parse_alias};
+use devboy_core::secret_approval::ApprovalGatedResolver;
 use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 use tracing::{debug, warn};
@@ -149,11 +150,15 @@ pub enum ArgvRewriteError {
 ///
 /// On `Err(ArgvRewriteError::Resolve)` the partial work is
 /// discarded — the caller cannot end up with half-resolved argv.
-pub fn rewrite_argv(
+pub fn rewrite_argv<R, F>(
     program: &str,
     argv: &[String],
-    resolver: &dyn SecretResolver,
-) -> Result<RewritePlan, ArgvRewriteError> {
+    resolver: &ApprovalGatedResolver<R, F>,
+) -> Result<RewritePlan, ArgvRewriteError>
+where
+    R: SecretResolver,
+    F: Fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy + Send + Sync,
+{
     // Step 1: decide the per-tool strategy.
     let strategy = ToolStrategy::detect(program, argv);
 
@@ -388,6 +393,23 @@ mod tests {
         }
     }
 
+    fn always_never(_: &str) -> devboy_core::secret_approval::ApproveOnUsePolicy {
+        devboy_core::secret_approval::ApproveOnUsePolicy::Never
+    }
+
+    fn wrap_resolver_never(
+        r: MapResolver,
+    ) -> ApprovalGatedResolver<
+        MapResolver,
+        fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy,
+    > {
+        ApprovalGatedResolver::new(
+            r,
+            std::sync::Arc::new(devboy_core::secret_approval::SessionApprovalCache::new()),
+            always_never,
+        )
+    }
+
     impl SecretResolver for MapResolver {
         fn resolve(&self, path: &str) -> Result<SecretString, AliasResolverError> {
             let map = self.entries.lock().unwrap();
@@ -409,7 +431,12 @@ mod tests {
     #[test]
     fn no_alias_in_argv_is_a_passthrough_with_no_substitutions() {
         let resolver = MapResolver::new([]);
-        let plan = rewrite_argv("any-tool", &argv(&["--flag", "value"]), &resolver).unwrap();
+        let plan = rewrite_argv(
+            "any-tool",
+            &argv(&["--flag", "value"]),
+            &wrap_resolver_never(resolver),
+        )
+        .unwrap();
         assert_eq!(plan.argv, vec!["--flag".to_owned(), "value".to_owned()]);
         assert!(plan.stdin_payload.is_none());
         assert!(plan.substitutions.is_empty());
@@ -424,7 +451,7 @@ mod tests {
         let plan = rewrite_argv(
             "some-tool",
             &argv(&["--token", "@secret:personal/github/pat"]),
-            &resolver,
+            &wrap_resolver_never(resolver),
         )
         .unwrap();
         assert_eq!(
@@ -441,7 +468,12 @@ mod tests {
     #[test]
     fn fallback_warns_via_argv_visible_flag() {
         let resolver = MapResolver::new([("a/b/c", "v")]);
-        let plan = rewrite_argv("some-tool", &argv(&["@secret:a/b/c"]), &resolver).unwrap();
+        let plan = rewrite_argv(
+            "some-tool",
+            &argv(&["@secret:a/b/c"]),
+            &wrap_resolver_never(resolver),
+        )
+        .unwrap();
         assert!(plan.argv_visible);
     }
 
@@ -459,7 +491,7 @@ mod tests {
                 "--with-token",
                 "@secret:personal/github/pat",
             ]),
-            &resolver,
+            &wrap_resolver_never(resolver),
         )
         .unwrap();
         // The alias arg is dropped from the rewritten argv.
@@ -487,7 +519,7 @@ mod tests {
         let plan = rewrite_argv(
             "/usr/local/bin/gh",
             &argv(&["auth", "login", "--with-token", "@secret:p/g/p"]),
-            &resolver,
+            &wrap_resolver_never(resolver),
         )
         .unwrap();
         // basename match → still gh strategy.
@@ -500,7 +532,7 @@ mod tests {
         let plan = rewrite_argv(
             "gh",
             &argv(&["repo", "view", "--token", "@secret:p/g/p"]),
-            &resolver,
+            &wrap_resolver_never(resolver),
         )
         .unwrap();
         // No --with-token flag → fallback strategy.
@@ -517,7 +549,7 @@ mod tests {
         let plan = rewrite_argv(
             "git",
             &argv(&["credential", "fill", "@secret:svc/git/cred"]),
-            &resolver,
+            &wrap_resolver_never(resolver),
         )
         .unwrap();
         // Alias arg dropped from argv; only literal args remain.
@@ -534,7 +566,7 @@ mod tests {
         let plan = rewrite_argv(
             "git",
             &argv(&["push", "--token", "@secret:a/b/c"]),
-            &resolver,
+            &wrap_resolver_never(resolver),
         )
         .unwrap();
         assert!(plan.argv_visible);
@@ -548,7 +580,7 @@ mod tests {
         let plan = rewrite_argv(
             "tool",
             &argv(&["@secret:a/b/c", "literal", "@secret:d/e/f"]),
-            &resolver,
+            &wrap_resolver_never(resolver),
         )
         .unwrap();
         assert_eq!(
@@ -566,7 +598,12 @@ mod tests {
         // ADR-020 §5: alias replaces the WHOLE field value;
         // partial occurrences are NOT aliases.
         let resolver = MapResolver::new([("a/b/c", "v")]);
-        let plan = rewrite_argv("tool", &argv(&["Bearer @secret:a/b/c"]), &resolver).unwrap();
+        let plan = rewrite_argv(
+            "tool",
+            &argv(&["Bearer @secret:a/b/c"]),
+            &wrap_resolver_never(resolver),
+        )
+        .unwrap();
         assert_eq!(plan.argv, vec!["Bearer @secret:a/b/c".to_owned()]);
         assert!(plan.substitutions.is_empty());
     }
@@ -579,7 +616,7 @@ mod tests {
         let err = rewrite_argv(
             "tool",
             &argv(&["--token", "@secret:nope/nope/nope"]),
-            &resolver,
+            &wrap_resolver_never(resolver),
         )
         .unwrap_err();
         match err {
@@ -611,7 +648,7 @@ mod tests {
                 "--with-token",
                 "@secret:personal/github/pat",
             ]),
-            &resolver,
+            &wrap_resolver_never(resolver),
         )
         .unwrap();
 

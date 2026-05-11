@@ -176,6 +176,102 @@ impl SessionApprovalCache {
     }
 }
 
+// =============================================================================
+// ApprovalGatedResolver — enforces the cache before a resolve
+// =============================================================================
+
+use std::sync::Arc;
+
+use crate::alias::{AliasResolverError, SecretResolver};
+use secrecy::SecretString;
+
+/// Type-safe wrapper that enforces the approve-on-use policy
+/// **before** dispatching to an inner [`SecretResolver`]. This is
+/// what closes the loop on the P25 protocol — a resolver that
+/// is not gated through this wrapper makes the
+/// `approve_on_use` field a metadata-only theatrical control.
+///
+/// Construction takes three values:
+///
+/// 1. An inner `SecretResolver` (keychain, local-vault, 1Password,
+///    …).
+/// 2. An [`Arc<SessionApprovalCache>`] — shared across every gated
+///    resolver in the process so the user only sees one prompt
+///    per session per path.
+/// 3. A `policy_for_path` closure — typically reads the path's
+///    `approve_on_use` field from the merged manifest. The
+///    closure shape avoids a hard dependency on `devboy-storage`
+///    in this crate.
+///
+/// On every `resolve()` call:
+///
+/// - `ApproveOnUsePolicy::Never` → straight to the inner resolver.
+/// - `ApproveOnUsePolicy::Session` with a cache hit → straight to
+///   the inner resolver.
+/// - `ApproveOnUsePolicy::Session` without a cache hit, or
+///   `ApproveOnUsePolicy::PerCall` → return
+///   [`AliasResolverError::Backend`] with a message that names the
+///   path and the policy, so the caller can surface the approval
+///   dialog and retry.
+pub struct ApprovalGatedResolver<R, F>
+where
+    R: SecretResolver,
+    F: Fn(&str) -> ApproveOnUsePolicy + Send + Sync,
+{
+    inner: R,
+    cache: Arc<SessionApprovalCache>,
+    policy_for_path: F,
+}
+
+impl<R, F> ApprovalGatedResolver<R, F>
+where
+    R: SecretResolver,
+    F: Fn(&str) -> ApproveOnUsePolicy + Send + Sync,
+{
+    pub fn new(inner: R, cache: Arc<SessionApprovalCache>, policy_for_path: F) -> Self {
+        Self {
+            inner,
+            cache,
+            policy_for_path,
+        }
+    }
+
+    /// Underlying cache handle — exposed so the orchestration
+    /// layer (which drives the approval dialog) can call
+    /// `record_session` after the user clicks "Allow always
+    /// (this session)".
+    pub fn cache(&self) -> &Arc<SessionApprovalCache> {
+        &self.cache
+    }
+}
+
+impl<R, F> SecretResolver for ApprovalGatedResolver<R, F>
+where
+    R: SecretResolver,
+    F: Fn(&str) -> ApproveOnUsePolicy + Send + Sync,
+{
+    fn resolve(&self, path: &str) -> Result<SecretString, AliasResolverError> {
+        let policy = (self.policy_for_path)(path);
+        match self.cache.evaluate(path, policy) {
+            ApprovalGate::NotRequired | ApprovalGate::AlreadyApproved => self.inner.resolve(path),
+            ApprovalGate::PromptRequired => {
+                let label = match policy {
+                    ApproveOnUsePolicy::Never => "never",
+                    ApproveOnUsePolicy::Session => "session",
+                    ApproveOnUsePolicy::PerCall => "per-call",
+                };
+                Err(AliasResolverError::Backend {
+                    path: path.to_owned(),
+                    message: format!(
+                        "approve-on-use policy `{label}` requires user approval; \
+                         surface secrets_request_use_approval and retry"
+                    ),
+                })
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,5 +392,160 @@ mod tests {
         assert_eq!(cache.sweep_expired(), 1);
         assert!(cache.is_approved("fresh"));
         assert!(!cache.is_approved("stale"));
+    }
+
+    // -- ApprovalGatedResolver --------------------------------------
+
+    use crate::alias::{AliasResolverError, SecretResolver};
+    use secrecy::{ExposeSecret, SecretString};
+    use std::sync::Mutex;
+
+    /// Minimal in-memory resolver for gating tests. Counts
+    /// calls so we can assert the gate short-circuits.
+    struct CountingResolver {
+        secrets: std::collections::HashMap<String, String>,
+        calls: Mutex<u32>,
+    }
+
+    impl CountingResolver {
+        fn new(entries: &[(&str, &str)]) -> Self {
+            Self {
+                secrets: entries
+                    .iter()
+                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                    .collect(),
+                calls: Mutex::new(0),
+            }
+        }
+    }
+
+    impl SecretResolver for CountingResolver {
+        fn resolve(&self, path: &str) -> Result<SecretString, AliasResolverError> {
+            *self.calls.lock().unwrap() += 1;
+            self.secrets
+                .get(path)
+                .map(|v| SecretString::from(v.clone()))
+                .ok_or_else(|| AliasResolverError::NotFound {
+                    path: path.to_owned(),
+                })
+        }
+    }
+
+    #[test]
+    fn gated_resolver_passes_through_never_policy() {
+        let inner = CountingResolver::new(&[("team/x/y", "value-1")]);
+        let cache = Arc::new(SessionApprovalCache::new());
+        let gated = ApprovalGatedResolver::new(inner, cache, |_| ApproveOnUsePolicy::Never);
+        let v = gated.resolve("team/x/y").unwrap();
+        assert_eq!(v.expose_secret(), "value-1");
+    }
+
+    #[test]
+    fn gated_resolver_refuses_session_policy_without_cache_hit() {
+        let inner = CountingResolver::new(&[("team/x/y", "value-1")]);
+        let cache = Arc::new(SessionApprovalCache::new());
+        let gated =
+            ApprovalGatedResolver::new(inner, cache.clone(), |_| ApproveOnUsePolicy::Session);
+        let err = gated.resolve("team/x/y").unwrap_err();
+        match err {
+            AliasResolverError::Backend { path, message } => {
+                assert_eq!(path, "team/x/y");
+                assert!(
+                    message.contains("session") && message.contains("user approval"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected Backend gate-required error, got {other:?}"),
+        }
+        // Inner resolver must NOT have been touched.
+        // (We can't borrow the inner directly through the gate;
+        // a fresh assertion below validates the same thing with
+        // an explicit count.)
+    }
+
+    #[test]
+    fn gated_resolver_passes_session_policy_after_cache_record() {
+        let inner = CountingResolver::new(&[("team/x/y", "value-1")]);
+        let cache = Arc::new(SessionApprovalCache::new());
+        cache.record_session("team/x/y", ttl_long());
+        let gated = ApprovalGatedResolver::new(inner, cache, |_| ApproveOnUsePolicy::Session);
+        let v = gated.resolve("team/x/y").unwrap();
+        assert_eq!(v.expose_secret(), "value-1");
+    }
+
+    #[test]
+    fn gated_resolver_always_refuses_per_call_even_with_cache() {
+        let inner = CountingResolver::new(&[("team/x/y", "value-1")]);
+        let cache = Arc::new(SessionApprovalCache::new());
+        cache.record_session("team/x/y", ttl_long());
+        let gated = ApprovalGatedResolver::new(inner, cache, |_| ApproveOnUsePolicy::PerCall);
+        let err = gated.resolve("team/x/y").unwrap_err();
+        assert!(matches!(err, AliasResolverError::Backend { .. }));
+    }
+
+    #[test]
+    fn gated_resolver_does_not_touch_inner_on_refusal() {
+        // Build the inner outside the gate so we can re-read its
+        // call count after the refusal.
+        let cache = Arc::new(SessionApprovalCache::new());
+        let inner_box: Box<dyn SecretResolver> =
+            Box::new(CountingResolver::new(&[("team/x/y", "value-1")]));
+        // Use a sneak: build the gate on an Arc-shared resolver
+        // via &dyn. A small adapter that owns nothing and just
+        // proxies the call count check is simpler.
+        let counter = Arc::new(Mutex::new(0u32));
+        let counter_clone = Arc::clone(&counter);
+        struct ProxyResolver {
+            inner: Box<dyn SecretResolver>,
+            counter: Arc<Mutex<u32>>,
+        }
+        impl SecretResolver for ProxyResolver {
+            fn resolve(&self, path: &str) -> Result<SecretString, AliasResolverError> {
+                *self.counter.lock().unwrap() += 1;
+                self.inner.resolve(path)
+            }
+        }
+        let proxy = ProxyResolver {
+            inner: inner_box,
+            counter: counter_clone,
+        };
+        let gated = ApprovalGatedResolver::new(proxy, cache, |_| ApproveOnUsePolicy::Session);
+        let _ = gated.resolve("team/x/y").unwrap_err();
+        assert_eq!(
+            *counter.lock().unwrap(),
+            0,
+            "inner resolver must not be touched on gate refusal"
+        );
+    }
+
+    #[test]
+    fn gated_resolver_call_count_zero_after_refusal() {
+        let cache = Arc::new(SessionApprovalCache::new());
+        let inner = CountingResolver::new(&[("team/prod-db/password", "v")]);
+        let gated = ApprovalGatedResolver::new(inner, cache, |path| {
+            if path == "team/prod-db/password" {
+                ApproveOnUsePolicy::PerCall
+            } else {
+                ApproveOnUsePolicy::Never
+            }
+        });
+        let _ = gated.resolve("team/prod-db/password").unwrap_err();
+        // can't observe inner.call_count() here because the
+        // gate owns inner; the wrapper invariant is enforced
+        // by the previous test using ProxyResolver. This test
+        // just exercises the per-path policy closure shape.
+    }
+
+    #[test]
+    fn gated_resolver_cache_accessor_exposes_handle_for_orchestrator() {
+        let inner = CountingResolver::new(&[]);
+        let cache = Arc::new(SessionApprovalCache::new());
+        let gated =
+            ApprovalGatedResolver::new(inner, Arc::clone(&cache), |_| ApproveOnUsePolicy::Session);
+        // The orchestration layer needs to record the approval
+        // after the user clicks "Allow always (this session)";
+        // it does so through the cached handle.
+        gated.cache().record_session("a/b/c", ttl_long());
+        assert!(cache.is_approved("a/b/c"));
     }
 }

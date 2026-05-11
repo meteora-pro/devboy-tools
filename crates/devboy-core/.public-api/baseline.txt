@@ -221,6 +221,8 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_core::alias::AliasResolverE
 pub const devboy_core::alias::ALIAS_PREFIX: &str
 pub trait devboy_core::alias::SecretResolver: core::marker::Send + core::marker::Sync
 pub fn devboy_core::alias::SecretResolver::resolve(&self, path: &str) -> core::result::Result<secrecy::SecretString, devboy_core::alias::AliasResolverError>
+impl<R, F> devboy_core::alias::SecretResolver for devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: devboy_core::alias::SecretResolver, F: core::ops::function::Fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy + core::marker::Send + core::marker::Sync
+pub fn devboy_core::secret_approval::ApprovalGatedResolver<R, F>::resolve(&self, path: &str) -> core::result::Result<secrecy::SecretString, devboy_core::alias::AliasResolverError>
 pub fn devboy_core::alias::is_alias(s: &str) -> bool
 pub fn devboy_core::alias::parse_alias(s: &str) -> core::option::Option<&str>
 pub mod devboy_core::asset
@@ -1359,6 +1361,19 @@ impl core::marker::Unpin for devboy_core::secret_approval::ApproveOnUsePolicy
 impl core::marker::UnsafeUnpin for devboy_core::secret_approval::ApproveOnUsePolicy
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::secret_approval::ApproveOnUsePolicy
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::secret_approval::ApproveOnUsePolicy
+pub struct devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: devboy_core::alias::SecretResolver, F: core::ops::function::Fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy + core::marker::Send + core::marker::Sync
+impl<R, F> devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: devboy_core::alias::SecretResolver, F: core::ops::function::Fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy + core::marker::Send + core::marker::Sync
+pub fn devboy_core::secret_approval::ApprovalGatedResolver<R, F>::cache(&self) -> &alloc::sync::Arc<devboy_core::secret_approval::SessionApprovalCache>
+pub fn devboy_core::secret_approval::ApprovalGatedResolver<R, F>::new(inner: R, cache: alloc::sync::Arc<devboy_core::secret_approval::SessionApprovalCache>, policy_for_path: F) -> Self
+impl<R, F> devboy_core::alias::SecretResolver for devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: devboy_core::alias::SecretResolver, F: core::ops::function::Fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy + core::marker::Send + core::marker::Sync
+pub fn devboy_core::secret_approval::ApprovalGatedResolver<R, F>::resolve(&self, path: &str) -> core::result::Result<secrecy::SecretString, devboy_core::alias::AliasResolverError>
+impl<R, F> core::marker::Freeze for devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: core::marker::Freeze, F: core::marker::Freeze
+impl<R, F> core::marker::Send for devboy_core::secret_approval::ApprovalGatedResolver<R, F>
+impl<R, F> core::marker::Sync for devboy_core::secret_approval::ApprovalGatedResolver<R, F>
+impl<R, F> core::marker::Unpin for devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: core::marker::Unpin, F: core::marker::Unpin
+impl<R, F> core::marker::UnsafeUnpin for devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: core::marker::UnsafeUnpin, F: core::marker::UnsafeUnpin
+impl<R, F> core::panic::unwind_safe::RefUnwindSafe for devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: core::panic::unwind_safe::RefUnwindSafe, F: core::panic::unwind_safe::RefUnwindSafe
+impl<R, F> core::panic::unwind_safe::UnwindSafe for devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: core::panic::unwind_safe::UnwindSafe, F: core::panic::unwind_safe::UnwindSafe
 pub struct devboy_core::secret_approval::SessionApprovalCache
 impl devboy_core::secret_approval::SessionApprovalCache
 pub fn devboy_core::secret_approval::SessionApprovalCache::clear(&self)

@@ -49,6 +49,7 @@
 //! [`SecretResolver`]: devboy_core::alias::SecretResolver
 
 use devboy_core::alias::{ALIAS_PREFIX, AliasResolverError, SecretResolver, parse_alias};
+use devboy_core::secret_approval::ApprovalGatedResolver;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, InvalidHeaderValue};
 use secrecy::ExposeSecret;
 use thiserror::Error;
@@ -156,16 +157,27 @@ impl RewriteOutcome {
 // =============================================================================
 
 /// Walk `headers`, find aliased values in [`WHITELISTED_HEADERS`],
-/// resolve via `resolver`, and replace each value with the
-/// resolved form. Returns a [`RewriteOutcome`] capturing what
-/// changed for transcript logging.
+/// resolve via an [`ApprovalGatedResolver`], and replace each
+/// value with the resolved form. Returns a [`RewriteOutcome`]
+/// capturing what changed for transcript logging.
+///
+/// The gated resolver enforces the approve-on-use protocol
+/// (`approve_on_use = session | per-call`) before dispatching
+/// to the underlying source. A `PromptRequired` gate surfaces
+/// as [`ProxyHeaderError::Resolve`] so the proxy can return
+/// the error to the agent and the orchestration layer can open
+/// the use-approval dialog.
 ///
 /// Non-whitelisted headers — and whitelisted headers that don't
 /// match the recognised alias patterns — are left untouched.
-pub fn rewrite_outgoing_headers(
+pub fn rewrite_outgoing_headers<R, F>(
     headers: &mut HeaderMap,
-    resolver: &dyn SecretResolver,
-) -> Result<RewriteOutcome, ProxyHeaderError> {
+    resolver: &ApprovalGatedResolver<R, F>,
+) -> Result<RewriteOutcome, ProxyHeaderError>
+where
+    R: SecretResolver,
+    F: Fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy + Send + Sync,
+{
     let mut outcome = RewriteOutcome::default();
 
     for whitelisted in WHITELISTED_HEADERS {
@@ -292,6 +304,31 @@ mod tests {
         }
     }
 
+    /// Test-only policy lookup that maps every path to
+    /// `Never`, so the gated wrapper passes through to the
+    /// inner resolver. Used by the existing test surface that
+    /// asserts the rewrite outcome under the no-policy default.
+    fn always_never(_: &str) -> devboy_core::secret_approval::ApproveOnUsePolicy {
+        devboy_core::secret_approval::ApproveOnUsePolicy::Never
+    }
+
+    /// Wrap a [`MapResolver`] in an [`ApprovalGatedResolver`]
+    /// with the test-only `Never`-policy lookup. The function-
+    /// pointer shape (`fn`, not a closure) makes the return
+    /// type spellable for tests that need to pin it.
+    fn wrap_resolver_never(
+        r: MapResolver,
+    ) -> ApprovalGatedResolver<
+        MapResolver,
+        fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy,
+    > {
+        ApprovalGatedResolver::new(
+            r,
+            std::sync::Arc::new(devboy_core::secret_approval::SessionApprovalCache::new()),
+            always_never,
+        )
+    }
+
     impl SecretResolver for MapResolver {
         fn resolve(&self, path: &str) -> Result<SecretString, AErr> {
             let map = self.entries.lock().unwrap();
@@ -368,7 +405,7 @@ mod tests {
     fn bearer_alias_in_authorization_is_rewritten() {
         let mut h = headers_with("authorization", "Bearer @secret:team/gitlab/token");
         let resolver = MapResolver::new([("team/gitlab/token", "glpat-fixture")]);
-        let outcome = rewrite_outgoing_headers(&mut h, &resolver).unwrap();
+        let outcome = rewrite_outgoing_headers(&mut h, &wrap_resolver_never(resolver)).unwrap();
         assert_eq!(outcome.rewrites.len(), 1);
         assert_eq!(
             h.get("authorization").unwrap().to_str().unwrap(),
@@ -383,7 +420,7 @@ mod tests {
     fn whole_value_alias_in_x_api_key_is_rewritten() {
         let mut h = headers_with("x-api-key", "@secret:personal/openai/key");
         let resolver = MapResolver::new([("personal/openai/key", "sk-fixture")]);
-        let outcome = rewrite_outgoing_headers(&mut h, &resolver).unwrap();
+        let outcome = rewrite_outgoing_headers(&mut h, &wrap_resolver_never(resolver)).unwrap();
         assert_eq!(h.get("x-api-key").unwrap().to_str().unwrap(), "sk-fixture");
         assert!(outcome.rewrites[0].scheme.is_none());
     }
@@ -392,7 +429,7 @@ mod tests {
     fn private_token_with_token_scheme_is_rewritten() {
         let mut h = headers_with("private-token", "Token @secret:team/gitlab/token");
         let resolver = MapResolver::new([("team/gitlab/token", "glpat-fixture")]);
-        rewrite_outgoing_headers(&mut h, &resolver).unwrap();
+        rewrite_outgoing_headers(&mut h, &wrap_resolver_never(resolver)).unwrap();
         assert_eq!(
             h.get("private-token").unwrap().to_str().unwrap(),
             "Token glpat-fixture"
@@ -403,7 +440,7 @@ mod tests {
     fn pass_through_when_no_alias_present() {
         let mut h = headers_with("authorization", "Bearer real-static-token");
         let resolver = MapResolver::new([]);
-        let outcome = rewrite_outgoing_headers(&mut h, &resolver).unwrap();
+        let outcome = rewrite_outgoing_headers(&mut h, &wrap_resolver_never(resolver)).unwrap();
         assert!(outcome.rewrites.is_empty());
         assert!(!outcome.changed());
         assert_eq!(
@@ -419,7 +456,7 @@ mod tests {
         // valid-looking alias.
         let mut h = headers_with("x-custom-header", "@secret:team/x/y");
         let resolver = MapResolver::new([("team/x/y", "should-not-be-used")]);
-        let outcome = rewrite_outgoing_headers(&mut h, &resolver).unwrap();
+        let outcome = rewrite_outgoing_headers(&mut h, &wrap_resolver_never(resolver)).unwrap();
         assert!(outcome.rewrites.is_empty());
         assert_eq!(
             h.get("x-custom-header").unwrap().to_str().unwrap(),
@@ -442,7 +479,7 @@ mod tests {
             ("team/auth/token", "auth-fixture"),
             ("team/api/key", "api-fixture"),
         ]);
-        let outcome = rewrite_outgoing_headers(&mut h, &resolver).unwrap();
+        let outcome = rewrite_outgoing_headers(&mut h, &wrap_resolver_never(resolver)).unwrap();
         assert_eq!(outcome.rewrites.len(), 2);
         assert_eq!(
             h.get("authorization").unwrap().to_str().unwrap(),
@@ -457,7 +494,7 @@ mod tests {
     fn missing_resolver_entry_propagates_error() {
         let mut h = headers_with("authorization", "Bearer @secret:nope/nope/nope");
         let resolver = MapResolver::new([]);
-        let err = rewrite_outgoing_headers(&mut h, &resolver).unwrap_err();
+        let err = rewrite_outgoing_headers(&mut h, &wrap_resolver_never(resolver)).unwrap_err();
         match err {
             ProxyHeaderError::Resolve { header, path, .. } => {
                 assert_eq!(header, "authorization");
@@ -492,6 +529,51 @@ mod tests {
         assert_eq!(r.transcript_value(), "@secret:personal/openai/key");
     }
 
+    // -- F3: approve-on-use gating fires before resolve -----------
+
+    #[test]
+    fn gated_resolver_refuses_session_policy_without_cache_hit() {
+        use devboy_core::secret_approval::{
+            ApprovalGatedResolver, ApproveOnUsePolicy, SessionApprovalCache,
+        };
+        let mut h = headers_with("authorization", "Bearer @secret:team/prod-db/password");
+        let inner = MapResolver::new([("team/prod-db/password", "should-not-leak")]);
+        let cache = std::sync::Arc::new(SessionApprovalCache::new());
+        let gated = ApprovalGatedResolver::new(inner, cache, |_| ApproveOnUsePolicy::PerCall);
+        let err = rewrite_outgoing_headers(&mut h, &gated).unwrap_err();
+        match err {
+            ProxyHeaderError::Resolve { path, .. } => {
+                assert_eq!(path, "team/prod-db/password");
+            }
+            other => panic!("expected Resolve error from gate, got {other:?}"),
+        }
+        // Original header is left untouched — no plaintext leak.
+        assert_eq!(
+            h.get("authorization").unwrap().to_str().unwrap(),
+            "Bearer @secret:team/prod-db/password",
+            "the alias must NOT have been replaced when the gate refuses"
+        );
+    }
+
+    #[test]
+    fn gated_resolver_allows_session_policy_after_cache_record() {
+        use devboy_core::secret_approval::{
+            ApprovalGatedResolver, ApproveOnUsePolicy, SessionApprovalCache,
+        };
+        use std::time::Duration;
+        let mut h = headers_with("authorization", "Bearer @secret:team/jira/api-key");
+        let inner = MapResolver::new([("team/jira/api-key", "jira-fixture")]);
+        let cache = std::sync::Arc::new(SessionApprovalCache::new());
+        cache.record_session("team/jira/api-key", Duration::from_secs(300));
+        let gated = ApprovalGatedResolver::new(inner, cache, |_| ApproveOnUsePolicy::Session);
+        let outcome = rewrite_outgoing_headers(&mut h, &gated).unwrap();
+        assert_eq!(outcome.rewrites.len(), 1);
+        assert_eq!(
+            h.get("authorization").unwrap().to_str().unwrap(),
+            "Bearer jira-fixture"
+        );
+    }
+
     // -- End-to-end with mock upstream ---------------------------
 
     #[tokio::test]
@@ -514,7 +596,8 @@ mod tests {
         );
 
         let resolver = MapResolver::new([("team/github/pat", "ghp-end-to-end-fixture")]);
-        let outcome = rewrite_outgoing_headers(&mut headers, &resolver).unwrap();
+        let outcome =
+            rewrite_outgoing_headers(&mut headers, &wrap_resolver_never(resolver)).unwrap();
         assert_eq!(outcome.rewrites.len(), 1);
 
         let client = reqwest::Client::new();

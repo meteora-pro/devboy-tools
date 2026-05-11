@@ -587,7 +587,7 @@ impl core::marker::UnsafeUnpin for devboy_mcp::proxy_secrets::RewriteOutcome
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::proxy_secrets::RewriteOutcome
 impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::proxy_secrets::RewriteOutcome
 pub const devboy_mcp::proxy_secrets::WHITELISTED_HEADERS: &[&str]
-pub fn devboy_mcp::proxy_secrets::rewrite_outgoing_headers(headers: &mut http::header::map::HeaderMap, resolver: &dyn devboy_core::alias::SecretResolver) -> core::result::Result<devboy_mcp::proxy_secrets::RewriteOutcome, devboy_mcp::proxy_secrets::ProxyHeaderError>
+pub fn devboy_mcp::proxy_secrets::rewrite_outgoing_headers<R, F>(headers: &mut http::header::map::HeaderMap, resolver: &devboy_core::secret_approval::ApprovalGatedResolver<R, F>) -> core::result::Result<devboy_mcp::proxy_secrets::RewriteOutcome, devboy_mcp::proxy_secrets::ProxyHeaderError> where R: devboy_core::alias::SecretResolver, F: core::ops::function::Fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy + core::marker::Send + core::marker::Sync
 pub mod devboy_mcp::routing
 pub enum devboy_mcp::routing::RoutingReason
 pub devboy_mcp::routing::RoutingReason::ExplicitPrefix
