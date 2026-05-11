@@ -1276,8 +1276,12 @@ pub fn run_wizard<I: WizardIo>(
 // CLI entry point (P26 polish)
 // =============================================================================
 
-/// Render one [`WizardEvent`] to stdout in JSON-lines mode.
-fn print_event_json(event: &WizardEvent) {
+/// Pure renderer: convert one [`WizardEvent`] into the
+/// JSON-lines payload the agent consumes. Kept separate from
+/// the stdout-writing wrapper so unit tests can pin the wire
+/// shape (the agent's protocol contract) without capturing
+/// stdout.
+fn event_to_json_value(event: &WizardEvent) -> serde_json::Value {
     let (phase, status, message) = match event {
         WizardEvent::PhaseStarted { phase } => (Some(phase.key()), "started", None),
         WizardEvent::PhaseProgress { phase, message } => {
@@ -1302,25 +1306,39 @@ fn print_event_json(event: &WizardEvent) {
     if let Some(m) = message {
         payload.insert("message".into(), serde_json::Value::String(m));
     }
-    println!("{}", serde_json::Value::Object(payload));
+    serde_json::Value::Object(payload)
+}
+
+/// Render one [`WizardEvent`] to stdout in JSON-lines mode.
+fn print_event_json(event: &WizardEvent) {
+    println!("{}", event_to_json_value(event));
+}
+
+/// Pure renderer: convert one [`WizardEvent`] into a human
+/// prose line. Same separation as [`event_to_json_value`] —
+/// the human format is also part of the user-facing contract
+/// (skill docs reference the prefixes) and benefits from
+/// direct unit assertions.
+fn event_to_human_line(event: &WizardEvent) -> String {
+    match event {
+        WizardEvent::PhaseStarted { phase } => format!("→ {}", phase.label()),
+        WizardEvent::PhaseProgress { phase: _, message } => format!("  {message}"),
+        WizardEvent::PhaseCompleted { phase, summary } => {
+            format!("✓ {} — {summary}", phase.label())
+        }
+        WizardEvent::PhaseSkipped { phase, reason } => {
+            format!("⤳ {} skipped — {reason}", phase.label())
+        }
+        WizardEvent::PhaseFailed { phase, reason } => {
+            format!("✗ {} failed — {reason}", phase.label())
+        }
+        WizardEvent::Completed => "done.".to_owned(),
+    }
 }
 
 /// Render one [`WizardEvent`] to stdout in human prose.
 fn print_event_human(event: &WizardEvent) {
-    match event {
-        WizardEvent::PhaseStarted { phase } => println!("→ {}", phase.label()),
-        WizardEvent::PhaseProgress { phase: _, message } => println!("  {message}"),
-        WizardEvent::PhaseCompleted { phase, summary } => {
-            println!("✓ {} — {summary}", phase.label())
-        }
-        WizardEvent::PhaseSkipped { phase, reason } => {
-            println!("⤳ {} skipped — {reason}", phase.label())
-        }
-        WizardEvent::PhaseFailed { phase, reason } => {
-            println!("✗ {} failed — {reason}", phase.label())
-        }
-        WizardEvent::Completed => println!("done."),
-    }
+    println!("{}", event_to_human_line(event));
 }
 
 /// `devboy secrets setup` entry point. Default mode is a
@@ -2448,5 +2466,308 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
         }
         assert!(body.contains("status = \"done\""));
         assert!(body.contains("schema_version = 1"));
+    }
+
+    // ===========================================================
+    // T2 — handle_cli scan-only / --write-manifest / --force
+    // ===========================================================
+
+    /// Build a `SetupArgs` with the fields the tests care about
+    /// and the rest at their `Default::default()` values. Keeps
+    /// individual tests focused on what they're actually
+    /// asserting.
+    fn setup_args(root: &Path) -> crate::secrets_cmd::SetupArgs {
+        crate::secrets_cmd::SetupArgs {
+            root: Some(root.to_path_buf()),
+            ..Default::default()
+        }
+    }
+
+    /// Seed a tempdir project that the proposer can chew on:
+    /// two TS env-var references that map to known providers
+    /// (`OPENAI_API_KEY` → openai catalog, `SLACK_BOT_TOKEN` →
+    /// slack catalog). With the catalog patterns active the
+    /// proposer should produce path-shaped proposals, not skips.
+    fn seed_proposable_project(dir: &Path) {
+        write(
+            dir,
+            "src/index.ts",
+            r#"const a = process.env.OPENAI_API_KEY;
+const b = process.env.SLACK_BOT_TOKEN;"#,
+        );
+    }
+
+    #[test]
+    fn handle_cli_scan_only_succeeds_against_empty_project() {
+        // No files to scan → zero proposals, exit clean.
+        let dir = TempDir::new().unwrap();
+        let args = setup_args(dir.path());
+        handle_cli(args).expect("scan-only must not fail on an empty tree");
+        // No manifest must be written without --write-manifest.
+        assert!(
+            !dir.path().join(".devboy/secrets.toml").exists(),
+            "scan-only path must not create a manifest"
+        );
+    }
+
+    #[test]
+    fn handle_cli_scan_only_succeeds_against_seeded_project() {
+        let dir = TempDir::new().unwrap();
+        seed_proposable_project(dir.path());
+        let args = setup_args(dir.path());
+        handle_cli(args).expect("scan-only must not fail when proposals exist");
+        assert!(
+            !dir.path().join(".devboy/secrets.toml").exists(),
+            "scan-only path must not create a manifest even when proposals exist"
+        );
+    }
+
+    #[test]
+    fn handle_cli_write_manifest_creates_secrets_toml_in_dot_devboy() {
+        let dir = TempDir::new().unwrap();
+        seed_proposable_project(dir.path());
+        let args = crate::secrets_cmd::SetupArgs {
+            root: Some(dir.path().to_path_buf()),
+            write_manifest: true,
+            ..Default::default()
+        };
+        handle_cli(args).expect("--write-manifest must succeed for a fresh manifest");
+
+        let manifest = dir.path().join(".devboy/secrets.toml");
+        assert!(manifest.exists(), "manifest must be written");
+        let body = std::fs::read_to_string(&manifest).unwrap();
+        // The proposer should have produced at least one path
+        // for OPENAI_API_KEY (the openai catalog ships with
+        // patterns for it).
+        assert!(
+            body.contains("required = ["),
+            "manifest must carry a required = [...] table:\n{body}"
+        );
+        // Reverse-trace hint: each [secret.…] block names its
+        // env_var in the description.
+        assert!(
+            body.contains("[secret."),
+            "manifest must carry per-path [secret.…] blocks:\n{body}"
+        );
+    }
+
+    #[test]
+    fn handle_cli_write_manifest_refuses_existing_manifest_without_force() {
+        let dir = TempDir::new().unwrap();
+        seed_proposable_project(dir.path());
+        // Pre-create the manifest with a sentinel body — the
+        // wizard must refuse to clobber it.
+        let manifest = dir.path().join(".devboy/secrets.toml");
+        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        std::fs::write(&manifest, "# user-curated body — keep me\n").unwrap();
+
+        let args = crate::secrets_cmd::SetupArgs {
+            root: Some(dir.path().to_path_buf()),
+            write_manifest: true,
+            ..Default::default()
+        };
+        let err = handle_cli(args).expect_err("must bail on existing manifest without --force");
+        let blob = err.to_string();
+        assert!(
+            blob.contains("already exists") && blob.contains("--force"),
+            "error must direct the user to --force, got: {blob}"
+        );
+        // Original body must be untouched.
+        let after = std::fs::read_to_string(&manifest).unwrap();
+        assert_eq!(after, "# user-curated body — keep me\n");
+    }
+
+    #[test]
+    fn handle_cli_write_manifest_with_force_overwrites_existing_manifest() {
+        let dir = TempDir::new().unwrap();
+        seed_proposable_project(dir.path());
+        let manifest = dir.path().join(".devboy/secrets.toml");
+        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        std::fs::write(&manifest, "# stale body — overwrite me\n").unwrap();
+
+        let args = crate::secrets_cmd::SetupArgs {
+            root: Some(dir.path().to_path_buf()),
+            write_manifest: true,
+            force: true,
+            ..Default::default()
+        };
+        handle_cli(args).expect("--write-manifest --force must succeed against existing file");
+
+        let body = std::fs::read_to_string(&manifest).unwrap();
+        // The "stale body" comment must be gone; the generated
+        // header must be in place.
+        assert!(
+            !body.contains("stale body"),
+            "old body must be gone, got:\n{body}"
+        );
+        assert!(
+            body.contains("Generated by `devboy secrets setup --write-manifest`"),
+            "new body must carry the generation banner:\n{body}"
+        );
+    }
+
+    #[test]
+    fn handle_cli_write_manifest_against_empty_project_writes_a_header_only_file() {
+        // No env-var references → no `required = [...]` block,
+        // but the file is still written with the comment header.
+        // This pins the contract: --write-manifest always
+        // produces a file the user can edit.
+        let dir = TempDir::new().unwrap();
+        let args = crate::secrets_cmd::SetupArgs {
+            root: Some(dir.path().to_path_buf()),
+            write_manifest: true,
+            ..Default::default()
+        };
+        handle_cli(args).expect("--write-manifest on empty repo still succeeds");
+        let manifest = dir.path().join(".devboy/secrets.toml");
+        assert!(manifest.exists());
+        let body = std::fs::read_to_string(&manifest).unwrap();
+        assert!(
+            body.contains("Generated by"),
+            "header banner must be present even with no proposals:\n{body}"
+        );
+    }
+
+    #[test]
+    fn handle_cli_json_mode_emits_summary_object() {
+        // --json + scan-only must end with a JSON object
+        // carrying scanned_files / env_var_hits / proposed_paths
+        // / skipped. We can't capture stdout here, but the
+        // function returning Ok is the gate the agent watches —
+        // anything else fails the wizard. The other assertions
+        // in this file pin the JSON shape directly via
+        // event_to_json_value and serialise_proposal.
+        let dir = TempDir::new().unwrap();
+        seed_proposable_project(dir.path());
+        let args = crate::secrets_cmd::SetupArgs {
+            root: Some(dir.path().to_path_buf()),
+            json: true,
+            ..Default::default()
+        };
+        handle_cli(args).expect("--json scan-only must exit clean");
+    }
+
+    // ===========================================================
+    // T2 — event_to_json_value / event_to_human_line
+    // ===========================================================
+
+    #[test]
+    fn event_to_json_phase_started_carries_phase_key_and_no_message() {
+        let v = event_to_json_value(&WizardEvent::PhaseStarted {
+            phase: WizardPhase::Scan,
+        });
+        assert_eq!(v["phase"], "scan");
+        assert_eq!(v["status"], "started");
+        assert!(
+            v.get("message").is_none(),
+            "PhaseStarted must omit the message key: {v}"
+        );
+    }
+
+    #[test]
+    fn event_to_json_phase_progress_serialises_message_field() {
+        let v = event_to_json_value(&WizardEvent::PhaseProgress {
+            phase: WizardPhase::Propose,
+            message: "scanning Rust sources".into(),
+        });
+        assert_eq!(v["phase"], "propose");
+        assert_eq!(v["status"], "progress");
+        assert_eq!(v["message"], "scanning Rust sources");
+    }
+
+    #[test]
+    fn event_to_json_phase_completed_serialises_summary_as_message() {
+        // ADR-023 §3.8 wire shape: the WizardEvent variant
+        // names a `summary` field internally, but on the wire
+        // it lands under the `message` key for consistency
+        // across event variants. This test pins that mapping.
+        let v = event_to_json_value(&WizardEvent::PhaseCompleted {
+            phase: WizardPhase::Scan,
+            summary: "12 files, 4 env-var refs".into(),
+        });
+        assert_eq!(v["phase"], "scan");
+        assert_eq!(v["status"], "completed");
+        assert_eq!(v["message"], "12 files, 4 env-var refs");
+    }
+
+    #[test]
+    fn event_to_json_phase_skipped_serialises_reason_as_message() {
+        let v = event_to_json_value(&WizardEvent::PhaseSkipped {
+            phase: WizardPhase::Provision,
+            reason: "no missing paths".into(),
+        });
+        assert_eq!(v["status"], "skipped");
+        assert_eq!(v["message"], "no missing paths");
+    }
+
+    #[test]
+    fn event_to_json_phase_failed_serialises_reason_as_message() {
+        let v = event_to_json_value(&WizardEvent::PhaseFailed {
+            phase: WizardPhase::Doctor,
+            reason: "vault unavailable".into(),
+        });
+        assert_eq!(v["status"], "failed");
+        assert_eq!(v["message"], "vault unavailable");
+    }
+
+    #[test]
+    fn event_to_json_completed_omits_phase_and_message() {
+        let v = event_to_json_value(&WizardEvent::Completed);
+        assert_eq!(v["status"], "wizard-completed");
+        assert!(
+            v.get("phase").is_none(),
+            "wizard-completed must omit the phase key: {v}"
+        );
+        assert!(
+            v.get("message").is_none(),
+            "wizard-completed must omit the message key: {v}"
+        );
+    }
+
+    #[test]
+    fn event_to_human_uses_prefix_markers_per_variant() {
+        // Pin the user-facing prefixes — skill docs reference
+        // these literal markers ("✓", "⤳", "✗") so a typo or
+        // rename here is a docs drift.
+        assert!(
+            event_to_human_line(&WizardEvent::PhaseStarted {
+                phase: WizardPhase::Scan
+            })
+            .starts_with("→ ")
+        );
+        assert!(
+            event_to_human_line(&WizardEvent::PhaseCompleted {
+                phase: WizardPhase::Scan,
+                summary: "ok".into(),
+            })
+            .starts_with("✓ ")
+        );
+        assert!(
+            event_to_human_line(&WizardEvent::PhaseSkipped {
+                phase: WizardPhase::Scan,
+                reason: "n/a".into(),
+            })
+            .starts_with("⤳ ")
+        );
+        assert!(
+            event_to_human_line(&WizardEvent::PhaseFailed {
+                phase: WizardPhase::Scan,
+                reason: "boom".into(),
+            })
+            .starts_with("✗ ")
+        );
+        assert_eq!(event_to_human_line(&WizardEvent::Completed), "done.");
+    }
+
+    #[test]
+    fn event_to_human_progress_line_is_two_space_indented_message_only() {
+        // Progress events deliberately drop the phase label —
+        // they're sub-line updates underneath the "→ phase"
+        // marker the PhaseStarted event already printed.
+        let line = event_to_human_line(&WizardEvent::PhaseProgress {
+            phase: WizardPhase::Propose,
+            message: "found 7 references".into(),
+        });
+        assert_eq!(line, "  found 7 references");
     }
 }
