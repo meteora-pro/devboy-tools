@@ -565,4 +565,80 @@ mod tests {
         assert!(index.get(&p("personal/github/token-legacy")).is_some());
         assert!(index.get(&p("personal/gitlab/token-legacy")).is_some());
     }
+
+    // ===========================================================
+    // T5 — resolve_target_path (non-interactive branches)
+    // ===========================================================
+
+    #[test]
+    fn resolve_target_path_returns_explicit_target_verbatim() {
+        // `--target` shortcuts the suggestion + interactive
+        // editor; the function must return exactly what the user
+        // supplied without consulting `suggest_canonical_path`.
+        let args = MigrateArgs {
+            legacy_key: Some("github/token".into()),
+            target: Some("ops/github/legacy-cleanup".into()),
+            yes: false,
+            ..MigrateArgs::default()
+        };
+        let got = resolve_target_path(&args, "github/token").unwrap();
+        assert_eq!(got, "ops/github/legacy-cleanup");
+    }
+
+    #[test]
+    fn resolve_target_path_with_yes_returns_suggested_path() {
+        // `--yes` non-interactive mode must take the suggestion
+        // verbatim for known legacy keys. We use `github/token`
+        // since suggest_canonical_path has a built-in mapping
+        // for it; the exact path is brittle (encoded in
+        // legacy_keys) so we only assert it's non-empty and
+        // ADR-020-shaped.
+        let args = MigrateArgs {
+            legacy_key: Some("github/token".into()),
+            yes: true,
+            ..MigrateArgs::default()
+        };
+        let got = resolve_target_path(&args, "github/token").unwrap();
+        assert!(
+            got.matches('/').count() >= 2,
+            "suggested path must have ≥3 segments per ADR-020 §2, got: {got}"
+        );
+    }
+
+    #[test]
+    fn resolve_target_path_bails_when_legacy_key_has_no_suggestion() {
+        // Unknown legacy key + no --target + --yes → bail with
+        // a clear hint to pass --target. `suggest_canonical_path`
+        // returns `Some` for both 2-segment `a/b` and the
+        // `contexts.*.*.*` shape; a single-token name fits
+        // neither pattern and is the cleanest "no suggestion"
+        // input.
+        let args = MigrateArgs {
+            legacy_key: Some("bare-no-slashes".into()),
+            yes: true,
+            ..MigrateArgs::default()
+        };
+        let err = resolve_target_path(&args, "bare-no-slashes").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("bare-no-slashes") && msg.contains("--target"),
+            "error must name the key and direct to --target, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn resolve_target_path_target_arg_takes_priority_over_yes_suggestion() {
+        // Even with --yes set, an explicit --target must win.
+        // Pin this — otherwise a future refactor that reorders
+        // the early-returns could silently start ignoring the
+        // user's explicit input.
+        let args = MigrateArgs {
+            legacy_key: Some("github/token".into()),
+            target: Some("project-x/github/migrated".into()),
+            yes: true,
+            ..MigrateArgs::default()
+        };
+        let got = resolve_target_path(&args, "github/token").unwrap();
+        assert_eq!(got, "project-x/github/migrated");
+    }
 }

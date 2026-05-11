@@ -610,4 +610,89 @@ mod tests {
         assert_eq!(&s[4..5], "-");
         assert_eq!(&s[7..8], "-");
     }
+
+    // ===========================================================
+    // T5 — uncovered branches: format-rule eval error, fixed
+    //      TodayProvider stability, real_prompts selector,
+    //      StdinPrompts behaviour, no-rule + no-url combination
+    // ===========================================================
+
+    #[test]
+    fn rotation_aborts_when_format_regex_fails_to_compile() {
+        // FormatCheck::Error fires when the entry's regex
+        // doesn't compile. Pin the abort path so a future
+        // refactor that swallows the error (e.g. degrades to
+        // NoRule) is caught.
+        let entry = IndexEntry {
+            // Unclosed character class — regex compilation fails.
+            format_regex: Some(r"^[".to_owned()),
+            pattern_id: None,
+            ..IndexEntry::default()
+        };
+        let prompts = FakePrompts::new(true, "abcdef");
+        let browser = FakeBrowser::ok();
+        let err = run_rotation(
+            &path(),
+            &entry,
+            &args(),
+            &cat(),
+            &browser,
+            &prompts,
+            TodayProvider::fixed("2026-05-09"),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("format rule could not be evaluated"),
+            "must bail with the eval-error wording, got: {err}"
+        );
+    }
+
+    #[test]
+    fn today_provider_fixed_is_stable_across_calls() {
+        // Pin the fixed-mode behaviour the recorder relies on:
+        // every call within the same RotationOutcome must
+        // return the same date. (Naive comparison would catch a
+        // future refactor that accidentally consumes the
+        // override.)
+        let tp = TodayProvider::fixed("2026-05-09");
+        assert_eq!(tp.today(), "2026-05-09");
+        assert_eq!(tp.today(), "2026-05-09");
+    }
+
+    #[test]
+    fn stdin_prompts_confirm_destructive_returns_true_unconditionally() {
+        // The from-stdin transport assumes the caller already
+        // gated on `--yes`-equivalent semantics, so the prompt
+        // always proceeds. Without this, piped-input rotations
+        // would hang waiting for confirmation that never comes.
+        let p = StdinPrompts;
+        let got = p
+            .confirm_destructive(&SecretPath::parse("team/jira/api-key").unwrap())
+            .unwrap();
+        assert!(got, "StdinPrompts must skip the confirm gate");
+    }
+
+    #[test]
+    fn real_prompts_with_from_stdin_returns_stdin_impl_behaviour() {
+        // We can't pattern-match on a Box<dyn Prompts>, but we
+        // can observe the impl's behaviour: StdinPrompts'
+        // confirm_destructive always returns true, while
+        // InteractivePrompts would attempt stdin I/O. Picking
+        // the right impl is the contract `real_prompts`
+        // upholds.
+        let a = RotateArgs {
+            path: "team/jira/api-key".into(),
+            from_stdin: true,
+            ..args()
+        };
+        let p = real_prompts(&a);
+        let got = p
+            .confirm_destructive(&SecretPath::parse("team/jira/api-key").unwrap())
+            .unwrap();
+        assert!(
+            got,
+            "from_stdin=true must yield StdinPrompts (auto-confirm)"
+        );
+    }
 }
