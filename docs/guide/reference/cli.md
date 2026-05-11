@@ -1027,7 +1027,7 @@ Run the setup-secrets wizard against the current directory. Default mode is `--s
 * `--write-manifest` — Commit the proposed paths to `<root>/.devboy/secrets.toml`. Refuses to overwrite an existing manifest unless `--force` is passed too — drift in the manifest is the user's own authoritative copy and the wizard treats it as opaque
 * `--force` — Allow `--write-manifest` to overwrite an existing `<root>/.devboy/secrets.toml`. No-op without `--write-manifest`
 * `--resume` — Resume the wizard from the recorded state file (`~/.devboy/secrets/setup-state.toml`). Skips phases already marked `done` / `skipped`. Implies a full wizard run, not just the scan preview
-* `--json` — Emit JSON-lines events to stdout instead of human prose. One event per line with shape `{"phase":"scan","status":"completed","summary":"…"}` — designed for the AI agent driving the skill
+* `--json` — Emit JSON-lines events to stdout instead of human prose. One event per line with shape `{"phase":"scan","status":"completed","message":"…"}` — designed for the AI agent driving the skill. The `message` key is optional: only `PhaseProgress`, `PhaseCompleted`, `PhaseSkipped`, and `PhaseFailed` carry a body; `PhaseStarted` and the terminal `wizard-completed` event omit it
 
 
 

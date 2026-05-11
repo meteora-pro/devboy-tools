@@ -113,7 +113,15 @@ Unknown TOML keys fail the parse (`deny_unknown_fields`).
    sha256sum /tmp/anthropic.json
    ```
 3. Compare against the value the upstream published (commit message, release notes, signed announcement).
-4. Pin the matching value in `[[source]].sha256`.
+4. Apply the verified SHA — either at add-time:
+   ```sh
+   devboy secrets catalog add-url https://.../anthropic.json --pin <sha256>
+   ```
+   or, for a URL already subscribed:
+   ```sh
+   devboy secrets catalog pin https://.../anthropic.json <sha256>
+   ```
+   Both write the SHA into the canonical state files; neither requires editing `sources.toml` / `known_hashes.toml` by hand.
 
 For a team operating its own catalog: ship the SHA256 in your release notes / CI artifact metadata so consumers can pin without trust-on-first-use.
 
@@ -151,7 +159,10 @@ Best-effort writes: a disk-full audit log never blocks the catalog load. `tail -
 When the GUI surfaces a TOFU mismatch warning (or the CLI logs `blocked-tofu-mismatch`):
 
 1. **Verify out-of-band that the upstream rotated legitimately.** Release notes, CI artifact, signed announcement — anything that's not the same channel that's now serving the new body.
-2. If the rotation is confirmed: in the GUI, click "Trust the new SHA" — `known_hashes.toml` is overwritten and the catalog activates. From the CLI, edit `known_hashes.toml` directly (or delete the URL's entry to fall back to TOFU first-fetch on the next run).
+2. If the rotation is confirmed: in the GUI, click "Trust the new SHA" — `known_hashes.toml` is overwritten and the catalog activates. From the CLI, use one of the dedicated subcommands instead of editing TOML by hand:
+   - `devboy secrets catalog forget <url>` — drops both the `[[source]]` and the recorded SHA, so the next `refresh` (or implicit re-fetch) restarts the TOFU first-fetch flow with the new body.
+   - `devboy secrets catalog pin <url> <sha256>` — overwrites the pinned SHA after you've verified the new value out-of-band. Safer than `forget` when you want to lock the rotation.
+   - `devboy secrets catalog refresh <url>` — force a re-fetch with the existing pin / TOFU record (useful after a `pin`).
 3. If you cannot confirm: refuse and audit. The cached copy still works for the duration of `refresh_seconds`, so you have at least one TTL window to investigate before the GUI keeps complaining.
 
 ## See also

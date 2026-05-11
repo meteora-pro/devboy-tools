@@ -345,8 +345,11 @@ pub struct SetupArgs {
     pub resume: bool,
     /// Emit JSON-lines events to stdout instead of human prose.
     /// One event per line with shape
-    /// `{"phase":"scan","status":"completed","summary":"…"}` —
-    /// designed for the AI agent driving the skill.
+    /// `{"phase":"scan","status":"completed","message":"…"}` —
+    /// designed for the AI agent driving the skill. The `message`
+    /// key is optional: only `PhaseProgress`, `PhaseCompleted`,
+    /// `PhaseSkipped`, and `PhaseFailed` carry a body; `PhaseStarted`
+    /// and the terminal `wizard-completed` event omit it.
     #[arg(long)]
     pub json: bool,
 }
