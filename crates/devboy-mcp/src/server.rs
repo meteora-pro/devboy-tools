@@ -889,7 +889,9 @@ impl McpServer {
 
         let mode = args.mode.unwrap_or_default();
         match self.secrets_provision.request_provision(path, mode) {
-            Ok(id) => match serde_json::to_value(serde_json::json!({ "request_id": id.0 })) {
+            Ok(id) => match serde_json::to_value(crate::secrets_provision::RequestIdReply {
+                request_id: id.0,
+            }) {
                 Ok(v) => ToolCallResult::text(v.to_string()),
                 Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
             },
@@ -928,7 +930,9 @@ impl McpServer {
             .secrets_provision
             .request_provision(path, ProvisionMode::Rotation)
         {
-            Ok(id) => match serde_json::to_value(serde_json::json!({ "request_id": id.0 })) {
+            Ok(id) => match serde_json::to_value(crate::secrets_provision::RequestIdReply {
+                request_id: id.0,
+            }) {
                 Ok(v) => ToolCallResult::text(v.to_string()),
                 Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
             },
@@ -979,7 +983,9 @@ impl McpServer {
             .secrets_provision
             .request_use_approval(path, args.reason, args.ttl_seconds)
         {
-            Ok(id) => match serde_json::to_value(serde_json::json!({ "request_id": id.0 })) {
+            Ok(id) => match serde_json::to_value(crate::secrets_provision::RequestIdReply {
+                request_id: id.0,
+            }) {
                 Ok(v) => ToolCallResult::text(v.to_string()),
                 Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
             },
@@ -1024,7 +1030,9 @@ impl McpServer {
             .secrets_provision
             .request_metadata_proposal(path, args.fields)
         {
-            Ok(id) => match serde_json::to_value(serde_json::json!({ "request_id": id.0 })) {
+            Ok(id) => match serde_json::to_value(crate::secrets_provision::RequestIdReply {
+                request_id: id.0,
+            }) {
                 Ok(v) => ToolCallResult::text(v.to_string()),
                 Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
             },
@@ -1069,7 +1077,9 @@ impl McpServer {
             .secrets_provision
             .request_new_path_proposal(suggested, args.metadata)
         {
-            Ok(id) => match serde_json::to_value(serde_json::json!({ "request_id": id.0 })) {
+            Ok(id) => match serde_json::to_value(crate::secrets_provision::RequestIdReply {
+                request_id: id.0,
+            }) {
                 Ok(v) => ToolCallResult::text(v.to_string()),
                 Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
             },

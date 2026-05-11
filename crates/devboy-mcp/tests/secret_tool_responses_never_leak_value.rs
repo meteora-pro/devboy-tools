@@ -102,6 +102,26 @@ async fn secrets_propose_new_path_response_never_carries_sentinel() {
 }
 
 #[tokio::test]
+async fn secrets_request_use_approval_response_never_carries_sentinel() {
+    // request_use_approval takes path + reason + optional TTL. A
+    // future regression that started echoing the reason (a
+    // free-form string the agent supplies) back into the reply
+    // would be caught here.
+    let server = build_server();
+    let resp = call(
+        &server,
+        "secrets_request_use_approval",
+        serde_json::json!({
+            "path": format!("team/openai/{SENTINEL}"),
+            "reason": format!("agent wants to call /v1/embeddings with {SENTINEL}"),
+            "ttl_seconds": 600,
+        }),
+    )
+    .await;
+    assert_no_sentinel(&resp, "secrets_request_use_approval");
+}
+
+#[tokio::test]
 async fn secrets_poll_status_response_never_carries_sentinel() {
     // poll_status reads the registry; the value-shaped fields
     // it could echo are the path and the kind. Inject the
