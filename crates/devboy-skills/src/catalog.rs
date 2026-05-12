@@ -1,9 +1,9 @@
 //! In-memory catalogue of skill summaries — supports filtering by
 //! category, fuzzy name search, and simple counting.
 //!
-//! A [`Catalog`] is the normalised output of [`SkillSource::list`]; the
-//! CLI builds one at every invocation so that downstream commands never
-//! have to re-ask the source about what is installable.
+//! A [`Catalog`] is the normalised output of [`crate::source::SkillSource::list`];
+//! the CLI builds one at every invocation so that downstream commands
+//! never have to re-ask the source about what is installable.
 
 use std::collections::BTreeMap;
 

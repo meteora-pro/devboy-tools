@@ -340,7 +340,6 @@ pub struct TraceRecord {
 pub struct SessionMeta {
     /// Session id matching every record in `trace.jsonl`.
     pub session_id: String,
-    /// Skill name.
     pub skill: String,
     /// Skill version at run time, if the caller provided it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -675,30 +674,39 @@ mod tests {
 
     #[test]
     fn events_are_redacted_before_writing() {
-        let dir = tempdir().unwrap();
-        let target = TraceTarget::Custom(dir.path().to_path_buf());
-        let tracer = SessionTracer::begin("devboy-test", &target).unwrap();
-        let trace_path = tracer.trace_path().to_path_buf();
-        tracer
-            .event(
-                Phase::ToolCall,
-                json!({
-                    "tool": "create_issue",
-                    "args": { "token": "ghp_012345678901234567890123456789012345" }
-                }),
-            )
-            .unwrap();
-        tracer.end(Outcome::Success, "").unwrap();
+        // Share the env-serialisation lock with `redact::tests`; without
+        // it a concurrent `DEVBOY_TRACE_REDACTION=off` in a sibling test
+        // can disable redaction for the window this test runs and let
+        // the raw token reach disk (observed as a hard failure on
+        // ubuntu-24.04-arm in CI). Strictly stronger than a bare
+        // `temp_env::with_var` reset because the mutex serialises against
+        // every redact-tests sibling that legitimately toggles the var.
+        super::redact::test_support::with_clean_env(|| {
+            let dir = tempdir().unwrap();
+            let target = TraceTarget::Custom(dir.path().to_path_buf());
+            let tracer = SessionTracer::begin("devboy-test", &target).unwrap();
+            let trace_path = tracer.trace_path().to_path_buf();
+            tracer
+                .event(
+                    Phase::ToolCall,
+                    json!({
+                        "tool": "create_issue",
+                        "args": { "token": "ghp_012345678901234567890123456789012345" }
+                    }),
+                )
+                .unwrap();
+            tracer.end(Outcome::Success, "").unwrap();
 
-        let text = std::fs::read_to_string(&trace_path).unwrap();
-        assert!(
-            !text.contains("ghp_0123456789"),
-            "trace contained raw GitHub token: {text}"
-        );
-        assert!(
-            text.contains("<redacted"),
-            "trace did not include redaction marker: {text}"
-        );
+            let text = std::fs::read_to_string(&trace_path).unwrap();
+            assert!(
+                !text.contains("ghp_0123456789"),
+                "trace contained raw GitHub token: {text}"
+            );
+            assert!(
+                text.contains("<redacted"),
+                "trace did not include redaction marker: {text}"
+            );
+        });
     }
 
     #[test]

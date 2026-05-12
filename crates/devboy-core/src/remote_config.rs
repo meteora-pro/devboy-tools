@@ -33,6 +33,65 @@ use crate::config::Config;
 ///
 /// # Arguments
 ///
+/// Resolved remote-config URL from env var or `[remote_config]` config
+/// block. Returns `None` if neither source provides a non-empty URL.
+///
+/// Used by `devboy doctor` and `devboy context list` to detect the
+/// "thin client / proxy" mode regardless of whether the URL came from
+/// the env var (which `fetch_and_merge` honours but doesn't write into
+/// `Config`) or the on-disk config file.
+pub fn resolve_url(local_config: &Config) -> Option<String> {
+    std::env::var("DEVBOY_REMOTE_CONFIG_URL")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            local_config
+                .remote_config
+                .as_ref()
+                .and_then(|rc| rc.url.as_ref().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+        })
+}
+
+/// Redact a URL for safe display in diagnostic messages: drop userinfo
+/// (basic-auth credentials in `https://user:pass@host/...`) and any
+/// query string or fragment. Scheme + host + port + path are preserved.
+///
+/// Lightweight string-level parser (no `url` crate dep) that mirrors
+/// the redaction we already do when logging remote-config fetch
+/// failures. Anything that doesn't look like an `<scheme>://...` URL
+/// passes through with only the query/fragment stripped — we'd rather
+/// echo a malformed value than panic, but credentials in non-URL
+/// strings are not detected.
+pub fn redact_url_for_display(raw: &str) -> String {
+    let raw = raw.trim();
+    let (scheme_with_sep, rest) = match raw.find("://") {
+        Some(idx) => (&raw[..idx + 3], &raw[idx + 3..]),
+        None => {
+            // Not a `scheme://` URL — strip query/fragment and return.
+            let stripped = raw.split_once('?').map(|(p, _)| p).unwrap_or(raw);
+            let stripped = stripped.split_once('#').map(|(p, _)| p).unwrap_or(stripped);
+            return stripped.to_string();
+        }
+    };
+
+    // Authority ends at the first `/`, `?`, or `#`. Userinfo is
+    // everything before the rightmost `@` inside that authority.
+    let auth_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (auth, tail) = rest.split_at(auth_end);
+    let host = match auth.rfind('@') {
+        Some(at) => &auth[at + 1..],
+        None => auth,
+    };
+
+    // Strip query string and fragment from tail.
+    let tail = tail.split_once('?').map(|(p, _)| p).unwrap_or(tail);
+    let tail = tail.split_once('#').map(|(p, _)| p).unwrap_or(tail);
+
+    format!("{scheme_with_sep}{host}{tail}")
+}
+
 /// * `local_config` - The locally loaded config
 /// * `token_from_keychain` - Optional token resolved from keychain via `token_key`
 pub async fn fetch_and_merge(local_config: Config, token_from_keychain: Option<&str>) -> Config {
@@ -95,7 +154,6 @@ fn redact_url(url: &str) -> String {
     without_query.to_string()
 }
 
-/// Fetch TOML config from a remote URL.
 async fn fetch_remote_toml(url: &str, token: Option<&str>) -> Result<Config, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -203,6 +261,89 @@ fn merge_configs(mut local: Config, remote: Config) -> Config {
 mod tests {
     use super::*;
     use crate::config::{RemoteConfigSettings, SentryConfig};
+
+    #[test]
+    fn redact_url_strips_userinfo_and_query() {
+        assert_eq!(
+            redact_url_for_display("https://user:pass@example.com/api/config?token=abc"),
+            "https://example.com/api/config"
+        );
+    }
+
+    #[test]
+    fn redact_url_keeps_path_and_port() {
+        assert_eq!(
+            redact_url_for_display("https://host.example:8443/api/config/mcp"),
+            "https://host.example:8443/api/config/mcp"
+        );
+    }
+
+    #[test]
+    fn redact_url_strips_only_userinfo_when_no_query() {
+        assert_eq!(
+            redact_url_for_display("https://alice@example.com/p"),
+            "https://example.com/p"
+        );
+    }
+
+    #[test]
+    fn redact_url_strips_only_query_when_no_userinfo() {
+        assert_eq!(
+            redact_url_for_display("https://example.com/p?secret=xyz#frag"),
+            "https://example.com/p"
+        );
+    }
+
+    #[test]
+    fn redact_url_handles_non_url_string_without_panic() {
+        // No scheme://, no panic — just strip query/fragment if any.
+        assert_eq!(redact_url_for_display("not-a-url"), "not-a-url");
+        assert_eq!(redact_url_for_display("not-a-url?q=secret"), "not-a-url");
+    }
+
+    #[test]
+    fn redact_url_handles_at_in_path() {
+        // The `@` in `/users/foo@bar/items` is part of the path, not
+        // userinfo — must not be stripped.
+        assert_eq!(
+            redact_url_for_display("https://example.com/users/foo@bar/items"),
+            "https://example.com/users/foo@bar/items"
+        );
+    }
+
+    #[test]
+    fn resolve_url_returns_config_url_when_set() {
+        let cfg = Config {
+            remote_config: Some(RemoteConfigSettings {
+                url: Some("https://from-config.example/".to_string()),
+                token_key: None,
+            }),
+            ..Default::default()
+        };
+        // Note: env var precedence (DEVBOY_REMOTE_CONFIG_URL > config)
+        // is exercised end-to-end via the existing remote_config
+        // integration test fixtures; not unit-tested here because
+        // `unsafe_code=forbid` blocks `set_var`.
+        assert_eq!(
+            resolve_url(&cfg).as_deref(),
+            Some("https://from-config.example/")
+        );
+    }
+
+    #[test]
+    fn resolve_url_returns_none_for_default_config() {
+        let cfg = Config::default();
+        // May still return Some(...) if a stray DEVBOY_REMOTE_CONFIG_URL
+        // is set in the test process environment — assert "none, OR
+        // exactly the env var value" so the test is order-independent.
+        let got = resolve_url(&cfg);
+        match (std::env::var("DEVBOY_REMOTE_CONFIG_URL").ok(), got) {
+            (None, None) => {}
+            (Some(env), Some(got)) => assert_eq!(env.trim(), got),
+            (None, Some(got)) => panic!("expected None, got Some({got})"),
+            (Some(env), None) => panic!("expected Some({env}), got None"),
+        }
+    }
 
     #[test]
     fn test_merge_configs_remote_overrides_sentry() {

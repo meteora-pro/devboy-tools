@@ -29,12 +29,10 @@ pub const INDEX_VERSION: u32 = 1;
 pub struct CachedAsset {
     /// Stable identifier (UUID or provider id).
     pub id: String,
-    /// Original filename.
     pub filename: String,
     /// MIME type if known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
-    /// Size in bytes.
     pub size: u64,
     /// Path relative to the cache root.
     pub local_path: PathBuf,
@@ -59,11 +57,9 @@ pub struct CachedAsset {
 pub struct NewCachedAsset {
     /// Stable identifier (UUID or provider id).
     pub id: String,
-    /// Original filename.
     pub filename: String,
     /// MIME type if known.
     pub mime_type: Option<String>,
-    /// Size in bytes.
     pub size: u64,
     /// Path relative to the cache root.
     pub local_path: PathBuf,

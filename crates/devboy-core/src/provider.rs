@@ -12,15 +12,17 @@ use crate::types::JobLogMode;
 use crate::types::{
     AddStructureGeneratorInput, AddStructureRowsInput, AssignToSprintInput, Comment,
     CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, CreatePageParams,
-    CreateStructureInput, Discussion, FileDiff, ForestModifyResult, GetChatsParams,
-    GetForestOptions, GetMessagesParams, GetPipelineInput, GetStructureValuesInput,
+    CreateStructureInput, CustomFieldDescriptor, Discussion, FileDiff, ForestModifyResult,
+    GetChatsParams, GetForestOptions, GetMessagesParams, GetPipelineInput, GetStructureValuesInput,
     GetUsersOptions, Issue, IssueFilter, IssueRelations, IssueStatus, JobLogOptions, JobLogOutput,
-    KbPage, KbPageContent, KbSpace, ListPagesParams, MeetingFilter, MeetingNote, MeetingTranscript,
-    MergeRequest, MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, PipelineInfo,
-    ProviderResult, Release, SaveStructureViewInput, SearchKbParams, SearchMessagesParams,
-    SendMessageParams, Sprint, SprintState, Structure, StructureForest, StructureGenerator,
-    StructureValues, StructureView, SyncStructureGeneratorInput, UpdateIssueInput,
-    UpdateMergeRequestInput, UpdatePageParams, UpdateStructureAutomationInput, User,
+    KbPage, KbPageContent, KbSpace, ListCustomFieldsParams, ListPagesParams,
+    ListProjectVersionsParams, MeetingFilter, MeetingNote, MeetingTranscript, MergeRequest,
+    MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, PipelineInfo,
+    ProjectVersion, ProviderResult, Release, SaveStructureViewInput, SearchKbParams,
+    SearchMessagesParams, SendMessageParams, Sprint, SprintState, Structure, StructureForest,
+    StructureGenerator, StructureValues, StructureView, SyncStructureGeneratorInput,
+    UpdateIssueInput, UpdateMergeRequestInput, UpdatePageParams, UpdateStructureAutomationInput,
+    UpsertProjectVersionInput, User,
 };
 
 /// Provider for working with issues.
@@ -40,10 +42,8 @@ pub trait IssueProvider: Send + Sync {
     /// Update an existing issue.
     async fn update_issue(&self, key: &str, input: UpdateIssueInput) -> Result<Issue>;
 
-    /// Get comments for an issue.
     async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>>;
 
-    /// Add a comment to an issue.
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment>;
 
     /// Get available statuses for the issue tracker.
@@ -131,8 +131,8 @@ pub trait IssueProvider: Send + Sync {
     ///
     /// Not all providers expose a delete endpoint for attachments (ClickUp
     /// doesn't, GitLab file uploads are immutable) — the default returns
-    /// `ProviderUnsupported` and callers can consult [`asset_capabilities`]
-    /// beforehand.
+    /// `ProviderUnsupported` and callers can consult
+    /// [`asset_capabilities`](Self::asset_capabilities) beforehand.
     async fn delete_attachment(&self, _issue_key: &str, _asset_id: &str) -> Result<()> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
@@ -148,7 +148,7 @@ pub trait IssueProvider: Send + Sync {
         AssetCapabilities::default()
     }
 
-    /// Set custom fields on an issue. Each entry: {"id": "field_id", "value": <value>}.
+    /// Set custom fields on an issue. Each entry: `{"id": "field_id", "value": <value>}`.
     /// Default is no-op — override in providers that support custom fields (e.g., ClickUp).
     async fn set_custom_fields(
         &self,
@@ -321,6 +321,38 @@ pub trait IssueProvider: Send + Sync {
         })
     }
 
+    // --- Project versions / fixVersion (issue #238) --------------------
+    //
+    // List + upsert form a deliberately small surface: read returns a
+    // rich per-version payload so a separate get-by-id is unnecessary
+    // (Paper 3 — Context Enrichment Hypothesis), and write is name-keyed
+    // so the LLM never deals with numeric ids. See `docs/research/`.
+
+    /// List versions ("releases" / `fixVersion` targets) for a project.
+    /// Default: ProviderUnsupported.
+    async fn list_project_versions(
+        &self,
+        _params: ListProjectVersionsParams,
+    ) -> Result<ProviderResult<ProjectVersion>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "list_project_versions".to_string(),
+        })
+    }
+
+    /// Create-or-update a project version, keyed by `(project, name)`.
+    /// Partial update: optional fields left as `None` are not touched.
+    /// Default: ProviderUnsupported.
+    async fn upsert_project_version(
+        &self,
+        _input: UpsertProjectVersionInput,
+    ) -> Result<ProjectVersion> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "upsert_project_version".to_string(),
+        })
+    }
+
     // --- Agile / Sprint (issue #198) -----------------------------------
 
     /// List sprints visible on a board, optionally filtered by state.
@@ -340,6 +372,21 @@ pub trait IssueProvider: Send + Sync {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
             operation: "assign_to_sprint".to_string(),
+        })
+    }
+
+    /// List provider-side custom fields. Lets agents (and downstream
+    /// codegen) discover the `customfield_*` ids of an instance
+    /// without hardcoding them. Default impl returns
+    /// `ProviderUnsupported` — providers without a real customfield
+    /// concept (GitHub, GitLab) keep that default.
+    async fn list_custom_fields(
+        &self,
+        _params: ListCustomFieldsParams,
+    ) -> Result<ProviderResult<CustomFieldDescriptor>> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "list_custom_fields".to_string(),
         })
     }
 
@@ -418,7 +465,6 @@ pub trait MergeRequestProvider: Send + Sync {
         })
     }
 
-    /// Get file diffs for a merge request.
     async fn get_diffs(&self, _mr_key: &str) -> Result<ProviderResult<FileDiff>> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
@@ -426,7 +472,6 @@ pub trait MergeRequestProvider: Send + Sync {
         })
     }
 
-    /// Add a comment to a merge request.
     async fn add_comment(&self, _mr_key: &str, _input: CreateCommentInput) -> Result<Comment> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
@@ -470,7 +515,6 @@ pub trait MergeRequestProvider: Send + Sync {
         })
     }
 
-    /// Download an attachment from a merge request.
     async fn download_mr_attachment(&self, _mr_key: &str, _asset_id: &str) -> Result<Vec<u8>> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
@@ -478,7 +522,6 @@ pub trait MergeRequestProvider: Send + Sync {
         })
     }
 
-    /// Delete an attachment from a merge request.
     async fn delete_mr_attachment(&self, _mr_key: &str, _asset_id: &str) -> Result<()> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
@@ -496,7 +539,6 @@ pub trait PipelineProvider: Send + Sync {
     /// Get the provider name for logging.
     fn provider_name(&self) -> &'static str;
 
-    /// Get pipeline status for a branch or MR/PR.
     async fn get_pipeline(&self, _input: GetPipelineInput) -> Result<PipelineInfo> {
         Err(Error::ProviderUnsupported {
             provider: self.provider_name().to_string(),
@@ -692,6 +734,23 @@ mod tests {
         assert_unsupported(p.download_attachment("k", "1").await, "download_attachment");
         assert_unsupported(p.delete_attachment("k", "1").await, "delete_attachment");
         assert_unsupported(p.get_issue_relations("k").await, "get_issue_relations");
+        assert_unsupported(
+            p.list_project_versions(crate::types::ListProjectVersionsParams {
+                project: "PROJ".into(),
+                ..Default::default()
+            })
+            .await,
+            "list_project_versions",
+        );
+        assert_unsupported(
+            p.upsert_project_version(crate::types::UpsertProjectVersionInput {
+                project: "PROJ".into(),
+                name: "1.0.0".into(),
+                ..Default::default()
+            })
+            .await,
+            "upsert_project_version",
+        );
     }
 
     #[tokio::test]

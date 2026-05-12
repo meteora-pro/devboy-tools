@@ -86,8 +86,12 @@ pub trait ToolEnricher: Send + Sync {
 /// JSON Schema property definition for a tool parameter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PropertySchema {
-    /// JSON Schema type: "string", "number", "integer", "boolean", "array", "object"
-    #[serde(rename = "type")]
+    /// JSON Schema type: "string", "number", "integer", "boolean", "array", "object".
+    /// Empty when [`Self::any_of`] is set — JSON Schema treats `type`
+    /// and `anyOf` as alternatives, and the serializer skips empty
+    /// `type` on the wire so the rendered schema stays valid for
+    /// LLM tool-call validators.
+    #[serde(rename = "type", default, skip_serializing_if = "String::is_empty")]
     pub schema_type: String,
 
     /// Human-readable description of this parameter.
@@ -98,7 +102,6 @@ pub struct PropertySchema {
     #[serde(rename = "enum", skip_serializing_if = "Option::is_none")]
     pub enum_values: Option<Vec<String>>,
 
-    /// Default value.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
 
@@ -113,6 +116,15 @@ pub struct PropertySchema {
     /// Items schema (for array type).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub items: Option<Box<PropertySchema>>,
+
+    /// Schema alternatives — used when a parameter accepts shapes
+    /// that can't be unified under one `type` (e.g. a Jira
+    /// customfield that's a select on Project A and free text on
+    /// Project B). Mutually exclusive with `schema_type` per JSON
+    /// Schema's `anyOf` semantics — when set, [`Self::schema_type`]
+    /// is empty and the serializer skips it.
+    #[serde(rename = "anyOf", default, skip_serializing_if = "Option::is_none")]
+    pub any_of: Option<Vec<PropertySchema>>,
 
     /// Marker that this field was added/modified by an enricher.
     #[serde(rename = "x-enriched", skip_serializing_if = "Option::is_none")]
@@ -178,6 +190,23 @@ impl PropertySchema {
             ..Default::default()
         }
     }
+
+    /// Create a schema that accepts any of several alternatives —
+    /// JSON Schema's `anyOf`. Used when a parameter can take
+    /// shapes that don't fit under a single `type` (e.g. a custom
+    /// field with different option lists across projects). The
+    /// outer schema carries the description and `anyOf` array;
+    /// `schema_type` is left empty so the wire format is a valid
+    /// `anyOf`-only schema.
+    pub fn any_of(description: &str, schemas: Vec<PropertySchema>) -> Self {
+        Self {
+            schema_type: String::new(),
+            description: Some(description.into()),
+            any_of: Some(schemas),
+            enriched: Some(true),
+            ..Default::default()
+        }
+    }
 }
 
 impl Default for PropertySchema {
@@ -190,6 +219,7 @@ impl Default for PropertySchema {
             minimum: None,
             maximum: None,
             items: None,
+            any_of: None,
             enriched: None,
         }
     }
@@ -387,6 +417,54 @@ mod tests {
         let a = PropertySchema::array(PropertySchema::string("item"), "List");
         assert_eq!(a.schema_type, "array");
         assert!(a.items.is_some());
+    }
+
+    /// `any_of` produces a JSON Schema with no top-level `type` —
+    /// the wire shape is `{"description": ..., "anyOf": [...]}`,
+    /// which is what JSON Schema validators expect for alternatives.
+    #[test]
+    fn test_property_schema_any_of_constructor() {
+        let alt = PropertySchema::any_of(
+            "Severity (varies per project)",
+            vec![
+                PropertySchema::string_enum(&["High", "Medium", "Low"], "Project A"),
+                PropertySchema::string_enum(&["P1", "P2", "P3"], "Project B"),
+            ],
+        );
+        assert_eq!(alt.schema_type, "");
+        assert_eq!(
+            alt.description.as_deref(),
+            Some("Severity (varies per project)")
+        );
+        assert_eq!(alt.enriched, Some(true));
+        let variants = alt.any_of.as_ref().expect("anyOf set");
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0].enum_values.as_ref().unwrap()[0], "High");
+        assert_eq!(variants[1].enum_values.as_ref().unwrap()[0], "P1");
+    }
+
+    /// Empty `schema_type` is skipped during JSON serialisation so
+    /// the rendered schema is valid `anyOf`-only — no stray
+    /// `"type": ""` ending up on the wire. We check the parsed
+    /// outer object specifically, since inner variants legitimately
+    /// carry their own `type`.
+    #[test]
+    fn test_property_schema_any_of_serialization_omits_empty_type() {
+        let alt = PropertySchema::any_of(
+            "alt",
+            vec![PropertySchema::string("a"), PropertySchema::number("b")],
+        );
+        let value = serde_json::to_value(&alt).unwrap();
+        let obj = value.as_object().expect("object");
+        assert!(
+            !obj.contains_key("type"),
+            "outer object must not have type: {value}"
+        );
+        assert!(obj.contains_key("anyOf"), "missing anyOf: {value}");
+        // Inner variants keep their `type` — that's expected.
+        let any_of = obj["anyOf"].as_array().unwrap();
+        assert_eq!(any_of[0]["type"], "string");
+        assert_eq!(any_of[1]["type"], "number");
     }
 
     #[test]

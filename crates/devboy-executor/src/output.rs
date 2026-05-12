@@ -1,8 +1,9 @@
 use devboy_core::{
-    Comment, Discussion, FileDiff, ForestModifyResult, Issue, IssueRelations, IssueStatus,
-    JobLogOutput, KbPage, KbPageContent, KbSpace, MeetingNote, MeetingTranscript, MergeRequest,
-    MessengerChat, MessengerMessage, Pagination, PipelineInfo, SortInfo, Structure,
-    StructureForest, StructureValues, StructureView, User,
+    Comment, CustomFieldDescriptor, Discussion, FileDiff, ForestModifyResult, Issue,
+    IssueRelations, IssueStatus, JobLogOutput, KbPage, KbPageContent, KbSpace, MeetingNote,
+    MeetingTranscript, MergeRequest, MessengerChat, MessengerMessage, Pagination, PipelineInfo,
+    ProjectVersion, SortInfo, Sprint, Structure, StructureForest, StructureValues, StructureView,
+    User,
 };
 
 /// Metadata from provider result (pagination + sort info).
@@ -19,35 +20,25 @@ pub struct ResultMeta {
 /// how to format the output (pipeline text, JSON, etc.).
 #[derive(Debug)]
 pub enum ToolOutput {
-    /// List of merge requests / pull requests
     MergeRequests(Vec<MergeRequest>, Option<ResultMeta>),
-    /// Single merge request / pull request
     SingleMergeRequest(Box<MergeRequest>),
     /// MR/PR discussions with comments and code positions
     Discussions(Vec<Discussion>, Option<ResultMeta>),
-    /// File diffs from a merge request / pull request
     Diffs(Vec<FileDiff>, Option<ResultMeta>),
     /// List of issues / tasks
     Issues(Vec<Issue>, Option<ResultMeta>),
     /// Single issue / task
     SingleIssue(Box<Issue>),
-    /// Comments on an issue or merge request
     Comments(Vec<Comment>, Option<ResultMeta>),
     /// CI/CD pipeline status with jobs
     Pipeline(Box<PipelineInfo>),
-    /// Job log output
     JobLog(Box<JobLogOutput>),
-    /// Available issue statuses
     Statuses(Vec<IssueStatus>, Option<ResultMeta>),
-    /// List of users
     Users(Vec<User>, Option<ResultMeta>),
-    /// List of meeting notes
     MeetingNotes(Vec<MeetingNote>, Option<ResultMeta>),
     /// Single meeting transcript with sentences
     MeetingTranscript(Box<MeetingTranscript>),
-    /// List of knowledge base spaces
     KnowledgeBaseSpaces(Vec<KbSpace>, Option<ResultMeta>),
-    /// List of knowledge base pages
     KnowledgeBasePages(Vec<KbPage>, Option<ResultMeta>),
     /// Single knowledge base page summary
     KnowledgeBasePageSummary(Box<KbPage>),
@@ -55,13 +46,10 @@ pub enum ToolOutput {
     KnowledgeBasePage(Box<KbPageContent>),
     /// Issue relations (parent, subtasks, linked issues)
     Relations(Box<IssueRelations>),
-    /// List of messenger chats
     MessengerChats(Vec<MessengerChat>, Option<ResultMeta>),
-    /// List of messenger messages
     MessengerMessages(Vec<MessengerMessage>, Option<ResultMeta>),
     /// Single sent message
     SingleMessage(Box<MessengerMessage>),
-    /// Asset listing result
     AssetList {
         /// Serialized attachment objects from the provider.
         attachments: Vec<serde_json::Value>,
@@ -74,7 +62,6 @@ pub enum ToolOutput {
     AssetDownloaded {
         /// Provider-specific asset identifier.
         asset_id: String,
-        /// Size in bytes.
         size: usize,
         /// Absolute path when cached locally.
         local_path: Option<String>,
@@ -83,29 +70,31 @@ pub enum ToolOutput {
         /// Whether the result came from local cache.
         cached: bool,
     },
-    /// Asset uploaded
     AssetUploaded {
         /// Provider-returned URL for the uploaded file.
         url: String,
-        /// Original filename.
         filename: String,
-        /// Size in bytes.
         size: usize,
     },
-    /// Asset deleted
     AssetDeleted {
         /// Deleted asset identifier.
         asset_id: String,
         /// Human-readable confirmation message.
         message: String,
     },
-    /// List of Jira Structures
     Structures(Vec<Structure>, Option<ResultMeta>),
+    /// List of project versions / fixVersion targets (Jira releases)
+    ProjectVersions(Vec<ProjectVersion>, Option<ResultMeta>),
+    /// Single project version (returned by upsert_project_version)
+    SingleProjectVersion(Box<ProjectVersion>),
+    /// Sprints visible on a Jira agile board (issue #198)
+    Sprints(Vec<Sprint>, Option<ResultMeta>),
+    /// Custom-field descriptors discovered on the issue tracker
+    CustomFields(Vec<CustomFieldDescriptor>, Option<ResultMeta>),
     /// Structure forest (hierarchy tree)
     StructureForest(Box<StructureForest>),
     /// Structure column values
     StructureValues(Box<StructureValues>),
-    /// Structure views
     StructureViews(Vec<StructureView>, Option<ResultMeta>),
     /// Forest modification result (add/move rows)
     ForestModified(ForestModifyResult),
@@ -131,6 +120,9 @@ impl ToolOutput {
             Self::MessengerMessages(v, _) => v.len(),
             Self::Structures(v, _) => v.len(),
             Self::StructureViews(v, _) => v.len(),
+            Self::ProjectVersions(v, _) => v.len(),
+            Self::Sprints(v, _) => v.len(),
+            Self::CustomFields(v, _) => v.len(),
             Self::AssetList { count, .. } => *count,
             Self::SingleMergeRequest(_)
             | Self::SingleIssue(_)
@@ -144,6 +136,7 @@ impl ToolOutput {
             | Self::StructureForest(_)
             | Self::StructureValues(_)
             | Self::ForestModified(_)
+            | Self::SingleProjectVersion(_)
             | Self::AssetDownloaded { .. }
             | Self::AssetUploaded { .. }
             | Self::AssetDeleted { .. }
@@ -180,6 +173,10 @@ impl ToolOutput {
             Self::StructureValues(_) => "structure_values",
             Self::StructureViews(..) => "structure_views",
             Self::ForestModified(_) => "forest_modified",
+            Self::ProjectVersions(..) => "project_versions",
+            Self::SingleProjectVersion(_) => "project_version",
+            Self::Sprints(..) => "sprints",
+            Self::CustomFields(..) => "custom_fields",
             Self::AssetList { .. } => "asset_list",
             Self::AssetDownloaded { .. } => "asset_downloaded",
             Self::AssetUploaded { .. } => "asset_uploaded",
@@ -204,7 +201,10 @@ impl ToolOutput {
             | Self::MessengerChats(_, meta)
             | Self::MessengerMessages(_, meta)
             | Self::Structures(_, meta)
-            | Self::StructureViews(_, meta) => meta.as_ref(),
+            | Self::StructureViews(_, meta)
+            | Self::ProjectVersions(_, meta)
+            | Self::Sprints(_, meta)
+            | Self::CustomFields(_, meta) => meta.as_ref(),
             _ => None,
         }
     }
@@ -232,6 +232,7 @@ mod tests {
             attachments_count: None,
             parent: None,
             subtasks: vec![],
+            custom_fields: std::collections::HashMap::new(),
         }
     }
 

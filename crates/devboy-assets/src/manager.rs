@@ -474,7 +474,6 @@ pub struct StoreRequest<'a> {
     /// [`AssetManager::content_id`] if they want to check for existence
     /// before downloading.
     pub asset_id: Option<&'a str>,
-    /// Original filename.
     pub filename: &'a str,
     /// MIME type if known.
     pub mime_type: Option<String>,

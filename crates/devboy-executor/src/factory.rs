@@ -30,10 +30,18 @@ pub fn create_provider(
         } => match scope {
             GitLabScope::Project { id } => {
                 let client = if let Some(proxy) = proxy {
-                    devboy_gitlab::GitLabClient::with_base_url(&proxy.url, id, access_token)
-                        .with_proxy(proxy.headers.clone())
+                    devboy_gitlab::GitLabClient::with_base_url(
+                        &proxy.url,
+                        id,
+                        access_token.clone(),
+                    )
+                    .with_proxy(proxy.headers.clone())
                 } else {
-                    devboy_gitlab::GitLabClient::with_base_url(base_url, id, access_token)
+                    devboy_gitlab::GitLabClient::with_base_url(
+                        base_url,
+                        id,
+                        access_token.clone(),
+                    )
                 };
                 Ok(Box::new(client))
             }
@@ -53,9 +61,14 @@ pub fn create_provider(
             scope,
             ..
         } => match scope {
-            GitHubScope::Repository { owner, repo } => Ok(Box::new(
-                devboy_github::GitHubClient::with_base_url(base_url, owner, repo, access_token),
-            )),
+            GitHubScope::Repository { owner, repo } => {
+                Ok(Box::new(devboy_github::GitHubClient::with_base_url(
+                    base_url,
+                    owner,
+                    repo,
+                    access_token.clone(),
+                )))
+            }
             GitHubScope::Organization { name } => Err(Error::ProviderUnsupported {
                 provider: "github".into(),
                 operation: format!("organization scope (org: {name}) not yet implemented"),
@@ -72,7 +85,7 @@ pub fn create_provider(
             ..
         } => match scope {
             ClickUpScope::List { id, team_id } => {
-                let mut client = devboy_clickup::ClickUpClient::new(id, access_token);
+                let mut client = devboy_clickup::ClickUpClient::new(id, access_token.clone());
                 if let Some(tid) = team_id {
                     client = client.with_team_id(tid);
                 }
@@ -90,11 +103,16 @@ pub fn create_provider(
         } => match scope {
             JiraScope::Project { key } => {
                 let mut client = if let Some(proxy) = proxy {
-                    devboy_jira::JiraClient::new(&proxy.url, key, email, access_token)
-                        .with_proxy(proxy.headers.clone())
-                        .with_instance_url(base_url)
+                    devboy_jira::JiraClient::new(
+                        &proxy.url,
+                        key,
+                        email,
+                        access_token.clone(),
+                    )
+                    .with_proxy(proxy.headers.clone())
+                    .with_instance_url(base_url)
                 } else {
-                    devboy_jira::JiraClient::new(base_url, key, email, access_token)
+                    devboy_jira::JiraClient::new(base_url, key, email, access_token.clone())
                 };
                 if let Some(f) = flavor {
                     client = client.with_flavor(*f);
@@ -131,7 +149,6 @@ pub fn create_provider(
     }
 }
 
-/// Create a knowledge base provider from config.
 pub fn create_knowledge_base_provider(
     config: &ProviderConfig,
     proxy: Option<&ProxyConfig>,
@@ -186,9 +203,9 @@ pub fn create_meeting_notes_provider(
     config: &ProviderConfig,
 ) -> Result<Box<dyn MeetingNotesProvider>> {
     match config {
-        ProviderConfig::Fireflies { api_key, .. } => {
-            Ok(Box::new(devboy_fireflies::FirefliesClient::new(api_key)))
-        }
+        ProviderConfig::Fireflies { api_key, .. } => Ok(Box::new(
+            devboy_fireflies::FirefliesClient::new(api_key.clone()),
+        )),
         other => Err(Error::ProviderUnsupported {
             provider: other.provider_name().into(),
             operation: "not a meeting notes provider".into(),
@@ -196,7 +213,6 @@ pub fn create_meeting_notes_provider(
     }
 }
 
-/// Create a messenger provider from config.
 pub fn create_messenger_provider(config: &ProviderConfig) -> Result<Box<dyn MessengerProvider>> {
     match config {
         ProviderConfig::Slack {
@@ -206,7 +222,7 @@ pub fn create_messenger_provider(config: &ProviderConfig) -> Result<Box<dyn Mess
             required_scopes,
             ..
         } => Ok(Box::new(
-            devboy_slack::SlackClient::new(access_token)
+            devboy_slack::SlackClient::new(access_token.clone())
                 .with_base_url(base_url)
                 .with_required_scopes(required_scopes.clone()),
         )),

@@ -22,6 +22,9 @@
 //! }
 //! ```
 
+#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![deny(rustdoc::invalid_html_tags)]
 pub mod agents;
 pub mod asset;
 pub mod config;
@@ -48,19 +51,20 @@ pub use provider::{
 pub use types::{
     AddStructureGeneratorInput, AddStructureRowsInput, AssignToSprintInput, CodePosition, Comment,
     CreateCommentInput, CreateIssueInput, CreateMergeRequestInput, CreatePageParams,
-    CreateStructureInput, Discussion, FailedJob, FileDiff, ForestModifyResult, GetChatsParams,
-    GetForestOptions, GetMessagesParams, GetPipelineInput, GetStructureValuesInput,
-    GetUsersOptions, Issue, IssueFilter, IssueLink, IssueRelations, IssueStatus, JobLogMode,
-    JobLogOptions, JobLogOutput, KbComment, KbPage, KbPageContent, KbSpace, ListPagesParams,
-    MeetingFilter, MeetingNote, MeetingSpeaker, MeetingTranscript, MergeRequest, MessageAttachment,
-    MessageAuthor, MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, Pagination,
-    PipelineInfo, PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, ProviderResult,
+    CreateStructureInput, CustomFieldDescriptor, CustomFieldValue, Discussion, FailedJob, FileDiff,
+    ForestModifyResult, GetChatsParams, GetForestOptions, GetMessagesParams, GetPipelineInput,
+    GetStructureValuesInput, GetUsersOptions, Issue, IssueFilter, IssueLink, IssueRelations,
+    IssueStatus, JobLogMode, JobLogOptions, JobLogOutput, KbComment, KbPage, KbPageContent,
+    KbSpace, ListCustomFieldsParams, ListPagesParams, ListProjectVersionsParams, MeetingFilter,
+    MeetingNote, MeetingSpeaker, MeetingTranscript, MergeRequest, MessageAttachment, MessageAuthor,
+    MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, Pagination, PipelineInfo,
+    PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, ProjectVersion, ProviderResult,
     Release, ReleaseAsset, SaveStructureViewInput, SearchKbParams, SearchMessagesParams,
     SendMessageParams, SortInfo, SortOrder, Sprint, SprintState, Structure, StructureColumnValue,
     StructureForest, StructureGenerator, StructureNode, StructureRowItem, StructureRowValues,
     StructureValues, StructureView, StructureViewColumn, SyncStructureGeneratorInput,
     TranscriptSentence, UpdateIssueInput, UpdateMergeRequestInput, UpdatePageParams,
-    UpdateStructureAutomationInput, User,
+    UpdateStructureAutomationInput, UpsertProjectVersionInput, User,
 };
 
 // Re-export enricher traits and utilities

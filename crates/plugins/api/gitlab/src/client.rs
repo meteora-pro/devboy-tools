@@ -9,6 +9,7 @@ use devboy_core::{
     PipelineStage, PipelineStatus, PipelineSummary, Provider, ProviderResult, Result,
     UpdateIssueInput, User, parse_markdown_attachments,
 };
+use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, warn};
 
 use crate::DEFAULT_GITLAB_URL;
@@ -18,18 +19,17 @@ use crate::types::{
     GitLabMergeRequestChanges, GitLabNote, GitLabNotePosition, GitLabUser, UpdateIssueRequest,
 };
 
-/// GitLab API client.
 pub struct GitLabClient {
     base_url: String,
     project_id: String,
-    token: String,
+    token: SecretString,
     proxy_headers: Option<std::collections::HashMap<String, String>>,
     client: reqwest::Client,
 }
 
 impl GitLabClient {
     /// Create a new GitLab client.
-    pub fn new(project_id: impl Into<String>, token: impl Into<String>) -> Self {
+    pub fn new(project_id: impl Into<String>, token: SecretString) -> Self {
         Self::with_base_url(DEFAULT_GITLAB_URL, project_id, token)
     }
 
@@ -37,12 +37,12 @@ impl GitLabClient {
     pub fn with_base_url(
         base_url: impl Into<String>,
         project_id: impl Into<String>,
-        token: impl Into<String>,
+        token: SecretString,
     ) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             project_id: project_id.into(),
-            token: token.into(),
+            token,
             proxy_headers: None,
             client: reqwest::Client::new(),
         }
@@ -67,7 +67,7 @@ impl GitLabClient {
                 req = req.header(key.as_str(), value.as_str());
             }
         } else {
-            req = req.header("PRIVATE-TOKEN", &self.token);
+            req = req.header("PRIVATE-TOKEN", self.token.expose_secret());
         }
         req
     }
@@ -384,6 +384,7 @@ fn map_issue(gl_issue: &GitLabIssue, base_url: &str) -> Issue {
         .filter(|&c| c > 0);
 
     Issue {
+        custom_fields: std::collections::HashMap::new(),
         key: format!("gitlab#{}", gl_issue.iid),
         title: gl_issue.title.clone(),
         description: gl_issue.description.clone(),
@@ -1151,7 +1152,6 @@ fn markdown_to_meta(att: &devboy_core::MarkdownAttachment, base_url: &str) -> As
 // Pipeline Provider (GitLab Pipelines API)
 // =============================================================================
 
-/// GitLab pipeline.
 #[derive(Debug, serde::Deserialize)]
 struct GlPipeline {
     id: u64,
@@ -1164,7 +1164,6 @@ struct GlPipeline {
     coverage: Option<String>,
 }
 
-/// GitLab pipeline job.
 #[derive(Debug, serde::Deserialize)]
 struct GlJob {
     id: u64,
@@ -1922,8 +1921,12 @@ mod tests {
         use super::*;
         use httpmock::prelude::*;
 
+        fn token(s: &str) -> SecretString {
+            SecretString::from(s.to_string())
+        }
+
         fn create_test_client(server: &MockServer) -> GitLabClient {
-            GitLabClient::with_base_url(server.base_url(), "123", "test-token")
+            GitLabClient::with_base_url(server.base_url(), "123", token("test-token"))
         }
 
         #[tokio::test]

@@ -36,6 +36,7 @@ use devboy_slack::SlackClient;
 use devboy_storage::{ChainStore, CredentialStore, wrap_with_cache};
 use dialoguer::{Confirm, Input, MultiSelect, Password};
 use doctor::{DoctorOptions, OutputFormat};
+use secrecy::{ExposeSecret, SecretString};
 use tracing_subscriber::EnvFilter;
 #[cfg(feature = "sentry")]
 use tracing_subscriber::prelude::*;
@@ -1285,8 +1286,9 @@ async fn handle_init_command(
     if !options.tokens.is_empty() {
         let store = get_credential_store_for_init();
         for (key, value) in &options.tokens {
+            let secret = SecretString::from(value.clone());
             store
-                .store(key, value)
+                .store(key, &secret)
                 .with_context(|| format!("Failed to store {} in keychain", key))?;
             println!("Stored {} in keychain", key);
         }
@@ -2244,8 +2246,9 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
 
         ConfigCommands::SetSecret { key, value } => {
             let store = get_credential_store();
+            let secret = SecretString::from(value);
             store
-                .store(&key, &value)
+                .store(&key, &secret)
                 .context("Failed to store secret")?;
             println!("Secret {} stored in keychain", key);
         }
@@ -2286,7 +2289,7 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
             // Then try keychain (supports arbitrary key formats like "proxy.name.field")
             let store = get_credential_store();
             if let Some(value) = store.get(&key).ok().flatten() {
-                println!("{} (from keychain)", mask_secret(&value));
+                println!("{} (from keychain)", mask_secret(value.expose_secret()));
                 return Ok(());
             }
 
@@ -2510,7 +2513,37 @@ fn handle_context_command(command: ContextCommands) -> Result<()> {
             let names = config.context_names();
 
             if names.is_empty() {
-                println!("No contexts configured.");
+                // Issue #229: a remote_config / proxy install is the
+                // supported "thin client" mode — no local contexts by
+                // design. `DEVBOY_REMOTE_CONFIG_URL` env var is also
+                // honoured (see `devboy_core::remote_config::resolve_url`).
+                let resolved_url = devboy_core::remote_config::resolve_url(&config);
+                let has_proxy = !config.proxy_mcp_servers.is_empty();
+                if resolved_url.is_some() || has_proxy {
+                    println!(
+                        "This install uses a remote MCP proxy; no local contexts are required."
+                    );
+                    if let Some(url) = resolved_url.as_deref() {
+                        // Strip userinfo (basic-auth) + query/fragment
+                        // before printing so accidental credentials in
+                        // the URL don't leak to the terminal.
+                        let safe = devboy_core::remote_config::redact_url_for_display(url);
+                        println!("Remote config URL: {safe}");
+                    }
+                    if has_proxy {
+                        println!(
+                            "Proxy MCP servers: {}",
+                            config
+                                .proxy_mcp_servers
+                                .iter()
+                                .map(|p| p.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                    }
+                } else {
+                    println!("No contexts configured.");
+                }
                 println!("Config source: {}", source_path.display());
                 return Ok(());
             }
@@ -2967,8 +3000,11 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
 
         tokio::spawn(async move {
             // 1. Fetch and merge remote config
-            let merged_config =
-                devboy_core::remote_config::fetch_and_merge(bg_config, bg_token.as_deref()).await;
+            let merged_config = devboy_core::remote_config::fetch_and_merge(
+                bg_config,
+                bg_token.as_ref().map(|s| s.expose_secret()),
+            )
+            .await;
 
             // 2. Re-initialize Sentry if remote config provided a DSN
             #[cfg(feature = "sentry")]
@@ -3418,8 +3454,9 @@ fn handle_proxy_add(
     if let Some(token_value) = token {
         let key = final_token_key.as_ref().unwrap();
         let store = get_credential_store_for_init();
+        let secret = SecretString::from(token_value);
         store
-            .store(key, &token_value)
+            .store(key, &secret)
             .with_context(|| format!("Failed to store token in keychain as '{}'", key))?;
         println!("Stored token in keychain as '{}'", key);
     }
@@ -3475,7 +3512,7 @@ async fn build_proxy_manager(config: &Config, store: &dyn CredentialStore) -> Pr
             &proxy_cfg.name,
             &url,
             proxy_cfg.tool_prefix.as_deref(),
-            token.as_deref(),
+            token.as_ref(),
             &proxy_cfg.auth_type,
             transport,
         )
@@ -3903,7 +3940,7 @@ fn add_context_providers_from_env(
 
     if context.fireflies.is_some() {
         if let Some(token) = get_token_for_context(store, context_name, "fireflies") {
-            let client = devboy_fireflies::FirefliesClient::new(&token);
+            let client = devboy_fireflies::FirefliesClient::new(token);
             server.add_meeting_provider(Arc::new(client));
             tracing::info!("Added Fireflies provider to context '{}'", context_name);
             added = true;
@@ -3983,7 +4020,7 @@ async fn add_env_only_proxies_from_snapshot(
                 &proxy_name,
                 url,
                 None,
-                token.as_deref(),
+                token.as_ref(),
                 "bearer",
                 ProxyTransport::StreamableHttp,
             )
@@ -4009,7 +4046,7 @@ fn get_token_for_context(
     store: &dyn CredentialStore,
     context_name: &str,
     provider: &str,
-) -> Option<String> {
+) -> Option<SecretString> {
     let scoped_key = format!("contexts.{}.{}.token", context_name, provider);
     store
         .get(&scoped_key)
@@ -4137,7 +4174,7 @@ fn add_context_providers(
 
     if context.fireflies.is_some() {
         if let Some(token) = get_token_for_context(store, context_name, "fireflies") {
-            let client = devboy_fireflies::FirefliesClient::new(&token);
+            let client = devboy_fireflies::FirefliesClient::new(token);
             server.add_meeting_provider(Arc::new(client));
             tracing::info!("Added Fireflies provider to context '{}'", context_name);
             added = true;
@@ -4578,7 +4615,7 @@ async fn run_benchmark(
         println!("Note: No GITHUB_TOKEN set. Set it for higher rate limits.\n");
     }
 
-    let client = devboy_github::GitHubClient::new(owner, repo, &gh_token);
+    let client = devboy_github::GitHubClient::new(owner, repo, SecretString::from(gh_token));
 
     // Fetch issues
     println!("Fetching issues...");

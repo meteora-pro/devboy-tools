@@ -21,7 +21,9 @@
 //! resolution), and `ADR-014-skills-lifecycle.md` (manifest,
 //! three-state upgrade).
 
-#![deny(missing_docs)]
+#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![deny(rustdoc::invalid_html_tags)]
 
 pub mod catalog;
 pub mod embedded;

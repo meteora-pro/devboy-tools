@@ -190,7 +190,7 @@ Seven provider plugins ship today — each with a dedicated client + schema enri
 |----------|-------|--------------|
 | **GitHub** | [`devboy-github`](crates/plugins/api/github/) | Issues, pull requests, comments, branches, repos |
 | **GitLab** | [`devboy-gitlab`](crates/plugins/api/gitlab/) | Issues, merge requests, discussions, pipelines, MR diffs |
-| **Jira** | [`devboy-jira`](crates/plugins/api/jira/) | Issues with custom-field metadata, sprints, transitions |
+| **Jira** | [`devboy-jira`](crates/plugins/api/jira/) | Issues with custom-field metadata, sprints, transitions, project versions (releases) |
 | **ClickUp** | [`devboy-clickup`](crates/plugins/api/clickup/) | Tasks, custom fields, lists, custom task IDs |
 | **Confluence** | [`devboy-confluence`](crates/plugins/api/confluence/) | Knowledge-base pages, search, spaces, create / update with labels (Server / Data Center, v1 + v2 API) |
 | **Slack** | [`devboy-slack`](crates/plugins/api/slack/) | Chat search, channel summary, post message |
@@ -294,8 +294,71 @@ Architecture details: [executor](docs/guide/architecture/executor.md), [enricher
 - **Skills user guide** — [`docs/guide/skills/`](docs/guide/skills/)
 - **Configuration** (env vars, contexts, doctor, proxy, format pipeline) — [`docs/guide/configuration/`](docs/guide/configuration/)
 - **Architecture** — [`docs/guide/architecture/`](docs/guide/architecture/)
-- **ADRs** — [`docs/architecture/adr/INDEX.md`](docs/architecture/adr/INDEX.md) (17 decisions logged)
+- **ADRs** — [`docs/architecture/adr/INDEX.md`](docs/architecture/adr/INDEX.md) (18 decisions logged)
 - **Research papers** — [`docs/research/INDEX.md`](docs/research/INDEX.md)
+- **Release procedure** — [`docs/guide/contributing/release.md`](docs/guide/contributing/release.md)
+
+---
+
+## Use as a library
+
+Beyond the CLI, the workspace ships **library crates** on crates.io — embed devboy components directly in a Rust project. The catalogue covers the foundation, credential storage, the format pipeline, every API provider, the MCP server, the skills subsystem, and the CLI binary.
+
+| Crate | Description | Crates.io | Docs |
+|---|---|---|---|
+| [`devboy-core`](crates/devboy-core) | Provider traits, unified types, configuration, errors | [![Crates.io](https://img.shields.io/crates/v/devboy-core.svg)](https://crates.io/crates/devboy-core) | [![Docs](https://docs.rs/devboy-core/badge.svg)](https://docs.rs/devboy-core) |
+| [`devboy-storage`](crates/devboy-storage) | OS-keychain credential storage with `SecretString` plumbing | [![Crates.io](https://img.shields.io/crates/v/devboy-storage.svg)](https://crates.io/crates/devboy-storage) | [![Docs](https://docs.rs/devboy-storage/badge.svg)](https://docs.rs/devboy-storage) |
+| [`devboy-assets`](crates/devboy-assets) | On-disk asset cache with LRU rotation (ADR-010) | [![Crates.io](https://img.shields.io/crates/v/devboy-assets.svg)](https://crates.io/crates/devboy-assets) | [![Docs](https://docs.rs/devboy-assets/badge.svg)](https://docs.rs/devboy-assets) |
+| [`devboy-format-pipeline`](crates/plugins/format-pipeline) | TOON encoding, MCKP-budget trimming, cursor pagination | [![Crates.io](https://img.shields.io/crates/v/devboy-format-pipeline.svg)](https://crates.io/crates/devboy-format-pipeline) | [![Docs](https://docs.rs/devboy-format-pipeline/badge.svg)](https://docs.rs/devboy-format-pipeline) |
+| [`devboy-gitlab`](crates/plugins/api/gitlab) | GitLab provider (issues, merge requests) | [![Crates.io](https://img.shields.io/crates/v/devboy-gitlab.svg)](https://crates.io/crates/devboy-gitlab) | [![Docs](https://docs.rs/devboy-gitlab/badge.svg)](https://docs.rs/devboy-gitlab) |
+| [`devboy-github`](crates/plugins/api/github) | GitHub provider (issues, pull requests) | [![Crates.io](https://img.shields.io/crates/v/devboy-github.svg)](https://crates.io/crates/devboy-github) | [![Docs](https://docs.rs/devboy-github/badge.svg)](https://docs.rs/devboy-github) |
+| [`devboy-jira`](crates/plugins/api/jira) | Jira provider (issues, project versions) | [![Crates.io](https://img.shields.io/crates/v/devboy-jira.svg)](https://crates.io/crates/devboy-jira) | [![Docs](https://docs.rs/devboy-jira/badge.svg)](https://docs.rs/devboy-jira) |
+| [`devboy-clickup`](crates/plugins/api/clickup) | ClickUp provider | [![Crates.io](https://img.shields.io/crates/v/devboy-clickup.svg)](https://crates.io/crates/devboy-clickup) | [![Docs](https://docs.rs/devboy-clickup/badge.svg)](https://docs.rs/devboy-clickup) |
+| [`devboy-confluence`](crates/plugins/api/confluence) | Confluence (self-hosted) provider | [![Crates.io](https://img.shields.io/crates/v/devboy-confluence.svg)](https://crates.io/crates/devboy-confluence) | [![Docs](https://docs.rs/devboy-confluence/badge.svg)](https://docs.rs/devboy-confluence) |
+| [`devboy-fireflies`](crates/plugins/api/fireflies) | Fireflies meeting transcripts | [![Crates.io](https://img.shields.io/crates/v/devboy-fireflies.svg)](https://crates.io/crates/devboy-fireflies) | [![Docs](https://docs.rs/devboy-fireflies/badge.svg)](https://docs.rs/devboy-fireflies) |
+| [`devboy-slack`](crates/plugins/api/slack) | Slack provider | [![Crates.io](https://img.shields.io/crates/v/devboy-slack.svg)](https://crates.io/crates/devboy-slack) | [![Docs](https://docs.rs/devboy-slack/badge.svg)](https://docs.rs/devboy-slack) |
+| [`devboy-executor`](crates/devboy-executor) | Tool execution engine + provider factory | [![Crates.io](https://img.shields.io/crates/v/devboy-executor.svg)](https://crates.io/crates/devboy-executor) | [![Docs](https://docs.rs/devboy-executor/badge.svg)](https://docs.rs/devboy-executor) |
+| [`devboy-mcp`](crates/devboy-mcp) | MCP server (JSON-RPC 2.0 over stdio) | [![Crates.io](https://img.shields.io/crates/v/devboy-mcp.svg)](https://crates.io/crates/devboy-mcp) | [![Docs](https://docs.rs/devboy-mcp/badge.svg)](https://docs.rs/devboy-mcp) |
+| [`devboy-skills`](crates/devboy-skills) | Skills subsystem (SKILL.md parser, install lifecycle) | [![Crates.io](https://img.shields.io/crates/v/devboy-skills.svg)](https://crates.io/crates/devboy-skills) | [![Docs](https://docs.rs/devboy-skills/badge.svg)](https://docs.rs/devboy-skills) |
+| [`devboy-cli`](crates/devboy-cli) | The `devboy` CLI binary (npm is the primary channel) | [![Crates.io](https://img.shields.io/crates/v/devboy-cli.svg)](https://crates.io/crates/devboy-cli) | [![Docs](https://docs.rs/devboy-cli/badge.svg)](https://docs.rs/devboy-cli) |
+
+Example — embed a single provider:
+
+```toml
+[dependencies]
+devboy-core = "0.26"
+devboy-jira = "0.26"
+```
+
+```rust
+// Illustrative — not run automatically.
+use devboy_core::{Config, IssueProvider};
+use devboy_jira::JiraClient;
+use secrecy::SecretString;
+
+async fn embed() -> anyhow::Result<()> {
+    let cfg = Config::load()?;
+    let jira_cfg = cfg.jira.expect("jira section missing in .devboy.toml");
+
+    // In a real devboy setup the token comes from the OS keychain via
+    // `devboy_storage::ChainStore`; for an embedded host pass any
+    // `SecretString` source you trust.
+    let token: SecretString = std::env::var("JIRA_TOKEN")?.into();
+
+    let client = JiraClient::new(
+        jira_cfg.url,
+        jira_cfg.project_key,
+        jira_cfg.email,
+        token,
+    );
+
+    let issue = client.get_issue("PROJ-123").await?;
+    println!("{}", issue.key);
+    Ok(())
+}
+```
+
+The release procedure is documented in [`docs/guide/contributing/release.md`](docs/guide/contributing/release.md). See [ADR-022](docs/architecture/adr/ADR-022-crates-io-publishing.md) for the architectural decision behind the dual npm + crates.io distribution.
 
 ---
 

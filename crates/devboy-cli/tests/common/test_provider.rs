@@ -11,6 +11,7 @@ use devboy_core::{
     UpdateIssueInput, User,
 };
 use devboy_github::GitHubClient;
+use secrecy::SecretString;
 
 use super::api_result::ApiResult;
 use super::{FixtureProvider, TestMode};
@@ -44,7 +45,7 @@ impl TestProvider {
             let owner = env::var("GITHUB_OWNER").unwrap_or_else(|_| "meteora-pro".to_string());
             let repo = env::var("GITHUB_REPO").unwrap_or_else(|_| "devboy-tools".to_string());
 
-            token.map(|t| GitHubClient::new(&owner, &repo, t))
+            token.map(|t| GitHubClient::new(&owner, &repo, SecretString::from(t)))
         } else {
             None
         };

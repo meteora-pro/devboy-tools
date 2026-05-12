@@ -45,21 +45,16 @@ pub struct JiraProjectMetadata {
     /// Available issue types (filter out subtask types for create_issue).
     #[serde(default)]
     pub issue_types: Vec<JiraIssueType>,
-    /// Available components.
     #[serde(default)]
     pub components: Vec<JiraComponent>,
-    /// Available priorities.
     #[serde(default)]
     pub priorities: Vec<JiraPriority>,
-    /// Available issue link types.
     #[serde(default)]
     pub link_types: Vec<JiraLinkType>,
-    /// Custom fields for this project.
     #[serde(default)]
     pub custom_fields: Vec<JiraCustomField>,
 }
 
-/// Jira issue type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraIssueType {
     pub id: String,
@@ -69,21 +64,18 @@ pub struct JiraIssueType {
     pub subtask: bool,
 }
 
-/// Jira component.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraComponent {
     pub id: String,
     pub name: String,
 }
 
-/// Jira priority.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraPriority {
     pub id: String,
     pub name: String,
 }
 
-/// Jira issue link type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraLinkType {
     pub id: String,
@@ -103,7 +95,6 @@ pub struct JiraCustomField {
     pub id: String,
     /// Human-readable name.
     pub name: String,
-    /// Field type.
     pub field_type: JiraFieldType,
     /// Whether this field is required.
     #[serde(default)]
@@ -113,7 +104,6 @@ pub struct JiraCustomField {
     pub options: Vec<JiraFieldOption>,
 }
 
-/// Jira custom field types.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum JiraFieldType {
@@ -258,12 +248,156 @@ impl JiraMetadata {
         types.dedup();
         types
     }
+
+    /// Union of customfields visible across the first
+    /// [`MAX_ENRICHMENT_PROJECTS`] projects, deduplicated by `name`.
+    /// First-write-wins on collisions — if `Severity` exists in
+    /// multiple projects with different ids, the schema is built
+    /// from the earliest project's definition (matches HashMap
+    /// iteration order; not deterministic across runs but stable
+    /// within one). Per-project resolution at dispatch time is done
+    /// by [`Self::custom_field_for_project`], which reads the
+    /// current project's metadata directly.
+    ///
+    /// The cap protects token budgets on enterprise instances with
+    /// hundreds of projects: enrichment beyond 30 projects emits a
+    /// `tracing::warn!` and silently truncates rather than letting
+    /// the schema explode. Selecting the relevant 30 (most-recent
+    /// activity, allowlist, etc.) is the metadata loader's job, not
+    /// this crate's.
+    pub fn all_custom_fields(&self) -> Vec<JiraCustomField> {
+        if self.projects.len() > MAX_ENRICHMENT_PROJECTS {
+            tracing::warn!(
+                project_count = self.projects.len(),
+                cap = MAX_ENRICHMENT_PROJECTS,
+                "Jira metadata carries more projects than the enrichment cap; \
+                 customfield schema will only reflect the first {} (by sorted \
+                 project key) — narrow the metadata loader's project \
+                 selection (top-N by recency, allowlist, etc.) for full \
+                 coverage.",
+                MAX_ENRICHMENT_PROJECTS
+            );
+        }
+        // Sort project keys before truncating so the "first 30" set
+        // is deterministic across reloads — HashMap iteration order
+        // is not stable (Codex review on PR #260).
+        let mut project_keys: Vec<&String> = self.projects.keys().collect();
+        project_keys.sort();
+        let mut by_name: std::collections::HashMap<String, JiraCustomField> =
+            std::collections::HashMap::new();
+        for key in project_keys.iter().take(MAX_ENRICHMENT_PROJECTS) {
+            if let Some(proj) = self.projects.get(*key) {
+                for cf in &proj.custom_fields {
+                    by_name.entry(cf.name.clone()).or_insert_with(|| cf.clone());
+                }
+            }
+        }
+        let mut result: Vec<JiraCustomField> = by_name.into_values().collect();
+        result.sort_by(|a, b| a.name.cmp(&b.name));
+        result
+    }
+
+    /// Resolve a customfield by display name **within a specific
+    /// project** — used by `transform_args` to pick the right
+    /// `customfield_*` id when the same name maps to different ids
+    /// across projects in multi-project mode.
+    pub fn custom_field_for_project(
+        &self,
+        project_key: &str,
+        field_name: &str,
+    ) -> Option<&JiraCustomField> {
+        self.projects
+            .get(project_key)?
+            .custom_fields
+            .iter()
+            .find(|cf| cf.name == field_name)
+    }
+
+    /// Group customfields across capped projects by display name —
+    /// returns `(name, [variants])` pairs sorted by name. A name
+    /// with two entries that have different `field_type`s flags a
+    /// cross-project shape conflict the enricher resolves with
+    /// `anyOf` instead of first-wins.
+    pub fn custom_field_groups(&self) -> Vec<(String, Vec<JiraCustomField>)> {
+        if self.projects.len() > MAX_ENRICHMENT_PROJECTS {
+            tracing::warn!(
+                project_count = self.projects.len(),
+                cap = MAX_ENRICHMENT_PROJECTS,
+                "Jira metadata carries more projects than the enrichment cap; \
+                 customfield groups will only reflect the first {} (by sorted \
+                 project key).",
+                MAX_ENRICHMENT_PROJECTS
+            );
+        }
+        // Sort project keys before truncating so the selected
+        // subset is deterministic across reloads — see
+        // `all_custom_fields` (Codex review on PR #260).
+        let mut project_keys: Vec<&String> = self.projects.keys().collect();
+        project_keys.sort();
+        let mut groups: std::collections::HashMap<String, Vec<JiraCustomField>> =
+            std::collections::HashMap::new();
+        for key in project_keys.iter().take(MAX_ENRICHMENT_PROJECTS) {
+            if let Some(proj) = self.projects.get(*key) {
+                for cf in &proj.custom_fields {
+                    groups.entry(cf.name.clone()).or_default().push(cf.clone());
+                }
+            }
+        }
+        let mut result: Vec<(String, Vec<JiraCustomField>)> = groups.into_iter().collect();
+        result.sort_by(|a, b| a.0.cmp(&b.0));
+        result
+    }
+}
+
+/// Cap on how many projects the schema enricher walks when building
+/// the customfield union. Higher values trade richer cross-project
+/// coverage for fatter `tools/list` payloads — 30 is empirically
+/// enough to surface common agile fields on enterprise instances
+/// without overflowing token budgets.
+pub const MAX_ENRICHMENT_PROJECTS: usize = 30;
+
+/// Strategy for choosing which Jira projects' metadata to fetch
+/// when building the enricher cache. Different deployments need
+/// different selection logic — a 5-project team wants `All`, a
+/// 1000-project enterprise wants `RecentActivity` or
+/// `Configured` so the enricher stays inside the
+/// `MAX_ENRICHMENT_PROJECTS` budget.
+#[derive(Debug, Clone)]
+pub enum MetadataLoadStrategy {
+    /// Explicit list of project keys (e.g. from app config).
+    /// Fastest path: skips Jira-side filtering entirely.
+    Configured(Vec<String>),
+    /// Projects the authenticated user has interacted with most
+    /// recently. Resolves through Jira's `/project/search?recent=N`
+    /// (Cloud) or the `recent` flag on `/project` (Server/DC).
+    /// Best default when the operator hasn't picked a list.
+    MyProjects,
+    /// Projects with issues updated in the last `days`. Uses a
+    /// JQL search across `lastIssueUpdateTime`. Picks up
+    /// stale-but-still-active projects that `MyProjects` may miss.
+    RecentActivity { days: u32 },
+    /// Every project the user can read. Errors out (with a
+    /// suggestion to switch strategies) if total >
+    /// [`MAX_ENRICHMENT_PROJECTS`] — loading 1000 projects'
+    /// metadata is rarely what anyone wanted.
+    All,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_metadata_load_strategy_variants_construct() {
+        // Smoke test: every variant constructs with realistic args.
+        // Concrete behaviour lives in `JiraClient::load_default_metadata`
+        // strategy implementations (follow-up commits).
+        let _configured = MetadataLoadStrategy::Configured(vec!["PROJ".into()]);
+        let _my_projects = MetadataLoadStrategy::MyProjects;
+        let _recent = MetadataLoadStrategy::RecentActivity { days: 90 };
+        let _all = MetadataLoadStrategy::All;
+    }
 
     fn sample_option_field() -> JiraCustomField {
         JiraCustomField {

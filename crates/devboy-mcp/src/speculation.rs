@@ -77,11 +77,20 @@ pub enum PrefetchOutcome {
         predicted_cost_tokens: u32,
     },
     /// Prefetch returned an error. Counted as wasted; logged at WARN.
-    Failed { tool: String, error: PrefetchError },
+    Failed {
+        tool: String,
+        /// Underlying prefetch error.
+        error: PrefetchError,
+    },
     /// Prefetch was rate-limited at scheduling time — the engine
     /// never even spawned it. Used by callers to attribute the
     /// `prefetch_dispatched` gap.
-    Skipped { tool: String, reason: SkipReason },
+    Skipped {
+        /// Tool name.
+        tool: String,
+        /// Reason the dispatch was skipped.
+        reason: SkipReason,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,7 +1,17 @@
 //! Jira API response types.
 //!
 //! These types represent the raw JSON responses from Jira API v2/v3.
-//! They are deserialized and then mapped to unified types.
+//! They are deserialized and then mapped to unified types. Most are
+//! internal — only `JiraField` and `JiraFieldSchema` are re-exported
+//! at the crate root for downstream consumers.
+//!
+//! `dead_code` is allowed at the module level because some fields
+//! exist purely so serde captures them off the wire (for forward
+//! compatibility with logs and debug dumps) without the mapper
+//! reading them yet. They are not unused — they pin the JSON shape
+//! the API returns and surface in `Debug` impls.
+
+#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +19,6 @@ use serde::{Deserialize, Serialize};
 // User
 // =============================================================================
 
-/// Jira user representation.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraUser {
     /// Account ID (Cloud only)
@@ -18,10 +27,8 @@ pub struct JiraUser {
     /// Username (Self-Hosted only)
     #[serde(default)]
     pub name: Option<String>,
-    /// Display name
     #[serde(default, rename = "displayName")]
     pub display_name: Option<String>,
-    /// Email address
     #[serde(default, rename = "emailAddress")]
     pub email_address: Option<String>,
 }
@@ -30,39 +37,30 @@ pub struct JiraUser {
 // Issue
 // =============================================================================
 
-/// Jira issue representation.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraIssue {
-    /// Issue ID
     pub id: String,
     /// Issue key (e.g., "PROJ-123")
     pub key: String,
-    /// Issue fields
     pub fields: JiraIssueFields,
 }
 
-/// Jira issue fields.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraIssueFields {
-    /// Summary (title)
     #[serde(default)]
     pub summary: Option<String>,
     /// Description — plain text (v2) or ADF document (v3)
     #[serde(default)]
     pub description: Option<serde_json::Value>,
-    /// Status
     #[serde(default)]
     pub status: Option<JiraStatus>,
-    /// Priority
     #[serde(default)]
     pub priority: Option<JiraPriority>,
-    /// Assignee
     #[serde(default)]
     pub assignee: Option<JiraUser>,
     /// Reporter (author)
     #[serde(default)]
     pub reporter: Option<JiraUser>,
-    /// Labels
     #[serde(default)]
     pub labels: Vec<String>,
     /// Created timestamp
@@ -71,19 +69,37 @@ pub struct JiraIssueFields {
     /// Updated timestamp
     #[serde(default)]
     pub updated: Option<String>,
+    /// Issue type reference. Read-only — captures `issuetype.name` so
+    /// callers can branch on `"Epic"` / `"Story"` / `"Sub-task"` without
+    /// re-parsing the raw payload.
+    #[serde(default)]
+    pub issuetype: Option<JiraIssueTypeRef>,
     /// Parent issue (for subtasks)
     #[serde(default)]
     pub parent: Option<Box<JiraIssue>>,
     /// Subtasks / child issues
     #[serde(default)]
     pub subtasks: Vec<JiraIssue>,
-    /// Issue links
     #[serde(default)]
     pub issuelinks: Vec<JiraIssueLink>,
     /// Attachments on the issue (present when the caller requests
     /// `fields=attachment` or uses `fields=*all`).
     #[serde(default)]
     pub attachment: Vec<JiraAttachment>,
+    /// Catch-all for everything else Jira returns under `fields` —
+    /// most importantly the instance-specific `customfield_*` slots.
+    /// Lets the mapper read e.g. an Epic Description customfield
+    /// without forcing every customfield to be modelled as a typed
+    /// field.
+    #[serde(flatten, default)]
+    pub extras: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// Lightweight read-only reference to an issue type — only the name
+/// is captured because that's what mapping logic branches on.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JiraIssueTypeRef {
+    pub name: String,
 }
 
 /// Jira attachment as returned inside `fields.attachment`.
@@ -91,16 +107,13 @@ pub struct JiraIssueFields {
 pub struct JiraAttachment {
     /// Attachment id (numeric string).
     pub id: String,
-    /// Original filename.
     #[serde(default)]
     pub filename: Option<String>,
     /// Direct download URL (`content` in the Jira API).
     #[serde(default)]
     pub content: Option<String>,
-    /// Size in bytes.
     #[serde(default)]
     pub size: Option<u64>,
-    /// MIME type.
     #[serde(default, rename = "mimeType")]
     pub mime_type: Option<String>,
     /// Creation timestamp (ISO 8601).
@@ -111,28 +124,23 @@ pub struct JiraAttachment {
     pub author: Option<JiraUser>,
 }
 
-/// Jira issue status.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JiraStatus {
-    /// Status name
     pub name: String,
     /// Status category (new, indeterminate, done)
     #[serde(default)]
     pub status_category: Option<JiraStatusCategory>,
 }
 
-/// Jira status category.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraStatusCategory {
     /// Category key: "new", "indeterminate", "done"
     pub key: String,
 }
 
-/// Jira issue priority.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraPriority {
-    /// Priority name
     pub name: String,
 }
 
@@ -140,13 +148,11 @@ pub struct JiraPriority {
 // Issue Links
 // =============================================================================
 
-/// Jira issue link representation.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraIssueLink {
     /// Link ID
     #[serde(default)]
     pub id: Option<String>,
-    /// Link type
     #[serde(rename = "type")]
     pub link_type: JiraIssueLinkType,
     /// Inward issue (e.g., "is blocked by" this issue)
@@ -157,7 +163,6 @@ pub struct JiraIssueLink {
     pub outward_issue: Option<Box<JiraIssue>>,
 }
 
-/// Jira issue link type.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraIssueLinkType {
     /// Link type name (e.g., "Blocks", "Relates")
@@ -177,7 +182,6 @@ pub struct JiraIssueLinkType {
 /// Search response from Self-Hosted Jira (API v2, GET /search).
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraSearchResponse {
-    /// Issues
     pub issues: Vec<JiraIssue>,
     /// Starting index
     #[serde(default, rename = "startAt")]
@@ -193,9 +197,7 @@ pub struct JiraSearchResponse {
 /// Search response from Jira Cloud (API v3, GET /search/jql).
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraCloudSearchResponse {
-    /// Issues
     pub issues: Vec<JiraIssue>,
-    /// Token for next page
     #[serde(default, rename = "nextPageToken")]
     pub next_page_token: Option<String>,
 }
@@ -226,7 +228,6 @@ pub struct JiraComment {
 /// Response from GET /issue/{key}/comment.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraCommentsResponse {
-    /// Comments
     pub comments: Vec<JiraComment>,
 }
 
@@ -266,7 +267,6 @@ pub struct CreateIssuePayload {
 /// Fields for creating an issue.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateIssueFields {
-    /// Project
     pub project: ProjectKey,
     /// Summary (title)
     pub summary: String,
@@ -275,18 +275,27 @@ pub struct CreateIssueFields {
     /// Description — plain text (v2) or ADF (v3)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<serde_json::Value>,
-    /// Labels
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<Vec<String>>,
-    /// Priority
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<PriorityName>,
-    /// Assignee
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assignee: Option<serde_json::Value>,
     /// Components (issue #197).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub components: Option<Vec<ComponentRef>>,
+    /// Fix versions / release targets. Serialised as
+    /// `[{ "name": "..." }, ...]` into Jira's `fields.fixVersions`.
+    #[serde(rename = "fixVersions", skip_serializing_if = "Option::is_none")]
+    pub fix_versions: Option<Vec<VersionRef>>,
+    /// Parent issue reference. Required by Jira when `issuetype` is a
+    /// sub-task or any "is_subtask" hierarchical type — the API rejects
+    /// the request with a 400 otherwise (issue #214). Serialised as
+    /// `{ "key": "PROJ-1" }`, matching Jira's `fields.parent` shape.
+    /// Uses [`IssueKeyRef`] (not [`ProjectKey`]) because the value is an
+    /// **issue** key (e.g. `PROJ-1`), not a project key (e.g. `PROJ`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<IssueKeyRef>,
 }
 
 /// Component reference used in create/update issue payloads (issue #197).
@@ -300,6 +309,17 @@ pub struct CreateIssueFields {
 /// This is addressed in Copilot review on PR #205.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentRef {
+    pub name: String,
+}
+
+/// Fix-version reference used in create/update issue payloads.
+///
+/// Same shape and rationale as [`ComponentRef`]: name-based reference
+/// that works across Cloud and Self-Hosted without callers having to
+/// resolve numeric ids first. Pairs with the `fix_versions` field in
+/// [`devboy_core::CreateIssueInput`] / [`devboy_core::UpdateIssueInput`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionRef {
     pub name: String,
 }
 
@@ -340,19 +360,21 @@ pub struct UpdateIssueFields {
     /// Description — plain text (v2) or ADF (v3)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<serde_json::Value>,
-    /// Labels
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<Vec<String>>,
-    /// Priority
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<PriorityName>,
-    /// Assignee
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assignee: Option<serde_json::Value>,
     /// Components (issue #197). `None` means do not touch.
     /// `Some(vec![])` clears all components.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub components: Option<Vec<ComponentRef>>,
+    /// Fix versions. `None` leaves them untouched. `Some(vec![])` clears
+    /// all fix versions. `Some(vec![...])` replaces with the given
+    /// release names.
+    #[serde(rename = "fixVersions", skip_serializing_if = "Option::is_none")]
+    pub fix_versions: Option<Vec<VersionRef>>,
 }
 
 /// Request body for transitioning an issue.
@@ -386,6 +408,56 @@ pub struct AddCommentPayload {
 }
 
 // =============================================================================
+// Field discovery
+// =============================================================================
+
+/// Entry from `GET /rest/api/{v}/field` — every field (system + custom)
+/// available on the Jira instance.
+///
+/// Used to resolve human-readable field names (e.g. `"Epic Link"`,
+/// `"Sprint"`, `"Epic Name"`) to their numeric `customfield_*` ids,
+/// which vary across instances. Cached inside [`crate::JiraClient`] to
+/// avoid repeating the request for every issue mutation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JiraField {
+    /// Field id, e.g. `"customfield_10014"` for customs or `"summary"`
+    /// for system fields.
+    pub id: String,
+    /// Human-readable name, e.g. `"Epic Link"`.
+    pub name: String,
+    /// Whether this is a custom field (`true`) or a system field
+    /// (`false`).
+    #[serde(default)]
+    pub custom: bool,
+    /// Optional schema descriptor.
+    #[serde(default)]
+    pub schema: Option<JiraFieldSchema>,
+}
+
+/// `schema` block of a [`JiraField`] entry. All fields optional —
+/// shape varies between system and custom fields and across Jira
+/// flavors.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JiraFieldSchema {
+    /// Top-level type, e.g. `"string"`, `"array"`, `"any"`.
+    #[serde(default, rename = "type")]
+    pub field_type: Option<String>,
+    /// Element type when `field_type == "array"`.
+    #[serde(default)]
+    pub items: Option<String>,
+    /// Custom field type URI, e.g.
+    /// `"com.pyxis.greenhopper.jira:gh-epic-link"`.
+    #[serde(default)]
+    pub custom: Option<String>,
+    /// Numeric custom field id (when `custom == true`).
+    #[serde(default, rename = "customId")]
+    pub custom_id: Option<i64>,
+    /// System field name when this is a system field.
+    #[serde(default)]
+    pub system: Option<String>,
+}
+
+// =============================================================================
 // Project Statuses
 // =============================================================================
 
@@ -410,7 +482,6 @@ pub struct JiraProjectStatus {
     /// Status ID
     #[serde(default)]
     pub id: Option<String>,
-    /// Status category
     #[serde(default)]
     pub status_category: Option<JiraStatusCategory>,
 }
@@ -423,7 +494,6 @@ pub struct JiraProjectStatus {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateIssueLinkPayload {
-    /// Link type
     #[serde(rename = "type")]
     pub link_type: IssueLinkTypeName,
     /// Inward issue (target)
@@ -552,4 +622,118 @@ pub struct JiraStructureValueEntry {
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraStructureValuesResponse {
     pub values: Vec<JiraStructureValueEntry>,
+}
+
+// =============================================================================
+// Jira Project Versions (issue #238) — /rest/api/2/version + /project/{key}/versions
+// =============================================================================
+
+/// Version DTO returned by the Jira REST API.
+///
+/// Field set is the union of Cloud (v3) and Server/DC (v2) — both use
+/// the same path family. `issuesStatusForFixVersion` only appears when
+/// the caller passes `?expand=issuesstatus`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraVersionDto {
+    pub id: String,
+    pub name: String,
+    /// Project key (e.g., "PROJ"). Server returns this directly; Cloud
+    /// returns `projectId` separately, so we accept either.
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<u64>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub start_date: Option<String>,
+    #[serde(default)]
+    pub release_date: Option<String>,
+    #[serde(default)]
+    pub released: bool,
+    #[serde(default)]
+    pub archived: bool,
+    /// Computed by the server: true when releaseDate is in the past
+    /// and the version is still unreleased.
+    #[serde(default)]
+    pub overdue: Option<bool>,
+    /// Returned only with `?expand=issuesstatus` (Cloud) — keys are
+    /// status categories (`unmapped`, `toDo`, `inProgress`, `done`).
+    #[serde(default)]
+    pub issues_status_for_fix_version: Option<JiraVersionIssueStatusCounts>,
+    /// Server/DC returns this directly on the version DTO. Callers that
+    /// need a total fixed-issue count have to hit
+    /// `/version/{id}/relatedIssueCounts` separately.
+    #[serde(default)]
+    pub issues_unresolved_count: Option<u32>,
+}
+
+/// Issue counts by status category (Cloud `?expand=issuesstatus`).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraVersionIssueStatusCounts {
+    #[serde(default)]
+    pub unmapped: u32,
+    #[serde(default)]
+    pub to_do: u32,
+    #[serde(default)]
+    pub in_progress: u32,
+    #[serde(default)]
+    pub done: u32,
+}
+
+impl JiraVersionIssueStatusCounts {
+    pub fn total(&self) -> u32 {
+        self.unmapped
+            .saturating_add(self.to_do)
+            .saturating_add(self.in_progress)
+            .saturating_add(self.done)
+    }
+}
+
+/// POST /rest/api/2/version payload.
+///
+/// `project` and `project_id` are mutually-exclusive routing keys —
+/// callers should fill exactly one (Server/DC accepts both, Cloud
+/// historically prefers `projectId`). Optional date / state fields
+/// are skipped when `None` so creation defaults match the UI.
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateVersionPayload {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub released: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived: Option<bool>,
+}
+
+/// PUT /rest/api/2/version/{id} payload — partial update; only fields
+/// explicitly set are sent (`#[serde(skip_serializing_if = "Option::is_none")]`),
+/// so unspecified fields are preserved server-side.
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateVersionPayload {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub released: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived: Option<bool>,
 }

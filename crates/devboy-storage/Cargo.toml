@@ -1,19 +1,25 @@
 [package]
 name = "devboy-storage"
-description = "Secure credential storage using OS keychain"
+description = "Secure credential storage for devboy-tools — OS keychain (macOS/Windows/Linux) with redacted SecretString plumbing."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["devboy", "keychain", "credentials", "secrets", "storage"]
+categories = ["authentication", "os", "development-tools"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-devboy-core = { path = "../devboy-core" }
-thiserror.workspace = true
-serde.workspace = true
-serde_json.workspace = true
+devboy-core = { workspace = true }
 tracing.workspace = true
-zeroize = { version = "1.8", features = ["derive"] }
+secrecy.workspace = true
 
 # Keychain access (platform-specific features)
 [target.'cfg(target_os = "macos")'.dependencies]

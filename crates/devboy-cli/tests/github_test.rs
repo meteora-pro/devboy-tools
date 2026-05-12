@@ -160,7 +160,6 @@ async fn test_get_current_user() {
     assert!(!user.id.is_empty(), "User should have an id");
 }
 
-/// Test provider name.
 #[tokio::test]
 async fn test_provider_name() {
     let provider = TestProvider::github();

@@ -20,22 +20,24 @@ use devboy_core::{
     AddStructureRowsInput, AssetCapabilities, AssetMeta, Comment, ContextCapabilities,
     CreateIssueInput, CreateStructureInput, Error, ForestModifyResult, GetForestOptions,
     GetStructureValuesInput, GetUsersOptions, Issue, IssueFilter, IssueLink, IssueProvider,
-    IssueRelations, IssueStatus, MergeRequestProvider, MoveStructureRowsInput, PipelineProvider,
-    Provider, ProviderResult, Result, SaveStructureViewInput, Structure, StructureColumnValue,
-    StructureForest, StructureNode, StructureRowValues, StructureValues, StructureView,
-    StructureViewColumn, UpdateIssueInput, User,
+    IssueRelations, IssueStatus, ListProjectVersionsParams, MergeRequestProvider,
+    MoveStructureRowsInput, PipelineProvider, ProjectVersion, Provider, ProviderResult, Result,
+    SaveStructureViewInput, Structure, StructureColumnValue, StructureForest, StructureNode,
+    StructureRowValues, StructureValues, StructureView, StructureViewColumn, UpdateIssueInput,
+    UpsertProjectVersionInput, User,
 };
+use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, warn};
 
 use crate::types::{
     AddCommentPayload, CreateIssueFields, CreateIssueLinkPayload, CreateIssuePayload,
-    CreateIssueResponse, IssueKeyRef, IssueLinkTypeName, IssueType, JiraAttachment,
-    JiraCloudSearchResponse, JiraComment, JiraCommentsResponse, JiraForestModifyResponse,
-    JiraForestResponse, JiraIssue, JiraIssueTypeStatuses, JiraPriority, JiraProjectStatus,
-    JiraSearchResponse, JiraStatus, JiraStructure, JiraStructureListResponse,
+    CreateIssueResponse, CreateVersionPayload, IssueKeyRef, IssueLinkTypeName, IssueType,
+    JiraAttachment, JiraCloudSearchResponse, JiraComment, JiraCommentsResponse, JiraField,
+    JiraForestModifyResponse, JiraForestResponse, JiraIssue, JiraIssueTypeStatuses, JiraPriority,
+    JiraProjectStatus, JiraSearchResponse, JiraStatus, JiraStructure, JiraStructureListResponse,
     JiraStructureValuesResponse, JiraStructureView, JiraStructureViewListResponse, JiraTransition,
-    JiraTransitionsResponse, JiraUser, PriorityName, ProjectKey, TransitionId, TransitionPayload,
-    UpdateIssueFields, UpdateIssuePayload,
+    JiraTransitionsResponse, JiraUser, JiraVersionDto, PriorityName, ProjectKey, TransitionId,
+    TransitionPayload, UpdateIssueFields, UpdateIssuePayload, UpdateVersionPayload,
 };
 
 /// Jira deployment flavor.
@@ -48,7 +50,6 @@ pub enum JiraFlavor {
     SelfHosted,
 }
 
-/// Jira API client.
 pub struct JiraClient {
     base_url: String,
     /// Original Jira instance URL for generating browse links.
@@ -56,10 +57,21 @@ pub struct JiraClient {
     instance_url: String,
     project_key: String,
     email: String,
-    token: String,
+    token: SecretString,
     flavor: JiraFlavor,
     proxy_headers: Option<std::collections::HashMap<String, String>>,
     client: reqwest::Client,
+    /// Lazy-loaded `name → [field id, …]` map populated from
+    /// `GET /rest/api/{v}/field` on first lookup. Used to translate
+    /// human-readable Jira field names (e.g. `"Epic Link"`) to the
+    /// instance-specific `customfield_*` ids without forcing callers
+    /// to know them. `Vec<String>` rather than `String` so that
+    /// instances with two custom fields sharing a display name (which
+    /// Jira allows) don't silently collapse with last-write-wins —
+    /// `resolve_field_id_by_name` surfaces ambiguity as an error.
+    /// `tokio::sync::OnceCell` provides `&self` interior mutability +
+    /// race-free initialisation under concurrent `tools/call`s.
+    field_cache: tokio::sync::OnceCell<std::collections::HashMap<String, Vec<String>>>,
 }
 
 impl JiraClient {
@@ -68,7 +80,7 @@ impl JiraClient {
         url: impl Into<String>,
         project_key: impl Into<String>,
         email: impl Into<String>,
-        token: impl Into<String>,
+        token: SecretString,
     ) -> Self {
         let url = url.into();
         let flavor = detect_flavor(&url);
@@ -79,13 +91,14 @@ impl JiraClient {
             instance_url: instance,
             project_key: project_key.into(),
             email: email.into(),
-            token: token.into(),
+            token,
             flavor,
             proxy_headers: None,
             client: reqwest::Client::builder()
                 .user_agent("devboy-tools")
                 .build()
                 .expect("Failed to create HTTP client"),
+            field_cache: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -124,7 +137,7 @@ impl JiraClient {
         base_url: impl Into<String>,
         project_key: impl Into<String>,
         email: impl Into<String>,
-        token: impl Into<String>,
+        token: SecretString,
         flavor: bool, // true = Cloud, false = SelfHosted
     ) -> Self {
         let url = base_url.into().trim_end_matches('/').to_string();
@@ -133,7 +146,7 @@ impl JiraClient {
             base_url: url,
             project_key: project_key.into(),
             email: email.into(),
-            token: token.into(),
+            token,
             flavor: if flavor {
                 JiraFlavor::Cloud
             } else {
@@ -144,6 +157,7 @@ impl JiraClient {
                 .user_agent("devboy-tools")
                 .build()
                 .expect("Failed to create HTTP client"),
+            field_cache: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -170,15 +184,17 @@ impl JiraClient {
         } else {
             builder = match self.flavor {
                 JiraFlavor::Cloud => {
-                    let credentials = base64_encode(&format!("{}:{}", self.email, self.token));
+                    let token_value = self.token.expose_secret();
+                    let credentials = base64_encode(&format!("{}:{}", self.email, token_value));
                     builder.header("Authorization", format!("Basic {}", credentials))
                 }
                 JiraFlavor::SelfHosted => {
-                    if self.token.contains(':') {
-                        let credentials = base64_encode(&self.token);
+                    let token_value = self.token.expose_secret();
+                    if token_value.contains(':') {
+                        let credentials = base64_encode(token_value);
                         builder.header("Authorization", format!("Basic {}", credentials))
                     } else {
-                        builder.header("Authorization", format!("Bearer {}", self.token))
+                        builder.header("Authorization", format!("Bearer {}", token_value))
                     }
                 }
             };
@@ -241,6 +257,28 @@ impl JiraClient {
         }
 
         Ok(())
+    }
+
+    /// Make an authenticated PUT request that parses a JSON response body.
+    ///
+    /// Jira's `PUT /version/{id}` (issue #238) — unlike `PUT /issue/{key}` —
+    /// returns the updated entity, so we need a typed variant alongside the
+    /// `put` helper that discards the body.
+    async fn put_with_response<T: serde::de::DeserializeOwned, B: serde::Serialize>(
+        &self,
+        url: &str,
+        body: &B,
+    ) -> Result<T> {
+        debug!(url = url, "Jira PUT request (typed response)");
+
+        let response = self
+            .request(reqwest::Method::PUT, url)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        self.handle_response(response).await
     }
 
     /// Make an authenticated PUT request (Jira PUT returns 204 No Content).
@@ -661,6 +699,551 @@ impl JiraClient {
             Err(other) => Err(other),
         }
     }
+
+    // --- Field discovery ------------------------------------------------
+    //
+    // `customfield_*` ids vary across instances, so the public-facing
+    // tools (`epic_key`, `sprint_id`, `epic_name` on create/update_issue
+    // and the future `get_custom_fields` tool) need a way to map field
+    // *names* to ids at runtime. We list every field once via
+    // `GET /rest/api/{v}/field` and cache the result in `field_cache`
+    // for the lifetime of this client.
+
+    /// Fetch every field (system + custom) on the Jira instance.
+    /// Single round-trip — Jira returns all fields in one unpaginated
+    /// response. Caller is responsible for caching if it plans to call
+    /// repeatedly; for `name → id` lookups, prefer
+    /// [`resolve_field_id_by_name`](Self::resolve_field_id_by_name)
+    /// which caches internally.
+    pub async fn fetch_fields(&self) -> Result<Vec<JiraField>> {
+        let url = format!("{}/field", self.base_url);
+        self.get(&url).await
+    }
+
+    /// Resolve a Jira field name (e.g. `"Epic Link"`, `"Sprint"`,
+    /// `"Epic Name"`) to its id (e.g. `"customfield_10014"`).
+    ///
+    /// Returns `Ok(None)` when no field with this exact name exists on
+    /// the instance — most often because the field is disabled,
+    /// renamed, or localised. Callers that depend on a specific field
+    /// should treat `None` as a hard error and surface a hint pointing
+    /// users at `get_custom_fields` for discovery.
+    ///
+    /// The first lookup populates an in-memory cache (`field_cache`)
+    /// from `GET /rest/api/{v}/field`; subsequent lookups are
+    /// allocation-free and don't hit the network. Concurrent first-time
+    /// lookups race-free thanks to `tokio::sync::OnceCell`.
+    pub async fn resolve_field_id_by_name(&self, name: &str) -> Result<Option<String>> {
+        let cache = self
+            .field_cache
+            .get_or_try_init(|| async {
+                let fields = self.fetch_fields().await?;
+                let mut map: std::collections::HashMap<String, Vec<String>> =
+                    std::collections::HashMap::new();
+                for f in fields {
+                    map.entry(f.name).or_default().push(f.id);
+                }
+                Ok::<_, Error>(map)
+            })
+            .await?;
+        match cache.get(name).map(Vec::as_slice) {
+            None | Some([]) => Ok(None),
+            Some([id]) => Ok(Some(id.clone())),
+            Some(ids) => Err(Error::InvalidData(format!(
+                "Jira field name `{name}` is ambiguous on this instance — \
+                 {n} fields share this name (ids: {joined}). \
+                 Use `get_custom_fields` to inspect each field's schema, \
+                 then disambiguate by passing the desired id explicitly via \
+                 `customFields: {{ \"<id>\": <value> }}`.",
+                n = ids.len(),
+                joined = ids.join(", "),
+            ))),
+        }
+    }
+
+    /// Convenience wrapper around
+    /// [`resolve_field_id_by_name`](Self::resolve_field_id_by_name)
+    /// that turns the `None` case into a friendly error pointing at
+    /// `get_custom_fields` for discovery. Used by the agile-field
+    /// inject path where the absence of a well-known name is a hard
+    /// failure, not a soft "not configured".
+    async fn resolve_well_known_field_id(&self, name: &str) -> Result<String> {
+        self.resolve_field_id_by_name(name).await?.ok_or_else(|| {
+            Error::InvalidData(format!(
+                "Jira field `{name}` not found on this instance. \
+                 Use `get_custom_fields` to list available fields, or \
+                 pass it explicitly via `customFields` with the right id."
+            ))
+        })
+    }
+
+    /// Read the `Epic Link` customfield value off an issue's `extras`
+    /// map. Returns the parent epic key (e.g. `"PROJ-1"`) when the
+    /// instance has the customfield configured and the slot is set;
+    /// `None` otherwise. Cloud team-managed Epics use the system
+    /// `parent` field instead, so callers should still check
+    /// `relations.parent` first.
+    async fn read_epic_link_key(&self, issue: &JiraIssue) -> Result<Option<String>> {
+        let cf_id = match self.resolve_field_id_by_name("Epic Link").await? {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+        Ok(issue
+            .fields
+            .extras
+            .get(&cf_id)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string))
+    }
+
+    /// Read the Epic Description customfield as a fallback when an
+    /// Epic-typed issue's system `description` is empty. Many
+    /// Server/DC instances and older Cloud company-managed projects
+    /// store Epic body text in a separate customfield (`Epic
+    /// Description`) and leave the system field blank — the mapper
+    /// otherwise returns `None`, which forces follow-up `get_issue`
+    /// calls (Paper 3, context enrichment).
+    ///
+    /// Returns `Ok(None)` when the issue isn't an Epic, when the
+    /// customfield isn't configured on this instance, or when the
+    /// slot itself is empty. Errors only on transport failures.
+    async fn read_epic_description_fallback(&self, issue: &JiraIssue) -> Result<Option<String>> {
+        let is_epic = issue
+            .fields
+            .issuetype
+            .as_ref()
+            .is_some_and(|t| t.name.eq_ignore_ascii_case("Epic"));
+        if !is_epic {
+            return Ok(None);
+        }
+        let cf_id = match self.resolve_field_id_by_name("Epic Description").await? {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+        let raw = match issue.fields.extras.get(&cf_id) {
+            Some(value) => value,
+            None => return Ok(None),
+        };
+        Ok(read_description(&Some(raw.clone()), self.flavor))
+    }
+
+    /// Inject the three agile-track customfields (`Epic Link`,
+    /// `Sprint`, `Epic Name`) into a serialised create/update payload.
+    /// Each input is optional and only resolved when `Some(_)`.
+    /// Mutates `payload["fields"]` in place. Caller is responsible for
+    /// having already produced a serialised value (e.g. via
+    /// [`merge_custom_fields_into_payload`]).
+    async fn inject_well_known_customfields(
+        &self,
+        payload: &mut serde_json::Value,
+        epic_key: &Option<String>,
+        epic_name: &Option<String>,
+    ) -> Result<()> {
+        if epic_key.is_none() && epic_name.is_none() {
+            return Ok(());
+        }
+        let fields = payload
+            .get_mut("fields")
+            .and_then(|f| f.as_object_mut())
+            .ok_or_else(|| {
+                Error::InvalidData("payload missing top-level `fields` object".into())
+            })?;
+
+        if let Some(value) = epic_key {
+            let id = self.resolve_well_known_field_id("Epic Link").await?;
+            fields.insert(id, serde_json::json!(value));
+        }
+        if let Some(value) = epic_name {
+            let id = self.resolve_well_known_field_id("Epic Name").await?;
+            fields.insert(id, serde_json::json!(value));
+        }
+        Ok(())
+    }
+
+    /// Build a [`crate::metadata::JiraMetadata`] cache the schema
+    /// enricher can consume, with project selection driven by the
+    /// caller-supplied [`crate::metadata::MetadataLoadStrategy`].
+    ///
+    /// This is the supported entry point for downstream consumers
+    /// that don't already have metadata loaded — they pick a
+    /// strategy, this method handles project discovery, per-project
+    /// metadata fetches, and `MAX_ENRICHMENT_PROJECTS` enforcement.
+    /// Strategies are intentionally explicit (no auto-default) so
+    /// callers think about which N projects make sense for their
+    /// surface area.
+    ///
+    /// Strategy-driven entry point. Concrete strategies land
+    /// behind a `match` here; unwired variants still return
+    /// `ProviderUnsupported` so downstream callers can probe
+    /// safely.
+    pub async fn load_default_metadata(
+        &self,
+        strategy: crate::metadata::MetadataLoadStrategy,
+    ) -> Result<crate::metadata::JiraMetadata> {
+        use crate::metadata::{MAX_ENRICHMENT_PROJECTS, MetadataLoadStrategy};
+
+        match strategy {
+            MetadataLoadStrategy::Configured(keys) => {
+                // Truncate-with-warn rather than error on over-cap
+                // input: the operator already typed an explicit
+                // list, surfacing an error here is more annoying
+                // than just doing the right thing and letting the
+                // tracing log carry the receipt.
+                let effective_keys: Vec<String> = if keys.len() > MAX_ENRICHMENT_PROJECTS {
+                    tracing::warn!(
+                        requested = keys.len(),
+                        cap = MAX_ENRICHMENT_PROJECTS,
+                        "Configured project list exceeds enrichment cap; \
+                         truncating to the first {} — narrow the list to \
+                         silence this warning.",
+                        MAX_ENRICHMENT_PROJECTS
+                    );
+                    keys.into_iter().take(MAX_ENRICHMENT_PROJECTS).collect()
+                } else {
+                    keys
+                };
+
+                let mut projects = std::collections::HashMap::new();
+                for key in effective_keys {
+                    let project_meta = self.build_project_metadata(&key).await?;
+                    projects.insert(key, project_meta);
+                }
+                Ok(crate::metadata::JiraMetadata {
+                    flavor: match self.flavor {
+                        JiraFlavor::Cloud => crate::metadata::JiraFlavor::Cloud,
+                        JiraFlavor::SelfHosted => crate::metadata::JiraFlavor::SelfHosted,
+                    },
+                    projects,
+                    structures: vec![],
+                })
+            }
+            MetadataLoadStrategy::All => {
+                // Cloud paginates `/project/search` (`{values, isLast, total}`),
+                // Server/DC returns a flat array from `/project`. We walk all
+                // pages on Cloud so the over-cap check sees the true total
+                // (Codex review on PR #260 — first-page-only let large Cloud
+                // instances slip through as "partial metadata").
+                let keys: Vec<String> = match self.flavor {
+                    JiraFlavor::Cloud => {
+                        let mut collected: Vec<String> = Vec::new();
+                        let mut start_at: u32 = 0;
+                        let page_size: u32 = (MAX_ENRICHMENT_PROJECTS as u32) + 1;
+                        loop {
+                            let url = format!(
+                                "{}/project/search?startAt={}&maxResults={}",
+                                self.base_url, start_at, page_size
+                            );
+                            let raw: serde_json::Value = self.get(&url).await?;
+                            let page_values = raw
+                                .get("values")
+                                .and_then(|v| v.as_array())
+                                .cloned()
+                                .unwrap_or_default();
+                            let page_len = page_values.len();
+                            for v in page_values {
+                                if let Some(k) = v.get("key").and_then(|k| k.as_str()) {
+                                    collected.push(k.to_string());
+                                }
+                            }
+                            let is_last_default = page_len < page_size as usize;
+                            let is_last = raw
+                                .get("isLast")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(is_last_default);
+                            if is_last || page_len == 0 || collected.len() > MAX_ENRICHMENT_PROJECTS
+                            {
+                                break;
+                            }
+                            start_at += page_len as u32;
+                        }
+                        collected
+                    }
+                    JiraFlavor::SelfHosted => {
+                        let url = format!("{}/project", self.base_url);
+                        let raw: Vec<serde_json::Value> = self.get(&url).await?;
+                        raw.iter()
+                            .filter_map(|v| {
+                                v.get("key").and_then(|k| k.as_str()).map(str::to_string)
+                            })
+                            .collect()
+                    }
+                };
+
+                if keys.len() > MAX_ENRICHMENT_PROJECTS {
+                    // `All` is semantically "give me everything";
+                    // silent truncation would hide projects the
+                    // caller asked for. Error out with a usable
+                    // hint instead.
+                    return Err(Error::InvalidData(format!(
+                        "Jira instance has {} accessible projects, more than the \
+                         enrichment cap of {}. Switch to \
+                         `MetadataLoadStrategy::MyProjects` (recently-touched) or \
+                         `RecentActivity {{ days }}` (recent issue activity) or \
+                         `Configured(vec![...])` to narrow the selection.",
+                        keys.len(),
+                        MAX_ENRICHMENT_PROJECTS,
+                    )));
+                }
+
+                let mut projects = std::collections::HashMap::new();
+                for key in keys {
+                    let project_meta = self.build_project_metadata(&key).await?;
+                    projects.insert(key, project_meta);
+                }
+                Ok(crate::metadata::JiraMetadata {
+                    flavor: match self.flavor {
+                        JiraFlavor::Cloud => crate::metadata::JiraFlavor::Cloud,
+                        JiraFlavor::SelfHosted => crate::metadata::JiraFlavor::SelfHosted,
+                    },
+                    projects,
+                    structures: vec![],
+                })
+            }
+            MetadataLoadStrategy::MyProjects => {
+                // Recent-projects endpoint shape differs between
+                // flavors: Cloud paginates via `/project/search`
+                // (`{values: [...]}`), Server/DC returns a flat
+                // array from `/project?recent=N`.
+                let keys: Vec<String> = match self.flavor {
+                    JiraFlavor::Cloud => {
+                        let url = format!(
+                            "{}/project/search?recent={}",
+                            self.base_url, MAX_ENRICHMENT_PROJECTS
+                        );
+                        let raw: serde_json::Value = self.get(&url).await?;
+                        raw.get("values")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| {
+                                        v.get("key").and_then(|k| k.as_str()).map(str::to_string)
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    }
+                    JiraFlavor::SelfHosted => {
+                        let url = format!(
+                            "{}/project?recent={}",
+                            self.base_url, MAX_ENRICHMENT_PROJECTS
+                        );
+                        let raw: Vec<serde_json::Value> = self.get(&url).await?;
+                        raw.iter()
+                            .filter_map(|v| {
+                                v.get("key").and_then(|k| k.as_str()).map(str::to_string)
+                            })
+                            .collect()
+                    }
+                };
+
+                let mut projects = std::collections::HashMap::new();
+                for key in keys.into_iter().take(MAX_ENRICHMENT_PROJECTS) {
+                    let project_meta = self.build_project_metadata(&key).await?;
+                    projects.insert(key, project_meta);
+                }
+                Ok(crate::metadata::JiraMetadata {
+                    flavor: match self.flavor {
+                        JiraFlavor::Cloud => crate::metadata::JiraFlavor::Cloud,
+                        JiraFlavor::SelfHosted => crate::metadata::JiraFlavor::SelfHosted,
+                    },
+                    projects,
+                    structures: vec![],
+                })
+            }
+            MetadataLoadStrategy::RecentActivity { days } => {
+                // Broader net than `MyProjects`: any project with
+                // issue activity in the window, regardless of who
+                // touched it. JQL search across `updated`, fetch
+                // just the `project` field, dedupe keys in result
+                // order so the freshest activity wins under the cap.
+                let jql = format!("updated >= -{days}d ORDER BY updated DESC");
+                let url = format!("{}/search", self.base_url);
+                // Route through `handle_response` so 4xx/5xx
+                // bodies surface as `Error` rather than parsing as
+                // an empty result and returning success with zero
+                // projects (Codex review on PR #260).
+                let response = self
+                    .request(reqwest::Method::GET, &url)
+                    .query(&[
+                        ("jql", jql.as_str()),
+                        ("fields", "project"),
+                        ("maxResults", "100"),
+                    ])
+                    .send()
+                    .await
+                    .map_err(|e| Error::Http(e.to_string()))?;
+                let response: serde_json::Value = self.handle_response(response).await?;
+
+                let mut seen = std::collections::HashSet::new();
+                let mut keys: Vec<String> = Vec::new();
+                if let Some(issues) = response.get("issues").and_then(|v| v.as_array()) {
+                    for issue in issues {
+                        if let Some(project_key) = issue
+                            .pointer("/fields/project/key")
+                            .and_then(|v| v.as_str())
+                            && seen.insert(project_key.to_string())
+                        {
+                            keys.push(project_key.to_string());
+                            if keys.len() >= MAX_ENRICHMENT_PROJECTS {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                let mut projects = std::collections::HashMap::new();
+                for key in keys {
+                    let project_meta = self.build_project_metadata(&key).await?;
+                    projects.insert(key, project_meta);
+                }
+                Ok(crate::metadata::JiraMetadata {
+                    flavor: match self.flavor {
+                        JiraFlavor::Cloud => crate::metadata::JiraFlavor::Cloud,
+                        JiraFlavor::SelfHosted => crate::metadata::JiraFlavor::SelfHosted,
+                    },
+                    projects,
+                    structures: vec![],
+                })
+            }
+        }
+    }
+
+    /// Fetch and assemble [`crate::metadata::JiraProjectMetadata`]
+    /// for a single project — issue types, components, priorities,
+    /// link types, customfields. Building block reused by every
+    /// concrete `MetadataLoadStrategy`.
+    ///
+    /// Issuance breakdown (5 round-trips per project, sequential):
+    /// - `GET /project/{key}` for `issueTypes`
+    /// - `GET /project/{key}/components`
+    /// - `GET /priority` (instance-wide; same payload for every
+    ///   project but small)
+    /// - `GET /issueLinkType` (instance-wide)
+    /// - `GET /field` (instance-wide)
+    ///
+    /// None of the instance-wide calls are memoised today — looping
+    /// over N projects issues 3·N redundant round-trips for
+    /// `/priority`/`/issueLinkType`/`/field`. Acceptable for the
+    /// `MAX_ENRICHMENT_PROJECTS = 30` budget; a follow-up may wrap
+    /// the instance-wide responses in a `tokio::sync::OnceCell`
+    /// alongside `field_cache` if profiling justifies it.
+    pub async fn build_project_metadata(
+        &self,
+        project_key: &str,
+    ) -> Result<crate::metadata::JiraProjectMetadata> {
+        let project_url = format!("{}/project/{}", self.base_url, project_key);
+        let project_value: serde_json::Value = self.get(&project_url).await?;
+        let issue_types: Vec<crate::metadata::JiraIssueType> = project_value
+            .get("issueTypes")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|it| {
+                        Some(crate::metadata::JiraIssueType {
+                            id: it.get("id")?.as_str()?.to_string(),
+                            name: it.get("name")?.as_str()?.to_string(),
+                            subtask: it.get("subtask").and_then(|v| v.as_bool()).unwrap_or(false),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let comp_url = format!("{}/project/{}/components", self.base_url, project_key);
+        let comp_raw: Vec<serde_json::Value> = self.get(&comp_url).await?;
+        let components: Vec<crate::metadata::JiraComponent> = comp_raw
+            .into_iter()
+            .filter_map(|v| {
+                Some(crate::metadata::JiraComponent {
+                    id: v.get("id")?.as_str()?.to_string(),
+                    name: v.get("name")?.as_str()?.to_string(),
+                })
+            })
+            .collect();
+
+        let prio_url = format!("{}/priority", self.base_url);
+        let prio_raw: Vec<serde_json::Value> = self.get(&prio_url).await?;
+        let priorities: Vec<crate::metadata::JiraPriority> = prio_raw
+            .into_iter()
+            .filter_map(|v| {
+                Some(crate::metadata::JiraPriority {
+                    id: v.get("id")?.as_str()?.to_string(),
+                    name: v.get("name")?.as_str()?.to_string(),
+                })
+            })
+            .collect();
+
+        let lt_url = format!("{}/issueLinkType", self.base_url);
+        let lt_raw: serde_json::Value = self.get(&lt_url).await?;
+        let link_types: Vec<crate::metadata::JiraLinkType> = lt_raw
+            .get("issueLinkTypes")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        Some(crate::metadata::JiraLinkType {
+                            id: v.get("id")?.as_str()?.to_string(),
+                            name: v.get("name")?.as_str()?.to_string(),
+                            outward: v
+                                .get("outward")
+                                .and_then(|s| s.as_str())
+                                .map(str::to_string),
+                            inward: v.get("inward").and_then(|s| s.as_str()).map(str::to_string),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let fields = self.fetch_fields().await?;
+        let custom_fields: Vec<crate::metadata::JiraCustomField> = fields
+            .into_iter()
+            .filter(|f| f.custom)
+            .map(|f| {
+                let field_type = infer_jira_field_type(f.schema.as_ref());
+                crate::metadata::JiraCustomField {
+                    id: f.id,
+                    name: f.name,
+                    field_type,
+                    required: false,
+                    options: vec![],
+                }
+            })
+            .collect();
+
+        Ok(crate::metadata::JiraProjectMetadata {
+            issue_types,
+            components,
+            priorities,
+            link_types,
+            custom_fields,
+        })
+    }
+}
+
+/// Translate the `schema` block on a `JiraField` into the
+/// project-metadata `JiraFieldType` enum. Falls back to
+/// [`JiraFieldType::Any`] when the schema is missing or unfamiliar
+/// — the enricher will still emit a usable `cf_*` slot, just
+/// without a typed constraint.
+fn infer_jira_field_type(
+    schema: Option<&crate::types::JiraFieldSchema>,
+) -> crate::metadata::JiraFieldType {
+    use crate::metadata::JiraFieldType;
+    let schema = match schema {
+        Some(s) => s,
+        None => return JiraFieldType::Any,
+    };
+    match schema.field_type.as_deref() {
+        Some("array") => JiraFieldType::Array,
+        Some("number") => JiraFieldType::Number,
+        Some("string") => JiraFieldType::String,
+        Some("date") => JiraFieldType::Date,
+        Some("datetime") => JiraFieldType::DateTime,
+        Some("option") => JiraFieldType::Option,
+        _ => JiraFieldType::Any,
+    }
 }
 
 /// Install hint shown when the Structure plugin may not be detected on the
@@ -1058,7 +1641,31 @@ fn parse_jira_key(key: &str) -> &str {
 }
 
 fn map_issue(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> Issue {
+    // Surface every `customfield_*` slot that came back in the
+    // payload — keys keep their raw `customfield_NNNNN` form so
+    // downstream consumers can correlate with `get_custom_fields`.
+    // Non-empty values only; nulls are filtered. `name` is left
+    // empty: Jira's `/issue/{key}` returns customfields keyed only
+    // by id, so name resolution belongs to a separate
+    // `get_custom_fields` call (Paper 3 — minimise enrichment per
+    // call).
+    let custom_fields: std::collections::HashMap<String, devboy_core::CustomFieldValue> = issue
+        .fields
+        .extras
+        .iter()
+        .filter(|(k, v)| k.starts_with("customfield_") && !v.is_null())
+        .map(|(k, v)| {
+            (
+                k.clone(),
+                devboy_core::CustomFieldValue {
+                    name: None,
+                    value: v.clone(),
+                },
+            )
+        })
+        .collect();
     Issue {
+        custom_fields,
         key: format!("jira#{}", issue.key),
         title: issue.fields.summary.clone().unwrap_or_default(),
         description: read_description(&issue.fields.description, flavor),
@@ -1515,7 +2122,7 @@ impl IssueProvider for JiraClient {
                 // Explicitly request required fields — without this, Jira Cloud
                 // may return minimal responses (only `id`) for certain JQL queries
                 // (e.g., label filters), causing deserialization failures.
-                let fields = "summary,status,priority,assignee,reporter,labels,created,updated,parent,subtasks".to_string();
+                let fields = "summary,description,status,priority,assignee,reporter,labels,created,updated,parent,subtasks,issuetype,*navigable".to_string();
 
                 loop {
                     let mut params: Vec<(&str, String)> = vec![
@@ -1546,7 +2153,14 @@ impl IssueProvider for JiraClient {
                     let page_len = search_resp.issues.len() as u32;
                     for issue in &search_resp.issues {
                         if fetched_count >= offset && all_issues.len() < limit as usize {
-                            all_issues.push(map_issue(issue, self.flavor, instance_url));
+                            let mut mapped = map_issue(issue, self.flavor, instance_url);
+                            if mapped.description.as_deref().is_none_or(str::is_empty)
+                                && let Some(epic_desc) =
+                                    self.read_epic_description_fallback(issue).await?
+                            {
+                                mapped.description = Some(epic_desc);
+                            }
+                            all_issues.push(mapped);
                         }
                         fetched_count += 1;
                     }
@@ -1589,7 +2203,7 @@ impl IssueProvider for JiraClient {
                     ("jql", jql_with_order),
                     ("startAt", offset.to_string()),
                     ("maxResults", limit.to_string()),
-                    ("fields", "summary,status,priority,assignee,reporter,labels,created,updated,parent,subtasks".to_string()),
+                    ("fields", "summary,description,status,priority,assignee,reporter,labels,created,updated,parent,subtasks,issuetype,*navigable".to_string()),
                 ];
 
                 let param_refs: Vec<(&str, &str)> =
@@ -1612,11 +2226,16 @@ impl IssueProvider for JiraClient {
                     _ => false,
                 };
 
-                let issues: Vec<Issue> = search_resp
-                    .issues
-                    .iter()
-                    .map(|i| map_issue(i, self.flavor, instance_url))
-                    .collect();
+                let mut issues: Vec<Issue> = Vec::with_capacity(search_resp.issues.len());
+                for raw in &search_resp.issues {
+                    let mut mapped = map_issue(raw, self.flavor, instance_url);
+                    if mapped.description.as_deref().is_none_or(str::is_empty)
+                        && let Some(epic_desc) = self.read_epic_description_fallback(raw).await?
+                    {
+                        mapped.description = Some(epic_desc);
+                    }
+                    issues.push(mapped);
+                }
 
                 let mut result = ProviderResult::new(issues);
                 result.pagination = Some(devboy_core::Pagination {
@@ -1643,7 +2262,13 @@ impl IssueProvider for JiraClient {
         let jira_key = parse_jira_key(key);
         let url = format!("{}/issue/{}", self.base_url, jira_key);
         let issue: JiraIssue = self.get(&url).await?;
-        Ok(map_issue(&issue, self.flavor, &self.instance_url))
+        let mut mapped = map_issue(&issue, self.flavor, &self.instance_url);
+        if mapped.description.as_deref().is_none_or(str::is_empty)
+            && let Some(epic_desc) = self.read_epic_description_fallback(&issue).await?
+        {
+            mapped.description = Some(epic_desc);
+        }
+        Ok(mapped)
     }
 
     async fn create_issue(&self, input: CreateIssueInput) -> Result<Issue> {
@@ -1690,6 +2315,18 @@ impl IssueProvider for JiraClient {
             )
         };
 
+        let fix_versions = if input.fix_versions.is_empty() {
+            None
+        } else {
+            Some(
+                input
+                    .fix_versions
+                    .into_iter()
+                    .map(|name| crate::types::VersionRef { name })
+                    .collect(),
+            )
+        };
+
         let payload = CreateIssuePayload {
             fields: CreateIssueFields {
                 project: ProjectKey {
@@ -1704,11 +2341,23 @@ impl IssueProvider for JiraClient {
                 priority,
                 assignee,
                 components,
+                fix_versions,
+                parent: input.parent.map(|key| crate::types::IssueKeyRef { key }),
             },
         };
 
         let (mut payload, _) = merge_custom_fields_into_payload(payload, &input.custom_fields)?;
 
+        self.inject_well_known_customfields(&mut payload, &input.epic_key, &input.epic_name)
+            .await?;
+
+        // Sprint is intentionally NOT written into the core REST
+        // payload — Jira treats it as an Agile-managed field that
+        // reliably accepts updates only through
+        // `/rest/agile/1.0/sprint/{id}/issue`. We dispatch to that
+        // endpoint after the core mutation succeeds (Copilot review
+        // on PR #260).
+        let sprint_id = input.sprint_id;
         let url = format!("{}/issue", self.base_url);
         let create_result: std::result::Result<CreateIssueResponse, Error> =
             self.post(&url, &payload).await;
@@ -1746,6 +2395,17 @@ impl IssueProvider for JiraClient {
             }
             Err(e) => return Err(e),
         };
+
+        // Sprint dispatch (see comment above the core POST).
+        if let Some(sid) = sprint_id
+            && sid > 0
+        {
+            self.assign_to_sprint(devboy_core::AssignToSprintInput {
+                sprint_id: sid as u64,
+                issue_keys: vec![create_resp.key.clone()],
+            })
+            .await?;
+        }
 
         // Fetch the full issue to return
         self.get_issue(&create_resp.key).await
@@ -1786,6 +2446,15 @@ impl IssueProvider for JiraClient {
         });
         let has_components = components.is_some();
 
+        // Fix versions. `None` → untouched, `Some([])` → clear.
+        let fix_versions = input.fix_versions.map(|names| {
+            names
+                .into_iter()
+                .map(|name| crate::types::VersionRef { name })
+                .collect()
+        });
+        let has_fix_versions = fix_versions.is_some();
+
         let fields = UpdateIssueFields {
             summary: input.title,
             description,
@@ -1793,12 +2462,19 @@ impl IssueProvider for JiraClient {
             priority,
             assignee,
             components,
+            fix_versions,
         };
 
         let has_custom_fields = input.custom_fields.as_ref().is_some_and(|v| {
             v.as_object()
                 .is_some_and(|obj| obj.keys().any(|k| k.starts_with("customfield_")))
         });
+
+        // Sprint is routed through the Agile API after the PUT,
+        // not via customfield write — see same-named comment in
+        // `create_issue`.
+        let sprint_id = input.sprint_id;
+        let has_epic_fields = input.epic_key.is_some() || input.epic_name.is_some();
 
         // Only call PUT if there are field updates
         let has_field_updates = fields.summary.is_some()
@@ -1807,13 +2483,27 @@ impl IssueProvider for JiraClient {
             || fields.priority.is_some()
             || fields.assignee.is_some()
             || has_components
-            || has_custom_fields;
+            || has_fix_versions
+            || has_custom_fields
+            || has_epic_fields;
 
         if has_field_updates {
             let url = format!("{}/issue/{}", self.base_url, jira_key);
             let payload = UpdateIssuePayload { fields };
-            let (payload, _) = merge_custom_fields_into_payload(payload, &input.custom_fields)?;
+            let (mut payload, _) = merge_custom_fields_into_payload(payload, &input.custom_fields)?;
+            self.inject_well_known_customfields(&mut payload, &input.epic_key, &input.epic_name)
+                .await?;
             self.put(&url, &payload).await?;
+        }
+
+        if let Some(sid) = sprint_id
+            && sid > 0
+        {
+            self.assign_to_sprint(devboy_core::AssignToSprintInput {
+                sprint_id: sid as u64,
+                issue_keys: vec![jira_key.to_string()],
+            })
+            .await?;
         }
 
         // Handle status change via transitions
@@ -1924,17 +2614,42 @@ impl IssueProvider for JiraClient {
         let source_jira_key = parse_jira_key(source_key).to_string();
         let target_jira_key = parse_jira_key(target_key).to_string();
 
+        // Map snake_case aliases to Jira's canonical link-type names.
+        // Reversed-direction aliases (`*_by`) flip source/target below
+        // so the resulting link reads correctly. Anything not in this
+        // table passes through verbatim — Jira accepts any link type
+        // configured on the instance, including custom names like
+        // `Implements`, `Causes`, `Created By`, `Discovered while
+        // testing` etc., and rejects unknown ones with a 400 that the
+        // caller will surface as-is.
         let link_type_name = match link_type {
             "blocks" => "Blocks",
-            "blocked_by" => "Blocks", // reversed direction
+            "blocked_by" => "Blocks",
             "relates_to" => "Relates",
-            "duplicates" => "Duplicate",
-            "clones" => "Cloners",
+            "duplicates" | "duplicated_by" => "Duplicate",
+            "clones" | "cloned_by" => "Cloners",
+            "causes" | "caused_by" => "Causes",
+            "implements" | "implemented_by" => "Implements",
+            "created_by" | "creates" => "Created By",
             other => other,
         };
 
-        // For "blocked_by", swap source and target so the direction is correct
-        let (outward_key, inward_key) = if link_type == "blocked_by" {
+        // Reversed-direction aliases: source/target swap so the link
+        // reads correctly. Every `*_by` alias above flips direction —
+        // adding a new `*_by` alias must also add it here, otherwise
+        // the link reads backward (e.g. without `created_by` listed,
+        // `link_issues(A, B, "created_by")` would create "A creates B"
+        // instead of "A is created by B"). Codex review on PR #260.
+        let reversed = matches!(
+            link_type,
+            "blocked_by"
+                | "duplicated_by"
+                | "cloned_by"
+                | "caused_by"
+                | "implemented_by"
+                | "created_by"
+        );
+        let (outward_key, inward_key) = if reversed {
             (target_jira_key, source_jira_key)
         } else {
             (source_jira_key, target_jira_key)
@@ -1956,12 +2671,24 @@ impl IssueProvider for JiraClient {
 
     async fn get_issue_relations(&self, issue_key: &str) -> Result<IssueRelations> {
         let jira_key = parse_jira_key(issue_key);
+        // Request `*navigable` so the `Epic Link` customfield lands
+        // in `fields.extras` for the post-map enrichment below.
         let url = format!(
-            "{}/issue/{}?fields=parent,subtasks,issuelinks,summary,status,priority",
+            "{}/issue/{}?fields=parent,subtasks,issuelinks,summary,status,priority,issuetype,*navigable",
             self.base_url, jira_key
         );
         let issue: JiraIssue = self.get(&url).await?;
-        Ok(map_relations(&issue, self.flavor, &self.instance_url))
+        let mut relations = map_relations(&issue, self.flavor, &self.instance_url);
+        // System `parent` (Cloud team-managed) takes precedence —
+        // skip the customfield path when it's already populated to
+        // avoid an unnecessary `/field` round-trip.
+        if relations.parent.is_none()
+            && relations.epic_key.is_none()
+            && let Some(epic_key) = self.read_epic_link_key(&issue).await?
+        {
+            relations.epic_key = Some(epic_key);
+        }
+        Ok(relations)
     }
 
     async fn upload_attachment(
@@ -2556,8 +3283,370 @@ impl IssueProvider for JiraClient {
             .await
     }
 
+    // --- Project versions / fixVersion (issue #238) --------------------
+
+    async fn list_project_versions(
+        &self,
+        params: ListProjectVersionsParams,
+    ) -> Result<ProviderResult<ProjectVersion>> {
+        let project_key = if params.project.is_empty() {
+            self.project_key.clone()
+        } else {
+            params.project
+        };
+
+        // Both Cloud v3 and Server/DC v2 expose
+        // `GET /project/{key}/versions` as an unpaginated list of all
+        // versions. The paginated `/version/page` endpoint exists on
+        // Cloud only and isn't worth the flavor split — projects with
+        // O(10²) versions still fit in one round-trip; we trim the
+        // response in-memory below to honour Paper 1's 8k-token cap.
+        //
+        // `?expand=issuesstatus` is a Cloud-only payload extension —
+        // Server/DC ignores it but we still skip the param there so we
+        // don't bake hidden flavor-quirk dependencies into the URL.
+        let mut url = format!("{}/project/{}/versions", self.base_url, project_key);
+        if params.include_issue_count && self.flavor == JiraFlavor::Cloud {
+            url.push_str("?expand=issuesstatus");
+        }
+
+        let dtos: Vec<JiraVersionDto> = self.get(&url).await?;
+
+        let mut versions: Vec<ProjectVersion> = dtos
+            .into_iter()
+            .map(|dto| jira_version_to_project_version(dto, &project_key))
+            .collect();
+
+        if let Some(want_released) = params.released {
+            versions.retain(|v| v.released == want_released);
+        }
+        if let Some(want_archived) = params.archived {
+            versions.retain(|v| v.archived == want_archived);
+        }
+
+        // Order (Paper 1 — keep the *current* release at the top, not the
+        // most recently shipped one):
+        //   1. unreleased before released — work-in-flight beats history;
+        //   2. release_date placement depends on the group:
+        //      - unreleased: undated *first* (undated == "planned, no
+        //        date yet" → still in flight), then dated desc;
+        //      - released: dated desc, undated *last* ("released without
+        //        a date" usually means unspecified history);
+        //   3. semver-numeric tiebreak on name so "10.0.0" beats "9.10.0".
+        versions.sort_by(|a, b| {
+            use std::cmp::Ordering;
+            let group = a.released.cmp(&b.released);
+            if group != Ordering::Equal {
+                return group;
+            }
+            // Both `a` and `b` are in the same released/unreleased group,
+            // so checking one is enough.
+            let undated_first = !a.released;
+            let date = match (&a.release_date, &b.release_date) {
+                (Some(a_d), Some(b_d)) => b_d.cmp(a_d),
+                (None, None) => Ordering::Equal,
+                (None, Some(_)) if undated_first => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (Some(_), None) if undated_first => Ordering::Greater,
+                (Some(_), None) => Ordering::Less,
+            };
+            date.then_with(|| compare_version_names(&b.name, &a.name))
+        });
+
+        let total_after_filter = versions.len() as u32;
+        let limit_applied = params.limit.unwrap_or(total_after_filter);
+        if (limit_applied as usize) < versions.len() {
+            versions.truncate(limit_applied as usize);
+        }
+
+        // Pagination carries total + has_more so the formatter can render
+        // a "[+N more …]" hint when truncation hid items (Paper 1 §Chunk
+        // Index). We start at offset 0 — the list endpoint is unpaginated
+        // server-side, all chunking is client-side trimming.
+        let pagination = devboy_core::Pagination {
+            offset: 0,
+            limit: limit_applied,
+            total: Some(total_after_filter),
+            has_more: (versions.len() as u32) < total_after_filter,
+            next_cursor: None,
+        };
+
+        Ok(ProviderResult::new(versions).with_pagination(pagination))
+    }
+
+    async fn upsert_project_version(
+        &self,
+        input: UpsertProjectVersionInput,
+    ) -> Result<ProjectVersion> {
+        let trimmed_name = input.name.trim().to_string();
+        if trimmed_name.is_empty() {
+            return Err(Error::InvalidData(
+                "upsert_project_version: name must not be empty".into(),
+            ));
+        }
+        // Jira limits version names to 255 characters; rejecting client-side
+        // gives a clearer error than a late 400 from the server.
+        if trimmed_name.chars().count() > 255 {
+            return Err(Error::InvalidData(
+                "upsert_project_version: name must be ≤ 255 characters".into(),
+            ));
+        }
+        let project_key = if input.project.is_empty() {
+            self.project_key.clone()
+        } else {
+            input.project.clone()
+        };
+
+        let update_payload = UpdateVersionPayload {
+            name: None,
+            description: input.description.clone(),
+            start_date: input.start_date.clone(),
+            release_date: input.release_date.clone(),
+            released: input.released,
+            archived: input.archived,
+        };
+        let create_payload = CreateVersionPayload {
+            name: trimmed_name.clone(),
+            project: Some(project_key.clone()),
+            project_id: None,
+            description: input.description,
+            start_date: input.start_date,
+            release_date: input.release_date,
+            released: input.released,
+            archived: input.archived,
+        };
+
+        // Resolve `(project, name)` → existing id. We list all versions
+        // in the project rather than filtering server-side — Jira has no
+        // exact-name lookup, and a single project rarely has more than a
+        // few hundred versions.
+        let list_url = format!("{}/project/{}/versions", self.base_url, project_key);
+        let dtos: Vec<JiraVersionDto> = self.get(&list_url).await?;
+        let existing = dtos.into_iter().find(|d| d.name == trimmed_name);
+
+        let dto: JiraVersionDto = match existing {
+            Some(existing) => {
+                self.put_with_response(
+                    &format!("{}/version/{}", self.base_url, existing.id),
+                    &update_payload,
+                )
+                .await?
+            }
+            None => {
+                // Create path. Two callers can race here: both miss the
+                // version on the initial list and both POST. Jira rejects
+                // the loser with a 400 + "already exists" message; we
+                // re-list, find the winner's id, and apply the update so
+                // the loser still observes a consistent post-condition.
+                match self
+                    .post::<JiraVersionDto, _>(
+                        &format!("{}/version", self.base_url),
+                        &create_payload,
+                    )
+                    .await
+                {
+                    Ok(dto) => dto,
+                    Err(e) if is_duplicate_version_error(&e) => {
+                        let dtos: Vec<JiraVersionDto> = self.get(&list_url).await?;
+                        let recovered = dtos
+                            .into_iter()
+                            .find(|d| d.name == trimmed_name)
+                            .ok_or_else(|| {
+                                Error::InvalidData(format!(
+                                    "upsert_project_version: create rejected as duplicate but version '{trimmed_name}' is not in the project list"
+                                ))
+                            })?;
+                        self.put_with_response(
+                            &format!("{}/version/{}", self.base_url, recovered.id),
+                            &update_payload,
+                        )
+                        .await?
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        };
+
+        Ok(jira_version_to_project_version(dto, &project_key))
+    }
+
+    async fn list_custom_fields(
+        &self,
+        params: devboy_core::ListCustomFieldsParams,
+    ) -> Result<ProviderResult<devboy_core::CustomFieldDescriptor>> {
+        // Jira's `/field` is global and unpaginated — `project` and
+        // `issue_type` filter params are accepted on the trait for
+        // forward compat (Cloud `/field/<id>/contexts` may scope per
+        // project/issuetype) but ignored here. Document accordingly.
+        let _ = (&params.project, &params.issue_type);
+
+        let fields = self.fetch_fields().await?;
+        let limit = params.limit.unwrap_or(50).min(200);
+        let needle = params.search.as_deref().map(str::to_lowercase);
+
+        let mut descriptors: Vec<devboy_core::CustomFieldDescriptor> = fields
+            .into_iter()
+            .filter(|f| f.custom)
+            .filter(|f| match &needle {
+                Some(n) => f.name.to_lowercase().contains(n),
+                None => true,
+            })
+            .map(|f| {
+                let field_type = f
+                    .schema
+                    .as_ref()
+                    .and_then(|s| s.field_type.clone())
+                    .unwrap_or_default();
+                let native = f.schema.as_ref().and_then(|s| serde_json::to_value(s).ok());
+                devboy_core::CustomFieldDescriptor {
+                    id: f.id,
+                    name: f.name,
+                    field_type,
+                    description: None,
+                    native,
+                }
+            })
+            .collect();
+
+        descriptors.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let total_after_filter = descriptors.len() as u32;
+        if (limit as usize) < descriptors.len() {
+            descriptors.truncate(limit as usize);
+        }
+
+        let pagination = devboy_core::Pagination {
+            offset: 0,
+            limit,
+            total: Some(total_after_filter),
+            has_more: (descriptors.len() as u32) < total_after_filter,
+            next_cursor: None,
+        };
+
+        Ok(ProviderResult::new(descriptors).with_pagination(pagination))
+    }
+
     fn provider_name(&self) -> &'static str {
         "jira"
+    }
+}
+
+/// Map the raw Jira version DTO to the provider-agnostic [`ProjectVersion`].
+///
+/// `project_fallback` covers DTOs returned by `POST /version` on some
+/// Server/DC builds where the `project` key is omitted — we fall back to
+/// the key the caller addressed.
+/// True when the error returned by `POST /version` indicates Jira
+/// rejected the create because a version with that name already exists
+/// in the project. Both Cloud v3 and Server/DC v2 surface this as a 400
+/// with the phrase "already exists" in the response body.
+fn is_duplicate_version_error(e: &Error) -> bool {
+    let lowered = e.to_string().to_lowercase();
+    lowered.contains("already exists") || lowered.contains("already used")
+}
+
+/// Compare two Jira version *names* with semver-aware ordering.
+///
+/// Splits each name into runs of digits and runs of non-digits and
+/// compares them piecewise — digit runs numerically (so `10` > `9`),
+/// non-digit runs lexicographically (so `1.0.0-rc1` < `1.0.0`). Falls
+/// back to plain string compare when either side has no digits, which
+/// keeps non-semver release names (e.g. `"Sprint 42 cleanup"`) stable.
+fn compare_version_names(a: &str, b: &str) -> std::cmp::Ordering {
+    fn tokens(s: &str) -> Vec<(bool, &str)> {
+        let mut out = Vec::new();
+        let mut start = 0;
+        let mut last_digit: Option<bool> = None;
+        for (i, ch) in s.char_indices() {
+            let is_digit = ch.is_ascii_digit();
+            match last_digit {
+                Some(prev) if prev != is_digit => {
+                    out.push((prev, &s[start..i]));
+                    start = i;
+                }
+                _ => {}
+            }
+            last_digit = Some(is_digit);
+        }
+        if let Some(prev) = last_digit {
+            out.push((prev, &s[start..]));
+        }
+        out
+    }
+
+    let a_toks = tokens(a);
+    let b_toks = tokens(b);
+    for (ax, bx) in a_toks.iter().zip(b_toks.iter()) {
+        let cmp = match (ax, bx) {
+            ((true, ad), (true, bd)) => {
+                // Numeric token compare — strip leading zeros, then by
+                // length, then lexicographically as a tiebreak.
+                let an = ad.trim_start_matches('0');
+                let bn = bd.trim_start_matches('0');
+                an.len().cmp(&bn.len()).then_with(|| an.cmp(bn))
+            }
+            ((false, at), (false, bt)) => at.cmp(bt),
+            // Numeric runs sort *after* alpha runs at the same position
+            // — this matches semver's rule that `1.0.0-rc1 < 1.0.0`.
+            ((true, _), (false, _)) => std::cmp::Ordering::Greater,
+            ((false, _), (true, _)) => std::cmp::Ordering::Less,
+        };
+        if cmp != std::cmp::Ordering::Equal {
+            return cmp;
+        }
+    }
+    // Equal token-by-token up to the shorter side. SemVer treats a
+    // pre-release suffix as *lower* than the bare version, so when one
+    // side has more tokens *and* the next token starts with `-` (or
+    // `+` build metadata), the longer side is considered smaller.
+    match a_toks.len().cmp(&b_toks.len()) {
+        std::cmp::Ordering::Equal => std::cmp::Ordering::Equal,
+        std::cmp::Ordering::Greater => {
+            let next = a_toks[b_toks.len()].1;
+            if next.starts_with('-') || next.starts_with('+') {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            }
+        }
+        std::cmp::Ordering::Less => {
+            let next = b_toks[a_toks.len()].1;
+            if next.starts_with('-') || next.starts_with('+') {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Less
+            }
+        }
+    }
+}
+
+fn jira_version_to_project_version(dto: JiraVersionDto, project_fallback: &str) -> ProjectVersion {
+    // Cloud `?expand=issuesstatus` returns a per-category breakdown we
+    // sum into a true `issue_count` total. Server/DC inlines
+    // `issuesUnresolvedCount` on the base payload but *not* a total, so
+    // we route that into `unresolved_issue_count` and leave
+    // `issue_count` unset there — conflating the two would let callers
+    // compare a Cloud total against a Server unresolved count and not
+    // notice the categorical mismatch.
+    let issue_count = dto
+        .issues_status_for_fix_version
+        .as_ref()
+        .map(|c| c.total());
+    let unresolved_issue_count = dto.issues_unresolved_count;
+
+    ProjectVersion {
+        id: dto.id,
+        project: dto.project.unwrap_or_else(|| project_fallback.to_string()),
+        name: dto.name,
+        description: dto.description.filter(|d| !d.is_empty()),
+        start_date: dto.start_date.filter(|d| !d.is_empty()),
+        release_date: dto.release_date.filter(|d| !d.is_empty()),
+        released: dto.released,
+        archived: dto.archived,
+        overdue: dto.overdue,
+        issue_count,
+        unresolved_issue_count,
+        source: "jira".to_string(),
     }
 }
 
@@ -2626,6 +3715,10 @@ mod tests {
     use super::*;
     use crate::types::*;
     use devboy_core::{CreateCommentInput, MrFilter};
+
+    fn token(s: &str) -> SecretString {
+        SecretString::from(s.to_string())
+    }
 
     // =========================================================================
     // Structure error mapping tests
@@ -2847,7 +3940,7 @@ mod tests {
             "http://localhost",
             "PROJ",
             "user@example.com",
-            "api-token-123",
+            token("api-token-123"),
             true,
         );
         // Cloud uses Basic auth with email:token
@@ -2869,7 +3962,7 @@ mod tests {
             "http://localhost",
             "PROJ",
             "user@example.com",
-            "personal-access-token",
+            token("personal-access-token"),
             false,
         );
         let req = client.request(reqwest::Method::GET, "http://localhost/test");
@@ -2889,7 +3982,7 @@ mod tests {
             "http://localhost",
             "PROJ",
             "user@example.com",
-            "user:password",
+            token("user:password"),
             false,
         );
         let expected = base64_encode("user:password");
@@ -3156,6 +4249,8 @@ mod tests {
                 subtasks: vec![],
                 issuelinks: vec![],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -3215,6 +4310,8 @@ mod tests {
                 subtasks: vec![],
                 issuelinks: vec![],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -3241,6 +4338,8 @@ mod tests {
                 subtasks: vec![],
                 issuelinks: vec![],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -3301,7 +4400,7 @@ mod tests {
             "http://localhost",
             "PROJ",
             "user@example.com",
-            "token",
+            token("token"),
             false,
         );
         assert_eq!(IssueProvider::provider_name(&client), "jira");
@@ -3386,12 +4485,16 @@ mod tests {
         use super::*;
         use httpmock::prelude::*;
 
+        fn token(s: &str) -> SecretString {
+            SecretString::from(s.to_string())
+        }
+
         fn create_self_hosted_client(server: &MockServer) -> JiraClient {
             JiraClient::with_base_url(
                 server.base_url(),
                 "PROJ",
                 "user@example.com",
-                "pat-token",
+                token("pat-token"),
                 false,
             )
         }
@@ -3401,7 +4504,7 @@ mod tests {
                 server.base_url(),
                 "PROJ",
                 "user@example.com",
-                "api-token",
+                token("api-token"),
                 true,
             )
         }
@@ -4095,6 +5198,186 @@ mod tests {
             assert_eq!(issue.key, "jira#PROJ-11");
         }
 
+        /// fix_versions pass-through on create — names serialise as
+        /// `[{"name": "..."}, ...]` into `fields.fixVersions`.
+        #[tokio::test]
+        async fn test_create_issue_with_fix_versions() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issue")
+                    .body_includes("\"fixVersions\":[{\"name\":\"3.18.0\"},{\"name\":\"3.19.0\"}]");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10012",
+                    "key": "PROJ-12"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-12");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10012",
+                    "key": "PROJ-12",
+                    "fields": {
+                        "summary": "With fix versions",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-05T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "With fix versions".to_string(),
+                    fix_versions: vec!["3.18.0".to_string(), "3.19.0".to_string()],
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-12");
+        }
+
+        /// Empty `fix_versions` must not emit a `"fixVersions": []` into
+        /// the payload — Jira treats absent and empty differently for
+        /// validators on the create screen.
+        #[tokio::test]
+        async fn test_create_issue_without_fix_versions_omits_field() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST).path("/issue").is_true(|req| {
+                    let body = String::from_utf8_lossy(req.body().as_ref());
+                    !body.contains("\"fixVersions\"")
+                });
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10013",
+                    "key": "PROJ-13"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-13");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10013",
+                    "key": "PROJ-13",
+                    "fields": {
+                        "summary": "No fix versions",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-05T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "No fix versions".to_string(),
+                    fix_versions: vec![],
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-13");
+        }
+
+        /// Issue #214 — sub-task creation requires `fields.parent.key`
+        /// in the payload; the API returns 400 otherwise. The
+        /// `CreateIssueInput.parent` field must round-trip into the body.
+        #[tokio::test]
+        async fn test_create_issue_subtask_includes_parent_in_payload() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST).path("/issue").is_true(|req| {
+                    let body = String::from_utf8_lossy(req.body().as_ref());
+                    body.contains("\"parent\":{\"key\":\"PROJ-1\"}")
+                        && body.contains("\"name\":\"Sub-task\"")
+                });
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10010",
+                    "key": "PROJ-10"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-10");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10010",
+                    "key": "PROJ-10",
+                    "fields": {
+                        "summary": "Sub task work",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-06T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "Sub task work".to_string(),
+                    issue_type: Some("Sub-task".to_string()),
+                    parent: Some("PROJ-1".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-10");
+        }
+
+        /// Without a parent, the body must not include `"parent"` — Jira
+        /// rejects empty `parent` objects, and we don't want to emit a
+        /// dangling field for non-sub-task issue types.
+        #[tokio::test]
+        async fn test_create_issue_without_parent_omits_field() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST).path("/issue").is_true(|req| {
+                    let body = String::from_utf8_lossy(req.body().as_ref());
+                    !body.contains("\"parent\"")
+                });
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10011",
+                    "key": "PROJ-11"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-11");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10011",
+                    "key": "PROJ-11",
+                    "fields": {
+                        "summary": "Plain task",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-06T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "Plain task".to_string(),
+                    parent: None,
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-11");
+        }
+
         /// Issue #197 — update_issue with components replaces them.
         /// `Some(vec![])` clears; `None` does not touch (handled upstream).
         #[tokio::test]
@@ -4135,6 +5418,1203 @@ mod tests {
                 .unwrap();
 
             assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// `Some(["3.18.0"])` replaces fix versions with one entry;
+        /// `Some(vec![])` clears; `None` does not touch (handled upstream).
+        #[tokio::test]
+        async fn test_update_issue_replaces_fix_versions() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/issue/PROJ-1")
+                    .body_includes("\"fixVersions\":[{\"name\":\"3.18.0\"}]");
+                then.status(204);
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "summary": "Updated",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .update_issue(
+                    "PROJ-1",
+                    UpdateIssueInput {
+                        fix_versions: Some(vec!["3.18.0".to_string()]),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// epic_key, sprint_id, epic_name on create are resolved via
+        /// `GET /field` and injected into the payload under their
+        /// instance-specific customfield ids — agents don't need to
+        /// know `customfield_*` numbers.
+        #[tokio::test]
+        async fn test_create_issue_with_epic_sprint_epicname() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "customfield_10014", "name": "Epic Link", "custom": true},
+                    {"id": "customfield_10011", "name": "Epic Name", "custom": true}
+                ]));
+            });
+
+            // Core POST writes Epic Link / Epic Name as customfields
+            // — Sprint is NOT in the body (Copilot review on
+            // PR #260: Sprint goes through the Agile API).
+            server.mock(|when, then| {
+                when.method(POST).path("/issue").is_true(|req| {
+                    let body = String::from_utf8_lossy(req.body().as_ref());
+                    body.contains("\"customfield_10014\":\"PROJ-1\"")
+                        && !body.contains("customfield_10020")
+                        && body.contains("\"customfield_10011\":\"Q4 platform\"")
+                });
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10100",
+                    "key": "PROJ-100"
+                }));
+            });
+
+            // Agile API call after the core POST attaches the
+            // newly-created issue to the requested sprint.
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/rest/agile/1.0/sprint/42/issue")
+                    .body_includes("\"issues\":[\"PROJ-100\"]");
+                then.status(204);
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-100");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10100",
+                    "key": "PROJ-100",
+                    "fields": {
+                        "summary": "Epic with agile fields",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-05T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .create_issue(CreateIssueInput {
+                    title: "Epic with agile fields".to_string(),
+                    epic_key: Some("PROJ-1".to_string()),
+                    sprint_id: Some(42),
+                    epic_name: Some("Q4 platform".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-100");
+        }
+
+        /// When the requested well-known field is absent on the
+        /// instance, the create call surfaces a friendly error
+        /// pointing at `get_custom_fields` for discovery.
+        #[tokio::test]
+        async fn test_create_issue_epic_key_errors_when_field_missing() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                // Epic Link absent — only summary + an unrelated customfield
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "summary", "name": "Summary", "custom": false},
+                    {"id": "customfield_99999", "name": "Tenant", "custom": true}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let err = client
+                .create_issue(CreateIssueInput {
+                    title: "No epic link".to_string(),
+                    epic_key: Some("PROJ-1".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+
+            let msg = err.to_string();
+            assert!(
+                msg.contains("Epic Link"),
+                "missing field name in error: {msg}"
+            );
+            assert!(
+                msg.contains("get_custom_fields"),
+                "missing discovery hint: {msg}"
+            );
+        }
+
+        /// update_issue routes epic_key through the same resolver
+        /// path. This test asserts the customfield id lands in the
+        /// PUT body.
+        #[tokio::test]
+        async fn test_update_issue_replaces_epic_key() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "customfield_10014", "name": "Epic Link", "custom": true}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/issue/PROJ-1")
+                    .body_includes("\"customfield_10014\":\"PROJ-50\"");
+                then.status(204);
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "summary": "Reparented",
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client
+                .update_issue(
+                    "PROJ-1",
+                    UpdateIssueInput {
+                        epic_key: Some("PROJ-50".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(issue.key, "jira#PROJ-1");
+        }
+
+        /// End-to-end: `load_default_metadata` feeds a real
+        /// `JiraSchemaEnricher`, and the resulting schema reflects
+        /// the customfields actually present on the instance — Epic
+        /// Link promoted to the `epicKey` alias, Story Points
+        /// surfacing as `cf_story_points`, priority/components
+        /// enums hydrated from per-project metadata. Validates the
+        /// full API → metadata → enricher → schema loop in one
+        /// test rather than only the slices each strategy commit
+        /// pins.
+        #[tokio::test]
+        async fn test_load_default_metadata_then_enrich_schema_e2e() {
+            use crate::JiraSchemaEnricher;
+            use devboy_core::{ToolEnricher, ToolSchema};
+            use serde_json::json;
+
+            let server = MockServer::start();
+
+            // MyProjects strategy on Server/DC: `/project?recent=30`.
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/project")
+                    .query_param("recent", "30");
+                then.status(200).json_body(json!([
+                    {"key": "PROJ", "name": "Platform"}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ");
+                then.status(200).json_body(json!({
+                    "key": "PROJ",
+                    "issueTypes": [
+                        {"id": "1", "name": "Task", "subtask": false},
+                        {"id": "10000", "name": "Epic", "subtask": false}
+                    ]
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/components");
+                then.status(200).json_body(json!([
+                    {"id": "100", "name": "Backend"}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/priority");
+                then.status(200).json_body(json!([
+                    {"id": "1", "name": "High"},
+                    {"id": "2", "name": "Medium"}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issueLinkType");
+                then.status(200).json_body(json!({
+                    "issueLinkTypes": [
+                        {"id": "1", "name": "Blocks", "outward": "blocks", "inward": "is blocked by"}
+                    ]
+                }));
+            });
+
+            // Instance-wide fields list — Story Points (custom) +
+            // Epic Link (custom, well-known alias) + a system
+            // field that must be filtered out.
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(json!([
+                    {"id": "summary", "name": "Summary", "custom": false},
+                    {"id": "customfield_10014", "name": "Epic Link", "custom": true,
+                     "schema": {"type": "any"}},
+                    {"id": "customfield_10001", "name": "Story Points", "custom": true,
+                     "schema": {"type": "number"}}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let metadata = client
+                .load_default_metadata(crate::metadata::MetadataLoadStrategy::MyProjects)
+                .await
+                .expect("metadata loads");
+            assert!(metadata.projects.contains_key("PROJ"));
+
+            // Feed the loaded metadata into the schema enricher
+            // and assert the customfield expansion actually fires.
+            let enricher = JiraSchemaEnricher::new(metadata);
+            let mut schema = ToolSchema::from_json(&json!({
+                "type": "object",
+                "properties": {
+                    "customFields": { "type": "object" },
+                    "priority": { "type": "string" },
+                    "components": { "type": "array" }
+                }
+            }));
+            enricher.enrich_schema("create_issue", &mut schema);
+
+            // Well-known alias takes the place of cf_epic_link.
+            assert!(
+                schema.properties.contains_key("epicKey"),
+                "Epic Link customfield should promote to canonical `epicKey` alias"
+            );
+            assert!(!schema.properties.contains_key("cf_epic_link"));
+            // Non-well-known customfield falls back to cf_*.
+            assert!(
+                schema.properties.contains_key("cf_story_points"),
+                "Story Points should surface as cf_story_points"
+            );
+            // Priorities / components also enriched from loaded
+            // metadata.
+            let priority = schema.properties.get("priority").unwrap();
+            assert_eq!(
+                priority.enum_values,
+                Some(vec!["High".into(), "Medium".into()])
+            );
+            let components = schema.properties.get("components").unwrap();
+            assert_eq!(components.enum_values, Some(vec!["Backend".into()]));
+        }
+
+        /// `RecentActivity { days }` finds projects via JQL search
+        /// for issues updated in the window, dedupes keys preserving
+        /// activity order, and assembles metadata for each.
+        #[tokio::test]
+        async fn test_load_default_metadata_recent_activity_strategy() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search")
+                    .query_param_includes("jql", "updated >= -7d")
+                    .query_param("fields", "project");
+                then.status(200).json_body(serde_json::json!({
+                    "issues": [
+                        {"key": "ACTIVE-1", "fields": {"project": {"key": "ACTIVE"}}},
+                        // Same project surfaces twice — dedupe.
+                        {"key": "ACTIVE-2", "fields": {"project": {"key": "ACTIVE"}}},
+                        {"key": "QUIET-1", "fields": {"project": {"key": "QUIET"}}}
+                    ],
+                    "total": 3
+                }));
+            });
+
+            for key in &["ACTIVE", "QUIET"] {
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}"));
+                    then.status(200).json_body(serde_json::json!({
+                        "key": key,
+                        "issueTypes": [{"id": "1", "name": "Task", "subtask": false}]
+                    }));
+                });
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}/components"));
+                    then.status(200).json_body(serde_json::json!([]));
+                });
+            }
+            server.mock(|when, then| {
+                when.method(GET).path("/priority");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/issueLinkType");
+                then.status(200)
+                    .json_body(serde_json::json!({"issueLinkTypes": []}));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let meta = client
+                .load_default_metadata(crate::metadata::MetadataLoadStrategy::RecentActivity {
+                    days: 7,
+                })
+                .await
+                .unwrap();
+            // ACTIVE appeared twice in search results; dedupe.
+            assert_eq!(meta.projects.len(), 2);
+            assert!(meta.projects.contains_key("ACTIVE"));
+            assert!(meta.projects.contains_key("QUIET"));
+        }
+
+        /// `MyProjects` on Server/DC uses flat `/project?recent=N`.
+        #[tokio::test]
+        async fn test_load_default_metadata_my_projects_self_hosted() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/project")
+                    .query_param("recent", "30");
+                then.status(200).json_body(serde_json::json!([
+                    {"key": "RECENT1", "name": "Recent 1"},
+                    {"key": "RECENT2", "name": "Recent 2"}
+                ]));
+            });
+
+            for key in &["RECENT1", "RECENT2"] {
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}"));
+                    then.status(200).json_body(serde_json::json!({
+                        "key": key,
+                        "issueTypes": [{"id": "1", "name": "Task", "subtask": false}]
+                    }));
+                });
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}/components"));
+                    then.status(200).json_body(serde_json::json!([]));
+                });
+            }
+            server.mock(|when, then| {
+                when.method(GET).path("/priority");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/issueLinkType");
+                then.status(200)
+                    .json_body(serde_json::json!({"issueLinkTypes": []}));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let meta = client
+                .load_default_metadata(crate::metadata::MetadataLoadStrategy::MyProjects)
+                .await
+                .unwrap();
+            assert_eq!(meta.projects.len(), 2);
+            assert!(meta.projects.contains_key("RECENT1"));
+            assert!(meta.projects.contains_key("RECENT2"));
+        }
+
+        /// `MyProjects` on Cloud uses paginated `/project/search`
+        /// which wraps the project list in `{values: [...]}`.
+        #[tokio::test]
+        async fn test_load_default_metadata_my_projects_cloud() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/project/search")
+                    .query_param("recent", "30");
+                then.status(200).json_body(serde_json::json!({
+                    "values": [
+                        {"key": "CLOUD1", "name": "Cloud Project 1"}
+                    ],
+                    "isLast": true
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/project/CLOUD1");
+                then.status(200).json_body(serde_json::json!({
+                    "key": "CLOUD1",
+                    "issueTypes": [{"id": "1", "name": "Task", "subtask": false}]
+                }));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/project/CLOUD1/components");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/priority");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/issueLinkType");
+                then.status(200)
+                    .json_body(serde_json::json!({"issueLinkTypes": []}));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+
+            let client = create_cloud_client(&server);
+            let meta = client
+                .load_default_metadata(crate::metadata::MetadataLoadStrategy::MyProjects)
+                .await
+                .unwrap();
+            assert_eq!(meta.projects.len(), 1);
+            assert!(meta.projects.contains_key("CLOUD1"));
+            assert_eq!(meta.flavor, crate::metadata::JiraFlavor::Cloud);
+        }
+
+        /// `All` strategy lists every project from `GET /project`
+        /// and assembles metadata for each, as long as the count
+        /// stays within `MAX_ENRICHMENT_PROJECTS`.
+        #[tokio::test]
+        async fn test_load_default_metadata_all_strategy_under_cap() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/project");
+                then.status(200).json_body(serde_json::json!([
+                    {"key": "PROJ", "name": "Platform"},
+                    {"key": "INFRA", "name": "Infrastructure"}
+                ]));
+            });
+
+            for key in &["PROJ", "INFRA"] {
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}"));
+                    then.status(200).json_body(serde_json::json!({
+                        "key": key,
+                        "issueTypes": [{"id": "1", "name": "Task", "subtask": false}]
+                    }));
+                });
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}/components"));
+                    then.status(200).json_body(serde_json::json!([]));
+                });
+            }
+
+            server.mock(|when, then| {
+                when.method(GET).path("/priority");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/issueLinkType");
+                then.status(200)
+                    .json_body(serde_json::json!({"issueLinkTypes": []}));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let meta = client
+                .load_default_metadata(crate::metadata::MetadataLoadStrategy::All)
+                .await
+                .unwrap();
+            assert_eq!(meta.projects.len(), 2);
+            assert!(meta.projects.contains_key("PROJ"));
+            assert!(meta.projects.contains_key("INFRA"));
+        }
+
+        /// Over-cap rejection: `All` won't silently truncate — it
+        /// surfaces an `InvalidData` error listing each alternative
+        /// strategy a caller could switch to.
+        #[tokio::test]
+        async fn test_load_default_metadata_all_strategy_errors_over_cap() {
+            let server = MockServer::start();
+
+            // 31 projects > MAX_ENRICHMENT_PROJECTS = 30.
+            let projects: Vec<serde_json::Value> = (1..=31)
+                .map(
+                    |i| serde_json::json!({"key": format!("P{i}"), "name": format!("Project {i}")}),
+                )
+                .collect();
+            server.mock(|when, then| {
+                when.method(GET).path("/project");
+                then.status(200).json_body(serde_json::json!(projects));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let err = client
+                .load_default_metadata(crate::metadata::MetadataLoadStrategy::All)
+                .await
+                .unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("31"), "missing count: {msg}");
+            assert!(msg.contains("30"), "missing cap: {msg}");
+            assert!(
+                msg.contains("MyProjects"),
+                "missing alternative hint: {msg}"
+            );
+            assert!(
+                msg.contains("RecentActivity"),
+                "missing alternative hint: {msg}"
+            );
+            assert!(
+                msg.contains("Configured"),
+                "missing alternative hint: {msg}"
+            );
+        }
+
+        /// `Configured` strategy loops the explicit project list,
+        /// builds a `JiraMetadata` keyed by project key. Instance-
+        /// wide endpoints (`/priority`, `/issueLinkType`, `/field`)
+        /// are called once per project — caching across iterations
+        /// is a separate optimisation but mock asserts the wire
+        /// behaviour works either way.
+        #[tokio::test]
+        async fn test_load_default_metadata_configured_strategy() {
+            let server = MockServer::start();
+
+            for key in &["PROJ", "INFRA"] {
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}"));
+                    then.status(200).json_body(serde_json::json!({
+                        "key": key,
+                        "issueTypes": [
+                            {"id": "1", "name": "Task", "subtask": false}
+                        ]
+                    }));
+                });
+                server.mock(|when, then| {
+                    when.method(GET).path(format!("/project/{key}/components"));
+                    then.status(200).json_body(serde_json::json!([]));
+                });
+            }
+
+            server.mock(|when, then| {
+                when.method(GET).path("/priority");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "1", "name": "High"}
+                ]));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/issueLinkType");
+                then.status(200).json_body(serde_json::json!({
+                    "issueLinkTypes": [
+                        {"id": "1", "name": "Blocks", "outward": "blocks", "inward": "is blocked by"}
+                    ]
+                }));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "customfield_10001", "name": "Story Points", "custom": true,
+                     "schema": {"type": "number"}}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let meta = client
+                .load_default_metadata(crate::metadata::MetadataLoadStrategy::Configured(vec![
+                    "PROJ".into(),
+                    "INFRA".into(),
+                ]))
+                .await
+                .unwrap();
+
+            assert_eq!(meta.projects.len(), 2);
+            assert!(meta.projects.contains_key("PROJ"));
+            assert!(meta.projects.contains_key("INFRA"));
+            assert_eq!(meta.flavor, crate::metadata::JiraFlavor::SelfHosted);
+            // Both projects see the same instance-wide customfield.
+            for project in meta.projects.values() {
+                assert_eq!(project.custom_fields.len(), 1);
+                assert_eq!(project.custom_fields[0].id, "customfield_10001");
+            }
+        }
+
+        /// `build_project_metadata` assembles per-project metadata
+        /// from five Jira endpoints (project, components, priority,
+        /// issueLinkType, field). Validates the wire-to-DTO mapping
+        /// for each — issue type subtask flag, components round-trip,
+        /// link-type direction labels, customfield filter (system
+        /// `Summary` dropped, custom kept).
+        #[tokio::test]
+        async fn test_build_project_metadata_assembles_from_five_endpoints() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ");
+                then.status(200).json_body(serde_json::json!({
+                    "key": "PROJ",
+                    "issueTypes": [
+                        {"id": "1", "name": "Task", "subtask": false},
+                        {"id": "5", "name": "Sub-task", "subtask": true}
+                    ]
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/components");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "10", "name": "API"},
+                    {"id": "11", "name": "Frontend"}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/priority");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "1", "name": "Highest"},
+                    {"id": "2", "name": "Medium"}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issueLinkType");
+                then.status(200).json_body(serde_json::json!({
+                    "issueLinkTypes": [
+                        {"id": "1", "name": "Blocks", "outward": "blocks", "inward": "is blocked by"}
+                    ]
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "summary", "name": "Summary", "custom": false},
+                    {"id": "customfield_10001", "name": "Story Points", "custom": true,
+                     "schema": {"type": "number"}}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let meta = client.build_project_metadata("PROJ").await.unwrap();
+
+            assert_eq!(meta.issue_types.len(), 2);
+            assert!(
+                meta.issue_types
+                    .iter()
+                    .any(|it| it.name == "Sub-task" && it.subtask)
+            );
+            assert_eq!(meta.components.len(), 2);
+            assert_eq!(meta.priorities.len(), 2);
+            assert_eq!(meta.link_types.len(), 1);
+            assert_eq!(meta.link_types[0].outward.as_deref(), Some("blocks"));
+            // System `Summary` filtered out; Story Points kept.
+            assert_eq!(meta.custom_fields.len(), 1);
+            assert_eq!(meta.custom_fields[0].id, "customfield_10001");
+            assert_eq!(
+                meta.custom_fields[0].field_type,
+                crate::metadata::JiraFieldType::Number
+            );
+        }
+
+        /// Customfield values from `fields.extras` surface on
+        /// `issue.custom_fields` keyed by the raw `customfield_*` id —
+        /// agents see every customfield on a single get_issue call
+        /// (Paper 3, context enrichment).
+        #[tokio::test]
+        async fn test_get_issue_surfaces_customfield_values() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "summary": "Issue with cf",
+                        "issuetype": {"name": "Task"},
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000",
+                        "customfield_10999": "tenant-a",
+                        "customfield_10888": 42,
+                        "customfield_10777": null
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client.get_issue("PROJ-1").await.unwrap();
+            let cf1 = issue
+                .custom_fields
+                .get("customfield_10999")
+                .expect("cf 10999 present");
+            assert!(
+                cf1.name.is_none(),
+                "Jira mapper leaves name resolution to get_custom_fields"
+            );
+            assert_eq!(cf1.value, serde_json::json!("tenant-a"));
+            let cf2 = issue
+                .custom_fields
+                .get("customfield_10888")
+                .expect("cf 10888 present");
+            assert_eq!(cf2.value, serde_json::json!(42));
+            // null values are filtered out
+            assert!(!issue.custom_fields.contains_key("customfield_10777"));
+        }
+
+        /// `link_issues("Implements", ...)` and other canonical Jira
+        /// link names go through to `POST /issueLink` verbatim — no
+        /// alias mapping clobbers them.
+        #[tokio::test]
+        async fn test_link_issues_implements_canonical_name() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issueLink")
+                    .body_includes("\"name\":\"Implements\"")
+                    .body_includes("\"outwardIssue\":{\"key\":\"PROJ-1\"}")
+                    .body_includes("\"inwardIssue\":{\"key\":\"PROJ-2\"}");
+                then.status(201);
+            });
+
+            let client = create_self_hosted_client(&server);
+            client
+                .link_issues("PROJ-1", "PROJ-2", "Implements")
+                .await
+                .unwrap();
+        }
+
+        /// snake_case alias `causes` maps to canonical `Causes`.
+        #[tokio::test]
+        async fn test_link_issues_causes_alias_maps_to_canonical() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issueLink")
+                    .body_includes("\"name\":\"Causes\"")
+                    .body_includes("\"outwardIssue\":{\"key\":\"PROJ-1\"}")
+                    .body_includes("\"inwardIssue\":{\"key\":\"PROJ-2\"}");
+                then.status(201);
+            });
+
+            let client = create_self_hosted_client(&server);
+            client
+                .link_issues("PROJ-1", "PROJ-2", "causes")
+                .await
+                .unwrap();
+        }
+
+        /// `created_by` flips direction: source A is created by
+        /// target B, so B becomes outward and A becomes inward.
+        /// Codex review on PR #260 — this alias was missing from the
+        /// reversed-direction set, causing the link to read backward.
+        #[tokio::test]
+        async fn test_link_issues_created_by_flips_direction() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issueLink")
+                    .body_includes("\"name\":\"Created By\"")
+                    .body_includes("\"outwardIssue\":{\"key\":\"PROJ-2\"}")
+                    .body_includes("\"inwardIssue\":{\"key\":\"PROJ-1\"}");
+                then.status(201);
+            });
+
+            let client = create_self_hosted_client(&server);
+            client
+                .link_issues("PROJ-1", "PROJ-2", "created_by")
+                .await
+                .unwrap();
+        }
+
+        /// Reversed alias `caused_by` maps to canonical `Causes` and
+        /// flips source/target so the resulting link reads correctly.
+        #[tokio::test]
+        async fn test_link_issues_caused_by_flips_direction() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/issueLink")
+                    .body_includes("\"name\":\"Causes\"")
+                    // source PROJ-1 becomes inwardIssue (the
+                    // "caused by" side); target PROJ-2 is the cause.
+                    .body_includes("\"outwardIssue\":{\"key\":\"PROJ-2\"}")
+                    .body_includes("\"inwardIssue\":{\"key\":\"PROJ-1\"}");
+                then.status(201);
+            });
+
+            let client = create_self_hosted_client(&server);
+            client
+                .link_issues("PROJ-1", "PROJ-2", "caused_by")
+                .await
+                .unwrap();
+        }
+
+        /// On Server/DC and Cloud company-managed projects, the
+        /// parent epic is in the `Epic Link` customfield rather than
+        /// in `fields.parent`. `get_issue_relations` populates
+        /// `relations.epic_key` from the customfield so agents can
+        /// see the link without a follow-up call.
+        #[tokio::test]
+        async fn test_get_issue_relations_includes_epic_link_customfield() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "customfield_10014", "name": "Epic Link", "custom": true,
+                     "schema": {"type": "any"}}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-100");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10100",
+                    "key": "PROJ-100",
+                    "fields": {
+                        "summary": "Story under epic",
+                        "issuetype": {"name": "Story"},
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-05T10:00:00.000+0000",
+                        "customfield_10014": "PROJ-1"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let relations = client.get_issue_relations("PROJ-100").await.unwrap();
+            assert_eq!(relations.epic_key.as_deref(), Some("PROJ-1"));
+            assert!(relations.parent.is_none());
+        }
+
+        /// Cloud team-managed projects keep the parent epic in the
+        /// system `parent` field. `relations.parent` populates,
+        /// `epic_key` stays `None` (no customfield needed).
+        #[tokio::test]
+        async fn test_get_issue_relations_cloud_team_managed_uses_parent() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-200");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10200",
+                    "key": "PROJ-200",
+                    "fields": {
+                        "summary": "Story under epic (team-managed)",
+                        "issuetype": {"name": "Story"},
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-05T10:00:00.000+0000",
+                        "parent": {
+                            "id": "9000",
+                            "key": "PROJ-1",
+                            "fields": {
+                                "summary": "Parent epic",
+                                "status": {"name": "Open"},
+                                "labels": [],
+                                "created": "2024-01-01T10:00:00.000+0000"
+                            }
+                        }
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let relations = client.get_issue_relations("PROJ-200").await.unwrap();
+            assert!(relations.parent.is_some());
+            assert_eq!(relations.parent.as_ref().unwrap().key, "jira#PROJ-1");
+            // No customfield call should have been made — there's no
+            // /field mock and the test would fail if the code tried
+            // to make the request.
+            assert_eq!(relations.epic_key, None);
+        }
+
+        /// Epic-typed issues whose system `description` is empty fall
+        /// back to the `Epic Description` customfield. This is the
+        /// classic Server/DC + older Cloud company-managed shape that
+        /// otherwise leaves agents with `description: null` and forces
+        /// a follow-up call (Paper 3).
+        #[tokio::test]
+        async fn test_get_issue_epic_description_fallback() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "customfield_10017", "name": "Epic Description", "custom": true,
+                     "schema": {"type": "string"}}
+                ]));
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/EPIC-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "EPIC-1",
+                    "fields": {
+                        "summary": "Q4 platform epic",
+                        "description": null,
+                        "issuetype": {"name": "Epic"},
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000",
+                        "customfield_10017": "Roll out the new pricing tier across all products."
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client.get_issue("EPIC-1").await.unwrap();
+            assert_eq!(
+                issue.description.as_deref(),
+                Some("Roll out the new pricing tier across all products.")
+            );
+        }
+
+        /// Non-Epic issues never trigger the fallback — even when the
+        /// instance happens to have an Epic Description customfield
+        /// configured, a Task with `description: null` stays `null`.
+        #[tokio::test]
+        async fn test_get_issue_no_fallback_for_non_epic() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/PROJ-1");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "summary": "Regular task",
+                        "description": null,
+                        "issuetype": {"name": "Task"},
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000",
+                        "customfield_10017": "ignored"
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client.get_issue("PROJ-1").await.unwrap();
+            // No /field call should happen for a Task — the resolver
+            // is short-circuited before any HTTP. Description stays
+            // None.
+            assert_eq!(issue.description, None);
+        }
+
+        /// When an Epic already has a system description, the
+        /// fallback must not override it.
+        #[tokio::test]
+        async fn test_get_issue_epic_keeps_existing_description() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/issue/EPIC-2");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "10002",
+                    "key": "EPIC-2",
+                    "fields": {
+                        "summary": "Epic with system description",
+                        "description": "Top-level epic body.",
+                        "issuetype": {"name": "Epic"},
+                        "status": {"name": "Open"},
+                        "labels": [],
+                        "created": "2024-01-01T10:00:00.000+0000",
+                        "customfield_10017": "Should not be used."
+                    }
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let issue = client.get_issue("EPIC-2").await.unwrap();
+            assert_eq!(issue.description.as_deref(), Some("Top-level epic body."));
+        }
+
+        /// list_custom_fields filters out system fields, sorts by
+        /// name, and applies the case-insensitive search filter.
+        #[tokio::test]
+        async fn test_list_custom_fields_filters_and_sorts() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "summary", "name": "Summary", "custom": false},
+                    {"id": "customfield_10020", "name": "Sprint", "custom": true,
+                     "schema": {"type": "array", "items": "json"}},
+                    {"id": "customfield_10014", "name": "Epic Link", "custom": true,
+                     "schema": {"type": "any"}},
+                    {"id": "customfield_10011", "name": "Epic Name", "custom": true,
+                     "schema": {"type": "string"}}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let result = client
+                .list_custom_fields(devboy_core::ListCustomFieldsParams {
+                    search: Some("epic".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            // Two epic-named fields, sorted alphabetically; system
+            // `Summary` is dropped because `custom == false`.
+            assert_eq!(result.items.len(), 2);
+            assert_eq!(result.items[0].name, "Epic Link");
+            assert_eq!(result.items[1].name, "Epic Name");
+            assert_eq!(result.items[0].field_type, "any");
+            assert_eq!(result.items[1].field_type, "string");
+
+            let pagination = result.pagination.expect("pagination present");
+            assert_eq!(pagination.total, Some(2));
+            assert!(!pagination.has_more);
+        }
+
+        /// list_custom_fields honours the `limit` cap and reports
+        /// `has_more` so callers can ask for a wider page.
+        #[tokio::test]
+        async fn test_list_custom_fields_limit_truncates_with_has_more() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "customfield_10020", "name": "Sprint", "custom": true},
+                    {"id": "customfield_10014", "name": "Epic Link", "custom": true},
+                    {"id": "customfield_10011", "name": "Epic Name", "custom": true}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let result = client
+                .list_custom_fields(devboy_core::ListCustomFieldsParams {
+                    limit: Some(2),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(result.items.len(), 2);
+            let pagination = result.pagination.expect("pagination present");
+            assert_eq!(pagination.total, Some(3));
+            assert!(pagination.has_more);
+        }
+
+        /// `resolve_field_id_by_name` finds the customfield id for a
+        /// well-known Jira field name and caches the lookup so that
+        /// subsequent calls don't re-issue the request.
+        #[tokio::test]
+        async fn test_resolve_field_id_by_name_caches_and_resolves() {
+            let server = MockServer::start();
+
+            // `times(1)` asserts the second lookup hits the cache.
+            let field_mock = server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "summary", "name": "Summary", "custom": false},
+                    {"id": "customfield_10014", "name": "Epic Link", "custom": true,
+                     "schema": {"type": "any", "custom": "com.pyxis.greenhopper.jira:gh-epic-link"}},
+                    {"id": "customfield_10020", "name": "Sprint", "custom": true},
+                    {"id": "customfield_10011", "name": "Epic Name", "custom": true}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+
+            let epic_link = client.resolve_field_id_by_name("Epic Link").await.unwrap();
+            assert_eq!(epic_link, Some("customfield_10014".to_string()));
+
+            // Cached — second call must not hit the network.
+            let sprint = client.resolve_field_id_by_name("Sprint").await.unwrap();
+            assert_eq!(sprint, Some("customfield_10020".to_string()));
+
+            field_mock.assert_calls(1);
+        }
+
+        /// Two custom fields on the same instance are allowed to
+        /// share a display name (Jira admins can create them in
+        /// different contexts). `resolve_field_id_by_name` must not
+        /// silently pick one — it surfaces the ambiguity as an error
+        /// listing every matching id so callers can disambiguate via
+        /// raw `customFields`. Codex review on PR #260.
+        #[tokio::test]
+        async fn test_resolve_field_id_by_name_errors_on_duplicate_names() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "customfield_10100", "name": "Severity", "custom": true},
+                    {"id": "customfield_10200", "name": "Severity", "custom": true}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let err = client
+                .resolve_field_id_by_name("Severity")
+                .await
+                .unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("Severity"), "missing field name: {msg}");
+            assert!(msg.contains("ambiguous"), "missing ambiguity hint: {msg}");
+            assert!(msg.contains("customfield_10100"), "missing first id: {msg}");
+            assert!(
+                msg.contains("customfield_10200"),
+                "missing second id: {msg}"
+            );
+        }
+
+        /// `resolve_field_id_by_name` returns `None` for unknown names,
+        /// letting callers report a friendly error instead of guessing.
+        #[tokio::test]
+        async fn test_resolve_field_id_by_name_returns_none_for_missing() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/field");
+                then.status(200).json_body(serde_json::json!([
+                    {"id": "summary", "name": "Summary", "custom": false}
+                ]));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let resolved = client.resolve_field_id_by_name("Epic Link").await.unwrap();
+            assert_eq!(resolved, None);
         }
 
         #[tokio::test]
@@ -4831,7 +7311,7 @@ mod tests {
                 "http://localhost",
                 "PROJ",
                 "user@example.com",
-                "token",
+                token("token"),
                 false,
             );
 
@@ -5089,6 +7569,8 @@ mod tests {
                     priority: None,
                     assignee: None,
                     components: None,
+                    fix_versions: None,
+                    parent: None,
                 },
             };
 
@@ -5118,6 +7600,8 @@ mod tests {
                     priority: None,
                     assignee: None,
                     components: None,
+                    fix_versions: None,
+                    parent: None,
                 },
             };
 
@@ -5143,6 +7627,8 @@ mod tests {
                     priority: None,
                     assignee: None,
                     components: None,
+                    fix_versions: None,
+                    parent: None,
                 },
             };
 
@@ -5376,6 +7862,8 @@ mod tests {
                 subtasks: vec![],
                 issuelinks: vec![],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -5411,6 +7899,8 @@ mod tests {
                 subtasks: vec![],
                 issuelinks: vec![],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         });
 
@@ -5431,6 +7921,8 @@ mod tests {
                 subtasks: vec![],
                 issuelinks: vec![],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -5479,6 +7971,8 @@ mod tests {
                             subtasks: vec![],
                             issuelinks: vec![],
                             attachment: vec![],
+                            issuetype: None,
+                            extras: std::collections::HashMap::new(),
                         },
                     },
                     JiraIssue {
@@ -5498,11 +7992,15 @@ mod tests {
                             subtasks: vec![],
                             issuelinks: vec![],
                             attachment: vec![],
+                            issuetype: None,
+                            extras: std::collections::HashMap::new(),
                         },
                     },
                 ],
                 issuelinks: vec![],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -5558,6 +8056,8 @@ mod tests {
                                 subtasks: vec![],
                                 issuelinks: vec![],
                                 attachment: vec![],
+                                issuetype: None,
+                                extras: std::collections::HashMap::new(),
                             },
                         })),
                         inward_issue: None,
@@ -5588,11 +8088,15 @@ mod tests {
                                 subtasks: vec![],
                                 issuelinks: vec![],
                                 attachment: vec![],
+                                issuetype: None,
+                                extras: std::collections::HashMap::new(),
                             },
                         })),
                     },
                 ],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -5648,6 +8152,8 @@ mod tests {
                                 subtasks: vec![],
                                 issuelinks: vec![],
                                 attachment: vec![],
+                                issuetype: None,
+                                extras: std::collections::HashMap::new(),
                             },
                         })),
                         inward_issue: None,
@@ -5678,11 +8184,15 @@ mod tests {
                                 subtasks: vec![],
                                 issuelinks: vec![],
                                 attachment: vec![],
+                                issuetype: None,
+                                extras: std::collections::HashMap::new(),
                             },
                         })),
                     },
                 ],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -5735,11 +8245,15 @@ mod tests {
                             subtasks: vec![],
                             issuelinks: vec![],
                             attachment: vec![],
+                            issuetype: None,
+                            extras: std::collections::HashMap::new(),
                         },
                     })),
                     inward_issue: None,
                 }],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -5782,6 +8296,8 @@ mod tests {
                         subtasks: vec![],
                         issuelinks: vec![],
                         attachment: vec![],
+                        issuetype: None,
+                        extras: std::collections::HashMap::new(),
                     },
                 })),
                 subtasks: vec![JiraIssue {
@@ -5801,6 +8317,8 @@ mod tests {
                         subtasks: vec![],
                         issuelinks: vec![],
                         attachment: vec![],
+                        issuetype: None,
+                        extras: std::collections::HashMap::new(),
                     },
                 }],
                 issuelinks: vec![JiraIssueLink {
@@ -5827,11 +8345,15 @@ mod tests {
                             subtasks: vec![],
                             issuelinks: vec![],
                             attachment: vec![],
+                            issuetype: None,
+                            extras: std::collections::HashMap::new(),
                         },
                     })),
                     inward_issue: None,
                 }],
                 attachment: vec![],
+                issuetype: None,
+                extras: std::collections::HashMap::new(),
             },
         };
 
@@ -5978,6 +8500,10 @@ mod tests {
         use devboy_core::StructureRowItem;
         use httpmock::prelude::*;
 
+        fn token(s: &str) -> SecretString {
+            SecretString::from(s.to_string())
+        }
+
         fn create_client(server: &MockServer) -> JiraClient {
             // with_base_url sets base_url WITHOUT /rest/api/N,
             // but Structure uses instance_url. Adjust:
@@ -5987,7 +8513,7 @@ mod tests {
                 server.base_url(),
                 "PROJ",
                 "user@example.com",
-                "token",
+                token("token"),
                 false,
             )
         }
@@ -6530,12 +9056,16 @@ mod tests {
         use super::*;
         use httpmock::prelude::*;
 
+        fn token(s: &str) -> SecretString {
+            SecretString::from(s.to_string())
+        }
+
         fn create_client(server: &MockServer) -> JiraClient {
             JiraClient::with_base_url(
                 server.base_url(),
                 "PROJ",
                 "user@example.com",
-                "token",
+                token("token"),
                 false,
             )
         }
@@ -6646,6 +9176,631 @@ mod tests {
                 })
                 .await
                 .unwrap();
+        }
+    }
+
+    // =====================================================================
+    // Project Versions / fixVersion — issue #238
+    // =====================================================================
+    mod versions_integration {
+        use super::*;
+        use devboy_core::{ListProjectVersionsParams, UpsertProjectVersionInput};
+        use httpmock::prelude::*;
+
+        fn token(s: &str) -> SecretString {
+            SecretString::from(s.to_string())
+        }
+
+        fn create_client(server: &MockServer) -> JiraClient {
+            JiraClient::with_base_url(
+                server.base_url(),
+                "PROJ",
+                "user@example.com",
+                token("pat-token"),
+                false,
+            )
+        }
+
+        fn create_cloud_client(server: &MockServer) -> JiraClient {
+            JiraClient::with_base_url(
+                server.base_url(),
+                "PROJ",
+                "user@example.com",
+                token("api-token"),
+                true,
+            )
+        }
+
+        fn version_dto(
+            id: &str,
+            name: &str,
+            release_date: Option<&str>,
+            released: bool,
+            archived: bool,
+        ) -> serde_json::Value {
+            let mut v = serde_json::json!({
+                "id": id,
+                "name": name,
+                "project": "PROJ",
+                "released": released,
+                "archived": archived,
+            });
+            if let Some(d) = release_date {
+                v["releaseDate"] = serde_json::json!(d);
+            }
+            v
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_returns_rich_payload() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    {
+                        "id": "10001",
+                        "name": "1.0.0",
+                        "project": "PROJ",
+                        "description": "Initial release",
+                        "startDate": "2025-01-01",
+                        "releaseDate": "2025-02-01",
+                        "released": true,
+                        "archived": false,
+                        "overdue": false,
+                    },
+                    version_dto("10002", "2.0.0", Some("2026-04-01"), false, false),
+                    version_dto("10003", "0.9.0", Some("2024-06-01"), true, true),
+                ]));
+            });
+
+            let client = create_client(&server);
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: None,
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(result.items.len(), 3);
+            // Sorted by release_date desc
+            assert_eq!(result.items[0].name, "2.0.0");
+            assert_eq!(result.items[1].name, "1.0.0");
+            assert_eq!(result.items[2].name, "0.9.0");
+            assert_eq!(
+                result.items[1].description.as_deref(),
+                Some("Initial release")
+            );
+            assert_eq!(result.items[1].source, "jira");
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_filters_archived_and_released() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    version_dto("1", "current", Some("2026-04-01"), false, false),
+                    version_dto("2", "shipped", Some("2025-12-01"), true, false),
+                    version_dto("3", "old", Some("2024-01-01"), true, true),
+                ]));
+            });
+
+            let client = create_client(&server);
+
+            let unreleased_only = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: Some(false),
+                    archived: Some(false),
+                    limit: None,
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+            assert_eq!(unreleased_only.items.len(), 1);
+            assert_eq!(unreleased_only.items[0].name, "current");
+
+            // Re-mock for the second call (httpmock mocks are per-server,
+            // and the previous mock matches all GETs to that path).
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_applies_limit_and_keeps_most_recent() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    version_dto("1", "v1", Some("2024-01-01"), true, false),
+                    version_dto("2", "v2", Some("2025-01-01"), true, false),
+                    version_dto("3", "v3", Some("2026-01-01"), true, false),
+                    version_dto("4", "v4", Some("2026-02-01"), false, false),
+                ]));
+            });
+
+            let client = create_client(&server);
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: Some(2),
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+            assert_eq!(result.items.len(), 2);
+            assert_eq!(result.items[0].name, "v4");
+            assert_eq!(result.items[1].name, "v3");
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_passes_expand_query_on_cloud() {
+            // Cloud responds to `?expand=issuesstatus` with a per-status
+            // breakdown we can sum into `issue_count`. Server/DC ignores
+            // the param, so the gate applies only to Cloud — see the
+            // sibling `omits_expand_on_self_hosted` test below.
+            let server = MockServer::start();
+            let mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/project/PROJ/versions")
+                    .query_param("expand", "issuesstatus");
+                then.status(200).json_body(serde_json::json!([
+                    {
+                        "id": "1",
+                        "name": "v1",
+                        "released": false,
+                        "archived": false,
+                        "issuesStatusForFixVersion": {
+                            "unmapped": 0,
+                            "toDo": 5,
+                            "inProgress": 3,
+                            "done": 2
+                        }
+                    }
+                ]));
+            });
+
+            let client = create_cloud_client(&server);
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: None,
+                    include_issue_count: true,
+                })
+                .await
+                .unwrap();
+            mock.assert();
+            assert_eq!(result.items.len(), 1);
+            assert_eq!(result.items[0].issue_count, Some(10));
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_omits_expand_on_self_hosted() {
+            // Copilot review on PR #239 — the expand parameter is a Cloud
+            // payload extension. We don't want to bake "Server/DC silently
+            // ignores Cloud query params" into the URL contract, so on
+            // Self-Hosted the client must not append `?expand=...` even
+            // when the caller asks for issue counts.
+            let server = MockServer::start();
+            let bare_mock = server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([{
+                    "id": "1",
+                    "name": "v1",
+                    "released": false,
+                    "archived": false,
+                    "issuesUnresolvedCount": 4,
+                }]));
+            });
+            let expanded_mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/project/PROJ/versions")
+                    .query_param("expand", "issuesstatus");
+                then.status(500); // would fail the test if we hit it
+            });
+
+            let client = create_client(&server); // self-hosted
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: None,
+                    include_issue_count: true,
+                })
+                .await
+                .unwrap();
+            bare_mock.assert();
+            expanded_mock.assert_calls(0);
+            // On Self-Hosted we don't have a true total — it goes into
+            // `unresolved_issue_count` rather than `issue_count` to keep
+            // the two flavors comparable (Codex review on PR #239).
+            assert_eq!(result.items[0].issue_count, None);
+            assert_eq!(result.items[0].unresolved_issue_count, Some(4));
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_orders_unreleased_first_then_recent() {
+            // Copilot review #3 on PR #239 — unreleased versions are the
+            // ones the agent is actually working on, they must surface
+            // before history regardless of date.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    version_dto("1", "9.10.0", Some("2026-04-01"), true, false),
+                    version_dto("2", "10.0.0", Some("2026-04-02"), false, false),
+                    version_dto("3", "next", None, false, false),
+                    version_dto("4", "1.0.0", Some("2024-01-01"), true, true),
+                ]));
+            });
+
+            let client = create_client(&server);
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: None,
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+            // Unreleased first: undated `next` then dated `10.0.0`.
+            // Released after: `9.10.0` (newer date) then `1.0.0` (older).
+            let names: Vec<_> = result.items.iter().map(|v| v.name.as_str()).collect();
+            assert_eq!(names, vec!["next", "10.0.0", "9.10.0", "1.0.0"]);
+        }
+
+        #[tokio::test]
+        async fn list_project_versions_pagination_reflects_truncation() {
+            // Copilot review #4 on PR #239 — without total/has_more the
+            // formatter can't render a "+N more" hint.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([
+                    version_dto("1", "v1", Some("2024-01-01"), true, false),
+                    version_dto("2", "v2", Some("2025-01-01"), true, false),
+                    version_dto("3", "v3", Some("2026-01-01"), true, false),
+                ]));
+            });
+
+            let client = create_client(&server);
+            let result = client
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: Some(2),
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+            let p = result.pagination.expect("pagination must be set");
+            assert_eq!(p.total, Some(3));
+            assert_eq!(p.limit, 2);
+            assert!(p.has_more);
+
+            // No truncation → has_more is false.
+            let server2 = MockServer::start();
+            server2.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([version_dto(
+                    "1",
+                    "v1",
+                    Some("2024-01-01"),
+                    true,
+                    false
+                ),]));
+            });
+            let client2 = create_client(&server2);
+            let result2 = client2
+                .list_project_versions(ListProjectVersionsParams {
+                    project: "PROJ".into(),
+                    released: None,
+                    archived: None,
+                    limit: Some(20),
+                    include_issue_count: false,
+                })
+                .await
+                .unwrap();
+            let p2 = result2.pagination.unwrap();
+            assert_eq!(p2.total, Some(1));
+            assert!(!p2.has_more);
+        }
+
+        #[test]
+        fn compare_version_names_handles_semver_and_alpha() {
+            use std::cmp::Ordering;
+            assert_eq!(compare_version_names("10.0.0", "9.10.0"), Ordering::Greater);
+            assert_eq!(compare_version_names("1.0.0", "1.0.0"), Ordering::Equal);
+            assert_eq!(compare_version_names("1.0.10", "1.0.2"), Ordering::Greater);
+            // Pre-release < release at the same numeric prefix.
+            assert_eq!(compare_version_names("1.0.0-rc1", "1.0.0"), Ordering::Less);
+            // Non-semver names fall back to lexicographic / token compare,
+            // but at minimum they must be a total order.
+            let _ = compare_version_names("Sprint 42 cleanup", "Sprint 9 cleanup");
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_creates_when_missing() {
+            let server = MockServer::start();
+            // 1) list returns no match
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([version_dto(
+                    "99",
+                    "1.0.0",
+                    Some("2025-01-01"),
+                    true,
+                    false
+                ),]));
+            });
+            // 2) POST /version creates
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/version")
+                    .body_includes("\"name\":\"3.18.0\"")
+                    .body_includes("\"project\":\"PROJ\"")
+                    .body_includes("\"description\":\"Release notes draft\"");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "10500",
+                    "name": "3.18.0",
+                    "project": "PROJ",
+                    "description": "Release notes draft",
+                    "released": false,
+                    "archived": false,
+                }));
+            });
+
+            let client = create_client(&server);
+            let v = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "3.18.0".into(),
+                    description: Some("Release notes draft".into()),
+                    start_date: None,
+                    release_date: None,
+                    released: None,
+                    archived: None,
+                })
+                .await
+                .unwrap();
+            assert_eq!(v.id, "10500");
+            assert_eq!(v.name, "3.18.0");
+            assert_eq!(v.description.as_deref(), Some("Release notes draft"));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_updates_when_present() {
+            let server = MockServer::start();
+            // 1) list returns match
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([version_dto(
+                    "777", "3.18.0", None, false, false
+                ),]));
+            });
+            // 2) PUT /version/{id}
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/version/777")
+                    .body_includes("\"description\":\"final notes\"")
+                    .body_includes("\"released\":true")
+                    .body_includes("\"releaseDate\":\"2026-05-01\"");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "777",
+                    "name": "3.18.0",
+                    "project": "PROJ",
+                    "description": "final notes",
+                    "releaseDate": "2026-05-01",
+                    "released": true,
+                    "archived": false,
+                }));
+            });
+
+            let client = create_client(&server);
+            let v = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "3.18.0".into(),
+                    description: Some("final notes".into()),
+                    start_date: None,
+                    release_date: Some("2026-05-01".into()),
+                    released: Some(true),
+                    archived: None,
+                })
+                .await
+                .unwrap();
+            assert_eq!(v.id, "777");
+            assert!(v.released);
+            assert_eq!(v.release_date.as_deref(), Some("2026-05-01"));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_partial_update_sends_only_description() {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([version_dto(
+                    "42",
+                    "2.0.0",
+                    Some("2026-01-01"),
+                    false,
+                    false
+                ),]));
+            });
+            // PUT body should include description; `name`, `released`,
+            // `archived`, and date fields stay out (serde skip_if = None).
+            let put_mock = server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/version/42")
+                    .body_includes("\"description\":\"draft\"")
+                    .body_excludes("\"name\":")
+                    .body_excludes("\"released\":")
+                    .body_excludes("\"archived\":")
+                    .body_excludes("\"releaseDate\":");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "42",
+                    "name": "2.0.0",
+                    "project": "PROJ",
+                    "description": "draft",
+                    "releaseDate": "2026-01-01",
+                    "released": false,
+                    "archived": false,
+                }));
+            });
+
+            let client = create_client(&server);
+            client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "2.0.0".into(),
+                    description: Some("draft".into()),
+                    start_date: None,
+                    release_date: None,
+                    released: None,
+                    archived: None,
+                })
+                .await
+                .unwrap();
+            put_mock.assert();
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_rejects_empty_name() {
+            let server = MockServer::start();
+            let client = create_client(&server);
+            let err = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "  ".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert!(matches!(err, devboy_core::Error::InvalidData(_)));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_rejects_overlong_name() {
+            // Codex review on PR #239 — Jira caps version names at 255
+            // chars; failing client-side gives a clearer error than
+            // letting the server return a 400.
+            let server = MockServer::start();
+            let client = create_client(&server);
+            let err = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "x".repeat(256),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert!(matches!(err, devboy_core::Error::InvalidData(_)));
+        }
+
+        #[test]
+        fn duplicate_version_error_classifier_matches_jira_phrasing() {
+            // Codex review on PR #239 — race recovery hangs on this
+            // classifier. Pin the strings Jira actually returns so a
+            // copy-paste regression in the wording table doesn't
+            // silently turn duplicate errors into hard failures.
+            let dup1 = devboy_core::Error::Api {
+                status: 400,
+                message: "A version with this name already exists in this project.".into(),
+            };
+            let dup2 = devboy_core::Error::Api {
+                status: 400,
+                message: "Name is already used by another version in this project.".into(),
+            };
+            let unrelated = devboy_core::Error::Api {
+                status: 400,
+                message: "releaseDate is in the wrong format.".into(),
+            };
+            assert!(is_duplicate_version_error(&dup1));
+            assert!(is_duplicate_version_error(&dup2));
+            assert!(!is_duplicate_version_error(&unrelated));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_propagates_non_duplicate_400() {
+            // Make sure the duplicate-recovery path doesn't swallow
+            // unrelated 400s — only "already exists" is retried.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/PROJ/versions");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            server.mock(|when, then| {
+                when.method(POST).path("/version");
+                then.status(400).json_body(serde_json::json!({
+                    "errorMessages": ["releaseDate is in the wrong format."]
+                }));
+            });
+            let client = create_client(&server);
+            let err = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "PROJ".into(),
+                    name: "3.18.0".into(),
+                    release_date: Some("not-a-date".into()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            // 400 → Error::Api (see Error::from_status).
+            assert!(matches!(err, devboy_core::Error::Api { .. }));
+        }
+
+        #[tokio::test]
+        async fn upsert_project_version_works_on_cloud_flavor() {
+            // Codex review on PR #239 — coverage gap: every upsert test
+            // ran against self-hosted. Pin Cloud insert path to make
+            // sure the same code works against Cloud's response shape.
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/project/CLOUDPROJ/versions");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            let post_mock = server.mock(|when, then| {
+                when.method(POST)
+                    .path("/version")
+                    .body_includes("\"name\":\"4.0.0\"")
+                    .body_includes("\"project\":\"CLOUDPROJ\"");
+                then.status(201).json_body(serde_json::json!({
+                    "id": "30001",
+                    "name": "4.0.0",
+                    "project": "CLOUDPROJ",
+                    "description": "Cloud release",
+                    "released": false,
+                    "archived": false,
+                    // Cloud-shaped issuesStatusForFixVersion would normally
+                    // not appear on the create response — the field
+                    // surfaces via list_project_versions(includeIssueCount).
+                }));
+            });
+
+            let client = create_cloud_client(&server);
+            let v = client
+                .upsert_project_version(UpsertProjectVersionInput {
+                    project: "CLOUDPROJ".into(),
+                    name: "4.0.0".into(),
+                    description: Some("Cloud release".into()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            post_mock.assert();
+            assert_eq!(v.id, "30001");
+            assert_eq!(v.project, "CLOUDPROJ");
+            assert_eq!(v.description.as_deref(), Some("Cloud release"));
         }
     }
 }

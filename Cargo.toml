@@ -25,11 +25,20 @@ members = [
 ]
 
 [workspace.package]
-version = "0.25.0"
+version = "0.28.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/meteora-pro/devboy-tools"
+homepage = "https://devboy.pro"
 authors = ["Meteora <dev@meteora.pro>"]
+# `readme` is intentionally NOT inherited workspace-wide: each publishable
+# crate has its own `README.md` and declares it explicitly. A workspace-level
+# `readme = "README.md"` resolves relative to the workspace root and produces
+# a misleading "path outside of the package" warning at `cargo publish` time.
+# `rust-version` is workspace-wide so that publish-time MSRV is consistent.
+# Pinned to 1.87 because devboy-format-pipeline uses `u64::is_multiple_of`
+# (stable since 1.87). Edition 2024 itself only requires 1.85.
+rust-version = "1.87"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -79,6 +88,27 @@ sha2 = "0.10"
 # Observability (optional)
 sentry = { version = "0.35", default-features = false, features = ["rustls", "reqwest", "tracing", "panic", "backtrace", "contexts"] }
 sentry-tracing = "0.35"
+
+# Secrets (in-process secret protection: redacted Debug, zeroize on drop)
+secrecy = { version = "0.10", features = ["serde"] }
+
+# Internal workspace crates — `version` lets crates.io resolve them when
+# the package is published; `path` keeps local builds resolving in-tree.
+# Keep `version` synced with `[workspace.package].version`.
+devboy-core = { version = "0.28.0", path = "crates/devboy-core" }
+devboy-storage = { version = "0.28.0", path = "crates/devboy-storage" }
+devboy-assets = { version = "0.28.0", path = "crates/devboy-assets" }
+devboy-executor = { version = "0.28.0", path = "crates/devboy-executor" }
+devboy-mcp = { version = "0.28.0", path = "crates/devboy-mcp" }
+devboy-skills = { version = "0.28.0", path = "crates/devboy-skills" }
+devboy-format-pipeline = { version = "0.28.0", path = "crates/plugins/format-pipeline" }
+devboy-gitlab = { version = "0.28.0", path = "crates/plugins/api/gitlab" }
+devboy-github = { version = "0.28.0", path = "crates/plugins/api/github" }
+devboy-clickup = { version = "0.28.0", path = "crates/plugins/api/clickup" }
+devboy-jira = { version = "0.28.0", path = "crates/plugins/api/jira" }
+devboy-confluence = { version = "0.28.0", path = "crates/plugins/api/confluence" }
+devboy-fireflies = { version = "0.28.0", path = "crates/plugins/api/fireflies" }
+devboy-slack = { version = "0.28.0", path = "crates/plugins/api/slack" }
 
 [profile.release]
 lto = true

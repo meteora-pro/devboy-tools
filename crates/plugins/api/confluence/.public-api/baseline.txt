@@ -1,0 +1,72 @@
+pub mod devboy_confluence
+pub enum devboy_confluence::ConfluenceAuth
+pub devboy_confluence::ConfluenceAuth::Basic
+pub devboy_confluence::ConfluenceAuth::Basic::password: secrecy::SecretString
+pub devboy_confluence::ConfluenceAuth::Basic::username: alloc::string::String
+pub devboy_confluence::ConfluenceAuth::BearerToken(secrecy::SecretString)
+pub devboy_confluence::ConfluenceAuth::None
+impl devboy_confluence::ConfluenceAuth
+pub fn devboy_confluence::ConfluenceAuth::basic(username: impl core::convert::Into<alloc::string::String>, password: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_confluence::ConfluenceAuth::bearer(token: impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for devboy_confluence::ConfluenceAuth
+pub fn devboy_confluence::ConfluenceAuth::clone(&self) -> devboy_confluence::ConfluenceAuth
+impl core::fmt::Debug for devboy_confluence::ConfluenceAuth
+pub fn devboy_confluence::ConfluenceAuth::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_confluence::ConfluenceAuth
+impl core::marker::Send for devboy_confluence::ConfluenceAuth
+impl core::marker::Sync for devboy_confluence::ConfluenceAuth
+impl core::marker::Unpin for devboy_confluence::ConfluenceAuth
+impl core::marker::UnsafeUnpin for devboy_confluence::ConfluenceAuth
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_confluence::ConfluenceAuth
+impl core::panic::unwind_safe::UnwindSafe for devboy_confluence::ConfluenceAuth
+pub struct devboy_confluence::ConfluenceClient
+impl devboy_confluence::ConfluenceClient
+pub fn devboy_confluence::ConfluenceClient::auth(&self) -> &devboy_confluence::ConfluenceAuth
+pub fn devboy_confluence::ConfluenceClient::base_url(&self) -> &str
+pub async fn devboy_confluence::ConfluenceClient::delete_empty(&self, path: &str) -> devboy_core::error::Result<()>
+pub async fn devboy_confluence::ConfluenceClient::get_json<T>(&self, path: &str) -> devboy_core::error::Result<T> where T: serde_core::de::DeserializeOwned
+pub fn devboy_confluence::ConfluenceClient::new(base_url: impl core::convert::Into<alloc::string::String>, auth: devboy_confluence::ConfluenceAuth) -> Self
+pub async fn devboy_confluence::ConfluenceClient::post_empty_json<B>(&self, path: &str, body: &B) -> devboy_core::error::Result<()> where B: serde_core::ser::Serialize + ?core::marker::Sized
+pub async fn devboy_confluence::ConfluenceClient::post_json<T, B>(&self, path: &str, body: &B) -> devboy_core::error::Result<T> where T: serde_core::de::DeserializeOwned, B: serde_core::ser::Serialize + ?core::marker::Sized
+pub async fn devboy_confluence::ConfluenceClient::put_json<T, B>(&self, path: &str, body: &B) -> devboy_core::error::Result<T> where T: serde_core::de::DeserializeOwned, B: serde_core::ser::Serialize + ?core::marker::Sized
+pub fn devboy_confluence::ConfluenceClient::rest_api_url(&self, path: &str) -> alloc::string::String
+pub fn devboy_confluence::ConfluenceClient::with_api_version(self, api_version: core::option::Option<&str>) -> Self
+pub fn devboy_confluence::ConfluenceClient::with_http_client(self, http: reqwest::async_impl::client::Client) -> Self
+pub fn devboy_confluence::ConfluenceClient::with_proxy(self, headers: std::collections::hash::map::HashMap<alloc::string::String, alloc::string::String>) -> Self
+impl core::clone::Clone for devboy_confluence::ConfluenceClient
+pub fn devboy_confluence::ConfluenceClient::clone(&self) -> devboy_confluence::ConfluenceClient
+impl core::fmt::Debug for devboy_confluence::ConfluenceClient
+pub fn devboy_confluence::ConfluenceClient::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl devboy_core::provider::KnowledgeBaseProvider for devboy_confluence::ConfluenceClient
+pub fn devboy_confluence::ConfluenceClient::create_page<'life0, 'async_trait>(&'life0 self, params: devboy_core::types::CreatePageParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::KbPage>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_confluence::ConfluenceClient::get_page<'life0, 'life1, 'async_trait>(&'life0 self, page_id: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::KbPageContent>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn devboy_confluence::ConfluenceClient::get_spaces<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::KbSpace>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_confluence::ConfluenceClient::list_pages<'life0, 'async_trait>(&'life0 self, params: devboy_core::types::ListPagesParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::KbPage>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_confluence::ConfluenceClient::provider_name(&self) -> &'static str
+pub fn devboy_confluence::ConfluenceClient::search<'life0, 'async_trait>(&'life0 self, params: devboy_core::types::SearchKbParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::KbPage>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_confluence::ConfluenceClient::update_page<'life0, 'async_trait>(&'life0 self, params: devboy_core::types::UpdatePageParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::KbPage>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+impl core::marker::Freeze for devboy_confluence::ConfluenceClient
+impl core::marker::Send for devboy_confluence::ConfluenceClient
+impl core::marker::Sync for devboy_confluence::ConfluenceClient
+impl core::marker::Unpin for devboy_confluence::ConfluenceClient
+impl core::marker::UnsafeUnpin for devboy_confluence::ConfluenceClient
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_confluence::ConfluenceClient
+impl !core::panic::unwind_safe::UnwindSafe for devboy_confluence::ConfluenceClient
+pub struct devboy_confluence::ConfluenceSchemaEnricher
+impl devboy_confluence::ConfluenceSchemaEnricher
+pub fn devboy_confluence::ConfluenceSchemaEnricher::new() -> Self
+impl core::default::Default for devboy_confluence::ConfluenceSchemaEnricher
+pub fn devboy_confluence::ConfluenceSchemaEnricher::default() -> Self
+impl devboy_core::enricher::ToolEnricher for devboy_confluence::ConfluenceSchemaEnricher
+pub fn devboy_confluence::ConfluenceSchemaEnricher::enrich_schema(&self, _tool_name: &str, _schema: &mut devboy_core::enricher::ToolSchema)
+pub fn devboy_confluence::ConfluenceSchemaEnricher::supported_categories(&self) -> &[devboy_core::tool_category::ToolCategory]
+pub fn devboy_confluence::ConfluenceSchemaEnricher::transform_args(&self, _tool_name: &str, _args: &mut serde_json::value::Value)
+pub fn devboy_confluence::ConfluenceSchemaEnricher::value_model(&self, tool_name: &str) -> core::option::Option<devboy_core::tool_value_model::ToolValueModel>
+impl core::marker::Freeze for devboy_confluence::ConfluenceSchemaEnricher
+impl core::marker::Send for devboy_confluence::ConfluenceSchemaEnricher
+impl core::marker::Sync for devboy_confluence::ConfluenceSchemaEnricher
+impl core::marker::Unpin for devboy_confluence::ConfluenceSchemaEnricher
+impl core::marker::UnsafeUnpin for devboy_confluence::ConfluenceSchemaEnricher
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_confluence::ConfluenceSchemaEnricher
+impl core::panic::unwind_safe::UnwindSafe for devboy_confluence::ConfluenceSchemaEnricher
+pub const devboy_confluence::DEFAULT_CONFLUENCE_API_PATH: &str

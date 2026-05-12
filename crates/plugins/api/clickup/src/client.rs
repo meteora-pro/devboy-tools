@@ -7,6 +7,7 @@ use devboy_core::{
     PipelineProvider, Provider, ProviderResult, Result, SortInfo, SortOrder, UpdateIssueInput,
     User,
 };
+use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, warn};
 
 use crate::DEFAULT_CLICKUP_URL;
@@ -24,18 +25,17 @@ fn encode_tag(tag: &str) -> String {
     urlencoding::encode(tag).into_owned()
 }
 
-/// ClickUp API client.
 pub struct ClickUpClient {
     base_url: String,
     list_id: String,
     team_id: Option<String>,
-    token: String,
+    token: SecretString,
     client: reqwest::Client,
 }
 
 impl ClickUpClient {
     /// Create a new ClickUp client.
-    pub fn new(list_id: impl Into<String>, token: impl Into<String>) -> Self {
+    pub fn new(list_id: impl Into<String>, token: SecretString) -> Self {
         Self::with_base_url(DEFAULT_CLICKUP_URL, list_id, token)
     }
 
@@ -43,13 +43,13 @@ impl ClickUpClient {
     pub fn with_base_url(
         base_url: impl Into<String>,
         list_id: impl Into<String>,
-        token: impl Into<String>,
+        token: SecretString,
     ) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             list_id: list_id.into(),
             team_id: None,
-            token: token.into(),
+            token,
             client: reqwest::Client::builder()
                 .user_agent("devboy-tools")
                 .build()
@@ -67,7 +67,7 @@ impl ClickUpClient {
     fn request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
         self.client
             .request(method, url)
-            .header("Authorization", &self.token)
+            .header("Authorization", self.token.expose_secret())
             .header("Content-Type", "application/json")
     }
 
@@ -443,7 +443,28 @@ fn map_timestamp(ts: &Option<String>) -> Option<String> {
 }
 
 fn map_task(task: &ClickUpTask) -> Issue {
+    // Surface set custom fields keyed by ClickUp's stable field id
+    // (matches `get_custom_fields` output across providers). Display
+    // name rides along inside `CustomFieldValue.name` so consumers
+    // don't lose it. Unset fields (`value: None`) are skipped to
+    // keep the map noise-free.
+    let custom_fields: std::collections::HashMap<String, devboy_core::CustomFieldValue> = task
+        .custom_fields
+        .iter()
+        .filter_map(|cf| {
+            cf.value.as_ref().map(|v| {
+                (
+                    cf.id.clone(),
+                    devboy_core::CustomFieldValue {
+                        name: cf.name.clone(),
+                        value: v.clone(),
+                    },
+                )
+            })
+        })
+        .collect();
     Issue {
+        custom_fields,
         key: map_task_key(task),
         title: task.name.clone(),
         description: task
@@ -1141,7 +1162,7 @@ impl IssueProvider for ClickUpClient {
         let response = self
             .client
             .post(&url)
-            .header("Authorization", &self.token)
+            .header("Authorization", self.token.expose_secret())
             .multipart(form)
             .send()
             .await
@@ -1204,7 +1225,7 @@ impl IssueProvider for ClickUpClient {
         let response = self
             .client
             .get(download_url)
-            .header("Authorization", &self.token)
+            .header("Authorization", self.token.expose_secret())
             .send()
             .await
             .map_err(|e| Error::Http(e.to_string()))?;
@@ -1443,6 +1464,10 @@ mod tests {
     use crate::types::{ClickUpStatus, ClickUpTag};
     use devboy_core::{CreateCommentInput, MrFilter};
 
+    fn token(s: &str) -> SecretString {
+        SecretString::from(s.to_string())
+    }
+
     #[test]
     fn test_epoch_ms_to_iso8601() {
         // 2024-01-01T00:00:00Z = 1704067200000 ms
@@ -1470,7 +1495,7 @@ mod tests {
     #[test]
     fn test_task_url_cu_prefix() {
         let client =
-            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", "token");
+            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", token("token"));
         let url = client.task_url("CU-abc123").unwrap();
         assert_eq!(url, "https://api.clickup.com/api/v2/task/abc123");
     }
@@ -1478,7 +1503,7 @@ mod tests {
     #[test]
     fn test_task_url_custom_id_with_team() {
         let client =
-            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", "token")
+            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", token("token"))
                 .with_team_id("9876");
         let url = client.task_url("DEV-42").unwrap();
         assert_eq!(
@@ -1490,9 +1515,74 @@ mod tests {
     #[test]
     fn test_task_url_custom_id_without_team() {
         let client =
-            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", "token");
+            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", token("token"));
         let result = client.task_url("DEV-42");
         assert!(result.is_err());
+    }
+
+    /// `task.custom_fields` populates `issue.custom_fields` keyed
+    /// by ClickUp's stable field **id** (matches the homogeneous
+    /// shape `JOIN`able with `get_custom_fields` across providers).
+    /// Display name rides along inside `CustomFieldValue.name`.
+    /// Unset fields (`value == None`) are filtered.
+    #[test]
+    fn test_map_task_surfaces_custom_field_values() {
+        let task = ClickUpTask {
+            id: "abc123".to_string(),
+            custom_id: None,
+            name: "T".to_string(),
+            description: None,
+            text_content: None,
+            status: ClickUpStatus {
+                status: "open".to_string(),
+                status_type: Some("open".to_string()),
+            },
+            priority: None,
+            tags: vec![],
+            assignees: vec![],
+            creator: None,
+            url: "https://app.clickup.com/t/abc123".to_string(),
+            date_created: None,
+            date_updated: None,
+            parent: None,
+            subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
+            attachments: Vec::new(),
+            custom_fields: vec![
+                crate::types::ClickUpCustomField {
+                    id: "cf-1".to_string(),
+                    name: Some("Severity".to_string()),
+                    field_type: Some("drop_down".to_string()),
+                    value: Some(serde_json::json!("High")),
+                },
+                crate::types::ClickUpCustomField {
+                    id: "cf-2".to_string(),
+                    name: Some("Sprint".to_string()),
+                    field_type: Some("text".to_string()),
+                    value: None, // unset → must be skipped
+                },
+                crate::types::ClickUpCustomField {
+                    id: "cf-3".to_string(),
+                    name: None, // anonymous → falls back to id
+                    field_type: Some("number".to_string()),
+                    value: Some(serde_json::json!(42)),
+                },
+            ],
+        };
+
+        let issue = map_task(&task);
+        // Keyed by id; display name rides along in
+        // `CustomFieldValue.name`.
+        let severity = issue.custom_fields.get("cf-1").expect("cf-1 present");
+        assert_eq!(severity.name.as_deref(), Some("Severity"));
+        assert_eq!(severity.value, serde_json::json!("High"));
+        // Unset value (`cf-2`) is filtered out entirely.
+        assert!(!issue.custom_fields.contains_key("cf-2"));
+        // Anonymous field (no name) keeps `name: None`.
+        let anon = issue.custom_fields.get("cf-3").expect("cf-3 present");
+        assert!(anon.name.is_none());
+        assert_eq!(anon.value, serde_json::json!(42));
     }
 
     #[test]
@@ -1535,6 +1625,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1582,6 +1673,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1612,6 +1704,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1762,7 +1855,7 @@ mod tests {
     #[test]
     fn test_clickup_asset_capabilities() {
         let client =
-            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", "token");
+            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", token("token"));
         let caps = client.asset_capabilities();
         assert!(caps.issue.upload);
         assert!(caps.issue.download);
@@ -1830,27 +1923,30 @@ mod tests {
     #[test]
     fn test_api_url() {
         let client =
-            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", "token");
+            ClickUpClient::with_base_url("https://api.clickup.com/api/v2", "12345", token("token"));
         assert_eq!(client.base_url, "https://api.clickup.com/api/v2");
         assert_eq!(client.list_id, "12345");
     }
 
     #[test]
     fn test_api_url_strips_trailing_slash() {
-        let client =
-            ClickUpClient::with_base_url("https://api.clickup.com/api/v2/", "12345", "token");
+        let client = ClickUpClient::with_base_url(
+            "https://api.clickup.com/api/v2/",
+            "12345",
+            token("token"),
+        );
         assert_eq!(client.base_url, "https://api.clickup.com/api/v2");
     }
 
     #[test]
     fn test_with_team_id() {
-        let client = ClickUpClient::new("12345", "token").with_team_id("9876");
+        let client = ClickUpClient::new("12345", token("token")).with_team_id("9876");
         assert_eq!(client.team_id, Some("9876".to_string()));
     }
 
     #[test]
     fn test_provider_name() {
-        let client = ClickUpClient::new("12345", "token");
+        let client = ClickUpClient::new("12345", token("token"));
         assert_eq!(IssueProvider::provider_name(&client), "clickup");
         assert_eq!(MergeRequestProvider::provider_name(&client), "clickup");
     }
@@ -1879,6 +1975,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1909,6 +2006,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1939,6 +2037,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1970,6 +2069,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let task = ClickUpTask {
@@ -1996,6 +2096,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -2031,6 +2132,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -2174,11 +2276,11 @@ mod tests {
         use httpmock::prelude::*;
 
         fn create_test_client(server: &MockServer) -> ClickUpClient {
-            ClickUpClient::with_base_url(server.base_url(), "12345", "pk_test_token")
+            ClickUpClient::with_base_url(server.base_url(), "12345", token("pk_test_token"))
         }
 
         fn create_test_client_with_team(server: &MockServer) -> ClickUpClient {
-            ClickUpClient::with_base_url(server.base_url(), "12345", "pk_test_token")
+            ClickUpClient::with_base_url(server.base_url(), "12345", token("pk_test_token"))
                 .with_team_id("9876")
         }
 
@@ -2398,7 +2500,7 @@ mod tests {
         #[tokio::test]
         async fn test_get_issues_limit_zero() {
             // No server needed — should return immediately without making API calls
-            let client = ClickUpClient::new("12345", "token");
+            let client = ClickUpClient::new("12345", token("token"));
             let issues = client
                 .get_issues(IssueFilter {
                     limit: Some(0),
@@ -2522,7 +2624,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_get_issue_custom_id_without_team_fails() {
-            let client = ClickUpClient::new("12345", "token");
+            let client = ClickUpClient::new("12345", token("token"));
             let result = client.get_issue("DEV-42").await;
             assert!(result.is_err());
         }
@@ -2968,7 +3070,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_mr_methods_unsupported() {
-            let client = ClickUpClient::new("12345", "token");
+            let client = ClickUpClient::new("12345", token("token"));
 
             let result = client.get_merge_requests(MrFilter::default()).await;
             assert!(matches!(

@@ -42,6 +42,7 @@ impl IssueProvider for ClickUpTestProvider {
             attachments_count: None,
             parent: None,
             subtasks: vec![],
+            custom_fields: std::collections::HashMap::new(),
         }]
         .into())
     }
@@ -121,6 +122,7 @@ impl IssueProvider for GitLabTestProvider {
             attachments_count: None,
             parent: None,
             subtasks: vec![],
+            custom_fields: std::collections::HashMap::new(),
         }]
         .into())
     }
@@ -238,7 +240,6 @@ const ISSUE_TOOLS: &[&str] = &[
     "add_issue_comment",
 ];
 
-/// Merge request tools.
 const MR_TOOLS: &[&str] = &[
     "get_merge_requests",
     "get_merge_request",

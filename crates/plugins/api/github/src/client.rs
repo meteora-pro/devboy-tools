@@ -9,6 +9,7 @@ use devboy_core::{
     PipelineStage, PipelineStatus, PipelineSummary, Provider, ProviderResult, Result,
     UpdateIssueInput, UpdateMergeRequestInput, User, parse_markdown_attachments,
 };
+use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use tracing::{debug, warn};
 
@@ -19,22 +20,17 @@ use crate::types::{
     GitHubReviewComment, GitHubUser, UpdateIssueRequest, UpdatePullRequestRequest,
 };
 
-/// GitHub API client.
 pub struct GitHubClient {
     base_url: String,
     owner: String,
     repo: String,
-    token: String,
+    token: SecretString,
     client: reqwest::Client,
 }
 
 impl GitHubClient {
     /// Create a new GitHub client.
-    pub fn new(
-        owner: impl Into<String>,
-        repo: impl Into<String>,
-        token: impl Into<String>,
-    ) -> Self {
+    pub fn new(owner: impl Into<String>, repo: impl Into<String>, token: SecretString) -> Self {
         Self::with_base_url(DEFAULT_GITHUB_URL, owner, repo, token)
     }
 
@@ -43,13 +39,13 @@ impl GitHubClient {
         base_url: impl Into<String>,
         owner: impl Into<String>,
         repo: impl Into<String>,
-        token: impl Into<String>,
+        token: SecretString,
     ) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             owner: owner.into(),
             repo: repo.into(),
-            token: token.into(),
+            token,
             client: reqwest::Client::builder()
                 .user_agent("devboy-tools")
                 .build()
@@ -65,8 +61,9 @@ impl GitHubClient {
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28");
 
-        if !self.token.is_empty() {
-            builder = builder.header("Authorization", format!("Bearer {}", self.token));
+        let token = self.token.expose_secret();
+        if !token.is_empty() {
+            builder = builder.header("Authorization", format!("Bearer {}", token));
         }
 
         builder
@@ -197,6 +194,7 @@ fn map_issue(gh_issue: &GitHubIssue) -> Issue {
         .filter(|&c| c > 0);
 
     Issue {
+        custom_fields: std::collections::HashMap::new(),
         key: format!("gh#{}", gh_issue.number),
         title: gh_issue.title.clone(),
         description: gh_issue.body.clone(),
@@ -897,7 +895,7 @@ const GITHUB_TRUSTED_HOSTS: &[&str] = &[
 async fn download_github_url(
     client: &reqwest::Client,
     base_url: &str,
-    token: &str,
+    token: &SecretString,
     url: &str,
 ) -> Result<Vec<u8>> {
     let needs_auth = is_github_api_host(base_url, url);
@@ -905,8 +903,9 @@ async fn download_github_url(
         .get(url)
         .header("Accept", "application/octet-stream")
         .header("User-Agent", "devboy-tools");
-    if needs_auth && !token.is_empty() {
-        request = request.header("Authorization", format!("Bearer {token}"));
+    let token_value = token.expose_secret();
+    if needs_auth && !token_value.is_empty() {
+        request = request.header("Authorization", format!("Bearer {token_value}"));
     } else if !is_github_trusted_host(base_url, url) {
         tracing::warn!(
             url,
@@ -2034,10 +2033,14 @@ mod tests {
         assert_eq!(pr.state, "closed");
     }
 
+    fn token(s: &str) -> SecretString {
+        SecretString::from(s.to_string())
+    }
+
     #[test]
     fn test_repo_url() {
         let client =
-            GitHubClient::with_base_url("https://api.github.com", "owner", "repo", "token");
+            GitHubClient::with_base_url("https://api.github.com", "owner", "repo", token("token"));
         assert_eq!(
             client.repo_url("/issues"),
             "https://api.github.com/repos/owner/repo/issues"
@@ -2051,7 +2054,7 @@ mod tests {
     #[test]
     fn test_repo_url_strips_trailing_slash() {
         let client =
-            GitHubClient::with_base_url("https://api.github.com/", "owner", "repo", "token");
+            GitHubClient::with_base_url("https://api.github.com/", "owner", "repo", token("token"));
         assert_eq!(
             client.repo_url("/issues"),
             "https://api.github.com/repos/owner/repo/issues"
@@ -2060,7 +2063,7 @@ mod tests {
 
     #[test]
     fn test_provider_name() {
-        let client = GitHubClient::new("owner", "repo", "token");
+        let client = GitHubClient::new("owner", "repo", token("token"));
         assert_eq!(IssueProvider::provider_name(&client), "github");
         assert_eq!(MergeRequestProvider::provider_name(&client), "github");
     }
@@ -2074,7 +2077,7 @@ mod tests {
         use httpmock::prelude::*;
 
         fn create_test_client(server: &MockServer) -> GitHubClient {
-            GitHubClient::with_base_url(server.base_url(), "owner", "repo", "test-token")
+            GitHubClient::with_base_url(server.base_url(), "owner", "repo", token("test-token"))
         }
 
         fn sample_issue_json() -> serde_json::Value {
