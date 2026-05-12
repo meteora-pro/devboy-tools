@@ -142,11 +142,33 @@ fn dictionary() -> &'static HashSet<&'static str> {
         // words that frequently appear in source code as identifiers /
         // strings and would otherwise cause regex-based false positives.
         [
-            "password", "passw0rd", "secret", "example", "demo", "test",
-            "dummy", "placeholder", "sample", "lorem", "ipsum", "default",
-            "changeme", "hunter2", "qwerty", "letmein", "abcdef", "12345678",
-            "yourkey", "yoursecret", "mykey", "mysecret", "redacted", "todo",
-            "fixme", "xxxxxxxx", "aaaaaaaa",
+            "password",
+            "passw0rd",
+            "secret",
+            "example",
+            "demo",
+            "test",
+            "dummy",
+            "placeholder",
+            "sample",
+            "lorem",
+            "ipsum",
+            "default",
+            "changeme",
+            "hunter2",
+            "qwerty",
+            "letmein",
+            "abcdef",
+            "12345678",
+            "yourkey",
+            "yoursecret",
+            "mykey",
+            "mysecret",
+            "redacted",
+            "todo",
+            "fixme",
+            "xxxxxxxx",
+            "aaaaaaaa",
         ]
         .into_iter()
         .collect()

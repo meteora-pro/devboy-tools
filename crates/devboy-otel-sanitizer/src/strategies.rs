@@ -6,7 +6,7 @@
 use sha2::{Digest, Sha256};
 
 use crate::strategy::Strategy;
-use crate::validity::{shannon_entropy, Encoding};
+use crate::validity::{Encoding, shannon_entropy};
 
 /// Apply a strategy to the entire input string.
 ///

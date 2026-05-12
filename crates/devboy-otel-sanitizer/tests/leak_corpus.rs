@@ -6,7 +6,7 @@
 //! engine end-to-end on real-world-shaped inputs.
 
 use devboy_otel_sanitizer::{
-    load_default_rules, Rule, RuleScope, SanitizeResult, Sanitizer, Severity, Strategy,
+    Rule, RuleScope, SanitizeResult, Sanitizer, Severity, Strategy, load_default_rules,
 };
 
 fn make_rules() -> Vec<Rule> {
@@ -63,8 +63,7 @@ fn make_rules() -> Vec<Rule> {
             id: "jwt_token".into(),
             description: "JSON Web Token (3-part base64url)".into(),
             // Lenient JWT: header.payload.signature, base64url
-            pattern: r"eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"
-                .into(),
+            pattern: r"eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}".into(),
             severity: Severity::High,
             category: "auth_token".into(),
             applies_to: vec![],
@@ -162,10 +161,7 @@ fn does_not_redact_aws_key_lookalike_with_dictionary_word() {
     // This is intentionally short / dictionary-like; should not redact
     // because the AWS pattern requires AKIA + exactly 16 uppercase/digits.
     let s = Sanitizer::new(make_rules()).unwrap();
-    assert_eq!(
-        s.sanitize_string("AKIASHORT"),
-        SanitizeResult::Unchanged
-    );
+    assert_eq!(s.sanitize_string("AKIASHORT"), SanitizeResult::Unchanged);
 }
 
 // ---------------- Scan API -------------------------------------------------
@@ -198,7 +194,11 @@ fn scan_severity_is_propagated() {
 
 fn bundled() -> Sanitizer {
     let rules = load_default_rules().expect("default rules must parse");
-    assert!(rules.len() >= 60, "expected ≥60 default rules, got {}", rules.len());
+    assert!(
+        rules.len() >= 60,
+        "expected ≥60 default rules, got {}",
+        rules.len()
+    );
     Sanitizer::new(rules).expect("default rules must compile")
 }
 
@@ -221,7 +221,9 @@ fn bundled_redacts_gcp_api_key() {
     let s = bundled();
     let input = "API_KEY=AIzaSyB8KxR3vN5pQ7mYzT9wE2hF4dJ6sLcQ8KX";
     match s.sanitize_string(input) {
-        SanitizeResult::Redacted(v) => assert!(v.contains("[GCP_API_KEY_REDACTED]") || v.contains("[GEMINI_KEY_REDACTED]")),
+        SanitizeResult::Redacted(v) => {
+            assert!(v.contains("[GCP_API_KEY_REDACTED]") || v.contains("[GEMINI_KEY_REDACTED]"))
+        }
         other => panic!("expected redacted, got {other:?}"),
     }
 }
@@ -263,8 +265,8 @@ fn bundled_redacts_slack_bot_token() {
 fn bundled_redacts_anthropic_legacy() {
     let s = bundled();
     // Use random-shape body for legacy pattern (less strict than api03)
-    let body: String = "K3xM9pQ2vNwRtBZyFnL5dHcS4jW7eGvAMkyP6oRu8TzXqLbVfHdJgN7YkOWEScArMUwPbFhTzGd"
-        .into();
+    let body: String =
+        "K3xM9pQ2vNwRtBZyFnL5dHcS4jW7eGvAMkyP6oRu8TzXqLbVfHdJgN7YkOWEScArMUwPbFhTzGd".into();
     let input = format!("ANTHROPIC_API_KEY=sk-ant-legacy-{body}aZxX1");
     match s.sanitize_string(&input) {
         SanitizeResult::Redacted(_) | SanitizeResult::Drop => {}
@@ -333,7 +335,9 @@ fn bundled_redacts_email() {
     let s = bundled();
     let input = "user.email=alice@example.com";
     match s.sanitize_string(input) {
-        SanitizeResult::Redacted(v) => assert!(v.contains("[EMAIL_REDACTED]") || v.contains("user.email=[REDACTED]")),
+        SanitizeResult::Redacted(v) => {
+            assert!(v.contains("[EMAIL_REDACTED]") || v.contains("user.email=[REDACTED]"))
+        }
         other => panic!("expected redacted, got {other:?}"),
     }
 }
@@ -351,5 +355,8 @@ fn bundled_does_not_redact_short_lookalike() {
     // Short, dictionary-ish — must not be matched by any rule.
     assert_eq!(s.sanitize_string("AKIASHORT"), SanitizeResult::Unchanged);
     assert_eq!(s.sanitize_string("ghp_short"), SanitizeResult::Unchanged);
-    assert_eq!(s.sanitize_string("password=test"), SanitizeResult::Unchanged);
+    assert_eq!(
+        s.sanitize_string("password=test"),
+        SanitizeResult::Unchanged
+    );
 }
