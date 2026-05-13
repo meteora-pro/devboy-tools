@@ -549,4 +549,196 @@ mod tests {
         };
         assert_eq!(args.choice(), BackendChoice::ForceGui);
     }
+
+    // ===========================================================
+    // U7 — find_ui_binary discovery + launch_gui subprocess
+    // ===========================================================
+
+    use tempfile::TempDir;
+
+    /// Helper — write a `+x` shell stub at `dir/name` that echoes
+    /// its argv into `dir/args.txt` (so tests can assert on the
+    /// flags the launcher forwarded) and exits with `exit_code`.
+    ///
+    /// `#[cfg(unix)]`-gated because the test relies on `chmod`
+    /// semantics and `#!/bin/sh`.
+    #[cfg(unix)]
+    fn write_argv_stub(dir: &std::path::Path, name: &str, exit_code: i32) -> PathBuf {
+        use std::fs::{self, File};
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let stub = dir.join(name);
+        let mut f = File::create(&stub).unwrap();
+        // Write argv (one arg per line) to args.txt next to the
+        // stub. The launcher invokes it as
+        // `stub --provision <PATH>` — the test reads args.txt and
+        // checks both tokens are present and ordered.
+        writeln!(
+            f,
+            "#!/bin/sh\nfor a in \"$@\"; do echo \"$a\"; done > \"$(dirname \"$0\")/args.txt\"\nexit {exit_code}"
+        )
+        .unwrap();
+        drop(f);
+        let mut perms = fs::metadata(&stub).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&stub, perms).unwrap();
+        stub
+    }
+
+    // -- find_ui_binary -----------------------------------------
+
+    #[test]
+    fn find_ui_binary_honours_env_override() {
+        // Even when the env points at a non-existent path, the
+        // override is returned verbatim — `Command::spawn` is the
+        // layer that verifies the file actually exists. Same
+        // contract as find_agent_binary.
+        temp_env::with_var(
+            UI_BIN_ENV,
+            Some("/tmp/devboy-secrets-ui-test-binary"),
+            || {
+                let p = find_ui_binary().unwrap();
+                assert_eq!(p, PathBuf::from("/tmp/devboy-secrets-ui-test-binary"));
+            },
+        );
+    }
+
+    #[test]
+    fn find_ui_binary_treats_empty_env_as_unset() {
+        // Empty string in DEVBOY_UI_BIN must NOT short-circuit
+        // to a useless "" path. Empty == unset; the discovery
+        // chain falls through to sibling / PATH.
+        let dir = TempDir::new().unwrap();
+        temp_env::with_vars(
+            [
+                (UI_BIN_ENV, Some("")),
+                ("PATH", Some(dir.path().to_str().unwrap())),
+            ],
+            || {
+                let result = find_ui_binary();
+                if let Ok(p) = &result {
+                    // The sibling lookup might still hit a real
+                    // binary next to the test runner — that's a
+                    // valid outcome. Just guard against the
+                    // empty-path footgun.
+                    assert_ne!(p, &PathBuf::new());
+                }
+                // If we got an Err it must mention the binary
+                // name so the user knows what to install.
+                if let Err(e) = &result {
+                    let msg = format!("{e:#}");
+                    assert!(msg.contains(UI_BIN_NAME));
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn find_ui_binary_error_mentions_env_override_and_bin_name() {
+        // When everything fails the error must direct the user
+        // to the DEVBOY_UI_BIN env override AND mention the
+        // binary name they need to install. Without those two
+        // strings the error is unhelpful boilerplate.
+        let dir = TempDir::new().unwrap();
+        temp_env::with_vars(
+            [
+                (UI_BIN_ENV, Some("")),
+                ("PATH", Some(dir.path().to_str().unwrap())),
+            ],
+            || {
+                let result = find_ui_binary();
+                // If the test binary happens to sit next to a
+                // real devboy-secrets-ui in `target/debug/deps`
+                // ancestor, the sibling lookup succeeds. Only
+                // assert on the error message when the lookup
+                // actually failed.
+                if let Err(e) = result {
+                    let msg = format!("{e:#}");
+                    assert!(
+                        msg.contains(UI_BIN_ENV),
+                        "error must mention {UI_BIN_ENV}: {msg}"
+                    );
+                    assert!(
+                        msg.contains(UI_BIN_NAME),
+                        "error must mention {UI_BIN_NAME}: {msg}"
+                    );
+                }
+            },
+        );
+    }
+
+    // -- launch_gui via env override ----------------------------
+
+    #[cfg(unix)]
+    #[test]
+    fn launch_gui_forwards_provision_flag_to_subprocess() {
+        // Wire DEVBOY_UI_BIN to a shell stub that captures argv.
+        // The launcher should pass `--provision <PATH>` through
+        // verbatim — that's the only argument it forwards today,
+        // and the agent / setup-skill UX depends on it.
+        let dir = TempDir::new().unwrap();
+        let stub = write_argv_stub(dir.path(), "stub-ui.sh", 0);
+        temp_env::with_var(UI_BIN_ENV, Some(stub.to_str().unwrap()), || {
+            launch_gui(Some("team/openai/api-key")).expect("stub exits 0");
+        });
+        let captured = std::fs::read_to_string(dir.path().join("args.txt")).unwrap();
+        let lines: Vec<&str> = captured.lines().collect();
+        assert_eq!(
+            lines,
+            vec!["--provision", "team/openai/api-key"],
+            "launcher must forward --provision then the path, got: {captured:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn launch_gui_omits_provision_when_path_not_set() {
+        // No --provision flag → empty argv. Same stub, just
+        // a no-arg invocation.
+        let dir = TempDir::new().unwrap();
+        let stub = write_argv_stub(dir.path(), "stub-ui.sh", 0);
+        temp_env::with_var(UI_BIN_ENV, Some(stub.to_str().unwrap()), || {
+            launch_gui(None).expect("stub exits 0");
+        });
+        let captured = std::fs::read_to_string(dir.path().join("args.txt")).unwrap();
+        assert_eq!(
+            captured, "",
+            "launcher must not add any flag when provision_path is None"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn launch_gui_propagates_nonzero_exit_from_subprocess() {
+        // Stub exits 17 — the launcher must surface a non-Ok
+        // result rather than silently swallowing the failure.
+        let dir = TempDir::new().unwrap();
+        let stub = write_argv_stub(dir.path(), "stub-ui.sh", 17);
+        let err = temp_env::with_var(UI_BIN_ENV, Some(stub.to_str().unwrap()), || {
+            launch_gui(None).unwrap_err()
+        });
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains(UI_BIN_NAME),
+            "error must name the binary that failed: {msg}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn launch_gui_surfaces_missing_binary_as_a_clear_error() {
+        // Point the env at a path that definitely does not
+        // exist. `Command::status` must fail at spawn time and
+        // the launcher must translate that into an anyhow error
+        // mentioning the binary path.
+        let nonexistent = "/totally-nonexistent/devboy-secrets-ui-stub";
+        let err = temp_env::with_var(UI_BIN_ENV, Some(nonexistent), || {
+            launch_gui(None).unwrap_err()
+        });
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("failed to spawn") && msg.contains(nonexistent),
+            "error must name the spawn failure AND the binary path: {msg}"
+        );
+    }
 }
