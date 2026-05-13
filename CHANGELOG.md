@@ -81,6 +81,15 @@ CLI now spawns the GUI as a subprocess (`find_ui_binary` → `Command::status`),
 mirroring the `devboy-secrets-agent` discovery pattern (env override
 `DEVBOY_UI_BIN` → sibling of `current_exe()` → `PATH`).
 
+Final sizes on macOS (release + LTO + strip, `panic = unwind` for Sentry):
+
+| Binary | Bytes | MiB | vs baseline |
+|---|---|---|---|
+| `devboy` (baseline, pre-split) | 27,595,560 | 26.32 | — |
+| `devboy` (after split) | **19,428,160** | **18.53** | **−8,167,400 (−29.6%)** |
+| `devboy-secrets-ui` (new) | 9,217,616 | 8.79 | new |
+| `devboy-secrets-agent` (unchanged) | 1,332,080 | 1.27 | — |
+
 What this gives users:
 
 - **Smaller CLI** for the CI / headless majority. Stripped + LTO'd
