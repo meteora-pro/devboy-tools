@@ -22,8 +22,22 @@ name = "devboy-secrets-ui"
 path = "src/main.rs"
 
 [dependencies]
+devboy-secrets-ui = { workspace = true, features = ["gui"] }
+devboy-storage = { workspace = true }
+devboy-token-catalog = { workspace = true }
+devboy-vault-crypto = { workspace = true }
+devboy-secret-patterns = { workspace = true }
+# `eframe` powers the native window. Pinned to the same egui 0.34.x
+# range that `devboy-secrets-ui::gui` uses so widget code and the host
+# run against the same types. `default-features = false` drops the
+# persistence feature we don't need (no app-state save between runs).
+eframe = { version = "0.34", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 anyhow.workspace = true
 clap.workspace = true
+secrecy.workspace = true
+regex.workspace = true
+reqwest = { workspace = true, features = ["json", "rustls-tls", "blocking"] }
+dirs.workspace = true
 
 [lints]
 workspace = true
