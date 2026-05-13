@@ -15,7 +15,8 @@
     "x64"
   ],
   "files": [
-    "bin/devboy.exe"
+    "bin/devboy.exe",
+    "bin/devboy-secrets-ui.exe"
   ],
   "preferUnplugged": true
 }
