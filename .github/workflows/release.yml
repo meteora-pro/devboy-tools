@@ -15,26 +15,36 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `artifact_name` is the primary CLI binary; `ui_artifact_name`
+        # is the companion GUI binary (see ADR-023 §3.4 — split into a
+        # second crate so the CLI does not link eframe/egui). Both ride
+        # in the same tarball/zip so the existing artifact naming +
+        # download URLs stay stable.
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: devboy
+            ui_artifact_name: devboy-secrets-ui
             asset_name: devboy-linux-x86_64
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             artifact_name: devboy
+            ui_artifact_name: devboy-secrets-ui
             asset_name: devboy-linux-arm64
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: devboy
+            ui_artifact_name: devboy-secrets-ui
             asset_name: devboy-macos-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: devboy
+            ui_artifact_name: devboy-secrets-ui
             asset_name: devboy-macos-arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: devboy.exe
+            ui_artifact_name: devboy-secrets-ui.exe
             asset_name: devboy-windows-x86_64.exe
 
     steps:
@@ -77,23 +87,34 @@ jobs:
           EXISTING_KEYCHAINS=$(security list-keychains -d user | sed 's/^[[:space:]]*"//; s/"$//')
           security list-keychains -d user -s $EXISTING_KEYCHAINS "$KEYCHAIN_PATH"
 
-      - name: Sign macOS binary
+      - name: Sign macOS binaries
         if: contains(matrix.target, 'apple-darwin')
+        # Both binaries must be signed — the OS keychain prompt that
+        # `devboy-secrets-ui` triggers on first run would otherwise
+        # show a quarantine warning, and notarytool refuses a bundle
+        # that contains an unsigned executable.
         run: |
           IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          codesign --force --options runtime \
-            --sign "$IDENTITY" \
-            --timestamp \
-            target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          for bin in ${{ matrix.artifact_name }} ${{ matrix.ui_artifact_name }}; do
+            codesign --force --options runtime \
+              --sign "$IDENTITY" \
+              --timestamp \
+              "target/${{ matrix.target }}/release/$bin"
+          done
 
-      - name: Notarize macOS binary
+      - name: Notarize macOS binaries
         if: contains(matrix.target, 'apple-darwin')
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        # One notarization request covers both binaries — Apple stamps
+        # every signed executable inside the zip, so we get the
+        # certified ticket attached to both in a single submission.
         run: |
-          zip -j devboy-notarize.zip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          zip -j devboy-notarize.zip \
+            target/${{ matrix.target }}/release/${{ matrix.artifact_name }} \
+            target/${{ matrix.target }}/release/${{ matrix.ui_artifact_name }}
           xcrun notarytool submit devboy-notarize.zip \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_ID_PASSWORD" \
@@ -107,9 +128,14 @@ jobs:
 
       - name: Prepare artifact (Unix)
         if: runner.os != 'Windows'
+        # Bundle both binaries into the same tarball so existing
+        # download URLs / SHA256 manifests stay stable; consumers
+        # learn about the second binary via `tar tf`.
         run: |
           cd target/${{ matrix.target }}/release
-          tar -czvf ${{ matrix.asset_name }}.tar.gz ${{ matrix.artifact_name }}
+          tar -czvf ${{ matrix.asset_name }}.tar.gz \
+            ${{ matrix.artifact_name }} \
+            ${{ matrix.ui_artifact_name }}
           shasum -a 256 ${{ matrix.asset_name }}.tar.gz > ${{ matrix.asset_name }}.tar.gz.sha256
 
       - name: Prepare artifact (Windows)
@@ -117,7 +143,7 @@ jobs:
         shell: pwsh
         run: |
           cd target/${{ matrix.target }}/release
-          Compress-Archive -Path ${{ matrix.artifact_name }} -DestinationPath ${{ matrix.asset_name }}.zip
+          Compress-Archive -Path ${{ matrix.artifact_name }},${{ matrix.ui_artifact_name }} -DestinationPath ${{ matrix.asset_name }}.zip
           (Get-FileHash ${{ matrix.asset_name }}.zip -Algorithm SHA256).Hash.ToLower() + "  ${{ matrix.asset_name }}.zip" | Out-File -Encoding utf8 ${{ matrix.asset_name }}.zip.sha256
 
       - name: Upload artifact
@@ -248,7 +274,9 @@ jobs:
             mkdir -p "$pkg_dir/bin"
 
             tar -xzf "artifacts/$artifact/$artifact.tar.gz" -C "$pkg_dir/bin/"
-            chmod 755 "$pkg_dir/bin/devboy"
+            # Both binaries land in `bin/`; mark them executable so
+            # npm preserves the +x bit through the registry pipeline.
+            chmod 755 "$pkg_dir/bin/devboy" "$pkg_dir/bin/devboy-secrets-ui"
 
             # Set version in package.json
             jq --arg v "$VERSION" '.version = $v' "$pkg_dir/package.json" > "$pkg_dir/package.json.tmp"
