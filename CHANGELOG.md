@@ -72,3 +72,42 @@ Live demo on `meteora/devboy-env-1` (845 env-var references in 123 files) drove 
 | post-S2 + bundled catalogs | provider-supplied patterns + skip | **161 (-32%)** |
 
 Real credentials (`OPENAI_API_KEY`, `LANGFUSE_*_KEY`, `GITLAB_ACCESS_TOKEN`, `OLLAMA_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`) preserved as path proposals throughout.
+
+### Changed — GUI lives in its own binary (epic #247 polish)
+
+The eframe/egui rendering stack moved out of the `devboy` CLI into a new
+companion binary `devboy-secrets-ui` (crate `devboy-secrets-ui-bin`). The
+CLI now spawns the GUI as a subprocess (`find_ui_binary` → `Command::status`),
+mirroring the `devboy-secrets-agent` discovery pattern (env override
+`DEVBOY_UI_BIN` → sibling of `current_exe()` → `PATH`).
+
+What this gives users:
+
+- **Smaller CLI** for the CI / headless majority. Stripped + LTO'd
+  `devboy` drops from **27.6 MiB → 19.4 MiB** (−7.8 MiB). Anyone hitting
+  `secrets list`, `secrets validate`, the MCP server, or the format
+  pipeline never links eframe, egui, winit, glow, wayland, x11, skrifa
+  font rasterizer, or the bundled image decoders.
+- **TUI stays inline** — `devboy secrets ui --tui` keeps the ratatui path
+  fully inside `devboy`; only `--gui` exec's into the companion.
+- **No artifact-naming change** — both binaries ride in the same
+  per-platform tarball / zip published to GitHub Releases, and both are
+  shipped through the same `@devboy-tools/<platform>` npm packages.
+
+Tradeoff: total on-disk footprint for GUI users is now ~28.6 MiB (19.4
+CLI + 9.2 UI) versus the old 27.6 MiB single binary — slight bump
+because each binary embeds its own copy of std + tokio + serde, but the
+CI win dominates the typical install profile.
+
+### Added — Approve-on-use cron-mode operations work (PR #255 follow-ups)
+
+After the main epic landed, the PR captured four Codex review finds (F1
+SSRF redirect bypass, F2 add-url confirm-before-write, F3 SessionApprovalCache
+wired into proxy_secrets + argv_secrets, F4 ProductionWizardIo provision via
+daemon RPC + `load_all_with_urls` in the proposer), two nits
+(`RequestIdReply` typed wrapper on 5 MCP handlers + extended leak test;
+cli.md `summary` vs `message` drift + replaced catalog-url-sources.md
+hand-edit guidance with `catalog forget` / `pin` / `refresh`), and five
+coverage-boost test series totaling 70+ new tests across catalog CLI,
+secrets_setup, secrets_validate, doctor/checks/sources, and the
+secrets_migrate + secrets_rotate happy paths.

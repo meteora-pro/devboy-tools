@@ -38,6 +38,17 @@ devboy secrets --help
 
 You should see subcommands `list`, `describe`, `validate`, `migrate`, `agent`, `ui`, `rotate`, `catalog`. If any are missing, upgrade the CLI to 0.26 or later (the minimum version that ships the secret framework).
 
+### Companion binaries
+
+The npm package and the GitHub Release tarball ship two companion binaries alongside `devboy`:
+
+- **`devboy-secrets-agent`** — long-running daemon that owns the unlocked local-vault. Spawned on demand by `devboy secrets agent start`; not required unless you use the `local-vault` source.
+- **`devboy-secrets-ui`** — native GUI window (eframe / egui) for the inventory + provision dialog. Spawned by `devboy secrets ui --gui` as a subprocess; not required for TUI / CI-only usage.
+
+Both are placed next to `devboy` in the same `bin/` directory, so the CLI's discovery walk (env override → sibling of `current_exe()` → `PATH`) finds them out of the box. If you build from source via `cargo install --path crates/devboy-cli`, run the same `cargo install` against `crates/devboy-secrets-agent` / `crates/devboy-secrets-ui-bin` to get the companions. The `DEVBOY_AGENT_BIN` and `DEVBOY_UI_BIN` env vars override discovery for tests / dev workflows.
+
+The split keeps the CLI itself lean (~19 MiB) — CI runs hitting `secrets list` / `secrets validate` / the MCP server never link the eframe rendering stack.
+
 ## Step 2. Wire up the first source
 
 By default the CLI works against the OS keychain with no configuration. That's enough for one developer on one machine. When the team adds 1Password, Vault, or env-store, you extend the router config. Start with keychain.
