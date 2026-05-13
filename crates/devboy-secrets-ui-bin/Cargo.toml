@@ -1,0 +1,29 @@
+[package]
+name = "devboy-secrets-ui-bin"
+description = "Native GUI window for the devboy-tools secrets inventory. Ships as the `devboy-secrets-ui` binary so the main `devboy` CLI does not need to link eframe/egui (ADR-023 §3.4)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["devboy", "secrets", "ui", "gui", "egui"]
+categories = ["command-line-utilities", "gui"]
+publish = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[[bin]]
+name = "devboy-secrets-ui"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true
