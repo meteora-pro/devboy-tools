@@ -486,6 +486,7 @@ impl SlackClient {
             reply_to_id,
             attachments: map_attachments(&message),
             is_edited: message.edited.is_some(),
+            edit_date: None,
         })
     }
 

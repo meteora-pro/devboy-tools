@@ -1235,6 +1235,8 @@ pub struct MessengerMessage {
     pub attachments: Vec<MessageAttachment>,
     /// Whether the message was edited after creation.
     pub is_edited: bool,
+    /// Provider-specific edit timestamp when available.
+    pub edit_date: Option<String>,
 }
 
 /// Parameters for listing available messenger chats.

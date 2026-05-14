@@ -666,6 +666,7 @@ fn map_message(message: TelegramMessage, edited_from_update: bool) -> MessengerM
         reply_to_id,
         attachments: map_attachments(&message),
         is_edited: edited_from_update || message.edit_date.is_some(),
+        edit_date: message.edit_date.map(|value| value.to_string()),
     }
 }
 
@@ -1127,6 +1128,7 @@ mod tests {
         assert_eq!(result.items[1].reply_to_id.as_deref(), Some("7"));
         assert_eq!(result.items[1].thread_id.as_deref(), Some("7"));
         assert!(result.items[1].is_edited);
+        assert_eq!(result.items[1].edit_date.as_deref(), Some("1710000300"));
     }
 
     #[tokio::test]
