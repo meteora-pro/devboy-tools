@@ -21,6 +21,17 @@ rustdoc-args = ["--cfg", "docsrs"]
 name = "devboy-secrets-ui"
 path = "src/main.rs"
 
+[features]
+default = []
+# `dev-screenshot` adds the `--screenshot <path>` flag: renders one
+# provision-dialog frame to a PNG through an offscreen egui_kittest
+# wgpu harness and exits, instead of running the eframe event loop.
+# Pure development tooling — lets an automated agent visually verify
+# GUI changes without a human looking at the native window. Off by
+# default so the shipped binary does not link a second (wgpu)
+# rendering backend.
+dev-screenshot = ["dep:egui_kittest", "dep:image"]
+
 [dependencies]
 devboy-secrets-ui = { workspace = true, features = ["gui"] }
 devboy-storage = { workspace = true }
@@ -32,6 +43,11 @@ devboy-secret-patterns = { workspace = true }
 # run against the same types. `default-features = false` drops the
 # persistence feature we don't need (no app-state save between runs).
 eframe = { version = "0.34", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+# Offscreen egui renderer for `--screenshot` (dev-screenshot feature).
+# Version-locked to egui 0.34.x so the harness renders the exact same
+# widget tree the live app builds.
+egui_kittest = { version = "0.34.2", optional = true, features = ["wgpu", "snapshot"] }
+image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 anyhow.workspace = true
 clap.workspace = true
 secrecy.workspace = true

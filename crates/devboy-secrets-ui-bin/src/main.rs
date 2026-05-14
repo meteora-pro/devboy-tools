@@ -24,6 +24,8 @@ use anyhow::Result;
 use clap::Parser;
 
 mod catalog_metadata;
+#[cfg(feature = "dev-screenshot")]
+mod screenshot;
 
 /// Command-line surface mirrored from the original
 /// `devboy secrets ui` clap struct so existing users see
@@ -44,10 +46,31 @@ struct Cli {
     /// inventory list with no dialog armed.
     #[arg(long, value_name = "PATH")]
     provision: Option<String>,
+
+    /// Dev-only: render one provision-dialog frame to a PNG at
+    /// this path and exit, instead of opening a window. Built
+    /// only with `--features dev-screenshot`. Lets an automated
+    /// agent visually verify GUI changes without a human at the
+    /// screen.
+    #[arg(long, value_name = "PATH")]
+    screenshot: Option<std::path::PathBuf>,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    #[cfg(feature = "dev-screenshot")]
+    if let Some(out) = cli.screenshot.as_deref() {
+        return screenshot::render_provision_dialog_to_png(out);
+    }
+    #[cfg(not(feature = "dev-screenshot"))]
+    if cli.screenshot.is_some() {
+        anyhow::bail!(
+            "--screenshot requires a build with `--features dev-screenshot`; \
+             this binary was built without it"
+        );
+    }
+
     launch_gui(cli.provision.as_deref())
 }
 

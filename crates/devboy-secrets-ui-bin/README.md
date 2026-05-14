@@ -24,6 +24,30 @@ CLI spawns this binary as a subprocess. The launcher discovers it via
 2. A sibling of `devboy` in the same directory
 3. `PATH`
 
+## Dev screenshot mode
+
+Built with `--features dev-screenshot`, the binary also accepts:
+
+```sh
+devboy-secrets-ui --screenshot <PATH>
+```
+
+This renders **one** provision-dialog frame to a PNG at `<PATH>` through
+an offscreen `egui_kittest` wgpu harness, then exits — no window, no
+event loop. It draws the exact same `gui::provision_dialog::render` the
+live app calls, populated with a catalog-matched sample, so the PNG is a
+faithful preview.
+
+Purpose: lets an automated agent (or a CI visual-diff job) inspect GUI
+changes without a human looking at the native window. The feature is
+**off by default** so the shipped binary does not link a second (wgpu)
+rendering backend on top of `glow`.
+
+```sh
+cargo run -p devboy-secrets-ui-bin --features dev-screenshot -- \
+  --screenshot /tmp/provision-dialog.png
+```
+
 ## See also
 
 - [ADR-023 §3.4](../../docs/architecture/adr/ADR-023-secret-store-ux-layer.md)
