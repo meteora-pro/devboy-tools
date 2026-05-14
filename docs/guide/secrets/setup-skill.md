@@ -178,7 +178,7 @@ The dialog opens as a **modal overlay** on top of the inventory (egui) / a cente
 | "How to obtain:" | both | catalog | Numbered list rendered from `variants[i].retrieval.steps`. |
 | "Note: …" | both | catalog | Caveat / pro-tip from `variants[i].retrieval.notes`. |
 | "Rotating this secret:" | **Rotation only** | catalog | `variants[i].rotation.notes` (the concrete *how*) + a "Rotation guide ↗" link from `variants[i].rotation.guide_url`. Omitted in Provision mode — rotation guidance belongs on the rotation flow, not the first-time provision. Hidden in Rotation mode too when neither field is set. |
-| value input | both | — | Hidden (password-masked) input — the actual action, below a separator. |
+| value input | both | — | Password-masked input — the actual action, below a separator. An eye-toggle (👁 / 🙈) right of the field unmasks it **in place** (standard password-field UX); a `shown / hidden · N chars` caption sits below. No separate "reveal" checkbox. |
 | destructive-confirm | **Rotation only** | — | "I understand this overwrites the current secret" checkbox gates the save. |
 
 When the path's provider segment does not match any loaded catalog the catalog-derived blocks collapse silently and the dialog renders only the manifest-side rows — the pre-S2 behaviour.

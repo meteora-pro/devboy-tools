@@ -34,7 +34,10 @@ Feature: Provision dialog binds to the active token catalog
     And the "How to obtain:" header + numbered `retrieval.steps` follow the links
     And the "Note: ..." footer carries `retrieval.notes`
     And the dialog does NOT show a "Rotating this secret:" section (Provision mode)
-    And the hidden value input sits below a separator as the final action
+    And the value input sits below a separator as the final action
+    And the value input is password-masked by default
+    And an eye-toggle next to the input unmasks the value in place when clicked
+    And there is no separate "Show entered value" checkbox
 
   Scenario: Rotation mode adds the cadence row and the rotation section
     When I open the rotation dialog for "team/openai/api-key"

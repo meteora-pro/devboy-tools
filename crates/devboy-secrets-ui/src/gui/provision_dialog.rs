@@ -134,23 +134,50 @@ pub fn render(ui: &mut egui::Ui, state: &mut DialogState) -> DialogFrameResult {
 
     ui.separator();
 
-    // 8. Hidden value input — the actual action. egui's
-    //    password mode masks it; the buffer round-trips through
-    //    `value_clone_for_edit` / `replace_value_str` so the
-    //    canonical store stays a `SecretString`.
+    // 8. Value input — the actual action. Masked by default;
+    //    an eye-toggle right of the field unmasks it in place
+    //    (the standard password-field affordance) instead of
+    //    echoing the value on a separate line. The buffer
+    //    round-trips through `value_clone_for_edit` /
+    //    `replace_value_str` so the canonical store stays a
+    //    `SecretString`.
     let mut buf = state.value_clone_for_edit();
-    let resp = ui.add(
-        egui::TextEdit::singleline(&mut buf)
-            .password(true)
-            .hint_text("paste the secret value"),
-    );
-    if resp.changed() {
-        state.replace_value_str(buf);
+    let revealed = state.reveal();
+    let mut toggle_reveal = false;
+    ui.horizontal(|ui| {
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut buf)
+                .password(!revealed)
+                .hint_text("paste the secret value")
+                .desired_width(360.0),
+        );
+        if resp.changed() {
+            state.replace_value_str(buf);
+        }
+        // Eye-toggle: 👁 when masked (click to reveal), 🙈 when
+        // revealed (click to re-mask). `on_hover_text` spells
+        // it out for anyone whose font doesn't render the
+        // emoji.
+        let (glyph, hover) = if revealed {
+            ("🙈", "Hide value")
+        } else {
+            ("👁", "Show value")
+        };
+        if ui.button(glyph).on_hover_text(hover).clicked() {
+            toggle_reveal = true;
+        }
+    });
+    if toggle_reveal {
+        state.toggle_reveal();
     }
     ui.label(
-        egui::RichText::new(format!("(hidden, {} chars)", state.value_len()))
-            .small()
-            .weak(),
+        egui::RichText::new(format!(
+            "{} · {} chars",
+            if revealed { "shown" } else { "hidden" },
+            state.value_len()
+        ))
+        .small()
+        .weak(),
     );
 
     // 9. Destructive-confirm checkbox — Rotation mode only.
@@ -210,6 +237,28 @@ mod tests {
     #[test]
     fn render_does_not_panic_in_headless_egui_context() {
         let mut state = fixture();
+        egui::__run_test_ui(|ui| {
+            let _ = render(ui, &mut state);
+        });
+    }
+
+    #[test]
+    fn render_does_not_panic_with_value_revealed() {
+        // The eye-toggle flips `state.reveal()`, which the
+        // renderer feeds into `TextEdit::password(!reveal)`.
+        // Exercise the unmasked branch so a future refactor of
+        // the input row can't regress it.
+        let mut state = fixture();
+        state.type_char('s');
+        state.type_char('k');
+        state.toggle_reveal();
+        assert!(state.reveal());
+        egui::__run_test_ui(|ui| {
+            let _ = render(ui, &mut state);
+        });
+        // Toggling back re-masks; render must still be panic-free.
+        state.toggle_reveal();
+        assert!(!state.reveal());
         egui::__run_test_ui(|ui| {
             let _ = render(ui, &mut state);
         });

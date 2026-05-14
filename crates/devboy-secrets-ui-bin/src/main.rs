@@ -127,10 +127,6 @@ struct InventoryApp {
     /// rest of the session — the user must save it somewhere
     /// before closing the window.
     recovery_phrase_to_show: Option<String>,
-    /// Toggle for the «show entered value» switch above the
-    /// provision-dialog hidden input. Off by default — only
-    /// flip on when the user wants to verify what they typed.
-    reveal_value: bool,
     /// `id` of the currently selected token variant, when the
     /// dialog's path resolves to a multi-variant provider.
     /// `None` when the provider has only one variant (auto-
@@ -177,7 +173,6 @@ impl InventoryApp {
             last_save_error: None,
             backend,
             recovery_phrase_to_show: None,
-            reveal_value: false,
             selected_variant_id: None,
             catalogs,
             catalog_errors,
@@ -706,29 +701,12 @@ impl eframe::App for InventoryApp {
                         );
                     }
 
-                    // Reveal-toggle for the value below. Echoes
-                    // chars in plaintext when on. Off by default
-                    // — turn on only when you need to spot-check
-                    // what you typed before saving.
-                    let mut reveal = self.reveal_value;
-                    if ui
-                        .checkbox(&mut reveal, "Show entered value (off = bullets)")
-                        .clicked()
-                    {
-                        self.reveal_value = reveal;
-                    }
-                    if self.reveal_value
-                        && let Some(d) = self.dialog.as_ref()
-                    {
-                        let val = d.value_clone_for_edit();
-                        ui.label(
-                            eframe::egui::RichText::new(format!("current value: «{val}»"))
-                                .monospace()
-                                .background_color(eframe::egui::Color32::from_rgb(
-                                    0x33, 0x33, 0x33,
-                                )),
-                        );
-                    }
+                    // The value's masked / unmasked state lives
+                    // in `DialogState` now — the provision-dialog
+                    // widget renders the eye-toggle right next to
+                    // the input (standard password-field UX). No
+                    // separate "Show entered value" checkbox, no
+                    // echoed `current value: «…»` line here.
 
                     // Live regex feedback — visible to the user
                     // while they're typing. Resolution order:

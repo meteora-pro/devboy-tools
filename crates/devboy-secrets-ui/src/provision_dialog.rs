@@ -250,6 +250,11 @@ pub struct DialogState {
     confirm_checked: bool,
     focus: DialogFocus,
     status: DialogStatus,
+    /// Whether the hidden value input is currently unmasked.
+    /// Driven by the eye-toggle next to the field. Off by
+    /// default — the value is masked until the user explicitly
+    /// reveals it to spot-check what they typed.
+    reveal: bool,
 }
 
 impl DialogState {
@@ -266,6 +271,7 @@ impl DialogState {
             confirm_checked: false,
             focus: DialogFocus::ValueInput,
             status: DialogStatus::Idle,
+            reveal: false,
         }
     }
 
@@ -287,6 +293,18 @@ impl DialogState {
 
     pub fn confirm_checked(&self) -> bool {
         self.confirm_checked
+    }
+
+    /// Whether the value input is currently unmasked. The egui
+    /// renderer feeds this into `TextEdit::password(!reveal)`.
+    pub fn reveal(&self) -> bool {
+        self.reveal
+    }
+
+    /// Flip the masked / unmasked state of the value input.
+    /// Wired to the eye-toggle button next to the field.
+    pub fn toggle_reveal(&mut self) {
+        self.reveal = !self.reveal;
     }
 
     /// Length of the held value in code points. Render uses this
@@ -886,6 +904,26 @@ mod tests {
         assert!(s.confirm_checked());
         s.toggle_confirm();
         assert!(!s.confirm_checked());
+    }
+
+    // -- Reveal toggle -----------------------------------------
+
+    #[test]
+    fn reveal_starts_off_so_the_value_is_masked_by_default() {
+        let s = DialogState::new(DialogMode::Provision, meta());
+        assert!(
+            !s.reveal(),
+            "value input must be masked until the user opts in"
+        );
+    }
+
+    #[test]
+    fn toggle_reveal_flips_the_mask_state_both_ways() {
+        let mut s = DialogState::new(DialogMode::Provision, meta());
+        s.toggle_reveal();
+        assert!(s.reveal(), "first toggle unmasks");
+        s.toggle_reveal();
+        assert!(!s.reveal(), "second toggle re-masks");
     }
 
     // -- Submit guards -----------------------------------------
