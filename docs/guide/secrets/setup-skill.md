@@ -164,18 +164,22 @@ Common failure modes:
 
 When the wizard reaches step 5 (provision a missing path), it opens the native provision dialog (`devboy secrets ui --provision <path>`). The dialog now fuses three sources of metadata so the user sees the same procedure the provider's own docs publish:
 
-| Field | Source | Notes |
-|---|---|---|
-| PATH | manifest | The ADR-020 path. |
-| VIA | router resolution | Source name (`local-vault`, `keychain`, `1password`, …). |
-| ROTATION | catalog → manifest → `"manual"` | `variants[i].rotation.method` wins over `IndexEntry.rotation_method`. |
-| FORMAT | catalog | `variants[i].format_hint` (e.g. "starts with sk-, 20+ chars"). |
-| DOCS | catalog | `variants[i].retrieval.docs_url` — the provider's official documentation. Rendered as a "Provider docs" link (egui) or a `DOCS` line (TUI). |
-| Description block | catalog | Italic text — `variants[i].description`. Hidden when no catalog match. |
-| "How to obtain:" | catalog | Numbered list rendered from `variants[i].retrieval.steps`. |
-| "Note: …" | catalog | Caveat / pro-tip from `variants[i].retrieval.notes`. |
-| "Rotating this secret:" | catalog | `variants[i].rotation.notes` (the concrete *how*) + a "Rotation guide" link from `variants[i].rotation.guide_url`. Hidden when neither is set. |
-| [Open URL] | catalog → manifest | `variants[i].retrieval.console_url`, with `IndexEntry.retrieval_url` as fallback. The *creation* page — distinct from the DOCS link. |
+The dialog opens as a **modal overlay** on top of the inventory (egui) / a centered modal in the terminal (TUI) — the inventory stays visible underneath. ESC or a click on the dimmed backdrop dismisses it. Content is ordered most-actionable-first.
+
+| Row / block | Mode | Source | Notes |
+|---|---|---|---|
+| heading | both | — | "Provision secret" / "Rotate secret". |
+| PATH | both | manifest | The ADR-020 path. |
+| VIA | both | router resolution | Source name (`local-vault`, `keychain`, `1password`, …). |
+| ROTATION | **Rotation only** | catalog → manifest → `"manual"` | Cadence row. Omitted in Provision mode — it's noise when first provisioning. |
+| FORMAT | both | catalog | `variants[i].format_hint` (e.g. "starts with sk-, 20+ chars"). |
+| Description block | both | catalog | Italic text — `variants[i].description`. Hidden when no catalog match. |
+| Links row | both | catalog → manifest | "Open console ↗" (`retrieval.console_url`, falls back to `IndexEntry.retrieval_url`) + "Provider docs ↗" (`retrieval.docs_url`). Both are **real hyperlinks** — egui opens the OS browser directly. Placed *above* the steps. In the TUI these are `CONSOLE` / `DOCS` text lines. |
+| "How to obtain:" | both | catalog | Numbered list rendered from `variants[i].retrieval.steps`. |
+| "Note: …" | both | catalog | Caveat / pro-tip from `variants[i].retrieval.notes`. |
+| "Rotating this secret:" | **Rotation only** | catalog | `variants[i].rotation.notes` (the concrete *how*) + a "Rotation guide ↗" link from `variants[i].rotation.guide_url`. Omitted in Provision mode — rotation guidance belongs on the rotation flow, not the first-time provision. Hidden in Rotation mode too when neither field is set. |
+| value input | both | — | Hidden (password-masked) input — the actual action, below a separator. |
+| destructive-confirm | **Rotation only** | — | "I understand this overwrites the current secret" checkbox gates the save. |
 
 When the path's provider segment does not match any loaded catalog the catalog-derived blocks collapse silently and the dialog renders only the manifest-side rows — the pre-S2 behaviour.
 

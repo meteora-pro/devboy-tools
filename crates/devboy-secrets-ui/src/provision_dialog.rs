@@ -488,9 +488,22 @@ fn border_style_for_mode(mode: DialogMode) -> Style {
 
 #[cfg(feature = "tui")]
 fn metadata_height(state: &DialogState) -> u16 {
-    // path + provider + rotation method + (optional) format hint
-    let mut h: u16 = 3;
+    // PATH + VIA are always present.
+    let mut h: u16 = 2;
+    // ROTATION cadence line — Rotation mode only (it's noise
+    // when first provisioning), mirroring the egui layout.
+    if state.mode == DialogMode::Rotation {
+        h += 1;
+    }
     if state.metadata.format_hint.is_some() {
+        h += 1;
+    }
+    // CONSOLE + DOCS link lines — the terminal can't make them
+    // clickable, so the URL is surfaced as text.
+    if state.metadata.provisioning_url.is_some() {
+        h += 1;
+    }
+    if state.metadata.docs_url.is_some() {
         h += 1;
     }
     // Catalog-derived fields (S2 / U-series): description,
@@ -508,14 +521,12 @@ fn metadata_height(state: &DialogState) -> u16 {
     if state.metadata.retrieval_notes.is_some() {
         h += 2;
     }
-    // Guide fields (G-series): a DOCS line, plus a rotation
-    // block (header + notes + guide URL).
-    if state.metadata.docs_url.is_some() {
-        h += 1;
-    }
-    if state.metadata.rotation_notes.is_some() || state.metadata.rotation_guide_url.is_some() {
-        // blank separator + header + (optional) notes line +
-        // (optional) guide-url line
+    // Rotation block (G-series) — Rotation mode ONLY, same as
+    // egui. header + (optional) notes line + (optional)
+    // guide-url line, with a blank separator above.
+    if state.mode == DialogMode::Rotation
+        && (state.metadata.rotation_notes.is_some() || state.metadata.rotation_guide_url.is_some())
+    {
         h += 2;
         if state.metadata.rotation_notes.is_some() {
             h += 1;
@@ -529,6 +540,10 @@ fn metadata_height(state: &DialogState) -> u16 {
 
 #[cfg(feature = "tui")]
 fn render_metadata(frame: &mut Frame<'_>, state: &DialogState, area: Rect) {
+    // Information hierarchy mirrors the egui dialog: context
+    // rows, then the actionable URLs, then the description,
+    // steps, note, and finally — Rotation mode only — the
+    // rotation block.
     let mut lines = vec![
         Line::from(vec![
             Span::styled("PATH      ", Style::default().add_modifier(Modifier::DIM)),
@@ -541,20 +556,32 @@ fn render_metadata(frame: &mut Frame<'_>, state: &DialogState, area: Rect) {
             Span::styled("VIA       ", Style::default().add_modifier(Modifier::DIM)),
             Span::raw(&state.metadata.provider),
         ]),
-        Line::from(vec![
+    ];
+    // ROTATION cadence — Rotation mode only.
+    if state.mode == DialogMode::Rotation {
+        lines.push(Line::from(vec![
             Span::styled("ROTATION  ", Style::default().add_modifier(Modifier::DIM)),
             Span::raw(&state.metadata.rotation_method),
-        ]),
-    ];
+        ]));
+    }
     if let Some(hint) = state.metadata.format_hint.as_deref() {
         lines.push(Line::from(vec![
             Span::styled("FORMAT    ", Style::default().add_modifier(Modifier::DIM)),
             Span::raw(hint),
         ]));
     }
-    // Provider docs URL (G-series) — the page that explains
-    // scopes / best practices, distinct from the creation
-    // page on the [Open URL] button.
+    // CONSOLE — the creation page. The terminal can't make it
+    // clickable (that's the GUI's "Open console" hyperlink),
+    // so surface the URL as text. Placed above the steps: it's
+    // where the user goes first.
+    if let Some(url) = state.metadata.provisioning_url.as_deref() {
+        lines.push(Line::from(vec![
+            Span::styled("CONSOLE   ", Style::default().add_modifier(Modifier::DIM)),
+            Span::raw(url),
+        ]));
+    }
+    // DOCS — the scopes / best-practices documentation, distinct
+    // from the creation page above.
     if let Some(docs) = state.metadata.docs_url.as_deref() {
         lines.push(Line::from(vec![
             Span::styled("DOCS      ", Style::default().add_modifier(Modifier::DIM)),
@@ -590,10 +617,12 @@ fn render_metadata(frame: &mut Frame<'_>, state: &DialogState, area: Rect) {
             Style::default().add_modifier(Modifier::DIM),
         )));
     }
-    // Rotation section (G-series) — the "how to rotate" half
-    // of the catalog contract. Only rendered when the catalog
-    // carries rotation guidance.
-    if state.metadata.rotation_notes.is_some() || state.metadata.rotation_guide_url.is_some() {
+    // Rotation section (G-series) — Rotation mode ONLY. For a
+    // first-time Provision the "how to rotate later" guidance
+    // is irrelevant clutter; it belongs on the rotation flow.
+    if state.mode == DialogMode::Rotation
+        && (state.metadata.rotation_notes.is_some() || state.metadata.rotation_guide_url.is_some())
+    {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "Rotating this secret:",
@@ -1085,16 +1114,14 @@ mod tests {
 
     #[cfg(feature = "tui")]
     #[test]
-    fn render_includes_docs_url_and_rotation_block_when_catalog_match_present() {
-        // G-series: the DOCS line + the "Rotating this secret:"
-        // block (notes + guide URL) must reach the terminal
-        // modal alongside the U-series procedure.
+    fn render_provision_shows_console_and_docs_but_not_rotation_block() {
+        // UX rework: in Provision mode the CONSOLE + DOCS lines
+        // render (where to go for the key), but the "Rotating
+        // this secret:" block does NOT — rotation guidance is
+        // noise when first provisioning.
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        // Tall buffer — the rotation block sits below the
-        // 5-line procedure, so the metadata section needs
-        // room.
         let backend = TestBackend::new(120, 44);
         let mut terminal = Terminal::new(backend).unwrap();
         let state = DialogState::new(DialogMode::Provision, meta_with_catalog_procedure());
@@ -1108,6 +1135,10 @@ mod tests {
         let dump: String = buffer.content().iter().map(|c| c.symbol()).collect();
 
         assert!(
+            dump.contains("CONSOLE"),
+            "CONSOLE line must render the creation-page URL:\n{dump}"
+        );
+        assert!(
             dump.contains("DOCS"),
             "DOCS line must render the provider docs URL:\n{dump}"
         );
@@ -1116,8 +1147,39 @@ mod tests {
             "DOCS line must carry the actual docs_url:\n{dump}"
         );
         assert!(
+            !dump.contains("Rotating this secret:"),
+            "rotation block must NOT render in Provision mode:\n{dump}"
+        );
+    }
+
+    #[cfg(feature = "tui")]
+    #[test]
+    fn render_rotation_mode_shows_the_rotation_block() {
+        // The rotation block is Rotation-mode only. Pin that it
+        // DOES render there — notes + guide URL + the ROTATION
+        // cadence row that Provision mode drops.
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let backend = TestBackend::new(120, 48);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let state = DialogState::new(DialogMode::Rotation, meta_with_catalog_procedure());
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render(f, &state, area);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let dump: String = buffer.content().iter().map(|c| c.symbol()).collect();
+
+        assert!(
+            dump.contains("ROTATION"),
+            "ROTATION cadence row must render in Rotation mode:\n{dump}"
+        );
+        assert!(
             dump.contains("Rotating this secret:"),
-            "rotation section header must render:\n{dump}"
+            "rotation section header must render in Rotation mode:\n{dump}"
         );
         assert!(
             dump.contains("Create the new key first"),
@@ -1133,13 +1195,14 @@ mod tests {
     #[test]
     fn render_omits_docs_and_rotation_block_when_guide_fields_empty() {
         // The plain `meta()` fixture has no docs_url / rotation
-        // guidance — neither block may appear.
+        // guidance — neither block may appear, even in Rotation
+        // mode.
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
         let backend = TestBackend::new(120, 24);
         let mut terminal = Terminal::new(backend).unwrap();
-        let state = DialogState::new(DialogMode::Provision, meta());
+        let state = DialogState::new(DialogMode::Rotation, meta());
         terminal
             .draw(|f| {
                 let area = f.area();
@@ -1205,18 +1268,36 @@ mod tests {
             rich > plain,
             "catalog-rich metadata block ({rich}) must be taller than the plain one ({plain})"
         );
-        // Sanity bound for the full catalog-rich bundle:
-        //   3 base
+        // Sanity bound for the catalog-rich bundle in Provision
+        // mode (ROTATION row + rotation block are Rotation-mode
+        // only, so they don't count here):
+        //   2 base (PATH + VIA)
         // + 1 FORMAT
+        // + 1 CONSOLE
         // + 1 DOCS
         // + 2 description
         // + (1 hdr + 3 steps + 1 sep) retrieval steps
         // + 2 retrieval notes
-        // + (2 + 1 notes + 1 guide) rotation block
-        // = 18. Allow ±2 for any future tweak.
+        // = 14. Allow ±2 for any future tweak.
         assert!(
-            (16..=20).contains(&rich),
+            (12..=16).contains(&rich),
             "rich metadata height {rich} drifted out of the expected range"
+        );
+    }
+
+    #[test]
+    fn metadata_height_is_taller_in_rotation_mode() {
+        // Rotation mode adds the ROTATION cadence row and the
+        // rotation block (header + notes + guide line) that
+        // Provision mode omits — the metadata block must be
+        // measurably taller for the same metadata bundle.
+        let provision = DialogState::new(DialogMode::Provision, meta_with_catalog_procedure());
+        let rotation = DialogState::new(DialogMode::Rotation, meta_with_catalog_procedure());
+        assert!(
+            metadata_height(&rotation) > metadata_height(&provision),
+            "Rotation mode ({}) must reserve more rows than Provision mode ({})",
+            metadata_height(&rotation),
+            metadata_height(&provision),
         );
     }
 }

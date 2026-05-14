@@ -10,19 +10,50 @@ use crate::provision_dialog::{DialogMode, DialogState, DialogStatus, DialogSubmi
 /// user clicked `Validate & save` and the guards passed; the
 /// caller hands it to the daemon. `cancelled` flips when the
 /// user clicked Cancel.
+///
+/// Note: there is no `open_url_clicked` field — the console /
+/// docs / rotation-guide links are real `egui` hyperlinks that
+/// hand the click straight to the OS browser via
+/// `ui.ctx().open_url`. The caller does not have to broker the
+/// browser launch.
 #[derive(Debug, Default)]
 pub struct DialogFrameResult {
     pub submission: Option<DialogSubmission>,
     pub cancelled: bool,
-    pub open_url_clicked: bool,
 }
 
+/// Render the provision / rotation dialog.
+///
+/// Information hierarchy, top to bottom — most-actionable
+/// first:
+///
+/// 1. **heading** — what the dialog does.
+/// 2. **metadata grid** — PATH / VIA / FORMAT for context.
+///    ROTATION cadence shows only in Rotation mode (it's noise
+///    when first provisioning).
+/// 3. **description** — what this credential variant is.
+/// 4. **links row** — "Open console" + "Provider docs", both
+///    real hyperlinks, placed *above* the steps so the user
+///    sees where to go before reading how.
+/// 5. **how-to-obtain steps** — the numbered procedure.
+/// 6. **note** — retrieval caveat.
+/// 7. **rotation section** — Rotation mode ONLY. For a
+///    first-time Provision the "how to rotate" guidance is
+///    irrelevant clutter.
+/// 8. **value input** — the actual action.
+/// 9. **confirm checkbox** — Rotation mode only.
+/// 10. **Validate & save / Cancel**.
+/// 11. **status line**.
 pub fn render(ui: &mut egui::Ui, state: &mut DialogState) -> DialogFrameResult {
     let mut out = DialogFrameResult::default();
-
-    ui.heading(state.mode().title());
-
+    let mode = state.mode();
     let meta = state.metadata().clone();
+
+    // 1. Heading.
+    ui.heading(mode.title());
+
+    // 2. Metadata grid — context, kept compact. The ROTATION
+    //    cadence row is Rotation-mode only.
     egui::Grid::new("provision_meta")
         .num_columns(2)
         .show(ui, |ui| {
@@ -32,9 +63,11 @@ pub fn render(ui: &mut egui::Ui, state: &mut DialogState) -> DialogFrameResult {
             ui.strong("VIA");
             ui.label(meta.provider.as_str());
             ui.end_row();
-            ui.strong("ROTATION");
-            ui.label(meta.rotation_method.as_str());
-            ui.end_row();
+            if mode == DialogMode::Rotation {
+                ui.strong("ROTATION");
+                ui.label(meta.rotation_method.as_str());
+                ui.end_row();
+            }
             if let Some(hint) = meta.format_hint.as_deref() {
                 ui.strong("FORMAT");
                 ui.label(hint);
@@ -42,19 +75,33 @@ pub fn render(ui: &mut egui::Ui, state: &mut DialogState) -> DialogFrameResult {
             }
         });
 
-    // Variant description — italic block under the meta grid.
-    // Surfaces "Workspace-scoped key issued at platform.openai.com..."
-    // so the user knows which kind of token they're about to
-    // store.
+    // 3. Variant description — what the user is about to store.
     if let Some(desc) = meta.description.as_deref() {
         ui.add_space(4.0);
         ui.label(egui::RichText::new(desc).italics());
     }
 
-    // Numbered retrieval procedure, sourced from
-    // ProviderCatalog.variants[i].retrieval.steps. Each step
-    // renders on its own line; egui's default wrapping handles
-    // long URLs / sentences gracefully.
+    // 4. Links row — actionable, so it sits above the steps.
+    //    Both are real hyperlinks: egui hands the click to the
+    //    OS browser directly (no caller round-trip). "Open
+    //    console" is the creation page; "Provider docs" is the
+    //    scopes / best-practices doc.
+    if meta.provisioning_url.is_some() || meta.docs_url.is_some() {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if let Some(url) = meta.provisioning_url.as_deref() {
+                ui.hyperlink_to("Open console ↗", url);
+            }
+            if let Some(url) = meta.docs_url.as_deref() {
+                if meta.provisioning_url.is_some() {
+                    ui.separator();
+                }
+                ui.hyperlink_to("Provider docs ↗", url);
+            }
+        });
+    }
+
+    // 5. Numbered retrieval procedure.
     if !meta.retrieval_steps.is_empty() {
         ui.add_space(4.0);
         ui.label(egui::RichText::new("How to obtain:").strong());
@@ -63,17 +110,18 @@ pub fn render(ui: &mut egui::Ui, state: &mut DialogState) -> DialogFrameResult {
         }
     }
 
-    // Caveat / pro-tip — small weak text after the steps.
+    // 6. Caveat / pro-tip — small weak text after the steps.
     if let Some(notes) = meta.retrieval_notes.as_deref() {
         ui.add_space(4.0);
         ui.label(egui::RichText::new(format!("Note: {notes}")).small().weak());
     }
 
-    // Rotation section — the "how to rotate" half of the
-    // catalog contract (G-series). Shown only when the
-    // catalog carries rotation guidance; the cadence itself
-    // already lives in the ROTATION grid row above.
-    if meta.rotation_notes.is_some() || meta.rotation_guide_url.is_some() {
+    // 7. Rotation section — Rotation mode ONLY. When first
+    //    provisioning, "how to rotate later" is noise; it
+    //    belongs on the rotation flow, not here.
+    if mode == DialogMode::Rotation
+        && (meta.rotation_notes.is_some() || meta.rotation_guide_url.is_some())
+    {
         ui.add_space(6.0);
         ui.label(egui::RichText::new("Rotating this secret:").strong());
         if let Some(notes) = meta.rotation_notes.as_deref() {
@@ -86,40 +134,27 @@ pub fn render(ui: &mut egui::Ui, state: &mut DialogState) -> DialogFrameResult {
 
     ui.separator();
 
-    ui.horizontal(|ui| {
-        let url_enabled = meta.provisioning_url.is_some();
-        if ui
-            .add_enabled(url_enabled, egui::Button::new("Open URL"))
-            .clicked()
-        {
-            out.open_url_clicked = true;
-        }
-        // Provider docs link — distinct from "Open URL" (the
-        // creation page): this is the page that explains
-        // scopes / best practices. egui's hyperlink hands the
-        // click straight to the OS browser, no daemon round
-        // trip needed.
-        if let Some(url) = meta.docs_url.as_deref() {
-            ui.hyperlink_to("Provider docs ↗", url);
-        }
-    });
-
-    // Hidden value input — egui's password mode handles the
-    // visual masking. The buffer round-trips through
-    // `value_clone_for_edit` / `replace_value_str` so the
-    // canonical store stays a `SecretString`.
+    // 8. Hidden value input — the actual action. egui's
+    //    password mode masks it; the buffer round-trips through
+    //    `value_clone_for_edit` / `replace_value_str` so the
+    //    canonical store stays a `SecretString`.
     let mut buf = state.value_clone_for_edit();
     let resp = ui.add(
         egui::TextEdit::singleline(&mut buf)
             .password(true)
-            .hint_text("value"),
+            .hint_text("paste the secret value"),
     );
     if resp.changed() {
         state.replace_value_str(buf);
     }
-    ui.label(format!("(hidden, {} chars)", state.value_len()));
+    ui.label(
+        egui::RichText::new(format!("(hidden, {} chars)", state.value_len()))
+            .small()
+            .weak(),
+    );
 
-    if state.mode() == DialogMode::Rotation {
+    // 9. Destructive-confirm checkbox — Rotation mode only.
+    if mode == DialogMode::Rotation {
         let mut checked = state.confirm_checked();
         if ui
             .checkbox(
@@ -135,6 +170,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut DialogState) -> DialogFrameResult {
 
     ui.separator();
 
+    // 10. Primary / secondary actions.
     ui.horizontal(|ui| {
         if ui.button("Validate & save").clicked() {
             out.submission = state.submit();
@@ -145,6 +181,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut DialogState) -> DialogFrameResult {
         }
     });
 
+    // 11. Status line.
     render_status_line(ui, state.status());
 
     out

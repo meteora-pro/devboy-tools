@@ -105,10 +105,11 @@ fn launch_gui(provision_path: Option<&str>) -> Result<()> {
 ///    declared path.
 /// 2. Renders the inventory list in the central area; clicking
 ///    a row arms the provision dialog with the row's metadata.
-/// 3. When armed, shows the provision dialog as a modal
-///    `egui::Window` overlay. On `Save`, writes the value
-///    straight to the OS keychain via `KeychainStore` and
-///    refreshes the row's status.
+/// 3. When armed, shows the provision dialog as a true modal
+///    overlay (`egui::Modal`) — dimmed backdrop over the
+///    inventory, ESC / click-outside to dismiss. On `Save`,
+///    writes the value straight to the OS keychain via
+///    `KeychainStore` and refreshes the row's status.
 ///
 /// `inventory_rows_for(...)` is the orchestration glue — pure
 /// data + no `egui` types so it's testable on its own.
@@ -625,11 +626,18 @@ impl eframe::App for InventoryApp {
             //      input, save / cancel).
             let dialog_path = self.dialog_path.clone().unwrap_or_default();
             let entry = self.metadata_by_path.get(&dialog_path).cloned();
-            eframe::egui::Window::new(format!("Provision: {dialog_path}"))
-                .collapsible(false)
-                .resizable(true)
-                .default_width(560.0)
-                .show(ui.ctx(), |ui| {
+            // Render the dialog as a true modal overlay: a dimmed
+            // backdrop over the inventory, focus trapped, ESC /
+            // click-outside dismiss it. `egui::Modal` (vs the old
+            // `egui::Window`) is the window-in-window primitive —
+            // the inventory stays visible underneath instead of
+            // being replaced like a route.
+            let modal = eframe::egui::Modal::new(eframe::egui::Id::new("provision-modal")).show(
+                ui.ctx(),
+                |ui| {
+                    // Cap the width so the modal reads as a card,
+                    // not a full-bleed panel.
+                    ui.set_max_width(560.0);
                     // Variant picker — only visible when the
                     // active path resolves to a catalog provider
                     // with more than one variant. Single-variant
@@ -794,21 +802,19 @@ impl eframe::App for InventoryApp {
                         submitted_path = Some(submission.path);
                     } else if result.cancelled {
                         close = true;
-                    } else if result.open_url_clicked
-                        && let Some(url) = dialog.metadata().provisioning_url.clone()
-                    {
-                        // Spawn the OS browser without blocking.
-                        let _ = std::process::Command::new(if cfg!(target_os = "macos") {
-                            "open"
-                        } else if cfg!(target_os = "windows") {
-                            "start"
-                        } else {
-                            "xdg-open"
-                        })
-                        .arg(url)
-                        .spawn();
                     }
-                });
+                    // The console / docs / rotation-guide links are
+                    // real egui hyperlinks now — egui opens the OS
+                    // browser itself. No `open_url_clicked` to
+                    // broker, no subprocess to spawn.
+                },
+            );
+
+            // ESC or a click on the dimmed backdrop dismisses the
+            // modal — same path as the dialog's Cancel button.
+            if modal.should_close() {
+                close = true;
+            }
 
             if let (Some(value), Some(path)) = (submitted_value, submitted_path) {
                 use secrecy::ExposeSecret;
