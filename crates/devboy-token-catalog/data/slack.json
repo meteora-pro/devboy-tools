@@ -13,6 +13,7 @@
       "format_hint": "starts with `xoxb-`, then `<workspace_id>-<bot_id>-<random>` segments",
       "retrieval": {
         "console_url": "https://api.slack.com/apps",
+        "docs_url": "https://api.slack.com/concepts/token-types#bot",
         "steps": [
           "Open https://api.slack.com/apps",
           "Pick the app (or Create New App)",
@@ -29,7 +30,12 @@
         "auth": { "kind": "bearer" },
         "expect_status": 200
       },
-      "rotation": { "method": "manual", "every_days": 180 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 180,
+        "guide_url": "https://api.slack.com/authentication/rotation",
+        "notes": "Two paths. If the app has token rotation enabled, the `xoxb-` token is short-lived and refreshed via `oauth.v2.access` with the refresh token — automate that. Otherwise rotation = Reinstall the app to Workspace, which mints a fresh `xoxb-` and invalidates the old one immediately. There is no overlap window on reinstall, so update the consumer in the same change."
+      }
     },
     {
       "id": "slack-user-token",
@@ -39,6 +45,7 @@
       "format_hint": "starts with `xoxp-`, then `<workspace>-<user>-<install>-<random>` segments",
       "retrieval": {
         "console_url": "https://api.slack.com/apps",
+        "docs_url": "https://api.slack.com/concepts/token-types#user",
         "steps": [
           "Open https://api.slack.com/apps → your app",
           "OAuth & Permissions → Scopes → add the User Token Scopes",
@@ -47,7 +54,12 @@
         ],
         "notes": "User tokens leak the human's full channel surface — treat as sensitive even for read-only scopes. Prefer the bot variant whenever possible."
       },
-      "rotation": { "method": "manual", "every_days": 90 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "guide_url": "https://api.slack.com/authentication/rotation",
+        "notes": "Re-run the OAuth flow (or Reinstall the app) to mint a fresh `xoxp-`; the previous user token is revoked when the install is replaced. The tighter 90-day cadence vs the bot token reflects the broader blast radius — a user token carries the human's full channel + DM access."
+      }
     },
     {
       "id": "slack-app-token",
@@ -57,6 +69,7 @@
       "format_hint": "starts with `xapp-`, then `<level>-<app_id>-<install>-<hex>` segments",
       "retrieval": {
         "console_url": "https://api.slack.com/apps",
+        "docs_url": "https://api.slack.com/concepts/token-types#app-level",
         "steps": [
           "Open https://api.slack.com/apps → your app",
           "Basic Information → App-Level Tokens → Generate Token and Scopes",
@@ -65,7 +78,11 @@
         ],
         "notes": "App-level tokens authenticate the Socket Mode WebSocket connection itself; the per-event payload still carries a separate bot or user token for the action."
       },
-      "rotation": { "method": "manual", "every_days": 180 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 180,
+        "notes": "App-level tokens have no rotate API and no refresh flow. Generate a new token under Basic Information → App-Level Tokens, point the Socket Mode client at it, then revoke the old — the old token drops its live WebSocket connections immediately on revoke, so swap the consumer first."
+      }
     }
   ],
   "env_var_patterns": [

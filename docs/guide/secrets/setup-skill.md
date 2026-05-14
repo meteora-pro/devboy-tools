@@ -170,10 +170,12 @@ When the wizard reaches step 5 (provision a missing path), it opens the native p
 | VIA | router resolution | Source name (`local-vault`, `keychain`, `1password`, …). |
 | ROTATION | catalog → manifest → `"manual"` | `variants[i].rotation.method` wins over `IndexEntry.rotation_method`. |
 | FORMAT | catalog | `variants[i].format_hint` (e.g. "starts with sk-, 20+ chars"). |
+| DOCS | catalog | `variants[i].retrieval.docs_url` — the provider's official documentation. Rendered as a "Provider docs" link (egui) or a `DOCS` line (TUI). |
 | Description block | catalog | Italic text — `variants[i].description`. Hidden when no catalog match. |
 | "How to obtain:" | catalog | Numbered list rendered from `variants[i].retrieval.steps`. |
 | "Note: …" | catalog | Caveat / pro-tip from `variants[i].retrieval.notes`. |
-| [Open URL] | catalog → manifest | `variants[i].retrieval.console_url`, with `IndexEntry.retrieval_url` as fallback. |
+| "Rotating this secret:" | catalog | `variants[i].rotation.notes` (the concrete *how*) + a "Rotation guide" link from `variants[i].rotation.guide_url`. Hidden when neither is set. |
+| [Open URL] | catalog → manifest | `variants[i].retrieval.console_url`, with `IndexEntry.retrieval_url` as fallback. The *creation* page — distinct from the DOCS link. |
 
 When the path's provider segment does not match any loaded catalog the catalog-derived blocks collapse silently and the dialog renders only the manifest-side rows — the pre-S2 behaviour.
 

@@ -13,6 +13,7 @@
       "format_hint": "starts with sk-ant-api03-, 93+ chars [A-Za-z0-9_-]",
       "retrieval": {
         "console_url": "https://console.anthropic.com/settings/keys",
+        "docs_url": "https://docs.anthropic.com/en/api/getting-started",
         "steps": [
           "Open https://console.anthropic.com/settings/keys",
           "Sign in with your Anthropic account (workspace SSO if applicable)",
@@ -30,7 +31,12 @@
         "auth": { "kind": "header", "name": "x-api-key" },
         "expect_status": 200
       },
-      "rotation": { "method": "manual", "every_days": 90 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "guide_url": "https://docs.anthropic.com/en/api/rate-limits#api-key-best-practices",
+        "notes": "Create the replacement key in the console, deploy it everywhere, THEN delete the old one. Both keys authenticate against the Messages API until you remove the old — no forced overlap window. Anthropic keys cannot be edited in place; deletion is the only revocation."
+      }
     },
     {
       "id": "anthropic-admin-key",
@@ -40,6 +46,7 @@
       "format_hint": "starts with sk-ant-admin01-, 93+ chars [A-Za-z0-9_-]",
       "retrieval": {
         "console_url": "https://console.anthropic.com/settings/admin-keys",
+        "docs_url": "https://docs.anthropic.com/en/api/administration-api",
         "steps": [
           "Open https://console.anthropic.com/settings/admin-keys (org admins only)",
           "Click Create Admin Key",
@@ -48,7 +55,12 @@
         ],
         "notes": "Admin keys must NOT live alongside API keys in the same env var family — keep them in a `team/anthropic/admin` path so a leak of the API key namespace does not also leak admin scope."
       },
-      "rotation": { "method": "manual", "every_days": 30 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 30,
+        "guide_url": "https://docs.anthropic.com/en/api/administration-api",
+        "notes": "Admin keys rotate like API keys — create the replacement, deploy it, delete the old. Because they carry org-management scope (workspaces, members, billing) the 30-day cadence is deliberately tighter; revoke the old key promptly once the new one is confirmed working."
+      }
     }
   ],
   "env_var_patterns": [

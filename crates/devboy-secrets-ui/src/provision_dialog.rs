@@ -122,6 +122,23 @@ pub struct DialogMetadata {
     /// Sourced from
     /// `ProviderCatalog.variants[i].retrieval.notes`.
     pub retrieval_notes: Option<String>,
+    /// Provider's official documentation for the credential —
+    /// the page explaining scopes / best practices, distinct
+    /// from the creation page (`provisioning_url`). Rendered
+    /// as a "Provider docs" link. Sourced from
+    /// `ProviderCatalog.variants[i].retrieval.docs_url`.
+    pub docs_url: Option<String>,
+    /// Provider's rotation / key-hygiene guide. Rendered as a
+    /// "Rotation guide" link in the dialog's rotation section.
+    /// Sourced from
+    /// `ProviderCatalog.variants[i].rotation.guide_url`.
+    pub rotation_guide_url: Option<String>,
+    /// Concrete rotation procedure — the "how" of rotating
+    /// this credential (atomic pair rotation, reinstall after
+    /// scope change, overlap window). Rendered as a block in
+    /// the rotation section. Sourced from
+    /// `ProviderCatalog.variants[i].rotation.notes`.
+    pub rotation_notes: Option<String>,
 }
 
 /// Lifecycle status of a dialog. The orchestration layer
@@ -491,6 +508,22 @@ fn metadata_height(state: &DialogState) -> u16 {
     if state.metadata.retrieval_notes.is_some() {
         h += 2;
     }
+    // Guide fields (G-series): a DOCS line, plus a rotation
+    // block (header + notes + guide URL).
+    if state.metadata.docs_url.is_some() {
+        h += 1;
+    }
+    if state.metadata.rotation_notes.is_some() || state.metadata.rotation_guide_url.is_some() {
+        // blank separator + header + (optional) notes line +
+        // (optional) guide-url line
+        h += 2;
+        if state.metadata.rotation_notes.is_some() {
+            h += 1;
+        }
+        if state.metadata.rotation_guide_url.is_some() {
+            h += 1;
+        }
+    }
     h
 }
 
@@ -517,6 +550,15 @@ fn render_metadata(frame: &mut Frame<'_>, state: &DialogState, area: Rect) {
         lines.push(Line::from(vec![
             Span::styled("FORMAT    ", Style::default().add_modifier(Modifier::DIM)),
             Span::raw(hint),
+        ]));
+    }
+    // Provider docs URL (G-series) — the page that explains
+    // scopes / best practices, distinct from the creation
+    // page on the [Open URL] button.
+    if let Some(docs) = state.metadata.docs_url.as_deref() {
+        lines.push(Line::from(vec![
+            Span::styled("DOCS      ", Style::default().add_modifier(Modifier::DIM)),
+            Span::raw(docs),
         ]));
     }
     // Variant description — italic-style block when the
@@ -547,6 +589,25 @@ fn render_metadata(frame: &mut Frame<'_>, state: &DialogState, area: Rect) {
             format!("Note: {notes}"),
             Style::default().add_modifier(Modifier::DIM),
         )));
+    }
+    // Rotation section (G-series) — the "how to rotate" half
+    // of the catalog contract. Only rendered when the catalog
+    // carries rotation guidance.
+    if state.metadata.rotation_notes.is_some() || state.metadata.rotation_guide_url.is_some() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Rotating this secret:",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        if let Some(notes) = state.metadata.rotation_notes.as_deref() {
+            lines.push(Line::from(format!("  {notes}")));
+        }
+        if let Some(url) = state.metadata.rotation_guide_url.as_deref() {
+            lines.push(Line::from(vec![
+                Span::styled("  guide: ", Style::default().add_modifier(Modifier::DIM)),
+                Span::raw(url),
+            ]));
+        }
     }
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
@@ -972,6 +1033,13 @@ mod tests {
             retrieval_notes: Some(
                 "Prefer sk-proj-... over user-scoped keys for server-to-server".into(),
             ),
+            docs_url: Some("https://platform.openai.com/docs/api-reference/authentication".into()),
+            rotation_guide_url: Some(
+                "https://platform.openai.com/docs/guides/production-best-practices".into(),
+            ),
+            rotation_notes: Some(
+                "Create the new key first, deploy it, then revoke the old one.".into(),
+            ),
         }
     }
 
@@ -1012,6 +1080,81 @@ mod tests {
         assert!(
             dump.contains("Note: Prefer sk-proj-..."),
             "notes must render with the `Note:` prefix:\n{dump}"
+        );
+    }
+
+    #[cfg(feature = "tui")]
+    #[test]
+    fn render_includes_docs_url_and_rotation_block_when_catalog_match_present() {
+        // G-series: the DOCS line + the "Rotating this secret:"
+        // block (notes + guide URL) must reach the terminal
+        // modal alongside the U-series procedure.
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        // Tall buffer — the rotation block sits below the
+        // 5-line procedure, so the metadata section needs
+        // room.
+        let backend = TestBackend::new(120, 44);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let state = DialogState::new(DialogMode::Provision, meta_with_catalog_procedure());
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render(f, &state, area);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let dump: String = buffer.content().iter().map(|c| c.symbol()).collect();
+
+        assert!(
+            dump.contains("DOCS"),
+            "DOCS line must render the provider docs URL:\n{dump}"
+        );
+        assert!(
+            dump.contains("docs/api-reference/authentication"),
+            "DOCS line must carry the actual docs_url:\n{dump}"
+        );
+        assert!(
+            dump.contains("Rotating this secret:"),
+            "rotation section header must render:\n{dump}"
+        );
+        assert!(
+            dump.contains("Create the new key first"),
+            "rotation notes must render:\n{dump}"
+        );
+        assert!(
+            dump.contains("guide:") && dump.contains("production-best-practices"),
+            "rotation guide URL must render:\n{dump}"
+        );
+    }
+
+    #[cfg(feature = "tui")]
+    #[test]
+    fn render_omits_docs_and_rotation_block_when_guide_fields_empty() {
+        // The plain `meta()` fixture has no docs_url / rotation
+        // guidance — neither block may appear.
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let backend = TestBackend::new(120, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let state = DialogState::new(DialogMode::Provision, meta());
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render(f, &state, area);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let dump: String = buffer.content().iter().map(|c| c.symbol()).collect();
+        assert!(
+            !dump.contains("DOCS"),
+            "DOCS line must NOT render when docs_url is None:\n{dump}"
+        );
+        assert!(
+            !dump.contains("Rotating this secret:"),
+            "rotation header must NOT render when guidance absent:\n{dump}"
         );
     }
 
@@ -1062,10 +1205,17 @@ mod tests {
             rich > plain,
             "catalog-rich metadata block ({rich}) must be taller than the plain one ({plain})"
         );
-        // Sanity bound: 4 base + 2 desc + (1 hdr + 3 steps + 1
-        // sep) + 2 notes = 13. Allow ±2 for any future tweak.
+        // Sanity bound for the full catalog-rich bundle:
+        //   3 base
+        // + 1 FORMAT
+        // + 1 DOCS
+        // + 2 description
+        // + (1 hdr + 3 steps + 1 sep) retrieval steps
+        // + 2 retrieval notes
+        // + (2 + 1 notes + 1 guide) rotation block
+        // = 18. Allow ±2 for any future tweak.
         assert!(
-            (10..=15).contains(&rich),
+            (16..=20).contains(&rich),
             "rich metadata height {rich} drifted out of the expected range"
         );
     }

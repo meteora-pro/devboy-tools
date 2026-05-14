@@ -104,7 +104,12 @@
         "console_url": {
           "type": "string",
           "format": "uri",
-          "description": "Provider's console / settings URL. The `Open URL` button in the provision dialog points here."
+          "description": "Provider's console / settings URL — the creation page. The `Open URL` button in the provision dialog points here."
+        },
+        "docs_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Provider's official documentation for this credential — scopes, security best practices, auth model. Distinct from `console_url` (where you make the key). Optional; the dialog renders a 'Provider docs' link when present."
         },
         "steps": {
           "type": "array",
@@ -176,6 +181,15 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 3650
+        },
+        "guide_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Provider's rotation / key-hygiene guide. Optional — many providers have no dedicated page, in which case `notes` carries the procedure. The dialog renders a 'Rotation guide' link when present."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Concrete rotation procedure / caveats — the 'how', not the 'when'. E.g. atomic pair rotation, reinstall-after-scope-change, overlap window. Rendered as a block in the dialog's rotation section."
         }
       }
     }

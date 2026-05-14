@@ -13,6 +13,7 @@
       "format_hint": "starts with `ATATT` (Atlassian's prefix), variable-length tail of [A-Za-z0-9_-]",
       "retrieval": {
         "console_url": "https://id.atlassian.com/manage-profile/security/api-tokens",
+        "docs_url": "https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/",
         "steps": [
           "Open https://id.atlassian.com/manage-profile/security/api-tokens",
           "Sign in with your Atlassian account",
@@ -29,7 +30,12 @@
         "auth": { "kind": "basic-password" },
         "expect_status": 200
       },
-      "rotation": { "method": "manual", "every_days": 90 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "guide_url": "https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/#Revoke-API-tokens",
+        "notes": "Atlassian API tokens cannot be rotated in place. Create a new token from the same page, update every consumer (the email stays the same — only the token changes), then Revoke the old one. Revocation is immediate. Since 2024 Atlassian enforces a 1-year max lifetime, so a lapsed token is a hard 401 — rotate before the expiry email lands."
+      }
     },
     {
       "id": "jira-pat",
@@ -38,6 +44,7 @@
       "format_hint": "opaque alnum string (length and prefix are server-version dependent)",
       "retrieval": {
         "console_url": "https://your-jira.example.com/secure/ViewProfile.jspa",
+        "docs_url": "https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html",
         "steps": [
           "Open your Jira Server / DC profile → Personal Access Tokens",
           "Click Create token",
@@ -46,7 +53,12 @@
         ],
         "notes": "Server / DC PATs are NOT cross-compatible with Cloud — using one against api.atlassian.com authenticates as `null`. Pick the right variant for the deployment style."
       },
-      "rotation": { "method": "manual", "every_days": 90 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "guide_url": "https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html",
+        "notes": "Server / DC PATs cannot be rotated in place. Create a fresh token from your profile, swap consumers, then revoke the old. The instance admin may have pinned a max lifetime — if so the token hard-expires regardless of the framework cadence, so treat the admin-set limit as the real rotation deadline."
+      }
     }
   ],
   "env_var_patterns": [

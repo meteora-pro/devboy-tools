@@ -13,6 +13,7 @@
       "format_hint": "starts with `glpat-`, 20 chars of [A-Za-z0-9_-] after the prefix",
       "retrieval": {
         "console_url": "https://gitlab.com/-/user_settings/personal_access_tokens",
+        "docs_url": "https://docs.gitlab.com/user/profile/personal_access_tokens/",
         "steps": [
           "Open https://gitlab.com/-/user_settings/personal_access_tokens (self-hosted: replace gitlab.com with your host)",
           "Pick a name describing where the token will live (`devboy-laptop`, `ci-pipeline`)",
@@ -29,7 +30,12 @@
         "auth": { "kind": "bearer" },
         "expect_status": 200
       },
-      "rotation": { "method": "manual", "every_days": 90 }
+      "rotation": {
+        "method": "provider-api",
+        "every_days": 90,
+        "guide_url": "https://docs.gitlab.com/api/personal_access_tokens/#rotate-a-personal-access-token",
+        "notes": "GitLab supports atomic API-driven rotation: `POST /personal_access_tokens/:id/rotate` (or the `self/rotate` form) revokes the old token and returns a new one in a single call, with a 1-week default expiry on the replacement. The UI exposes the same as a Rotate button on the token row. Atomic rotation has no overlap window — update the consumer with the response value immediately."
+      }
     },
     {
       "id": "gitlab-project-token",
@@ -39,6 +45,7 @@
       "format_hint": "starts with `glpat-`, 20 chars of [A-Za-z0-9_-] after the prefix (same shape as a PAT)",
       "retrieval": {
         "console_url": "https://gitlab.com/<group>/<project>/-/settings/access_tokens",
+        "docs_url": "https://docs.gitlab.com/user/project/settings/project_access_tokens/",
         "steps": [
           "Open the project's Settings → Access Tokens page",
           "Pick a name describing the bot (`ci-deploy-bot`, `release-publisher`)",
@@ -56,7 +63,12 @@
         "auth": { "kind": "bearer" },
         "expect_status": 200
       },
-      "rotation": { "method": "manual", "every_days": 90 }
+      "rotation": {
+        "method": "provider-api",
+        "every_days": 90,
+        "guide_url": "https://docs.gitlab.com/api/project_access_tokens/#rotate-a-project-access-token",
+        "notes": "`POST /projects/:id/access_tokens/:token_id/rotate` revokes the old token and returns a fresh one atomically. The same Rotate button is on the token row in Settings → Access Tokens. Because the token is bound to a service-account user, rotation does not change the identity — only the credential — so CI permissions stay intact."
+      }
     },
     {
       "id": "gitlab-deploy-token",
@@ -65,6 +77,7 @@
       "format_hint": "no prefix, opaque alnum string of provider-defined length",
       "retrieval": {
         "console_url": "https://gitlab.com/<group>/<project>/-/settings/repository#js-deploy-tokens-settings",
+        "docs_url": "https://docs.gitlab.com/user/project/deploy_tokens/",
         "steps": [
           "Open the project's Settings → Repository → Deploy tokens",
           "Pick a name (`ci-registry-pull`)",
@@ -74,7 +87,12 @@
         ],
         "notes": "Deploy tokens authenticate as `gitlab-deploy-token-<id>` rather than as a user. There is no liveness URL that pairs with a Deploy Token alone — verify by attempting the operation it was issued for (e.g. `docker login` against the project registry)."
       },
-      "rotation": { "method": "manual", "every_days": 180 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 180,
+        "guide_url": "https://docs.gitlab.com/user/project/deploy_tokens/#revoke-a-deploy-token",
+        "notes": "Deploy tokens have NO rotate API — unlike PATs and Project Access Tokens. Create a new deploy token, update the CI variables (both the username and value change), then revoke the old one from the same settings page. The longer 180-day cadence reflects the read-only scope."
+      }
     }
   ]
 }

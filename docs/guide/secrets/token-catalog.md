@@ -49,6 +49,7 @@ One file = one provider. The schema:
       "format_hint": "human-readable shape hint",
       "retrieval": {
         "console_url": "https://console.example.invalid/keys",
+        "docs_url": "https://docs.example.invalid/authentication",
         "steps": [
           "Step one — clear, action-oriented.",
           "Step two."
@@ -64,7 +65,9 @@ One file = one provider. The schema:
       },
       "rotation": {
         "method": "manual",
-        "every_days": 90
+        "every_days": 90,
+        "guide_url": "https://docs.example.invalid/key-rotation",
+        "notes": "How to rotate: create the replacement, deploy it, revoke the old. Note any overlap window or atomic-pair constraint."
       }
     }
   ]
@@ -88,6 +91,11 @@ One file = one provider. The schema:
 - `rotation` (cadence + method)
 - `default_keychain_account` (overrides the default `account = path` convention)
 - `retrieval.notes`
+- `retrieval.docs_url` — the provider's official documentation for the credential (scopes, security best practices, auth model). Distinct from `console_url`: that's where you *make* the key, this is where you *understand* it. The provision dialog renders it as a "Provider docs" link.
+- `rotation.guide_url` — the provider's rotation / key-hygiene guide, when one exists. Rendered as a "Rotation guide" link.
+- `rotation.notes` — the concrete rotation procedure (the *how*, not the *when*): atomic pair rotation, reinstall-after-scope-change, overlap window, hard-cutover. Rendered as a block in the dialog's rotation section.
+
+> **Bundled-catalog bar:** the catalog crate's test suite enforces that every *bundled* variant carries `retrieval.docs_url` **and** either `rotation.guide_url` or a non-empty `rotation.notes`. A bare `{method, every_days}` rotation block tells the user *when* to rotate but not *how* — that's a regression the `every_bundled_variant_has_rotation_guidance` test fails on. User-authored and URL-loaded catalogs are not held to this bar (the fields stay optional in the schema), but following it is strongly recommended.
 
 ## Authoring a new provider
 

@@ -13,6 +13,7 @@
       "format_hint": "starts with sk- (or sk-proj-), 20+ characters [A-Za-z0-9_-]",
       "retrieval": {
         "console_url": "https://platform.openai.com/api-keys",
+        "docs_url": "https://platform.openai.com/docs/api-reference/authentication",
         "steps": [
           "Open https://platform.openai.com/api-keys",
           "Sign in with your OpenAI account (workspace SSO if applicable)",
@@ -29,7 +30,12 @@
         "auth": { "kind": "bearer" },
         "expect_status": 200
       },
-      "rotation": { "method": "manual", "every_days": 90 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "guide_url": "https://platform.openai.com/docs/guides/production-best-practices",
+        "notes": "Create the replacement key first and deploy it everywhere, THEN delete the old one from the same page. OpenAI imposes no overlap window — both keys stay live until you delete the old, so there is no race. Never edit a key in place; deletion is the only revocation."
+      }
     }
   ]
 }

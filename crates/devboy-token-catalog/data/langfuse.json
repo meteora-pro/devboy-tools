@@ -13,6 +13,7 @@
       "format_hint": "starts with `pk-lf-`, then 36 chars [A-Za-z0-9-] (uuid-shaped)",
       "retrieval": {
         "console_url": "https://cloud.langfuse.com/project/_/settings/api-keys",
+        "docs_url": "https://langfuse.com/docs/api-and-data-platform/features/public-api",
         "steps": [
           "Open https://cloud.langfuse.com (or your self-hosted host)",
           "Pick the project from the top-left switcher",
@@ -21,7 +22,12 @@
         ],
         "notes": "Langfuse rotates the pair atomically — clicking Create generates a new (public, secret) tuple together. Update both env vars in lockstep when you rotate."
       },
-      "rotation": { "method": "manual", "every_days": 90 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "guide_url": "https://langfuse.com/faq/all/api-keys",
+        "notes": "Langfuse credentials rotate as a PAIR. Click Create new keys to mint a fresh (public, secret) tuple, update BOTH LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY in lockstep, then delete the old pair. The old pair keeps working until you delete it — that is your manual overlap window. Rotating only one half breaks ingest with a 401."
+      }
     },
     {
       "id": "langfuse-secret-key",
@@ -31,6 +37,7 @@
       "format_hint": "starts with `sk-lf-`, then 36 chars [A-Za-z0-9-] (uuid-shaped)",
       "retrieval": {
         "console_url": "https://cloud.langfuse.com/project/_/settings/api-keys",
+        "docs_url": "https://langfuse.com/docs/api-and-data-platform/features/public-api",
         "steps": [
           "Open https://cloud.langfuse.com (or your self-hosted host)",
           "Pick the project from the top-left switcher",
@@ -46,7 +53,12 @@
         "auth": { "kind": "basic-password" },
         "expect_status": 200
       },
-      "rotation": { "method": "manual", "every_days": 90 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "guide_url": "https://langfuse.com/faq/all/api-keys",
+        "notes": "The secret key rotates only as part of the (public, secret) pair — see the public-key variant for the full procedure. Never rotate the secret alone: the matching public key is invalidated at the same time, so a half-rotation is a guaranteed 401."
+      }
     }
   ],
   "env_var_patterns": [

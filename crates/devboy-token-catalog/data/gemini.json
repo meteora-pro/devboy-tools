@@ -13,6 +13,7 @@
       "format_hint": "39 chars of [A-Za-z0-9_-]; no prefix",
       "retrieval": {
         "console_url": "https://aistudio.google.com/app/apikey",
+        "docs_url": "https://ai.google.dev/gemini-api/docs/api-key",
         "steps": [
           "Open https://aistudio.google.com/app/apikey",
           "Sign in with the Google account that owns the GCP project",
@@ -29,7 +30,12 @@
         "auth": { "kind": "header", "name": "x-goog-api-key" },
         "expect_status": 200
       },
-      "rotation": { "method": "manual", "every_days": 90 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "guide_url": "https://ai.google.dev/gemini-api/docs/api-key#security",
+        "notes": "Create a second key in the same GCP project from the AI Studio page, deploy it, then delete the old one. Multiple keys can coexist in one project — there is no overlap limit — so rotation is zero-downtime. Deletion is immediate and irreversible."
+      }
     }
   ],
   "env_var_patterns": [

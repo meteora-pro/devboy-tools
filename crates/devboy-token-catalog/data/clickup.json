@@ -13,6 +13,7 @@
       "format_hint": "starts with `pk_`, then `<numeric user id>_<uppercase alnum>`",
       "retrieval": {
         "console_url": "https://app.clickup.com/settings/apps",
+        "docs_url": "https://developer.clickup.com/docs/authentication",
         "steps": [
           "Open https://app.clickup.com/settings/apps",
           "Sign in",
@@ -28,7 +29,12 @@
         "auth": { "kind": "header", "name": "Authorization" },
         "expect_status": 200
       },
-      "rotation": { "method": "manual", "every_days": 90 }
+      "rotation": {
+        "method": "provider-ui",
+        "every_days": 90,
+        "guide_url": "https://developer.clickup.com/docs/authentication#personal-token",
+        "notes": "Clicking Regenerate in Settings → Apps is the rotation — there is exactly ONE Personal API token per user, so regeneration invalidates the previous value immediately with NO overlap window. Update every consumer in the same change window or they 401. This is the one provider where you cannot stage the new value ahead of cutover."
+      }
     },
     {
       "id": "clickup-oauth-client-secret",
@@ -37,6 +43,7 @@
       "format_hint": "opaque secret string (provider does not pin a shape)",
       "retrieval": {
         "console_url": "https://app.clickup.com/settings/integrations",
+        "docs_url": "https://developer.clickup.com/docs/authentication#oauth-flow",
         "steps": [
           "Open https://app.clickup.com/settings/integrations → Apps",
           "Pick the OAuth app (or Create app if none)",
@@ -44,7 +51,12 @@
         ],
         "notes": "OAuth client secrets are workspace-level; team admins manage them. Do NOT use a Personal API token for production integrations — OAuth tokens carry the user's revocation surface and audit trail."
       },
-      "rotation": { "method": "manual", "every_days": 180 }
+      "rotation": {
+        "method": "provider-ui",
+        "every_days": 180,
+        "guide_url": "https://developer.clickup.com/docs/authentication#oauth-flow",
+        "notes": "Regenerating the client secret from the app's settings invalidates the old one at once. Redeploy every integration that holds the secret BEFORE you regenerate — there is no overlap. The client_id is unchanged by rotation; only the secret half of the pair turns over."
+      }
     }
   ],
   "env_var_patterns": [

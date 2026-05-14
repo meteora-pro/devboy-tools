@@ -69,15 +69,40 @@ pub fn render(ui: &mut egui::Ui, state: &mut DialogState) -> DialogFrameResult {
         ui.label(egui::RichText::new(format!("Note: {notes}")).small().weak());
     }
 
+    // Rotation section — the "how to rotate" half of the
+    // catalog contract (G-series). Shown only when the
+    // catalog carries rotation guidance; the cadence itself
+    // already lives in the ROTATION grid row above.
+    if meta.rotation_notes.is_some() || meta.rotation_guide_url.is_some() {
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new("Rotating this secret:").strong());
+        if let Some(notes) = meta.rotation_notes.as_deref() {
+            ui.label(notes);
+        }
+        if let Some(url) = meta.rotation_guide_url.as_deref() {
+            ui.hyperlink_to("Rotation guide ↗", url);
+        }
+    }
+
     ui.separator();
 
-    let url_enabled = meta.provisioning_url.is_some();
-    if ui
-        .add_enabled(url_enabled, egui::Button::new("Open URL"))
-        .clicked()
-    {
-        out.open_url_clicked = true;
-    }
+    ui.horizontal(|ui| {
+        let url_enabled = meta.provisioning_url.is_some();
+        if ui
+            .add_enabled(url_enabled, egui::Button::new("Open URL"))
+            .clicked()
+        {
+            out.open_url_clicked = true;
+        }
+        // Provider docs link — distinct from "Open URL" (the
+        // creation page): this is the page that explains
+        // scopes / best practices. egui's hyperlink hands the
+        // click straight to the OS browser, no daemon round
+        // trip needed.
+        if let Some(url) = meta.docs_url.as_deref() {
+            ui.hyperlink_to("Provider docs ↗", url);
+        }
+    });
 
     // Hidden value input — egui's password mode handles the
     // visual masking. The buffer round-trips through

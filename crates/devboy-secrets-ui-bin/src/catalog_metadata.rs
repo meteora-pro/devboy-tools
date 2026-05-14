@@ -16,13 +16,16 @@
 //! match, manifest fills the gaps, hardcoded defaults are the
 //! last resort):
 //!
-//! - `provider`        — second path segment (e.g. `openai`)
-//! - `rotation_method` — variant.rotation.method → entry.rotation_method → `"manual"`
-//! - `provisioning_url`— variant.retrieval.console_url → entry.retrieval_url → None
-//! - `format_hint`     — variant.format_hint → None
-//! - `description`     — variant.description → None
-//! - `retrieval_steps` — variant.retrieval.steps → []
-//! - `retrieval_notes` — variant.retrieval.notes → None
+//! - `provider`           — second path segment (e.g. `openai`)
+//! - `rotation_method`    — variant.rotation.method → entry.rotation_method → `"manual"`
+//! - `provisioning_url`   — variant.retrieval.console_url → entry.retrieval_url → None
+//! - `format_hint`        — variant.format_hint → None
+//! - `description`        — variant.description → None
+//! - `retrieval_steps`    — variant.retrieval.steps → []
+//! - `retrieval_notes`    — variant.retrieval.notes → None
+//! - `docs_url`           — variant.retrieval.docs_url → None
+//! - `rotation_guide_url` — variant.rotation.guide_url → None
+//! - `rotation_notes`     — variant.rotation.notes → None
 //!
 //! When **no catalog matches** (the provider segment maps to
 //! nothing in the loaded set), every catalog-derived field
@@ -76,6 +79,13 @@ pub fn metadata_from_catalog_and_entry(
         description: variant.map(|v| v.description.clone()),
         retrieval_steps: variant.map(retrieval_steps).unwrap_or_default(),
         retrieval_notes: variant.and_then(|v| v.retrieval.notes.clone()),
+        docs_url: variant.and_then(|v| v.retrieval.docs_url.clone()),
+        rotation_guide_url: variant
+            .and_then(|v| v.rotation.as_ref())
+            .and_then(|r| r.guide_url.clone()),
+        rotation_notes: variant
+            .and_then(|v| v.rotation.as_ref())
+            .and_then(|r| r.notes.clone()),
     }
 }
 
@@ -136,6 +146,7 @@ mod tests {
             format_hint: None,
             retrieval: RetrievalSpec {
                 console_url: format!("https://example.invalid/{id}"),
+                docs_url: None,
                 steps: Vec::new(),
                 notes: None,
             },
@@ -178,6 +189,7 @@ mod tests {
             format_hint: Some("starts with sk-, 20+ chars".into()),
             retrieval: RetrievalSpec {
                 console_url: "https://platform.openai.com/api-keys".into(),
+                docs_url: Some("https://platform.openai.com/docs/api-reference/authentication".into()),
                 steps: vec![
                     "Open platform.openai.com/api-keys".into(),
                     "Click Create new secret key".into(),
@@ -195,6 +207,8 @@ mod tests {
             rotation: Some(RotationSpec {
                 method: "manual".into(),
                 every_days: 90,
+                guide_url: Some("https://platform.openai.com/docs/guides/production-best-practices".into()),
+                notes: Some("Create the new key first, deploy it, then revoke the old one — there is no overlap constraint.".into()),
             }),
             default_keychain_account: None,
         };
@@ -223,6 +237,40 @@ mod tests {
             Some("Prefer sk-proj-... for server-to-server")
         );
         assert_eq!(meta.rotation_method, "manual");
+        // Guide fields (G-series): docs_url + rotation
+        // guidance must thread through from the catalog.
+        assert_eq!(
+            meta.docs_url.as_deref(),
+            Some("https://platform.openai.com/docs/api-reference/authentication")
+        );
+        assert_eq!(
+            meta.rotation_guide_url.as_deref(),
+            Some("https://platform.openai.com/docs/guides/production-best-practices")
+        );
+        assert!(
+            meta.rotation_notes
+                .as_deref()
+                .unwrap()
+                .contains("revoke the old one"),
+            "rotation_notes must carry the concrete procedure"
+        );
+    }
+
+    #[test]
+    fn guide_fields_collapse_to_none_when_catalog_omits_them() {
+        // variant_min builds a variant with no docs_url and no
+        // rotation block at all — every guide field must land
+        // as None rather than panicking or fabricating a URL.
+        let catalogs = vec![catalog("plain", vec![variant_min("v", "minimal variant")])];
+        let meta = metadata_from_catalog_and_entry(
+            "team/plain/key",
+            &IndexEntry::default(),
+            &catalogs,
+            None,
+        );
+        assert!(meta.docs_url.is_none());
+        assert!(meta.rotation_guide_url.is_none());
+        assert!(meta.rotation_notes.is_none());
     }
 
     #[test]
@@ -293,6 +341,8 @@ mod tests {
             rotation: Some(RotationSpec {
                 method: "provider-ui".into(),
                 every_days: 30,
+                guide_url: None,
+                notes: None,
             }),
             ..variant_min("v", "x")
         };

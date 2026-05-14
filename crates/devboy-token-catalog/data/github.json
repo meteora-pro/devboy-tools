@@ -13,6 +13,7 @@
       "format_hint": "starts with `ghp_`, exactly 40 characters total",
       "retrieval": {
         "console_url": "https://github.com/settings/tokens",
+        "docs_url": "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic",
         "steps": [
           "Open https://github.com/settings/tokens",
           "Click Generate new token → Generate new token (classic)",
@@ -29,7 +30,12 @@
         "auth": { "kind": "bearer" },
         "expect_status": 200
       },
-      "rotation": { "method": "manual", "every_days": 90 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "guide_url": "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/token-expiration-and-revocation",
+        "notes": "Generate the replacement token, update every consumer, THEN delete the old one from Settings → Developer settings → Tokens. Both tokens stay valid until you delete the old, so there is no downtime window. GitHub also emails you before a token with an expiry lapses — treat that mail as the rotation trigger."
+      }
     },
     {
       "id": "github-fine-grained-pat",
@@ -39,6 +45,7 @@
       "format_hint": "starts with `github_pat_`, 82 chars of [A-Z0-9_] after the prefix",
       "retrieval": {
         "console_url": "https://github.com/settings/personal-access-tokens",
+        "docs_url": "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token",
         "steps": [
           "Open https://github.com/settings/personal-access-tokens",
           "Click Generate new token (fine-grained)",
@@ -57,7 +64,12 @@
         "auth": { "kind": "bearer" },
         "expect_status": 200
       },
-      "rotation": { "method": "manual", "every_days": 90 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "guide_url": "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/token-expiration-and-revocation",
+        "notes": "A fine-grained token can be regenerated in place from its own settings page — `Regenerate token` keeps the same name, permissions, and resource list while minting a fresh value and resetting the expiry. The old value stops working immediately, so update consumers in the same change window. Prefer regenerate-in-place over delete+recreate to keep the permission set pinned."
+      }
     }
   ]
 }

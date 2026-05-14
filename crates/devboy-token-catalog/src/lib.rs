@@ -158,8 +158,18 @@ pub struct TokenVariant {
 #[serde(deny_unknown_fields)]
 pub struct RetrievalSpec {
     /// Provider's console / settings URL (`Open URL` button
-    /// target).
+    /// target). This is the *creation* page — where the user
+    /// clicks "Create key".
     pub console_url: String,
+    /// Provider's official documentation for this credential —
+    /// the page that explains scopes, security best practices,
+    /// and the auth model. Distinct from `console_url`: that's
+    /// where you *make* the key, this is where you *understand*
+    /// it. Optional and additive (v1 catalogs without it still
+    /// load); the provision dialog renders a "Provider docs"
+    /// link when present.
+    #[serde(default)]
+    pub docs_url: Option<String>,
     /// Numbered steps the user follows on the console UI.
     /// Rendered as a Markdown-ish ordered list in the
     /// provision dialog.
@@ -213,6 +223,22 @@ pub struct RotationSpec {
     /// string so future methods don't break the schema.
     pub method: String,
     pub every_days: u32,
+    /// Provider's rotation / key-hygiene guide. Optional and
+    /// additive — many providers do not have a dedicated
+    /// rotation page, in which case `notes` carries the
+    /// procedure instead. When present the provision dialog
+    /// renders a "Rotation guide" link.
+    #[serde(default)]
+    pub guide_url: Option<String>,
+    /// Concrete rotation procedure / caveats — the "how", not
+    /// the "when". Examples: "rotate the public+secret pair
+    /// atomically, update both env vars in lockstep" /
+    /// "reinstall the Slack app after a scope change, the old
+    /// token does not auto-grant new scopes" / "the previous
+    /// key keeps working for a 24h overlap window". Optional;
+    /// rendered as a block in the dialog's rotation section.
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 // =============================================================================
@@ -1645,6 +1671,7 @@ mod tests {
                 format_hint: Some("sk- + 32 alnum".into()),
                 retrieval: RetrievalSpec {
                     console_url: "https://platform.moonshot.cn/console/api-keys".into(),
+                    docs_url: None,
                     steps: vec!["Sign in".into(), "Create key".into()],
                     notes: None,
                 },
@@ -1658,6 +1685,8 @@ mod tests {
                 rotation: Some(RotationSpec {
                     method: "manual".into(),
                     every_days: 90,
+                    guide_url: None,
+                    notes: None,
                 }),
                 default_keychain_account: None,
             }],
@@ -2042,9 +2071,10 @@ mod tests {
                 .header("Location", "http://169.254.169.254/latest/meta-data");
         });
 
-        let client =
-            ssrf_safe_blocking_client(std::time::Duration::from_secs(2)).unwrap();
-        let res = client.get(format!("{}/catalog.json", server.base_url())).send();
+        let client = ssrf_safe_blocking_client(std::time::Duration::from_secs(2)).unwrap();
+        let res = client
+            .get(format!("{}/catalog.json", server.base_url()))
+            .send();
         m.assert();
         let err = res.expect_err("SSRF-safe client must refuse the 302 to 169.254.169.254");
         let chain = collect_error_chain(&err);
@@ -2059,15 +2089,16 @@ mod tests {
         let server = httpmock::MockServer::start();
         let m = server.mock(|when, then| {
             when.method(httpmock::Method::GET).path("/catalog.json");
-            then.status(301).header("Location", "http://10.0.0.5/internal");
+            then.status(301)
+                .header("Location", "http://10.0.0.5/internal");
         });
 
-        let client =
-            ssrf_safe_blocking_client(std::time::Duration::from_secs(2)).unwrap();
-        let res = client.get(format!("{}/catalog.json", server.base_url())).send();
+        let client = ssrf_safe_blocking_client(std::time::Duration::from_secs(2)).unwrap();
+        let res = client
+            .get(format!("{}/catalog.json", server.base_url()))
+            .send();
         m.assert();
-        let err =
-            res.expect_err("SSRF-safe client must refuse a 301 redirect into RFC1918 space");
+        let err = res.expect_err("SSRF-safe client must refuse a 301 redirect into RFC1918 space");
         let chain = collect_error_chain(&err);
         assert!(
             chain.contains("SSRF guard") || chain.contains("10.0.0.5"),
@@ -2091,8 +2122,7 @@ mod tests {
                 .header("Location", format!("{}/loop", server.base_url()));
         });
 
-        let client =
-            ssrf_safe_blocking_client(std::time::Duration::from_secs(2)).unwrap();
+        let client = ssrf_safe_blocking_client(std::time::Duration::from_secs(2)).unwrap();
         let res = client.get(format!("{}/loop", server.base_url())).send();
         let err = res.expect_err(
             "SSRF-safe client must refuse a redirect chain that exceeds the 10-hop cap",
@@ -2663,6 +2693,66 @@ mod tests {
                 .expect("rust-embed asset must be retrievable");
             serde_json::from_slice::<ProviderCatalog>(&asset.data)
                 .expect("bundled catalog must parse cleanly");
+        }
+    }
+
+    /// G-series contract: every bundled variant must tell the
+    /// user HOW to obtain the credential AND how to rotate it.
+    /// "How to obtain" = a non-empty `retrieval.steps` list
+    /// (already required by the schema). "How to rotate" = a
+    /// `rotation` block that carries either a `guide_url` or a
+    /// non-empty `notes` string — a bare `{method, every_days}`
+    /// tells the user *when* to rotate but not *how*, which is
+    /// the gap this test guards against regressing.
+    #[test]
+    fn every_bundled_variant_has_rotation_guidance() {
+        for catalog in bundled_catalogs() {
+            for variant in &catalog.variants {
+                let rotation = variant.rotation.as_ref().unwrap_or_else(|| {
+                    panic!(
+                        "{}/{}: bundled variants must declare a `rotation` block",
+                        catalog.provider_id, variant.id
+                    )
+                });
+                let has_guide = rotation.guide_url.is_some();
+                let has_notes = rotation
+                    .notes
+                    .as_deref()
+                    .is_some_and(|n| !n.trim().is_empty());
+                assert!(
+                    has_guide || has_notes,
+                    "{}/{}: rotation block must carry a `guide_url` or non-empty \
+                     `notes` — `{{method, every_days}}` alone says when to rotate, \
+                     not how",
+                    catalog.provider_id,
+                    variant.id
+                );
+            }
+        }
+    }
+
+    /// Companion to the rotation check: every bundled variant
+    /// must point at the provider's official documentation via
+    /// `retrieval.docs_url`. `console_url` is where you *make*
+    /// the key; `docs_url` is where you *understand* it
+    /// (scopes, best practices). The G-series promise is that
+    /// the provision dialog can always offer a "Provider docs"
+    /// link.
+    #[test]
+    fn every_bundled_variant_has_a_docs_url() {
+        for catalog in bundled_catalogs() {
+            for variant in &catalog.variants {
+                assert!(
+                    variant
+                        .retrieval
+                        .docs_url
+                        .as_deref()
+                        .is_some_and(|u| u.starts_with("https://")),
+                    "{}/{}: retrieval.docs_url must be a populated https URL",
+                    catalog.provider_id,
+                    variant.id
+                );
+            }
         }
     }
 }

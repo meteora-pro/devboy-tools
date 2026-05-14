@@ -12,6 +12,7 @@
       "format_hint": "free-form bearer token (provider does not pin a shape; self-hosted operators choose their own)",
       "retrieval": {
         "console_url": "https://ollama.com/settings/keys",
+        "docs_url": "https://docs.ollama.com/api",
         "steps": [
           "For hosted Ollama Turbo: open https://ollama.com/settings/keys, sign in, click Create API key, copy the value.",
           "For self-hosted: pick any opaque string (e.g. `openssl rand -hex 32`) and set it on the server via `OLLAMA_API_KEY=<value>`. The same value goes here in devboy."
@@ -25,7 +26,11 @@
         "auth": { "kind": "bearer" },
         "expect_status": 200
       },
-      "rotation": { "method": "manual", "every_days": 180 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 180,
+        "notes": "Hosted Turbo: delete the old key and Create a new one on the keys page — they can coexist briefly, so stage the new value first. Self-hosted: there is exactly ONE OLLAMA_API_KEY per server, so rotation is a hard cutover — generate a new opaque value, set it on the server, restart the daemon, then update devboy. The server accepts only the current value, so consumers 401 during the restart window."
+      }
     }
   ],
   "env_var_patterns": [

@@ -13,6 +13,7 @@
       "format_hint": "starts with sk-, 32+ alphanumeric chars",
       "retrieval": {
         "console_url": "https://platform.moonshot.cn/console/api-keys",
+        "docs_url": "https://platform.moonshot.cn/docs/api-reference",
         "steps": [
           "Open https://platform.moonshot.cn/console/api-keys (CN site)",
           "Sign in with your Moonshot account (WeChat / phone OTP)",
@@ -29,7 +30,11 @@
         "auth": { "kind": "bearer" },
         "expect_status": 200
       },
-      "rotation": { "method": "manual", "every_days": 90 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "notes": "Moonshot has no dedicated rotation page. Create a fresh key in the CN console, deploy it, then delete the old one — multiple keys can coexist on one account, so rotation is zero-downtime. Deleting a key revokes it immediately on both the OpenAI- and Anthropic-compatible endpoints."
+      }
     },
     {
       "id": "kimi-global",
@@ -39,6 +44,7 @@
       "format_hint": "starts with sk-, 32+ alphanumeric chars",
       "retrieval": {
         "console_url": "https://platform.moonshot.ai/console/api-keys",
+        "docs_url": "https://platform.moonshot.ai/docs/api-reference",
         "steps": [
           "Open https://platform.moonshot.ai/console/api-keys (global site)",
           "Sign in (email + OTP, or Google SSO)",
@@ -55,7 +61,11 @@
         "auth": { "kind": "bearer" },
         "expect_status": 200
       },
-      "rotation": { "method": "manual", "every_days": 90 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "notes": "Same procedure as the CN tier: create a fresh key in the global console, deploy it, delete the old. Keys are independent across the CN and global tiers — rotating one does not touch the other."
+      }
     },
     {
       "id": "kimi-coding",
@@ -65,6 +75,7 @@
       "format_hint": "starts with kc-, 40+ alphanumeric chars",
       "retrieval": {
         "console_url": "https://kimi.com/dev",
+        "docs_url": "https://kimi.com/dev/docs",
         "steps": [
           "Open https://kimi.com/dev",
           "Subscribe to the Coding tier (one-click; flat $20/mo)",
@@ -81,7 +92,11 @@
         "auth": { "kind": "bearer" },
         "expect_status": 200
       },
-      "rotation": { "method": "manual", "every_days": 30 }
+      "rotation": {
+        "method": "manual",
+        "every_days": 30,
+        "notes": "Rotate from the Coding dashboard → API Keys panel: create a new key, swap consumers, delete the old. The tighter 30-day cadence reflects the flat-rate subscription model — a leaked Coding key drains your subscription quota, not a metered balance you'd notice on a bill."
+      }
     }
   ]
 }

@@ -24,6 +24,21 @@ Feature: Provision dialog binds to the active token catalog
     And the dialog includes a "Note: ..." footer with `retrieval.notes` content
     And the [Open URL] button targets `retrieval.console_url`
 
+  Scenario: Catalog-matched path surfaces the docs link and rotation guidance
+    When I open "devboy secrets ui --gui --provision team/openai/api-key"
+    Then the dialog shows a "Provider docs" link targeting `retrieval.docs_url`
+    And the docs link is distinct from the [Open URL] creation-page button
+    And the dialog includes a "Rotating this secret:" section
+    And the rotation section renders `rotation.notes` as a block
+    And the rotation section shows a "Rotation guide" link targeting `rotation.guide_url`
+
+  Scenario: Variant with rotation notes but no guide URL still renders the section
+    Given the manifest declares "personal/kimi/api-key" and the Kimi catalog has `rotation.notes` but no `rotation.guide_url`
+    When I open the provision dialog for "personal/kimi/api-key"
+    Then the "Rotating this secret:" section still renders
+    And it shows the `rotation.notes` block
+    And no "Rotation guide" link appears (guide_url is absent)
+
   Scenario: Path without a catalog match falls back to manifest-only rendering
     Given the manifest declares "personal/some-internal-tool/api-key" with no matching catalog
     When I open "devboy secrets ui --gui --provision personal/some-internal-tool/api-key"
@@ -43,6 +58,8 @@ Feature: Provision dialog binds to the active token catalog
     When I open "devboy secrets ui --tui --provision team/openai/api-key"
     Then the modal renders inside the terminal at 70% width × 70% height
     And the metadata block carries PATH / VIA / ROTATION / FORMAT lines
+    And a DOCS line carries `retrieval.docs_url`
     And the description appears in italic style below the metadata block
     And the steps render as "  1. ...", "  2. ...", numbered in order
     And the notes appear dimmed after the steps prefixed with "Note: "
+    And a "Rotating this secret:" block renders `rotation.notes` and a "guide: ..." line
