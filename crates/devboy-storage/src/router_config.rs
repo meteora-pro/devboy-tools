@@ -83,6 +83,7 @@ use tracing::debug;
 
 use crate::index::SECRETS_SUBDIR;
 use crate::secret_path::{PathError, SecretPath};
+use crate::source::Capabilities;
 
 /// Filename of the router config inside [`SECRETS_SUBDIR`].
 pub const SOURCES_FILENAME: &str = "sources.toml";
@@ -224,6 +225,44 @@ pub struct RouterConfig {
     pub secret_overrides: BTreeMap<SecretPath, SecretOverride>,
 }
 
+/// Access mode for one `[[source]]` — a capability mask
+/// layered over whatever the source plugin declares.
+///
+/// A source plugin advertises a static [`Capabilities`] set
+/// (`local-vault` is `READ | LIST | VALIDATE | WRITE | ROTATE
+/// | …`). The `access` key in `[[source]]` lets an operator
+/// *narrow* that per config without touching the plugin:
+/// mount the team's shared vault `read` everywhere, leave
+/// `readwrite` only on the box that owns rotation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceAccess {
+    /// Read-only — the effective capability set is the
+    /// plugin's declared set AND-ed with `READ | LIST |
+    /// VALIDATE`. `WRITE` / `ROTATE` are masked off even when
+    /// the plugin supports them.
+    Read,
+    /// Full access — the plugin's declared capability set is
+    /// used unchanged. This is the default when `access` is
+    /// omitted, so existing configs keep their behaviour.
+    #[default]
+    ReadWrite,
+}
+
+impl SourceAccess {
+    /// Apply this access mode to a source plugin's `declared`
+    /// capability set, returning the *effective* set the
+    /// router / UI should honour.
+    pub fn mask(self, declared: Capabilities) -> Capabilities {
+        match self {
+            SourceAccess::ReadWrite => declared,
+            SourceAccess::Read => {
+                declared & (Capabilities::READ | Capabilities::LIST | Capabilities::VALIDATE)
+            }
+        }
+    }
+}
+
 /// One `[[source]]` block.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceDefinition {
@@ -232,10 +271,23 @@ pub struct SourceDefinition {
     /// `type` field. Renamed because `type` is a reserved word in
     /// Rust.
     pub source_type: String,
+    /// Access mask — `read` or `readwrite` (default). Narrows
+    /// the source plugin's declared capabilities; see
+    /// [`SourceAccess`].
+    pub access: SourceAccess,
     /// Any additional fields the source plugin understands
     /// (`account`, `addr`, `mount`, `file`, …). Stored verbatim;
     /// the router does not inspect them.
     pub settings: BTreeMap<String, toml::Value>,
+}
+
+impl SourceDefinition {
+    /// The capability set the router / UI should honour for
+    /// this source — the plugin's `declared` set narrowed by
+    /// the configured [`SourceAccess`].
+    pub fn effective_capabilities(&self, declared: Capabilities) -> Capabilities {
+        self.access.mask(declared)
+    }
 }
 
 /// `[default]` block.
@@ -349,6 +401,12 @@ struct RawSource {
     name: String,
     #[serde(rename = "type")]
     source_type: String,
+    /// `read` / `readwrite`; defaults to `readwrite` when
+    /// omitted. Declared as an explicit field so the
+    /// `#[serde(flatten)]` below does NOT sweep it into
+    /// `settings`.
+    #[serde(default)]
+    access: SourceAccess,
     #[serde(flatten)]
     settings: BTreeMap<String, toml::Value>,
 }
@@ -386,6 +444,7 @@ impl RawConfig {
             sources.push(SourceDefinition {
                 name: raw.name,
                 source_type: raw.source_type,
+                access: raw.access,
                 settings: raw.settings,
             });
         }
@@ -534,6 +593,119 @@ mod tests {
         assert!(cfg.default.is_none());
         assert!(cfg.routes.is_empty());
         assert!(cfg.secret_overrides.is_empty());
+    }
+
+    // -- SourceAccess (W1) -------------------------------------
+
+    #[test]
+    fn source_access_defaults_to_readwrite_when_omitted() {
+        let cfg = RouterConfig::parse(
+            r#"
+            [[source]]
+            name = "keychain"
+            type = "keychain"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.sources[0].access, SourceAccess::ReadWrite);
+    }
+
+    #[test]
+    fn source_access_read_parses_and_does_not_leak_into_settings() {
+        let cfg = RouterConfig::parse(
+            r#"
+            [[source]]
+            name = "team-vault"
+            type = "vault"
+            access = "read"
+            addr = "https://vault.example.invalid"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.sources[0].access, SourceAccess::Read);
+        // `access` is an explicit field — it must NOT be swept
+        // into the flattened settings map.
+        assert!(!cfg.sources[0].settings.contains_key("access"));
+        // …but other unknown keys still flow through to settings.
+        assert!(cfg.sources[0].settings.contains_key("addr"));
+    }
+
+    #[test]
+    fn source_access_readwrite_parses_explicitly() {
+        let cfg = RouterConfig::parse(
+            r#"
+            [[source]]
+            name = "rw"
+            type = "local-vault"
+            access = "readwrite"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.sources[0].access, SourceAccess::ReadWrite);
+    }
+
+    #[test]
+    fn read_access_masks_off_write_and_rotate() {
+        // local-vault declares the full set; `access = "read"`
+        // must narrow it to READ | LIST | VALIDATE.
+        let declared = Capabilities::READ
+            | Capabilities::LIST
+            | Capabilities::VALIDATE
+            | Capabilities::WRITE
+            | Capabilities::ROTATE;
+        let masked = SourceAccess::Read.mask(declared);
+        assert!(masked.contains(Capabilities::READ));
+        assert!(masked.contains(Capabilities::LIST));
+        assert!(masked.contains(Capabilities::VALIDATE));
+        assert!(!masked.contains(Capabilities::WRITE));
+        assert!(!masked.contains(Capabilities::ROTATE));
+    }
+
+    #[test]
+    fn readwrite_access_passes_the_declared_set_through_unchanged() {
+        let declared = Capabilities::READ | Capabilities::WRITE | Capabilities::ROTATE;
+        assert_eq!(SourceAccess::ReadWrite.mask(declared), declared);
+    }
+
+    #[test]
+    fn read_access_cannot_grant_a_capability_the_plugin_lacks() {
+        // env-store only declares READ — masking with `read`
+        // must not magically add LIST / VALIDATE.
+        let declared = Capabilities::READ;
+        let masked = SourceAccess::Read.mask(declared);
+        assert_eq!(masked, Capabilities::READ);
+        assert!(!masked.contains(Capabilities::LIST));
+    }
+
+    #[test]
+    fn effective_capabilities_routes_through_the_access_mode() {
+        let cfg = RouterConfig::parse(
+            r#"
+            [[source]]
+            name = "ro"
+            type = "vault"
+            access = "read"
+            "#,
+        )
+        .unwrap();
+        let declared = Capabilities::READ | Capabilities::WRITE | Capabilities::ROTATE;
+        let effective = cfg.sources[0].effective_capabilities(declared);
+        assert!(effective.contains(Capabilities::READ));
+        assert!(!effective.contains(Capabilities::WRITE));
+    }
+
+    #[test]
+    fn bad_access_value_is_a_parse_error() {
+        let err = RouterConfig::parse(
+            r#"
+            [[source]]
+            name = "x"
+            type = "vault"
+            access = "write-only"
+            "#,
+        )
+        .unwrap_err();
+        assert!(matches!(err, RouterConfigError::Parse { .. }));
     }
 
     #[test]

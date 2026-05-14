@@ -1848,6 +1848,7 @@ fn main() { let _ = std::env::var("LIVE_VAR"); }
                 format_hint: None,
                 retrieval: RetrievalSpec {
                     console_url: "https://example.invalid".to_owned(),
+                    docs_url: None,
                     steps: vec!["x".to_owned()],
                     notes: None,
                 },

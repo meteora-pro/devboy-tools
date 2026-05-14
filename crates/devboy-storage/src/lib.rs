@@ -78,7 +78,7 @@ pub use pattern_resolution::{
 pub use router_cache::{AdaptiveCache, CacheClock, DEFAULT_BASE_TTL, ManualClock, SystemClock};
 pub use router_config::{
     DefaultRoute, RouteRule, RouterConfig, RouterConfigError, SOURCES_FILENAME, SecretOverride,
-    SourceDefinition,
+    SourceAccess, SourceDefinition,
 };
 pub use router_credentials::{
     CredentialGraphError, SOURCE_CREDENTIALS_PREFIX, validate_source_credentials,

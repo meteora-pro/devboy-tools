@@ -126,7 +126,13 @@ impl DiagnosticCheck for SourcesCheck {
 struct SourceCard {
     name: String,
     source_type: String,
+    /// The capability set the source *plugin* declares —
+    /// before the `[[source]].access` mask is applied.
     capabilities: Capabilities,
+    /// Configured access mode (`read` / `readwrite`). The
+    /// effective capability set the router honours is
+    /// `access.mask(capabilities)`.
+    access: devboy_storage::SourceAccess,
     status_label: &'static str,
     status_message: Option<String>,
     hint: Option<String>,
@@ -163,6 +169,7 @@ async fn probe_keychain(def: &SourceDefinition) -> SourceCard {
     SourceCard {
         name: def.name.clone(),
         source_type: def.source_type.clone(),
+        access: def.access,
         capabilities: src.capabilities(),
         status_label: status_label(&status),
         status_message: status_message(&status),
@@ -178,6 +185,7 @@ async fn probe_local_vault(def: &SourceDefinition) -> SourceCard {
             return SourceCard {
                 name: def.name.clone(),
                 source_type: def.source_type.clone(),
+                access: def.access,
                 capabilities: Capabilities::empty(),
                 status_label: "Error",
                 status_message: Some(format!("could not resolve agent socket: {e}")),
@@ -190,6 +198,7 @@ async fn probe_local_vault(def: &SourceDefinition) -> SourceCard {
     SourceCard {
         name: def.name.clone(),
         source_type: def.source_type.clone(),
+        access: def.access,
         capabilities: src.capabilities(),
         status_label: status_label(&status),
         status_message: status_message(&status),
@@ -206,6 +215,7 @@ async fn probe_1password(def: &SourceDefinition) -> SourceCard {
             return SourceCard {
                 name: def.name.clone(),
                 source_type: def.source_type.clone(),
+                access: def.access,
                 // Even with the binary missing we know the cap
                 // declaration from ADR-021 §8.
                 capabilities: Capabilities::READ
@@ -231,6 +241,7 @@ async fn probe_1password(def: &SourceDefinition) -> SourceCard {
     SourceCard {
         name: def.name.clone(),
         source_type: def.source_type.clone(),
+        access: def.access,
         capabilities: src.capabilities(),
         status_label: status_label(&status),
         status_message: status_message(&status),
@@ -245,6 +256,7 @@ async fn probe_env_store(def: &SourceDefinition) -> SourceCard {
     SourceCard {
         name: def.name.clone(),
         source_type: def.source_type.clone(),
+        access: def.access,
         capabilities: src.capabilities(),
         status_label: status_label(&status),
         status_message: status_message(&status),
@@ -257,6 +269,7 @@ fn unprobed_card(def: &SourceDefinition, capabilities: Capabilities, reason: &st
     SourceCard {
         name: def.name.clone(),
         source_type: def.source_type.clone(),
+        access: def.access,
         capabilities,
         status_label: "Skipped",
         status_message: Some(format!("not probed yet — {reason}")),
@@ -269,6 +282,7 @@ fn unknown_type_card(def: &SourceDefinition, unknown: &str) -> SourceCard {
     SourceCard {
         name: def.name.clone(),
         source_type: def.source_type.clone(),
+        access: def.access,
         capabilities: Capabilities::empty(),
         status_label: "Error",
         status_message: Some(format!("unknown source type '{unknown}'")),
@@ -330,10 +344,21 @@ fn worst(a: CheckStatus, b: CheckStatus) -> CheckStatus {
 }
 
 fn card_to_json(card: &SourceCard) -> Value {
+    // `capabilities` is what the plugin declares; the access
+    // mask (`read` / `readwrite`) narrows it to the effective
+    // set the router will honour. Surface both so the user can
+    // see *why* a write was refused.
+    let access = match card.access {
+        devboy_storage::SourceAccess::Read => "read",
+        devboy_storage::SourceAccess::ReadWrite => "readwrite",
+    };
+    let effective = card.access.mask(card.capabilities);
     json!({
         "name": card.name,
         "type": card.source_type,
+        "access": access,
         "capabilities": capabilities_to_json(card.capabilities),
+        "effective_capabilities": capabilities_to_json(effective),
         "status": card.status_label,
         "status_message": card.status_message,
         "hint": card.hint,
@@ -534,6 +559,7 @@ mod tests {
         SourceDefinition {
             name: name.to_owned(),
             source_type: source_type.to_owned(),
+            access: devboy_storage::SourceAccess::ReadWrite,
             settings: BTreeMap::new(),
         }
     }
@@ -606,6 +632,7 @@ mod tests {
         let card = SourceCard {
             name: "personal-1p".into(),
             source_type: "1password".into(),
+            access: devboy_storage::SourceAccess::ReadWrite,
             capabilities: Capabilities::READ
                 | Capabilities::LIST
                 | Capabilities::BIOMETRIC_PROMPT
@@ -619,6 +646,7 @@ mod tests {
         assert_eq!(v["name"], "personal-1p");
         assert_eq!(v["type"], "1password");
         assert_eq!(v["status"], "Available");
+        assert_eq!(v["access"], "readwrite");
         // status_message + hint serialise as JSON `null` when
         // None — pin that so downstream JSON consumers don't
         // need to special-case missing keys.
@@ -634,6 +662,7 @@ mod tests {
         let card = SourceCard {
             name: "broken".into(),
             source_type: "1password".into(),
+            access: devboy_storage::SourceAccess::ReadWrite,
             capabilities: Capabilities::empty(),
             status_label: "NotInstalled",
             status_message: Some("`op` CLI not found".into()),
@@ -643,6 +672,47 @@ mod tests {
         let v = card_to_json(&card);
         assert_eq!(v["status_message"], "`op` CLI not found");
         assert_eq!(v["hint"], "install the 1Password CLI");
+    }
+
+    #[test]
+    fn card_to_json_surfaces_access_and_effective_capabilities() {
+        // A `read`-access card declares the full set but the
+        // effective set must be narrowed — that's the W1
+        // contract `doctor` makes visible.
+        let card = SourceCard {
+            name: "team-vault".into(),
+            source_type: "vault".into(),
+            access: devboy_storage::SourceAccess::Read,
+            capabilities: Capabilities::READ
+                | Capabilities::LIST
+                | Capabilities::VALIDATE
+                | Capabilities::WRITE
+                | Capabilities::ROTATE,
+            status_label: "Available",
+            status_message: None,
+            hint: None,
+            check_status: CheckStatus::Pass,
+        };
+        let v = card_to_json(&card);
+        assert_eq!(v["access"], "read");
+        // declared set still carries WRITE…
+        let declared: Vec<&str> = v["capabilities"]["all"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n.as_str().unwrap())
+            .collect();
+        assert!(declared.contains(&"WRITE"));
+        // …but the effective set has it masked off.
+        let effective: Vec<&str> = v["effective_capabilities"]["all"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n.as_str().unwrap())
+            .collect();
+        assert!(effective.contains(&"READ"));
+        assert!(!effective.contains(&"WRITE"));
+        assert!(!effective.contains(&"ROTATE"));
     }
 
     // -- probe_source dispatcher ---------------------------------
