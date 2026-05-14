@@ -133,23 +133,27 @@ struct TelegramDocument {
     file_id: String,
     file_name: Option<String>,
     mime_type: Option<String>,
+    file_size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct TelegramFile {
     file_id: String,
     mime_type: Option<String>,
+    file_size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct TelegramSticker {
     file_id: String,
     emoji: Option<String>,
+    file_size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct TelegramPhotoSize {
     file_id: String,
+    file_size: Option<u64>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -583,9 +587,9 @@ fn serialize_search_cursor(state: &TelegramSearchCursor) -> Result<Option<String
         return Ok(None);
     }
 
-    serde_json::to_string(state).map(Some).map_err(|e| {
-        Error::InvalidData(format!("failed to serialize Telegram search cursor: {e}"))
-    })
+    serde_json::to_string(state)
+        .map(Some)
+        .map_err(|e| Error::InvalidData(format!("failed to serialize Telegram search cursor: {e}")))
 }
 
 fn parse_timestamp(field_name: &str, value: Option<&str>) -> Result<Option<i64>> {
@@ -675,8 +679,7 @@ fn message_text(message: &TelegramMessage) -> String {
 }
 
 fn normalized_message_text(message: &TelegramMessage) -> String {
-    message_text(message)
-        .to_lowercase()
+    message_text(message).to_lowercase()
 }
 
 fn message_author(message: &TelegramMessage) -> MessageAuthor {
@@ -716,6 +719,7 @@ fn map_attachments(message: &TelegramMessage) -> Vec<MessageAttachment> {
             attachment_type: Some("file".to_string()),
             url: None,
             mime_type: document.mime_type.clone(),
+            file_size: document.file_size,
         });
     }
     if let Some(audio) = message.audio.as_ref() {
@@ -725,6 +729,7 @@ fn map_attachments(message: &TelegramMessage) -> Vec<MessageAttachment> {
             attachment_type: Some("audio".to_string()),
             url: None,
             mime_type: audio.mime_type.clone(),
+            file_size: audio.file_size,
         });
     }
     if let Some(video) = message.video.as_ref() {
@@ -734,6 +739,7 @@ fn map_attachments(message: &TelegramMessage) -> Vec<MessageAttachment> {
             attachment_type: Some("video".to_string()),
             url: None,
             mime_type: video.mime_type.clone(),
+            file_size: video.file_size,
         });
     }
     if let Some(voice) = message.voice.as_ref() {
@@ -743,6 +749,7 @@ fn map_attachments(message: &TelegramMessage) -> Vec<MessageAttachment> {
             attachment_type: Some("voice".to_string()),
             url: None,
             mime_type: voice.mime_type.clone(),
+            file_size: voice.file_size,
         });
     }
     if let Some(sticker) = message.sticker.as_ref() {
@@ -752,6 +759,7 @@ fn map_attachments(message: &TelegramMessage) -> Vec<MessageAttachment> {
             attachment_type: Some("sticker".to_string()),
             url: None,
             mime_type: None,
+            file_size: sticker.file_size,
         });
     }
     if let Some(photo) = message.photo.last() {
@@ -761,6 +769,7 @@ fn map_attachments(message: &TelegramMessage) -> Vec<MessageAttachment> {
             attachment_type: Some("image".to_string()),
             url: None,
             mime_type: None,
+            file_size: photo.file_size,
         });
     }
 
@@ -816,7 +825,10 @@ fn telegram_chat_type(chat: &TelegramChat) -> ChatType {
 }
 
 fn telegram_membership_is_active(status: &str) -> bool {
-    matches!(status, "creator" | "administrator" | "member" | "restricted")
+    matches!(
+        status,
+        "creator" | "administrator" | "member" | "restricted"
+    )
 }
 
 fn matches_chat_type(chat_type: ChatType, filter: Option<ChatType>) -> bool {
@@ -1354,7 +1366,9 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, Error::InvalidData(message) if message.contains("must not be empty")));
+        assert!(
+            matches!(err, Error::InvalidData(message) if message.contains("must not be empty"))
+        );
     }
 
     #[tokio::test]
@@ -1371,6 +1385,7 @@ mod tests {
                     attachment_type: None,
                     url: None,
                     mime_type: None,
+                    file_size: None,
                 }],
             })
             .await

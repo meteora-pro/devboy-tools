@@ -1208,6 +1208,8 @@ pub struct MessageAttachment {
     pub url: Option<String>,
     /// Optional mime type.
     pub mime_type: Option<String>,
+    /// Optional file size in bytes.
+    pub file_size: Option<u64>,
 }
 
 /// Unified messenger message representation.
