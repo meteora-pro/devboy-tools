@@ -82,8 +82,9 @@ impl DialogMode {
 
 /// Read-only metadata shown in the upper half of the modal.
 /// Constructed by the orchestration layer from the manifest +
-/// router resolution. None of the fields contain secret values.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// router resolution + the active token catalog. None of the
+/// fields contain secret values.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DialogMetadata {
     /// ADR-020 path, e.g. `team/jira/api-key`.
     pub path: String,
@@ -101,6 +102,26 @@ pub struct DialogMetadata {
     /// token, 36 chars" or "PEM block"). Rendered next to the
     /// input.
     pub format_hint: Option<String>,
+    /// Free-prose description of the token variant — surfaced
+    /// above the steps so the user knows what they are
+    /// requesting. Sourced from
+    /// `ProviderCatalog.variants[i].description` (or the
+    /// catalog-level description when there's no variant
+    /// override). Empty when no catalog matched the path.
+    pub description: Option<String>,
+    /// Numbered procedure walking the user through obtaining
+    /// the value at the provider's console. Each entry renders
+    /// as one numbered line; an empty Vec hides the block.
+    /// Sourced from
+    /// `ProviderCatalog.variants[i].retrieval.steps`.
+    pub retrieval_steps: Vec<String>,
+    /// Caveat / pro-tip rendered as a small note after the
+    /// steps. Common content: "project-scoped keys inherit
+    /// billing from the parent" / "rotate every 90 days" /
+    /// "use a service-account email instead of a user token".
+    /// Sourced from
+    /// `ProviderCatalog.variants[i].retrieval.notes`.
+    pub retrieval_notes: Option<String>,
 }
 
 /// Lifecycle status of a dialog. The orchestration layer
@@ -451,11 +472,26 @@ fn border_style_for_mode(mode: DialogMode) -> Style {
 #[cfg(feature = "tui")]
 fn metadata_height(state: &DialogState) -> u16 {
     // path + provider + rotation method + (optional) format hint
+    let mut h: u16 = 3;
     if state.metadata.format_hint.is_some() {
-        4
-    } else {
-        3
+        h += 1;
     }
+    // Catalog-derived fields (S2 / U-series): description,
+    // numbered procedure, notes. Each occupies a separate
+    // visual block so the dialog matches what egui renders.
+    if state.metadata.description.is_some() {
+        // Approximate one line; long descriptions wrap and
+        // get truncated until we add scroll (future epic).
+        h += 2;
+    }
+    if !state.metadata.retrieval_steps.is_empty() {
+        // 1 line header + 1 line per step + blank separator
+        h += 1 + state.metadata.retrieval_steps.len() as u16 + 1;
+    }
+    if state.metadata.retrieval_notes.is_some() {
+        h += 2;
+    }
+    h
 }
 
 #[cfg(feature = "tui")]
@@ -482,6 +518,35 @@ fn render_metadata(frame: &mut Frame<'_>, state: &DialogState, area: Rect) {
             Span::styled("FORMAT    ", Style::default().add_modifier(Modifier::DIM)),
             Span::raw(hint),
         ]));
+    }
+    // Variant description — italic-style block when the
+    // catalog matched a variant (S2 / U-series).
+    if let Some(desc) = state.metadata.description.as_deref() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            desc,
+            Style::default().add_modifier(Modifier::ITALIC),
+        )));
+    }
+    // Numbered procedure from `retrieval.steps`. Each entry on
+    // its own line; mirrors the egui rendering.
+    if !state.metadata.retrieval_steps.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "How to obtain:",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        for (i, step) in state.metadata.retrieval_steps.iter().enumerate() {
+            lines.push(Line::from(format!("  {}. {step}", i + 1)));
+        }
+    }
+    // Caveat / pro-tip after the steps. Dimmed so it visually
+    // de-prioritises against the actionable list above.
+    if let Some(notes) = state.metadata.retrieval_notes.as_deref() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("Note: {notes}"),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
     }
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
@@ -628,6 +693,7 @@ mod tests {
             rotation_method: "provider-ui".into(),
             provisioning_url: Some("https://example.invalid/jira/tokens".into()),
             format_hint: Some("Bearer token, 36 chars".into()),
+            ..DialogMetadata::default()
         }
     }
 
@@ -882,5 +948,125 @@ mod tests {
         assert!(!dump.contains("supersecretvaluexyz"));
         // Bullets stand in for the chars.
         assert!(dump.contains("•"));
+    }
+
+    // -- Catalog procedure rendering (U-series) -----------------
+
+    /// Build a metadata bundle that mirrors what
+    /// `metadata_from_catalog_and_entry` produces for
+    /// `team/openai/api-key` once a catalog match is found.
+    /// Pins what TUI / GUI snapshots must show.
+    fn meta_with_catalog_procedure() -> DialogMetadata {
+        DialogMetadata {
+            path: "team/openai/api-key".into(),
+            provider: "openai".into(),
+            rotation_method: "manual".into(),
+            provisioning_url: Some("https://platform.openai.com/api-keys".into()),
+            format_hint: Some("starts with sk-, 20+ chars".into()),
+            description: Some("Personal or workspace key issued at platform.openai.com.".into()),
+            retrieval_steps: vec![
+                "Open platform.openai.com/api-keys".into(),
+                "Click Create new secret key".into(),
+                "Copy the value — it is shown once".into(),
+            ],
+            retrieval_notes: Some(
+                "Prefer sk-proj-... over user-scoped keys for server-to-server".into(),
+            ),
+        }
+    }
+
+    #[cfg(feature = "tui")]
+    #[test]
+    fn render_includes_description_steps_and_notes_when_catalog_match_present() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        // Bigger buffer so the 5 extra lines fit before the
+        // Open-URL row.
+        let backend = TestBackend::new(120, 36);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let state = DialogState::new(DialogMode::Provision, meta_with_catalog_procedure());
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render(f, &state, area);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let dump: String = buffer.content().iter().map(|c| c.symbol()).collect();
+
+        // Catalog-derived blocks all render in the metadata
+        // section above the Open URL row.
+        assert!(
+            dump.contains("Personal or workspace key"),
+            "description must render above the steps:\n{dump}"
+        );
+        assert!(
+            dump.contains("How to obtain:"),
+            "step header must render:\n{dump}"
+        );
+        assert!(
+            dump.contains("1. Open platform.openai.com/api-keys"),
+            "step 1 must be numbered:\n{dump}"
+        );
+        assert!(
+            dump.contains("Note: Prefer sk-proj-..."),
+            "notes must render with the `Note:` prefix:\n{dump}"
+        );
+    }
+
+    #[cfg(feature = "tui")]
+    #[test]
+    fn render_omits_catalog_blocks_when_metadata_is_empty() {
+        // The pre-catalog fallback path: only the manifest
+        // populated DialogMetadata. The catalog blocks must
+        // NOT appear — otherwise the dialog confuses the user
+        // with empty `How to obtain:` headers.
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let backend = TestBackend::new(120, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let state = DialogState::new(DialogMode::Provision, meta());
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render(f, &state, area);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let dump: String = buffer.content().iter().map(|c| c.symbol()).collect();
+        assert!(
+            !dump.contains("How to obtain:"),
+            "step header must NOT render when steps empty:\n{dump}"
+        );
+        assert!(
+            !dump.contains("Note:"),
+            "notes header must NOT render when notes None:\n{dump}"
+        );
+    }
+
+    #[test]
+    fn metadata_height_grows_with_each_catalog_field() {
+        // The TUI layout has a fixed-height metadata block —
+        // when the catalog populates description / steps /
+        // notes, the block must grow to accommodate them.
+        // Pin the contract so a future refactor of
+        // metadata_height doesn't silently truncate the
+        // bundle.
+        let plain_state = DialogState::new(DialogMode::Provision, meta());
+        let rich_state = DialogState::new(DialogMode::Provision, meta_with_catalog_procedure());
+        let plain = metadata_height(&plain_state);
+        let rich = metadata_height(&rich_state);
+        assert!(
+            rich > plain,
+            "catalog-rich metadata block ({rich}) must be taller than the plain one ({plain})"
+        );
+        // Sanity bound: 4 base + 2 desc + (1 hdr + 3 steps + 1
+        // sep) + 2 notes = 13. Allow ±2 for any future tweak.
+        assert!(
+            (10..=15).contains(&rich),
+            "rich metadata height {rich} drifted out of the expected range"
+        );
     }
 }

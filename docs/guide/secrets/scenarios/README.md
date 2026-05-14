@@ -1,6 +1,6 @@
 # Secret-framework BDD scenarios
 
-Five Gherkin `.feature` files covering the user-facing behaviour of the secret framework — onboarding, approve-on-use, catalog URL lifecycle, the agent trust boundary, and the proposer noise-reduction series.
+Six Gherkin `.feature` files covering the user-facing behaviour of the secret framework — onboarding, approve-on-use, catalog URL lifecycle, the agent trust boundary, the proposer noise-reduction series, and the catalog → provision-dialog rendering contract.
 
 These are **executable specifications** in the BDD sense — every scenario states a concrete observable outcome a user (developer or AI agent) can verify by running the documented commands. They are not (yet) wired into a `cucumber-rs` test harness; the `.feature` files act as the written contract that the existing unit / integration / end-to-end test suites already cover (look for the named functions and reasons in `crates/devboy-cli/src/secrets_setup.rs`, `crates/devboy-token-catalog/src/lib.rs`, `crates/devboy-mcp/src/secrets_*.rs`).
 
@@ -13,6 +13,7 @@ These are **executable specifications** in the BDD sense — every scenario stat
 | [`catalog-url-source.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/catalog-url-source.feature) | `catalog add-url / status / refresh / forget / pin` — the full TOFU recovery + pin promotion flow. |
 | [`agent-trust-boundary.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/agent-trust-boundary.feature) | "Agent never sees the value" enforced by `AgentSafeReply` marker + CI grep gate + negative test; covers every `secrets_*` MCP tool. |
 | [`proposer-noise-reduction.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/proposer-noise-reduction.feature) | The five-step skip-list expansion (P1-P5) plus the catalog-driven precision (S2 + bundled catalogs) that took the proposer from 236 to 161 paths on the canonical demo project. |
+| [`ui-catalog-rendering.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/ui-catalog-rendering.feature) | The provision dialog binds to the active token catalog (description / numbered steps / notes / console URL), with manifest-only fallback when no catalog matches the path. Covers both the egui and ratatui renderers (U-series). |
 
 ## Why Gherkin
 

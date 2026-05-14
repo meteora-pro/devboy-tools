@@ -23,6 +23,8 @@
 use anyhow::Result;
 use clap::Parser;
 
+mod catalog_metadata;
+
 /// Command-line surface mirrored from the original
 /// `devboy secrets ui` clap struct so existing users see
 /// the same flags when they call the subprocess directly.
@@ -1183,17 +1185,17 @@ impl InventoryApp {
             Some(e) => e.clone(),
             None => devboy_storage::IndexEntry::default(),
         };
-        let metadata = devboy_secrets_ui::DialogMetadata {
-            path: path.to_owned(),
-            provider: path.split('/').nth(1).unwrap_or("unknown").to_owned(),
-            rotation_method: entry
-                .rotation_method
-                .map(|m| format!("{m:?}").to_lowercase())
-                .unwrap_or_else(|| "manual".to_owned()),
-            provisioning_url: entry.retrieval_url.clone(),
-            format_hint: entry.description.clone(),
-        };
+        // Resolve the variant first so the catalog builder can
+        // surface the matching variant's description / steps /
+        // notes (P26 / S2). Falls back to the catalog's first
+        // variant inside the builder when nothing matched.
         self.selected_variant_id = self.resolve_initial_variant(&entry);
+        let metadata = crate::catalog_metadata::metadata_from_catalog_and_entry(
+            path,
+            &entry,
+            &self.catalogs,
+            self.selected_variant_id.as_deref(),
+        );
         self.dialog = Some(devboy_secrets_ui::DialogState::new(
             devboy_secrets_ui::DialogMode::Provision,
             metadata,

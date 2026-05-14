@@ -42,6 +42,33 @@ pub fn render(ui: &mut egui::Ui, state: &mut DialogState) -> DialogFrameResult {
             }
         });
 
+    // Variant description — italic block under the meta grid.
+    // Surfaces "Workspace-scoped key issued at platform.openai.com..."
+    // so the user knows which kind of token they're about to
+    // store.
+    if let Some(desc) = meta.description.as_deref() {
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(desc).italics());
+    }
+
+    // Numbered retrieval procedure, sourced from
+    // ProviderCatalog.variants[i].retrieval.steps. Each step
+    // renders on its own line; egui's default wrapping handles
+    // long URLs / sentences gracefully.
+    if !meta.retrieval_steps.is_empty() {
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("How to obtain:").strong());
+        for (i, step) in meta.retrieval_steps.iter().enumerate() {
+            ui.label(format!("  {}. {step}", i + 1));
+        }
+    }
+
+    // Caveat / pro-tip — small weak text after the steps.
+    if let Some(notes) = meta.retrieval_notes.as_deref() {
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(format!("Note: {notes}")).small().weak());
+    }
+
     ui.separator();
 
     let url_enabled = meta.provisioning_url.is_some();
@@ -113,6 +140,7 @@ mod tests {
                 rotation_method: "provider-ui".into(),
                 provisioning_url: Some("https://example.invalid/x".into()),
                 format_hint: Some("Bearer 36 chars".into()),
+                ..DialogMetadata::default()
             },
         )
     }

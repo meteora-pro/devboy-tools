@@ -20,7 +20,7 @@ Feature: setup-secrets wizard onboards a fresh project
     And no file under "<repo>/.devboy/" is created
 
   Scenario: Writing the manifest commits proposals to disk
-    When I run "devboy secrets setup --scan-only --root <repo> --write-manifest"
+    When I run "devboy secrets setup --root <repo> --write-manifest"
     Then "<repo>/.devboy/secrets.toml" is created
     And the file contains a "required = [...]" block listing every Path proposal
     And the file contains a "[secret.\"<path>\"]" block per Path with description tracing back to the env var

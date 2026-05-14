@@ -160,10 +160,33 @@ Common failure modes:
 
 ---
 
+## Provision dialog: what the user sees
+
+When the wizard reaches step 5 (provision a missing path), it opens the native provision dialog (`devboy secrets ui --provision <path>`). The dialog now fuses three sources of metadata so the user sees the same procedure the provider's own docs publish:
+
+| Field | Source | Notes |
+|---|---|---|
+| PATH | manifest | The ADR-020 path. |
+| VIA | router resolution | Source name (`local-vault`, `keychain`, `1password`, …). |
+| ROTATION | catalog → manifest → `"manual"` | `variants[i].rotation.method` wins over `IndexEntry.rotation_method`. |
+| FORMAT | catalog | `variants[i].format_hint` (e.g. "starts with sk-, 20+ chars"). |
+| Description block | catalog | Italic text — `variants[i].description`. Hidden when no catalog match. |
+| "How to obtain:" | catalog | Numbered list rendered from `variants[i].retrieval.steps`. |
+| "Note: …" | catalog | Caveat / pro-tip from `variants[i].retrieval.notes`. |
+| [Open URL] | catalog → manifest | `variants[i].retrieval.console_url`, with `IndexEntry.retrieval_url` as fallback. |
+
+When the path's provider segment does not match any loaded catalog the catalog-derived blocks collapse silently and the dialog renders only the manifest-side rows — the pre-S2 behaviour.
+
+The variant chip in the inventory row (when the catalog declares more than one variant) re-arms the dialog with the selected variant's metadata; nothing else in the user's input is affected.
+
+The builder lives in `crates/devboy-secrets-ui-bin/src/catalog_metadata.rs::metadata_from_catalog_and_entry` and is exercised by `cargo test -p devboy-secrets-ui-bin catalog_metadata`.
+
 ## See also
 
+- [ADR-023](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md) §3.4 — provision dialog contract.
 - [ADR-023](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md) §3.8 — formal spec of the eight-step flow.
 - [`onboarding.md`](./onboarding.md) — manual equivalent for users without an agent.
 - [`agent-protocol.md`](./agent-protocol.md) — MCP tool surface used in steps 5-6 (`secrets_request_provision`, `secrets_poll_status`).
+- [`scenarios/ui-catalog-rendering.feature`](./scenarios/ui-catalog-rendering.feature) — Gherkin contract for the provision dialog's catalog binding.
 - `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/SKILL.md` — the skill manifest and procedure walkthrough the agent loads at activation time.
 - `crates/devboy-cli/src/secrets_setup.rs` — the CLI-side scanner / proposer / wizard runner, including `read_setup_state`.
