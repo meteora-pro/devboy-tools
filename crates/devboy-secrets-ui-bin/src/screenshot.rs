@@ -25,7 +25,8 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use devboy_secrets_ui::{
-    DialogMetadata, DialogMode, DialogState, VaultUnlockMode, VaultUnlockState, VaultUnlockStatus,
+    DialogMetadata, DialogMode, DialogState, OnboardingProvider, OnboardingState, VaultUnlockMode,
+    VaultUnlockState, VaultUnlockStatus,
 };
 
 /// Which view the `--screenshot` mode should render. Selected
@@ -40,6 +41,9 @@ pub enum ScreenshotView {
     /// The vault unlock modal, `Create` mode (passphrase +
     /// confirm fields).
     VaultCreate,
+    /// The first-run onboarding wizard with all three providers
+    /// selected so every sub-form is visible.
+    Onboarding,
 }
 
 impl ScreenshotView {
@@ -49,8 +53,10 @@ impl ScreenshotView {
             "provision" => Ok(Self::Provision),
             "unlock" => Ok(Self::VaultUnlock),
             "create" => Ok(Self::VaultCreate),
+            "onboarding" => Ok(Self::Onboarding),
             other => Err(anyhow::anyhow!(
-                "unknown --screenshot-view `{other}` (expected: provision, unlock, create)"
+                "unknown --screenshot-view `{other}` \
+                 (expected: provision, unlock, create, onboarding)"
             )),
         }
     }
@@ -62,6 +68,7 @@ pub fn render_to_png(view: ScreenshotView, out: &Path) -> Result<()> {
         ScreenshotView::Provision => render_provision_dialog_to_png(out),
         ScreenshotView::VaultUnlock => render_vault_unlock_to_png(out, VaultUnlockMode::Unlock),
         ScreenshotView::VaultCreate => render_vault_unlock_to_png(out, VaultUnlockMode::Create),
+        ScreenshotView::Onboarding => render_onboarding_to_png(out),
     }
 }
 
@@ -104,6 +111,35 @@ fn render_vault_unlock_to_png(out: &Path, mode: VaultUnlockMode) -> Result<()> {
 
     let mut harness = egui_kittest::Harness::new_ui(move |ui| {
         let _ = devboy_secrets_ui::gui::vault_unlock::render(ui, &mut state);
+    });
+    harness.run();
+
+    let image = harness
+        .render()
+        .map_err(|e| anyhow::anyhow!("offscreen wgpu render failed: {e:?}"))?;
+    image
+        .save(out)
+        .with_context(|| format!("could not write screenshot to {}", out.display()))?;
+    Ok(())
+}
+
+/// Render the first-run onboarding wizard to `out` as a PNG.
+/// All three providers are pre-selected and their sub-forms
+/// pre-filled so the screenshot exercises every section —
+/// passphrase + confirm, the HCP Vault fields, the primary
+/// radio.
+fn render_onboarding_to_png(out: &Path) -> Result<()> {
+    let mut state = OnboardingState::new();
+    state.toggle_provider(OnboardingProvider::LocalVault, true);
+    state.toggle_provider(OnboardingProvider::HttpVault, true);
+    state.replace_local_passphrase_str("sample-passphrase".into());
+    state.replace_local_confirm_str("sample-passphrase".into());
+    state.set_http_addr("https://example.hashicorp.cloud:8200".into());
+    state.set_http_namespace("admin".into());
+    state.replace_http_token_str("hvs.sampletoken".into());
+
+    let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+        let _ = devboy_secrets_ui::gui::onboarding::render(ui, &mut state);
     });
     harness.run();
 

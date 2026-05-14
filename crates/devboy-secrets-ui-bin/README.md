@@ -39,11 +39,12 @@ a faithful preview.
 
 `--screenshot-view` selects which view (default `provision`):
 
-| Value       | Renders |
-|-------------|---------|
-| `provision` | the provision dialog, catalog-matched (`team/openai/api-key`) |
-| `unlock`    | the vault unlock modal, with a sample wrong-passphrase error |
-| `create`    | the vault create modal (passphrase + confirm fields) |
+| Value        | Renders |
+|--------------|---------|
+| `provision`  | the provision dialog, catalog-matched (`team/openai/api-key`) |
+| `unlock`     | the vault unlock modal, with a sample wrong-passphrase error |
+| `create`     | the vault create modal (passphrase + confirm fields) |
+| `onboarding` | the first-run onboarding wizard, all three providers selected |
 
 Purpose: lets an automated agent (or a CI visual-diff job) inspect GUI
 changes without a human looking at the native window. The feature is

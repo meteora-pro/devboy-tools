@@ -27,6 +27,7 @@
 pub mod discovery_import;
 pub mod inventory;
 pub mod metadata_editor;
+pub mod onboarding;
 pub mod provision_dialog;
 pub mod use_approval_dialog;
 pub mod vault_unlock;

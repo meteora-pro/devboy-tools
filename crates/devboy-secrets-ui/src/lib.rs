@@ -11,6 +11,7 @@ pub mod discovery_import;
 pub mod gui;
 pub mod inventory;
 pub mod metadata_editor;
+pub mod onboarding;
 pub mod provision_dialog;
 pub mod use_approval_dialog;
 pub mod vault_unlock;
@@ -45,4 +46,8 @@ pub use use_approval_dialog::{UseApprovalDecision, UseApprovalState, UseApproval
 
 pub use vault_unlock::{
     VaultUnlockFocus, VaultUnlockFrameResult, VaultUnlockMode, VaultUnlockState, VaultUnlockStatus,
+};
+
+pub use onboarding::{
+    OnboardingAccess, OnboardingFrameResult, OnboardingProvider, OnboardingState, OnboardingStatus,
 };

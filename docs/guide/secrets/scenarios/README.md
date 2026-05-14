@@ -1,6 +1,6 @@
 # Secret-framework BDD scenarios
 
-Seven Gherkin `.feature` files covering the user-facing behaviour of the secret framework — onboarding, approve-on-use, catalog URL lifecycle, the agent trust boundary, the proposer noise-reduction series, the catalog → provision-dialog rendering contract, and the local-vault unlock / create flow.
+Eight Gherkin `.feature` files covering the user-facing behaviour of the secret framework — the setup-secrets onboarding, approve-on-use, catalog URL lifecycle, the agent trust boundary, the proposer noise-reduction series, the catalog → provision-dialog rendering contract, the local-vault unlock / create flow, and the first-run onboarding wizard (backend picker).
 
 These are **executable specifications** in the BDD sense — every scenario states a concrete observable outcome a user (developer or AI agent) can verify by running the documented commands. They are not (yet) wired into a `cucumber-rs` test harness; the `.feature` files act as the written contract that the existing unit / integration / end-to-end test suites already cover (look for the named functions and reasons in `crates/devboy-cli/src/secrets_setup.rs`, `crates/devboy-token-catalog/src/lib.rs`, `crates/devboy-mcp/src/secrets_*.rs`).
 
@@ -15,6 +15,7 @@ These are **executable specifications** in the BDD sense — every scenario stat
 | [`proposer-noise-reduction.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/proposer-noise-reduction.feature) | The five-step skip-list expansion (P1-P5) plus the catalog-driven precision (S2 + bundled catalogs) that took the proposer from 236 to 161 paths on the canonical demo project. |
 | [`ui-catalog-rendering.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/ui-catalog-rendering.feature) | The provision dialog binds to the active token catalog (description / numbered steps / notes / console URL), with manifest-only fallback when no catalog matches the path. Covers both the egui and ratatui renderers (U-series). |
 | [`vault-unlock.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/vault-unlock.feature) | The local-vault unlock / create flow in `secrets ui` — env-passphrase fast path, modal unlock prompt for an existing `.dvb`, wrong-passphrase handling, the keychain escape hatch, first-run create-vault with the recovery-phrase gate, and live backend switching (V-series). |
+| [`onboarding.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/onboarding.feature) | The first-run onboarding wizard — backend picker (keychain / local-vault / HCP Vault, combinations allowed), per-backend sub-forms, the `access` mode for HCP Vault, `sources.toml` write, primary-backend resolution, and the P11 (multi-source routing) / P15 (write path) deferral boundaries (W-series). |
 
 ## Why Gherkin
 

@@ -196,8 +196,13 @@ Where the provision dialog's *Save* writes depends on the backend the UI resolve
 | OS keychain | default — no `DEVBOY_VAULT_PASSPHRASE`, no `.dvb` file | the OS keychain (service `devboy-tools`) |
 | local-vault (unlocked) | `DEVBOY_VAULT_PASSPHRASE` set, OR the user unlocked / created the vault in the UI | the encrypted `.dvb` file (XChaCha20-Poly1305 + Argon2id) |
 | local-vault (locked) | a `.dvb` file exists but no env passphrase | nothing — the UI shows a modal **unlock prompt** before the inventory is usable |
+| HashiCorp Cloud Vault | a `type = "vault"` `[[source]]` is configured (via the onboarding wizard) | **read-only today** — the UI reads provisioned status from Vault but refuses writes with an honest message (the `SecretSource` write surface ships in P15) |
 
-The UI handles the locked → unlocked transition itself: a modal asks for the passphrase (eye-toggle, wrong-passphrase shown in red, *Use keychain instead* escape hatch), and a top-bar switcher flips backends live. First run with no vault file offers a create flow with a one-time recovery-phrase gate. Full walkthrough: [`local-vault.md` → "Unlocking from the secrets UI"](./local-vault.md), contract: [`scenarios/vault-unlock.feature`](./scenarios/vault-unlock.feature).
+The UI handles the locked → unlocked transition itself: a modal asks for the passphrase (eye-toggle, wrong-passphrase shown in red, *Use keychain instead* escape hatch), and a top-bar switcher flips backends live. First run with no vault file offers a create flow with a one-time recovery-phrase gate.
+
+**First-run onboarding.** When nothing is configured anywhere (no `sources.toml`, no `.dvb`, no env passphrase), the UI opens an onboarding wizard: a backend picker for keychain / local-vault / HCP Vault, combinations allowed, one marked primary. It writes `sources.toml` and creates the local vault if asked. The HCP Vault entry carries an `access = "read" | "readwrite"` mask — `read` narrows the source's capabilities to `READ | LIST | VALIDATE`.
+
+Full walkthrough: [`local-vault.md`](./local-vault.md) ("Unlocking from the secrets UI", "First-run onboarding wizard", "External Vault as a read-source"). Contracts: [`scenarios/vault-unlock.feature`](./scenarios/vault-unlock.feature), [`scenarios/onboarding.feature`](./scenarios/onboarding.feature).
 
 ## See also
 

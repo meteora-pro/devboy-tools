@@ -167,6 +167,10 @@ struct InventoryApp {
     /// the inventory renders dimmed underneath until this is
     /// `None`.
     vault_unlock: Option<devboy_secrets_ui::VaultUnlockState>,
+    /// First-run onboarding wizard. `Some` on the very first
+    /// launch (no `sources.toml`, no vault file, no env
+    /// passphrase) until the user finishes or skips it.
+    onboarding: Option<devboy_secrets_ui::OnboardingState>,
 }
 
 impl InventoryApp {
@@ -190,6 +194,16 @@ impl InventoryApp {
         } else {
             None
         };
+        // First run — nothing configured anywhere — arms the
+        // onboarding wizard. `vault_unlock` and `onboarding`
+        // are mutually exclusive: a locked vault means the
+        // user already onboarded, so `is_first_run()` returns
+        // false in that case.
+        let onboarding = if is_first_run() {
+            Some(devboy_secrets_ui::OnboardingState::new())
+        } else {
+            None
+        };
         let mut app = Self {
             state: devboy_secrets_ui::InventoryState::new(rows),
             metadata_by_path,
@@ -204,6 +218,7 @@ impl InventoryApp {
             pending_url_confirms,
             pending_url_warnings,
             vault_unlock,
+            onboarding,
         };
         if let Some(path) = initial_path {
             app.open_dialog_for(&path);
@@ -278,7 +293,12 @@ impl InventoryApp {
                     let vault_path = match &self.backend {
                         StorageBackend::LocalVaultLocked { vault_path }
                         | StorageBackend::LocalVault { vault_path, .. } => vault_path.clone(),
-                        StorageBackend::Keychain => default_vault_path(),
+                        // Keychain or an HTTP-Vault backend → a
+                        // newly created local-vault lands at the
+                        // default path.
+                        StorageBackend::Keychain | StorageBackend::HttpVault { .. } => {
+                            default_vault_path()
+                        }
                     };
                     StorageBackend::create_vault(vault_path, passphrase)
                 }
@@ -312,6 +332,136 @@ impl InventoryApp {
             self.reload();
         }
     }
+
+    /// Render the first-run onboarding modal and apply its
+    /// outcome. No-op when `self.onboarding` is `None`.
+    ///
+    /// On "Finish setup": write `sources.toml`, create the
+    /// local-vault if the user picked one (surfacing the
+    /// recovery phrase), then resolve `self.backend` to the
+    /// chosen primary provider. On "Skip": straight to the
+    /// keychain, no files written.
+    fn render_onboarding_modal(&mut self, ctx: &eframe::egui::Context) {
+        if self.onboarding.is_none() {
+            return;
+        }
+        let mut finish = false;
+        let mut skip = false;
+        {
+            let state = self.onboarding.as_mut().unwrap();
+            eframe::egui::Modal::new(eframe::egui::Id::new("onboarding-modal")).show(ctx, |ui| {
+                ui.set_max_width(480.0);
+                let result = devboy_secrets_ui::gui::onboarding::render(ui, state);
+                finish = result.finish;
+                skip = result.skip;
+            });
+        }
+
+        if skip {
+            self.backend = StorageBackend::Keychain;
+            self.onboarding = None;
+            self.reload();
+            return;
+        }
+        if !finish {
+            return;
+        }
+
+        // Snapshot everything off the modal before mutating
+        // `self` (the modal borrow has to end first).
+        let state = self.onboarding.as_ref().expect("guarded above");
+        let toml_body = state.to_sources_toml();
+        let primary = state.primary();
+        let wants_local = state.local_vault_selected();
+        let local_pass = state.local_passphrase().clone();
+        let http = if state.http_vault_selected() {
+            let access = match state.http_access() {
+                devboy_secrets_ui::OnboardingAccess::Read => devboy_storage::SourceAccess::Read,
+                devboy_secrets_ui::OnboardingAccess::ReadWrite => {
+                    devboy_storage::SourceAccess::ReadWrite
+                }
+            };
+            let ns = state.http_namespace().trim();
+            Some((
+                state.http_addr().trim().to_owned(),
+                (!ns.is_empty()).then(|| ns.to_owned()),
+                state.http_mount().trim().to_owned(),
+                state.http_token().clone(),
+                access,
+            ))
+        } else {
+            None
+        };
+
+        if let Some(s) = self.onboarding.as_mut() {
+            s.apply_status(devboy_secrets_ui::OnboardingStatus::Working);
+        }
+
+        // 1. Write sources.toml.
+        if let Err(reason) = write_sources_toml(&toml_body) {
+            if let Some(s) = self.onboarding.as_mut() {
+                s.apply_status(devboy_secrets_ui::OnboardingStatus::Failed { reason });
+            }
+            return;
+        }
+
+        // 2. Create the local-vault if the user picked one.
+        let mut created_local: Option<StorageBackend> = None;
+        if wants_local {
+            match StorageBackend::create_vault(default_vault_path(), local_pass) {
+                Ok((backend, recovery)) => {
+                    if let Some(phrase) = recovery {
+                        self.recovery_phrase_to_show = Some(phrase);
+                    }
+                    created_local = Some(backend);
+                }
+                Err(reason) => {
+                    if let Some(s) = self.onboarding.as_mut() {
+                        s.apply_status(devboy_secrets_ui::OnboardingStatus::Failed { reason });
+                    }
+                    return;
+                }
+            }
+        }
+
+        // 3. Resolve `self.backend` to the chosen primary.
+        self.backend = match primary {
+            devboy_secrets_ui::OnboardingProvider::Keychain => StorageBackend::Keychain,
+            devboy_secrets_ui::OnboardingProvider::LocalVault => {
+                // `wants_local` must be true if local-vault is
+                // primary (the wizard only lets you pick a
+                // selected provider) — but fall back to
+                // keychain rather than panic if something drifts.
+                created_local.unwrap_or(StorageBackend::Keychain)
+            }
+            devboy_secrets_ui::OnboardingProvider::HttpVault => {
+                let (addr, namespace, mount, token, access) =
+                    http.expect("http-vault primary implies http-vault selected");
+                StorageBackend::HttpVault {
+                    addr,
+                    namespace,
+                    mount,
+                    token,
+                    access,
+                }
+            }
+        };
+        self.onboarding = None;
+        self.reload();
+    }
+}
+
+/// Write `body` to the canonical `sources.toml` path, creating
+/// the parent directory if needed. Surfaces a human-facing
+/// reason on failure.
+fn write_sources_toml(body: &str) -> Result<(), String> {
+    let path = devboy_storage::RouterConfig::default_path()
+        .map_err(|e| format!("could not resolve the sources.toml path: {e}"))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("could not create the secrets config directory: {e}"))?;
+    }
+    std::fs::write(&path, body).map_err(|e| format!("could not write {}: {e}", path.display()))
 }
 
 // =============================================================================
@@ -330,6 +480,24 @@ fn default_vault_path() -> std::path::PathBuf {
             p.push("local-vault.dvb");
             p
         })
+}
+
+/// `true` when nothing is configured anywhere — no
+/// `sources.toml`, no local-vault file, no
+/// `DEVBOY_VAULT_PASSPHRASE`. That's the signal to show the
+/// first-run onboarding wizard. Any one of those three
+/// existing means the user has been here before, so the
+/// wizard is skipped (the unlock modal or the env fast-path
+/// takes over instead).
+fn is_first_run() -> bool {
+    let sources_exists = devboy_storage::RouterConfig::default_path()
+        .map(|p| p.exists())
+        .unwrap_or(false);
+    let vault_exists = default_vault_path().exists();
+    let env_passphrase = std::env::var("DEVBOY_VAULT_PASSPHRASE")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    !sources_exists && !vault_exists && !env_passphrase
 }
 
 /// Which backend the GUI should write secrets to.
@@ -357,6 +525,26 @@ enum StorageBackend {
     LocalVault {
         vault_path: std::path::PathBuf,
         passphrase: secrecy::SecretString,
+    },
+    /// A remote HashiCorp / HCP Vault, reached over the HTTP
+    /// KV v2 API via `devboy_secret_vault::VaultSource`.
+    /// Configured through the onboarding wizard (W3-W5) and
+    /// written into `sources.toml`.
+    ///
+    /// Read-only in practice: the `SecretSource` trait has no
+    /// write surface yet (that's P15), so `store` refuses with
+    /// an honest message. `access` still carries the configured
+    /// `read` / `readwrite` so the UI can explain *why* a write
+    /// was refused.
+    HttpVault {
+        addr: String,
+        namespace: Option<String>,
+        /// KV v2 data mount prefix, e.g. `secret/data`. An
+        /// ADR-020 path `team/openai/api-key` becomes the Vault
+        /// reference `<mount>/team/openai/api-key`.
+        mount: String,
+        token: secrecy::SecretString,
+        access: devboy_storage::SourceAccess,
     },
 }
 
@@ -406,7 +594,9 @@ impl StorageBackend {
     }
 
     /// Drop the held passphrase, returning the backend to its
-    /// locked state. No-op for keychain / already-locked.
+    /// locked state. No-op for keychain / already-locked / HTTP
+    /// Vault (the Vault token lives in `sources.toml`, there is
+    /// no in-memory unlock state to drop).
     fn lock(&self) -> StorageBackend {
         match self {
             StorageBackend::LocalVault { vault_path, .. }
@@ -414,6 +604,7 @@ impl StorageBackend {
                 vault_path: vault_path.clone(),
             },
             StorageBackend::Keychain => StorageBackend::Keychain,
+            StorageBackend::HttpVault { .. } => self.clone(),
         }
     }
 
@@ -476,6 +667,22 @@ impl StorageBackend {
                     vault_path.display()
                 )
             }
+            StorageBackend::HttpVault {
+                addr,
+                namespace,
+                access,
+                ..
+            } => {
+                let ns = namespace
+                    .as_deref()
+                    .map(|n| format!(", namespace `{n}`"))
+                    .unwrap_or_default();
+                let mode = match access {
+                    devboy_storage::SourceAccess::Read => "read-only",
+                    devboy_storage::SourceAccess::ReadWrite => "read-write",
+                };
+                format!("HashiCorp Vault — `{addr}`{ns} ({mode})")
+            }
         }
     }
 
@@ -485,6 +692,7 @@ impl StorageBackend {
             StorageBackend::LocalVaultLocked { .. } | StorageBackend::LocalVault { .. } => {
                 "local-vault"
             }
+            StorageBackend::HttpVault { .. } => "vault",
         }
     }
 
@@ -515,6 +723,66 @@ impl StorageBackend {
                 };
                 matches!(vault.get(path), Ok(Some(_)))
             }
+            StorageBackend::HttpVault { .. } => {
+                // `VaultSource::get` is async; block_on it on a
+                // tiny current-thread runtime. Any error (no
+                // network, bad token, sealed) collapses to
+                // "not provisioned" — the same forgiving render
+                // contract the other backends follow.
+                use devboy_storage::SecretSource as _;
+                match self.http_vault_source() {
+                    Some(src) => {
+                        let reference = self.http_vault_reference(path);
+                        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                        else {
+                            return false;
+                        };
+                        rt.block_on(async move { matches!(src.get(&reference).await, Ok(Some(_))) })
+                    }
+                    None => false,
+                }
+            }
+        }
+    }
+
+    /// Build a `VaultSource` from an `HttpVault` backend.
+    /// `None` for any other variant (or if the HTTP client
+    /// fails to build, which is essentially never).
+    fn http_vault_source(&self) -> Option<devboy_secret_vault::VaultSource> {
+        let StorageBackend::HttpVault {
+            addr,
+            namespace,
+            token,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        let mut src = devboy_secret_vault::VaultSource::new(
+            "http-vault",
+            addr.clone(),
+            devboy_secret_vault::VaultAuth::Token(token.clone()),
+        )
+        .ok()?;
+        if let Some(ns) = namespace {
+            src = src.with_namespace(ns);
+        }
+        Some(src)
+    }
+
+    /// Translate an ADR-020 path into a Vault KV v2 reference:
+    /// `<mount>/<path>` (e.g. `secret/data/team/openai/api-key`).
+    fn http_vault_reference(&self, path: &str) -> String {
+        match self {
+            StorageBackend::HttpVault { mount, .. } => {
+                format!("{}/{}", mount.trim_end_matches('/'), path)
+            }
+            // Not an HTTP-vault backend — return the path
+            // verbatim; callers only reach this on the HttpVault
+            // arm anyway.
+            _ => path.to_owned(),
         }
     }
 
@@ -569,6 +837,24 @@ impl StorageBackend {
                 };
                 Ok(recovery)
             }
+            // HTTP Vault is read-only from the UI today. The
+            // `SecretSource` trait has no write surface yet
+            // (P15) — refuse honestly rather than silently
+            // dropping the value. `access` distinguishes "you
+            // chose read-only" from "writes aren't built yet".
+            StorageBackend::HttpVault { access, .. } => match access {
+                devboy_storage::SourceAccess::Read => Err(
+                    "this Vault source is configured read-only (`access = \"read\"`) — \
+                     change it to `readwrite` in sources.toml once write support lands"
+                        .to_owned(),
+                ),
+                devboy_storage::SourceAccess::ReadWrite => Err(
+                    "writing to HashiCorp Vault from the UI is not implemented yet — \
+                     the SecretSource write surface ships in P15. Until then, write the \
+                     value with the Vault CLI / UI and devboy will read it back."
+                        .to_owned(),
+                ),
+            },
         }
     }
 }
@@ -736,6 +1022,15 @@ fn catalog_override_for(
 
 impl eframe::App for InventoryApp {
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
+        // First-run onboarding wizard — gates everything on the
+        // very first launch. `onboarding` and `vault_unlock`
+        // are mutually exclusive (a locked vault means the user
+        // already onboarded), so checking onboarding first is
+        // safe.
+        if self.onboarding.is_some() {
+            self.render_onboarding_modal(ui.ctx());
+        }
+
         // Vault unlock / create modal — gates everything else
         // while the backend is a locked local-vault. The
         // `egui::Modal` dims the inventory underneath; the
@@ -791,6 +1086,18 @@ impl eframe::App for InventoryApp {
                 // extra switcher button needed (the modal has
                 // its own "Use keychain instead" hatch).
                 StorageBackend::LocalVaultLocked { .. } => {}
+                // HTTP Vault is configured in sources.toml — the
+                // only live switch is back to the keychain for
+                // the session.
+                StorageBackend::HttpVault { .. } => {
+                    if ui
+                        .small_button("Switch to keychain")
+                        .on_hover_text("Use the OS keychain for this session")
+                        .clicked()
+                    {
+                        switch_to_keychain = true;
+                    }
+                }
             }
         });
         if switch_to_vault {
@@ -1942,5 +2249,100 @@ mod tests {
             .source_label(),
             "local-vault"
         );
+    }
+
+    // -- StorageBackend::HttpVault (W2) ------------------------
+
+    fn http_vault(access: devboy_storage::SourceAccess) -> StorageBackend {
+        StorageBackend::HttpVault {
+            addr: "https://vault.example.invalid:8200".to_owned(),
+            namespace: Some("admin".to_owned()),
+            mount: "secret/data".to_owned(),
+            token: SecretString::new("hvs.tok".to_string().into()),
+            access,
+        }
+    }
+
+    #[test]
+    fn http_vault_label_surfaces_addr_namespace_and_access_mode() {
+        let read = http_vault(devboy_storage::SourceAccess::Read).label();
+        assert!(read.contains("HashiCorp Vault"));
+        assert!(read.contains("vault.example.invalid"));
+        assert!(read.contains("namespace `admin`"));
+        assert!(read.contains("read-only"));
+        let rw = http_vault(devboy_storage::SourceAccess::ReadWrite).label();
+        assert!(rw.contains("read-write"));
+    }
+
+    #[test]
+    fn http_vault_source_label_is_vault() {
+        assert_eq!(
+            http_vault(devboy_storage::SourceAccess::ReadWrite).source_label(),
+            "vault"
+        );
+    }
+
+    #[test]
+    fn http_vault_reference_prefixes_the_mount() {
+        let backend = http_vault(devboy_storage::SourceAccess::ReadWrite);
+        assert_eq!(
+            backend.http_vault_reference("team/openai/api-key"),
+            "secret/data/team/openai/api-key"
+        );
+    }
+
+    #[test]
+    fn http_vault_reference_trims_a_trailing_slash_on_the_mount() {
+        let backend = StorageBackend::HttpVault {
+            addr: "https://v.invalid".to_owned(),
+            namespace: None,
+            mount: "secret/data/".to_owned(),
+            token: SecretString::new("t".to_string().into()),
+            access: devboy_storage::SourceAccess::ReadWrite,
+        };
+        assert_eq!(
+            backend.http_vault_reference("team/x/y"),
+            "secret/data/team/x/y"
+        );
+    }
+
+    #[test]
+    fn http_vault_read_access_refuses_a_write_pointing_at_the_config() {
+        let err = http_vault(devboy_storage::SourceAccess::Read)
+            .store("team/x/y", &SecretString::new("v".to_string().into()))
+            .expect_err("read-only HTTP Vault must refuse a write");
+        assert!(err.contains("read-only"), "got: {err}");
+        assert!(err.contains("sources.toml"), "got: {err}");
+    }
+
+    #[test]
+    fn http_vault_readwrite_refuses_a_write_pointing_at_p15() {
+        // `readwrite` doesn't mean write WORKS yet — the
+        // SecretSource write surface ships in P15. The refusal
+        // must say so honestly rather than silently dropping
+        // the value.
+        let err = http_vault(devboy_storage::SourceAccess::ReadWrite)
+            .store("team/x/y", &SecretString::new("v".to_string().into()))
+            .expect_err("HTTP Vault write is not implemented yet");
+        assert!(err.contains("P15"), "got: {err}");
+    }
+
+    #[test]
+    fn http_vault_source_builds_with_namespace() {
+        // `http_vault_source` should produce a `VaultSource`
+        // for an HttpVault backend (and `None` for others).
+        let backend = http_vault(devboy_storage::SourceAccess::ReadWrite);
+        assert!(backend.http_vault_source().is_some());
+        assert!(StorageBackend::Keychain.http_vault_source().is_none());
+    }
+
+    #[test]
+    fn http_vault_lock_is_a_no_op() {
+        // The Vault token lives in sources.toml — there is no
+        // in-memory unlock state to drop, so `lock` returns the
+        // backend unchanged.
+        let backend = http_vault(devboy_storage::SourceAccess::Read);
+        assert!(matches!(backend.lock(), StorageBackend::HttpVault { .. }));
+        assert!(!backend.is_locked());
     }
 }

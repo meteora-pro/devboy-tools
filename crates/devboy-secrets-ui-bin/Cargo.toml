@@ -38,6 +38,11 @@ devboy-storage = { workspace = true }
 devboy-token-catalog = { workspace = true }
 devboy-vault-crypto = { workspace = true }
 devboy-secret-patterns = { workspace = true }
+# HCP / HashiCorp Vault read-source. `VaultSource` is async;
+# `StorageBackend::HttpVault` block_on's it on a small current-
+# thread runtime (one request per inventory probe / save).
+devboy-secret-vault = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros"] }
 # `eframe` powers the native window. Pinned to the same egui 0.34.x
 # range that `devboy-secrets-ui::gui` uses so widget code and the host
 # run against the same types. `default-features = false` drops the

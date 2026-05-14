@@ -33,6 +33,41 @@ Once unlocked, the top bar offers **Lock vault** (drops the passphrase, the unlo
 
 The passphrase typed into the modal lives in a `SecretString` and is zeroized when the modal closes; the agent never sees it (same contract as the provision dialog).
 
+## First-run onboarding wizard
+
+On the very first launch — no `sources.toml`, no `.dvb` file, no `DEVBOY_VAULT_PASSPHRASE` — `devboy secrets ui` shows an **onboarding wizard** instead of jumping to the keychain. It's a backend picker:
+
+- **OS keychain** — pre-ticked, zero config.
+- **Encrypted local vault** — ticking it reveals passphrase + confirm fields; on finish the `.dvb` file is created and its recovery phrase is shown once.
+- **HashiCorp Cloud Vault** — ticking it reveals address / namespace / mount / token fields plus a **read-only / read-write** access radio.
+
+Combinations are allowed — all three can be configured at once. One is the **primary** backend (a radio over the ticked providers) — the one the UI works against today. *Finish setup* writes a `sources.toml` with one `[[source]]` per ticked backend and `[default].source` pointing at the primary; *Skip — use keychain* goes straight to the keychain, writing nothing. The wizard never re-appears once `sources.toml` exists.
+
+## External Vault as a read-source (HCP / HashiCorp Cloud)
+
+A `type = "vault"` `[[source]]` points devboy at a remote HashiCorp Vault over the HTTP KV v2 API. HCP Vault (the managed offering) needs a `namespace` (conventionally `admin`); plain open-source Vault leaves it blank. Settings:
+
+```toml
+[[source]]
+name = "hcp-vault"
+type = "vault"
+access = "read"                       # or "readwrite"
+addr = "https://<cluster>.hashicorp.cloud:8200"
+namespace = "admin"                   # HCP / Enterprise; omit for OSS Vault
+mount = "secret/data"                 # KV v2 data-mount prefix
+token = "hvs.…"                       # Vault token
+```
+
+An ADR-020 path `team/openai/api-key` is read from the Vault reference `<mount>/team/openai/api-key`.
+
+> **Read-only today.** The `SecretSource` trait has no write surface yet — that ships in **P15**. So even `access = "readwrite"` cannot *write* to Vault from the UI yet; the UI refuses a save with an honest message and you write the value with the Vault CLI / UI, then devboy reads it back. `access = "read"` is the safe, working choice; `access = "readwrite"` is forward-looking config.
+
+### The `access` mask
+
+`access = "read"` narrows whatever the source plugin declares to `READ | LIST | VALIDATE` — `WRITE` / `ROTATE` are masked off even when the backend supports them. Use it to mount a team's shared Vault read-only on most machines and leave `readwrite` only where rotation runs. `doctor`'s "Sources" card shows both the *declared* and the *effective* (masked) capability set, so a refused write is explainable. The mask can only narrow — it never grants a capability the plugin lacks.
+
+> **Multi-source routing is deferred (P11).** The onboarding wizard writes every selected backend into `sources.toml`, but the UI drives exactly *one* — the primary — until the P11 router orchestration lands. The other entries are recorded and ready.
+
 ## File format
 
 The file lives at `~/.devboy/secrets/local-vault.dvb` by default. Binary layout (see `crates/devboy-vault-crypto/src/format.rs`):
