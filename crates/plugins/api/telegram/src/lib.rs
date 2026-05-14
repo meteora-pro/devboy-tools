@@ -1,8 +1,10 @@
 //! Telegram provider implementation for devboy-tools.
 //!
-//! This first slice implements read-only messenger access via the Telegram Bot
-//! API `getUpdates` endpoint. It exposes chats and messages the bot has already
-//! received, which matches current Bot API constraints.
+//! Telegram Bot API access is driven by `getUpdates`.
+//!
+//! The Bot API does not expose a standalone "list every chat this bot currently
+//! belongs to" method, so chat discovery is reconstructed from incoming updates:
+//! message traffic plus `my_chat_member` membership updates.
 
 mod client;
 

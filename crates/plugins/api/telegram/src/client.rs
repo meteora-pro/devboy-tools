@@ -54,6 +54,7 @@ struct TelegramUpdate {
     edited_message: Option<TelegramMessage>,
     channel_post: Option<TelegramMessage>,
     edited_channel_post: Option<TelegramMessage>,
+    my_chat_member: Option<TelegramChatMemberUpdated>,
 }
 
 impl TelegramUpdate {
@@ -69,6 +70,17 @@ impl TelegramUpdate {
         }
         self.edited_channel_post.map(|message| (message, true))
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TelegramChatMemberUpdated {
+    chat: TelegramChat,
+    new_chat_member: TelegramChatMember,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TelegramChatMember {
+    status: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -168,6 +180,11 @@ impl TelegramClient {
     async fn get_updates(&self, offset: Option<i64>, limit: u32) -> Result<Vec<TelegramUpdate>> {
         let mut query = vec![("timeout", "0".to_string())];
         query.push(("limit", limit.min(100).to_string()));
+        query.push((
+            "allowed_updates",
+            "[\"message\",\"edited_message\",\"channel_post\",\"edited_channel_post\",\"my_chat_member\"]"
+                .to_string(),
+        ));
         if let Some(offset) = offset {
             query.push(("offset", offset.to_string()));
         }
@@ -264,11 +281,14 @@ impl MessengerProvider for TelegramClient {
     async fn get_chats(&self, params: GetChatsParams) -> Result<ProviderResult<MessengerChat>> {
         let limit = params.limit.unwrap_or(20).min(100);
         let mut offset = parse_cursor(params.cursor.as_deref())?;
-        let mut items = Vec::new();
-        let mut seen_chat_ids = HashSet::new();
         let search = params.search.as_deref().map(str::to_lowercase);
+        let include_inactive = params.include_inactive.unwrap_or(false);
         let mut has_more = false;
         let mut next_cursor = None;
+        let mut ordered_chat_ids = Vec::new();
+        let mut seen_chat_ids = HashSet::new();
+        let mut chats_by_id = std::collections::HashMap::<String, MessengerChat>::new();
+        let mut membership_by_id = std::collections::HashMap::<String, bool>::new();
 
         loop {
             let updates = self.get_updates(offset, 100).await?;
@@ -277,35 +297,49 @@ impl MessengerProvider for TelegramClient {
             }
 
             let raw_len = updates.len();
-            for (index, update) in updates.into_iter().enumerate() {
+            for update in updates {
                 let resume_offset = update.update_id + 1;
-                let Some((message, _)) = update.into_message() else {
-                    offset = Some(resume_offset);
-                    continue;
-                };
-
-                let chat = map_chat(&message.chat);
                 offset = Some(resume_offset);
-
-                if !matches_chat_type(chat.chat_type, params.chat_type) {
-                    continue;
+                if let Some(member_update) = update.my_chat_member.as_ref() {
+                    let chat = map_chat(&member_update.chat);
+                    let chat_id = chat.id.clone();
+                    if seen_chat_ids.insert(chat_id.clone()) {
+                        ordered_chat_ids.push(chat_id.clone());
+                    }
+                    membership_by_id.insert(
+                        chat_id.clone(),
+                        telegram_membership_is_active(&member_update.new_chat_member.status),
+                    );
+                    chats_by_id.insert(chat_id, chat);
                 }
-                if !matches_search(&chat, search.as_deref()) {
-                    continue;
-                }
-                if !seen_chat_ids.insert(chat.id.clone()) {
-                    continue;
-                }
-
-                items.push(chat);
-                if items.len() >= limit as usize {
-                    has_more = index + 1 < raw_len || raw_len == 100;
-                    next_cursor = Some(resume_offset.to_string());
-                    break;
+                if let Some((message, _)) = update.into_message() {
+                    let chat = map_chat(&message.chat);
+                    let chat_id = chat.id.clone();
+                    if seen_chat_ids.insert(chat_id.clone()) {
+                        ordered_chat_ids.push(chat_id.clone());
+                    }
+                    membership_by_id.entry(chat_id.clone()).or_insert(true);
+                    chats_by_id.insert(chat_id, chat);
                 }
             }
 
-            if items.len() >= limit as usize {
+            let matching_count = ordered_chat_ids
+                .iter()
+                .filter_map(|chat_id| chats_by_id.get(chat_id))
+                .filter(|chat| matches_chat_type(chat.chat_type, params.chat_type))
+                .filter(|chat| matches_search(chat, search.as_deref()))
+                .filter(|chat| {
+                    include_inactive
+                        || membership_by_id
+                            .get(&chat.id)
+                            .copied()
+                            .unwrap_or(chat.is_active)
+                })
+                .count();
+
+            if matching_count >= limit as usize {
+                has_more = raw_len == 100;
+                next_cursor = offset.map(|value| value.to_string());
                 break;
             }
 
@@ -316,6 +350,27 @@ impl MessengerProvider for TelegramClient {
             has_more = true;
             next_cursor = offset.map(|value| value.to_string());
         }
+
+        let items = ordered_chat_ids
+            .into_iter()
+            .filter_map(|chat_id| chats_by_id.remove(&chat_id).map(|chat| (chat_id, chat)))
+            .filter_map(|(chat_id, mut chat)| {
+                if let Some(active) = membership_by_id.get(&chat_id).copied() {
+                    chat.is_active = active;
+                }
+                if !matches_chat_type(chat.chat_type, params.chat_type) {
+                    return None;
+                }
+                if !matches_search(&chat, search.as_deref()) {
+                    return None;
+                }
+                if !include_inactive && !chat.is_active {
+                    return None;
+                }
+                Some(chat)
+            })
+            .take(limit as usize)
+            .collect();
 
         Ok(ProviderResult::new(items).with_pagination(Pagination {
             offset: 0,
@@ -760,6 +815,10 @@ fn telegram_chat_type(chat: &TelegramChat) -> ChatType {
     }
 }
 
+fn telegram_membership_is_active(status: &str) -> bool {
+    matches!(status, "creator" | "administrator" | "member" | "restricted")
+}
+
 fn matches_chat_type(chat_type: ChatType, filter: Option<ChatType>) -> bool {
     filter.map(|value| value == chat_type).unwrap_or(true)
 }
@@ -873,6 +932,126 @@ mod tests {
         assert_eq!(result.items[0].chat_type, ChatType::Direct);
         assert_eq!(result.items[1].chat_type, ChatType::Group);
         assert!(!result.pagination.unwrap().has_more);
+    }
+
+    #[tokio::test]
+    async fn get_chats_includes_membership_only_chats() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/botbot-token/getUpdates")
+                .query_param("timeout", "0")
+                .query_param("limit", "100")
+                .query_param(
+                    "allowed_updates",
+                    "[\"message\",\"edited_message\",\"channel_post\",\"edited_channel_post\",\"my_chat_member\"]",
+                );
+            then.status(200).json_body_obj(&serde_json::json!({
+                "ok": true,
+                "result": [
+                    {
+                        "update_id": 13,
+                        "my_chat_member": {
+                            "chat": { "id": -300, "type": "supergroup", "title": "Ops" },
+                            "new_chat_member": { "status": "member" }
+                        }
+                    }
+                ]
+            }));
+        });
+
+        let result = TelegramClient::new(token("bot-token"))
+            .with_base_url(server.base_url())
+            .get_chats(GetChatsParams {
+                limit: Some(10),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].id, "-300");
+        assert_eq!(result.items[0].name, "Ops");
+        assert!(result.items[0].is_active);
+    }
+
+    #[tokio::test]
+    async fn get_chats_excludes_inactive_memberships_by_default() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/botbot-token/getUpdates")
+                .query_param("timeout", "0")
+                .query_param("limit", "100")
+                .query_param(
+                    "allowed_updates",
+                    "[\"message\",\"edited_message\",\"channel_post\",\"edited_channel_post\",\"my_chat_member\"]",
+                );
+            then.status(200).json_body_obj(&serde_json::json!({
+                "ok": true,
+                "result": [
+                    {
+                        "update_id": 14,
+                        "my_chat_member": {
+                            "chat": { "id": -400, "type": "supergroup", "title": "Archive" },
+                            "new_chat_member": { "status": "left" }
+                        }
+                    }
+                ]
+            }));
+        });
+
+        let result = TelegramClient::new(token("bot-token"))
+            .with_base_url(server.base_url())
+            .get_chats(GetChatsParams {
+                limit: Some(10),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert!(result.items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_chats_can_include_inactive_memberships() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/botbot-token/getUpdates")
+                .query_param("timeout", "0")
+                .query_param("limit", "100")
+                .query_param(
+                    "allowed_updates",
+                    "[\"message\",\"edited_message\",\"channel_post\",\"edited_channel_post\",\"my_chat_member\"]",
+                );
+            then.status(200).json_body_obj(&serde_json::json!({
+                "ok": true,
+                "result": [
+                    {
+                        "update_id": 15,
+                        "my_chat_member": {
+                            "chat": { "id": -500, "type": "supergroup", "title": "Former" },
+                            "new_chat_member": { "status": "kicked" }
+                        }
+                    }
+                ]
+            }));
+        });
+
+        let result = TelegramClient::new(token("bot-token"))
+            .with_base_url(server.base_url())
+            .get_chats(GetChatsParams {
+                limit: Some(10),
+                include_inactive: Some(true),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].id, "-500");
+        assert!(!result.items[0].is_active);
     }
 
     #[tokio::test]
