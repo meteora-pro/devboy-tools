@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 /// In CLI mode, this can be fetched from the ClickUp API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpMetadata {
-    /// Available statuses for the list.
     #[serde(default)]
     pub statuses: Vec<ClickUpStatus>,
     /// Custom fields defined for the list.
@@ -16,7 +15,6 @@ pub struct ClickUpMetadata {
     pub custom_fields: Vec<ClickUpCustomField>,
 }
 
-/// ClickUp list status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpStatus {
     pub name: String,
@@ -28,11 +26,9 @@ pub struct ClickUpStatus {
 /// ClickUp custom field definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpCustomField {
-    /// Field ID in ClickUp.
     pub id: String,
     /// Human-readable name.
     pub name: String,
-    /// Field type.
     #[serde(alias = "type")]
     pub field_type: ClickUpFieldType,
     /// Whether this field is required.
@@ -76,7 +72,6 @@ pub enum ClickUpFieldType {
 /// Option for dropdown/labels custom fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickUpFieldOption {
-    /// Option ID.
     pub id: String,
     /// Display name.
     pub name: String,

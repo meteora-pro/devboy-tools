@@ -62,7 +62,9 @@ pub struct AgentSnapshot {
 
 /// Trait every per-agent detector implements.
 pub trait AgentDetector: Send + Sync {
+    /// Fn.
     fn id(&self) -> &'static str;
+    /// Fn.
     fn display_name(&self) -> &'static str;
 
     /// Inspect `home` (the user's home directory) and produce a snapshot.

@@ -21,7 +21,6 @@ pub struct User {
     pub name: Option<String>,
     /// Email address
     pub email: Option<String>,
-    /// Avatar URL
     pub avatar_url: Option<String>,
 }
 
@@ -34,9 +33,7 @@ pub struct User {
 pub struct Issue {
     /// Unique key (e.g., "gitlab#123", "gh#456", "CU-abc", "PROJ-123")
     pub key: String,
-    /// Issue title
     pub title: String,
-    /// Issue description / body
     pub description: Option<String>,
     /// State (e.g., "opened", "closed")
     pub state: String,
@@ -46,9 +43,7 @@ pub struct Issue {
     pub priority: Option<String>,
     /// Labels / tags
     pub labels: Vec<String>,
-    /// Author
     pub author: Option<User>,
-    /// Assignees
     pub assignees: Vec<User>,
     /// Web URL for the issue
     pub url: Option<String>,
@@ -66,6 +61,35 @@ pub struct Issue {
     /// Subtasks / child issues
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subtasks: Vec<Issue>,
+    /// Provider-specific custom fields. **Key is always the
+    /// provider-stable id** (Jira `customfield_10014`, ClickUp field
+    /// uuid) so downstream consumers can join with metadata from
+    /// `get_custom_fields` regardless of provider. Display name
+    /// rides along inside the value when the provider returns it
+    /// on the issue payload — Jira leaves `name` empty (do a
+    /// follow-up `get_custom_fields` call if you need it), ClickUp
+    /// fills it from `task.custom_fields[].name`. GitHub and GitLab
+    /// don't have a customfield concept and always return an empty
+    /// map here.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub custom_fields: std::collections::HashMap<String, CustomFieldValue>,
+}
+
+/// Value of a single entry in [`Issue::custom_fields`]. Splits the
+/// raw provider value from the optional human-readable name so
+/// downstream consumers don't have to parse one out of the other.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct CustomFieldValue {
+    /// Human-readable field name (e.g. `"Epic Link"`,
+    /// `"Severity"`). `None` when the issue payload didn't carry a
+    /// name — Jira's `/issue/{key}` returns customfield values
+    /// keyed only by id, so the mapper leaves this empty and
+    /// relies on `get_custom_fields` for resolution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Raw provider value. Shape varies — string for text, number
+    /// for numeric, object/array for selects and multi-selects.
+    pub value: Value,
 }
 
 /// A link between two issues.
@@ -100,6 +124,14 @@ pub struct IssueRelations {
     /// Duplicate issues
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub duplicates: Vec<IssueLink>,
+    /// Parent epic key (Jira-only). Populated when the issue has an
+    /// `Epic Link` customfield value — covers Server/DC and Cloud
+    /// company-managed projects. Cloud team-managed Epics use the
+    /// system `parent` field instead and surface there. Lightweight
+    /// key-only field on purpose: a full `Issue` lookup for every
+    /// relations call would be too expensive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_key: Option<String>,
 }
 
 /// Filter parameters for listing issues.
@@ -138,15 +170,12 @@ pub struct IssueFilter {
 /// Input for creating a new issue.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateIssueInput {
-    /// Issue title
     pub title: String,
-    /// Issue description / body
     pub description: Option<String>,
     /// Labels to add
     pub labels: Vec<String>,
     /// Assignee usernames
     pub assignees: Vec<String>,
-    /// Priority
     pub priority: Option<String>,
     /// Parent issue key (for creating subtasks, e.g., "CU-abc123" or "DEV-42")
     pub parent: Option<String>,
@@ -175,6 +204,34 @@ pub struct CreateIssueInput {
     /// first-class Components concept (GitHub/GitLab/ClickUp).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub components: Vec<String>,
+    /// Fix version **names** to associate with the issue (Jira-only).
+    /// Each entry is a release name from the project's versions
+    /// (`ProjectVersion.name`, e.g. `"3.18.0"`). Jira accepts both id-
+    /// and name-based references in `fields.fixVersions`; names line up
+    /// with the schema enricher and stay portable across Cloud and
+    /// Self-Hosted. Ignored by providers without first-class fix
+    /// versions (GitHub/GitLab/ClickUp).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fix_versions: Vec<String>,
+    /// Parent epic key (Jira-only). Maps to the instance's `Epic Link`
+    /// custom field — id resolved at runtime, no need for callers to
+    /// know the `customfield_*` number. On Cloud team-managed projects
+    /// the canonical Epic Link is the system `parent` field; passing
+    /// the same value via `epic_key` works there too because Jira
+    /// accepts the customfield as an alias.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_key: Option<String>,
+    /// Sprint id (Jira-only). Maps to the instance's `Sprint` custom
+    /// field. Numeric, not name — Jira's Sprint field stores agile
+    /// board sprint ids; use `get_board_sprints` to discover them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sprint_id: Option<i64>,
+    /// Epic name (Jira-only, required when `issue_type == "Epic"` on
+    /// Server/DC and Cloud company-managed projects). Maps to the
+    /// instance's `Epic Name` custom field. Cloud team-managed
+    /// projects use the regular `summary` and ignore this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_name: Option<String>,
 }
 
 impl Default for CreateIssueInput {
@@ -191,6 +248,10 @@ impl Default for CreateIssueInput {
             issue_type: None,
             custom_fields: None,
             components: Vec::new(),
+            fix_versions: Vec::new(),
+            epic_key: None,
+            sprint_id: None,
+            epic_name: None,
         }
     }
 }
@@ -231,6 +292,27 @@ pub struct UpdateIssueInput {
     /// **names** (see [`CreateIssueInput::components`] for rationale).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub components: Option<Vec<String>>,
+    /// Replace fix versions on the issue (Jira-only).
+    /// `None` leaves fix versions untouched. `Some(vec![])` clears all
+    /// fix versions. `Some(vec![...])` replaces with the given release
+    /// **names** (see [`CreateIssueInput::fix_versions`] for rationale).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix_versions: Option<Vec<String>>,
+    /// Set the parent epic (Jira-only). `None` leaves the link
+    /// untouched. `Some("PROJ-1")` replaces it. To detach an issue
+    /// from its epic, pass `customFields: { "<epic-link-cf>": null }`
+    /// — the `epic_key` slot is for setting, not clearing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_key: Option<String>,
+    /// Move the issue to a sprint (Jira-only). `None` leaves the
+    /// sprint untouched. See [`CreateIssueInput::sprint_id`] for the
+    /// id-vs-name rationale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sprint_id: Option<i64>,
+    /// Set the Epic Name (Jira-only, applies to Epic-typed issues).
+    /// `None` leaves it untouched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_name: Option<String>,
 }
 
 impl Default for UpdateIssueInput {
@@ -246,6 +328,10 @@ impl Default for UpdateIssueInput {
             markdown: true,
             custom_fields: None,
             components: None,
+            fix_versions: None,
+            epic_key: None,
+            sprint_id: None,
+            epic_name: None,
         }
     }
 }
@@ -259,23 +345,16 @@ impl Default for UpdateIssueInput {
 pub struct MergeRequest {
     /// Unique key (e.g., "mr#123", "pr#456")
     pub key: String,
-    /// MR title
     pub title: String,
-    /// MR description / body
     pub description: Option<String>,
     /// State (e.g., "opened", "closed", "merged")
     pub state: String,
     /// Source provider name
     pub source: String,
-    /// Source branch
     pub source_branch: String,
-    /// Target branch
     pub target_branch: String,
-    /// Author
     pub author: Option<User>,
-    /// Assignees
     pub assignees: Vec<User>,
-    /// Reviewers
     pub reviewers: Vec<User>,
     /// Labels / tags
     pub labels: Vec<String>,
@@ -289,12 +368,9 @@ pub struct MergeRequest {
     pub updated_at: Option<String>,
 }
 
-/// Input for creating a merge request / pull request.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateMergeRequestInput {
-    /// Title of the merge request
     pub title: String,
-    /// Description / body
     pub description: Option<String>,
     /// Source branch (head)
     pub source_branch: String,
@@ -368,11 +444,9 @@ pub struct Discussion {
 /// Represents a comment on an issue or merge request.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Comment {
-    /// Comment ID
     pub id: String,
     /// Comment body / text
     pub body: String,
-    /// Author
     pub author: Option<User>,
     /// Created at timestamp (ISO 8601)
     pub created_at: Option<String>,
@@ -385,17 +459,13 @@ pub struct Comment {
 /// Position in code for inline comments.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct CodePosition {
-    /// File path
     pub file_path: String,
-    /// Line number
     pub line: u32,
     /// Line type ("old" for deleted, "new" for added)
     pub line_type: String,
-    /// Commit SHA
     pub commit_sha: Option<String>,
 }
 
-/// Input for creating a comment.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateCommentInput {
     /// Comment body / text
@@ -417,11 +487,8 @@ pub struct FileDiff {
     pub file_path: String,
     /// Old file path (if renamed)
     pub old_path: Option<String>,
-    /// Is new file
     pub new_file: bool,
-    /// Is deleted file
     pub deleted_file: bool,
-    /// Is renamed file
     pub renamed_file: bool,
     /// Diff content (unified diff format)
     pub diff: String,
@@ -724,7 +791,6 @@ pub struct IssueStatus {
     pub order: Option<u32>,
 }
 
-/// Options for get_users.
 #[derive(Debug, Clone, Default)]
 pub struct GetUsersOptions {
     pub user_id: Option<String>,
@@ -732,7 +798,150 @@ pub struct GetUsersOptions {
     pub search: Option<String>,
     pub include_inactive: Option<bool>,
     pub start_at: Option<u32>,
+    /// Pub.
     pub max_results: Option<u32>,
+}
+
+// =============================================================================
+// Project Versions (Jira fixVersion / release marker)
+// =============================================================================
+
+/// A project-scoped release marker (Jira "version" / `fixVersion`).
+///
+/// Provider-agnostic abstraction over the Jira Versions API; other
+/// providers (GitLab milestones, GitHub releases) could implement the
+/// same surface in the future. Carries enough fields up-front to avoid
+/// per-id follow-up calls (Paper 3 — Context Enrichment Hypothesis).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ProjectVersion {
+    /// Provider-native identifier (Jira: numeric id as string).
+    pub id: String,
+    /// Project key this version belongs to (e.g. `"PROJ"`).
+    pub project: String,
+    /// Human-readable version name (e.g. `"3.18.0"`).
+    pub name: String,
+    /// Release notes / description.
+    pub description: Option<String>,
+    /// Planned start date (ISO 8601 date, no time).
+    pub start_date: Option<String>,
+    /// Planned or actual release date (ISO 8601 date, no time).
+    pub release_date: Option<String>,
+    /// Whether the version has been released.
+    pub released: bool,
+    /// Whether the version has been archived.
+    pub archived: bool,
+    /// Provider-computed flag — true when `release_date` is in the past
+    /// and the version is still unreleased. Optional because the
+    /// provider may not return it.
+    pub overdue: Option<bool>,
+    /// Total number of issues attached to this version, when the
+    /// provider can report it.
+    ///
+    /// Provider semantics differ:
+    /// - **Jira Cloud** populates this from `?expand=issuesstatus`
+    ///   (sum across all status categories — true total).
+    /// - **Jira Self-Hosted / DC** does *not* populate this on the
+    ///   listing endpoint — `unresolved_issue_count` carries what the
+    ///   server returns instead. Fetching a real total there requires
+    ///   a per-version `/version/{id}/relatedIssueCounts` call which
+    ///   we deliberately don't make on the list path.
+    pub issue_count: Option<u32>,
+    /// Number of *unresolved* issues attached to this version. Set on
+    /// Jira Self-Hosted/DC from the base payload; on Cloud the same
+    /// number is buried inside the per-status breakdown so we don't
+    /// re-derive it here. Kept separate from `issue_count` so callers
+    /// can't accidentally compare an unresolved-count against a total.
+    pub unresolved_issue_count: Option<u32>,
+    /// Source provider name (e.g. `"jira"`).
+    pub source: String,
+}
+
+/// Filters / pagination for `IssueProvider::list_project_versions`.
+#[derive(Debug, Clone, Default)]
+pub struct ListProjectVersionsParams {
+    /// Project key to scope the query (required).
+    pub project: String,
+    /// `Some(true)` → only released; `Some(false)` → only unreleased;
+    /// `None` → both.
+    pub released: Option<bool>,
+    /// `Some(true)` → only archived; `Some(false)` → only non-archived;
+    /// `None` → both. Tool layer defaults this to `Some(false)` to
+    /// hide archival noise.
+    pub archived: Option<bool>,
+    /// Maximum results to return after filtering. Tool layer defaults to 20.
+    pub limit: Option<u32>,
+    /// Whether to fetch per-version `issue_count` (extra round-trip
+    /// or `?expand=issuesstatus` on Cloud).
+    pub include_issue_count: bool,
+}
+
+/// Provider-agnostic descriptor for a custom field on an issue
+/// tracker — Jira's `customfield_*` numbers, GitLab's resource
+/// labels, ClickUp's "custom field" entities. Only the lowest common
+/// denominator (`id`, `name`, `field_type`) is unified; provider
+/// specifics live under `native` so callers that need them (e.g.
+/// downstream codegen) can read them without losing fidelity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomFieldDescriptor {
+    /// Provider-specific id (e.g. `"customfield_10014"` on Jira).
+    pub id: String,
+    /// Human-readable name (e.g. `"Epic Link"`).
+    pub name: String,
+    /// Normalised type tag (`"string"`, `"array"`, `"number"`, ...).
+    /// Empty string when the provider didn't expose a schema.
+    pub field_type: String,
+    /// Optional description copied from the provider, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Provider-native schema details preserved verbatim — Jira's
+    /// `JiraFieldSchema` (custom URI, customId), ClickUp's option
+    /// list, GitHub's enum values. Opaque to the unified layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<Value>,
+}
+
+/// Filters / pagination for `IssueProvider::list_custom_fields`.
+#[derive(Debug, Clone, Default)]
+pub struct ListCustomFieldsParams {
+    /// Project key to scope the query — used by providers that
+    /// expose project-scoped customfields. Ignored on Jira global
+    /// `/field` endpoint.
+    pub project: Option<String>,
+    /// Issue type to scope the query (Jira create-screen contexts).
+    /// Ignored when the provider returns a flat global list.
+    pub issue_type: Option<String>,
+    /// Case-insensitive substring filter on the field name. Useful
+    /// for "find the Epic Link customfield" without listing every
+    /// field on the instance.
+    pub search: Option<String>,
+    /// Maximum results after filtering. Tool layer caps this at 200
+    /// to honour Paper-1 token budgets.
+    pub limit: Option<u32>,
+}
+
+/// Input to `IssueProvider::upsert_project_version`.
+///
+/// Resolves `(project, name)` → existing version id. If found, the
+/// provider issues a partial update preserving any fields not
+/// explicitly set here (Optional means "don't touch"). If not found,
+/// the version is created.
+#[derive(Debug, Clone, Default)]
+pub struct UpsertProjectVersionInput {
+    /// Project key (required).
+    pub project: String,
+    /// Version name — used both as the lookup key and as the value
+    /// when creating (required).
+    pub name: String,
+    /// Release notes / description.
+    pub description: Option<String>,
+    /// Planned start date (ISO 8601 date).
+    pub start_date: Option<String>,
+    /// Planned or actual release date (ISO 8601 date).
+    pub release_date: Option<String>,
+    /// Mark released / unreleased.
+    pub released: Option<bool>,
+    /// Archive / unarchive.
+    pub archived: Option<bool>,
 }
 
 // =============================================================================
@@ -752,6 +961,7 @@ pub struct Release {
     pub author: Option<User>,
     pub is_draft: Option<bool>,
     pub is_prerelease: Option<bool>,
+    /// Pub.
     pub assets: Vec<ReleaseAsset>,
     pub created_at: Option<String>,
     pub published_at: Option<String>,
@@ -860,10 +1070,8 @@ pub struct FailedJob {
     pub error_snippet: Option<String>,
 }
 
-/// Input for get_pipeline.
 #[derive(Debug, Clone, Default)]
 pub struct GetPipelineInput {
-    /// Branch name (e.g., "main", "feat/DEV-123").
     pub branch: Option<String>,
     /// MR/PR key (e.g., "mr#123", "pr#456"). Takes priority over branch.
     pub mr_key: Option<String>,
@@ -917,11 +1125,8 @@ pub struct MeetingNote {
     pub title: String,
     /// Meeting date (ISO 8601)
     pub meeting_date: Option<String>,
-    /// Duration in seconds
     pub duration_seconds: Option<u64>,
-    /// Host email
     pub host_email: Option<String>,
-    /// Organizer email
     pub organizer_email: Option<String>,
     /// Participant identifiers (emails, names, or display names depending on provider)
     pub participants: Vec<String>,
@@ -931,13 +1136,11 @@ pub struct MeetingNote {
     pub action_items: Vec<String>,
     /// Keywords / topics
     pub keywords: Vec<String>,
-    /// Topics discussed
     pub topics_discussed: Vec<String>,
     /// Meeting type (e.g., "standup", "planning")
     pub meeting_type: Option<String>,
     /// AI summary overview
     pub summary: Option<String>,
-    /// Transcript URL
     pub transcript_url: Option<String>,
     /// Audio recording URL
     pub audio_url: Option<String>,
@@ -947,7 +1150,6 @@ pub struct MeetingNote {
     pub meeting_link: Option<String>,
 }
 
-/// A speaker in a meeting.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct MeetingSpeaker {
     pub id: String,
@@ -987,7 +1189,6 @@ pub struct MeetingFilter {
     pub keyword: Option<String>,
     /// Filter from date (ISO 8601)
     pub from_date: Option<String>,
-    /// Filter to date (ISO 8601)
     pub to_date: Option<String>,
     /// Filter by participant emails
     pub participants: Option<Vec<String>>,
@@ -1031,13 +1232,11 @@ pub struct KbPage {
     pub title: String,
     /// Owning space key when available.
     pub space_key: Option<String>,
-    /// Canonical web URL.
     pub url: Option<String>,
     /// Current page version.
     pub version: Option<u32>,
     /// Last modification timestamp.
     pub last_modified: Option<String>,
-    /// Human-readable author name.
     pub author: Option<String>,
     /// Short excerpt / snippet.
     pub excerpt: Option<String>,
@@ -1052,7 +1251,6 @@ pub struct KbPageContent {
     pub content: String,
     /// Content representation: e.g. "markdown", "html", "storage".
     pub content_type: String,
-    /// Ancestor page chain from root to parent.
     pub ancestors: Vec<KbPage>,
     /// Page labels/tags.
     pub labels: Vec<String>,
@@ -1088,7 +1286,6 @@ pub struct ListPagesParams {
     pub cursor: Option<String>,
     /// Optional free-text title/content filter.
     pub search: Option<String>,
-    /// Optional ancestor/parent page ID to scope the listing.
     pub parent_id: Option<String>,
 }
 
@@ -1101,9 +1298,7 @@ pub struct CreatePageParams {
     pub title: String,
     /// Page body content.
     pub content: String,
-    /// Content representation supplied by the caller.
     pub content_type: Option<String>,
-    /// Optional parent page ID.
     pub parent_id: Option<String>,
     /// Labels to set on the page.
     pub labels: Vec<String>,
@@ -1116,7 +1311,6 @@ pub struct UpdatePageParams {
     pub page_id: String,
     /// New title, if changing.
     pub title: Option<String>,
-    /// New body content, if changing.
     pub content: Option<String>,
     /// Content representation supplied by the caller.
     pub content_type: Option<String>,
@@ -1139,7 +1333,6 @@ pub struct SearchKbParams {
     pub cursor: Option<String>,
     /// Maximum number of matches to return.
     pub limit: Option<u32>,
-    /// Whether `query` should be treated as raw provider-native syntax.
     #[serde(default)]
     pub raw_query: bool,
 }
@@ -1174,7 +1367,6 @@ pub struct MessengerChat {
     pub chat_type: ChatType,
     /// Source provider name (e.g. "slack").
     pub source: String,
-    /// Number of members when available.
     pub member_count: Option<u32>,
     /// Optional chat/topic description.
     pub description: Option<String>,
@@ -1191,7 +1383,6 @@ pub struct MessageAuthor {
     pub name: String,
     /// Username/handle when available.
     pub username: Option<String>,
-    /// Avatar URL.
     pub avatar_url: Option<String>,
 }
 
@@ -1212,7 +1403,6 @@ pub struct MessageAttachment {
     pub file_size: Option<u64>,
 }
 
-/// Unified messenger message representation.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct MessengerMessage {
     /// Provider-specific message ID.
@@ -1223,9 +1413,7 @@ pub struct MessengerMessage {
     pub text: String,
     /// Message author.
     pub author: MessageAuthor,
-    /// Source provider name (e.g. "slack").
     pub source: String,
-    /// Message timestamp (ISO 8601 or provider timestamp string).
     pub timestamp: String,
     /// Parent thread identifier when this message is in a thread.
     pub thread_id: Option<String>,
@@ -1265,7 +1453,6 @@ pub struct GetMessagesParams {
     pub cursor: Option<String>,
     /// Optional thread identifier to fetch replies for a thread.
     pub thread_id: Option<String>,
-    /// Only include messages after this provider timestamp string.
     pub since: Option<String>,
     /// Only include messages before this provider timestamp string.
     pub until: Option<String>,
@@ -1284,7 +1471,6 @@ pub struct SearchMessagesParams {
     pub cursor: Option<String>,
     /// Only include messages after this provider timestamp string.
     pub since: Option<String>,
-    /// Only include messages before this provider timestamp string.
     pub until: Option<String>,
 }
 
@@ -1297,7 +1483,6 @@ pub struct SendMessageParams {
     pub text: String,
     /// Optional thread identifier to post as a threaded reply.
     pub thread_id: Option<String>,
-    /// Optional direct parent message ID when supported.
     pub reply_to_id: Option<String>,
     /// Optional attachments to include or reference.
     pub attachments: Vec<MessageAttachment>,
@@ -1343,7 +1528,6 @@ pub struct StructureNode {
 pub struct StructureForest {
     /// Forest version (for optimistic concurrency)
     pub version: u64,
-    /// Structure ID
     pub structure_id: u64,
     /// Root nodes of the tree
     pub tree: Vec<StructureNode>,
@@ -1384,7 +1568,6 @@ pub struct StructureView {
     pub filter: Option<String>,
 }
 
-/// A column in a Structure view.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct StructureViewColumn {
     /// Column ID
@@ -1404,7 +1587,6 @@ pub struct StructureViewColumn {
 /// Batch values for Structure rows × columns.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct StructureValues {
-    /// Structure ID
     pub structure_id: u64,
     /// Values matrix: row_id → column values
     pub values: Vec<StructureRowValues>,
@@ -1413,7 +1595,6 @@ pub struct StructureValues {
 /// Values for a single row.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct StructureRowValues {
-    /// Row ID
     pub row_id: u64,
     /// Column values (column_id/field → value)
     pub columns: Vec<StructureColumnValue>,
@@ -1477,7 +1658,6 @@ pub struct MoveStructureRowsInput {
 /// Input for reading structure values.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GetStructureValuesInput {
-    /// Structure ID
     pub structure_id: u64,
     /// Row IDs to read
     pub rows: Vec<u64>,
@@ -1490,7 +1670,6 @@ pub struct GetStructureValuesInput {
 pub struct SaveStructureViewInput {
     /// View ID (omit to create new)
     pub id: Option<u64>,
-    /// Structure ID
     pub structure_id: u64,
     /// View name
     pub name: String,
@@ -1500,7 +1679,6 @@ pub struct SaveStructureViewInput {
     pub group_by: Option<String>,
     /// Sort by field
     pub sort_by: Option<String>,
-    /// JQL filter
     pub filter: Option<String>,
 }
 

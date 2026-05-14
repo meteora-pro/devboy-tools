@@ -56,6 +56,7 @@ fn generate_issues(n: usize) -> Vec<Issue> {
             attachments_count: None,
             parent: None,
             subtasks: vec![],
+            custom_fields: std::collections::HashMap::new(),
         })
         .collect()
 }

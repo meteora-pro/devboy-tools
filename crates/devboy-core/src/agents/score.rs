@@ -6,11 +6,12 @@
 //!
 //! `pick_primary` picks the top-scoring snapshot when one of:
 //! - **Recency dominance** — the top candidate was used at least
-//!   [`RECENCY_DOMINANCE_HOURS`] more recently than the runner-up. Just
-//!   used Claude 5 seconds ago vs Copilot 2 days ago? Claude wins,
+//!   `RECENCY_DOMINANCE_HOURS` (4 h) more recently than the runner-up.
+//!   Just used Claude 5 seconds ago vs Copilot 2 days ago? Claude wins,
 //!   period — volume can't fight that.
-//! - **Score gap** — the top score is at least [`PRIMARY_THRESHOLD`]× the
-//!   runner-up's. Used as fallback when both candidates are equally fresh.
+//! - **Score gap** — the top score is at least `PRIMARY_THRESHOLD` (1.5×)
+//!   the runner-up's. Used as fallback when both candidates are equally
+//!   fresh.
 //!
 //! Otherwise returns `None`, signalling that the caller should ask the user.
 

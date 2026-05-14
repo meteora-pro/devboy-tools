@@ -15,7 +15,6 @@ use crate::tree::TrimNode;
 use crate::trim;
 use crate::truncation;
 
-/// Budget pipeline configuration.
 #[derive(Debug, Clone)]
 pub struct BudgetConfig {
     /// Maximum token budget for output (default: 8000).
@@ -497,6 +496,7 @@ mod tests {
                 attachments_count: None,
             parent: None,
                 subtasks: vec![],
+                custom_fields: std::collections::HashMap::new(),
             })
             .collect()
     }

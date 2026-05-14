@@ -154,7 +154,6 @@ fn redact_url(url: &str) -> String {
     without_query.to_string()
 }
 
-/// Fetch TOML config from a remote URL.
 async fn fetch_remote_toml(url: &str, token: Option<&str>) -> Result<Config, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))

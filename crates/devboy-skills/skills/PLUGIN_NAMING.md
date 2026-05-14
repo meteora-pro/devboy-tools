@@ -3,12 +3,12 @@
 The Claude Code and Codex plugins share **the same source files** as
 `devboy onboard` — there is no separate plugin tree. `plugins/claude/skills/`
 is a directory of **symlinks** pointing at the real skill directories
-under `/skills/<category>/<source-name>/`. The Codex plugin reuses the
-same tree via a single top-level symlink:
+under `/crates/devboy-skills/skills/<category>/<source-name>/`. The Codex
+plugin reuses the same tree via a single top-level symlink:
 
 ```
-plugins/claude/skills/setup    -> ../../../skills/00-self-bootstrap/setup
-plugins/claude/skills/get-issues -> ../../../skills/01-issue-tracking/get-issues
+plugins/claude/skills/setup       -> ../../../crates/devboy-skills/skills/00-self-bootstrap/setup
+plugins/claude/skills/get-issues  -> ../../../crates/devboy-skills/skills/01-issue-tracking/get-issues
 …  (24 entries, one per source skill)
 
 plugins/codex/skills                  -> ../claude/skills
@@ -20,8 +20,9 @@ folder name, and the `name:` field in the frontmatter all match
 (`setup`, `get-issues`, …, `analyze-usage`). Inside Claude Code the
 plugin namespacing prepends `devboy:` (the plugin name from
 `plugin.json`), so users invoke skills as `/devboy:setup`,
-`/devboy:get-issues`, … Editing `skills/00-self-bootstrap/setup/SKILL.md`
-updates the plugin in the same edit — zero file duplication.
+`/devboy:get-issues`, … Editing
+`crates/devboy-skills/skills/00-self-bootstrap/setup/SKILL.md` updates
+the plugin in the same edit — zero file duplication.
 
 ## Why no rename rule
 
@@ -45,8 +46,8 @@ validation:
 
 Adding a new skill:
 
-1. Create `skills/<category>/<name>/SKILL.md` with frontmatter
-   (`name:` matches the directory name).
+1. Create `crates/devboy-skills/skills/<category>/<name>/SKILL.md`
+   with frontmatter (`name:` matches the directory name).
 2. Run `scripts/release/build-skills.sh` to (re)create the matching
    symlink.
 3. Commit both — the source files and the new symlink under
@@ -54,7 +55,7 @@ Adding a new skill:
 
 Removing a skill:
 
-1. `git rm -r skills/<category>/<name>/`.
+1. `git rm -r crates/devboy-skills/skills/<category>/<name>/`.
 2. Run `scripts/release/build-skills.sh` — the orphan symlink is
    pruned automatically.
 3. Commit.

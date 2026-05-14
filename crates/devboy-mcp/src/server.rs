@@ -36,7 +36,6 @@ pub struct DeferredInit {
     pub routing_engine: Option<Arc<RoutingEngine>>,
 }
 
-/// MCP server for devboy-tools.
 pub struct McpServer {
     contexts: HashMap<String, Vec<Arc<dyn Provider>>>,
     knowledge_base_contexts: HashMap<String, Vec<Arc<dyn devboy_core::KnowledgeBaseProvider>>>,
@@ -209,7 +208,6 @@ impl McpServer {
             .push(provider);
     }
 
-    /// Add a provider to the server.
     pub fn add_provider(&mut self, provider: Arc<dyn Provider>) {
         self.contexts
             .entry("default".to_string())
@@ -236,7 +234,6 @@ impl McpServer {
             .or_default();
     }
 
-    /// Set active context.
     pub fn set_active_context(&self, context: &str) -> devboy_core::Result<()> {
         if !self.contexts.contains_key(context) {
             return Err(devboy_core::Error::Config(format!(
@@ -400,7 +397,6 @@ impl McpServer {
         }
     }
 
-    /// Handle initialize request.
     fn handle_initialize(&mut self, id: RequestId, params: Option<Value>) -> JsonRpcResponse {
         if self.initialized {
             return JsonRpcResponse::error(
@@ -555,7 +551,6 @@ impl McpServer {
         JsonRpcResponse::success(id, serde_json::to_value(result).unwrap())
     }
 
-    /// Handle tools/call request.
     async fn handle_tools_call(&mut self, id: RequestId, params: Option<Value>) -> JsonRpcResponse {
         let params: ToolCallParams = match params {
             Some(p) => match serde_json::from_value(p) {
@@ -1053,7 +1048,6 @@ impl McpServer {
         executor
     }
 
-    /// Handle ping request.
     fn handle_ping(&self, id: RequestId) -> JsonRpcResponse {
         JsonRpcResponse::success(id, serde_json::json!({}))
     }

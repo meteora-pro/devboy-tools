@@ -1,6 +1,6 @@
 //! Per-session layered-pipeline state for the MCP server.
 //!
-//! Wraps a [`devboy_format_pipeline::LayeredPipeline`] in
+//! Wraps a [`devboy_format_pipeline::layered_pipeline::LayeredPipeline`] in
 //! `Arc<Mutex<…>>` so it can sit in `McpServer` (which takes `&self` in
 //! handlers) and still be advanced through the L0 dedup cache. The
 //! pipeline is created once per server process and persists across all

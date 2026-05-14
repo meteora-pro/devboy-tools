@@ -1,24 +1,32 @@
 [package]
 name = "devboy-executor"
-description = "Tool execution engine with provider factory, enrichment pipeline, and typed output"
+description = "Tool execution engine for devboy-tools — provider factory, enrichment pipeline, typed output. Wires every devboy provider into a uniform tool surface."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["devboy", "ai-agents", "tool-execution", "mcp", "providers"]
+categories = ["development-tools", "api-bindings"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-devboy-core = { path = "../devboy-core" }
-devboy-assets = { path = "../devboy-assets" }
-devboy-gitlab = { path = "../plugins/api/gitlab" }
-devboy-github = { path = "../plugins/api/github" }
-devboy-clickup = { path = "../plugins/api/clickup" }
-devboy-jira = { path = "../plugins/api/jira" }
-devboy-confluence = { path = "../plugins/api/confluence" }
-devboy-fireflies = { path = "../plugins/api/fireflies" }
-devboy-slack = { path = "../plugins/api/slack" }
-devboy-telegram = { path = "../plugins/api/telegram" }
-devboy-format-pipeline = { path = "../plugins/format-pipeline" }
+devboy-core = { workspace = true }
+devboy-assets = { workspace = true }
+devboy-gitlab = { workspace = true }
+devboy-github = { workspace = true }
+devboy-clickup = { workspace = true }
+devboy-jira = { workspace = true }
+devboy-confluence = { workspace = true }
+devboy-fireflies = { workspace = true }
+devboy-slack = { workspace = true }
+devboy-format-pipeline = { workspace = true }
 
 tokio.workspace = true
 serde.workspace = true

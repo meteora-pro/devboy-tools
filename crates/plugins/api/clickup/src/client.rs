@@ -25,7 +25,6 @@ fn encode_tag(tag: &str) -> String {
     urlencoding::encode(tag).into_owned()
 }
 
-/// ClickUp API client.
 pub struct ClickUpClient {
     base_url: String,
     list_id: String,
@@ -444,7 +443,28 @@ fn map_timestamp(ts: &Option<String>) -> Option<String> {
 }
 
 fn map_task(task: &ClickUpTask) -> Issue {
+    // Surface set custom fields keyed by ClickUp's stable field id
+    // (matches `get_custom_fields` output across providers). Display
+    // name rides along inside `CustomFieldValue.name` so consumers
+    // don't lose it. Unset fields (`value: None`) are skipped to
+    // keep the map noise-free.
+    let custom_fields: std::collections::HashMap<String, devboy_core::CustomFieldValue> = task
+        .custom_fields
+        .iter()
+        .filter_map(|cf| {
+            cf.value.as_ref().map(|v| {
+                (
+                    cf.id.clone(),
+                    devboy_core::CustomFieldValue {
+                        name: cf.name.clone(),
+                        value: v.clone(),
+                    },
+                )
+            })
+        })
+        .collect();
     Issue {
+        custom_fields,
         key: map_task_key(task),
         title: task.name.clone(),
         description: task
@@ -1500,6 +1520,71 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// `task.custom_fields` populates `issue.custom_fields` keyed
+    /// by ClickUp's stable field **id** (matches the homogeneous
+    /// shape `JOIN`able with `get_custom_fields` across providers).
+    /// Display name rides along inside `CustomFieldValue.name`.
+    /// Unset fields (`value == None`) are filtered.
+    #[test]
+    fn test_map_task_surfaces_custom_field_values() {
+        let task = ClickUpTask {
+            id: "abc123".to_string(),
+            custom_id: None,
+            name: "T".to_string(),
+            description: None,
+            text_content: None,
+            status: ClickUpStatus {
+                status: "open".to_string(),
+                status_type: Some("open".to_string()),
+            },
+            priority: None,
+            tags: vec![],
+            assignees: vec![],
+            creator: None,
+            url: "https://app.clickup.com/t/abc123".to_string(),
+            date_created: None,
+            date_updated: None,
+            parent: None,
+            subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
+            attachments: Vec::new(),
+            custom_fields: vec![
+                crate::types::ClickUpCustomField {
+                    id: "cf-1".to_string(),
+                    name: Some("Severity".to_string()),
+                    field_type: Some("drop_down".to_string()),
+                    value: Some(serde_json::json!("High")),
+                },
+                crate::types::ClickUpCustomField {
+                    id: "cf-2".to_string(),
+                    name: Some("Sprint".to_string()),
+                    field_type: Some("text".to_string()),
+                    value: None, // unset → must be skipped
+                },
+                crate::types::ClickUpCustomField {
+                    id: "cf-3".to_string(),
+                    name: None, // anonymous → falls back to id
+                    field_type: Some("number".to_string()),
+                    value: Some(serde_json::json!(42)),
+                },
+            ],
+        };
+
+        let issue = map_task(&task);
+        // Keyed by id; display name rides along in
+        // `CustomFieldValue.name`.
+        let severity = issue.custom_fields.get("cf-1").expect("cf-1 present");
+        assert_eq!(severity.name.as_deref(), Some("Severity"));
+        assert_eq!(severity.value, serde_json::json!("High"));
+        // Unset value (`cf-2`) is filtered out entirely.
+        assert!(!issue.custom_fields.contains_key("cf-2"));
+        // Anonymous field (no name) keeps `name: None`.
+        let anon = issue.custom_fields.get("cf-3").expect("cf-3 present");
+        assert!(anon.name.is_none());
+        assert_eq!(anon.value, serde_json::json!(42));
+    }
+
     #[test]
     fn test_map_task() {
         let task = ClickUpTask {
@@ -1540,6 +1625,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1587,6 +1673,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1617,6 +1704,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1887,6 +1975,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1917,6 +2006,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1947,6 +2037,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -1978,6 +2069,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let task = ClickUpTask {
@@ -2004,6 +2096,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);
@@ -2039,6 +2132,7 @@ mod tests {
             dependencies: None,
             linked_tasks: None,
             attachments: Vec::new(),
+            custom_fields: Vec::new(),
         };
 
         let issue = map_task(&task);

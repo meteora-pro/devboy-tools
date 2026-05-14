@@ -19,7 +19,6 @@ pub enum Error {
     #[error("Network error: {0}")]
     Network(String),
 
-    /// Request timeout
     #[error("Request timeout")]
     Timeout,
 
@@ -97,12 +96,7 @@ pub enum Error {
 
     /// Credential not found in keychain
     #[error("Credential not found: {provider}/{key}")]
-    CredentialNotFound {
-        /// Provider name
-        provider: String,
-        /// Credential key
-        key: String,
-    },
+    CredentialNotFound { provider: String, key: String },
 
     // =========================================================================
     // Provider Errors
@@ -114,7 +108,6 @@ pub enum Error {
     /// Provider not supported for this operation
     #[error("Provider '{provider}' does not support: {operation}")]
     ProviderUnsupported {
-        /// Provider name
         provider: String,
         /// Unsupported operation
         operation: String,

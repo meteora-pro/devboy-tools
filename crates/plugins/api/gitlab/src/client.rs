@@ -19,7 +19,6 @@ use crate::types::{
     GitLabMergeRequestChanges, GitLabNote, GitLabNotePosition, GitLabUser, UpdateIssueRequest,
 };
 
-/// GitLab API client.
 pub struct GitLabClient {
     base_url: String,
     project_id: String,
@@ -385,6 +384,7 @@ fn map_issue(gl_issue: &GitLabIssue, base_url: &str) -> Issue {
         .filter(|&c| c > 0);
 
     Issue {
+        custom_fields: std::collections::HashMap::new(),
         key: format!("gitlab#{}", gl_issue.iid),
         title: gl_issue.title.clone(),
         description: gl_issue.description.clone(),
@@ -1152,7 +1152,6 @@ fn markdown_to_meta(att: &devboy_core::MarkdownAttachment, base_url: &str) -> As
 // Pipeline Provider (GitLab Pipelines API)
 // =============================================================================
 
-/// GitLab pipeline.
 #[derive(Debug, serde::Deserialize)]
 struct GlPipeline {
     id: u64,
@@ -1165,7 +1164,6 @@ struct GlPipeline {
     coverage: Option<String>,
 }
 
-/// GitLab pipeline job.
 #[derive(Debug, serde::Deserialize)]
 struct GlJob {
     id: u64,

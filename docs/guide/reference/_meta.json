@@ -6,6 +6,16 @@
   },
   {
     "type": "file",
+    "name": "consuming-tool-schemas",
+    "label": "Consuming tool schemas"
+  },
+  {
+    "type": "file",
+    "name": "load-default-metadata",
+    "label": "Loading Jira metadata"
+  },
+  {
+    "type": "file",
     "name": "cli",
     "label": "CLI reference"
   }

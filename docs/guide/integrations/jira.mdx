@@ -90,6 +90,21 @@ Once configured, the following MCP tools are available:
 | `update_issue` | Update an existing issue (title, description, status, priority, labels) |
 | `add_issue_comment` | Add a comment to an issue |
 
+### Project version tools
+
+Manage Jira project versions (a.k.a. `fixVersion` targets / releases). Two-tool surface — there is no per-id `get_version`; `list_project_versions` returns enough fields per item that an extra round-trip is unnecessary (see `docs/research/paper-3-context-enrichment.md`).
+
+| Tool | Description |
+|------|-------------|
+| `list_project_versions` | List versions for a project. Returns `id`, `name`, `description`, `releaseDate`, `startDate`, `released`, `archived`, `overdue`, and (Cloud only, when `includeIssueCount=true`) `issue_count`. Default filter hides archived versions and caps at 20 most recent — unreleased first, then released by `releaseDate desc`, semver-aware tiebreak on name. |
+| `upsert_project_version` | Create-or-update a version keyed by `(project, name)`. Partial update — fields you omit are preserved server-side. Useful for writing release notes (`description`) or closing a release (`released: true`, `releaseDate`). |
+
+Both endpoints work on Jira Cloud and Self-Hosted/DC. Server/DC ignores Cloud-only `?expand=issuesstatus`, so `issue_count` from `list_project_versions` is populated only on Cloud — Self-Hosted callers fall back to `issuesUnresolvedCount` from the base payload.
+
+For per-issue details on a release, follow up with `get_issues` and a JQL `nativeQuery` like `fixVersion = "3.18.0"`.
+
+When `list_project_versions` had to truncate to fit `limit`, the response footer carries a `[+N more — call with limit: …]` hint so you can ask for the rest.
+
 ### Issue key format
 
 Jira issues use the standard Jira key format: `PROJ-123` (project key + number).

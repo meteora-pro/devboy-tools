@@ -181,7 +181,6 @@ impl CacheManager {
 pub struct StoredFile {
     /// Absolute path where the file was written.
     pub path: PathBuf,
-    /// Size in bytes.
     pub size: u64,
     /// SHA-256 checksum in lower-case hex.
     pub checksum_sha256: String,
@@ -201,8 +200,8 @@ pub struct StoredFile {
 /// - Lexical containment: the joined path's components must start with
 ///   the root's components.
 /// - **Symlink guard**: when the resolved path exists on disk, both
-///   `root` and the resolved path are [`canonicalize`]d so that any
-///   symlink within the cache directory is dereferenced. The
+///   `root` and the resolved path are [`std::path::Path::canonicalize`]d
+///   so that any symlink within the cache directory is dereferenced. The
 ///   canonicalized resolved path must still start with the canonicalized
 ///   root; if it doesn't (e.g. a symlink inside the cache dir points
 ///   outside), the path is rejected.

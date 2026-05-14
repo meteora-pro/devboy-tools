@@ -6,9 +6,15 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GitLabScope {
     /// Single project: `/api/v4/projects/{id}/...`
-    Project { id: String },
+    Project {
+        /// Project id (numeric or `group/project` slug).
+        id: String,
+    },
     /// Group-level: `/api/v4/groups/{id}/...`
-    Group { id: String },
+    Group {
+        /// Group id (numeric or path).
+        id: String,
+    },
     /// Global: `/api/v4/...`
     Global,
 }
@@ -17,9 +23,16 @@ pub enum GitLabScope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GitHubScope {
     /// Single repository: `/repos/{owner}/{repo}/...`
-    Repository { owner: String, repo: String },
+    Repository {
+        /// Owner (user or org).
+        owner: String,
+        repo: String,
+    },
     /// Organization-level: search with `org:` qualifier
-    Organization { name: String },
+    Organization {
+        /// Organization login.
+        name: String,
+    },
     /// Global: search across all accessible resources
     Global,
 }
@@ -28,14 +41,21 @@ pub enum GitHubScope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClickUpScope {
     /// Single list (with optional team_id for custom task ID resolution)
-    List { id: String, team_id: Option<String> },
+    List {
+        id: String,
+        /// Optional team id (workspace) for custom task ID resolution.
+        team_id: Option<String>,
+    },
 }
 
 /// Scope for Jira API calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum JiraScope {
     /// Single Jira project
-    Project { key: String },
+    Project {
+        /// Project key (e.g. `DEV`).
+        key: String,
+    },
     /// Multiple Jira projects (union of results)
     MultiProject { keys: Vec<String> },
 }
@@ -44,7 +64,10 @@ pub enum JiraScope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConfluenceScope {
     /// Single Confluence instance, optionally scoped by a default space key.
-    Space { key: Option<String> },
+    Space {
+        /// Default space key (optional).
+        key: Option<String>,
+    },
 }
 
 /// Scope for Slack API calls.

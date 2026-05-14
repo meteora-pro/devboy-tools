@@ -17,7 +17,6 @@ use crate::toon;
 pub struct TrimNode {
     /// Unique node identifier within the tree
     pub id: usize,
-    /// Node type
     pub kind: NodeKind,
     /// Weight in tokens (serialization cost without children)
     pub weight: usize,
@@ -40,10 +39,7 @@ pub enum NodeKind {
         index: usize,
     },
     /// Field within an element (description, body, diff content)
-    Field {
-        /// Field name
-        name: String,
-    },
+    Field { name: String },
     /// Text block (description body, diff content, log content)
     Text,
 }
@@ -208,7 +204,6 @@ pub fn build_issues_tree(issues: &[Issue]) -> TrimNode {
     root
 }
 
-/// Build a tree from a list of merge requests.
 pub fn build_merge_requests_tree(mrs: &[MergeRequest]) -> TrimNode {
     let mut id_gen = IdGen::new();
     let mut root = TrimNode::new(id_gen.next(), NodeKind::Root, 0);
@@ -269,7 +264,6 @@ pub fn build_diffs_tree(diffs: &[FileDiff]) -> TrimNode {
     root
 }
 
-/// Build a tree from a list of comments.
 pub fn build_comments_tree(comments: &[Comment]) -> TrimNode {
     let mut id_gen = IdGen::new();
     let mut root = TrimNode::new(id_gen.next(), NodeKind::Root, 0);
@@ -375,6 +369,7 @@ mod tests {
                 attachments_count: None,
                 parent: None,
                 subtasks: vec![],
+                custom_fields: std::collections::HashMap::new(),
             })
             .collect()
     }

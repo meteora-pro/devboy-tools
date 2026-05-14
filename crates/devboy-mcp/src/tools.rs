@@ -2,7 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// MCP tool definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {
     pub name: String,
