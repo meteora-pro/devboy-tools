@@ -29,14 +29,21 @@ CLI spawns this binary as a subprocess. The launcher discovers it via
 Built with `--features dev-screenshot`, the binary also accepts:
 
 ```sh
-devboy-secrets-ui --screenshot <PATH>
+devboy-secrets-ui --screenshot <PATH> [--screenshot-view <VIEW>]
 ```
 
-This renders **one** provision-dialog frame to a PNG at `<PATH>` through
-an offscreen `egui_kittest` wgpu harness, then exits — no window, no
-event loop. It draws the exact same `gui::provision_dialog::render` the
-live app calls, populated with a catalog-matched sample, so the PNG is a
-faithful preview.
+This renders **one** UI frame to a PNG at `<PATH>` through an offscreen
+`egui_kittest` wgpu harness, then exits — no window, no event loop. It
+draws the exact same `gui::*::render` the live app calls, so the PNG is
+a faithful preview.
+
+`--screenshot-view` selects which view (default `provision`):
+
+| Value       | Renders |
+|-------------|---------|
+| `provision` | the provision dialog, catalog-matched (`team/openai/api-key`) |
+| `unlock`    | the vault unlock modal, with a sample wrong-passphrase error |
+| `create`    | the vault create modal (passphrase + confirm fields) |
 
 Purpose: lets an automated agent (or a CI visual-diff job) inspect GUI
 changes without a human looking at the native window. The feature is

@@ -24,7 +24,46 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use devboy_secrets_ui::{DialogMetadata, DialogMode, DialogState};
+use devboy_secrets_ui::{
+    DialogMetadata, DialogMode, DialogState, VaultUnlockMode, VaultUnlockState, VaultUnlockStatus,
+};
+
+/// Which view the `--screenshot` mode should render. Selected
+/// by `--screenshot-view`; `provision` is the default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenshotView {
+    /// The provision dialog, catalog-matched (`team/openai/api-key`).
+    Provision,
+    /// The vault unlock modal, `Unlock` mode with a sample
+    /// wrong-passphrase failure shown.
+    VaultUnlock,
+    /// The vault unlock modal, `Create` mode (passphrase +
+    /// confirm fields).
+    VaultCreate,
+}
+
+impl ScreenshotView {
+    /// Parse the `--screenshot-view` CLI value.
+    pub fn parse(s: &str) -> Result<Self> {
+        match s {
+            "provision" => Ok(Self::Provision),
+            "unlock" => Ok(Self::VaultUnlock),
+            "create" => Ok(Self::VaultCreate),
+            other => Err(anyhow::anyhow!(
+                "unknown --screenshot-view `{other}` (expected: provision, unlock, create)"
+            )),
+        }
+    }
+}
+
+/// Render the requested `view` to a PNG at `out`.
+pub fn render_to_png(view: ScreenshotView, out: &Path) -> Result<()> {
+    match view {
+        ScreenshotView::Provision => render_provision_dialog_to_png(out),
+        ScreenshotView::VaultUnlock => render_vault_unlock_to_png(out, VaultUnlockMode::Unlock),
+        ScreenshotView::VaultCreate => render_vault_unlock_to_png(out, VaultUnlockMode::Create),
+    }
+}
 
 /// Render one provision-dialog frame and write it to `out` as a
 /// PNG. The dialog is populated with a catalog-matched sample
@@ -36,6 +75,35 @@ pub fn render_provision_dialog_to_png(out: &Path) -> Result<()> {
 
     let mut harness = egui_kittest::Harness::new_ui(move |ui| {
         let _ = devboy_secrets_ui::gui::provision_dialog::render(ui, &mut state);
+    });
+    harness.run();
+
+    let image = harness
+        .render()
+        .map_err(|e| anyhow::anyhow!("offscreen wgpu render failed: {e:?}"))?;
+    image
+        .save(out)
+        .with_context(|| format!("could not write screenshot to {}", out.display()))?;
+    Ok(())
+}
+
+/// Render the vault unlock / create modal to `out` as a PNG.
+/// `Unlock` mode is shown with a sample failure message so the
+/// error styling is visible; `Create` mode shows the empty
+/// passphrase + confirm fields.
+fn render_vault_unlock_to_png(out: &Path, mode: VaultUnlockMode) -> Result<()> {
+    let mut state = VaultUnlockState::new(mode);
+    if mode == VaultUnlockMode::Unlock {
+        // Seed a failure so the screenshot exercises the red
+        // error line — the most layout-sensitive state.
+        state.replace_passphrase_str("wrong-guess".into());
+        state.apply_status(VaultUnlockStatus::Failed {
+            reason: "wrong passphrase".into(),
+        });
+    }
+
+    let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+        let _ = devboy_secrets_ui::gui::vault_unlock::render(ui, &mut state);
     });
     harness.run();
 

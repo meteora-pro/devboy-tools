@@ -47,13 +47,19 @@ struct Cli {
     #[arg(long, value_name = "PATH")]
     provision: Option<String>,
 
-    /// Dev-only: render one provision-dialog frame to a PNG at
-    /// this path and exit, instead of opening a window. Built
-    /// only with `--features dev-screenshot`. Lets an automated
-    /// agent visually verify GUI changes without a human at the
-    /// screen.
+    /// Dev-only: render one UI frame to a PNG at this path and
+    /// exit, instead of opening a window. Built only with
+    /// `--features dev-screenshot`. Lets an automated agent
+    /// visually verify GUI changes without a human at the
+    /// screen. Pair with `--screenshot-view` to pick which view.
     #[arg(long, value_name = "PATH")]
     screenshot: Option<std::path::PathBuf>,
+
+    /// Dev-only: which view `--screenshot` renders — `provision`
+    /// (default), `unlock`, or `create`. Ignored without
+    /// `--screenshot`.
+    #[arg(long, value_name = "VIEW", default_value = "provision")]
+    screenshot_view: String,
 }
 
 fn main() -> Result<()> {
@@ -61,7 +67,8 @@ fn main() -> Result<()> {
 
     #[cfg(feature = "dev-screenshot")]
     if let Some(out) = cli.screenshot.as_deref() {
-        return screenshot::render_provision_dialog_to_png(out);
+        let view = screenshot::ScreenshotView::parse(&cli.screenshot_view)?;
+        return screenshot::render_to_png(view, out);
     }
     #[cfg(not(feature = "dev-screenshot"))]
     if cli.screenshot.is_some() {
@@ -154,6 +161,12 @@ struct InventoryApp {
     /// new hash via the warning dialog or reject the load.
     /// Tuple: `(url, known_sha, actual_sha)`.
     pending_url_warnings: Vec<(String, String, String)>,
+    /// Vault unlock / create modal state. `Some` while the
+    /// backend is a locked local-vault and the user hasn't
+    /// unlocked it (or chosen the keychain escape hatch) yet —
+    /// the inventory renders dimmed underneath until this is
+    /// `None`.
+    vault_unlock: Option<devboy_secrets_ui::VaultUnlockState>,
 }
 
 impl InventoryApp {
@@ -165,6 +178,18 @@ impl InventoryApp {
         let (rows, metadata_by_path) = load_inventory_or_empty(&backend, &catalogs);
         let (pending_url_confirms, pending_url_warnings) =
             partition_url_trust_errors(&catalog_errors);
+        // A locked local-vault arms the unlock modal at
+        // startup — the inventory loads (everything reads as
+        // not-provisioned, since `has_value` on a locked
+        // backend is `false`) but stays gated behind the modal
+        // until the user unlocks or picks the keychain hatch.
+        let vault_unlock = if backend.is_locked() {
+            Some(devboy_secrets_ui::VaultUnlockState::new(
+                devboy_secrets_ui::VaultUnlockMode::Unlock,
+            ))
+        } else {
+            None
+        };
         let mut app = Self {
             state: devboy_secrets_ui::InventoryState::new(rows),
             metadata_by_path,
@@ -178,6 +203,7 @@ impl InventoryApp {
             catalog_errors,
             pending_url_confirms,
             pending_url_warnings,
+            vault_unlock,
         };
         if let Some(path) = initial_path {
             app.open_dialog_for(&path);
@@ -204,24 +230,130 @@ impl InventoryApp {
         self.state.replace_rows(rows);
         self.metadata_by_path = metadata;
     }
+
+    /// Render the vault unlock / create modal and apply its
+    /// outcome. No-op when `self.vault_unlock` is `None`.
+    ///
+    /// On submit: attempt `backend.unlock(passphrase)`. Success
+    /// swaps in the unlocked backend, clears the modal, and
+    /// reloads the inventory so rows show real has-value
+    /// status. Failure keeps the modal open with the reason in
+    /// red. The "Use keychain instead" hatch switches the
+    /// backend to keychain for the session.
+    fn render_vault_unlock_modal(&mut self, ctx: &eframe::egui::Context) {
+        if self.vault_unlock.is_none() {
+            return;
+        }
+        let mut submit = false;
+        let mut use_keychain = false;
+        {
+            let state = self.vault_unlock.as_mut().unwrap();
+            eframe::egui::Modal::new(eframe::egui::Id::new("vault-unlock-modal")).show(ctx, |ui| {
+                ui.set_max_width(420.0);
+                let result = devboy_secrets_ui::gui::vault_unlock::render(ui, state);
+                submit = result.submit;
+                use_keychain = result.use_keychain;
+            });
+        }
+
+        if submit {
+            // Snapshot the passphrase + mode, flip the modal to
+            // "working", then attempt the real open / create.
+            let modal = self.vault_unlock.as_ref().expect("guarded above");
+            let passphrase = modal.passphrase().clone();
+            let mode = modal.mode();
+            if let Some(s) = self.vault_unlock.as_mut() {
+                s.apply_status(devboy_secrets_ui::VaultUnlockStatus::Working);
+            }
+
+            let outcome: Result<(StorageBackend, Option<String>), String> = match mode {
+                // Unlock — open an existing `.dvb` file.
+                devboy_secrets_ui::VaultUnlockMode::Unlock => {
+                    self.backend.unlock(passphrase).map(|b| (b, None))
+                }
+                // Create — mint a new vault. The path is the
+                // locked backend's path if we have one,
+                // otherwise the default location.
+                devboy_secrets_ui::VaultUnlockMode::Create => {
+                    let vault_path = match &self.backend {
+                        StorageBackend::LocalVaultLocked { vault_path }
+                        | StorageBackend::LocalVault { vault_path, .. } => vault_path.clone(),
+                        StorageBackend::Keychain => default_vault_path(),
+                    };
+                    StorageBackend::create_vault(vault_path, passphrase)
+                }
+            };
+
+            match outcome {
+                Ok((backend, recovery)) => {
+                    self.backend = backend;
+                    self.vault_unlock = None;
+                    // Surface the recovery phrase exactly once
+                    // (create flow only — `unlock` returns None).
+                    if let Some(phrase) = recovery {
+                        self.recovery_phrase_to_show = Some(phrase);
+                    }
+                    // Re-read the inventory: a locked / keychain
+                    // backend may have reported rows differently;
+                    // now it shows the real state.
+                    self.reload();
+                }
+                Err(reason) => {
+                    if let Some(s) = self.vault_unlock.as_mut() {
+                        s.apply_status(devboy_secrets_ui::VaultUnlockStatus::Failed { reason });
+                    }
+                }
+            }
+        } else if use_keychain {
+            // Escape hatch — fall back to the OS keychain for
+            // this session.
+            self.backend = StorageBackend::Keychain;
+            self.vault_unlock = None;
+            self.reload();
+        }
+    }
 }
 
 // =============================================================================
 // StorageBackend
 // =============================================================================
 
+/// Resolve the local-vault file path: `DEVBOY_VAULT_PATH` if
+/// set, otherwise `<config>/devboy-tools/secrets/local-vault.dvb`.
+fn default_vault_path() -> std::path::PathBuf {
+    std::env::var("DEVBOY_VAULT_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            let mut p = dirs::config_dir().unwrap_or_else(std::env::temp_dir);
+            p.push("devboy-tools");
+            p.push("secrets");
+            p.push("local-vault.dvb");
+            p
+        })
+}
+
 /// Which backend the GUI should write secrets to.
 ///
-/// Picked at app construction time and held for the lifetime of
-/// the window. The user can switch by closing the window and
-/// flipping the env var.
+/// Picked at app construction time. The passphrase-bearing
+/// `LocalVault` variant can be reached two ways: the
+/// `DEVBOY_VAULT_PASSPHRASE` env var (resolved straight to
+/// unlocked at startup), or interactively — `LocalVaultLocked`
+/// is the intermediate state the UI shows an unlock prompt for.
+/// The user can also switch backends live (V5).
 #[derive(Debug, Clone)]
 enum StorageBackend {
     /// Default — OS keychain via `devboy_storage::KeychainStore`.
     Keychain,
+    /// Local-vault file exists but no passphrase is held yet —
+    /// the UI must prompt for one before reads / writes work.
+    /// Reached when a `.dvb` file is present but
+    /// `DEVBOY_VAULT_PASSPHRASE` was not set.
+    LocalVaultLocked { vault_path: std::path::PathBuf },
     /// Local-vault file at `vault_path`, unlocked with
-    /// `passphrase`. Selected when `DEVBOY_VAULT_PASSPHRASE` is
-    /// set; the file is created on first save if it doesn't exist.
+    /// `passphrase`. Reached from the env var, from a
+    /// successful [`StorageBackend::unlock`], or from a
+    /// first-run create flow. The file is created on first save
+    /// if it doesn't exist.
     LocalVault {
         vault_path: std::path::PathBuf,
         passphrase: secrecy::SecretString,
@@ -230,30 +362,113 @@ enum StorageBackend {
 
 impl StorageBackend {
     fn detect_from_env() -> Self {
+        // 1. Explicit env passphrase → unlocked straight away.
         if let Ok(pass) = std::env::var("DEVBOY_VAULT_PASSPHRASE")
             && !pass.is_empty()
         {
-            let vault_path = std::env::var("DEVBOY_VAULT_PATH")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| {
-                    let mut p = dirs::config_dir().unwrap_or_else(std::env::temp_dir);
-                    p.push("devboy-tools");
-                    p.push("secrets");
-                    p.push("local-vault.dvb");
-                    p
-                });
             return StorageBackend::LocalVault {
-                vault_path,
+                vault_path: default_vault_path(),
                 passphrase: secrecy::SecretString::new(pass.into()),
             };
         }
+        // 2. No env passphrase, but a vault file exists → the UI
+        //    should prompt for the passphrase (V2 unlock modal).
+        let vault_path = default_vault_path();
+        if vault_path.exists() {
+            return StorageBackend::LocalVaultLocked { vault_path };
+        }
+        // 3. Nothing → keychain default.
         StorageBackend::Keychain
+    }
+
+    /// Whether the backend needs a passphrase before reads /
+    /// writes will work — drives whether the UI shows the
+    /// unlock modal at startup.
+    fn is_locked(&self) -> bool {
+        matches!(self, StorageBackend::LocalVaultLocked { .. })
+    }
+
+    /// Attempt to unlock a `LocalVaultLocked` backend with
+    /// `passphrase`. On success returns the unlocked
+    /// `LocalVault` variant; on failure returns a human-facing
+    /// reason (wrong passphrase, corrupt file, …). No-op error
+    /// for already-unlocked / keychain backends.
+    fn unlock(&self, passphrase: secrecy::SecretString) -> Result<StorageBackend, String> {
+        let StorageBackend::LocalVaultLocked { vault_path } = self else {
+            return Err("backend is not a locked local-vault".to_owned());
+        };
+        let unlock = devboy_vault_crypto::UnlockMethod::Passphrase(passphrase.clone());
+        devboy_vault_crypto::Vault::open(vault_path, unlock).map_err(|e| format!("{e}"))?;
+        Ok(StorageBackend::LocalVault {
+            vault_path: vault_path.clone(),
+            passphrase,
+        })
+    }
+
+    /// Drop the held passphrase, returning the backend to its
+    /// locked state. No-op for keychain / already-locked.
+    fn lock(&self) -> StorageBackend {
+        match self {
+            StorageBackend::LocalVault { vault_path, .. }
+            | StorageBackend::LocalVaultLocked { vault_path } => StorageBackend::LocalVaultLocked {
+                vault_path: vault_path.clone(),
+            },
+            StorageBackend::Keychain => StorageBackend::Keychain,
+        }
+    }
+
+    /// Create a brand-new encrypted vault at `vault_path` with
+    /// `passphrase`, with a recovery phrase generated. On
+    /// success returns the unlocked `LocalVault` backend plus
+    /// the recovery phrase the UI must surface exactly once.
+    ///
+    /// Refuses if a file already exists at `vault_path` — the
+    /// caller should have routed to `unlock` instead.
+    fn create_vault(
+        vault_path: std::path::PathBuf,
+        passphrase: secrecy::SecretString,
+    ) -> Result<(StorageBackend, Option<String>), String> {
+        use devboy_vault_crypto::{InitialUnlock, Vault};
+        if vault_path.exists() {
+            return Err(format!(
+                "a vault file already exists at {} — unlock it instead of creating a new one",
+                vault_path.display()
+            ));
+        }
+        if let Some(parent) = vault_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("could not create vault directory: {e}"))?;
+        }
+        let outcome = Vault::create(
+            &vault_path,
+            InitialUnlock {
+                passphrase: passphrase.clone(),
+                with_recovery: true,
+                with_keychain_account: None,
+                passphrase_params: None,
+            },
+        )
+        .map_err(|e| format!("vault create failed: {e}"))?;
+        let recovery = outcome.recovery_phrase.map(|p| p.expose_words().to_owned());
+        Ok((
+            StorageBackend::LocalVault {
+                vault_path,
+                passphrase,
+            },
+            recovery,
+        ))
     }
 
     fn label(&self) -> String {
         match self {
             StorageBackend::Keychain => {
                 "macOS Keychain — service `devboy-tools`, account = path".to_owned()
+            }
+            StorageBackend::LocalVaultLocked { vault_path } => {
+                format!(
+                    "local-vault (locked) — file `{}`, awaiting passphrase",
+                    vault_path.display()
+                )
             }
             StorageBackend::LocalVault { vault_path, .. } => {
                 format!(
@@ -267,12 +482,16 @@ impl StorageBackend {
     fn source_label(&self) -> &'static str {
         match self {
             StorageBackend::Keychain => "default-keychain",
-            StorageBackend::LocalVault { .. } => "local-vault",
+            StorageBackend::LocalVaultLocked { .. } | StorageBackend::LocalVault { .. } => {
+                "local-vault"
+            }
         }
     }
 
     /// Probe whether `path` already has a value. Errors collapse
     /// to "not provisioned" to keep the inventory render simple.
+    /// A locked vault reports everything as not-provisioned —
+    /// the UI gates on the unlock modal before this matters.
     fn has_value(&self, path: &str) -> bool {
         match self {
             StorageBackend::Keychain => {
@@ -282,6 +501,7 @@ impl StorageBackend {
                     Ok(Some(_))
                 )
             }
+            StorageBackend::LocalVaultLocked { .. } => false,
             StorageBackend::LocalVault {
                 vault_path,
                 passphrase,
@@ -301,6 +521,8 @@ impl StorageBackend {
     /// Write `value` to the backend. Creates a vault file if it
     /// doesn't exist (LocalVault). Returns the optional recovery
     /// phrase the user must save (only on first vault create).
+    /// A locked vault refuses the write — the UI must unlock it
+    /// first.
     fn store(&self, path: &str, value: &secrecy::SecretString) -> Result<Option<String>, String> {
         match self {
             StorageBackend::Keychain => {
@@ -309,6 +531,9 @@ impl StorageBackend {
                     .map_err(|e| format!("{e}"))?;
                 Ok(None)
             }
+            StorageBackend::LocalVaultLocked { .. } => Err(
+                "local-vault is locked — unlock it with your passphrase before saving".to_owned(),
+            ),
             StorageBackend::LocalVault {
                 vault_path,
                 passphrase,
@@ -511,12 +736,88 @@ fn catalog_override_for(
 
 impl eframe::App for InventoryApp {
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
-        // Backend banner — tells the user where saves go.
-        ui.label(
-            eframe::egui::RichText::new(format!("Backend: {}", self.backend.label()))
-                .small()
-                .color(eframe::egui::Color32::from_rgb(0x55, 0xaa, 0xff)),
-        );
+        // Vault unlock / create modal — gates everything else
+        // while the backend is a locked local-vault. The
+        // `egui::Modal` dims the inventory underneath; the
+        // user can't touch a row until they unlock or pick the
+        // keychain escape hatch.
+        if self.vault_unlock.is_some() {
+            self.render_vault_unlock_modal(ui.ctx());
+        }
+
+        // Backend banner + switcher — tells the user where
+        // saves go, and lets them flip keychain ↔ local-vault
+        // live (V5). The switch is session-scoped; the env var
+        // stays the durable override.
+        let backend_label = self.backend.label();
+        let mut switch_to_vault = false;
+        let mut lock_vault = false;
+        let mut switch_to_keychain = false;
+        ui.horizontal(|ui| {
+            ui.label(
+                eframe::egui::RichText::new(format!("Backend: {backend_label}"))
+                    .small()
+                    .color(eframe::egui::Color32::from_rgb(0x55, 0xaa, 0xff)),
+            );
+            match &self.backend {
+                StorageBackend::Keychain => {
+                    if ui
+                        .small_button("Switch to encrypted vault")
+                        .on_hover_text(
+                            "Use the on-disk XChaCha20-Poly1305 vault instead of the OS keychain",
+                        )
+                        .clicked()
+                    {
+                        switch_to_vault = true;
+                    }
+                }
+                StorageBackend::LocalVault { .. } => {
+                    if ui
+                        .small_button("Lock vault")
+                        .on_hover_text("Drop the passphrase; the unlock prompt returns")
+                        .clicked()
+                    {
+                        lock_vault = true;
+                    }
+                    if ui
+                        .small_button("Switch to keychain")
+                        .on_hover_text("Use the OS keychain for this session")
+                        .clicked()
+                    {
+                        switch_to_keychain = true;
+                    }
+                }
+                // Locked → the unlock modal is already up; no
+                // extra switcher button needed (the modal has
+                // its own "Use keychain instead" hatch).
+                StorageBackend::LocalVaultLocked { .. } => {}
+            }
+        });
+        if switch_to_vault {
+            // Existing `.dvb` → unlock flow; no file yet →
+            // create flow.
+            let vault_path = default_vault_path();
+            let mode = if vault_path.exists() {
+                // `unlock` needs a `LocalVaultLocked` backend to
+                // act on, so move there first.
+                self.backend = StorageBackend::LocalVaultLocked { vault_path };
+                devboy_secrets_ui::VaultUnlockMode::Unlock
+            } else {
+                devboy_secrets_ui::VaultUnlockMode::Create
+            };
+            self.vault_unlock = Some(devboy_secrets_ui::VaultUnlockState::new(mode));
+        }
+        if lock_vault {
+            self.backend = self.backend.lock();
+            self.vault_unlock = Some(devboy_secrets_ui::VaultUnlockState::new(
+                devboy_secrets_ui::VaultUnlockMode::Unlock,
+            ));
+            self.reload();
+        }
+        if switch_to_keychain {
+            self.backend = StorageBackend::Keychain;
+            self.reload();
+        }
         ui.separator();
 
         // URL trust prompts (P23.6). Surface as modeless `egui::Window`s
@@ -532,7 +833,12 @@ impl eframe::App for InventoryApp {
 
         // Recovery phrase — surfaced exactly once after first
         // vault create. The user must save this somewhere; we
-        // do not show it again across runs.
+        // do not show it again across runs. An explicit
+        // "I've saved this" acknowledgement is the gate — the
+        // banner stays until the user confirms, so a freshly
+        // created vault can't have its only recovery path
+        // scrolled away by accident.
+        let mut recovery_acknowledged = false;
         if let Some(phrase) = &self.recovery_phrase_to_show {
             ui.label(
                 eframe::egui::RichText::new("⚠ Save your recovery phrase")
@@ -551,7 +857,17 @@ impl eframe::App for InventoryApp {
                 .small()
                 .italics(),
             );
+            if ui
+                .button("I've saved this phrase — dismiss")
+                .on_hover_text("The phrase is shown only once; copy it somewhere safe first")
+                .clicked()
+            {
+                recovery_acknowledged = true;
+            }
             ui.separator();
+        }
+        if recovery_acknowledged {
+            self.recovery_phrase_to_show = None;
         }
 
         if let Some(err) = &self.last_save_error {
@@ -1421,4 +1737,210 @@ impl InventoryApp {
 enum UrlTrustDecision {
     Accept { url: String, sha256: String },
     Reject { url: String },
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use secrecy::SecretString;
+
+    /// A vault path inside a fresh tempdir — never collides with
+    /// a real `~/.devboy` vault, cleaned up on drop.
+    fn temp_vault_path(dir: &tempfile::TempDir) -> std::path::PathBuf {
+        dir.path().join("test-vault.dvb")
+    }
+
+    // -- StorageBackend state machine --------------------------
+
+    #[test]
+    fn is_locked_only_true_for_the_locked_variant() {
+        assert!(!StorageBackend::Keychain.is_locked());
+        let dir = tempfile::tempdir().unwrap();
+        let locked = StorageBackend::LocalVaultLocked {
+            vault_path: temp_vault_path(&dir),
+        };
+        assert!(locked.is_locked());
+        let unlocked = StorageBackend::LocalVault {
+            vault_path: temp_vault_path(&dir),
+            passphrase: SecretString::new("p".to_string().into()),
+        };
+        assert!(!unlocked.is_locked());
+    }
+
+    #[test]
+    fn lock_drops_the_passphrase_back_to_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_vault_path(&dir);
+        let unlocked = StorageBackend::LocalVault {
+            vault_path: path.clone(),
+            passphrase: SecretString::new("p".to_string().into()),
+        };
+        let locked = unlocked.lock();
+        assert!(matches!(
+            locked,
+            StorageBackend::LocalVaultLocked { vault_path } if vault_path == path
+        ));
+        // Keychain is unaffected by lock.
+        assert!(matches!(
+            StorageBackend::Keychain.lock(),
+            StorageBackend::Keychain
+        ));
+    }
+
+    // -- create_vault → unlock round-trip ----------------------
+
+    #[test]
+    fn create_vault_mints_a_file_and_returns_a_recovery_phrase() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_vault_path(&dir);
+        let (backend, recovery) = StorageBackend::create_vault(
+            path.clone(),
+            SecretString::new("correct-horse".to_string().into()),
+        )
+        .expect("create must succeed on a fresh path");
+        assert!(path.exists(), "the .dvb file must be written");
+        assert!(
+            matches!(backend, StorageBackend::LocalVault { .. }),
+            "create returns an unlocked backend"
+        );
+        let phrase = recovery.expect("with_recovery: true must yield a phrase");
+        assert!(
+            phrase.split_whitespace().count() >= 12,
+            "recovery phrase should be a multi-word mnemonic, got: {phrase}"
+        );
+    }
+
+    #[test]
+    fn create_vault_refuses_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_vault_path(&dir);
+        StorageBackend::create_vault(path.clone(), SecretString::new("first".to_string().into()))
+            .unwrap();
+        // Second create against the same path must refuse.
+        let err =
+            StorageBackend::create_vault(path, SecretString::new("second".to_string().into()))
+                .unwrap_err();
+        assert!(
+            err.contains("already exists"),
+            "error must explain the file clash, got: {err}"
+        );
+    }
+
+    #[test]
+    fn unlock_opens_a_vault_created_with_the_same_passphrase() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_vault_path(&dir);
+        StorageBackend::create_vault(
+            path.clone(),
+            SecretString::new("the-passphrase".to_string().into()),
+        )
+        .unwrap();
+        // Now resolve as locked and unlock with the right pass.
+        let locked = StorageBackend::LocalVaultLocked {
+            vault_path: path.clone(),
+        };
+        let unlocked = locked
+            .unlock(SecretString::new("the-passphrase".to_string().into()))
+            .expect("correct passphrase must unlock");
+        assert!(matches!(
+            unlocked,
+            StorageBackend::LocalVault { vault_path, .. } if vault_path == path
+        ));
+    }
+
+    #[test]
+    fn unlock_rejects_a_wrong_passphrase() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_vault_path(&dir);
+        StorageBackend::create_vault(
+            path.clone(),
+            SecretString::new("the-real-one".to_string().into()),
+        )
+        .unwrap();
+        let locked = StorageBackend::LocalVaultLocked { vault_path: path };
+        let err = locked
+            .unlock(SecretString::new("a-wrong-guess".to_string().into()))
+            .expect_err("a wrong passphrase must not unlock the vault");
+        assert!(
+            !err.is_empty(),
+            "unlock failure must carry a human-facing reason"
+        );
+    }
+
+    #[test]
+    fn unlock_is_a_no_op_error_on_a_keychain_backend() {
+        let err = StorageBackend::Keychain
+            .unlock(SecretString::new("p".to_string().into()))
+            .expect_err("keychain has nothing to unlock");
+        assert!(err.contains("not a locked local-vault"), "got: {err}");
+    }
+
+    // -- has_value / store on a locked backend -----------------
+
+    #[test]
+    fn locked_backend_reports_no_values_and_refuses_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let locked = StorageBackend::LocalVaultLocked {
+            vault_path: temp_vault_path(&dir),
+        };
+        // A locked vault reads as empty — the UI gates on the
+        // unlock modal before this matters.
+        assert!(!locked.has_value("team/openai/api-key"));
+        // …and refuses writes with a clear message.
+        let err = locked
+            .store(
+                "team/openai/api-key",
+                &SecretString::new("sk-whatever".to_string().into()),
+            )
+            .expect_err("a locked vault must refuse a write");
+        assert!(err.contains("locked"), "got: {err}");
+    }
+
+    // -- labels ------------------------------------------------
+
+    #[test]
+    fn labels_distinguish_the_three_backend_states() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_vault_path(&dir);
+        assert!(StorageBackend::Keychain.label().contains("Keychain"));
+        assert!(
+            StorageBackend::LocalVaultLocked {
+                vault_path: path.clone()
+            }
+            .label()
+            .contains("locked")
+        );
+        let unlocked = StorageBackend::LocalVault {
+            vault_path: path,
+            passphrase: SecretString::new("p".to_string().into()),
+        };
+        let label = unlocked.label();
+        assert!(label.contains("local-vault") && !label.contains("locked"));
+    }
+
+    #[test]
+    fn source_label_collapses_both_vault_states_to_local_vault() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_vault_path(&dir);
+        assert_eq!(StorageBackend::Keychain.source_label(), "default-keychain");
+        assert_eq!(
+            StorageBackend::LocalVaultLocked {
+                vault_path: path.clone()
+            }
+            .source_label(),
+            "local-vault"
+        );
+        assert_eq!(
+            StorageBackend::LocalVault {
+                vault_path: path,
+                passphrase: SecretString::new("p".to_string().into()),
+            }
+            .source_label(),
+            "local-vault"
+        );
+    }
 }

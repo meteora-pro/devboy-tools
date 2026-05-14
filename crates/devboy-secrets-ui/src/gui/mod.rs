@@ -29,3 +29,4 @@ pub mod inventory;
 pub mod metadata_editor;
 pub mod provision_dialog;
 pub mod use_approval_dialog;
+pub mod vault_unlock;

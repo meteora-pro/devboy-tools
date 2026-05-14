@@ -21,6 +21,18 @@ See [ADR-023](https://github.com/meteora-pro/devboy-tools/blob/main/docs/archite
 
 > **Main criterion**: local-vault is for cases where there is *no* good system store. If the OS keychain or 1Password is available, prefer them. Local-vault gives you portability and file-level control at the cost of owning backups and key rotation yourself.
 
+## Unlocking from the secrets UI
+
+`devboy secrets ui` resolves the backend three ways at startup, in order:
+
+1. **`DEVBOY_VAULT_PASSPHRASE` is set** → the vault opens straight away, no prompt. Scriptable; right for headless / auto-agent runs.
+2. **A `.dvb` file exists** (default `<config>/devboy-tools/secrets/local-vault.dvb`, override with `DEVBOY_VAULT_PATH`) **but no env passphrase** → the UI opens a modal **unlock prompt** over a dimmed inventory. Type the passphrase, hit *Unlock*. A wrong passphrase shows in red and the modal stays open. *Use keychain instead* is the escape hatch — it switches to the OS keychain for that session.
+3. **No `.dvb` file, no env passphrase** → the backend defaults to the OS keychain. A **Switch to encrypted vault** button in the top bar opens a **create-vault** modal: pick a passphrase, confirm it, and the UI mints the vault and shows the recovery phrase once — behind an explicit *I've saved this phrase* gate.
+
+Once unlocked, the top bar offers **Lock vault** (drops the passphrase, the unlock prompt returns) and **Switch to keychain**. The switch is session-scoped — the env var stays the durable, machine-level override.
+
+The passphrase typed into the modal lives in a `SecretString` and is zeroized when the modal closes; the agent never sees it (same contract as the provision dialog).
+
 ## File format
 
 The file lives at `~/.devboy/secrets/local-vault.dvb` by default. Binary layout (see `crates/devboy-vault-crypto/src/format.rs`):

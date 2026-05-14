@@ -187,6 +187,18 @@ The variant chip in the inventory row (when the catalog declares more than one v
 
 The builder lives in `crates/devboy-secrets-ui-bin/src/catalog_metadata.rs::metadata_from_catalog_and_entry` and is exercised by `cargo test -p devboy-secrets-ui-bin catalog_metadata`.
 
+## Choosing a backend
+
+Where the provision dialog's *Save* writes depends on the backend the UI resolved at startup:
+
+| Backend | Reached when | Provision dialog writes to |
+|---|---|---|
+| OS keychain | default — no `DEVBOY_VAULT_PASSPHRASE`, no `.dvb` file | the OS keychain (service `devboy-tools`) |
+| local-vault (unlocked) | `DEVBOY_VAULT_PASSPHRASE` set, OR the user unlocked / created the vault in the UI | the encrypted `.dvb` file (XChaCha20-Poly1305 + Argon2id) |
+| local-vault (locked) | a `.dvb` file exists but no env passphrase | nothing — the UI shows a modal **unlock prompt** before the inventory is usable |
+
+The UI handles the locked → unlocked transition itself: a modal asks for the passphrase (eye-toggle, wrong-passphrase shown in red, *Use keychain instead* escape hatch), and a top-bar switcher flips backends live. First run with no vault file offers a create flow with a one-time recovery-phrase gate. Full walkthrough: [`local-vault.md` → "Unlocking from the secrets UI"](./local-vault.md), contract: [`scenarios/vault-unlock.feature`](./scenarios/vault-unlock.feature).
+
 ## See also
 
 - [ADR-023](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md) §3.4 — provision dialog contract.
@@ -194,5 +206,7 @@ The builder lives in `crates/devboy-secrets-ui-bin/src/catalog_metadata.rs::meta
 - [`onboarding.md`](./onboarding.md) — manual equivalent for users without an agent.
 - [`agent-protocol.md`](./agent-protocol.md) — MCP tool surface used in steps 5-6 (`secrets_request_provision`, `secrets_poll_status`).
 - [`scenarios/ui-catalog-rendering.feature`](./scenarios/ui-catalog-rendering.feature) — Gherkin contract for the provision dialog's catalog binding.
+- [`scenarios/vault-unlock.feature`](./scenarios/vault-unlock.feature) — Gherkin contract for the local-vault unlock / create flow.
+- [`local-vault.md`](./local-vault.md) — local-vault file format, the UI unlock paths, recovery, and backup.
 - `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/SKILL.md` — the skill manifest and procedure walkthrough the agent loads at activation time.
 - `crates/devboy-cli/src/secrets_setup.rs` — the CLI-side scanner / proposer / wizard runner, including `read_setup_state`.
