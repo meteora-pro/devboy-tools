@@ -566,6 +566,349 @@ pub fn extract_attachment(
     Ok(None)
 }
 
+/// K14 — metadata patch for one KeePass entry. Every field is
+/// optional; `None` means "leave the existing value alone".
+/// Setting a field to `Some(…)` overwrites it; setting to
+/// `Some(empty-string / empty-vec / clearing variant)` clears it.
+///
+/// EXCLUDES `password` and any Protected custom string by design.
+/// The agent-blindness boundary (ADR-023 §3.7) says agents can
+/// rotate documentation around a secret but never alter the
+/// secret bytes themselves — that flow stays in the GUI's
+/// per-field reveal/copy path.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MetadataPatch {
+    /// New Entry Title (the user-visible label in KeePass).
+    pub title: Option<String>,
+    /// New UserName. `Some(empty)` clears it.
+    pub username: Option<String>,
+    /// New URL. `Some(empty)` clears it.
+    pub url: Option<String>,
+    /// New Notes block (multiline allowed). `Some(empty)` clears.
+    pub notes: Option<String>,
+    /// New tag list — replaces the current set wholesale. Use an
+    /// empty Vec to clear all tags.
+    pub tags: Option<Vec<String>>,
+    /// Expiry control:
+    /// * `Some(Some(iso))` — set expiry to that timestamp +
+    ///   flip `times.expires` to true
+    /// * `Some(None)` — clear `times.expires` (no expiry)
+    /// * `None` — leave the field alone
+    ///
+    /// `iso` is parsed as RFC 3339 / ISO 8601; on parse failure
+    /// `edit_metadata` returns `KdbxSourceError::OpenFailed` with
+    /// a "bad expires_at" message.
+    pub expires_at: Option<Option<String>>,
+}
+
+/// K14b — read-only metadata projection for one entry. Same
+/// surface as [`MetadataPatch`], plus the immutable identifying
+/// fields the caller needs to round-trip an edit (`uuid`,
+/// `created_at`, `modified_at`, attachment metadata).
+///
+/// Excludes the value-bearing fields (Password / Protected
+/// custom strings) — agents that call `describe_metadata` see
+/// exactly what `edit_metadata` will let them change, no more.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KdbxEntryMetadata {
+    pub uuid: String,
+    pub title: String,
+    pub username: Option<String>,
+    pub url: Option<String>,
+    pub notes: Option<String>,
+    pub tags: Vec<String>,
+    pub created_at: Option<String>,
+    pub modified_at: Option<String>,
+    pub expires_at: Option<String>,
+    pub otp: Option<String>,
+    pub attachments: Vec<KdbxAttachmentMeta>,
+    /// Names of custom string fields on the entry (both Protected
+    /// and Unprotected). Helps the caller know what's available
+    /// to set via `set_unprotected` in a future
+    /// `edit_metadata` extension; we don't expose values here
+    /// because Protected ones would be secret bytes.
+    pub custom_string_names: Vec<String>,
+}
+
+/// K14 — apply a [`MetadataPatch`] to the entry identified by
+/// `entry_uuid` inside the KDBX file at `path`. Re-derives the
+/// Argon2id KDF on open, walks to the entry, mutates only the
+/// patch-covered fields, then `Database::save` back to the same
+/// path.
+///
+/// Working-copy safety: this function writes to `path` verbatim
+/// — callers MUST pass a working-copy path (see
+/// [`derive_working_copy_path`] / [`prepare_working_copy`]) and
+/// then atomically swap or sync back to the user's original
+/// file on their own schedule. The function does NOT auto-copy;
+/// that's the orchestrating layer's job (the UI bin already
+/// honours `DEVBOY_KDBX_WORKING_COPY=auto`).
+///
+/// Returns `KdbxSourceError::OpenFailed` on:
+/// * wrong passphrase / corrupt body
+/// * unknown `entry_uuid` (no walked entry matched)
+/// * bad `expires_at` ISO 8601 string in the patch
+/// * filesystem failure on the write side
+///
+/// Synchronous + CPU-bound — wrap in `spawn_blocking` from an
+/// async context.
+pub fn edit_metadata(
+    path: &std::path::Path,
+    passphrase: &SecretString,
+    keyfile: Option<&std::path::Path>,
+    entry_uuid: &str,
+    patch: &MetadataPatch,
+) -> Result<(), KdbxSourceError> {
+    use keepass::db::Value;
+    use keepass::{Database, DatabaseKey};
+    use std::fs::File;
+    use std::io::BufReader;
+
+    // ---- open ------------------------------------------------
+    let mut file = File::open(path).map_err(|e| KdbxSourceError::OpenFailed {
+        path: path.to_path_buf(),
+        reason: format!("could not open file: {e}"),
+    })?;
+    let mut key = DatabaseKey::new().with_password(passphrase.expose_secret());
+    if let Some(kf_path) = keyfile {
+        let kf = File::open(kf_path).map_err(|e| KdbxSourceError::OpenFailed {
+            path: kf_path.to_path_buf(),
+            reason: format!("could not open keyfile: {e}"),
+        })?;
+        let mut kf_reader = BufReader::new(kf);
+        key = key
+            .with_keyfile(&mut kf_reader)
+            .map_err(|e| KdbxSourceError::OpenFailed {
+                path: path.to_path_buf(),
+                reason: format!("keyfile parse failed: {e}"),
+            })?;
+    }
+    // The key is consumed by `open`; clone what we need to feed
+    // `save` again later (DatabaseKey is Clone in 0.12).
+    let save_key = DatabaseKey::new().with_password(passphrase.expose_secret());
+    let mut db = Database::open(&mut file, key).map_err(|e| KdbxSourceError::OpenFailed {
+        path: path.to_path_buf(),
+        reason: format!("{e}"),
+    })?;
+    drop(file);
+
+    // ---- locate by uuid + mutate -----------------------------
+    let target_id =
+        find_entry_id_by_uuid(&db, entry_uuid).ok_or_else(|| KdbxSourceError::OpenFailed {
+            path: path.to_path_buf(),
+            reason: format!("entry uuid {entry_uuid:?} not found"),
+        })?;
+
+    // Pre-validate expires_at BEFORE mutating so a bad ISO 8601
+    // doesn't leave a half-applied patch.
+    let parsed_expiry: Option<Option<chrono::NaiveDateTime>> = match &patch.expires_at {
+        None => None,
+        Some(None) => Some(None),
+        Some(Some(iso)) => Some(Some(
+            iso.parse::<chrono::NaiveDateTime>()
+                .or_else(|_| chrono::DateTime::parse_from_rfc3339(iso).map(|dt| dt.naive_utc()))
+                .map_err(|e| KdbxSourceError::OpenFailed {
+                    path: path.to_path_buf(),
+                    reason: format!("bad expires_at {iso:?}: {e}"),
+                })?,
+        )),
+    };
+
+    // Wrap the EntryMut borrow in a scope so it ends before
+    // we hand the database off to `save`. clippy's
+    // `drop_non_drop` doesn't recognise EntryMut as carrying a
+    // Drop impl, so an explicit `drop(entry)` would trip it.
+    {
+        let mut entry = db
+            .entry_mut(target_id)
+            .ok_or_else(|| KdbxSourceError::OpenFailed {
+                path: path.to_path_buf(),
+                reason: format!("entry {entry_uuid:?} disappeared mid-edit"),
+            })?;
+
+        if let Some(v) = &patch.title {
+            entry.fields.insert(
+                keepass::db::fields::TITLE.to_owned(),
+                Value::Unprotected(v.clone()),
+            );
+        }
+        if let Some(v) = &patch.username {
+            entry.fields.insert(
+                keepass::db::fields::USERNAME.to_owned(),
+                Value::Unprotected(v.clone()),
+            );
+        }
+        if let Some(v) = &patch.url {
+            entry.fields.insert(
+                keepass::db::fields::URL.to_owned(),
+                Value::Unprotected(v.clone()),
+            );
+        }
+        if let Some(v) = &patch.notes {
+            entry.fields.insert(
+                keepass::db::fields::NOTES.to_owned(),
+                Value::Unprotected(v.clone()),
+            );
+        }
+        if let Some(tags) = &patch.tags {
+            entry.tags = tags.clone();
+        }
+        match parsed_expiry {
+            None => {}
+            Some(None) => {
+                entry.times.expires = Some(false);
+            }
+            Some(Some(dt)) => {
+                entry.times.expiry = Some(dt);
+                entry.times.expires = Some(true);
+            }
+        }
+        // Stamp the modification time so any other KeePass
+        // client re-syncing the file sees the change.
+        entry.times.last_modification = Some(keepass::db::Times::now());
+    }
+
+    // ---- save back -------------------------------------------
+    let mut out = std::fs::File::create(path).map_err(|e| KdbxSourceError::OpenFailed {
+        path: path.to_path_buf(),
+        reason: format!("could not open for write: {e}"),
+    })?;
+    db.save(&mut out, save_key)
+        .map_err(|e| KdbxSourceError::OpenFailed {
+            path: path.to_path_buf(),
+            reason: format!("save failed: {e}"),
+        })?;
+    Ok(())
+}
+
+/// K14b — read-only companion to [`edit_metadata`]. Opens the
+/// KDBX, locates the entry by UUID, and projects its
+/// non-value-bearing fields into a [`KdbxEntryMetadata`].
+///
+/// Excludes Password / any Protected custom string from the
+/// return so an agent calling this can't fish for secrets via
+/// the metadata channel.
+pub fn describe_metadata(
+    path: &std::path::Path,
+    passphrase: &SecretString,
+    keyfile: Option<&std::path::Path>,
+    entry_uuid: &str,
+) -> Result<Option<KdbxEntryMetadata>, KdbxSourceError> {
+    use keepass::{Database, DatabaseKey};
+    use std::fs::File;
+    use std::io::BufReader;
+
+    let mut file = File::open(path).map_err(|e| KdbxSourceError::OpenFailed {
+        path: path.to_path_buf(),
+        reason: format!("could not open file: {e}"),
+    })?;
+    let mut key = DatabaseKey::new().with_password(passphrase.expose_secret());
+    if let Some(kf_path) = keyfile {
+        let kf = File::open(kf_path).map_err(|e| KdbxSourceError::OpenFailed {
+            path: kf_path.to_path_buf(),
+            reason: format!("could not open keyfile: {e}"),
+        })?;
+        let mut kf_reader = BufReader::new(kf);
+        key = key
+            .with_keyfile(&mut kf_reader)
+            .map_err(|e| KdbxSourceError::OpenFailed {
+                path: path.to_path_buf(),
+                reason: format!("keyfile parse failed: {e}"),
+            })?;
+    }
+    let db = Database::open(&mut file, key).map_err(|e| KdbxSourceError::OpenFailed {
+        path: path.to_path_buf(),
+        reason: format!("{e}"),
+    })?;
+
+    let Some(entry_id) = find_entry_id_by_uuid(&db, entry_uuid) else {
+        return Ok(None);
+    };
+    let entry = db
+        .entry(entry_id)
+        .ok_or_else(|| KdbxSourceError::OpenFailed {
+            path: path.to_path_buf(),
+            reason: format!("entry {entry_uuid:?} disappeared mid-read"),
+        })?;
+
+    let custom_string_names: Vec<String> = entry
+        .fields
+        .keys()
+        .filter(|k| !is_standard_metadata_field(k) && k.as_str() != "Password")
+        .cloned()
+        .collect();
+    let attachments: Vec<KdbxAttachmentMeta> = entry
+        .attachments_named()
+        .map(|(name, att)| KdbxAttachmentMeta {
+            name: name.to_owned(),
+            size_bytes: att.data.get().len(),
+        })
+        .collect();
+
+    Ok(Some(KdbxEntryMetadata {
+        uuid: entry_uuid.to_owned(),
+        title: entry.get_title().unwrap_or_default().to_owned(),
+        username: entry
+            .get_username()
+            .map(str::to_owned)
+            .filter(|s| !s.is_empty()),
+        url: entry.get_url().map(str::to_owned).filter(|s| !s.is_empty()),
+        notes: entry
+            .get(keepass::db::fields::NOTES)
+            .map(str::to_owned)
+            .filter(|s| !s.is_empty()),
+        tags: entry.tags.clone(),
+        created_at: entry
+            .times
+            .creation
+            .map(|t| t.and_utc().format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+        modified_at: entry
+            .times
+            .last_modification
+            .map(|t| t.and_utc().format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+        expires_at: if entry.times.expires == Some(true) {
+            entry
+                .times
+                .expiry
+                .map(|t| t.and_utc().format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        } else {
+            None
+        },
+        otp: entry
+            .get_raw_otp_value()
+            .map(str::to_owned)
+            .filter(|s| !s.is_empty()),
+        attachments,
+        custom_string_names,
+    }))
+}
+
+/// Helper — walk every group iteratively, return the first
+/// EntryId whose uuid matches. Same iteration shape as
+/// `extract_attachment` to avoid borrow-checker pain.
+fn find_entry_id_by_uuid(db: &keepass::Database, entry_uuid: &str) -> Option<keepass::db::EntryId> {
+    let mut stack: Vec<keepass::db::GroupId> = vec![db.root().id()];
+    while let Some(group_id) = stack.pop() {
+        let Some(group) = db.group(group_id) else {
+            continue;
+        };
+        for entry in group.entries() {
+            if entry.id().uuid().hyphenated().to_string() == entry_uuid {
+                return Some(entry.id());
+            }
+        }
+        let sub_ids: Vec<keepass::db::GroupId> = group.group_ids().collect();
+        stack.extend(sub_ids);
+    }
+    None
+}
+
+/// Standard KeePass field names — used by `describe_metadata` to
+/// filter custom string fields out of the standard-field list.
+fn is_standard_metadata_field(name: &str) -> bool {
+    matches!(name, "Title" | "UserName" | "URL" | "Notes")
+}
+
 /// Open `.kdbx` at `path` with `passphrase` + optional `keyfile`
 /// and flatten every entry into a [`KdbxSnapshot`].
 ///
@@ -1369,5 +1712,176 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, KdbxSourceError::OpenFailed { .. }));
+    }
+
+    // -- K14 — edit_metadata + describe_metadata ----------------
+
+    /// Construct a synthetic KDBX with one entry pre-populated
+    /// with title/username/url/notes/tags/protected password.
+    /// Returns (tmp_dir, kdbx_path, entry_uuid).
+    fn make_kdbx_with_entry() -> (tempfile::TempDir, std::path::PathBuf, String) {
+        use keepass::{Database, DatabaseKey};
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let kdbx_path = tmp_dir.path().join("edit.kdbx");
+
+        let mut db = Database::new();
+        let uuid;
+        {
+            let mut root = db.root_mut();
+            let mut entry = root.add_entry();
+            entry.set_unprotected("Title", "API token");
+            entry.set_unprotected("UserName", "ops");
+            entry.set_unprotected("URL", "https://api.example.com");
+            entry.set_unprotected("Notes", "original notes");
+            entry.set_protected("Password", "super-secret-password");
+            entry.tags = vec!["api".into(), "prod".into()];
+            uuid = entry.as_ref().id().uuid().hyphenated().to_string();
+        }
+        let mut out = std::fs::File::create(&kdbx_path).unwrap();
+        db.save(&mut out, DatabaseKey::new().with_password("p"))
+            .unwrap();
+        (tmp_dir, kdbx_path, uuid)
+    }
+
+    #[test]
+    fn edit_metadata_round_trips_notes_tags_and_url() {
+        let (_tmp, path, uuid) = make_kdbx_with_entry();
+
+        edit_metadata(
+            &path,
+            &SecretString::from("p"),
+            None,
+            &uuid,
+            &MetadataPatch {
+                notes: Some("rotation runbook: ops-wiki/rotations#42".into()),
+                tags: Some(vec!["api".into(), "prod".into(), "rotated-q1".into()]),
+                url: Some("https://api.example.com/v2".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let snapshot = open_kdbx_into_snapshot(&path, &SecretString::from("p"), None).unwrap();
+        let entry = snapshot
+            .entries
+            .iter()
+            .find(|e| e.uuid == uuid)
+            .expect("entry must survive the edit");
+        assert_eq!(
+            entry.notes.as_deref(),
+            Some("rotation runbook: ops-wiki/rotations#42")
+        );
+        assert_eq!(entry.tags, vec!["api", "prod", "rotated-q1"]);
+        assert_eq!(entry.url.as_deref(), Some("https://api.example.com/v2"));
+        // Password must NOT have been touched.
+        let pw = entry.primary_value().expect("password slot present");
+        use secrecy::ExposeSecret as _;
+        assert_eq!(pw.value.expose_secret(), "super-secret-password");
+    }
+
+    #[test]
+    fn edit_metadata_round_trips_expires_at_set_and_clear() {
+        let (_tmp, path, uuid) = make_kdbx_with_entry();
+
+        // Set expiry.
+        edit_metadata(
+            &path,
+            &SecretString::from("p"),
+            None,
+            &uuid,
+            &MetadataPatch {
+                expires_at: Some(Some("2027-01-15T00:00:00Z".to_owned())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let snap = open_kdbx_into_snapshot(&path, &SecretString::from("p"), None).unwrap();
+        let entry = snap.entries.iter().find(|e| e.uuid == uuid).unwrap();
+        assert!(entry.expires_at.is_some());
+
+        // Clear expiry.
+        edit_metadata(
+            &path,
+            &SecretString::from("p"),
+            None,
+            &uuid,
+            &MetadataPatch {
+                expires_at: Some(None),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let snap = open_kdbx_into_snapshot(&path, &SecretString::from("p"), None).unwrap();
+        let entry = snap.entries.iter().find(|e| e.uuid == uuid).unwrap();
+        assert_eq!(entry.expires_at, None);
+    }
+
+    #[test]
+    fn edit_metadata_rejects_bad_expires_at() {
+        let (_tmp, path, uuid) = make_kdbx_with_entry();
+        let err = edit_metadata(
+            &path,
+            &SecretString::from("p"),
+            None,
+            &uuid,
+            &MetadataPatch {
+                expires_at: Some(Some("not-a-date".to_owned())),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        let KdbxSourceError::OpenFailed { reason, .. } = err else {
+            panic!("expected OpenFailed");
+        };
+        assert!(reason.contains("bad expires_at"), "got: {reason}");
+    }
+
+    #[test]
+    fn edit_metadata_rejects_unknown_uuid() {
+        let (_tmp, path, _uuid) = make_kdbx_with_entry();
+        let err = edit_metadata(
+            &path,
+            &SecretString::from("p"),
+            None,
+            "00000000-0000-0000-0000-000000000000",
+            &MetadataPatch {
+                notes: Some("doesn't matter".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        let KdbxSourceError::OpenFailed { reason, .. } = err else {
+            panic!("expected OpenFailed");
+        };
+        assert!(reason.contains("not found"), "got: {reason}");
+    }
+
+    #[test]
+    fn describe_metadata_projects_fields_without_password() {
+        let (_tmp, path, uuid) = make_kdbx_with_entry();
+        let meta = describe_metadata(&path, &SecretString::from("p"), None, &uuid)
+            .unwrap()
+            .expect("entry present");
+        assert_eq!(meta.title, "API token");
+        assert_eq!(meta.username.as_deref(), Some("ops"));
+        assert_eq!(meta.url.as_deref(), Some("https://api.example.com"));
+        assert_eq!(meta.notes.as_deref(), Some("original notes"));
+        assert_eq!(meta.tags, vec!["api", "prod"]);
+        assert_eq!(meta.uuid, uuid);
+        // No password / no protected secret leaks out.
+        assert!(!meta.custom_string_names.iter().any(|n| n == "Password"));
+    }
+
+    #[test]
+    fn describe_metadata_returns_none_for_unknown_uuid() {
+        let (_tmp, path, _uuid) = make_kdbx_with_entry();
+        let out = describe_metadata(
+            &path,
+            &SecretString::from("p"),
+            None,
+            "00000000-0000-0000-0000-000000000000",
+        )
+        .unwrap();
+        assert!(out.is_none());
     }
 }
