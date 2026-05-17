@@ -486,6 +486,53 @@ fn write_sources_toml(body: &str) -> Result<(), String> {
 // StorageBackend
 // =============================================================================
 
+/// Resolve which KDBX file the backend should actually open.
+///
+/// When `DEVBOY_KDBX_WORKING_COPY` is set, we materialise (or
+/// reuse) a working copy of the original `.kdbx` file and
+/// return its path. This protects the user's primary KeePass
+/// DB from any write surface (K14+) that we, the agent, or
+/// the user wire up via the UI / MCP — the original is never
+/// touched.
+///
+/// Modes:
+/// - **unset** (default) — read-only path; return the original
+///   file verbatim.
+/// - **`auto`** — derive a destination next to the source
+///   (`<stem>.devboy-working-<UTC-timestamp>.kdbx`), copy the
+///   bytes if the file doesn't already exist, return the
+///   destination.
+/// - **any other value** — treated as an explicit absolute path
+///   for the working copy. Same copy-once-if-missing logic.
+///
+/// Failures during the copy step are intentionally swallowed:
+/// we fall back to the original file and let the unlock flow
+/// surface any downstream error. (The user can still see the
+/// original is untouched because they can re-open it in
+/// KeePass and confirm.)
+fn resolve_kdbx_working_copy(original: &std::path::Path) -> std::path::PathBuf {
+    let Ok(mode) = std::env::var("DEVBOY_KDBX_WORKING_COPY") else {
+        return original.to_path_buf();
+    };
+    if mode.is_empty() {
+        return original.to_path_buf();
+    }
+    let destination = if mode.eq_ignore_ascii_case("auto") {
+        devboy_secret_kdbx::derive_working_copy_path(original)
+    } else {
+        std::path::PathBuf::from(mode)
+    };
+    match devboy_secret_kdbx::prepare_working_copy(original, &destination) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!(
+                "devboy: failed to prepare KDBX working copy ({e}); falling back to the original file (read-only)"
+            );
+            original.to_path_buf()
+        }
+    }
+}
+
 /// Resolve the local-vault file path: `DEVBOY_VAULT_PATH` if
 /// set, otherwise `<config>/devboy-tools/secrets/local-vault.dvb`.
 fn default_vault_path() -> std::path::PathBuf {
@@ -611,11 +658,17 @@ impl StorageBackend {
         if let Ok(kdbx_path) = std::env::var("DEVBOY_KDBX_FILE")
             && !kdbx_path.is_empty()
         {
-            let file = std::path::PathBuf::from(kdbx_path);
+            let original = std::path::PathBuf::from(kdbx_path);
             let keyfile = std::env::var("DEVBOY_KDBX_KEYFILE")
                 .ok()
                 .filter(|s| !s.is_empty())
                 .map(std::path::PathBuf::from);
+            // Working-copy mode (K13): when
+            // DEVBOY_KDBX_WORKING_COPY=auto we copy the original
+            // off to the side and operate on the copy from this
+            // point forward. Any custom string value passes
+            // straight through as the destination path.
+            let file = resolve_kdbx_working_copy(&original);
             if file.exists()
                 && let Ok(pass) = std::env::var("DEVBOY_KDBX_PASSPHRASE")
                 && !pass.is_empty()
@@ -2804,5 +2857,68 @@ mod tests {
             desc.contains("value field: custom string `api_token`"),
             "value-field note must appear in description, got:\n{desc}"
         );
+    }
+
+    // -- K13 — working-copy resolution ----------------------
+
+    #[test]
+    fn resolve_kdbx_working_copy_returns_original_when_env_unset() {
+        // Make sure we're not polluted by an outer env var.
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("orig.kdbx");
+        std::fs::write(&src, b"x").unwrap();
+        temp_env::with_var("DEVBOY_KDBX_WORKING_COPY", None::<&str>, || {
+            let got = resolve_kdbx_working_copy(&src);
+            assert_eq!(got, src);
+        });
+    }
+
+    #[test]
+    fn resolve_kdbx_working_copy_auto_creates_sibling_with_timestamp() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("orig.kdbx");
+        std::fs::write(&src, b"hello-kdbx").unwrap();
+        temp_env::with_var("DEVBOY_KDBX_WORKING_COPY", Some("auto"), || {
+            let got = resolve_kdbx_working_copy(&src);
+            assert_ne!(got, src, "working copy must differ from original");
+            assert!(got.exists(), "working copy must exist");
+            assert_eq!(std::fs::read(&got).unwrap(), b"hello-kdbx");
+            let stem = got.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(
+                stem.starts_with("orig.devboy-working-"),
+                "unexpected filename: {stem}"
+            );
+        });
+    }
+
+    #[test]
+    fn resolve_kdbx_working_copy_explicit_path_is_honoured() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("orig.kdbx");
+        let dst = dir.path().join("override.kdbx");
+        std::fs::write(&src, b"hello-kdbx").unwrap();
+        temp_env::with_var(
+            "DEVBOY_KDBX_WORKING_COPY",
+            Some(dst.to_str().unwrap()),
+            || {
+                let got = resolve_kdbx_working_copy(&src);
+                assert_eq!(got, dst);
+                assert!(dst.exists());
+                assert_eq!(std::fs::read(&dst).unwrap(), b"hello-kdbx");
+            },
+        );
+    }
+
+    #[test]
+    fn resolve_kdbx_working_copy_falls_back_to_original_on_copy_failure() {
+        // Source doesn't exist → prepare_working_copy errors;
+        // resolve falls back to the original path so the
+        // downstream unlock can surface its own error.
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("nope.kdbx");
+        temp_env::with_var("DEVBOY_KDBX_WORKING_COPY", Some("auto"), || {
+            let got = resolve_kdbx_working_copy(&src);
+            assert_eq!(got, src);
+        });
     }
 }

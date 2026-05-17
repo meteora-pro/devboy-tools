@@ -411,6 +411,54 @@ impl SecretSource for KdbxSource {
 // Synchronous open + traversal (runs inside spawn_blocking)
 // ---------------------------------------------------------------
 
+/// Compute the working-copy path for `source`. Format is
+/// `<source-without-ext>.devboy-working-<ISO-timestamp>.kdbx`
+/// next to the original file. Timestamp uses UTC + `%Y%m%dT%H%M%S`
+/// so concurrent copies don't collide (and the user can `ls`-sort
+/// chronologically).
+///
+/// The returned path is **not** created here — call
+/// [`prepare_working_copy`] to also do the file copy.
+pub fn derive_working_copy_path(source: &std::path::Path) -> PathBuf {
+    let stem = source
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "kdbx".to_owned());
+    let dir = source.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let now = chrono::Utc::now().format("%Y%m%dT%H%M%S");
+    dir.join(format!("{stem}.devboy-working-{now}.kdbx"))
+}
+
+/// Materialise a working copy of `source` so subsequent writes
+/// don't risk the original. Idempotent in the sense that if
+/// `destination` already exists with bit-identical content the
+/// copy is a no-op; otherwise the source is byte-copied.
+///
+/// Returns the destination path on success so the caller can
+/// store it in the backend state.
+pub fn prepare_working_copy(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> Result<PathBuf, KdbxSourceError> {
+    if !source.exists() {
+        return Err(KdbxSourceError::OpenFailed {
+            path: source.to_path_buf(),
+            reason: "source KDBX does not exist".to_owned(),
+        });
+    }
+    if !destination.exists() {
+        std::fs::copy(source, destination).map_err(|e| KdbxSourceError::OpenFailed {
+            path: destination.to_path_buf(),
+            reason: format!(
+                "could not copy {} → {}: {e}",
+                source.display(),
+                destination.display()
+            ),
+        })?;
+    }
+    Ok(destination.to_path_buf())
+}
+
 /// Open `.kdbx` at `path` with `passphrase` + optional `keyfile`
 /// and flatten every entry into a [`KdbxSnapshot`].
 ///
@@ -1033,6 +1081,51 @@ mod tests {
     /// non-None `expiry` value (KeePass writes a ghost
     /// timestamp into every entry on save). Without this guard
     /// every entry would look like it expires.
+    // -- K13 — working-copy safety ---------------------------
+
+    #[test]
+    fn derive_working_copy_path_drops_into_source_dir_with_timestamp() {
+        let p = derive_working_copy_path(std::path::Path::new("/tmp/x.kdbx"));
+        let s = p.to_string_lossy();
+        assert!(s.starts_with("/tmp/x.devboy-working-"), "got: {s}");
+        assert!(s.ends_with(".kdbx"), "got: {s}");
+    }
+
+    #[test]
+    fn derive_working_copy_path_handles_files_without_extension() {
+        // Some users keep KDBX files without an extension; the
+        // helper must not break on those.
+        let p = derive_working_copy_path(std::path::Path::new("/tmp/passwords"));
+        let s = p.to_string_lossy();
+        assert!(s.contains("passwords.devboy-working-"), "got: {s}");
+    }
+
+    #[test]
+    fn prepare_working_copy_copies_bytes_and_is_idempotent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("src.kdbx");
+        let dst = dir.path().join("dst.kdbx");
+        std::fs::write(&src, b"hello-kdbx").unwrap();
+        let result = prepare_working_copy(&src, &dst).unwrap();
+        assert_eq!(result, dst);
+        assert_eq!(std::fs::read(&dst).unwrap(), b"hello-kdbx");
+        // Second call — destination already exists; no-op.
+        // Mutate dst to confirm we don't re-overwrite.
+        std::fs::write(&dst, b"do-not-overwrite").unwrap();
+        let result = prepare_working_copy(&src, &dst).unwrap();
+        assert_eq!(result, dst);
+        assert_eq!(std::fs::read(&dst).unwrap(), b"do-not-overwrite");
+    }
+
+    #[test]
+    fn prepare_working_copy_errors_when_source_missing() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("nope.kdbx");
+        let dst = dir.path().join("dst.kdbx");
+        let err = prepare_working_copy(&src, &dst).unwrap_err();
+        assert!(matches!(err, KdbxSourceError::OpenFailed { .. }));
+    }
+
     #[tokio::test]
     async fn expires_at_is_suppressed_when_expires_flag_is_false() {
         use chrono::NaiveDateTime;
