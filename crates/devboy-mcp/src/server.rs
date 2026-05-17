@@ -10,8 +10,20 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use devboy_core::{BuiltinToolsConfig, Provider};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
+
+/// K16 — serde helper for three-state Option<Option<T>> fields.
+/// Distinguishes "missing" (`None`) from "explicit null"
+/// (`Some(None)`) — needed for `expires_at` patch semantics
+/// (leave / clear / set).
+fn deserialize_double_option<'de, T, D>(d: D) -> std::result::Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
 use tokio::sync::oneshot;
 
 use crate::layered::{SessionPipeline, extract_file_path as file_path_from_args, is_mutating_tool};
@@ -785,6 +797,8 @@ impl McpServer {
             "secrets_propose_metadata" => Some(self.handle_secrets_propose_metadata(params)),
             "secrets_propose_new_path" => Some(self.handle_secrets_propose_new_path(params)),
             "secrets_poll_status" => Some(self.handle_secrets_poll_status(params)),
+            "kdbx_describe_metadata" => Some(Self::handle_kdbx_describe_metadata(params)),
+            "kdbx_edit_metadata" => Some(Self::handle_kdbx_edit_metadata(params)),
             _ => None,
         }
     }
@@ -855,6 +869,191 @@ impl McpServer {
                 Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
             },
             Err(e) => ToolCallResult::error(format!("secrets_describe failed: {e:?}")),
+        }
+    }
+
+    /// K16 — MCP wrapper around
+    /// `devboy_secret_kdbx::describe_metadata`. Reads the
+    /// passphrase from the `DEVBOY_KDBX_PASSPHRASE` env var so
+    /// the agent never sees it on the wire. Path + UUID
+    /// (+ optional keyfile) come from the tool arguments.
+    ///
+    /// Same agent-blindness boundary as the K15 CLI command:
+    /// Password and Protected custom strings are filtered out
+    /// of the response.
+    fn handle_kdbx_describe_metadata(params: &ToolCallParams) -> ToolCallResult {
+        use secrecy::SecretString;
+
+        #[derive(Deserialize)]
+        struct Args {
+            file: std::path::PathBuf,
+            uuid: String,
+            #[serde(default)]
+            keyfile: Option<std::path::PathBuf>,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<Args>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => return ToolCallResult::error("missing arguments object".to_string()),
+        };
+        let Ok(passphrase) = std::env::var("DEVBOY_KDBX_PASSPHRASE") else {
+            return ToolCallResult::error(
+                "DEVBOY_KDBX_PASSPHRASE env var must be set for kdbx_* tools — \
+                 agents are not allowed to pass the KDBX passphrase over the wire"
+                    .to_string(),
+            );
+        };
+        if passphrase.is_empty() {
+            return ToolCallResult::error(
+                "DEVBOY_KDBX_PASSPHRASE is empty; refusing to open".to_string(),
+            );
+        }
+        match devboy_secret_kdbx::describe_metadata(
+            &args.file,
+            &SecretString::new(passphrase.into()),
+            args.keyfile.as_deref(),
+            &args.uuid,
+        ) {
+            Ok(Some(meta)) => {
+                let json = serde_json::json!({
+                    "uuid": meta.uuid,
+                    "title": meta.title,
+                    "username": meta.username,
+                    "url": meta.url,
+                    "notes": meta.notes,
+                    "tags": meta.tags,
+                    "created_at": meta.created_at,
+                    "modified_at": meta.modified_at,
+                    "expires_at": meta.expires_at,
+                    "otp_present": meta.otp.is_some(),
+                    "attachments": meta.attachments.iter().map(|a| serde_json::json!({
+                        "name": a.name,
+                        "size_bytes": a.size_bytes,
+                    })).collect::<Vec<_>>(),
+                    "custom_string_names": meta.custom_string_names,
+                });
+                ToolCallResult::text(json.to_string())
+            }
+            Ok(None) => ToolCallResult::error(format!(
+                "no entry with uuid {} in {}",
+                args.uuid,
+                args.file.display()
+            )),
+            Err(e) => ToolCallResult::error(format!("kdbx_describe_metadata failed: {e}")),
+        }
+    }
+
+    /// K16 — MCP wrapper around
+    /// `devboy_secret_kdbx::edit_metadata`. Reads passphrase
+    /// from `DEVBOY_KDBX_PASSPHRASE` env var; tool arguments
+    /// carry file / uuid / keyfile / patch.
+    ///
+    /// The patch payload is structurally the same as
+    /// `MetadataPatch`:
+    /// ```json
+    /// {
+    ///   "file": "/abs/path.kdbx",
+    ///   "uuid": "12345678-90ab-cdef-1234-567890abcdef",
+    ///   "patch": {
+    ///     "title": "...", "username": "...", "url": "...",
+    ///     "notes": "...", "tags": ["a","b"],
+    ///     "expires_at": "2027-01-15T00:00:00Z" | null
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Honours K13 working-copy safety: the underlying call
+    /// writes verbatim to the path we hand it; this wrapper
+    /// derives the working-copy path + `prepare_working_copy`
+    /// before invoking `edit_metadata`. Working-copy path is
+    /// included in the response so the caller can sync back.
+    fn handle_kdbx_edit_metadata(params: &ToolCallParams) -> ToolCallResult {
+        use secrecy::SecretString;
+
+        #[derive(Deserialize)]
+        struct Args {
+            file: std::path::PathBuf,
+            uuid: String,
+            #[serde(default)]
+            keyfile: Option<std::path::PathBuf>,
+            patch: PatchArgs,
+        }
+        #[derive(Deserialize, Default)]
+        struct PatchArgs {
+            #[serde(default)]
+            title: Option<String>,
+            #[serde(default)]
+            username: Option<String>,
+            #[serde(default)]
+            url: Option<String>,
+            #[serde(default)]
+            notes: Option<String>,
+            #[serde(default)]
+            tags: Option<Vec<String>>,
+            /// `Some("2027-…")` → set, `Some(null)` → clear,
+            /// missing → leave alone. JSON-serde encodes the
+            /// three-state via Option<Option<String>>.
+            #[serde(default, deserialize_with = "deserialize_double_option")]
+            expires_at: Option<Option<String>>,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<Args>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => return ToolCallResult::error("missing arguments object".to_string()),
+        };
+        let Ok(passphrase) = std::env::var("DEVBOY_KDBX_PASSPHRASE") else {
+            return ToolCallResult::error(
+                "DEVBOY_KDBX_PASSPHRASE env var must be set for kdbx_* tools — \
+                 agents are not allowed to pass the KDBX passphrase over the wire"
+                    .to_string(),
+            );
+        };
+        if passphrase.is_empty() {
+            return ToolCallResult::error(
+                "DEVBOY_KDBX_PASSPHRASE is empty; refusing to open".to_string(),
+            );
+        }
+        let patch = devboy_secret_kdbx::MetadataPatch {
+            title: args.patch.title,
+            username: args.patch.username,
+            url: args.patch.url,
+            notes: args.patch.notes,
+            tags: args.patch.tags,
+            expires_at: args.patch.expires_at,
+        };
+        if patch == devboy_secret_kdbx::MetadataPatch::default() {
+            return ToolCallResult::error("patch is empty — pass at least one field".to_string());
+        }
+        let working_copy = devboy_secret_kdbx::derive_working_copy_path(&args.file);
+        if let Err(e) = devboy_secret_kdbx::prepare_working_copy(&args.file, &working_copy) {
+            return ToolCallResult::error(format!(
+                "could not prepare working copy at {}: {e}",
+                working_copy.display()
+            ));
+        }
+        match devboy_secret_kdbx::edit_metadata(
+            &working_copy,
+            &SecretString::new(passphrase.into()),
+            args.keyfile.as_deref(),
+            &args.uuid,
+            &patch,
+        ) {
+            Ok(()) => {
+                let reply = serde_json::json!({
+                    "ok": true,
+                    "source": args.file.display().to_string(),
+                    "working_copy": working_copy.display().to_string(),
+                    "uuid": args.uuid,
+                });
+                ToolCallResult::text(reply.to_string())
+            }
+            Err(e) => ToolCallResult::error(format!("kdbx_edit_metadata failed: {e}")),
         }
     }
 
@@ -1309,6 +1508,8 @@ impl McpServer {
                 | "secrets_propose_metadata"
                 | "secrets_propose_new_path"
                 | "secrets_poll_status"
+                | "kdbx_describe_metadata"
+                | "kdbx_edit_metadata"
         )
     }
 
