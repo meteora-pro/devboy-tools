@@ -171,7 +171,6 @@ struct InventoryApp {
     /// (K28) renders as a chip and that K27 inventory
     /// aggregation folds into the combined row list when
     /// unlocked. Mutated by the K29 per-wallet unlock flow.
-    #[allow(dead_code)] // wired up by K27-K30 in follow-up commits
     extra_wallets: Vec<wallets::NamedBackend>,
     /// K29 — when the user clicked an entry in K28's wallet bar
     /// or a K30 lazy-unlock placeholder row, this is the name
@@ -252,7 +251,7 @@ impl InventoryApp {
         // Catalogs first — `load_inventory_or_empty` needs them
         // to populate the per-row `catalog_override` chip (P22.2).
         let (catalogs, catalog_errors) = load_token_catalogs();
-        let (rows, metadata_by_path) = load_inventory_or_empty(&backend, &catalogs);
+        let (rows, metadata_by_path) = load_inventory_or_empty(&backend, &extra_wallets, &catalogs);
         let (pending_url_confirms, pending_url_warnings) =
             partition_url_trust_errors(&catalog_errors);
         // A locked backend (local-vault OR KDBX) arms the
@@ -334,7 +333,8 @@ impl InventoryApp {
     }
 
     fn reload(&mut self) {
-        let (rows, metadata) = load_inventory_or_empty(&self.backend, &self.catalogs);
+        let (rows, metadata) =
+            load_inventory_or_empty(&self.backend, &self.extra_wallets, &self.catalogs);
         self.state.replace_rows(rows);
         self.metadata_by_path = metadata;
     }
@@ -1373,6 +1373,7 @@ fn load_token_catalogs() -> (
 /// render a coloured tag inline.
 fn load_inventory_or_empty(
     backend: &StorageBackend,
+    extras: &[wallets::NamedBackend],
     catalogs: &[devboy_token_catalog::LoadedCatalog],
 ) -> (
     Vec<devboy_secrets_ui::InventoryRow>,
@@ -1390,12 +1391,34 @@ fn load_inventory_or_empty(
         return (Vec::new(), std::collections::HashMap::new());
     };
 
+    // K27 — combined view: primary first (matches the daemon's
+    // primary-source-of-record routing), then extras in
+    // sources.toml declaration order. The status / KDBX-row
+    // probes walk this slice in order, so primary always wins
+    // a multi-wallet collision.
+    let combined: Vec<(&str, &StorageBackend)> = std::iter::once(("primary", backend))
+        .chain(extras.iter().map(|w| (w.name.as_str(), &w.backend)))
+        .collect();
+
     let mut rows = Vec::with_capacity(merged.secrets.len());
     let mut metadata = std::collections::HashMap::with_capacity(merged.secrets.len());
     for resolved in merged.secrets.values() {
         let path_str = resolved.path.to_string();
-        let provisioned = backend.has_value(&path_str);
-        let status = if provisioned {
+        // Find the FIRST wallet that has this path — primary
+        // checked first, then extras in declaration order.
+        // `Some(name)` → Provisioned + tag the routed_source
+        // with that wallet's label. `None` → Missing.
+        let routed = combined
+            .iter()
+            .find(|(_, b)| b.has_value(&path_str))
+            .map(|(name, b)| {
+                if *name == "primary" {
+                    backend.source_label().to_owned()
+                } else {
+                    format!("{} ({})", b.source_label(), name)
+                }
+            });
+        let status = if routed.is_some() {
             devboy_secrets_ui::RowStatus::Provisioned
         } else {
             devboy_secrets_ui::RowStatus::Missing
@@ -1404,7 +1427,7 @@ fn load_inventory_or_empty(
         rows.push(devboy_secrets_ui::InventoryRow {
             path: path_str.clone(),
             status,
-            routed_source: provisioned.then(|| backend.source_label().to_owned()),
+            routed_source: routed,
             expires_at: resolved.metadata.expires_at.clone(),
             provider: provider_segment.map(str::to_owned),
             scope: resolved
@@ -1419,21 +1442,30 @@ fn load_inventory_or_empty(
         metadata.insert(path_str, resolved.metadata.clone());
     }
 
-    // KDBX-backed rows: include every decrypted entry whose path
-    // isn't already in the manifest. Gives the user a one-shot
-    // view of their KeePass DB without needing to write a
-    // manifest for it first. The agent never sees these rows —
-    // they live entirely inside the UI process snapshot.
-    if let StorageBackend::Kdbx { snapshot, .. } = backend {
+    // K27 — KDBX-backed rows: include every decrypted entry
+    // from EVERY unlocked KDBX wallet (primary OR extras).
+    // Each row gets tagged with the source wallet name so the
+    // user can tell two KDBX vaults apart at a glance.
+    for (wallet_name, b) in &combined {
+        let StorageBackend::Kdbx { snapshot, .. } = b else {
+            continue;
+        };
         for entry in &snapshot.entries {
             // Skip duplicates already covered by the manifest
             // pass — manifest entries take precedence so the
-            // user's curated descriptions / rotation hints win.
+            // user's curated descriptions / rotation hints
+            // win. Also skip duplicates from earlier wallets
+            // (primary > extras > later extras).
             if rows.iter().any(|r| r.path == entry.path) {
                 continue;
             }
             let scope = entry.path.split('/').next().unwrap_or("kdbx").to_owned();
             let provider_segment = entry.path.split('/').nth(1);
+            let source_tag = if *wallet_name == "primary" {
+                b.source_label().to_owned()
+            } else {
+                format!("{} ({})", b.source_label(), wallet_name)
+            };
             // KDBX entries are always "provisioned" — they exist
             // in the unlocked snapshot, that's the whole point.
             // `expires_at` flows straight through so the
@@ -1442,7 +1474,7 @@ fn load_inventory_or_empty(
             rows.push(devboy_secrets_ui::InventoryRow {
                 path: entry.path.clone(),
                 status: devboy_secrets_ui::RowStatus::Provisioned,
-                routed_source: Some(backend.source_label().to_owned()),
+                routed_source: Some(source_tag),
                 expires_at: entry.expires_at.clone(),
                 provider: provider_segment.map(str::to_owned),
                 scope,
