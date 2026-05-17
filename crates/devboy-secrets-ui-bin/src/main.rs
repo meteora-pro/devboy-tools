@@ -373,35 +373,69 @@ impl InventoryApp {
                 s.apply_status(devboy_secrets_ui::VaultUnlockStatus::Working);
             }
 
-            let outcome: Result<(StorageBackend, Option<String>), String> = match mode {
-                // Unlock — open an existing `.dvb` file.
-                devboy_secrets_ui::VaultUnlockMode::Unlock => {
-                    self.backend.unlock(passphrase).map(|b| (b, None))
-                }
-                // Create — mint a new vault. The path is the
-                // locked backend's path if we have one,
-                // otherwise the default location.
-                devboy_secrets_ui::VaultUnlockMode::Create => {
-                    let vault_path = match &self.backend {
-                        StorageBackend::LocalVaultLocked { vault_path }
-                        | StorageBackend::LocalVault { vault_path, .. } => vault_path.clone(),
-                        // Keychain, HTTP-Vault, or KDBX backend → a
-                        // newly created local-vault lands at the
-                        // default path. The user can always pick
-                        // a different file later via the
-                        // backend-picker (V5).
-                        StorageBackend::Keychain
-                        | StorageBackend::HttpVault { .. }
-                        | StorageBackend::KdbxLocked { .. }
-                        | StorageBackend::Kdbx { .. } => default_vault_path(),
-                    };
-                    StorageBackend::create_vault(vault_path, passphrase)
-                }
-            };
+            // K29 — when an extra wallet's chip armed this
+            // modal, route the unlock to that wallet instead
+            // of the primary backend. `pending_unlock_target =
+            // None` keeps the legacy single-wallet path for
+            // the primary-locked-at-startup case.
+            let target_extra = self.pending_unlock_target.clone();
+            let outcome: Result<(StorageBackend, Option<String>, Option<String>), String> =
+                match mode {
+                    // Unlock — open an existing `.dvb` file or the
+                    // matching KDBX file. If targeting an extra, we
+                    // pull its current backend out, unlock it, and
+                    // return alongside the wallet name so the
+                    // post-write step knows where to put it back.
+                    devboy_secrets_ui::VaultUnlockMode::Unlock => match &target_extra {
+                        Some(name) => match self.extra_wallets.iter().find(|w| &w.name == name) {
+                            Some(extra) => extra
+                                .backend
+                                .unlock(passphrase)
+                                .map(|b| (b, None, Some(name.clone()))),
+                            None => Err(format!("wallet `{name}` is gone")),
+                        },
+                        None => self.backend.unlock(passphrase).map(|b| (b, None, None)),
+                    },
+                    // Create — mint a new vault. The path is the
+                    // locked backend's path if we have one,
+                    // otherwise the default location.
+                    devboy_secrets_ui::VaultUnlockMode::Create => {
+                        let vault_path = match &self.backend {
+                            StorageBackend::LocalVaultLocked { vault_path }
+                            | StorageBackend::LocalVault { vault_path, .. } => vault_path.clone(),
+                            // Keychain, HTTP-Vault, or KDBX backend → a
+                            // newly created local-vault lands at the
+                            // default path. The user can always pick
+                            // a different file later via the
+                            // backend-picker (V5).
+                            StorageBackend::Keychain
+                            | StorageBackend::HttpVault { .. }
+                            | StorageBackend::KdbxLocked { .. }
+                            | StorageBackend::Kdbx { .. } => default_vault_path(),
+                        };
+                        StorageBackend::create_vault(vault_path, passphrase)
+                            .map(|(b, recovery)| (b, recovery, None))
+                    }
+                };
 
             match outcome {
-                Ok((backend, recovery)) => {
-                    self.backend = backend;
+                Ok((backend, recovery, target_name)) => {
+                    // K29 — route the unlocked backend back to
+                    // either the primary slot (legacy path) or
+                    // the matching extra wallet slot.
+                    match target_name {
+                        Some(name) => {
+                            if let Some(slot) =
+                                self.extra_wallets.iter_mut().find(|w| w.name == name)
+                            {
+                                slot.backend = backend;
+                            }
+                        }
+                        None => {
+                            self.backend = backend;
+                        }
+                    }
+                    self.pending_unlock_target = None;
                     self.vault_unlock = None;
                     // Surface the recovery phrase exactly once
                     // (create flow only — `unlock` returns None).
@@ -421,8 +455,13 @@ impl InventoryApp {
             }
         } else if use_keychain {
             // Escape hatch — fall back to the OS keychain for
-            // this session.
-            self.backend = StorageBackend::Keychain;
+            // this session. Only applies to the primary; if a
+            // K28 extra-wallet unlock was in progress we just
+            // close the modal without touching the keychain.
+            if self.pending_unlock_target.is_none() {
+                self.backend = StorageBackend::Keychain;
+            }
+            self.pending_unlock_target = None;
             self.vault_unlock = None;
             self.reload();
         }
