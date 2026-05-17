@@ -1787,9 +1787,41 @@ impl eframe::App for InventoryApp {
                     // gets its own 👁 reveal + 📋 copy buttons;
                     // values stay masked by default, revealed
                     // one at a time at the user's request.
-                    if let Some(values) = kdbx_values_for_path(&self.backend, &dialog_path) {
+                    let kdbx_values = kdbx_values_for_path(&self.backend, &dialog_path);
+                    let is_kdbx_row = kdbx_values.is_some();
+                    if let Some(values) = kdbx_values {
                         render_kdbx_values_section(ui, &values, &mut self.revealed_kdbx_values);
                         ui.separator();
+                    }
+
+                    // For KDBX rows the provision-input below
+                    // would be misleading: writes aren't
+                    // implemented yet (read-only MVP) and the
+                    // K19 Values section above already covers
+                    // the "view + copy" need. Show a small
+                    // close-only footer instead of the whole
+                    // format-hint / regex-feedback / hidden-
+                    // input stack the local-vault flow uses.
+                    if is_kdbx_row {
+                        ui.label(
+                            eframe::egui::RichText::new(
+                                "Read-only: KDBX write support lands in a follow-up. \
+                                 Use the Values block above to copy any field.",
+                            )
+                            .small()
+                            .weak()
+                            .italics(),
+                        );
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Close").clicked() {
+                                close = true;
+                            }
+                        });
+                        // Skip the provision-input render
+                        // entirely — early-return out of the
+                        // modal show closure for this entry.
+                        return;
                     }
 
                     // Format hint (P22.1). Human-readable shape
