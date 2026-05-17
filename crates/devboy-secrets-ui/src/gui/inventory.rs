@@ -251,8 +251,12 @@ fn render_tree_node(
 }
 
 /// Render one leaf row (a single `InventoryRow`) inside a
-/// tree group. Same path / status / catalog-override chip
-/// pattern as the flat-mode table but on one line.
+/// tree group. The displayed label is just the LAST path
+/// segment — the parent `CollapsingHeader` chain already
+/// shows the breadcrumb context so duplicating the full
+/// path is redundant + crowded for KeePass DBs with deep
+/// group hierarchies. The full path stays in `row.path`
+/// for selection tracking and click routing.
 fn render_leaf_row(
     ui: &mut egui::Ui,
     leaf: &InventoryRow,
@@ -260,8 +264,11 @@ fn render_leaf_row(
     to_select: &mut Option<String>,
 ) {
     let is_selected = selected_path == Some(leaf.path.as_str());
+    let display = leaf.path.rsplit('/').next().unwrap_or(leaf.path.as_str());
     ui.horizontal(|ui| {
-        let label = ui.selectable_label(is_selected, leaf.path.as_str());
+        let label = ui
+            .selectable_label(is_selected, display)
+            .on_hover_text(leaf.path.as_str());
         if label.clicked() {
             *to_select = Some(leaf.path.clone());
         }
