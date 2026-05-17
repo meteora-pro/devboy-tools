@@ -174,6 +174,16 @@ plus search + hierarchical-tree UX in the inventory view to make a
   via `dialoguer::Password` (no echo, no shell history), prints the
   inventory table (path + Title + UserName + URL + `password?` yes/no),
   values NEVER printed. `--json` flag emits JSON-lines per entry.
+- **Attachment download** (K21): KDBX entries with files attached
+  (PEM keys, screenshots, `.keytab`, etc.) now show an "Attachments"
+  section in the provision dialog with one row per file (name +
+  human-readable size + 💾 Save). Save opens the native OS picker
+  (`NSSavePanel` / GTK `xdg-desktop-portal` / `IFileSaveDialog` via
+  the `rfd` crate), then re-derives the KDBX body with the cached
+  passphrase, walks to the entry by UUID, and writes the bytes to
+  the chosen path. Bytes are never cached in the inventory snapshot
+  — extraction is on-demand and stays inside the `devboy-secrets-ui`
+  process address space (agent-blindness boundary preserved).
 
 ### Added — Approve-on-use cron-mode operations work (PR #255 follow-ups)
 

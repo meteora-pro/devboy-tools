@@ -145,6 +145,10 @@ struct InventoryApp {
     /// `open_dialog_for` runs so a new entry starts masked.
     /// Used by the K19 reveal-values section in the dialog.
     revealed_kdbx_values: std::collections::HashSet<String>,
+    /// Toast message shown for ~3s after the K21 attachment-
+    /// save flow completes. `(message, expires_at)`. Cleared
+    /// on the next dialog open or after the timestamp passes.
+    attachment_toast: Option<(String, std::time::Instant)>,
     /// Backend-driven token catalogs loaded at startup.
     /// Sources: bundled (compiled in), user
     /// (`~/.devboy/secrets/catalog/`), project
@@ -234,6 +238,7 @@ impl InventoryApp {
             recovery_phrase_to_show: None,
             selected_variant_id: None,
             revealed_kdbx_values: std::collections::HashSet::new(),
+            attachment_toast: None,
             catalogs,
             catalog_errors,
             pending_url_confirms,
@@ -1443,6 +1448,150 @@ fn render_kdbx_values_section(
         });
 }
 
+/// K21 — render the "Attachments" section of the KDBX entry
+/// dialog. Pulls the metadata list (name + size) from the
+/// snapshot and adds a 💾 button per row that re-opens the
+/// KDBX file, extracts the body, and offers a native save-as
+/// dialog. Returns `Some(toast)` when a save attempt finished
+/// this frame (success OR failure) so the caller can display a
+/// short-lived banner; otherwise `None`.
+///
+/// Agent-blindness: the extraction call runs synchronously
+/// inside this UI process. The decrypted bytes never enter the
+/// `KdbxSnapshot` cache and stay in scope only long enough to
+/// hit `std::fs::write`. Same passphrase the user typed at
+/// unlock-time is reused — we never re-prompt.
+fn render_kdbx_attachments_section(
+    ui: &mut eframe::egui::Ui,
+    backend: &StorageBackend,
+    path: &str,
+) -> Option<String> {
+    let StorageBackend::Kdbx {
+        file,
+        keyfile,
+        passphrase,
+        snapshot,
+    } = backend
+    else {
+        return None;
+    };
+    let entry = snapshot.entries.iter().find(|e| e.path == path)?;
+    if entry.attachments.is_empty() {
+        return None;
+    }
+
+    let mut toast: Option<String> = None;
+
+    ui.label(
+        eframe::egui::RichText::new(format!("Attachments ({})", entry.attachments.len())).strong(),
+    );
+    ui.label(
+        eframe::egui::RichText::new(
+            "Files stored inside this KeePass entry. Save extracts the body \
+             to disk — bytes are decrypted on demand and never cached.",
+        )
+        .small()
+        .weak(),
+    );
+    ui.add_space(4.0);
+
+    eframe::egui::Grid::new("kdbx-attachments-grid")
+        .num_columns(3)
+        .spacing([10.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            for att in &entry.attachments {
+                // Column 1 — name with paperclip glyph.
+                ui.label(format!("📎 {}", att.name));
+
+                // Column 2 — human-readable size.
+                ui.label(
+                    eframe::egui::RichText::new(format_byte_size(att.size_bytes))
+                        .monospace()
+                        .weak(),
+                );
+
+                // Column 3 — Save button. Opens the OS picker;
+                // on confirm extracts the bytes and writes them.
+                if ui
+                    .button("💾 Save")
+                    .on_hover_text("Pick a destination and write the attachment to disk")
+                    .clicked()
+                {
+                    let destination = rfd::FileDialog::new().set_file_name(&att.name).save_file();
+                    if let Some(dest) = destination {
+                        toast = Some(perform_attachment_save(
+                            file,
+                            passphrase,
+                            keyfile.as_deref(),
+                            &entry.uuid,
+                            &att.name,
+                            &dest,
+                        ));
+                    }
+                }
+                ui.end_row();
+            }
+        });
+
+    toast
+}
+
+/// Execute the K21 save flow synchronously: re-derive the KDBX
+/// body via Argon2id, walk to the entry by UUID, grab the
+/// attachment by name, write it to `dest`. Returns a single-line
+/// toast message describing the outcome — green path: "Saved
+/// <name> → <path>"; red paths: "Failed: <reason>".
+///
+/// Synchronous on purpose. Attachments are typically small
+/// (certs, keys, screenshots), Argon2id was already paid at
+/// unlock-time so cold-cache cost on macOS is sub-second, and
+/// keeping it on the UI thread avoids the spawn_blocking +
+/// channel boilerplate. If a user complains it freezes the
+/// window on giant blobs, switch to tokio::spawn_blocking.
+fn perform_attachment_save(
+    file: &std::path::Path,
+    passphrase: &secrecy::SecretString,
+    keyfile: Option<&std::path::Path>,
+    entry_uuid: &str,
+    attachment_name: &str,
+    dest: &std::path::Path,
+) -> String {
+    match devboy_secret_kdbx::extract_attachment(
+        file,
+        passphrase,
+        keyfile,
+        entry_uuid,
+        attachment_name,
+    ) {
+        Ok(Some(bytes)) => match std::fs::write(dest, &bytes) {
+            Ok(()) => format!("Saved {} → {}", attachment_name, dest.display()),
+            Err(e) => format!("Failed: {e}"),
+        },
+        Ok(None) => format!("Failed: attachment {attachment_name:?} not found"),
+        Err(e) => format!("Failed: {e}"),
+    }
+}
+
+/// Format a byte count as a short human-readable string (e.g.
+/// `42 B`, `1.4 KiB`, `2.3 MiB`). Used by the K21 attachments
+/// grid so the row stays compact even for multi-megabyte blobs.
+fn format_byte_size(bytes: usize) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let b = bytes as f64;
+    if b >= GIB {
+        format!("{:.1} GiB", b / GIB)
+    } else if b >= MIB {
+        format!("{:.1} MiB", b / MIB)
+    } else if b >= KIB {
+        format!("{:.1} KiB", b / KIB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 /// Determine the inline catalog-override badge for a row whose
 /// middle path segment is `provider_id`. Returns `None` for
 /// bundled sources (the common case — no chip needed) and for
@@ -1803,6 +1952,35 @@ impl eframe::App for InventoryApp {
                     // format-hint / regex-feedback / hidden-
                     // input stack the local-vault flow uses.
                     if is_kdbx_row {
+                        // K21 — attachments section. Pulls
+                        // metadata (name + size) from the
+                        // snapshot; clicking 💾 triggers a
+                        // re-open of the KDBX file with the
+                        // cached passphrase to extract the
+                        // body, then a native save-as dialog.
+                        if let Some(toast) =
+                            render_kdbx_attachments_section(ui, &self.backend, &dialog_path)
+                        {
+                            self.attachment_toast = Some((
+                                toast,
+                                std::time::Instant::now() + std::time::Duration::from_secs(4),
+                            ));
+                        }
+                        if let Some((msg, deadline)) = self.attachment_toast.as_ref() {
+                            if std::time::Instant::now() < *deadline {
+                                ui.colored_label(
+                                    eframe::egui::Color32::from_rgb(0x55, 0xaa, 0x55),
+                                    msg.as_str(),
+                                );
+                                // Repaint so the toast clears
+                                // visually when the deadline
+                                // passes, not on the next
+                                // user interaction.
+                                ui.ctx().request_repaint();
+                            } else {
+                                self.attachment_toast = None;
+                            }
+                        }
                         ui.label(
                             eframe::egui::RichText::new(
                                 "Read-only: KDBX write support lands in a follow-up. \
@@ -2355,6 +2533,10 @@ impl InventoryApp {
         // time. Stops a value-shaped string from staying on
         // screen after the user moved on to a different entry.
         self.revealed_kdbx_values.clear();
+        // Drop any stale "saved to <path>" toast from a
+        // previous dialog so it doesn't bleed into the new
+        // one's render.
+        self.attachment_toast = None;
     }
 
     /// Pick the variant that should be selected when the

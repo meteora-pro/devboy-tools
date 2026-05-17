@@ -63,6 +63,11 @@ secrecy.workspace = true
 regex.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls-tls", "blocking"] }
 dirs.workspace = true
+# Native file-picker for the K21 "Save attachment" flow.
+# `rfd` shells out to the OS picker (NSSavePanel on macOS,
+# GTK / xdg-desktop-portal on Linux, IFileSaveDialog on
+# Windows) so we don't reinvent that wheel inside egui.
+rfd = "0.15"
 
 [dev-dependencies]
 tempfile.workspace = true

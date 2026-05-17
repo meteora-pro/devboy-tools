@@ -489,6 +489,83 @@ pub fn prepare_working_copy(
     Ok(destination.to_path_buf())
 }
 
+/// Pull one attachment's binary bytes out of `path` given the
+/// `passphrase` (+ optional `keyfile`), the entry's UUID, and
+/// the attachment's filename. Re-opens the KDBX file every
+/// call rather than caching binary bodies in the snapshot —
+/// attachments can run to hundreds of megabytes (PEM
+/// archives, dumps, recordings) and eager loading would
+/// inflate the in-process memory footprint for every
+/// inventory open.
+///
+/// Returns `Ok(None)` when the entry exists but doesn't carry
+/// the named attachment, `Ok(Some(bytes))` on success, and
+/// `Err(KdbxSourceError::OpenFailed)` when the file open / KDF
+/// fails (wrong passphrase, corrupt body, missing file).
+///
+/// Synchronous + CPU-bound (Argon2id derive again on each
+/// call). Callers in async contexts should wrap in
+/// `tokio::task::spawn_blocking`.
+pub fn extract_attachment(
+    path: &std::path::Path,
+    passphrase: &SecretString,
+    keyfile: Option<&std::path::Path>,
+    entry_uuid: &str,
+    attachment_name: &str,
+) -> Result<Option<Vec<u8>>, KdbxSourceError> {
+    use keepass::{Database, DatabaseKey};
+    use std::fs::File;
+    use std::io::BufReader;
+
+    let mut file = File::open(path).map_err(|e| KdbxSourceError::OpenFailed {
+        path: path.to_path_buf(),
+        reason: format!("could not open file: {e}"),
+    })?;
+    let mut key = DatabaseKey::new().with_password(passphrase.expose_secret());
+    if let Some(kf_path) = keyfile {
+        let kf = File::open(kf_path).map_err(|e| KdbxSourceError::OpenFailed {
+            path: kf_path.to_path_buf(),
+            reason: format!("could not open keyfile: {e}"),
+        })?;
+        let mut kf_reader = BufReader::new(kf);
+        key = key
+            .with_keyfile(&mut kf_reader)
+            .map_err(|e| KdbxSourceError::OpenFailed {
+                path: path.to_path_buf(),
+                reason: format!("keyfile parse failed: {e}"),
+            })?;
+    }
+    let db = Database::open(&mut file, key).map_err(|e| KdbxSourceError::OpenFailed {
+        path: path.to_path_buf(),
+        reason: format!("{e}"),
+    })?;
+
+    // Iterative DFS over the entire group tree — looking for
+    // the entry whose UUID matches, then its named attachment.
+    // Iterating by GroupId (Copy) instead of GroupRef sidesteps
+    // the borrow chain: each iteration re-resolves the ref
+    // from the database against a fresh GroupId.
+    let mut stack: Vec<keepass::db::GroupId> = vec![db.root().id()];
+    while let Some(group_id) = stack.pop() {
+        let Some(group) = db.group(group_id) else {
+            continue;
+        };
+        for entry in group.entries() {
+            if entry.id().uuid().hyphenated().to_string() == entry_uuid {
+                for (name, att) in entry.attachments_named() {
+                    if name == attachment_name {
+                        return Ok(Some(att.data.get().clone()));
+                    }
+                }
+                return Ok(None);
+            }
+        }
+        let sub_ids: Vec<keepass::db::GroupId> = group.group_ids().collect();
+        stack.extend(sub_ids);
+    }
+    Ok(None)
+}
+
 /// Open `.kdbx` at `path` with `passphrase` + optional `keyfile`
 /// and flatten every entry into a [`KdbxSnapshot`].
 ///
@@ -1202,5 +1279,95 @@ mod tests {
             "ghost expiry must not leak through, got {:?}",
             entry.expires_at
         );
+    }
+
+    // -- K21 — extract_attachment ---------------------------
+
+    /// Build a KDBX with one entry that carries two
+    /// attachments, round-trip through `extract_attachment`,
+    /// assert the bytes come back verbatim + a wrong-name
+    /// lookup is `None`.
+    #[test]
+    fn extract_attachment_returns_bytes_for_matching_name() {
+        use keepass::db::Value;
+        use keepass::{Database, DatabaseKey};
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let kdbx_path = tmp_dir.path().join("with_attachments.kdbx");
+
+        let mut db = Database::new();
+        let uuid_seen;
+        {
+            let mut root = db.root_mut();
+            let mut entry = root.add_entry();
+            entry.set_unprotected("Title", "TLS bundle");
+            entry.add_attachment(
+                "server.pem".to_owned(),
+                Value::Unprotected(b"-----BEGIN CERT-----\nABCDEF\n-----END CERT-----".to_vec()),
+            );
+            entry.add_attachment(
+                "client.key".to_owned(),
+                Value::Unprotected(b"client-key-bytes".to_vec()),
+            );
+            uuid_seen = entry.as_ref().id().uuid().hyphenated().to_string();
+        }
+        let mut out = std::fs::File::create(&kdbx_path).unwrap();
+        db.save(&mut out, DatabaseKey::new().with_password("p"))
+            .unwrap();
+
+        // Happy path — both attachments fetchable by name.
+        let bytes = extract_attachment(
+            &kdbx_path,
+            &SecretString::from("p"),
+            None,
+            &uuid_seen,
+            "server.pem",
+        )
+        .unwrap()
+        .expect("server.pem must be present");
+        assert!(bytes.starts_with(b"-----BEGIN CERT-----"));
+
+        let bytes = extract_attachment(
+            &kdbx_path,
+            &SecretString::from("p"),
+            None,
+            &uuid_seen,
+            "client.key",
+        )
+        .unwrap()
+        .expect("client.key must be present");
+        assert_eq!(bytes, b"client-key-bytes");
+
+        // Unknown attachment on a known entry → Ok(None).
+        let result = extract_attachment(
+            &kdbx_path,
+            &SecretString::from("p"),
+            None,
+            &uuid_seen,
+            "nope.txt",
+        )
+        .unwrap();
+        assert!(result.is_none());
+
+        // Unknown entry UUID → Ok(None).
+        let result = extract_attachment(
+            &kdbx_path,
+            &SecretString::from("p"),
+            None,
+            "00000000-0000-0000-0000-000000000000",
+            "server.pem",
+        )
+        .unwrap();
+        assert!(result.is_none());
+
+        // Wrong passphrase → OpenFailed error.
+        let err = extract_attachment(
+            &kdbx_path,
+            &SecretString::from("wrong-passphrase"),
+            None,
+            &uuid_seen,
+            "server.pem",
+        )
+        .unwrap_err();
+        assert!(matches!(err, KdbxSourceError::OpenFailed { .. }));
     }
 }
