@@ -351,6 +351,28 @@ impl core::marker::Unpin for devboy_gitlab::UpdateMergeRequestRequest
 impl core::marker::UnsafeUnpin for devboy_gitlab::UpdateMergeRequestRequest
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::UpdateMergeRequestRequest
 impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::UpdateMergeRequestRequest
+pub enum devboy_gitlab::AuthScheme
+pub devboy_gitlab::AuthScheme::Auto
+pub devboy_gitlab::AuthScheme::Bearer
+pub devboy_gitlab::AuthScheme::PrivateToken
+impl core::clone::Clone for devboy_gitlab::AuthScheme
+pub fn devboy_gitlab::AuthScheme::clone(&self) -> devboy_gitlab::AuthScheme
+impl core::cmp::Eq for devboy_gitlab::AuthScheme
+impl core::cmp::PartialEq for devboy_gitlab::AuthScheme
+pub fn devboy_gitlab::AuthScheme::eq(&self, other: &devboy_gitlab::AuthScheme) -> bool
+impl core::default::Default for devboy_gitlab::AuthScheme
+pub fn devboy_gitlab::AuthScheme::default() -> devboy_gitlab::AuthScheme
+impl core::fmt::Debug for devboy_gitlab::AuthScheme
+pub fn devboy_gitlab::AuthScheme::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_gitlab::AuthScheme
+impl core::marker::StructuralPartialEq for devboy_gitlab::AuthScheme
+impl core::marker::Freeze for devboy_gitlab::AuthScheme
+impl core::marker::Send for devboy_gitlab::AuthScheme
+impl core::marker::Sync for devboy_gitlab::AuthScheme
+impl core::marker::Unpin for devboy_gitlab::AuthScheme
+impl core::marker::UnsafeUnpin for devboy_gitlab::AuthScheme
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_gitlab::AuthScheme
+impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::AuthScheme
 pub struct devboy_gitlab::CreateDiscussionRequest
 pub devboy_gitlab::CreateDiscussionRequest::body: alloc::string::String
 pub devboy_gitlab::CreateDiscussionRequest::position: core::option::Option<devboy_gitlab::DiscussionPosition>
@@ -445,6 +467,7 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_gitlab::DiscussionPosition
 pub struct devboy_gitlab::GitLabClient
 impl devboy_gitlab::GitLabClient
 pub fn devboy_gitlab::GitLabClient::new(project_id: impl core::convert::Into<alloc::string::String>, token: secrecy::SecretString) -> Self
+pub fn devboy_gitlab::GitLabClient::with_auth_scheme(self, scheme: devboy_gitlab::AuthScheme) -> Self
 pub fn devboy_gitlab::GitLabClient::with_base_url(base_url: impl core::convert::Into<alloc::string::String>, project_id: impl core::convert::Into<alloc::string::String>, token: secrecy::SecretString) -> Self
 pub fn devboy_gitlab::GitLabClient::with_proxy(self, headers: std::collections::hash::map::HashMap<alloc::string::String, alloc::string::String>) -> Self
 impl devboy_core::provider::IssueProvider for devboy_gitlab::GitLabClient
