@@ -32,7 +32,8 @@
 //! data — they only appear in the K28 wallet-bar chips and the
 //! K30 lazy-unlock placeholder rows.
 
-use crate::StorageBackend;
+use crate::{StorageBackend, default_vault_path};
+use devboy_storage::SourceDefinition;
 
 /// One named entry in a [`WalletList`]. The name matches the
 /// `[[source]]` block's `name` key when loaded from
@@ -229,6 +230,64 @@ impl WalletList {
     /// + the K30 lazy-unlock placeholder rows.
     pub fn all_locked(&self) -> impl Iterator<Item = &NamedBackend> + '_ {
         self.wallets.iter().filter(|w| w.backend.is_locked())
+    }
+}
+
+/// K26 — Load every supported `[[source]]` block from
+/// `sources.toml` as a `NamedBackend`, excluding any source
+/// whose name matches `primary_name` (so the env-driven primary
+/// doesn't show up twice in the wallet list). Supported types:
+/// `keychain`, `local-vault`, `kdbx`. Unsupported types
+/// (`vault`, `1password`, `env-store`) are silently skipped —
+/// they stay in the toml for the daemon's router but the GUI
+/// doesn't surface them yet.
+///
+/// Returns an empty Vec when `sources.toml` is missing or
+/// fails to parse — the UI continues with just its primary.
+pub fn load_extra_wallets_from_router_config(primary_name: &str) -> Vec<NamedBackend> {
+    use devboy_storage::RouterConfig;
+    let Ok(cfg) = RouterConfig::load() else {
+        return Vec::new();
+    };
+    cfg.sources
+        .iter()
+        .filter(|def| def.name != primary_name)
+        .filter_map(|def| backend_from_definition(def).map(|b| NamedBackend::new(&def.name, b)))
+        .collect()
+}
+
+/// Build a `StorageBackend` from one `[[source]]` block.
+/// Returns `None` for source types the GUI doesn't yet handle —
+/// caller silently skips them.
+pub fn backend_from_definition(def: &SourceDefinition) -> Option<StorageBackend> {
+    match def.source_type.as_str() {
+        "keychain" => Some(StorageBackend::Keychain),
+        "local-vault" => {
+            // `path` is optional — when absent we fall back to
+            // the daemon's default vault location so toml-only
+            // configs keep working.
+            let path = def
+                .settings
+                .get("path")
+                .and_then(toml::Value::as_str)
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(default_vault_path);
+            Some(StorageBackend::LocalVaultLocked { vault_path: path })
+        }
+        "kdbx" => {
+            let file = def
+                .settings
+                .get("file")
+                .and_then(toml::Value::as_str)
+                .map(std::path::PathBuf::from)?;
+            let keyfile = def
+                .settings
+                .get("keyfile")
+                .and_then(toml::Value::as_str)
+                .map(std::path::PathBuf::from);
+            Some(StorageBackend::KdbxLocked { file, keyfile })
+        }
+        _ => None,
     }
 }
 

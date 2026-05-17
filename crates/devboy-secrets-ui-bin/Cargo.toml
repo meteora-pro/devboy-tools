@@ -66,6 +66,11 @@ secrecy.workspace = true
 regex.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls-tls", "blocking"] }
 dirs.workspace = true
+# K26 — read `[[source]]` `settings` blocks from `sources.toml`
+# (the workspace `toml = "0.8"` crate is already on path via
+# devboy-storage). We import it directly here so wallets.rs can
+# match on toml::Value when building backend instances.
+toml.workspace = true
 # Native file-picker for the K21 "Save attachment" flow.
 # `rfd` shells out to the OS picker (NSSavePanel on macOS,
 # GTK / xdg-desktop-portal on Linux, IFileSaveDialog on

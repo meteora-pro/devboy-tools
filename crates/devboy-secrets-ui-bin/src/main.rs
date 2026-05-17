@@ -24,11 +24,12 @@ use anyhow::Result;
 use clap::Parser;
 
 mod catalog_metadata;
-// Multi-wallet types (K25). Most methods are wired up
-// incrementally in K26-K30 — the `#[allow(dead_code)]` is
-// removed in K26 when the first caller lands.
 #[cfg(feature = "dev-screenshot")]
 mod screenshot;
+// Multi-wallet types (K25 + K26). Some helpers are wired up
+// incrementally in K27-K30; the loader + name helper land
+// here, and `WalletList` itself stays unused for now (its
+// shape pre-bakes the K27 aggregation refactor).
 #[allow(dead_code)]
 mod wallets;
 
@@ -161,8 +162,24 @@ struct InventoryApp {
     dialog_path: Option<String>,
     last_save_error: Option<String>,
     /// Selected backend (keychain or local-vault), picked at
-    /// app construction from env vars.
+    /// app construction from env vars. This is the *primary*
+    /// wallet — writes go here.
     backend: StorageBackend,
+    /// K26 — extra wallets loaded from `sources.toml` beyond
+    /// the env-driven primary. Each entry is a
+    /// `NamedBackend { name, backend }` that the wallet bar
+    /// (K28) renders as a chip and that K27 inventory
+    /// aggregation folds into the combined row list when
+    /// unlocked. Mutated by the K29 per-wallet unlock flow.
+    #[allow(dead_code)] // wired up by K27-K30 in follow-up commits
+    extra_wallets: Vec<wallets::NamedBackend>,
+    /// K29 — when the user clicked an entry in K28's wallet bar
+    /// or a K30 lazy-unlock placeholder row, this is the name
+    /// of the wallet that owns the upcoming unlock attempt.
+    /// `None` targets the primary backend (preserves the K22
+    /// behaviour for the existing single-wallet unlock flow).
+    #[allow(dead_code)] // wired up by K29 in a follow-up commit
+    pending_unlock_target: Option<String>,
     /// Recovery phrase to surface once after first vault create.
     /// `None` until a vault is created, then `Some` for the
     /// rest of the session — the user must save it somewhere
@@ -223,6 +240,15 @@ struct InventoryApp {
 impl InventoryApp {
     fn new_with_initial(initial_path: Option<String>) -> Self {
         let backend = StorageBackend::detect_from_env();
+        // K26 — load every [[source]] entry from sources.toml
+        // that isn't the env-driven primary. Each becomes a
+        // separate wallet the user can unlock independently.
+        // Synthetic name for the primary derives from the
+        // backend's natural identifier (keychain / local-vault
+        // / KDBX file stem) so toml-side dedup works without
+        // extra config.
+        let primary_name = wallets::synthetic_name_for(&backend);
+        let extra_wallets = wallets::load_extra_wallets_from_router_config(&primary_name);
         // Catalogs first — `load_inventory_or_empty` needs them
         // to populate the per-row `catalog_override` chip (P22.2).
         let (catalogs, catalog_errors) = load_token_catalogs();
@@ -273,6 +299,8 @@ impl InventoryApp {
             dialog_path: None,
             last_save_error: None,
             backend,
+            extra_wallets,
+            pending_unlock_target: None,
             recovery_phrase_to_show: None,
             selected_variant_id: None,
             revealed_kdbx_values: std::collections::HashSet::new(),
