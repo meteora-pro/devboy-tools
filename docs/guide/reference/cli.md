@@ -68,6 +68,8 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets setup`↴](#devboy-secrets-setup)
 * [`devboy secrets kdbx`↴](#devboy-secrets-kdbx)
 * [`devboy secrets kdbx peek`↴](#devboy-secrets-kdbx-peek)
+* [`devboy secrets kdbx describe-metadata`↴](#devboy-secrets-kdbx-describe-metadata)
+* [`devboy secrets kdbx edit-metadata`↴](#devboy-secrets-kdbx-edit-metadata)
 * [`devboy hooks`↴](#devboy-hooks)
 * [`devboy hooks install`↴](#devboy-hooks-install)
 * [`devboy hooks check`↴](#devboy-hooks-check)
@@ -1043,6 +1045,8 @@ Work with KDBX 4 (KeePass) files as a SecretSource. The passphrase is prompted f
 ###### **Subcommands:**
 
 * `peek` — Open a `.kdbx` file with a prompted passphrase and print the per-entry inventory (path + Title + UserName + URL + whether a Password is set). Values are NEVER printed — this is a read-only sanity check that the file opens and our path normalisation produces sensible references
+* `describe-metadata` — Read-only metadata projection for ONE entry by UUID. Prints title / username / url / notes / tags / expires_at / attachment names / custom-string names. Password and every Protected custom string are deliberately excluded from the output — same agent-blindness boundary as `edit-metadata` (K14)
+* `edit-metadata` — Edit non-value metadata on ONE entry by UUID. Allows updating title / username / url / notes / tags / expiry timestamp; the value-bearing Password and any Protected custom string are unreachable from this surface. Writes through `derive_working_copy_path` so the user's original `.kdbx` is never overwritten — the working copy path is printed at the end so callers can sync back on their own schedule
 
 
 
@@ -1057,6 +1061,44 @@ Open a `.kdbx` file with a prompted passphrase and print the per-entry inventory
 * `--file <FILE>` — Absolute path to the `.kdbx` file. Required — there is no default discovery for KDBX files (the user opts in per-invocation)
 * `--keyfile <KEYFILE>` — Optional path to a keyfile companion (KeePass two-factor unlock). Omit for passphrase-only databases
 * `--json` — Print as JSON (one entry per object) instead of the default human table. Useful for scripted verification
+
+
+
+## `devboy secrets kdbx describe-metadata`
+
+Read-only metadata projection for ONE entry by UUID. Prints title / username / url / notes / tags / expires_at / attachment names / custom-string names. Password and every Protected custom string are deliberately excluded from the output — same agent-blindness boundary as `edit-metadata` (K14)
+
+**Usage:** `devboy secrets kdbx describe-metadata [OPTIONS] --file <FILE> --uuid <UUID>`
+
+###### **Options:**
+
+* `--file <FILE>` — Absolute path to the `.kdbx` file
+* `--keyfile <KEYFILE>` — Optional keyfile companion (KeePass two-factor unlock)
+* `--uuid <UUID>` — UUID of the entry to project. Hyphenated hex (`12345678-90ab-cdef-1234-567890abcdef`). See `kdbx peek --json` for a complete UUID listing
+* `--json` — Print as JSON instead of the default human key/value table. JSON output is the contract for scripted / MCP-wrapper consumers
+
+
+
+## `devboy secrets kdbx edit-metadata`
+
+Edit non-value metadata on ONE entry by UUID. Allows updating title / username / url / notes / tags / expiry timestamp; the value-bearing Password and any Protected custom string are unreachable from this surface. Writes through `derive_working_copy_path` so the user's original `.kdbx` is never overwritten — the working copy path is printed at the end so callers can sync back on their own schedule
+
+**Usage:** `devboy secrets kdbx edit-metadata [OPTIONS] --file <FILE> --uuid <UUID>`
+
+###### **Options:**
+
+* `--file <FILE>` — Absolute path to the `.kdbx` file. The edit goes to the derived working copy, not this path — see the printed `working_copy` line on success
+* `--keyfile <KEYFILE>` — Optional keyfile companion (KeePass two-factor unlock)
+* `--uuid <UUID>` — UUID of the entry to edit. Hyphenated hex
+* `--title <TITLE>` — New Title. Empty string clears
+* `--username <USERNAME>` — New UserName. Empty string clears
+* `--url <URL>` — New URL. Empty string clears
+* `--notes <NOTES>` — New Notes (multiline allowed via shell escapes / `--notes "$(cat notes.md)"`). Empty string clears
+* `--tag <TAGS>` — Replace the tag list with these values. Pass `--tag` once per tag; omit the flag entirely to leave existing tags alone; pass `--clear-tags` to drop all tags
+* `--clear-tags` — Wipe all tags on the entry. Mutually exclusive with `--tag`; if both appear, `--clear-tags` wins
+* `--expires-at <ISO8601>` — New expiry timestamp (RFC 3339, e.g. `2027-01-15T00:00:00Z`). Pass `--no-expiry` to clear an existing expiry. Without either, the field is left alone
+* `--no-expiry` — Clear any existing expiry timestamp. Mutually exclusive with `--expires-at`; if both appear, `--no-expiry` wins
+* `--json` — Print as JSON instead of the default human summary
 
 
 

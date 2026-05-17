@@ -94,6 +94,97 @@ pub enum KdbxCommands {
     /// this is a read-only sanity check that the file opens and
     /// our path normalisation produces sensible references.
     Peek(KdbxPeekArgs),
+    /// Read-only metadata projection for ONE entry by UUID.
+    /// Prints title / username / url / notes / tags / expires_at
+    /// / attachment names / custom-string names. Password and
+    /// every Protected custom string are deliberately excluded
+    /// from the output — same agent-blindness boundary as
+    /// `edit-metadata` (K14).
+    DescribeMetadata(KdbxDescribeMetadataArgs),
+    /// Edit non-value metadata on ONE entry by UUID. Allows
+    /// updating title / username / url / notes / tags / expiry
+    /// timestamp; the value-bearing Password and any Protected
+    /// custom string are unreachable from this surface. Writes
+    /// through `derive_working_copy_path` so the user's
+    /// original `.kdbx` is never overwritten — the working
+    /// copy path is printed at the end so callers can sync
+    /// back on their own schedule.
+    EditMetadata(KdbxEditMetadataArgs),
+}
+
+/// Flags shared by `kdbx describe-metadata` + `kdbx edit-metadata`
+/// — every metadata-edit invocation needs file + passphrase +
+/// optional keyfile + UUID.
+#[derive(Args, Debug)]
+pub struct KdbxDescribeMetadataArgs {
+    /// Absolute path to the `.kdbx` file.
+    #[arg(long)]
+    pub file: PathBuf,
+    /// Optional keyfile companion (KeePass two-factor unlock).
+    #[arg(long)]
+    pub keyfile: Option<PathBuf>,
+    /// UUID of the entry to project. Hyphenated hex
+    /// (`12345678-90ab-cdef-1234-567890abcdef`). See
+    /// `kdbx peek --json` for a complete UUID listing.
+    #[arg(long)]
+    pub uuid: String,
+    /// Print as JSON instead of the default human key/value
+    /// table. JSON output is the contract for scripted /
+    /// MCP-wrapper consumers.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Flags for `devboy secrets kdbx edit-metadata`. Every patch
+/// field is optional — pass only what you intend to change.
+/// Unprovided fields stay untouched on the entry.
+#[derive(Args, Debug)]
+pub struct KdbxEditMetadataArgs {
+    /// Absolute path to the `.kdbx` file. The edit goes to the
+    /// derived working copy, not this path — see the printed
+    /// `working_copy` line on success.
+    #[arg(long)]
+    pub file: PathBuf,
+    /// Optional keyfile companion (KeePass two-factor unlock).
+    #[arg(long)]
+    pub keyfile: Option<PathBuf>,
+    /// UUID of the entry to edit. Hyphenated hex.
+    #[arg(long)]
+    pub uuid: String,
+    /// New Title. Empty string clears.
+    #[arg(long)]
+    pub title: Option<String>,
+    /// New UserName. Empty string clears.
+    #[arg(long)]
+    pub username: Option<String>,
+    /// New URL. Empty string clears.
+    #[arg(long)]
+    pub url: Option<String>,
+    /// New Notes (multiline allowed via shell escapes / `--notes
+    /// "$(cat notes.md)"`). Empty string clears.
+    #[arg(long)]
+    pub notes: Option<String>,
+    /// Replace the tag list with these values. Pass `--tag` once
+    /// per tag; omit the flag entirely to leave existing tags
+    /// alone; pass `--clear-tags` to drop all tags.
+    #[arg(long = "tag")]
+    pub tags: Vec<String>,
+    /// Wipe all tags on the entry. Mutually exclusive with
+    /// `--tag`; if both appear, `--clear-tags` wins.
+    #[arg(long)]
+    pub clear_tags: bool,
+    /// New expiry timestamp (RFC 3339, e.g.
+    /// `2027-01-15T00:00:00Z`). Pass `--no-expiry` to clear an
+    /// existing expiry. Without either, the field is left alone.
+    #[arg(long, value_name = "ISO8601")]
+    pub expires_at: Option<String>,
+    /// Clear any existing expiry timestamp. Mutually exclusive
+    /// with `--expires-at`; if both appear, `--no-expiry` wins.
+    #[arg(long)]
+    pub no_expiry: bool,
+    /// Print as JSON instead of the default human summary.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Flags for `devboy secrets kdbx peek`.
@@ -418,6 +509,8 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
         SecretsCommands::Setup(args) => crate::secrets_setup::handle_cli(args),
         SecretsCommands::Kdbx { command } => match command {
             KdbxCommands::Peek(args) => kdbx_peek(args),
+            KdbxCommands::DescribeMetadata(args) => kdbx_describe_metadata(args),
+            KdbxCommands::EditMetadata(args) => kdbx_edit_metadata(args),
         },
     }
 }
@@ -482,7 +575,7 @@ fn kdbx_peek(args: KdbxPeekArgs) -> Result<()> {
                 "title": entry.title,
                 "username": entry.username,
                 "url": entry.url,
-                "has_password": entry.password.is_some(),
+                "has_password": entry.primary_value().is_some(),
             });
             println!("{line}");
         }
@@ -515,7 +608,7 @@ fn kdbx_peek(args: KdbxPeekArgs) -> Result<()> {
         "PATH", "TITLE",
     );
     for entry in &snapshot.entries {
-        let pwd_mark = if entry.password.is_some() {
+        let pwd_mark = if entry.primary_value().is_some() {
             "yes"
         } else {
             "—"
@@ -535,6 +628,242 @@ fn kdbx_peek(args: KdbxPeekArgs) -> Result<()> {
     println!();
     println!("(values are held only in this process; no Password field ever printed)");
     Ok(())
+}
+
+/// K15 — `devboy secrets kdbx describe-metadata` — read-only
+/// projection of one entry's non-secret fields. Prompts for the
+/// passphrase securely (no stdin pipe, no shell history), opens
+/// the KDBX, calls `describe_metadata` for the given UUID, and
+/// prints the result as a human key/value table or JSON.
+///
+/// The output omits Password and any Protected custom string by
+/// construction (the plugin filters them out) — same agent-
+/// blindness boundary as `edit-metadata` (K15).
+fn kdbx_describe_metadata(args: KdbxDescribeMetadataArgs) -> Result<()> {
+    use secrecy::SecretString;
+    use std::io::IsTerminal;
+
+    if !args.file.exists() {
+        anyhow::bail!(
+            "KDBX file does not exist: {}\n\
+             Pass --file <path> to a real .kdbx file.",
+            args.file.display()
+        );
+    }
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "KDBX passphrase prompt requires an interactive terminal; \
+             this command refuses to read the passphrase from a pipe."
+        );
+    }
+    let passphrase = dialoguer::Password::new()
+        .with_prompt(format!("Passphrase for {}", args.file.display()))
+        .allow_empty_password(false)
+        .interact()
+        .context("could not read passphrase from stdin")?;
+
+    let meta = devboy_secret_kdbx::describe_metadata(
+        &args.file,
+        &SecretString::new(passphrase.into()),
+        args.keyfile.as_deref(),
+        &args.uuid,
+    )
+    .with_context(|| format!("could not open {}", args.file.display()))?;
+
+    let Some(meta) = meta else {
+        anyhow::bail!(
+            "no entry with uuid {} in {}",
+            args.uuid,
+            args.file.display()
+        );
+    };
+
+    if args.json {
+        // Serialize hand-rolled — keeps the kdbx plugin's
+        // metadata struct free of a serde dep just for one CLI
+        // command. The shape is a stable contract for the K16
+        // MCP wrapper.
+        let json = serde_json::json!({
+            "uuid": meta.uuid,
+            "title": meta.title,
+            "username": meta.username,
+            "url": meta.url,
+            "notes": meta.notes,
+            "tags": meta.tags,
+            "created_at": meta.created_at,
+            "modified_at": meta.modified_at,
+            "expires_at": meta.expires_at,
+            "otp_present": meta.otp.is_some(),
+            "attachments": meta.attachments.iter().map(|a| serde_json::json!({
+                "name": a.name,
+                "size_bytes": a.size_bytes,
+            })).collect::<Vec<_>>(),
+            "custom_string_names": meta.custom_string_names,
+        });
+        println!("{}", serde_json::to_string_pretty(&json)?);
+    } else {
+        println!("uuid:        {}", meta.uuid);
+        println!("title:       {}", meta.title);
+        println!("username:    {}", meta.username.as_deref().unwrap_or(""));
+        println!("url:         {}", meta.url.as_deref().unwrap_or(""));
+        println!("notes:       {}", meta.notes.as_deref().unwrap_or(""));
+        println!("tags:        {}", meta.tags.join(", "));
+        println!("created:     {}", meta.created_at.as_deref().unwrap_or(""));
+        println!("modified:    {}", meta.modified_at.as_deref().unwrap_or(""));
+        println!("expires_at:  {}", meta.expires_at.as_deref().unwrap_or(""));
+        println!(
+            "otp:         {}",
+            if meta.otp.is_some() { "(present)" } else { "" }
+        );
+        if !meta.attachments.is_empty() {
+            println!("attachments:");
+            for a in &meta.attachments {
+                println!("  - {} ({} bytes)", a.name, a.size_bytes);
+            }
+        }
+        if !meta.custom_string_names.is_empty() {
+            println!(
+                "custom_string_names: {}",
+                meta.custom_string_names.join(", ")
+            );
+        }
+        println!();
+        println!("(value-bearing fields — Password + Protected custom strings — never printed)");
+    }
+    Ok(())
+}
+
+/// K15 — `devboy secrets kdbx edit-metadata` — patch one
+/// entry's non-secret fields. Honours K13 working-copy safety:
+/// writes go to the working-copy path, not the user's
+/// original. Working-copy path is printed on success.
+fn kdbx_edit_metadata(args: KdbxEditMetadataArgs) -> Result<()> {
+    use secrecy::SecretString;
+    use std::io::IsTerminal;
+
+    if !args.file.exists() {
+        anyhow::bail!(
+            "KDBX file does not exist: {}\n\
+             Pass --file <path> to a real .kdbx file.",
+            args.file.display()
+        );
+    }
+
+    // Build the patch from CLI flags. None = leave alone.
+    let tags = if args.clear_tags {
+        Some(Vec::new())
+    } else if !args.tags.is_empty() {
+        Some(args.tags.clone())
+    } else {
+        None
+    };
+    let expires_at = if args.no_expiry {
+        Some(None)
+    } else {
+        args.expires_at.as_ref().map(|s| Some(s.clone()))
+    };
+    let patch = devboy_secret_kdbx::MetadataPatch {
+        title: args.title.clone(),
+        username: args.username.clone(),
+        url: args.url.clone(),
+        notes: args.notes.clone(),
+        tags,
+        expires_at,
+    };
+
+    // Refuse no-op edits — easier than silently doing nothing.
+    if patch == devboy_secret_kdbx::MetadataPatch::default() {
+        anyhow::bail!(
+            "no metadata fields supplied — pass at least one of \
+             --title / --username / --url / --notes / --tag / \
+             --clear-tags / --expires-at / --no-expiry"
+        );
+    }
+
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "KDBX passphrase prompt requires an interactive terminal; \
+             this command refuses to read the passphrase from a pipe."
+        );
+    }
+    let passphrase = dialoguer::Password::new()
+        .with_prompt(format!("Passphrase for {}", args.file.display()))
+        .allow_empty_password(false)
+        .interact()
+        .context("could not read passphrase from stdin")?;
+    let passphrase = SecretString::new(passphrase.into());
+
+    // K13 working-copy: derive a sibling path with a UTC
+    // timestamp, copy the user's original verbatim, edit that.
+    let working_copy = devboy_secret_kdbx::derive_working_copy_path(&args.file);
+    devboy_secret_kdbx::prepare_working_copy(&args.file, &working_copy).map_err(|e| {
+        anyhow::anyhow!(
+            "could not prepare working copy at {}: {e}",
+            working_copy.display()
+        )
+    })?;
+
+    devboy_secret_kdbx::edit_metadata(
+        &working_copy,
+        &passphrase,
+        args.keyfile.as_deref(),
+        &args.uuid,
+        &patch,
+    )
+    .with_context(|| format!("edit_metadata failed on {}", working_copy.display()))?;
+
+    if args.json {
+        let json = serde_json::json!({
+            "ok": true,
+            "source": args.file.display().to_string(),
+            "working_copy": working_copy.display().to_string(),
+            "uuid": args.uuid,
+            "patched": patched_summary(&patch),
+        });
+        println!("{}", serde_json::to_string_pretty(&json)?);
+    } else {
+        println!("ok");
+        println!("source:       {}", args.file.display());
+        println!("working_copy: {}", working_copy.display());
+        println!("uuid:         {}", args.uuid);
+        println!("patched:");
+        for line in patched_summary(&patch).as_array().unwrap() {
+            println!("  - {}", line.as_str().unwrap_or(""));
+        }
+        println!();
+        println!(
+            "(original file untouched — sync the working copy back manually \
+             when you're ready)"
+        );
+    }
+    Ok(())
+}
+
+/// Human-readable bullet list of which fields the patch
+/// actually touched. Used by both human + JSON renders.
+fn patched_summary(patch: &devboy_secret_kdbx::MetadataPatch) -> serde_json::Value {
+    let mut lines: Vec<String> = Vec::new();
+    if let Some(v) = &patch.title {
+        lines.push(format!("title = {v:?}"));
+    }
+    if let Some(v) = &patch.username {
+        lines.push(format!("username = {v:?}"));
+    }
+    if let Some(v) = &patch.url {
+        lines.push(format!("url = {v:?}"));
+    }
+    if let Some(v) = &patch.notes {
+        lines.push(format!("notes = {v:?}"));
+    }
+    if let Some(tags) = &patch.tags {
+        lines.push(format!("tags = {tags:?}"));
+    }
+    match &patch.expires_at {
+        Some(Some(ts)) => lines.push(format!("expires_at = {ts:?}")),
+        Some(None) => lines.push("expires_at = <cleared>".to_owned()),
+        None => {}
+    }
+    serde_json::Value::Array(lines.into_iter().map(serde_json::Value::String).collect())
 }
 
 /// Truncate `s` to `max` characters with an ellipsis if it
