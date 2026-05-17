@@ -324,7 +324,7 @@ impl InventoryApp {
         {
             let state = self.vault_unlock.as_mut().unwrap();
             eframe::egui::Modal::new(eframe::egui::Id::new("vault-unlock-modal")).show(ctx, |ui| {
-                ui.set_max_width(420.0);
+                ui.set_max_width(fit_modal_width(ui.ctx(), 420.0));
                 let result = devboy_secrets_ui::gui::vault_unlock::render(ui, state);
                 submit = result.submit;
                 use_keychain = result.use_keychain;
@@ -413,7 +413,7 @@ impl InventoryApp {
         {
             let state = self.onboarding.as_mut().unwrap();
             eframe::egui::Modal::new(eframe::egui::Id::new("onboarding-modal")).show(ctx, |ui| {
-                ui.set_max_width(480.0);
+                ui.set_max_width(fit_modal_width(ui.ctx(), 480.0));
                 let result = devboy_secrets_ui::gui::onboarding::render(ui, state);
                 finish = result.finish;
                 skip = result.skip;
@@ -530,7 +530,9 @@ impl InventoryApp {
             // (~80 cols × ~7 px/glyph) inside the modal at the
             // default 1024-wide window without forcing the
             // user into horizontal scroll. Long links wrap.
-            ui.set_max_width(720.0);
+            // K31 — clamp to the live screen width so a tiny
+            // window doesn't push the modal off-canvas.
+            ui.set_max_width(fit_modal_width(ui.ctx(), 720.0));
 
             ui.heading("devboy secrets");
             ui.label(
@@ -1776,6 +1778,16 @@ fn format_byte_size(bytes: usize) -> String {
     }
 }
 
+/// K31 — clamp a modal's preferred max width to fit inside the
+/// current viewport when the user has shrunk the window past
+/// it. Leaves 32 px of padding on each side and floors at 280
+/// px so the modal stays usable on a tiny window. Returns the
+/// effective max-width to feed `ui.set_max_width`.
+fn fit_modal_width(ctx: &eframe::egui::Context, preferred: f32) -> f32 {
+    let screen_w = ctx.content_rect().width();
+    preferred.min(screen_w - 32.0).max(280.0)
+}
+
 /// K23 — build-info pulled in by the `build.rs` script. Cargo
 /// turns `cargo:rustc-env=KEY=VALUE` lines into compile-time
 /// `env!()` lookups. Defaults to `"unknown"` (also set in the
@@ -1929,6 +1941,30 @@ impl eframe::App for InventoryApp {
             self.render_vault_unlock_modal(ui.ctx());
         }
 
+        // K31 — responsive scroll fallback. The body (banner +
+        // inventory + dialog) lives inside ScrollArea::both()
+        // so a small window scrolls instead of clipping. Modals
+        // render through `ctx` above, so they stay outside this
+        // scope and remain centred regardless of scroll state.
+        // `auto_shrink([false; 2])` keeps the scroll bars
+        // reserving space even when content fits — prevents the
+        // layout from jumping as rows appear / disappear.
+        eframe::egui::ScrollArea::both()
+            .id_salt("inventory-root-scroll")
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                self.render_body(ui);
+            });
+    }
+}
+
+impl InventoryApp {
+    /// K31 — extracted body render so the outer `ui()` can
+    /// keep the menu bar + modals fixed and put just the
+    /// scrollable surface inside `ScrollArea::both`. Behaviour
+    /// is identical to the pre-K31 monolithic `ui()` body; this
+    /// is a pure structural extraction.
+    fn render_body(&mut self, ui: &mut eframe::egui::Ui) {
         // Backend banner + switcher — tells the user where
         // saves go, and lets them flip keychain ↔ local-vault
         // live (V5). The switch is session-scoped; the env var
@@ -2179,8 +2215,10 @@ impl eframe::App for InventoryApp {
                 ui.ctx(),
                 |ui| {
                     // Cap the width so the modal reads as a card,
-                    // not a full-bleed panel.
-                    ui.set_max_width(560.0);
+                    // not a full-bleed panel. K31 — clamp to the
+                    // live screen width so a narrow window still
+                    // gets the modal in-frame.
+                    ui.set_max_width(fit_modal_width(ui.ctx(), 560.0));
                     // Variant picker — only visible when the
                     // active path resolves to a catalog provider
                     // with more than one variant. Single-variant
@@ -2514,7 +2552,6 @@ impl eframe::App for InventoryApp {
         }
     }
 }
-
 // =============================================================================
 // Liveness probes
 // =============================================================================
