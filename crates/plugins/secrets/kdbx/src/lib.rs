@@ -81,22 +81,36 @@ pub enum KdbxSourceError {
     },
 }
 
-/// Which KDBX field supplied the entry's value. KeePass users
-/// conventionally put tokens in the standard Password field,
-/// but power users sometimes use a Protected custom string
-/// (e.g. `api_token`) instead. The walker auto-detects when
-/// Password is empty + exactly one Protected custom string
-/// exists; this enum records which field won.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ValueField {
-    /// Value came from the standard Password field.
-    Password,
-    /// Value came from a Protected custom string named `name`.
-    CustomField {
-        /// Custom-string field name (verbatim from KeePass).
-        name: String,
-    },
+/// One value-bearing field on a KDBX entry. KeePass entries
+/// can carry multiple Protected custom strings (e.g.
+/// `password_admin`, `password_readonly`, `api_token`) AND
+/// have the standard Password field set at the same time. We
+/// preserve all of them so the UI can show every value the
+/// user might want.
+#[derive(Debug, Clone)]
+pub struct KdbxValue {
+    /// Field name (`Password`, `api_token`, `admin_password`, …).
+    /// Standard KeePass fields keep their canonical casing;
+    /// custom strings preserve whatever the user picked.
+    pub name: String,
+    /// The value itself. `SecretString` zeroizes on drop so a
+    /// stray clone doesn't outlive the read.
+    pub value: SecretString,
+    /// `true` when KeePass stored this as a Protected custom
+    /// string (or it's the standard Password). The UI uses this
+    /// to mask the field by default; the user can reveal one
+    /// field at a time.
+    pub is_protected: bool,
 }
+
+impl PartialEq for KdbxValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.is_protected == other.is_protected
+            && self.value.expose_secret() == other.value.expose_secret()
+    }
+}
+impl Eq for KdbxValue {}
 
 /// Metadata for one KeePass attachment, surfaced in the
 /// snapshot WITHOUT the binary content. Lists name + size so
@@ -112,31 +126,28 @@ pub struct KdbxAttachmentMeta {
 
 /// One inventory row resolved out of the KDBX file.
 ///
-/// Held in the per-source [`KdbxSnapshot`]. The `password` field
-/// carries the value the router hands the caller via `get()`;
-/// every other field is metadata the UI surfaces in the
-/// inventory row + the provision dialog's context card.
+/// Held in the per-source [`KdbxSnapshot`]. `values` carries
+/// every value-bearing field the entry has (multiple passwords,
+/// custom tokens, etc.); the standalone fields above carry
+/// metadata the UI surfaces in the inventory row + context card.
 ///
 /// All standard KeePass fields are preserved + every custom
-/// string the user added gets carried through `custom_fields`.
-/// Times, tags, UUID, OTP and attachment names round-trip
-/// untouched so a future "view in KeePass" deep-link can
-/// reconstruct the source entry from the snapshot alone.
+/// string the user added gets carried through `values` (or via
+/// the `username` / `url` / `notes` convenience slots for the
+/// metadata-only standard fields).
 #[derive(Debug)]
 pub struct KdbxEntry {
     /// Normalized ADR-020-like path (lowercase, `[a-z0-9_-]` only,
     /// `/`-separated segments). Mirrors `SecretSource::get`'s
     /// reference argument.
     pub path: String,
-    /// Resolved value of the entry — typically the Password
-    /// field, or a Protected custom string when [`value_field`]
-    /// names one. `None` when the entry has no usable value
-    /// (rare — empty entries used as placeholders).
-    pub password: Option<SecretString>,
-    /// Which KDBX field [`password`] came from. Lets the UI
-    /// label rows like "AWS Access Key (custom: secret_key)"
-    /// when the value lives in something other than Password.
-    pub value_field: ValueField,
+    /// Every value-bearing field on this entry, in stable order
+    /// (standard Password first if non-empty, then custom
+    /// strings alphabetised). The UI lists them all in the
+    /// reveal-dialog; `SecretSource::get(path)` defaults to the
+    /// first Protected entry. `SecretSource::get(path#name)`
+    /// (K18.5 extension) routes by field name.
+    pub values: Vec<KdbxValue>,
     /// Entry Title field — preserved verbatim for display.
     pub title: String,
     /// Optional UserName field.
@@ -168,19 +179,31 @@ pub struct KdbxEntry {
     /// string. Surfaced as a separate field so the UI can show
     /// a "TOTP available" chip without reading the secret.
     pub otp: Option<String>,
-    /// Non-standard string fields the user added. Includes any
-    /// custom Protected/Unprotected entries that aren't one of
-    /// {Title, UserName, Password, URL, Notes, otp}. Keys
-    /// preserve original casing; values are exposed verbatim.
-    /// Use [`BTreeMap`](std::collections::BTreeMap) so the UI
-    /// renders fields in a stable, alphabetical order.
-    pub custom_fields: std::collections::BTreeMap<String, String>,
     /// Attachment metadata only (names + sizes). The actual
     /// bytes are never read into the snapshot — fetching them
     /// would force every consumer to handle potentially-secret
     /// binaries (PEM keys, .keytab files) and we'd rather punt
     /// that to an explicit "extract attachment" flow.
     pub attachments: Vec<KdbxAttachmentMeta>,
+}
+
+impl KdbxEntry {
+    /// Primary value — the one `get(path)` defaults to. Prefers
+    /// the first Protected field; falls back to the first
+    /// value at all when nothing's protected. Returns `None`
+    /// when the entry has no values (empty placeholder entry).
+    pub fn primary_value(&self) -> Option<&KdbxValue> {
+        self.values
+            .iter()
+            .find(|v| v.is_protected)
+            .or_else(|| self.values.first())
+    }
+
+    /// Look up a value by KeePass field name (case-sensitive
+    /// — KeePass preserves the user's casing).
+    pub fn value_by_name(&self, name: &str) -> Option<&KdbxValue> {
+        self.values.iter().find(|v| v.name == name)
+    }
 }
 
 /// Snapshot of the unlocked KDBX file — every entry flattened to
@@ -389,18 +412,25 @@ impl SecretSource for KdbxSource {
             })?;
         let guard = self.snapshot.lock().await;
         let snapshot = guard.as_ref().expect("ensure_snapshot populated this");
-        // Linear scan over the cached entries. Fine up to a few
-        // thousand entries; if a user shows up with a KDBX of
-        // 50 000+ entries we'll swap in a HashMap.
+        // `path` or `path#field-name`. The fragment lets the
+        // router pull a specific value when a KeePass entry
+        // carries several Protected strings (multiple passwords
+        // per entry is common — `password_admin` +
+        // `password_readonly` + …).
+        let (path_ref, field_ref) = match reference.split_once('#') {
+            Some((p, f)) if !f.is_empty() => (p, Some(f)),
+            _ => (reference, None),
+        };
         for entry in &snapshot.entries {
-            if entry.path == reference {
-                return match &entry.password {
-                    Some(p) => Ok(Some(GetOutcome {
-                        value: SecretString::from(p.expose_secret().to_string()),
-                        lease_duration: None,
-                    })),
-                    None => Ok(None),
+            if entry.path == path_ref {
+                let value = match field_ref {
+                    Some(name) => entry.value_by_name(name),
+                    None => entry.primary_value(),
                 };
+                return Ok(value.map(|v| GetOutcome {
+                    value: SecretString::from(v.value.expose_secret().to_string()),
+                    lease_duration: None,
+                }));
             }
         }
         Ok(None)
@@ -506,9 +536,11 @@ pub fn open_kdbx_into_snapshot(
     Ok(KdbxSnapshot { entries })
 }
 
-/// KeePass standard field names — everything in `Entry.fields`
-/// not in this set lands in `custom_fields`.
-const STANDARD_FIELDS: &[&str] = &["Title", "UserName", "Password", "URL", "Notes", "otp"];
+/// KeePass standard metadata-only field names — these are
+/// surfaced through dedicated convenience slots on
+/// [`KdbxEntry`] (`title` / `username` / `url` / `notes` /
+/// `otp`) instead of being promoted into the `values` vec.
+const METADATA_FIELDS: &[&str] = &["Title", "UserName", "URL", "Notes", "otp"];
 
 /// Recursive traversal helper — visits every entry under
 /// `group_ref`, maintaining the breadcrumb in `path_segments`.
@@ -527,53 +559,37 @@ fn walk_group(
         segments.push(normalised_title);
         let path = ensure_min_three_segments(segments);
 
-        // Value resolution. Prefer the Password field. When
-        // it's empty AND exactly one Protected custom string
-        // exists, promote that string to the value slot — many
-        // KeePass power-users park API tokens / OAuth secrets
-        // in a custom "api_token" Protected entry instead of
-        // the literal Password field.
-        let raw_password = entry.get_password().filter(|p| !p.is_empty());
-        let (password, value_field) = match raw_password {
-            Some(p) => (Some(SecretString::from(p.to_owned())), ValueField::Password),
-            None => {
-                let protected_customs: Vec<(&String, &str)> = entry
-                    .fields
-                    .iter()
-                    .filter(|(k, v)| !STANDARD_FIELDS.contains(&k.as_str()) && v.is_protected())
-                    .map(|(k, v)| (k, v.as_str()))
-                    .collect();
-                if protected_customs.len() == 1 && !protected_customs[0].1.is_empty() {
-                    let (name, val) = protected_customs[0];
-                    (
-                        Some(SecretString::from(val.to_owned())),
-                        ValueField::CustomField { name: name.clone() },
-                    )
-                } else {
-                    (None, ValueField::Password)
-                }
-            }
-        };
-
-        // Custom fields — everything NOT in STANDARD_FIELDS.
-        // Both Protected and Unprotected entries are surfaced;
-        // the UI is responsible for masking the Protected ones
-        // when rendering. Skip the field we just promoted into
-        // `password` so it doesn't appear twice in the dialog.
-        let promoted_field_name: Option<&str> = match &value_field {
-            ValueField::Password => None,
-            ValueField::CustomField { name } => Some(name.as_str()),
-        };
-        let mut custom_fields: std::collections::BTreeMap<String, String> =
-            std::collections::BTreeMap::new();
-        for (key, value) in &entry.fields {
-            if STANDARD_FIELDS.contains(&key.as_str()) {
-                continue;
-            }
-            if promoted_field_name == Some(key.as_str()) {
-                continue;
-            }
-            custom_fields.insert(key.clone(), value.as_str().to_owned());
+        // K18 multi-value: collect EVERY value-bearing field
+        // on the entry. KeePass commonly stores multiple
+        // Protected strings per entry (`password_admin`,
+        // `password_readonly`, `api_token`); we preserve all
+        // of them so the UI can list + reveal each one.
+        //
+        // Order: standard Password first (if non-empty), then
+        // custom strings alphabetised. Both Protected and
+        // Unprotected customs are kept; the `is_protected`
+        // flag drives masking in the UI.
+        let mut values: Vec<KdbxValue> = Vec::new();
+        if let Some(pw) = entry.get_password().filter(|p| !p.is_empty()) {
+            values.push(KdbxValue {
+                name: "Password".to_owned(),
+                value: SecretString::from(pw.to_owned()),
+                is_protected: true,
+            });
+        }
+        let mut customs: Vec<(&String, &keepass::db::Value<String>)> = entry
+            .fields
+            .iter()
+            .filter(|(k, _)| k.as_str() != "Password" && !METADATA_FIELDS.contains(&k.as_str()))
+            .filter(|(_, v)| !v.as_str().is_empty())
+            .collect();
+        customs.sort_by_key(|(k, _)| k.as_str().to_owned());
+        for (key, value) in customs {
+            values.push(KdbxValue {
+                name: key.clone(),
+                value: SecretString::from(value.as_str().to_owned()),
+                is_protected: value.is_protected(),
+            });
         }
 
         // Times — format as ISO 8601 + suppress the ghost
@@ -606,8 +622,7 @@ fn walk_group(
 
         out.push(KdbxEntry {
             path,
-            password,
-            value_field,
+            values,
             title,
             username: entry.get_username().map(str::to_owned),
             url: entry.get_url().map(str::to_owned),
@@ -618,7 +633,6 @@ fn walk_group(
             modified_at,
             expires_at,
             otp: entry.get_raw_otp_value().map(str::to_owned),
-            custom_fields,
             attachments,
         });
     }
@@ -979,25 +993,52 @@ mod tests {
                 .map(|s| s.starts_with("otpauth://"))
                 .unwrap_or(false)
         );
-        let keys: Vec<&str> = entry.custom_fields.keys().map(|k| k.as_str()).collect();
-        assert_eq!(keys, vec!["client_id", "webhook_secret"]);
+        // K18 multi-value: three values land in `values` —
+        // Password (standard), client_id (Unprotected custom),
+        // webhook_secret (Protected custom). Ordered:
+        // Password first, then customs alphabetised.
+        let value_names: Vec<&str> = entry.values.iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(value_names, vec!["Password", "client_id", "webhook_secret"]);
+        // is_protected flag is preserved per field.
+        assert!(entry.value_by_name("Password").unwrap().is_protected);
+        assert!(!entry.value_by_name("client_id").unwrap().is_protected);
+        assert!(entry.value_by_name("webhook_secret").unwrap().is_protected);
+        // Values themselves come through verbatim.
         assert_eq!(
-            entry.custom_fields.get("client_id").map(|s| s.as_str()),
-            Some("acct_1abc")
-        );
-        assert_eq!(entry.value_field, ValueField::Password);
-        assert_eq!(
-            entry.password.as_ref().unwrap().expose_secret(),
+            entry
+                .value_by_name("Password")
+                .unwrap()
+                .value
+                .expose_secret(),
             "sk_live_fixture"
         );
+        assert_eq!(
+            entry
+                .value_by_name("client_id")
+                .unwrap()
+                .value
+                .expose_secret(),
+            "acct_1abc"
+        );
+        assert_eq!(
+            entry
+                .value_by_name("webhook_secret")
+                .unwrap()
+                .value
+                .expose_secret(),
+            "whsec_zzz"
+        );
+        // primary_value() prefers Protected → Password wins.
+        assert_eq!(entry.primary_value().unwrap().name, "Password");
     }
 
-    /// When the standard Password field is empty AND exactly
-    /// one Protected custom string exists, the walker promotes
-    /// that custom string to the value slot and records its
-    /// name in `value_field`.
+    /// When the standard Password field is empty AND a
+    /// Protected custom string exists, the K18 model surfaces
+    /// the custom string as a value — `primary_value()`
+    /// promotes it transparently since it's the first
+    /// Protected entry available.
     #[tokio::test]
-    async fn value_field_promotes_lone_protected_custom_string_when_password_empty() {
+    async fn primary_value_picks_lone_protected_custom_when_password_empty() {
         use keepass::{Database, DatabaseKey};
 
         let tmp_dir = tempfile::TempDir::new().unwrap();
@@ -1020,34 +1061,26 @@ mod tests {
         let _ = src.is_available().await;
         let guard = src.snapshot.lock().await;
         let entry = &guard.as_ref().unwrap().entries[0];
-        assert_eq!(
-            entry.value_field,
-            ValueField::CustomField {
-                name: "api_token".to_owned()
-            }
-        );
-        assert_eq!(
-            entry.password.as_ref().unwrap().expose_secret(),
-            "ghp_promoted_secret"
-        );
-        // The promoted field must NOT appear in custom_fields
-        // (otherwise the UI would render the value twice).
-        assert!(!entry.custom_fields.contains_key("api_token"));
-        // The unprotected custom string DOES remain in
-        // custom_fields.
-        assert_eq!(
-            entry.custom_fields.get("note_to_self").map(|s| s.as_str()),
-            Some("rotate quarterly")
-        );
+
+        // values has both customs (Password is absent → not
+        // in the vec); api_token (Protected) + note_to_self
+        // (Unprotected), alphabetised.
+        let names: Vec<&str> = entry.values.iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(names, vec!["api_token", "note_to_self"]);
+        assert!(entry.value_by_name("api_token").unwrap().is_protected);
+        assert!(!entry.value_by_name("note_to_self").unwrap().is_protected);
+
+        // primary_value picks the first Protected.
+        let primary = entry.primary_value().unwrap();
+        assert_eq!(primary.name, "api_token");
+        assert_eq!(primary.value.expose_secret(), "ghp_promoted_secret");
     }
 
-    /// When the standard Password is empty AND TWO or more
-    /// Protected custom strings exist, promotion is ambiguous —
-    /// nothing is promoted, password stays None, and BOTH
-    /// candidates appear in `custom_fields` so the UI can ask
-    /// the user.
+    /// When MULTIPLE Protected custom strings exist (with no
+    /// standard Password), K18 keeps all of them. The user can
+    /// pick via `path#name` syntax via `KdbxSource::get`.
     #[tokio::test]
-    async fn value_field_does_not_promote_when_multiple_protected_customs_exist() {
+    async fn multiple_protected_customs_all_appear_in_values() {
         use keepass::{Database, DatabaseKey};
 
         let tmp_dir = tempfile::TempDir::new().unwrap();
@@ -1068,12 +1101,24 @@ mod tests {
         let src = KdbxSource::new("amb", &kdbx_path);
         src.set_passphrase(SecretString::from("p")).await;
         let _ = src.is_available().await;
-        let guard = src.snapshot.lock().await;
-        let entry = &guard.as_ref().unwrap().entries[0];
-        assert!(entry.password.is_none());
-        assert_eq!(entry.value_field, ValueField::Password);
-        let keys: Vec<&str> = entry.custom_fields.keys().map(|k| k.as_str()).collect();
-        assert_eq!(keys, vec!["token_a", "token_b"]);
+        // `get(path)` → primary value (first Protected
+        // alphabetised → "token_a").
+        let outcome = src.get("kdbx/imported/ambiguous").await.unwrap().unwrap();
+        assert_eq!(outcome.value.expose_secret(), "a-value");
+        // `get(path#name)` → explicit field selection.
+        let outcome = src
+            .get("kdbx/imported/ambiguous#token_b")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(outcome.value.expose_secret(), "b-value");
+        // Unknown field name → None.
+        assert!(
+            src.get("kdbx/imported/ambiguous#nope")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     /// Expiry timestamp is suppressed when KeePass's `Expires`

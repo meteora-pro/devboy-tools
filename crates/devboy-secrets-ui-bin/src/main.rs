@@ -961,7 +961,7 @@ impl StorageBackend {
             StorageBackend::Kdbx { snapshot, .. } => snapshot
                 .entries
                 .iter()
-                .any(|e| e.path == path && e.password.is_some()),
+                .any(|e| e.path == path && !e.values.is_empty()),
         }
     }
 
@@ -1277,15 +1277,10 @@ fn load_inventory_or_empty(
 ///   this token last touched" until the user opts into a proper
 ///   rotation flow.
 fn kdbx_entry_to_index_entry(entry: &devboy_secret_kdbx::KdbxEntry) -> devboy_storage::IndexEntry {
+    use secrecy::ExposeSecret as _;
     use std::fmt::Write as _;
     let mut description = String::with_capacity(256);
     let _ = writeln!(description, "KeePass entry: {}", entry.title);
-    if let devboy_secret_kdbx::ValueField::CustomField { name } = &entry.value_field {
-        let _ = writeln!(
-            description,
-            "(value field: custom string `{name}`, not the standard Password)"
-        );
-    }
     if let Some(notes) = entry.notes.as_deref()
         && !notes.is_empty()
     {
@@ -1297,23 +1292,29 @@ fn kdbx_entry_to_index_entry(entry: &devboy_secret_kdbx::KdbxEntry) -> devboy_st
     if !entry.tags.is_empty() {
         let _ = writeln!(description, "\nTags: {}", entry.tags.join(", "));
     }
-    if !entry.custom_fields.is_empty() {
-        description.push_str("\nCustom fields:\n");
-        for (key, value) in &entry.custom_fields {
-            // Don't print custom-string values into the
-            // metadata channel: any one of them could be a
-            // secret. Key names only.
-            let preview = if value.len() > 32 || value.contains('\n') {
-                "<value omitted>".to_owned()
-            } else if value.is_empty() {
-                "<empty>".to_owned()
+    // K18 — every value-bearing field is in `entry.values`.
+    // Protected fields are masked (key name only); Unprotected
+    // fields show a short preview so config-shaped strings
+    // like `account_id` / `region` stay visible. Long /
+    // multiline values are always omitted regardless of
+    // protection state (could still leak by length).
+    if !entry.values.is_empty() {
+        description.push_str("\nValue fields:\n");
+        for v in &entry.values {
+            let lock = if v.is_protected { "🔒" } else { "  " };
+            let preview = if v.is_protected {
+                "<masked, reveal in UI>".to_owned()
             } else {
-                // Short, single-line, presumably non-secret —
-                // show as-is so config-shaped fields (account
-                // id, region, role) are visible.
-                value.clone()
+                let raw = v.value.expose_secret();
+                if raw.len() > 32 || raw.contains('\n') {
+                    "<value omitted>".to_owned()
+                } else if raw.is_empty() {
+                    "<empty>".to_owned()
+                } else {
+                    raw.to_owned()
+                }
             };
-            let _ = writeln!(description, "  • {key}: {preview}");
+            let _ = writeln!(description, "  {lock} {}: {preview}", v.name);
         }
     }
     if !entry.attachments.is_empty() {
@@ -2780,17 +2781,34 @@ mod tests {
     // -- K8 — KdbxEntry → IndexEntry projection --------------
 
     fn fixture_kdbx_entry() -> devboy_secret_kdbx::KdbxEntry {
-        let mut custom_fields = std::collections::BTreeMap::new();
-        custom_fields.insert("client_id".to_owned(), "acct_1abc".to_owned());
-        custom_fields.insert(
-            "very_long_value_that_should_get_redacted_in_description".to_owned(),
-            "x".repeat(120),
-        );
-        custom_fields.insert("blank".to_owned(), String::new());
+        // K18 model: every value-bearing field is in `values`.
+        // Mix of standard Password + Protected + Unprotected
+        // custom strings to exercise every render branch.
+        let values = vec![
+            devboy_secret_kdbx::KdbxValue {
+                name: "Password".into(),
+                value: SecretString::new("sk_live".to_string().into()),
+                is_protected: true,
+            },
+            devboy_secret_kdbx::KdbxValue {
+                name: "client_id".into(),
+                value: SecretString::new("acct_1abc".to_string().into()),
+                is_protected: false,
+            },
+            devboy_secret_kdbx::KdbxValue {
+                name: "very_long_value".into(),
+                value: SecretString::new("x".repeat(120).into()),
+                is_protected: false,
+            },
+            devboy_secret_kdbx::KdbxValue {
+                name: "blank".into(),
+                value: SecretString::new(String::new().into()),
+                is_protected: false,
+            },
+        ];
         devboy_secret_kdbx::KdbxEntry {
             path: "kdbx/work/stripe-api".into(),
-            password: Some(SecretString::new("sk_live".to_string().into())),
-            value_field: devboy_secret_kdbx::ValueField::Password,
+            values,
             title: "Stripe API".into(),
             username: Some("ops@example.com".into()),
             url: Some("https://dashboard.stripe.com/apikeys".into()),
@@ -2801,7 +2819,6 @@ mod tests {
             modified_at: Some("2026-05-01T00:00:00Z".into()),
             expires_at: Some("2027-01-15T00:00:00Z".into()),
             otp: Some("otpauth://totp/Stripe".into()),
-            custom_fields,
             attachments: vec![devboy_secret_kdbx::KdbxAttachmentMeta {
                 name: "server.pem".into(),
                 size_bytes: 1024,
@@ -2833,12 +2850,18 @@ mod tests {
         assert!(desc.contains("KeePass entry: Stripe API"));
         assert!(desc.contains("Notes:\nQuarterly rotation"));
         assert!(desc.contains("Tags: ops, billing"));
-        assert!(desc.contains("Custom fields:"));
+        // K18 — value fields block lists every field by name.
+        assert!(desc.contains("Value fields:"));
+        // Protected Password field: masked.
+        assert!(
+            desc.contains("🔒 Password: <masked, reveal in UI>"),
+            "Password row must be masked, got:\n{desc}"
+        );
+        // Unprotected short custom: preview shown.
         assert!(desc.contains("client_id: acct_1abc"));
-        // Long value gets redacted (>32 chars).
+        // Long Unprotected: redacted by length.
         assert!(desc.contains("<value omitted>"));
-        // Empty value is rendered as `<empty>` (visible to the
-        // user but doesn't leak anything).
+        // Empty Unprotected: marker.
         assert!(desc.contains("blank: <empty>"));
         assert!(desc.contains("📎 server.pem (1024 bytes)"));
         assert!(desc.contains("TOTP source available"));
@@ -2846,16 +2869,26 @@ mod tests {
     }
 
     #[test]
-    fn kdbx_to_index_entry_flags_value_field_when_custom_string_was_promoted() {
+    fn kdbx_to_index_entry_masks_every_protected_field_in_description() {
+        // K18: a Protected custom string is masked just like
+        // the standard Password — value name is shown so the
+        // user knows it exists, value never appears in
+        // description.
         let mut entry = fixture_kdbx_entry();
-        entry.value_field = devboy_secret_kdbx::ValueField::CustomField {
+        entry.values.push(devboy_secret_kdbx::KdbxValue {
             name: "api_token".into(),
-        };
+            value: SecretString::new("ghp_super_secret_value".to_string().into()),
+            is_protected: true,
+        });
         let mapped = kdbx_entry_to_index_entry(&entry);
         let desc = mapped.description.unwrap();
         assert!(
-            desc.contains("value field: custom string `api_token`"),
-            "value-field note must appear in description, got:\n{desc}"
+            desc.contains("🔒 api_token: <masked, reveal in UI>"),
+            "Protected custom must be masked in description, got:\n{desc}"
+        );
+        assert!(
+            !desc.contains("ghp_super_secret_value"),
+            "Protected value must NEVER appear in description"
         );
     }
 
