@@ -66,6 +66,8 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets catalog pin`↴](#devboy-secrets-catalog-pin)
 * [`devboy secrets catalog validate`↴](#devboy-secrets-catalog-validate)
 * [`devboy secrets setup`↴](#devboy-secrets-setup)
+* [`devboy secrets kdbx`↴](#devboy-secrets-kdbx)
+* [`devboy secrets kdbx peek`↴](#devboy-secrets-kdbx-peek)
 * [`devboy hooks`↴](#devboy-hooks)
 * [`devboy hooks install`↴](#devboy-hooks-install)
 * [`devboy hooks check`↴](#devboy-hooks-check)
@@ -727,6 +729,7 @@ Discover and inspect declared secrets (metadata only — values are never shown)
 * `rotate` — Rotate a secret: open the provider URL in the browser, destructive-confirm, read the new value, format-validate, and record `last_rotated_at`. See ADR-023 §3.4
 * `catalog` — Manage the token catalog (provider procedure files the `secrets ui` form binds to). See ADR-023 §3.4
 * `setup` — Run the setup-secrets wizard against the current directory. Default mode is `--scan-only` — read-only preview of what the wizard would propose. Pass `--write-manifest` to commit the proposals to `<repo>/.devboy/secrets.toml`. See ADR-023 §3.8 and `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/`
+* `kdbx` — Work with KDBX 4 (KeePass) files as a SecretSource. The passphrase is prompted from stdin with no echo; the decrypted body lives only inside this process and is dropped on exit. See ADR-021 §8 + `crates/plugins/secrets/kdbx/`
 
 
 
@@ -1028,6 +1031,32 @@ Run the setup-secrets wizard against the current directory. Default mode is `--s
 * `--force` — Allow `--write-manifest` to overwrite an existing `<root>/.devboy/secrets.toml`. No-op without `--write-manifest`
 * `--resume` — Resume the wizard from the recorded state file (`~/.devboy/secrets/setup-state.toml`). Skips phases already marked `done` / `skipped`. Implies a full wizard run, not just the scan preview
 * `--json` — Emit JSON-lines events to stdout instead of human prose. One event per line with shape `{"phase":"scan","status":"completed","message":"…"}` — designed for the AI agent driving the skill. The `message` key is optional: only `PhaseProgress`, `PhaseCompleted`, `PhaseSkipped`, and `PhaseFailed` carry a body; `PhaseStarted` and the terminal `wizard-completed` event omit it
+
+
+
+## `devboy secrets kdbx`
+
+Work with KDBX 4 (KeePass) files as a SecretSource. The passphrase is prompted from stdin with no echo; the decrypted body lives only inside this process and is dropped on exit. See ADR-021 §8 + `crates/plugins/secrets/kdbx/`
+
+**Usage:** `devboy secrets kdbx <COMMAND>`
+
+###### **Subcommands:**
+
+* `peek` — Open a `.kdbx` file with a prompted passphrase and print the per-entry inventory (path + Title + UserName + URL + whether a Password is set). Values are NEVER printed — this is a read-only sanity check that the file opens and our path normalisation produces sensible references
+
+
+
+## `devboy secrets kdbx peek`
+
+Open a `.kdbx` file with a prompted passphrase and print the per-entry inventory (path + Title + UserName + URL + whether a Password is set). Values are NEVER printed — this is a read-only sanity check that the file opens and our path normalisation produces sensible references
+
+**Usage:** `devboy secrets kdbx peek [OPTIONS] --file <FILE>`
+
+###### **Options:**
+
+* `--file <FILE>` — Absolute path to the `.kdbx` file. Required — there is no default discovery for KDBX files (the user opts in per-invocation)
+* `--keyfile <KEYFILE>` — Optional path to a keyfile companion (KeePass two-factor unlock). Omit for passphrase-only databases
+* `--json` — Print as JSON (one entry per object) instead of the default human table. Useful for scripted verification
 
 
 

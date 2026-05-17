@@ -45,6 +45,11 @@ crossterm = "0.28"
 devboy-secret-keychain = { workspace = true }
 devboy-secret-local-vault = { workspace = true }
 devboy-secret-1password = { workspace = true }
+# Drives `devboy secrets kdbx peek` — reads a KDBX 4 file and
+# prints its entry inventory without the values. Pulled in only
+# for the CLI peek path; the heavy-weight UI integration sits in
+# devboy-secrets-ui-bin.
+devboy-secret-kdbx = { workspace = true }
 devboy-secret-env-store = { workspace = true }
 devboy-github = { workspace = true }
 devboy-gitlab = { workspace = true }

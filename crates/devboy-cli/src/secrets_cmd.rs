@@ -75,6 +75,43 @@ pub enum SecretsCommands {
     /// `<repo>/.devboy/secrets.toml`. See ADR-023 §3.8 and
     /// `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/`.
     Setup(SetupArgs),
+    /// Work with KDBX 4 (KeePass) files as a SecretSource. The
+    /// passphrase is prompted from stdin with no echo; the
+    /// decrypted body lives only inside this process and is
+    /// dropped on exit. See ADR-021 §8 + `crates/plugins/secrets/kdbx/`.
+    Kdbx {
+        #[command(subcommand)]
+        command: KdbxCommands,
+    },
+}
+
+/// `devboy secrets kdbx <subcommand>` family.
+#[derive(Subcommand, Debug)]
+pub enum KdbxCommands {
+    /// Open a `.kdbx` file with a prompted passphrase and print
+    /// the per-entry inventory (path + Title + UserName + URL +
+    /// whether a Password is set). Values are NEVER printed —
+    /// this is a read-only sanity check that the file opens and
+    /// our path normalisation produces sensible references.
+    Peek(KdbxPeekArgs),
+}
+
+/// Flags for `devboy secrets kdbx peek`.
+#[derive(Args, Debug)]
+pub struct KdbxPeekArgs {
+    /// Absolute path to the `.kdbx` file. Required — there is
+    /// no default discovery for KDBX files (the user opts in
+    /// per-invocation).
+    #[arg(long)]
+    pub file: PathBuf,
+    /// Optional path to a keyfile companion (KeePass two-factor
+    /// unlock). Omit for passphrase-only databases.
+    #[arg(long)]
+    pub keyfile: Option<PathBuf>,
+    /// Print as JSON (one entry per object) instead of the
+    /// default human table. Useful for scripted verification.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// `devboy secrets catalog <subcommand>` family.
@@ -379,6 +416,136 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
             CatalogCommands::Validate(args) => catalog_validate(args),
         },
         SecretsCommands::Setup(args) => crate::secrets_setup::handle_cli(args),
+        SecretsCommands::Kdbx { command } => match command {
+            KdbxCommands::Peek(args) => kdbx_peek(args),
+        },
+    }
+}
+
+/// Open a KDBX 4 file with a prompted passphrase and print the
+/// inventory it contains. Used as a smoke test for the
+/// `devboy-secret-kdbx` integration when the GUI flow isn't
+/// available (CI, headless dev box, autonomous agent setup).
+///
+/// What's printed:
+/// - the path the source-plugin's path-mapper produced
+/// - the KeePass Title, UserName, URL fields
+/// - whether the entry carries a non-empty Password (yes/no
+///   only — the actual value never leaves the process)
+///
+/// What's NOT printed: Password values, Notes (which can
+/// contain values), custom string fields (ditto).
+fn kdbx_peek(args: KdbxPeekArgs) -> Result<()> {
+    use secrecy::SecretString;
+    use std::io::IsTerminal;
+
+    if !args.file.exists() {
+        anyhow::bail!(
+            "KDBX file does not exist: {}\n\
+             Pass --file <path> to a real .kdbx file.",
+            args.file.display()
+        );
+    }
+
+    // Secure passphrase prompt — `dialoguer::Password` hides
+    // input + reads from the TTY directly so the value never
+    // shows up in shell history or process listings. Refuse to
+    // read from a pipe (`!is_terminal`) since the prompt would
+    // hang forever waiting for a terminal.
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "KDBX passphrase prompt requires an interactive terminal; \
+             this command refuses to read the passphrase from a pipe."
+        );
+    }
+    let passphrase = dialoguer::Password::new()
+        .with_prompt(format!("Passphrase for {}", args.file.display()))
+        .allow_empty_password(false)
+        .interact()
+        .context("could not read passphrase from stdin")?;
+
+    let snapshot = devboy_secret_kdbx::open_kdbx_into_snapshot(
+        &args.file,
+        &SecretString::new(passphrase.into()),
+        args.keyfile.as_deref(),
+    )
+    .with_context(|| format!("could not open {}", args.file.display()))?;
+
+    if args.json {
+        // JSON-lines so a script can consume entries one at a
+        // time. Each line is an object with `path`, `title`,
+        // `username`, `url`, `has_password`. No `password` field
+        // ever appears.
+        for entry in &snapshot.entries {
+            let line = serde_json::json!({
+                "path": entry.path,
+                "title": entry.title,
+                "username": entry.username,
+                "url": entry.url,
+                "has_password": entry.password.is_some(),
+            });
+            println!("{line}");
+        }
+        let summary = serde_json::json!({
+            "file": args.file.display().to_string(),
+            "entries": snapshot.entries.len(),
+        });
+        println!("{summary}");
+        return Ok(());
+    }
+
+    // Human table — fixed-width columns sized to the loaded
+    // entries so long titles wrap nicely.
+    println!(
+        "Opened {} ({} entries)",
+        args.file.display(),
+        snapshot.entries.len()
+    );
+    println!();
+    let mut path_w = "PATH".len();
+    let mut title_w = "TITLE".len();
+    for entry in &snapshot.entries {
+        path_w = path_w.max(entry.path.len());
+        title_w = title_w.max(entry.title.len());
+    }
+    let path_w = path_w.min(64);
+    let title_w = title_w.min(40);
+    println!(
+        "{:<path_w$}  {:<title_w$}  PASSWORD  USERNAME / URL",
+        "PATH", "TITLE",
+    );
+    for entry in &snapshot.entries {
+        let pwd_mark = if entry.password.is_some() {
+            "yes"
+        } else {
+            "—"
+        };
+        let user = entry.username.as_deref().unwrap_or("");
+        let url = entry.url.as_deref().unwrap_or("");
+        let trailing = match (user.is_empty(), url.is_empty()) {
+            (true, true) => String::new(),
+            (false, true) => user.to_owned(),
+            (true, false) => url.to_owned(),
+            (false, false) => format!("{user} · {url}"),
+        };
+        let path = truncate(&entry.path, path_w);
+        let title = truncate(&entry.title, title_w);
+        println!("{path:<path_w$}  {title:<title_w$}  {pwd_mark:<8}  {trailing}",);
+    }
+    println!();
+    println!("(values are held only in this process; no Password field ever printed)");
+    Ok(())
+}
+
+/// Truncate `s` to `max` characters with an ellipsis if it
+/// overflows. Pure helper used by the kdbx-peek table render.
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_owned()
+    } else {
+        let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+        out.push('…');
+        out
     }
 }
 
