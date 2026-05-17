@@ -13,9 +13,12 @@
 //! passphrase into the GUI.
 
 fn main() {
-    let path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "~/path/to/your.kdbx".to_owned());
+    let Some(path) = std::env::args().nth(1) else {
+        eprintln!(
+            "usage: cargo run -p devboy-secret-kdbx --example probe_user_file -- <path-to-file.kdbx>"
+        );
+        std::process::exit(64);
+    };
     let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     println!("file: {path}");
     println!("size: {bytes} bytes");
