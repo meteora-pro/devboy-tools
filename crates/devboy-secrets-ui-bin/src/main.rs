@@ -85,12 +85,41 @@ fn main() -> Result<()> {
 // GUI launcher
 // =============================================================================
 
+/// Embedded devboy brand logo (`assets/devboy-logo.png`).
+/// Bundled into the binary via `include_bytes!` so the app
+/// stays single-file shippable — no runtime asset lookup, no
+/// `OPENBOX_RESOURCE_DIR`-style env vars.
+const APP_ICON_PNG: &[u8] = include_bytes!("../assets/devboy-logo.png");
+
+/// Decode `APP_ICON_PNG` into the RGBA buffer eframe expects.
+/// Returns `None` (silently) when the embedded bytes fail to
+/// decode — that is a packaging bug, not a runtime error the
+/// user can act on, so we don't surface it in the UI.
+fn load_icon() -> Option<eframe::egui::IconData> {
+    let img = image::load_from_memory(APP_ICON_PNG).ok()?.into_rgba8();
+    let (width, height) = img.dimensions();
+    Some(eframe::egui::IconData {
+        rgba: img.into_raw(),
+        width,
+        height,
+    })
+}
+
 fn launch_gui(provision_path: Option<&str>) -> Result<()> {
     let initial_path = provision_path.map(str::to_owned);
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_inner_size([1024.0, 640.0])
+        .with_title("devboy — secrets inventory");
+    // K22 — devboy brand icon for the OS window (Dock on
+    // macOS, taskbar on Windows, wm-hints on X11/Wayland).
+    // `load_icon` decodes the embedded PNG at startup; if the
+    // bytes ever go corrupt we log + skip rather than crash
+    // the launch — a window without an icon still works.
+    if let Some(icon) = load_icon() {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([1024.0, 640.0])
-            .with_title("devboy — secrets inventory"),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
