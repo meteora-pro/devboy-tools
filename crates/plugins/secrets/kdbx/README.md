@@ -53,15 +53,59 @@ boundary as the existing local-vault flow (ADR-023 §3.7). Agent-side tools
 KeePass uses a Group / Entry hierarchy + free-form custom string fields. The
 ADR-020 path convention is `scope/provider/purpose` (≥3 slash-separated
 segments). The plugin maps KDBX entries by joining their Group breadcrumb
-with the Entry title:
+with the Entry title, then normalising every segment to lowercase +
+`[a-z0-9_-]`:
 
-```
-KeePass:   Root / team / openai / "api-key" (Password field)
-ADR-020:   team/openai/api-key
+```text
+KeePass:   Personal / Cloud / "AWS Access Key" (Password field)
+ADR-020:   kdbx/personal/cloud/aws-access-key
 ```
 
-The Password field is the value. Other fields (UserName, URL, Notes, custom
-strings) surface as metadata on the inventory row.
+Rules:
+
+- The synthetic Root group is **never** part of the path (KeePass names it
+  after the file).
+- Each segment is lowercased + dash-coalesced from runs of non-`[a-z0-9_]`.
+- Entries that collapse to fewer than 2 user-derived segments get padded
+  with `imported` to keep the result valid (e.g. a root-level "Token"
+  entry → `kdbx/imported/token`).
+- The `kdbx/` prefix is added unconditionally so the rows are easy to tell
+  apart from manifest-declared paths in the inventory.
+
+## Value field auto-detect
+
+Most KeePass entries put the token in the standard `Password` field. The
+plugin handles two other patterns:
+
+| Where the value lives | Plugin behaviour |
+|---|---|
+| **Standard `Password` field** (most common) | Used directly. `value_field = Password`. |
+| **Single Protected custom string** + empty Password (e.g. `api_token` field) | Auto-promoted to the value slot. `value_field = CustomField { name: "api_token" }`. The promoted field is hidden from the custom-fields list so the UI doesn't render it twice. |
+| **Multiple Protected custom strings** + empty Password | Ambiguous — nothing is promoted. `password = None`. All candidates remain in `custom_fields` so the UI can let the user pick. |
+
+The active value-field is surfaced in the inventory's provision dialog
+context card so the user can see why a non-Password field won.
+
+## Metadata round-trip
+
+Every KeePass field the plugin reads is preserved in the in-process
+snapshot WITHOUT decryption to disk:
+
+| KeePass field | KdbxEntry slot |
+|---|---|
+| `Title` | `title` (plus path component) |
+| `UserName` | `username` (mapped to `IndexEntry.env_var` for context-card display) |
+| `Password` | `password` (the value) |
+| `URL` | `url` (mapped to `IndexEntry.retrieval_url`) |
+| `Notes` | `notes` (multiline block in `IndexEntry.description`) |
+| `tags` | `tags: Vec<String>` |
+| `times.creation` | `created_at` (ISO 8601) |
+| `times.last_modification` | `modified_at` → `IndexEntry.last_rotated_at` (rotation-age heuristic) |
+| `times.expiry` + `times.expires == Some(true)` | `expires_at` → `IndexEntry.expires_at`. Ghost expiry (Expires=false) is suppressed. |
+| `Entry.id` (UUID) | `uuid: String` (hyphenated hex) |
+| `Entry.get_raw_otp_value()` | `otp` (TOTP marker chip in UI) |
+| Custom string fields | `custom_fields: BTreeMap<String, String>` (alphabetical) |
+| Attachments | `attachments: Vec<KdbxAttachmentMeta { name, size_bytes }>` — names + sizes only, bytes never read |
 
 ## Read-only first
 

@@ -108,6 +108,73 @@ CLI + 9.2 UI) versus the old 27.6 MiB single binary — slight bump
 because each binary embeds its own copy of std + tokio + serde, but the
 CI win dominates the typical install profile.
 
+### Added — KDBX 4 (KeePass) read-only backend + inventory UX (PR #255)
+
+End-to-end read support for KeePass `.kdbx` files as a `SecretSource`,
+plus search + hierarchical-tree UX in the inventory view to make a
+~100+ entry KeePass DB navigable.
+
+**KDBX plugin** ([`crates/plugins/secrets/kdbx`](crates/plugins/secrets/kdbx/)):
+
+- Built on the [`keepass = "0.12"`](https://docs.rs/keepass) crate. KDBX 4
+  (Argon2id KDF + ChaCha20-Poly1305 / AES-256 + HMAC-SHA256) read path
+  with optional keyfile two-factor unlock.
+- `KdbxSource` implements `SecretSource` per ADR-021 §8 with capabilities
+  `READ | LIST | BIOMETRIC_PROMPT`. Read-only MVP — write is a future
+  follow-up (KeePass-GUI concurrent-write safety design needs its own
+  RFC).
+- Path mapping: `Personal/Cloud/AWS Access Key` → `kdbx/personal/cloud/aws-access-key`
+  (lowercased, `[a-z0-9_-]` only, `/`-separated). Single-segment or
+  two-segment KeePass entries are namespaced under `kdbx/imported/<x>`
+  to satisfy ADR-020's 3-segment minimum.
+- Full per-entry metadata extraction: Title, UserName, Password, URL,
+  Notes, **UUID** (stable id), **tags**, **created/modified/expires**
+  timestamps, **raw OTP source**, **all custom string fields** (both
+  Protected and Unprotected), **attachment names + sizes** (bytes are
+  never read into the snapshot).
+- Auto-detect value field: standard Password wins; falls back to the
+  unique Protected custom string when Password is empty (many users
+  park API tokens in a custom `api_token` field). `ValueField` enum
+  records which won; UI shows a "(value field: custom string `<name>`)"
+  note in the context card.
+- Agent-blindness boundary per ADR-023 §3.7: the decrypted snapshot
+  lives ONLY inside the `devboy-secrets-ui` process. The daemon never
+  opens the KDBX file. The `secrets list` / MCP `secrets_describe`
+  surface sees titles + URLs but never values.
+
+**UI integration** ([`crates/devboy-secrets-ui-bin`](crates/devboy-secrets-ui-bin/)):
+
+- New `StorageBackend::KdbxLocked` + `Kdbx` variants. Selected via
+  `DEVBOY_KDBX_FILE` env var (optionally `DEVBOY_KDBX_PASSPHRASE` +
+  `DEVBOY_KDBX_KEYFILE`). When locked, the existing vault-unlock modal
+  appears with KDBX-specific copy ("Unlock KeePass database" + the file
+  path + agent-blindness reminder).
+- `load_inventory_or_empty` extended: every KDBX entry that isn't
+  already in the project manifest becomes an `InventoryRow` with
+  source-label `kdbx` and a full `IndexEntry` projection. Notes / tags
+  / custom string keys / attachment names / UUID / OTP marker all land
+  in the context card.
+
+**Inventory UX** ([`crates/devboy-secrets-ui`](crates/devboy-secrets-ui/)):
+
+- **Search bar** above the inventory (🔍 input with hint text, real-time
+  filter, ✕ clear button, "N of M shown" counter, `Cmd+F` / `Ctrl+F`
+  focus shortcut). Substring-matches case-insensitively across
+  `path / scope / provider / catalog_override / routed_source`.
+  Deliberately excludes `expires_at` and per-row metadata so a query
+  can't accidentally leak rotation-date patterns or values.
+- **Hierarchical tree view** built from path segments. Default for any
+  inventory with ≥20 rows; toggle between Flat / Tree at any time.
+  Per-group header shows `(N)` leaf-count summary. User-expanded
+  prefixes persist in `InventoryState.expanded`. With a non-empty
+  query, every ancestor of every matching leaf is force-expanded so
+  results surface without click-through.
+- **CLI fallback**: new `devboy secrets kdbx peek --file <path>`
+  subcommand for headless verification — secure passphrase prompt
+  via `dialoguer::Password` (no echo, no shell history), prints the
+  inventory table (path + Title + UserName + URL + `password?` yes/no),
+  values NEVER printed. `--json` flag emits JSON-lines per entry.
+
 ### Added — Approve-on-use cron-mode operations work (PR #255 follow-ups)
 
 After the main epic landed, the PR captured four Codex review finds (F1

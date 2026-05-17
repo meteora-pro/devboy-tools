@@ -85,6 +85,29 @@ You should get an entry like `{"name": "default-keychain", "type": "keychain", "
 
 > **If you plan to use 1Password / Vault**: add a separate `[[source]]` block of type `1password` or `vault`, plus a `[[route]]` with the matching `prefix`. Details: [docs/guide/secrets/local-vault.md](./local-vault.md).
 
+### Using an existing KeePass database
+
+If you already keep your tokens in a KeePass `.kdbx` file, point devboy at it via env var (no router config needed for read-only use):
+
+```bash
+export DEVBOY_KDBX_FILE=~/Documents/secrets.kdbx
+# Optional companion keyfile (two-factor unlock):
+# export DEVBOY_KDBX_KEYFILE=~/Documents/secrets.keyx
+
+devboy secrets ui --gui
+```
+
+The UI window opens with an "Unlock KeePass database" modal asking for the passphrase. After unlock the inventory populates with one row per KeePass entry. Path mapping: `Personal / Cloud / "AWS Access Key"` → `kdbx/personal/cloud/aws-access-key`. The decrypted snapshot lives inside the UI process only — the `devboy-secrets-agent` daemon never opens the file. Read-only MVP; writing back lands as a follow-up.
+
+For a non-GUI smoke (CI / headless dev box):
+
+```bash
+devboy secrets kdbx peek --file ~/Documents/secrets.kdbx
+# Prompts for passphrase in-terminal (no echo); prints the inventory
+# table — path / Title / UserName / URL / `password?` yes-no. Values
+# are never printed.
+```
+
 ## Step 3. Project manifest
 
 The manifest declares which secrets the project expects. Without it the framework has no idea what to look for and `doctor` cannot complain about missing values.
