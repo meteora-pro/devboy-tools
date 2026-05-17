@@ -1498,7 +1498,18 @@ fn load_inventory_or_empty(
                 continue;
             }
             let scope = entry.path.split('/').next().unwrap_or("kdbx").to_owned();
-            let provider_segment = entry.path.split('/').nth(1);
+            let path_provider_segment = entry.path.split('/').nth(1);
+            // K20 — heuristic provider detection. Path
+            // segments from a hand-curated KDBX usually don't
+            // line up with catalog provider_ids (the user
+            // organises by group, not by provider). Try the
+            // entry's URL + title + username against every
+            // loaded catalog before falling back to the
+            // path-segment guess.
+            let detected_provider = detect_kdbx_catalog_binding(entry, catalogs);
+            let provider = detected_provider
+                .clone()
+                .or_else(|| path_provider_segment.map(str::to_owned));
             let source_tag = if *wallet_name == "primary" {
                 b.source_label().to_owned()
             } else {
@@ -1514,9 +1525,12 @@ fn load_inventory_or_empty(
                 status: devboy_secrets_ui::RowStatus::Provisioned,
                 routed_source: Some(source_tag),
                 expires_at: entry.expires_at.clone(),
-                provider: provider_segment.map(str::to_owned),
+                provider,
                 scope,
-                catalog_override: provider_segment.and_then(|p| catalog_override_for(catalogs, p)),
+                catalog_override: detected_provider
+                    .as_deref()
+                    .or(path_provider_segment)
+                    .and_then(|p| catalog_override_for(catalogs, p)),
             });
             // Surface KDBX metadata in the index-entry map so
             // the provision dialog's context card can show the
@@ -1961,6 +1975,96 @@ const ABOUT_WIZARD_ASCII: &str = r#"▌▌▌▌▌▌▌▌▌▌▌▌▌▌�
 ▁▁▁▁▁▁▁▁▁▁@*%%><==+!.+>>****#%%%**%%#@@@%*#%%#%%%=+>~ll!!!!I!_--_i:  .:iIiiiiiii
 ▁▁▁▁▁▁▁▁▁▒<+~_~~~--_/_>>>*%%#%#%%*%#####%*%#%%%**><<<<==+++=<<<<<=~/!lIIiIiIiiii
 ▁▁▁▁▁▁▁▁▀>><=--~_\/\_\><<*%##%%%%%%#%%%%%*%%****><=+--------~~~~_\\__\/|!!llIIIi"#;
+
+/// K20 — heuristic provider detection for a KDBX entry. Tries
+/// (in order):
+///
+/// 1. URL host match — `entry.url`'s host vs every catalog
+///    variant's `retrieval.console_url` host. `platform.openai
+///    .com` → `openai`. Stripping a leading `www.` on both
+///    sides; substring match so subdomain trees collapse
+///    (`api.openai.com` still matches `platform.openai.com`'s
+///    parent domain via the second-level token).
+///
+/// 2. Title / username substring vs catalog `provider_id` and
+///    `display_name`, case-insensitive. "OpenAI prod token"
+///    → `openai`.
+///
+/// Returns the first match's `provider_id`. No match → None;
+/// the caller falls back to the path-segment guess.
+fn detect_kdbx_catalog_binding(
+    entry: &devboy_secret_kdbx::KdbxEntry,
+    catalogs: &[devboy_token_catalog::LoadedCatalog],
+) -> Option<String> {
+    // ----- 1. URL host match ------------------------------
+    if let Some(url) = entry.url.as_deref()
+        && let Some(host) = reqwest::Url::parse(url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_owned))
+    {
+        let host_key = host.strip_prefix("www.").unwrap_or(&host).to_lowercase();
+        let host_core = second_level_domain(&host_key);
+        for loaded in catalogs {
+            for variant in &loaded.catalog.variants {
+                let console = &variant.retrieval.console_url;
+                if let Some(c_host) = reqwest::Url::parse(console)
+                    .ok()
+                    .and_then(|u| u.host_str().map(str::to_owned))
+                {
+                    let c_key = c_host
+                        .strip_prefix("www.")
+                        .unwrap_or(&c_host)
+                        .to_lowercase();
+                    if c_key == host_key || second_level_domain(&c_key) == host_core {
+                        return Some(loaded.catalog.provider_id.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // ----- 2. Title / username substring vs provider_id /
+    //          display_name ----------------------------------
+    let needle = format!(
+        "{} {}",
+        entry.title.to_lowercase(),
+        entry.username.as_deref().unwrap_or("").to_lowercase()
+    );
+    for loaded in catalogs {
+        let pid = loaded.catalog.provider_id.to_lowercase();
+        let dn = loaded.catalog.display_name.to_lowercase();
+        // Require provider id / display name to be at least 3
+        // chars so we don't match "go" against "google" by
+        // accident on tiny tokens. Hyphens / underscores are
+        // tolerated by lowercase normalisation.
+        if pid.len() >= 3 && needle.contains(&pid) {
+            return Some(loaded.catalog.provider_id.clone());
+        }
+        if dn.len() >= 3 && needle.contains(&dn) {
+            return Some(loaded.catalog.provider_id.clone());
+        }
+    }
+    None
+}
+
+/// Reduce a host string to its second-level + TLD (`api.openai
+/// .com` → `openai.com`, `platform.openai.com` → `openai.com`).
+/// Used by the URL-host match so subdomain trees collapse
+/// against the catalog's console_url even when the user's
+/// KeePass URL points at a different sub-host.
+///
+/// Pure label arithmetic — doesn't know about effective TLDs
+/// (`.co.uk` etc) and won't collapse `app.example.co.uk` to
+/// `example.co.uk`. That's a known limitation; the second-pass
+/// title-substring match catches what URL-match misses.
+fn second_level_domain(host: &str) -> String {
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() <= 2 {
+        host.to_owned()
+    } else {
+        parts[parts.len() - 2..].join(".")
+    }
+}
 
 /// Determine the inline catalog-override badge for a row whose
 /// middle path segment is `provider_id`. Returns `None` for
@@ -3900,5 +4004,133 @@ mod tests {
             let got = resolve_kdbx_working_copy(&src);
             assert_eq!(got, src);
         });
+    }
+
+    // -- K20 — catalog binding heuristics ---------------------
+
+    #[test]
+    fn second_level_domain_collapses_subdomains() {
+        assert_eq!(second_level_domain("openai.com"), "openai.com");
+        assert_eq!(second_level_domain("platform.openai.com"), "openai.com");
+        assert_eq!(second_level_domain("api.us-east.openai.com"), "openai.com");
+        // Two-label hosts pass through unchanged.
+        assert_eq!(second_level_domain("localhost"), "localhost");
+    }
+
+    /// Build a minimal in-memory KdbxEntry for the K20 tests
+    /// — we only care about title / username / url here so
+    /// most fields are zero-value placeholders.
+    fn fake_kdbx_entry(
+        title: &str,
+        username: Option<&str>,
+        url: Option<&str>,
+    ) -> devboy_secret_kdbx::KdbxEntry {
+        devboy_secret_kdbx::KdbxEntry {
+            path: format!("kdbx/test/{}", title.to_lowercase().replace(' ', "-")),
+            values: Vec::new(),
+            title: title.to_owned(),
+            username: username.map(str::to_owned),
+            url: url.map(str::to_owned),
+            notes: None,
+            uuid: "00000000-0000-0000-0000-000000000000".to_owned(),
+            tags: Vec::new(),
+            created_at: None,
+            modified_at: None,
+            expires_at: None,
+            otp: None,
+            attachments: Vec::new(),
+        }
+    }
+
+    fn fake_loaded_catalog(
+        provider_id: &str,
+        display_name: &str,
+        console_url: &str,
+    ) -> devboy_token_catalog::LoadedCatalog {
+        devboy_token_catalog::LoadedCatalog {
+            catalog: devboy_token_catalog::ProviderCatalog {
+                schema: None,
+                schema_version: 1,
+                provider_id: provider_id.to_owned(),
+                display_name: display_name.to_owned(),
+                description: None,
+                variants: vec![devboy_token_catalog::TokenVariant {
+                    id: "default".to_owned(),
+                    display_name: "default".to_owned(),
+                    description: "fixture".to_owned(),
+                    format_regex: None,
+                    format_hint: None,
+                    retrieval: devboy_token_catalog::RetrievalSpec {
+                        console_url: console_url.to_owned(),
+                        docs_url: None,
+                        steps: vec!["create".to_owned()],
+                        notes: None,
+                    },
+                    liveness: None,
+                    rotation: None,
+                    default_keychain_account: None,
+                }],
+                env_var_patterns: Vec::new(),
+                env_var_skip: Vec::new(),
+            },
+            source: devboy_token_catalog::CatalogSource::Bundled,
+            path: None,
+        }
+    }
+
+    #[test]
+    fn detect_kdbx_catalog_binding_via_url_host_match() {
+        let catalogs = vec![
+            fake_loaded_catalog("openai", "OpenAI", "https://platform.openai.com/api-keys"),
+            fake_loaded_catalog("stripe", "Stripe", "https://dashboard.stripe.com/apikeys"),
+        ];
+        let entry = fake_kdbx_entry(
+            "Production key",
+            Some("ops@example.com"),
+            Some("https://api.openai.com/v1/models"),
+        );
+        assert_eq!(
+            detect_kdbx_catalog_binding(&entry, &catalogs).as_deref(),
+            Some("openai")
+        );
+    }
+
+    #[test]
+    fn detect_kdbx_catalog_binding_via_title_substring() {
+        let catalogs = vec![fake_loaded_catalog(
+            "stripe",
+            "Stripe",
+            "https://dashboard.stripe.com/apikeys",
+        )];
+        // No URL → title carries the signal.
+        let entry = fake_kdbx_entry("Stripe live keys", None, None);
+        assert_eq!(
+            detect_kdbx_catalog_binding(&entry, &catalogs).as_deref(),
+            Some("stripe")
+        );
+    }
+
+    #[test]
+    fn detect_kdbx_catalog_binding_returns_none_when_no_signal() {
+        let catalogs = vec![fake_loaded_catalog(
+            "openai",
+            "OpenAI",
+            "https://platform.openai.com/api-keys",
+        )];
+        let entry = fake_kdbx_entry("Personal SSH key", None, None);
+        assert!(detect_kdbx_catalog_binding(&entry, &catalogs).is_none());
+    }
+
+    #[test]
+    fn detect_kdbx_catalog_binding_short_provider_id_does_not_match_random_substring() {
+        // Three-char minimum + lowercase normalisation should
+        // stop e.g. "ai" matching "AIRBNB" via substring.
+        let catalogs = vec![fake_loaded_catalog(
+            "ai",
+            "AI",
+            "https://example.invalid/console",
+        )];
+        let entry = fake_kdbx_entry("Airbnb host login", None, None);
+        assert!(detect_kdbx_catalog_binding(&entry, &catalogs).is_none());
     }
 }
