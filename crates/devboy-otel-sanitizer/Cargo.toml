@@ -1,0 +1,34 @@
+[package]
+name = "devboy-otel-sanitizer"
+description = "Generic OpenTelemetry sanitizer — pluggable redaction library for OTLP traces, metrics, logs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["opentelemetry", "otlp", "redaction", "sanitization", "security"]
+categories = ["development-tools::debugging"]
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+regex = "1.11"
+toml = "0.8"
+sha2 = "0.10"
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[features]
+default = []
+# Optional ML-based PII detection — see D7 in ADR-109 / RESEARCH-011.
+# Build with: `cargo build --features=ml`
+# Runtime: `devboy otel scan --use-ml` flag (separate user opt-in).
+# Models must be downloaded explicitly via `devboy models pull <name>`.
+ml = []

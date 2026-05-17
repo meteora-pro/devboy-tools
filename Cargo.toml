@@ -9,6 +9,7 @@ members = [
     "crates/devboy-mcp",
     "crates/devboy-cli",
     "crates/devboy-skills",
+    "crates/devboy-otel-sanitizer",
     # API plugins
     "crates/plugins/api/gitlab",
     "crates/plugins/api/github",
