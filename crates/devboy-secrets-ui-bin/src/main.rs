@@ -140,6 +140,11 @@ struct InventoryApp {
     /// resolved) or no catalog match at all. Driven by the
     /// radio-button picker rendered above the context card.
     selected_variant_id: Option<String>,
+    /// Names of KDBX value fields the user has explicitly
+    /// revealed in the current dialog. Cleared every time
+    /// `open_dialog_for` runs so a new entry starts masked.
+    /// Used by the K19 reveal-values section in the dialog.
+    revealed_kdbx_values: std::collections::HashSet<String>,
     /// Backend-driven token catalogs loaded at startup.
     /// Sources: bundled (compiled in), user
     /// (`~/.devboy/secrets/catalog/`), project
@@ -228,6 +233,7 @@ impl InventoryApp {
             backend,
             recovery_phrase_to_show: None,
             selected_variant_id: None,
+            revealed_kdbx_values: std::collections::HashSet::new(),
             catalogs,
             catalog_errors,
             pending_url_confirms,
@@ -1338,6 +1344,105 @@ fn kdbx_entry_to_index_entry(entry: &devboy_secret_kdbx::KdbxEntry) -> devboy_st
     }
 }
 
+/// Locate the KDBX entry for `path` and clone its value list,
+/// when the backend is KDBX. Returns `None` for any other
+/// backend (the dialog falls back to its single-value render).
+///
+/// Cloning is intentional — the `KdbxValue` Vec is small
+/// (typically 1-5 fields per entry) and the egui render layer
+/// wants borrow-free access. SecretString implements clone via
+/// allocation; the original snapshot owns the canonical copy.
+fn kdbx_values_for_path(
+    backend: &StorageBackend,
+    path: &str,
+) -> Option<Vec<devboy_secret_kdbx::KdbxValue>> {
+    let StorageBackend::Kdbx { snapshot, .. } = backend else {
+        return None;
+    };
+    let entry = snapshot.entries.iter().find(|e| e.path == path)?;
+    if entry.values.is_empty() {
+        return None;
+    }
+    Some(entry.values.to_vec())
+}
+
+/// Render the K19 "Values" section inside the provision
+/// dialog: one row per value field with name + masked/revealed
+/// text + 👁 reveal + 📋 copy. Mutates `revealed` (the set of
+/// field names currently shown in plaintext) on user input.
+///
+/// Agent-blindness: this render runs inside the UI process
+/// only. The plaintext is held in `KdbxValue.value` (zeroizing
+/// SecretString) and exposed via `expose_secret()` only to the
+/// `Label` / clipboard at the very last moment.
+fn render_kdbx_values_section(
+    ui: &mut eframe::egui::Ui,
+    values: &[devboy_secret_kdbx::KdbxValue],
+    revealed: &mut std::collections::HashSet<String>,
+) {
+    use secrecy::ExposeSecret as _;
+    ui.label(eframe::egui::RichText::new(format!("Values ({})", values.len())).strong());
+    ui.label(
+        eframe::egui::RichText::new(
+            "KeePass entries can carry multiple Protected fields. \
+             Each row reveals independently; copy lands on the clipboard.",
+        )
+        .small()
+        .weak(),
+    );
+    ui.add_space(4.0);
+
+    eframe::egui::Grid::new("kdbx-values-grid")
+        .num_columns(4)
+        .spacing([10.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            for v in values {
+                // Column 1 — lock chip + field name.
+                let lock = if v.is_protected { "🔒" } else { "·" };
+                ui.label(format!("{lock} {}", v.name));
+
+                // Column 2 — value (masked or revealed).
+                let is_revealed = revealed.contains(&v.name) || !v.is_protected;
+                let body: String = if is_revealed {
+                    v.value.expose_secret().to_owned()
+                } else {
+                    "•".repeat(8)
+                };
+                ui.label(eframe::egui::RichText::new(body).monospace());
+
+                // Column 3 — reveal toggle (only meaningful
+                // for Protected fields; Unprotected rows show
+                // a disabled placeholder for layout symmetry).
+                if v.is_protected {
+                    let (glyph, hover) = if is_revealed {
+                        ("🙈", "Hide value")
+                    } else {
+                        ("👁", "Reveal value")
+                    };
+                    if ui.button(glyph).on_hover_text(hover).clicked() {
+                        if is_revealed {
+                            revealed.remove(&v.name);
+                        } else {
+                            revealed.insert(v.name.clone());
+                        }
+                    }
+                } else {
+                    ui.label("  ");
+                }
+
+                // Column 4 — copy to clipboard. Honours the
+                // user-supplied value verbatim; egui handles
+                // the OS-level clipboard write on macOS /
+                // Linux / Windows.
+                if ui.button("📋").on_hover_text("Copy to clipboard").clicked() {
+                    ui.ctx().copy_text(v.value.expose_secret().to_owned());
+                }
+                ui.end_row();
+            }
+        });
+}
+
 /// Determine the inline catalog-override badge for a row whose
 /// middle path segment is `provider_id`. Returns `None` for
 /// bundled sources (the common case — no chip needed) and for
@@ -1673,6 +1778,19 @@ impl eframe::App for InventoryApp {
                         variant_for_card,
                     );
                     ui.separator();
+
+                    // K19 — KDBX-only "Values" section. When the
+                    // active backend is KDBX and the dialog path
+                    // matches one of its entries, list EVERY
+                    // value field (multiple Protected strings are
+                    // routine in KeePass — see K18). Each row
+                    // gets its own 👁 reveal + 📋 copy buttons;
+                    // values stay masked by default, revealed
+                    // one at a time at the user's request.
+                    if let Some(values) = kdbx_values_for_path(&self.backend, &dialog_path) {
+                        render_kdbx_values_section(ui, &values, &mut self.revealed_kdbx_values);
+                        ui.separator();
+                    }
 
                     // Format hint (P22.1). Human-readable shape
                     // ("starts with sk-, 32+ alphanumeric") sourced
@@ -2200,6 +2318,11 @@ impl InventoryApp {
         ));
         self.dialog_path = Some(path.to_owned());
         self.last_save_error = None;
+        // Every new dialog starts with every Protected field
+        // masked — the user re-clicks 👁 to reveal one at a
+        // time. Stops a value-shaped string from staying on
+        // screen after the user moved on to a different entry.
+        self.revealed_kdbx_values.clear();
     }
 
     /// Pick the variant that should be selected when the
