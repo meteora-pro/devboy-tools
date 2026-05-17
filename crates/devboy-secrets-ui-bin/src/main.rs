@@ -658,7 +658,7 @@ impl InventoryApp {
                 ui.label("·");
                 ui.hyperlink_to(
                     "Changelog",
-                    "https://github.com/meteora-pro/devboy-tools/blob/main/CHANGELOG.md",
+                    "https://github.com/meteora-pro/devboy-tools/releases",
                 );
                 ui.label("·");
                 ui.hyperlink_to(
@@ -2110,7 +2110,7 @@ impl eframe::App for InventoryApp {
                 }
                 if ui.button("Open changelog").clicked() {
                     ui.ctx().open_url(eframe::egui::OpenUrl::new_tab(
-                        "https://github.com/meteora-pro/devboy-tools/blob/main/CHANGELOG.md",
+                        "https://github.com/meteora-pro/devboy-tools/releases",
                     ));
                     ui.close();
                 }
