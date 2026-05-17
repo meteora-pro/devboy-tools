@@ -7,18 +7,62 @@ use crate::inventory::{InventoryState, RowStatus, SortKey};
 
 /// Render the inventory into the supplied [`egui::Ui`]. Mutates
 /// the state directly via clicks (row selection, sort key
-/// changes, filter changes).
+/// changes, filter changes, search query).
 pub fn render(ui: &mut egui::Ui, state: &mut InventoryState) {
     ui.heading("Secrets — inventory");
     ui.label(state.daemon_status().label());
 
     ui.separator();
 
+    render_search_bar(ui, state);
     render_filters(ui, state);
 
     ui.separator();
 
     render_table(ui, state);
+}
+
+/// Top-bar search field. Drives `InventoryState.query`; the
+/// real filter lives in `visible_rows`. Counter under the bar
+/// shows "N of M shown" so the user can tell what was hidden.
+/// `Cmd+F` / `Ctrl+F` focuses the field (mirrors the platform
+/// convention for "find").
+fn render_search_bar(ui: &mut egui::Ui, state: &mut InventoryState) {
+    let total = state.rows().len();
+    let visible = state.visible_rows().len();
+    let mut buf = state.query().to_owned();
+    ui.horizontal(|ui| {
+        ui.label("🔍");
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut buf)
+                .hint_text("search by path / scope / provider …")
+                .desired_width(360.0),
+        );
+        // Cmd+F (macOS) / Ctrl+F (other) focuses the search
+        // field. The check fires on every frame; cheap.
+        let ctx = ui.ctx().clone();
+        let want_focus = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::F));
+        if want_focus {
+            resp.request_focus();
+        }
+        if resp.changed() {
+            state.set_query(buf.clone());
+        }
+        if !buf.is_empty() && ui.small_button("✕").on_hover_text("clear search").clicked() {
+            state.set_query(String::new());
+        }
+    });
+    // Counter — visible / total. Only show when the user has
+    // a query or active filters; otherwise the row count is
+    // self-evident from the table.
+    let has_filter = !state.query().trim().is_empty() || !state.filters().is_empty();
+    if has_filter {
+        ui.label(
+            egui::RichText::new(format!("{visible} of {total} shown"))
+                .small()
+                .weak(),
+        );
+    }
 }
 
 fn render_filters(ui: &mut egui::Ui, state: &mut InventoryState) {
@@ -41,6 +85,7 @@ fn render_filters(ui: &mut egui::Ui, state: &mut InventoryState) {
         ui.label("Filters:");
         if ui.button("clear all").clicked() {
             state.clear_filters();
+            state.set_query(String::new());
         }
     });
 }

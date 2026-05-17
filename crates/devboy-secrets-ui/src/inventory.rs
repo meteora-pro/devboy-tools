@@ -223,6 +223,13 @@ pub struct InventoryState {
     filters: InventoryFilters,
     /// Primary sort key. ADR-023 §3.4 defaults to `ExpiresAt`.
     sort_key: SortKey,
+    /// Free-text query that further narrows `visible_rows`.
+    /// Empty string == no query (every row matches). Matches
+    /// case-insensitively across `path | scope | provider |
+    /// catalog_override | routed_source`. The render layer
+    /// owns the input widget; this is just the canonical
+    /// holder so the filter logic can read it.
+    query: String,
     /// Index into the *visible* rows list; clamped to
     /// `[0, visible_rows().len())` whenever filters or rows
     /// change.
@@ -236,12 +243,13 @@ pub struct InventoryState {
 impl InventoryState {
     /// Build a new state from the orchestration layer's row list.
     /// Defaults: sort by `ExpiresAt`, focus on the table, daemon
-    /// status `Unknown`.
+    /// status `Unknown`, no query.
     pub fn new(rows: Vec<InventoryRow>) -> Self {
         Self {
             rows,
             filters: InventoryFilters::default(),
             sort_key: SortKey::ExpiresAt,
+            query: String::new(),
             selected: 0,
             focus: Focus::Table,
             daemon_status: DaemonStatus::Unknown,
@@ -265,6 +273,19 @@ impl InventoryState {
     }
     pub fn daemon_status(&self) -> DaemonStatus {
         self.daemon_status
+    }
+
+    /// Free-text query currently applied to `visible_rows`.
+    /// Empty string means no query — every row matches.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// Replace the free-text query, clamp the selection. Render
+    /// layer calls this whenever the search-bar text changes.
+    pub fn set_query(&mut self, query: impl Into<String>) {
+        self.query = query.into();
+        self.clamp_selection();
     }
 
     /// Replace the row list and clamp the cursor. Called when
@@ -344,6 +365,7 @@ impl InventoryState {
 
     /// Filtered + sorted view over `rows`. Borrows; no copy.
     pub fn visible_rows(&self) -> Vec<&InventoryRow> {
+        let query_lc = self.query.trim().to_lowercase();
         let mut out: Vec<&InventoryRow> = self
             .rows
             .iter()
@@ -355,6 +377,7 @@ impl InventoryState {
                         .as_deref()
                         .is_none_or(|p| r.provider.as_deref() == Some(p))
                     && self.filters.status.is_none_or(|s| r.status == s)
+                    && (query_lc.is_empty() || row_matches_query(r, &query_lc))
             })
             .collect();
         match self.sort_key {
@@ -388,6 +411,39 @@ impl InventoryState {
             self.selected = visible - 1;
         }
     }
+}
+
+/// Case-insensitive substring match against the fields the
+/// inventory's search bar searches over. `query_lc` is assumed
+/// to be lower-cased + trimmed already (the caller does it
+/// once per render).
+///
+/// Searched fields: path, scope, provider (if Some),
+/// catalog_override (if Some), routed_source (if Some).
+/// Deliberately does NOT search inside per-row metadata
+/// (KdbxEntry custom strings, IndexEntry description) — those
+/// can hold values, and we don't want a stray query like "sk_"
+/// to highlight rows whose secret value starts with it.
+pub fn row_matches_query(row: &InventoryRow, query_lc: &str) -> bool {
+    if row.path.to_lowercase().contains(query_lc) || row.scope.to_lowercase().contains(query_lc) {
+        return true;
+    }
+    if let Some(p) = row.provider.as_deref()
+        && p.to_lowercase().contains(query_lc)
+    {
+        return true;
+    }
+    if let Some(c) = row.catalog_override.as_deref()
+        && c.to_lowercase().contains(query_lc)
+    {
+        return true;
+    }
+    if let Some(s) = row.routed_source.as_deref()
+        && s.to_lowercase().contains(query_lc)
+    {
+        return true;
+    }
+    false
 }
 
 // =============================================================================
@@ -856,5 +912,94 @@ mod tests {
         // Filter chips show "any" when no filter set.
         assert!(dump.contains("scope: any"));
         assert!(dump.contains("Tab=cycle focus"));
+    }
+
+    // -- K9 — free-text query --------------------------------
+
+    #[test]
+    fn query_filters_by_case_insensitive_substring_across_path_and_scope() {
+        let mut s = fixture_state();
+        s.set_query("GITLAB");
+        let visible: Vec<&str> = s.visible_rows().iter().map(|r| r.path.as_str()).collect();
+        assert!(visible.iter().all(|p| p.contains("gitlab")));
+        assert_eq!(
+            visible.len(),
+            2,
+            "expected both gitlab rows, got {visible:?}"
+        );
+    }
+
+    #[test]
+    fn query_matches_provider_field() {
+        let mut s = fixture_state();
+        s.set_query("github");
+        let visible: Vec<&str> = s.visible_rows().iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(visible, vec!["personal/github/pat"]);
+    }
+
+    #[test]
+    fn query_matches_routed_source() {
+        let mut s = fixture_state();
+        s.set_query("vault-team");
+        let visible: Vec<&str> = s.visible_rows().iter().map(|r| r.path.as_str()).collect();
+        // Both gitlab rows route through vault-team.
+        assert_eq!(visible.len(), 2);
+    }
+
+    #[test]
+    fn empty_query_is_a_no_op() {
+        let mut s = fixture_state();
+        let baseline = s.visible_rows().len();
+        s.set_query("");
+        assert_eq!(s.visible_rows().len(), baseline);
+        s.set_query("   "); // whitespace-only
+        assert_eq!(s.visible_rows().len(), baseline);
+    }
+
+    #[test]
+    fn query_combines_with_existing_filters() {
+        let mut s = fixture_state();
+        s.set_status_filter(Some(RowStatus::Missing));
+        // Only the jira row is missing.
+        assert_eq!(s.visible_rows().len(), 1);
+        s.set_query("gitlab");
+        // No gitlab row is missing → empty.
+        assert_eq!(s.visible_rows().len(), 0);
+        s.set_query("jira");
+        // jira row is missing AND matches query.
+        assert_eq!(s.visible_rows().len(), 1);
+    }
+
+    #[test]
+    fn query_clamps_selection_when_match_set_shrinks() {
+        let mut s = fixture_state();
+        s.move_to_bottom();
+        let prev = s.selected();
+        s.set_query("github");
+        assert!(s.selected() < s.visible_rows().len());
+        assert!(s.selected() <= prev);
+    }
+
+    #[test]
+    fn query_does_not_search_metadata_only_secret_shaped_strings() {
+        // row_matches_query MUST NOT search inside fields that
+        // could hold secret-shaped data — only the
+        // already-public row scaffolding (path / scope /
+        // provider / catalog_override / routed_source).
+        let r = row(
+            "team/x/y",
+            RowStatus::Provisioned,
+            Some("local-vault"),
+            Some("2026-01-01"),
+            Some("x"),
+        );
+        // These match because they live on the row scaffolding.
+        assert!(row_matches_query(&r, "team"));
+        assert!(row_matches_query(&r, "local-vault"));
+        // The expires_at date is NOT in the searched set even
+        // though it's technically on the row — this guards
+        // against the user accidentally typing a date prefix
+        // and revealing how many secrets expire that month.
+        assert!(!row_matches_query(&r, "2026"));
     }
 }
