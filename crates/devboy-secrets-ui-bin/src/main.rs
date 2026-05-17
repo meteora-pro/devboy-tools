@@ -177,7 +177,6 @@ struct InventoryApp {
     /// of the wallet that owns the upcoming unlock attempt.
     /// `None` targets the primary backend (preserves the K22
     /// behaviour for the existing single-wallet unlock flow).
-    #[allow(dead_code)] // wired up by K29 in a follow-up commit
     pending_unlock_target: Option<String>,
     /// Recovery phrase to surface once after first vault create.
     /// `None` until a vault is created, then `Some` for the
@@ -2030,6 +2029,16 @@ impl InventoryApp {
     /// is identical to the pre-K31 monolithic `ui()` body; this
     /// is a pure structural extraction.
     fn render_body(&mut self, ui: &mut eframe::egui::Ui) {
+        // K28 — wallet bar. One chip per connected wallet
+        // (primary first, then extras), each showing the
+        // lock state + name + a "★ primary" marker. Click a
+        // 🔒 chip to arm the K29 unlock flow for that wallet;
+        // click 🔓 on an extra to lock it back; click 🔒 on
+        // the primary opens the legacy single-wallet unlock
+        // modal (same UX as pre-K28).
+        self.render_wallet_bar(ui);
+        ui.separator();
+
         // Backend banner + switcher — tells the user where
         // saves go, and lets them flip keychain ↔ local-vault
         // live (V5). The switch is session-scoped; the env var
@@ -2616,7 +2625,134 @@ impl InventoryApp {
             }
         }
     }
+
+    /// K28 — render the per-wallet chip strip above the backend
+    /// banner. Each wallet renders as a small button with
+    /// 🔒/🔓 + name + optional `(N)` entry-count. Click:
+    ///
+    /// * primary, locked → arms the legacy single-wallet unlock
+    ///   modal (same code path as pre-K28)
+    /// * primary, unlocked → no-op; the existing banner below
+    ///   still owns the "Lock vault" / switcher buttons
+    /// * extra, locked → arms K29's per-wallet unlock modal
+    ///   targeting that wallet's name
+    /// * extra, unlocked → locks it back via `StorageBackend::lock`
+    fn render_wallet_bar(&mut self, ui: &mut eframe::egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                eframe::egui::RichText::new("Wallets:")
+                    .small()
+                    .color(eframe::egui::Color32::from_rgb(0xaa, 0xaa, 0xaa)),
+            );
+            // Primary chip first.
+            let primary_name = wallets::synthetic_name_for(&self.backend);
+            let primary_locked = self.backend.is_locked();
+            let primary_count = wallet_entry_count(&self.backend);
+            let primary_label = chip_label("primary", &primary_name, primary_locked, primary_count);
+            let resp = ui.small_button(primary_label).on_hover_text(format!(
+                "Primary wallet ({}). Click to {} it.",
+                self.backend.source_label(),
+                if primary_locked { "unlock" } else { "manage" }
+            ));
+            if resp.clicked() && primary_locked && self.vault_unlock.is_none() {
+                // Re-use the existing locked-startup arm flow.
+                let state = devboy_secrets_ui::VaultUnlockState::new(
+                    devboy_secrets_ui::VaultUnlockMode::Unlock,
+                );
+                let state = match &self.backend {
+                    StorageBackend::KdbxLocked { file, .. } => state.with_copy(
+                        "Unlock KeePass database",
+                        format!("Enter the passphrase that protects `{}`.", file.display()),
+                    ),
+                    _ => state,
+                };
+                self.vault_unlock = Some(state);
+                self.pending_unlock_target = None; // primary
+            }
+
+            // Extra wallets in declaration order. Captured into
+            // per-frame intent flags so we can mutate
+            // self.extra_wallets / self.vault_unlock after the
+            // loop finishes (avoid double borrow).
+            let mut unlock_request: Option<String> = None;
+            let mut lock_request: Option<String> = None;
+            for w in &self.extra_wallets {
+                let count = wallet_entry_count(&w.backend);
+                let locked = w.backend.is_locked();
+                let label = chip_label("extra", &w.name, locked, count);
+                let resp = ui.small_button(label).on_hover_text(format!(
+                    "{} wallet `{}` ({}). Click to {} it.",
+                    w.backend.source_label(),
+                    w.name,
+                    if locked { "locked" } else { "unlocked" },
+                    if locked { "unlock" } else { "lock" }
+                ));
+                if resp.clicked() {
+                    if locked {
+                        unlock_request = Some(w.name.clone());
+                    } else {
+                        lock_request = Some(w.name.clone());
+                    }
+                }
+            }
+            if let Some(name) = unlock_request
+                && self.vault_unlock.is_none()
+            {
+                let target = self.extra_wallets.iter().find(|w| w.name == name);
+                let state = devboy_secrets_ui::VaultUnlockState::new(
+                    devboy_secrets_ui::VaultUnlockMode::Unlock,
+                );
+                let state = match target.map(|w| &w.backend) {
+                    Some(StorageBackend::KdbxLocked { file, .. }) => state.with_copy(
+                        format!("Unlock `{name}`"),
+                        format!("Enter the passphrase that protects `{}`.", file.display()),
+                    ),
+                    Some(StorageBackend::LocalVaultLocked { vault_path }) => state.with_copy(
+                        format!("Unlock `{name}`"),
+                        format!(
+                            "Enter the passphrase for the encrypted vault at `{}`.",
+                            vault_path.display()
+                        ),
+                    ),
+                    _ => state.with_copy(format!("Unlock `{name}`"), String::new()),
+                };
+                self.vault_unlock = Some(state);
+                self.pending_unlock_target = Some(name);
+            }
+            if let Some(name) = lock_request
+                && let Some(slot) = self.extra_wallets.iter_mut().find(|w| w.name == name)
+            {
+                slot.backend = slot.backend.lock();
+                self.reload();
+            }
+        });
+    }
 }
+
+/// K28 — entry-count for an unlocked wallet's chip. Unlocked
+/// KDBX vaults report their snapshot length; everything else
+/// returns `None` (no on-the-spot count without an extra round
+/// trip to the daemon).
+fn wallet_entry_count(backend: &StorageBackend) -> Option<usize> {
+    match backend {
+        StorageBackend::Kdbx { snapshot, .. } => Some(snapshot.entries.len()),
+        _ => None,
+    }
+}
+
+/// K28 — chip label: `🔒 name` (locked) or `🔓 name (N)`
+/// (unlocked, optional count). `role = "primary"` adds a
+/// trailing `★` so the primary stands out at a glance.
+fn chip_label(role: &str, name: &str, locked: bool, count: Option<usize>) -> String {
+    let lock = if locked { "🔒" } else { "🔓" };
+    let marker = if role == "primary" { " ★" } else { "" };
+    let count_suffix = match count {
+        Some(n) if !locked => format!(" ({n})"),
+        _ => String::new(),
+    };
+    format!("{lock} {name}{count_suffix}{marker}")
+}
+
 // =============================================================================
 // Liveness probes
 // =============================================================================
