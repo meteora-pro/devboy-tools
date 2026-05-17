@@ -47,6 +47,11 @@ pub fn render(ui: &mut egui::Ui, state: &mut VaultUnlockState) -> VaultUnlockFra
 
     let revealed = state.reveal();
     let mut toggle_reveal = false;
+    // Enter-to-submit: the render observes when any input
+    // field has focus AND the user pressed Enter, then sets
+    // this flag. Same code path as the explicit submit button
+    // below — `validate()` runs first, errors stay in-modal.
+    let mut enter_pressed = false;
 
     // 3. Passphrase input + eye-toggle. The eye-toggle drives
     //    `state.reveal()`, shared by both fields.
@@ -64,6 +69,13 @@ pub fn render(ui: &mut egui::Ui, state: &mut VaultUnlockState) -> VaultUnlockFra
         }
         if resp.gained_focus() {
             state.focus_field(VaultUnlockFocus::Passphrase);
+        }
+        // egui's TextEdit fires `lost_focus()` when Enter is
+        // pressed inside a single-line field (focus leaves the
+        // text-edit). Detect that combination + flag for the
+        // submit branch below.
+        if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            enter_pressed = true;
         }
         let (glyph, hover) = if revealed {
             ("🙈", "Hide passphrase")
@@ -94,6 +106,9 @@ pub fn render(ui: &mut egui::Ui, state: &mut VaultUnlockState) -> VaultUnlockFra
             }
             if resp.gained_focus() {
                 state.focus_field(VaultUnlockFocus::Confirm);
+            }
+            if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                enter_pressed = true;
             }
         });
     }
@@ -135,19 +150,17 @@ pub fn render(ui: &mut egui::Ui, state: &mut VaultUnlockState) -> VaultUnlockFra
     // 6. Actions. The primary button runs the local guard
     //    (`validate`) first — only a clean result flips
     //    `out.submit`, so the binary never gets handed an
-    //    empty / mismatched passphrase.
+    //    empty / mismatched passphrase. Enter pressed in any
+    //    input field also triggers this branch (UX win: user
+    //    types passphrase + Enter, no mouse trip).
+    let working = matches!(state.status(), VaultUnlockStatus::Working);
+    let mut button_clicked = false;
     ui.horizontal(|ui| {
-        let working = matches!(state.status(), VaultUnlockStatus::Working);
         if ui
             .add_enabled(!working, egui::Button::new(mode.submit_label()))
             .clicked()
         {
-            match state.validate() {
-                Ok(()) => out.submit = true,
-                Err(reason) => {
-                    state.apply_status(VaultUnlockStatus::Failed { reason });
-                }
-            }
+            button_clicked = true;
         }
         // Escape hatch — fall back to the OS keychain for this
         // session instead of unlocking the vault.
@@ -159,6 +172,14 @@ pub fn render(ui: &mut egui::Ui, state: &mut VaultUnlockState) -> VaultUnlockFra
             out.use_keychain = true;
         }
     });
+    if (button_clicked || enter_pressed) && !working {
+        match state.validate() {
+            Ok(()) => out.submit = true,
+            Err(reason) => {
+                state.apply_status(VaultUnlockStatus::Failed { reason });
+            }
+        }
+    }
 
     out
 }

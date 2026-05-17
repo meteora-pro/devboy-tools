@@ -235,10 +235,12 @@ impl ViewMode {
     }
 }
 
-/// Above this many rows the default view-mode is `Tree`. Below
-/// it, `Flat` makes more sense (the user can scan everything at
-/// a glance and a tree just adds chrome).
-const TREE_MODE_THRESHOLD: usize = 20;
+/// Historical threshold for the auto-default. Kept as `0` so
+/// every new InventoryState lands on `Tree` regardless of row
+/// count — that's the experience the user asked for after
+/// trying both modes against their KeePass DB. The flat layout
+/// is still one toggle-click away.
+const TREE_MODE_THRESHOLD: usize = 0;
 
 /// Self-contained Inventory state. Built by the orchestration
 /// layer, mutated by key handlers, consumed by [`render`].
@@ -283,28 +285,25 @@ impl InventoryState {
     /// Defaults: sort by `ExpiresAt`, focus on the table, daemon
     /// status `Unknown`, no query.
     pub fn new(rows: Vec<InventoryRow>) -> Self {
-        let view_mode = if rows.len() >= TREE_MODE_THRESHOLD {
-            ViewMode::Tree
-        } else {
-            ViewMode::Flat
-        };
+        // Tree is the unconditional default — see
+        // `TREE_MODE_THRESHOLD` for the rationale. The user
+        // toggles back to Flat from the UI if they want a
+        // table render.
+        let _ = TREE_MODE_THRESHOLD;
         let mut state = Self {
             rows,
             filters: InventoryFilters::default(),
             sort_key: SortKey::ExpiresAt,
             query: String::new(),
-            view_mode,
+            view_mode: ViewMode::Tree,
             expanded: std::collections::HashSet::new(),
             selected: 0,
             focus: Focus::Table,
             daemon_status: DaemonStatus::Unknown,
         };
         // Initial tree mode: expand every top-level prefix so
-        // the user sees structure at a glance. The user can
-        // collapse from there.
-        if state.view_mode == ViewMode::Tree {
-            state.expand_top_level_defaults();
-        }
+        // the user sees structure at a glance.
+        state.expand_top_level_defaults();
         state
     }
 
@@ -1333,32 +1332,25 @@ mod tests {
     }
 
     #[test]
-    fn view_mode_default_is_tree_when_row_count_exceeds_threshold() {
-        // ≥ TREE_MODE_THRESHOLD (20) rows → default tree.
-        let mut many = Vec::new();
-        for i in 0..30 {
-            many.push(row(
-                &format!("kdbx/group/{i:02}"),
-                RowStatus::Provisioned,
-                None,
-                None,
-                None,
-            ));
-        }
-        let s = InventoryState::new(many);
-        assert_eq!(s.view_mode(), ViewMode::Tree);
-    }
+    fn view_mode_default_is_tree_for_any_non_empty_inventory() {
+        // K18.x — user-requested: Tree is always the default,
+        // regardless of row count. Threshold kept at 0 so the
+        // contract is uniform.
+        let many: Vec<InventoryRow> = (0..30)
+            .map(|i| {
+                row(
+                    &format!("kdbx/group/{i:02}"),
+                    RowStatus::Provisioned,
+                    None,
+                    None,
+                    None,
+                )
+            })
+            .collect();
+        assert_eq!(InventoryState::new(many).view_mode(), ViewMode::Tree);
 
-    #[test]
-    fn view_mode_default_is_flat_for_small_inventories() {
-        let s = InventoryState::new(vec![row(
-            "team/x/y",
-            RowStatus::Provisioned,
-            None,
-            None,
-            None,
-        )]);
-        assert_eq!(s.view_mode(), ViewMode::Flat);
+        let single = vec![row("team/x/y", RowStatus::Provisioned, None, None, None)];
+        assert_eq!(InventoryState::new(single).view_mode(), ViewMode::Tree);
     }
 
     #[test]

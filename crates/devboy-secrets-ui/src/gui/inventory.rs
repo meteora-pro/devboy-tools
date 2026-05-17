@@ -6,9 +6,23 @@
 use crate::inventory::{InventoryRow, InventoryState, RowStatus, SortKey, TreeNode, ViewMode};
 
 /// Render the inventory into the supplied [`egui::Ui`]. Mutates
-/// the state directly via clicks (row selection, sort key
-/// changes, filter changes, search query, group expansion).
+/// the state directly via clicks AND keyboard input (row
+/// selection, sort key changes, filter changes, search query,
+/// group expansion).
+///
+/// Keyboard shortcuts (when no text-input has focus — typing
+/// inside the search bar passes the keys through to the
+/// TextEdit instead):
+///
+/// - `↑` / `↓` — move the selection up / down the visible
+///   row list. Works in both Flat and Tree modes.
+/// - `Home` / `End` — jump to the first / last visible row.
+/// - `/` — focus the search field (same effect as Cmd+F).
+/// - `Esc` — clear the search query when focus is anywhere;
+///   otherwise the host modal handler runs.
 pub fn render(ui: &mut egui::Ui, state: &mut InventoryState) {
+    apply_keyboard_navigation(ui, state);
+
     ui.heading("Secrets — inventory");
     ui.label(state.daemon_status().label());
 
@@ -24,6 +38,59 @@ pub fn render(ui: &mut egui::Ui, state: &mut InventoryState) {
         ViewMode::Flat => render_table(ui, state),
         ViewMode::Tree => render_tree(ui, state),
     }
+}
+
+/// Translate non-text key presses into `InventoryState`
+/// mutations. Runs at the top of the render so the resulting
+/// selection / query change shows up the same frame.
+///
+/// We deliberately do NOT call `consume_key` — egui's
+/// TextEdit widgets need to keep receiving `↑↓` for their own
+/// cursor movement, and we don't want to fight them. The
+/// `wants_keyboard_input` check ensures we don't steal keys
+/// when the user is typing in the search bar.
+fn apply_keyboard_navigation(ui: &mut egui::Ui, state: &mut InventoryState) {
+    let ctx = ui.ctx().clone();
+    let text_input_focused = ctx.egui_wants_keyboard_input();
+
+    // `/` focuses search even when a row label is focused —
+    // standard "find" affordance. Skipped while text input
+    // already has focus (the slash should land in the field).
+    if !text_input_focused
+        && ctx.input(|i| {
+            i.events
+                .iter()
+                .any(|e| matches!(e, egui::Event::Text(t) if t == "/"))
+        })
+    {
+        ctx.memory_mut(|m| {
+            m.request_focus(egui::Id::new("inventory_search_field"));
+        });
+    }
+
+    if text_input_focused {
+        return;
+    }
+
+    // Arrow / Home / End drive the inventory cursor when
+    // nothing else is focused.
+    ctx.input(|i| {
+        if i.key_pressed(egui::Key::ArrowDown) {
+            state.move_down();
+        }
+        if i.key_pressed(egui::Key::ArrowUp) {
+            state.move_up();
+        }
+        if i.key_pressed(egui::Key::Home) {
+            state.move_to_top();
+        }
+        if i.key_pressed(egui::Key::End) {
+            state.move_to_bottom();
+        }
+        if i.key_pressed(egui::Key::Escape) && !state.query().is_empty() {
+            state.set_query(String::new());
+        }
+    });
 }
 
 /// Toggle between flat-list and tree-view. The default is
@@ -54,11 +121,14 @@ fn render_search_bar(ui: &mut egui::Ui, state: &mut InventoryState) {
         ui.label("🔍");
         let resp = ui.add(
             egui::TextEdit::singleline(&mut buf)
-                .hint_text("search by path / scope / provider …")
+                .id(egui::Id::new("inventory_search_field"))
+                .hint_text("search by path / scope / provider …  (Cmd+F or /)")
                 .desired_width(360.0),
         );
         // Cmd+F (macOS) / Ctrl+F (other) focuses the search
-        // field. The check fires on every frame; cheap.
+        // field. The `/` shortcut is handled at the top-level
+        // render via `apply_keyboard_navigation`, which also
+        // targets this same egui Id.
         let ctx = ui.ctx().clone();
         let want_focus = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::F));
         if want_focus {
