@@ -81,29 +81,106 @@ pub enum KdbxSourceError {
     },
 }
 
+/// Which KDBX field supplied the entry's value. KeePass users
+/// conventionally put tokens in the standard Password field,
+/// but power users sometimes use a Protected custom string
+/// (e.g. `api_token`) instead. The walker auto-detects when
+/// Password is empty + exactly one Protected custom string
+/// exists; this enum records which field won.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValueField {
+    /// Value came from the standard Password field.
+    Password,
+    /// Value came from a Protected custom string named `name`.
+    CustomField {
+        /// Custom-string field name (verbatim from KeePass).
+        name: String,
+    },
+}
+
+/// Metadata for one KeePass attachment, surfaced in the
+/// snapshot WITHOUT the binary content. Lists name + size so
+/// the UI can show "📎 server.pem (2 KiB)" without reading
+/// potentially sensitive blobs into the inventory view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KdbxAttachmentMeta {
+    /// Filename as recorded in KeePass.
+    pub name: String,
+    /// Body size in bytes.
+    pub size_bytes: usize,
+}
+
 /// One inventory row resolved out of the KDBX file.
 ///
-/// Held in the per-source [`KdbxSnapshot`]. The `password` field is
-/// the value the router hands the caller via `get()`; `title` /
-/// `username` / `url` are metadata the UI surfaces in the
+/// Held in the per-source [`KdbxSnapshot`]. The `password` field
+/// carries the value the router hands the caller via `get()`;
+/// every other field is metadata the UI surfaces in the
 /// inventory row + the provision dialog's context card.
+///
+/// All standard KeePass fields are preserved + every custom
+/// string the user added gets carried through `custom_fields`.
+/// Times, tags, UUID, OTP and attachment names round-trip
+/// untouched so a future "view in KeePass" deep-link can
+/// reconstruct the source entry from the snapshot alone.
 #[derive(Debug)]
 pub struct KdbxEntry {
     /// Normalized ADR-020-like path (lowercase, `[a-z0-9_-]` only,
     /// `/`-separated segments). Mirrors `SecretSource::get`'s
     /// reference argument.
     pub path: String,
-    /// Password field. `None` when the KDBX entry has no Password
-    /// set (rare — empty entries used as placeholders).
+    /// Resolved value of the entry — typically the Password
+    /// field, or a Protected custom string when [`value_field`]
+    /// names one. `None` when the entry has no usable value
+    /// (rare — empty entries used as placeholders).
     pub password: Option<SecretString>,
+    /// Which KDBX field [`password`] came from. Lets the UI
+    /// label rows like "AWS Access Key (custom: secret_key)"
+    /// when the value lives in something other than Password.
+    pub value_field: ValueField,
     /// Entry Title field — preserved verbatim for display.
     pub title: String,
     /// Optional UserName field.
     pub username: Option<String>,
     /// Optional URL field.
     pub url: Option<String>,
-    /// Optional Notes field.
+    /// Optional Notes field. Multiline; the UI's context card
+    /// renders it as a `monospace` block.
     pub notes: Option<String>,
+    /// Stable KeePass UUID (hyphenated hex). Survives renames
+    /// of Title / Group, so the manifest can pin entries by
+    /// UUID instead of path when the source DB is volatile.
+    pub uuid: String,
+    /// KeePass tags (already a `Vec<String>` in the upstream
+    /// type — preserved verbatim).
+    pub tags: Vec<String>,
+    /// ISO 8601 string of [`keepass::Times::creation`].
+    pub created_at: Option<String>,
+    /// ISO 8601 string of [`keepass::Times::last_modification`].
+    /// The UI uses this as a `last_rotated_at` heuristic.
+    pub modified_at: Option<String>,
+    /// ISO 8601 string of [`keepass::Times::expiry`], **only**
+    /// when [`keepass::Times::expires`] is `Some(true)`. KeePass
+    /// stores an expiry timestamp even when expiry isn't
+    /// enabled; we hide that "ghost" value here so downstream
+    /// rotation warnings don't fire on it.
+    pub expires_at: Option<String>,
+    /// Raw OTP source: `otpauth://...` URL or `secret=...` query
+    /// string. Surfaced as a separate field so the UI can show
+    /// a "TOTP available" chip without reading the secret.
+    pub otp: Option<String>,
+    /// Non-standard string fields the user added. Includes any
+    /// custom Protected/Unprotected entries that aren't one of
+    /// {Title, UserName, Password, URL, Notes, otp}. Keys
+    /// preserve original casing; values are exposed verbatim.
+    /// Use [`BTreeMap`](std::collections::BTreeMap) so the UI
+    /// renders fields in a stable, alphabetical order.
+    pub custom_fields: std::collections::BTreeMap<String, String>,
+    /// Attachment metadata only (names + sizes). The actual
+    /// bytes are never read into the snapshot — fetching them
+    /// would force every consumer to handle potentially-secret
+    /// binaries (PEM keys, .keytab files) and we'd rather punt
+    /// that to an explicit "extract attachment" flow.
+    pub attachments: Vec<KdbxAttachmentMeta>,
 }
 
 /// Snapshot of the unlocked KDBX file — every entry flattened to
@@ -381,6 +458,10 @@ pub fn open_kdbx_into_snapshot(
     Ok(KdbxSnapshot { entries })
 }
 
+/// KeePass standard field names — everything in `Entry.fields`
+/// not in this set lands in `custom_fields`.
+const STANDARD_FIELDS: &[&str] = &["Title", "UserName", "Password", "URL", "Notes", "otp"];
+
 /// Recursive traversal helper — visits every entry under
 /// `group_ref`, maintaining the breadcrumb in `path_segments`.
 ///
@@ -397,17 +478,100 @@ fn walk_group(
         let mut segments = path_segments.clone();
         segments.push(normalised_title);
         let path = ensure_min_three_segments(segments);
-        let password = entry
-            .get_password()
-            .filter(|p| !p.is_empty())
-            .map(|p| SecretString::from(p.to_owned()));
+
+        // Value resolution. Prefer the Password field. When
+        // it's empty AND exactly one Protected custom string
+        // exists, promote that string to the value slot — many
+        // KeePass power-users park API tokens / OAuth secrets
+        // in a custom "api_token" Protected entry instead of
+        // the literal Password field.
+        let raw_password = entry.get_password().filter(|p| !p.is_empty());
+        let (password, value_field) = match raw_password {
+            Some(p) => (Some(SecretString::from(p.to_owned())), ValueField::Password),
+            None => {
+                let protected_customs: Vec<(&String, &str)> = entry
+                    .fields
+                    .iter()
+                    .filter(|(k, v)| !STANDARD_FIELDS.contains(&k.as_str()) && v.is_protected())
+                    .map(|(k, v)| (k, v.as_str()))
+                    .collect();
+                if protected_customs.len() == 1 && !protected_customs[0].1.is_empty() {
+                    let (name, val) = protected_customs[0];
+                    (
+                        Some(SecretString::from(val.to_owned())),
+                        ValueField::CustomField { name: name.clone() },
+                    )
+                } else {
+                    (None, ValueField::Password)
+                }
+            }
+        };
+
+        // Custom fields — everything NOT in STANDARD_FIELDS.
+        // Both Protected and Unprotected entries are surfaced;
+        // the UI is responsible for masking the Protected ones
+        // when rendering. Skip the field we just promoted into
+        // `password` so it doesn't appear twice in the dialog.
+        let promoted_field_name: Option<&str> = match &value_field {
+            ValueField::Password => None,
+            ValueField::CustomField { name } => Some(name.as_str()),
+        };
+        let mut custom_fields: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for (key, value) in &entry.fields {
+            if STANDARD_FIELDS.contains(&key.as_str()) {
+                continue;
+            }
+            if promoted_field_name == Some(key.as_str()) {
+                continue;
+            }
+            custom_fields.insert(key.clone(), value.as_str().to_owned());
+        }
+
+        // Times — format as ISO 8601 + suppress the ghost
+        // expiry timestamp when KeePass's `Expires` flag is off.
+        let created_at = entry
+            .times
+            .creation
+            .map(|d| d.format("%Y-%m-%dT%H:%M:%SZ").to_string());
+        let modified_at = entry
+            .times
+            .last_modification
+            .map(|d| d.format("%Y-%m-%dT%H:%M:%SZ").to_string());
+        let expires_at = if entry.times.expires == Some(true) {
+            entry
+                .times
+                .expiry
+                .map(|d| d.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        } else {
+            None
+        };
+
+        // Attachments — metadata only.
+        let attachments: Vec<KdbxAttachmentMeta> = entry
+            .attachments_named()
+            .map(|(name, att)| KdbxAttachmentMeta {
+                name: name.to_owned(),
+                size_bytes: att.data.get().len(),
+            })
+            .collect();
+
         out.push(KdbxEntry {
             path,
             password,
+            value_field,
             title,
             username: entry.get_username().map(str::to_owned),
             url: entry.get_url().map(str::to_owned),
             notes: entry.get("Notes").map(str::to_owned),
+            uuid: entry.id().uuid().hyphenated().to_string(),
+            tags: entry.tags.clone(),
+            created_at,
+            modified_at,
+            expires_at,
+            otp: entry.get_raw_otp_value().map(str::to_owned),
+            custom_fields,
+            attachments,
         });
     }
     for child in group_ref.groups() {
@@ -674,5 +838,231 @@ mod tests {
             }
             other => panic!("expected Error, got {other:?}"),
         }
+    }
+
+    // -- K7 — full metadata extraction -----------------------
+
+    /// Build a synthetic KDBX with one entry that exercises
+    /// every K7 metadata field: tags, custom fields (both
+    /// Protected and Unprotected), Notes, ExpiryTime + Expires,
+    /// raw OTP, and walk it back out via `KdbxSource`. Pins
+    /// every field of the resulting `KdbxEntry` so a future
+    /// refactor of the walker can't silently drop one.
+    #[tokio::test]
+    async fn full_metadata_extraction_round_trip() {
+        use chrono::NaiveDateTime;
+        use keepass::db::Value;
+        use keepass::{Database, DatabaseKey};
+
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let kdbx_path = tmp_dir.path().join("rich.kdbx");
+
+        let mut db = Database::new();
+        let uuid_seen;
+        {
+            let mut root = db.root_mut();
+            let mut work = root.add_group();
+            work.name = "Work".to_owned();
+            let mut entry = work.add_entry();
+            entry.set_unprotected("Title", "Stripe API");
+            entry.set_unprotected("UserName", "ops@example.com");
+            entry.set_unprotected("URL", "https://dashboard.stripe.com/apikeys");
+            entry.set_unprotected("Notes", "Quarterly rotation; alert oncall");
+            entry.set("Password", Value::Unprotected("sk_live_fixture".to_owned()));
+            entry.set("client_id", Value::Unprotected("acct_1abc".to_owned()));
+            entry.set_protected("webhook_secret", "whsec_zzz");
+            entry.tags = vec!["ops".to_owned(), "billing".to_owned()];
+            entry.times.expires = Some(true);
+            entry.times.expiry = Some(
+                NaiveDateTime::parse_from_str("2027-01-15T00:00:00", "%Y-%m-%dT%H:%M:%S").unwrap(),
+            );
+            entry.times.creation = Some(
+                NaiveDateTime::parse_from_str("2026-01-01T00:00:00", "%Y-%m-%dT%H:%M:%S").unwrap(),
+            );
+            entry.times.last_modification = Some(
+                NaiveDateTime::parse_from_str("2026-05-01T00:00:00", "%Y-%m-%dT%H:%M:%S").unwrap(),
+            );
+            entry.set_unprotected(
+                "otp",
+                "otpauth://totp/Stripe:ops%40example.com?secret=ABCD&issuer=Stripe",
+            );
+            uuid_seen = entry.as_ref().id().uuid().hyphenated().to_string();
+        }
+
+        let mut out = std::fs::File::create(&kdbx_path).unwrap();
+        db.save(&mut out, DatabaseKey::new().with_password("p"))
+            .unwrap();
+
+        let src = KdbxSource::new("work-kp", &kdbx_path);
+        src.set_passphrase(SecretString::from("p")).await;
+        match src.is_available().await {
+            SourceStatus::Available => {}
+            other => panic!("expected Available, got {other:?}"),
+        }
+
+        // Reach into the cached snapshot directly so we can
+        // assert on EVERY field (the public `get()` only
+        // returns the value).
+        let guard = src.snapshot.lock().await;
+        let snap = guard.as_ref().expect("snapshot populated");
+        assert_eq!(snap.entries.len(), 1);
+        let entry = &snap.entries[0];
+
+        assert_eq!(entry.path, "kdbx/work/stripe-api");
+        assert_eq!(entry.title, "Stripe API");
+        assert_eq!(entry.username.as_deref(), Some("ops@example.com"));
+        assert_eq!(
+            entry.url.as_deref(),
+            Some("https://dashboard.stripe.com/apikeys")
+        );
+        assert_eq!(
+            entry.notes.as_deref(),
+            Some("Quarterly rotation; alert oncall")
+        );
+        assert_eq!(entry.uuid, uuid_seen);
+        assert_eq!(entry.tags, vec!["ops", "billing"]);
+        assert_eq!(entry.created_at.as_deref(), Some("2026-01-01T00:00:00Z"));
+        assert_eq!(entry.modified_at.as_deref(), Some("2026-05-01T00:00:00Z"));
+        assert_eq!(entry.expires_at.as_deref(), Some("2027-01-15T00:00:00Z"));
+        assert!(
+            entry
+                .otp
+                .as_deref()
+                .map(|s| s.starts_with("otpauth://"))
+                .unwrap_or(false)
+        );
+        let keys: Vec<&str> = entry.custom_fields.keys().map(|k| k.as_str()).collect();
+        assert_eq!(keys, vec!["client_id", "webhook_secret"]);
+        assert_eq!(
+            entry.custom_fields.get("client_id").map(|s| s.as_str()),
+            Some("acct_1abc")
+        );
+        assert_eq!(entry.value_field, ValueField::Password);
+        assert_eq!(
+            entry.password.as_ref().unwrap().expose_secret(),
+            "sk_live_fixture"
+        );
+    }
+
+    /// When the standard Password field is empty AND exactly
+    /// one Protected custom string exists, the walker promotes
+    /// that custom string to the value slot and records its
+    /// name in `value_field`.
+    #[tokio::test]
+    async fn value_field_promotes_lone_protected_custom_string_when_password_empty() {
+        use keepass::{Database, DatabaseKey};
+
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let kdbx_path = tmp_dir.path().join("promoted.kdbx");
+
+        let mut db = Database::new();
+        {
+            let mut root = db.root_mut();
+            let mut entry = root.add_entry();
+            entry.set_unprotected("Title", "GitHub PAT");
+            entry.set_protected("api_token", "ghp_promoted_secret");
+            entry.set_unprotected("note_to_self", "rotate quarterly");
+        }
+        let mut out = std::fs::File::create(&kdbx_path).unwrap();
+        db.save(&mut out, DatabaseKey::new().with_password("p"))
+            .unwrap();
+
+        let src = KdbxSource::new("gh", &kdbx_path);
+        src.set_passphrase(SecretString::from("p")).await;
+        let _ = src.is_available().await;
+        let guard = src.snapshot.lock().await;
+        let entry = &guard.as_ref().unwrap().entries[0];
+        assert_eq!(
+            entry.value_field,
+            ValueField::CustomField {
+                name: "api_token".to_owned()
+            }
+        );
+        assert_eq!(
+            entry.password.as_ref().unwrap().expose_secret(),
+            "ghp_promoted_secret"
+        );
+        // The promoted field must NOT appear in custom_fields
+        // (otherwise the UI would render the value twice).
+        assert!(!entry.custom_fields.contains_key("api_token"));
+        // The unprotected custom string DOES remain in
+        // custom_fields.
+        assert_eq!(
+            entry.custom_fields.get("note_to_self").map(|s| s.as_str()),
+            Some("rotate quarterly")
+        );
+    }
+
+    /// When the standard Password is empty AND TWO or more
+    /// Protected custom strings exist, promotion is ambiguous —
+    /// nothing is promoted, password stays None, and BOTH
+    /// candidates appear in `custom_fields` so the UI can ask
+    /// the user.
+    #[tokio::test]
+    async fn value_field_does_not_promote_when_multiple_protected_customs_exist() {
+        use keepass::{Database, DatabaseKey};
+
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let kdbx_path = tmp_dir.path().join("ambiguous.kdbx");
+
+        let mut db = Database::new();
+        {
+            let mut root = db.root_mut();
+            let mut entry = root.add_entry();
+            entry.set_unprotected("Title", "Ambiguous");
+            entry.set_protected("token_a", "a-value");
+            entry.set_protected("token_b", "b-value");
+        }
+        let mut out = std::fs::File::create(&kdbx_path).unwrap();
+        db.save(&mut out, DatabaseKey::new().with_password("p"))
+            .unwrap();
+
+        let src = KdbxSource::new("amb", &kdbx_path);
+        src.set_passphrase(SecretString::from("p")).await;
+        let _ = src.is_available().await;
+        let guard = src.snapshot.lock().await;
+        let entry = &guard.as_ref().unwrap().entries[0];
+        assert!(entry.password.is_none());
+        assert_eq!(entry.value_field, ValueField::Password);
+        let keys: Vec<&str> = entry.custom_fields.keys().map(|k| k.as_str()).collect();
+        assert_eq!(keys, vec!["token_a", "token_b"]);
+    }
+
+    /// Expiry timestamp is suppressed when KeePass's `Expires`
+    /// flag is `Some(false)` even if the file carries a
+    /// non-None `expiry` value (KeePass writes a ghost
+    /// timestamp into every entry on save). Without this guard
+    /// every entry would look like it expires.
+    #[tokio::test]
+    async fn expires_at_is_suppressed_when_expires_flag_is_false() {
+        use chrono::NaiveDateTime;
+        use keepass::{Database, DatabaseKey};
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let kdbx_path = tmp_dir.path().join("ghost.kdbx");
+
+        let mut db = Database::new();
+        {
+            let mut root = db.root_mut();
+            let mut entry = root.add_entry();
+            entry.set_unprotected("Title", "Non-Expiring");
+            entry.times.expires = Some(false);
+            entry.times.expiry = Some(
+                NaiveDateTime::parse_from_str("2099-12-31T23:59:59", "%Y-%m-%dT%H:%M:%S").unwrap(),
+            );
+        }
+        let mut out = std::fs::File::create(&kdbx_path).unwrap();
+        db.save(&mut out, DatabaseKey::new().with_password("p"))
+            .unwrap();
+
+        let src = KdbxSource::new("ghost", &kdbx_path);
+        src.set_passphrase(SecretString::from("p")).await;
+        let _ = src.is_available().await;
+        let guard = src.snapshot.lock().await;
+        let entry = &guard.as_ref().unwrap().entries[0];
+        assert!(
+            entry.expires_at.is_none(),
+            "ghost expiry must not leak through, got {:?}",
+            entry.expires_at
+        );
     }
 }
