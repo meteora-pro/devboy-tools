@@ -339,7 +339,12 @@ impl SecretSource for KdbxSource {
 ///
 /// Standalone function so it can run inside `spawn_blocking` (the
 /// `keepass` crate is sync + CPU-bound on the Argon2id KDF).
-fn open_kdbx_into_snapshot(
+///
+/// Exposed as `pub` so the UI bin's `StorageBackend::unlock` path
+/// can call it directly without going through `KdbxSource`'s
+/// async wrapper — the UI already holds a tokio runtime and just
+/// wants to materialize the snapshot on the unlock-modal submit.
+pub fn open_kdbx_into_snapshot(
     path: &std::path::Path,
     passphrase: &SecretString,
     keyfile: Option<&std::path::Path>,

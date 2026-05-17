@@ -42,6 +42,10 @@ devboy-secret-patterns = { workspace = true }
 # `StorageBackend::HttpVault` block_on's it on a small current-
 # thread runtime (one request per inventory probe / save).
 devboy-secret-vault = { workspace = true }
+# KDBX 4 (KeePass) read-source. The UI bin opens the file directly
+# via `open_kdbx_into_snapshot` on the unlock-modal submit; the
+# decrypted snapshot lives inside this process address space only.
+devboy-secret-kdbx = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 # `eframe` powers the native window. Pinned to the same egui 0.34.x
 # range that `devboy-secrets-ui::gui` uses so widget code and the host

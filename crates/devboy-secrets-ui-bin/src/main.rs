@@ -293,12 +293,15 @@ impl InventoryApp {
                     let vault_path = match &self.backend {
                         StorageBackend::LocalVaultLocked { vault_path }
                         | StorageBackend::LocalVault { vault_path, .. } => vault_path.clone(),
-                        // Keychain or an HTTP-Vault backend → a
+                        // Keychain, HTTP-Vault, or KDBX backend → a
                         // newly created local-vault lands at the
-                        // default path.
-                        StorageBackend::Keychain | StorageBackend::HttpVault { .. } => {
-                            default_vault_path()
-                        }
+                        // default path. The user can always pick
+                        // a different file later via the
+                        // backend-picker (V5).
+                        StorageBackend::Keychain
+                        | StorageBackend::HttpVault { .. }
+                        | StorageBackend::KdbxLocked { .. }
+                        | StorageBackend::Kdbx { .. } => default_vault_path(),
                     };
                     StorageBackend::create_vault(vault_path, passphrase)
                 }
@@ -546,6 +549,31 @@ enum StorageBackend {
         token: secrecy::SecretString,
         access: devboy_storage::SourceAccess,
     },
+    /// KDBX file declared (env var `DEVBOY_KDBX_FILE`) but the
+    /// passphrase has not been collected yet — the UI shows the
+    /// passphrase prompt modal (K4) before any read.
+    KdbxLocked {
+        file: std::path::PathBuf,
+        keyfile: Option<std::path::PathBuf>,
+    },
+    /// KDBX file unlocked. The decrypted snapshot is held in
+    /// process so `has_value` / inventory probes don't repeat the
+    /// Argon2id KDF on every call (an 8 MiB DB takes ~1s of CPU
+    /// to derive). Snapshot is shared via `Arc` so the enum stays
+    /// `Clone` without re-decrypting.
+    ///
+    /// Read-only MVP: `store` refuses with an honest message
+    /// until the KDBX write path (K6 follow-up) ships.
+    Kdbx {
+        file: std::path::PathBuf,
+        keyfile: Option<std::path::PathBuf>,
+        /// Held so the user can re-unlock after a `lock()` cycle
+        /// without re-entering the passphrase. Lives only inside
+        /// this process — never sent to the agent.
+        passphrase: secrecy::SecretString,
+        /// Flattened, decrypted entries.
+        snapshot: std::sync::Arc<devboy_secret_kdbx::KdbxSnapshot>,
+    },
 }
 
 impl StorageBackend {
@@ -559,13 +587,56 @@ impl StorageBackend {
                 passphrase: secrecy::SecretString::new(pass.into()),
             };
         }
-        // 2. No env passphrase, but a vault file exists → the UI
+        // 2. DEVBOY_KDBX_FILE pointed at a real file → either
+        //    locked (passphrase modal) or unlocked-via-env (the
+        //    DEVBOY_KDBX_PASSPHRASE escape hatch, mostly for
+        //    tests and CI dry-runs). Always preferred over the
+        //    local-vault default when set, since the user
+        //    explicitly opted into the KDBX backend.
+        if let Ok(kdbx_path) = std::env::var("DEVBOY_KDBX_FILE")
+            && !kdbx_path.is_empty()
+        {
+            let file = std::path::PathBuf::from(kdbx_path);
+            let keyfile = std::env::var("DEVBOY_KDBX_KEYFILE")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(std::path::PathBuf::from);
+            if file.exists()
+                && let Ok(pass) = std::env::var("DEVBOY_KDBX_PASSPHRASE")
+                && !pass.is_empty()
+            {
+                // Try to unlock straight away. If the open fails
+                // (wrong passphrase, corrupt body), fall through
+                // to the Locked variant so the UI can show its
+                // unlock modal with a fresh prompt.
+                let passphrase = secrecy::SecretString::new(pass.into());
+                match devboy_secret_kdbx::open_kdbx_into_snapshot(
+                    &file,
+                    &passphrase,
+                    keyfile.as_deref(),
+                ) {
+                    Ok(snapshot) => {
+                        return StorageBackend::Kdbx {
+                            file,
+                            keyfile,
+                            passphrase,
+                            snapshot: std::sync::Arc::new(snapshot),
+                        };
+                    }
+                    Err(_) => return StorageBackend::KdbxLocked { file, keyfile },
+                }
+            }
+            // No env passphrase OR the unlock attempt failed →
+            // hand to the UI's unlock-modal flow.
+            return StorageBackend::KdbxLocked { file, keyfile };
+        }
+        // 3. No env passphrase, but a vault file exists → the UI
         //    should prompt for the passphrase (V2 unlock modal).
         let vault_path = default_vault_path();
         if vault_path.exists() {
             return StorageBackend::LocalVaultLocked { vault_path };
         }
-        // 3. Nothing → keychain default.
+        // 4. Nothing → keychain default.
         StorageBackend::Keychain
     }
 
@@ -573,35 +644,90 @@ impl StorageBackend {
     /// writes will work — drives whether the UI shows the
     /// unlock modal at startup.
     fn is_locked(&self) -> bool {
-        matches!(self, StorageBackend::LocalVaultLocked { .. })
+        matches!(
+            self,
+            StorageBackend::LocalVaultLocked { .. } | StorageBackend::KdbxLocked { .. }
+        )
     }
 
-    /// Attempt to unlock a `LocalVaultLocked` backend with
-    /// `passphrase`. On success returns the unlocked
-    /// `LocalVault` variant; on failure returns a human-facing
-    /// reason (wrong passphrase, corrupt file, …). No-op error
-    /// for already-unlocked / keychain backends.
+    /// Attempt to unlock a `LocalVaultLocked` or `KdbxLocked`
+    /// backend with `passphrase`. On success returns the
+    /// unlocked variant; on failure returns a human-facing
+    /// reason (wrong passphrase, corrupt file, …). Error for
+    /// already-unlocked / keychain / HTTP-vault backends.
     fn unlock(&self, passphrase: secrecy::SecretString) -> Result<StorageBackend, String> {
-        let StorageBackend::LocalVaultLocked { vault_path } = self else {
-            return Err("backend is not a locked local-vault".to_owned());
-        };
-        let unlock = devboy_vault_crypto::UnlockMethod::Passphrase(passphrase.clone());
-        devboy_vault_crypto::Vault::open(vault_path, unlock).map_err(|e| format!("{e}"))?;
-        Ok(StorageBackend::LocalVault {
-            vault_path: vault_path.clone(),
+        match self {
+            StorageBackend::LocalVaultLocked { vault_path } => {
+                let unlock = devboy_vault_crypto::UnlockMethod::Passphrase(passphrase.clone());
+                devboy_vault_crypto::Vault::open(vault_path, unlock).map_err(|e| format!("{e}"))?;
+                Ok(StorageBackend::LocalVault {
+                    vault_path: vault_path.clone(),
+                    passphrase,
+                })
+            }
+            StorageBackend::KdbxLocked { file, keyfile } => {
+                let snapshot = devboy_secret_kdbx::open_kdbx_into_snapshot(
+                    file,
+                    &passphrase,
+                    keyfile.as_deref(),
+                )
+                .map_err(|e| format!("{e}"))?;
+                Ok(StorageBackend::Kdbx {
+                    file: file.clone(),
+                    keyfile: keyfile.clone(),
+                    passphrase,
+                    snapshot: std::sync::Arc::new(snapshot),
+                })
+            }
+            _ => Err("backend does not have a passphrase-locked state".to_owned()),
+        }
+    }
+
+    /// Re-open the KDBX file with the already-held passphrase
+    /// and rebuild the snapshot. Lets the user pick up edits
+    /// they made in KeePass / KeePassXC without re-typing the
+    /// passphrase. No-op (returns the original backend) for
+    /// every other variant.
+    ///
+    /// Wired into the UI's reload-from-manifest button in K4
+    /// (silenced for now so the K3 build is warning-clean).
+    #[allow(dead_code)]
+    fn refresh(&self) -> Result<StorageBackend, String> {
+        let StorageBackend::Kdbx {
+            file,
+            keyfile,
             passphrase,
+            ..
+        } = self
+        else {
+            return Ok(self.clone());
+        };
+        let snapshot =
+            devboy_secret_kdbx::open_kdbx_into_snapshot(file, passphrase, keyfile.as_deref())
+                .map_err(|e| format!("{e}"))?;
+        Ok(StorageBackend::Kdbx {
+            file: file.clone(),
+            keyfile: keyfile.clone(),
+            passphrase: passphrase.clone(),
+            snapshot: std::sync::Arc::new(snapshot),
         })
     }
 
-    /// Drop the held passphrase, returning the backend to its
-    /// locked state. No-op for keychain / already-locked / HTTP
-    /// Vault (the Vault token lives in `sources.toml`, there is
-    /// no in-memory unlock state to drop).
+    /// Drop the held passphrase + snapshot, returning the
+    /// backend to its locked state. No-op for keychain /
+    /// already-locked / HTTP Vault (the Vault token lives in
+    /// `sources.toml`, there is no in-memory unlock state to
+    /// drop).
     fn lock(&self) -> StorageBackend {
         match self {
             StorageBackend::LocalVault { vault_path, .. }
             | StorageBackend::LocalVaultLocked { vault_path } => StorageBackend::LocalVaultLocked {
                 vault_path: vault_path.clone(),
+            },
+            StorageBackend::Kdbx { file, keyfile, .. }
+            | StorageBackend::KdbxLocked { file, keyfile } => StorageBackend::KdbxLocked {
+                file: file.clone(),
+                keyfile: keyfile.clone(),
             },
             StorageBackend::Keychain => StorageBackend::Keychain,
             StorageBackend::HttpVault { .. } => self.clone(),
@@ -683,6 +809,24 @@ impl StorageBackend {
                 };
                 format!("HashiCorp Vault — `{addr}`{ns} ({mode})")
             }
+            StorageBackend::KdbxLocked { file, .. } => {
+                format!(
+                    "KDBX (locked) — file `{}`, awaiting passphrase",
+                    file.display()
+                )
+            }
+            StorageBackend::Kdbx { file, snapshot, .. } => {
+                format!(
+                    "KDBX 4 — file `{}`, {} entr{} loaded (read-only)",
+                    file.display(),
+                    snapshot.entries.len(),
+                    if snapshot.entries.len() == 1 {
+                        "y"
+                    } else {
+                        "ies"
+                    }
+                )
+            }
         }
     }
 
@@ -693,6 +837,7 @@ impl StorageBackend {
                 "local-vault"
             }
             StorageBackend::HttpVault { .. } => "vault",
+            StorageBackend::KdbxLocked { .. } | StorageBackend::Kdbx { .. } => "kdbx",
         }
     }
 
@@ -744,6 +889,11 @@ impl StorageBackend {
                     None => false,
                 }
             }
+            StorageBackend::KdbxLocked { .. } => false,
+            StorageBackend::Kdbx { snapshot, .. } => snapshot
+                .entries
+                .iter()
+                .any(|e| e.path == path && e.password.is_some()),
         }
     }
 
@@ -837,6 +987,14 @@ impl StorageBackend {
                 };
                 Ok(recovery)
             }
+            StorageBackend::KdbxLocked { .. } => {
+                Err("KDBX file is locked — unlock it with your passphrase before saving".to_owned())
+            }
+            StorageBackend::Kdbx { .. } => Err(
+                "writing to a KDBX file is not implemented yet (read-only MVP) — \
+                 edit the entry in KeePass / KeePassXC and reload the inventory"
+                    .to_owned(),
+            ),
             // HTTP Vault is read-only from the UI today. The
             // `SecretSource` trait has no write surface yet
             // (P15) — refuse honestly rather than silently
@@ -987,6 +1145,48 @@ fn load_inventory_or_empty(
         });
         metadata.insert(path_str, resolved.metadata.clone());
     }
+
+    // KDBX-backed rows: include every decrypted entry whose path
+    // isn't already in the manifest. Gives the user a one-shot
+    // view of their KeePass DB without needing to write a
+    // manifest for it first. The agent never sees these rows —
+    // they live entirely inside the UI process snapshot.
+    if let StorageBackend::Kdbx { snapshot, .. } = backend {
+        for entry in &snapshot.entries {
+            // Skip duplicates already covered by the manifest
+            // pass — manifest entries take precedence so the
+            // user's curated descriptions / rotation hints win.
+            if rows.iter().any(|r| r.path == entry.path) {
+                continue;
+            }
+            let scope = entry.path.split('/').next().unwrap_or("kdbx").to_owned();
+            let provider_segment = entry.path.split('/').nth(1);
+            // KDBX entries are always "provisioned" — they exist
+            // in the unlocked snapshot, that's the whole point.
+            rows.push(devboy_secrets_ui::InventoryRow {
+                path: entry.path.clone(),
+                status: devboy_secrets_ui::RowStatus::Provisioned,
+                routed_source: Some(backend.source_label().to_owned()),
+                expires_at: None,
+                provider: provider_segment.map(str::to_owned),
+                scope,
+                catalog_override: provider_segment.and_then(|p| catalog_override_for(catalogs, p)),
+            });
+            // Surface KDBX metadata in the index-entry map so
+            // the provision dialog's context card can show the
+            // KeePass-side Title / UserName / URL / Notes.
+            metadata.insert(
+                entry.path.clone(),
+                devboy_storage::IndexEntry {
+                    description: Some(format!("KeePass entry: {}", entry.title)),
+                    retrieval_url: entry.url.clone(),
+                    env_var: entry.username.clone(),
+                    ..devboy_storage::IndexEntry::default()
+                },
+            );
+        }
+    }
+
     (rows, metadata)
 }
 
@@ -1090,6 +1290,26 @@ impl eframe::App for InventoryApp {
                 // only live switch is back to the keychain for
                 // the session.
                 StorageBackend::HttpVault { .. } => {
+                    if ui
+                        .small_button("Switch to keychain")
+                        .on_hover_text("Use the OS keychain for this session")
+                        .clicked()
+                    {
+                        switch_to_keychain = true;
+                    }
+                }
+                // KDBX: locked → unlock modal already up. Unlocked
+                // → offer "Lock" to drop the passphrase + snapshot
+                // and "Switch to keychain" as an escape hatch.
+                StorageBackend::KdbxLocked { .. } => {}
+                StorageBackend::Kdbx { .. } => {
+                    if ui
+                        .small_button("Lock KDBX")
+                        .on_hover_text("Drop the passphrase + snapshot; the unlock prompt returns")
+                        .clicked()
+                    {
+                        lock_vault = true;
+                    }
                     if ui
                         .small_button("Switch to keychain")
                         .on_hover_text("Use the OS keychain for this session")
@@ -2183,7 +2403,68 @@ mod tests {
         let err = StorageBackend::Keychain
             .unlock(SecretString::new("p".to_string().into()))
             .expect_err("keychain has nothing to unlock");
-        assert!(err.contains("not a locked local-vault"), "got: {err}");
+        assert!(
+            err.contains("does not have a passphrase-locked state"),
+            "got: {err}"
+        );
+    }
+
+    // -- Kdbx backend variants --------------------------------
+
+    #[test]
+    fn kdbx_locked_reports_locked_and_refuses_writes() {
+        let backend = StorageBackend::KdbxLocked {
+            file: std::path::PathBuf::from("/tmp/nonexistent.kdbx"),
+            keyfile: None,
+        };
+        assert!(backend.is_locked());
+        assert!(!backend.has_value("any/path"));
+        let err = backend
+            .store("any/path", &SecretString::new("v".to_string().into()))
+            .expect_err("locked KDBX must refuse writes");
+        assert!(err.contains("unlock it"), "got: {err}");
+    }
+
+    #[test]
+    fn kdbx_source_label_is_kdbx_in_both_states() {
+        let locked = StorageBackend::KdbxLocked {
+            file: std::path::PathBuf::from("/tmp/x.kdbx"),
+            keyfile: None,
+        };
+        assert_eq!(locked.source_label(), "kdbx");
+    }
+
+    #[test]
+    fn kdbx_lock_round_trip_clears_passphrase_back_to_locked() {
+        // Build an unlocked Kdbx variant with an empty snapshot.
+        let unlocked = StorageBackend::Kdbx {
+            file: std::path::PathBuf::from("/tmp/x.kdbx"),
+            keyfile: Some(std::path::PathBuf::from("/tmp/x.keyx")),
+            passphrase: SecretString::new("hunter2".to_string().into()),
+            snapshot: std::sync::Arc::new(devboy_secret_kdbx::KdbxSnapshot::default()),
+        };
+        let relocked = unlocked.lock();
+        match relocked {
+            StorageBackend::KdbxLocked { file, keyfile } => {
+                assert_eq!(file, std::path::PathBuf::from("/tmp/x.kdbx"));
+                assert_eq!(keyfile.as_deref(), Some(std::path::Path::new("/tmp/x.keyx")));
+            }
+            other => panic!("lock should land on KdbxLocked, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn kdbx_unlocked_writes_are_refused_with_read_only_message() {
+        let backend = StorageBackend::Kdbx {
+            file: std::path::PathBuf::from("/tmp/x.kdbx"),
+            keyfile: None,
+            passphrase: SecretString::new("p".to_string().into()),
+            snapshot: std::sync::Arc::new(devboy_secret_kdbx::KdbxSnapshot::default()),
+        };
+        let err = backend
+            .store("any/path", &SecretString::new("v".to_string().into()))
+            .expect_err("KDBX is read-only");
+        assert!(err.contains("not implemented yet"), "got: {err}");
     }
 
     // -- has_value / store on a locked backend -----------------
