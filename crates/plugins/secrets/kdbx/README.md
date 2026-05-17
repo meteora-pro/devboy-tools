@@ -107,12 +107,77 @@ snapshot WITHOUT decryption to disk:
 | Custom string fields | `custom_fields: BTreeMap<String, String>` (alphabetical) |
 | Attachments | `attachments: Vec<KdbxAttachmentMeta { name, size_bytes }>` — names + sizes only, bytes never read |
 
-## Read-only first
+## Read-only first, then metadata-only writes
 
-The MVP only reads. Writing back to the KDBX file (and the concurrent-write
-safety questions that come with it — KeePass GUI users typically have the
-same file open) lands as a follow-up. The `WRITE` capability bit stays off
-until then.
+The MVP only reads, and the standard `SecretSource::store` surface still
+refuses — value rotation through this plugin would need a much larger
+concurrency / merge story (KeePass GUI users typically have the same file
+open).
+
+What landed in K14–K17 is a strictly-narrower write surface: **metadata
+only**. Two new functions, plus matching CLI + MCP wrappers, let agents
+rotate documentation around a secret — Notes / Tags / URL / Title /
+UserName / expiry timestamp — without ever touching the value-bearing
+Password or any Protected custom string. The ADR-023 §3.7 agent-blindness
+boundary is enforced at three layers:
+
+1. `MetadataPatch` has no field for Password / Protected custom strings —
+   there is literally no API surface to mutate them through this flow.
+2. `describe_metadata` filters Password and Protected fields out of the
+   response.
+3. The MCP tool wrappers refuse to read the passphrase from tool
+   arguments; they only honour the `DEVBOY_KDBX_PASSPHRASE` env var (set
+   in the user's shell, agent can't see env).
+
+Write-side safety: callers MUST pass a working-copy path
+(`derive_working_copy_path` + `prepare_working_copy`); `edit_metadata`
+writes verbatim to the given path. The CLI + MCP wrappers wire the
+working-copy step in for you so the user's original `.kdbx` is never
+overwritten — sync-back to the original is left to the caller.
+
+```rust
+use devboy_secret_kdbx::{edit_metadata, MetadataPatch};
+use secrecy::SecretString;
+
+let patch = MetadataPatch {
+    notes: Some("rotation runbook: ops-wiki/rotations#42".into()),
+    tags: Some(vec!["api".into(), "prod".into(), "rotated-q1".into()]),
+    expires_at: Some(Some("2027-01-15T00:00:00Z".into())),
+    ..Default::default()
+};
+edit_metadata(
+    &working_copy_path,
+    &SecretString::from("…"),
+    None,
+    "12345678-90ab-cdef-1234-567890abcdef",
+    &patch,
+)?;
+```
+
+CLI usage:
+
+```sh
+# Read-only projection (no Password / Protected fields)
+devboy secrets kdbx describe-metadata \
+  --file ~/path/to/your.kdbx \
+  --uuid 12345678-90ab-cdef-1234-567890abcdef \
+  --json
+
+# Patch — title / username / url / notes are scalar (empty clears),
+# --tag is repeatable (or --clear-tags), --expires-at sets, --no-expiry
+# clears. Writes to a derived working-copy path that's printed on
+# success.
+devboy secrets kdbx edit-metadata \
+  --file ~/path/to/your.kdbx \
+  --uuid 12345678-90ab-cdef-1234-567890abcdef \
+  --notes "rotation runbook: ops-wiki/rotations#42" \
+  --tag api --tag prod --tag rotated-q1 \
+  --expires-at 2027-01-15T00:00:00Z
+```
+
+MCP tools (`kdbx_describe_metadata`, `kdbx_edit_metadata`) take the same
+arguments as the CLI minus the passphrase prompt; the passphrase comes
+from `DEVBOY_KDBX_PASSPHRASE` (refused if missing or empty).
 
 ## Smoke tests
 

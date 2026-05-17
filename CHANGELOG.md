@@ -185,6 +185,78 @@ plus search + hierarchical-tree UX in the inventory view to make a
   — extraction is on-demand and stays inside the `devboy-secrets-ui`
   process address space (agent-blindness boundary preserved).
 
+### Added — KDBX metadata write-surface + CLI + MCP (K14-K17)
+
+Lets agents rotate documentation around a KDBX entry —
+notes, tags, expiry timestamp, title, username, url — without
+ever touching the value-bearing Password or any Protected
+custom string. The ADR-023 §3.7 agent-blindness boundary is
+enforced at THREE layers:
+
+* The plugin's `MetadataPatch` struct has no field for the
+  Password or Protected fields — there is literally no API
+  surface to mutate them through this flow.
+* `describe_metadata` returns the same shape minus values —
+  agents see what they're allowed to change, no more.
+* The MCP wrapper reads the KDBX passphrase from the
+  `DEVBOY_KDBX_PASSPHRASE` env var; the agent never sees it
+  on the wire.
+
+Write-side safety: every edit lands on a sibling working-copy
+(`<source>.devboy-working-<UTC>.kdbx`) derived through K13's
+existing `derive_working_copy_path` / `prepare_working_copy`
+helpers. The user's original `.kdbx` is never overwritten;
+sync-back is left to the caller.
+
+**Plugin** ([`crates/plugins/secrets/kdbx`](crates/plugins/secrets/kdbx/)):
+- `MetadataPatch` — all-optional struct (title, username, url,
+  notes, tags, `expires_at: Option<Option<String>>` for the
+  three-state set / clear / leave).
+- `KdbxEntryMetadata` — read-only projection with the same
+  fields plus `uuid`, `created_at`, `modified_at`, `otp`
+  (None or "(present)"), `attachments` metadata, and
+  `custom_string_names`.
+- `edit_metadata(file, passphrase, keyfile, uuid, &patch)` —
+  opens, mutates, `Database::save` back. Writes verbatim to
+  the path passed in (working-copy enforcement is the caller's
+  job). Returns `KdbxSourceError::OpenFailed` on wrong
+  passphrase / corrupt body / unknown UUID / bad expires_at.
+- `describe_metadata(file, passphrase, keyfile, uuid)` — read
+  companion; returns `Ok(None)` for unknown UUID.
+- 7 new unit tests covering round-trip notes/tags/url,
+  expires_at set + clear, bad-expires-at rejection,
+  unknown-UUID rejection, describe field projection,
+  describe None-for-unknown-UUID.
+- `keepass = "0.12"` `save_kdbx4` feature promoted from
+  dev-only to unconditional.
+
+**CLI** ([`crates/devboy-cli/src/secrets_cmd.rs`](crates/devboy-cli/src/secrets_cmd.rs)):
+- `devboy secrets kdbx describe-metadata --file <path>
+  --uuid <hex> [--keyfile <p>] [--json]` — secure passphrase
+  prompt via `dialoguer::Password`, prints the metadata
+  projection as a key/value table or `--json`.
+- `devboy secrets kdbx edit-metadata --file <path>
+  --uuid <hex> [flags]` — flags: `--title`, `--username`,
+  `--url`, `--notes` (empty string clears each), `--tag
+  <name>` repeatable, `--clear-tags`, `--expires-at <RFC-
+  3339>`, `--no-expiry`. Refuses no-op invocations. Writes
+  to working-copy; prints the path on success.
+
+**MCP** ([`crates/devboy-mcp/src/server.rs`](crates/devboy-mcp/src/server.rs)):
+- `kdbx_describe_metadata { file, uuid, keyfile? }` and
+  `kdbx_edit_metadata { file, uuid, keyfile?, patch }` tools.
+  Passphrase via `DEVBOY_KDBX_PASSPHRASE` env var; refuses if
+  missing / empty. `patch.expires_at` is three-state via a
+  `deserialize_double_option` serde helper (missing /
+  null / set). Both registered in `is_internal_tool` so the
+  MCP speculation engine never pre-executes them — every
+  write is explicit and observable.
+
+**Docs**: this CHANGELOG entry + `crates/plugins/secrets/kdbx/
+README.md` write-surface section + regenerated
+`docs/guide/reference/cli.md` so the drift-check test sees
+the new subcommands.
+
 ### Added — Approve-on-use cron-mode operations work (PR #255 follow-ups)
 
 After the main epic landed, the PR captured four Codex review finds (F1
