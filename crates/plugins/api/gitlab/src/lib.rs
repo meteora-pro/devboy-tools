@@ -10,7 +10,7 @@ mod client;
 pub mod enricher;
 pub mod types;
 
-pub use client::GitLabClient;
+pub use client::{AuthScheme, GitLabClient};
 pub use enricher::GitLabSchemaEnricher;
 pub use types::*;
 
