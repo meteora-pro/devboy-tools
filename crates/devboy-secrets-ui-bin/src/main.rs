@@ -1178,31 +1178,110 @@ fn load_inventory_or_empty(
             let provider_segment = entry.path.split('/').nth(1);
             // KDBX entries are always "provisioned" — they exist
             // in the unlocked snapshot, that's the whole point.
+            // `expires_at` flows straight through so the
+            // inventory's rotation column lights up for entries
+            // KeePass has marked as expiring.
             rows.push(devboy_secrets_ui::InventoryRow {
                 path: entry.path.clone(),
                 status: devboy_secrets_ui::RowStatus::Provisioned,
                 routed_source: Some(backend.source_label().to_owned()),
-                expires_at: None,
+                expires_at: entry.expires_at.clone(),
                 provider: provider_segment.map(str::to_owned),
                 scope,
                 catalog_override: provider_segment.and_then(|p| catalog_override_for(catalogs, p)),
             });
             // Surface KDBX metadata in the index-entry map so
             // the provision dialog's context card can show the
-            // KeePass-side Title / UserName / URL / Notes.
-            metadata.insert(
-                entry.path.clone(),
-                devboy_storage::IndexEntry {
-                    description: Some(format!("KeePass entry: {}", entry.title)),
-                    retrieval_url: entry.url.clone(),
-                    env_var: entry.username.clone(),
-                    ..devboy_storage::IndexEntry::default()
-                },
-            );
+            // KeePass-side Title / UserName / URL / Notes / tags
+            // / custom strings / attachments / UUID / OTP.
+            metadata.insert(entry.path.clone(), kdbx_entry_to_index_entry(entry));
         }
     }
 
     (rows, metadata)
+}
+
+/// Project a `KdbxEntry` into the storage-layer `IndexEntry`
+/// shape the UI's existing context card already understands.
+/// Folds the K7 metadata fields (custom strings, tags, UUID,
+/// OTP, attachments, modification time) into the IndexEntry's
+/// existing slots so the inventory view + provision dialog
+/// light up without any per-backend special-casing.
+///
+/// Field mapping:
+///
+/// - `description` — multiline block: "KeePass entry: <title>" +
+///   optional value-source note + Notes + tags + custom string
+///   keys + attachment names + UUID + OTP marker.
+/// - `retrieval_url` — URL field (so the context card renders the
+///   clickable hyperlink the user already expects).
+/// - `env_var` — UserName (mapped to the "alias" slot — closest
+///   semantic match in the existing IndexEntry shape).
+/// - `expires_at` — K7 expires_at (only when KeePass's Expires
+///   flag was true).
+/// - `last_rotated_at` — K7 modified_at; KeePass's
+///   LastModificationTime is a reasonable proxy for "when was
+///   this token last touched" until the user opts into a proper
+///   rotation flow.
+fn kdbx_entry_to_index_entry(entry: &devboy_secret_kdbx::KdbxEntry) -> devboy_storage::IndexEntry {
+    use std::fmt::Write as _;
+    let mut description = String::with_capacity(256);
+    let _ = writeln!(description, "KeePass entry: {}", entry.title);
+    if let devboy_secret_kdbx::ValueField::CustomField { name } = &entry.value_field {
+        let _ = writeln!(
+            description,
+            "(value field: custom string `{name}`, not the standard Password)"
+        );
+    }
+    if let Some(notes) = entry.notes.as_deref()
+        && !notes.is_empty()
+    {
+        description.push('\n');
+        description.push_str("Notes:\n");
+        description.push_str(notes);
+        description.push('\n');
+    }
+    if !entry.tags.is_empty() {
+        let _ = writeln!(description, "\nTags: {}", entry.tags.join(", "));
+    }
+    if !entry.custom_fields.is_empty() {
+        description.push_str("\nCustom fields:\n");
+        for (key, value) in &entry.custom_fields {
+            // Don't print custom-string values into the
+            // metadata channel: any one of them could be a
+            // secret. Key names only.
+            let preview = if value.len() > 32 || value.contains('\n') {
+                "<value omitted>".to_owned()
+            } else if value.is_empty() {
+                "<empty>".to_owned()
+            } else {
+                // Short, single-line, presumably non-secret —
+                // show as-is so config-shaped fields (account
+                // id, region, role) are visible.
+                value.clone()
+            };
+            let _ = writeln!(description, "  • {key}: {preview}");
+        }
+    }
+    if !entry.attachments.is_empty() {
+        description.push_str("\nAttachments:\n");
+        for att in &entry.attachments {
+            let _ = writeln!(description, "  📎 {} ({} bytes)", att.name, att.size_bytes);
+        }
+    }
+    if entry.otp.is_some() {
+        description.push_str("\n🔐 TOTP source available (otp field set)\n");
+    }
+    let _ = writeln!(description, "\nKeePass UUID: {}", entry.uuid);
+
+    devboy_storage::IndexEntry {
+        description: Some(description.trim_end().to_owned()),
+        retrieval_url: entry.url.clone(),
+        env_var: entry.username.clone(),
+        expires_at: entry.expires_at.clone(),
+        last_rotated_at: entry.modified_at.clone(),
+        ..devboy_storage::IndexEntry::default()
+    }
 }
 
 /// Determine the inline catalog-override badge for a row whose
@@ -2643,5 +2722,87 @@ mod tests {
         let backend = http_vault(devboy_storage::SourceAccess::Read);
         assert!(matches!(backend.lock(), StorageBackend::HttpVault { .. }));
         assert!(!backend.is_locked());
+    }
+
+    // -- K8 — KdbxEntry → IndexEntry projection --------------
+
+    fn fixture_kdbx_entry() -> devboy_secret_kdbx::KdbxEntry {
+        let mut custom_fields = std::collections::BTreeMap::new();
+        custom_fields.insert("client_id".to_owned(), "acct_1abc".to_owned());
+        custom_fields.insert(
+            "very_long_value_that_should_get_redacted_in_description".to_owned(),
+            "x".repeat(120),
+        );
+        custom_fields.insert("blank".to_owned(), String::new());
+        devboy_secret_kdbx::KdbxEntry {
+            path: "kdbx/work/stripe-api".into(),
+            password: Some(SecretString::new("sk_live".to_string().into())),
+            value_field: devboy_secret_kdbx::ValueField::Password,
+            title: "Stripe API".into(),
+            username: Some("ops@example.com".into()),
+            url: Some("https://dashboard.stripe.com/apikeys".into()),
+            notes: Some("Quarterly rotation".into()),
+            uuid: "11111111-2222-3333-4444-555555555555".into(),
+            tags: vec!["ops".into(), "billing".into()],
+            created_at: Some("2026-01-01T00:00:00Z".into()),
+            modified_at: Some("2026-05-01T00:00:00Z".into()),
+            expires_at: Some("2027-01-15T00:00:00Z".into()),
+            otp: Some("otpauth://totp/Stripe".into()),
+            custom_fields,
+            attachments: vec![devboy_secret_kdbx::KdbxAttachmentMeta {
+                name: "server.pem".into(),
+                size_bytes: 1024,
+            }],
+        }
+    }
+
+    #[test]
+    fn kdbx_to_index_entry_maps_all_first_class_fields() {
+        let entry = fixture_kdbx_entry();
+        let mapped = kdbx_entry_to_index_entry(&entry);
+        assert_eq!(
+            mapped.retrieval_url.as_deref(),
+            Some("https://dashboard.stripe.com/apikeys")
+        );
+        assert_eq!(mapped.env_var.as_deref(), Some("ops@example.com"));
+        assert_eq!(mapped.expires_at.as_deref(), Some("2027-01-15T00:00:00Z"));
+        assert_eq!(
+            mapped.last_rotated_at.as_deref(),
+            Some("2026-05-01T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn kdbx_to_index_entry_includes_metadata_blocks_in_description() {
+        let entry = fixture_kdbx_entry();
+        let mapped = kdbx_entry_to_index_entry(&entry);
+        let desc = mapped.description.expect("description populated");
+        assert!(desc.contains("KeePass entry: Stripe API"));
+        assert!(desc.contains("Notes:\nQuarterly rotation"));
+        assert!(desc.contains("Tags: ops, billing"));
+        assert!(desc.contains("Custom fields:"));
+        assert!(desc.contains("client_id: acct_1abc"));
+        // Long value gets redacted (>32 chars).
+        assert!(desc.contains("<value omitted>"));
+        // Empty value is rendered as `<empty>` (visible to the
+        // user but doesn't leak anything).
+        assert!(desc.contains("blank: <empty>"));
+        assert!(desc.contains("📎 server.pem (1024 bytes)"));
+        assert!(desc.contains("TOTP source available"));
+        assert!(desc.contains("KeePass UUID: 11111111"));
+    }
+
+    #[test]
+    fn kdbx_to_index_entry_flags_value_field_when_custom_string_was_promoted() {
+        let mut entry = fixture_kdbx_entry();
+        entry.value_field = devboy_secret_kdbx::ValueField::CustomField {
+            name: "api_token".into(),
+        };
+        let mapped = kdbx_entry_to_index_entry(&entry);
+        let desc = mapped.description.unwrap();
+        assert!(
+            desc.contains("value field: custom string `api_token`"),
+            "value-field note must appear in description, got:\n{desc}"
+        );
     }
 }
