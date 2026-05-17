@@ -70,6 +70,44 @@ safety questions that come with it — KeePass GUI users typically have the
 same file open) lands as a follow-up. The `WRITE` capability bit stays off
 until then.
 
+## Smoke tests
+
+### Header probe (no passphrase needed)
+
+Verify a `.kdbx` file is structurally a KDBX 4 database without
+decrypting anything:
+
+```sh
+cargo run -p devboy-secret-kdbx --example probe_user_file -- ~/path/to/your.kdbx
+```
+
+Prints file size + version. Useful as a pre-flight before
+investing in the GUI flow.
+
+### Full end-to-end (passphrase required)
+
+```sh
+DEVBOY_KDBX_FILE=~/path/to/your.kdbx \
+  devboy secrets ui --gui
+```
+
+On launch:
+
+1. The UI window appears with the unlock modal already armed
+   ("Unlock KeePass database").
+2. Type the passphrase, click Unlock.
+3. The inventory populates with one row per entry; the row's
+   path follows the convention `kdbx/<group-path>/<title>`.
+4. The provision-dialog context card surfaces Title / UserName /
+   URL when you click a row.
+
+The decrypted snapshot stays inside the `devboy-secrets-ui`
+process only. The `devboy-secrets-agent` daemon never opens the
+KDBX file; the CLI's MCP-side tools (`secrets list` /
+`secrets_describe`) never see a Password field. This matches
+the agent-blindness rule ADR-023 §3.7 specifies for the
+`local-vault` backend.
+
 ## See also
 
 - [ADR-021](../../../../docs/architecture/adr/ADR-021-external-secret-sources.md)
