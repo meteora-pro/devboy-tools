@@ -1378,6 +1378,13 @@ fn kdbx_entry_to_index_entry(entry: &devboy_secret_kdbx::KdbxEntry) -> devboy_st
     }
 }
 
+/// K24 — max width (logical pixels) for the value column in
+/// the KDBX Values grid + the name column in Attachments.
+/// Below ~480 px the modal looks cramped; much above and a
+/// long unbroken token still overflows the 1024-px default
+/// window. 420 leaves room for two action buttons + spacing.
+const VALUE_COL_MAX_WIDTH: f32 = 420.0;
+
 /// Locate the KDBX entry for `path` and clone its value list,
 /// when the backend is KDBX. Returns `None` for any other
 /// backend (the dialog falls back to its single-value render).
@@ -1437,13 +1444,24 @@ fn render_kdbx_values_section(
                 ui.label(format!("{lock} {}", v.name));
 
                 // Column 2 — value (masked or revealed).
+                // K24 — wrap long values inside a max-width
+                // scope so a multi-hundred-char API token
+                // doesn't push the row past the modal edge.
+                // egui's Grid column would otherwise stretch
+                // to fit the longest unbroken run.
                 let is_revealed = revealed.contains(&v.name) || !v.is_protected;
                 let body: String = if is_revealed {
                     v.value.expose_secret().to_owned()
                 } else {
                     "•".repeat(8)
                 };
-                ui.label(eframe::egui::RichText::new(body).monospace());
+                ui.scope(|ui| {
+                    ui.set_max_width(VALUE_COL_MAX_WIDTH);
+                    ui.add(
+                        eframe::egui::Label::new(eframe::egui::RichText::new(body).monospace())
+                            .wrap(),
+                    );
+                });
 
                 // Column 3 — reveal toggle (only meaningful
                 // for Protected fields; Unprotected rows show
@@ -1531,7 +1549,14 @@ fn render_kdbx_attachments_section(
         .show(ui, |ui| {
             for att in &entry.attachments {
                 // Column 1 — name with paperclip glyph.
-                ui.label(format!("📎 {}", att.name));
+                // K24 — wrap inside max-width scope so a long
+                // attachment name (PEM bundles often have
+                // 40-char filenames) doesn't push the Save
+                // button off-screen.
+                ui.scope(|ui| {
+                    ui.set_max_width(VALUE_COL_MAX_WIDTH);
+                    ui.add(eframe::egui::Label::new(format!("📎 {}", att.name)).wrap());
+                });
 
                 // Column 2 — human-readable size.
                 ui.label(
