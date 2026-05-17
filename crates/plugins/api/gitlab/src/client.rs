@@ -67,7 +67,21 @@ impl GitLabClient {
                 req = req.header(key.as_str(), value.as_str());
             }
         } else {
-            req = req.header("PRIVATE-TOKEN", self.token.expose_secret());
+            // Detect OAuth access_token vs PAT by GitLab prefix.
+            // PAT tokens (`glpat-`/`gloas-`/`gldt-`/`glrt-`) use the
+            // `PRIVATE-TOKEN` header; OAuth access_tokens (no prefix)
+            // must use `Authorization: Bearer` — GitLab rejects them
+            // on `PRIVATE-TOKEN` with 401 Unauthorized.
+            let tok = self.token.expose_secret();
+            let is_pat = tok.starts_with("glpat-")
+                || tok.starts_with("gloas-")
+                || tok.starts_with("gldt-")
+                || tok.starts_with("glrt-");
+            if is_pat {
+                req = req.header("PRIVATE-TOKEN", tok);
+            } else {
+                req = req.header("Authorization", format!("Bearer {tok}"));
+            }
         }
         req
     }
