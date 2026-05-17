@@ -178,6 +178,10 @@ struct InventoryApp {
     /// save flow completes. `(message, expires_at)`. Cleared
     /// on the next dialog open or after the timestamp passes.
     attachment_toast: Option<(String, std::time::Instant)>,
+    /// K23 — `true` while the About modal is open. Toggled by
+    /// the "Help → About" menu item and the "About" small-
+    /// button in the backend banner.
+    show_about: bool,
     /// Backend-driven token catalogs loaded at startup.
     /// Sources: bundled (compiled in), user
     /// (`~/.devboy/secrets/catalog/`), project
@@ -268,6 +272,7 @@ impl InventoryApp {
             selected_variant_id: None,
             revealed_kdbx_values: std::collections::HashSet::new(),
             attachment_toast: None,
+            show_about: false,
             catalogs,
             catalog_errors,
             pending_url_confirms,
@@ -506,6 +511,116 @@ impl InventoryApp {
         };
         self.onboarding = None;
         self.reload();
+    }
+
+    /// K23 — About modal. Bundles version + git hash + build
+    /// timestamp + rustc + target triple in a fixed-width
+    /// table, lists what's-in-this-build bullets, exposes
+    /// clickable repo / changelog / license links, and signs
+    /// off with the Meteora wizard ASCII art. Read-only —
+    /// closes on the Close button or by clicking outside the
+    /// modal.
+    fn render_about_modal(&mut self, ctx: &eframe::egui::Context) {
+        if !self.show_about {
+            return;
+        }
+        let mut close = false;
+        eframe::egui::Modal::new(eframe::egui::Id::new("about-modal")).show(ctx, |ui| {
+            ui.set_max_width(560.0);
+
+            ui.heading("devboy secrets");
+            ui.label(
+                eframe::egui::RichText::new(
+                    "Local-first credentials wrangler for AI-coding workflows.",
+                )
+                .small()
+                .weak(),
+            );
+            ui.add_space(8.0);
+
+            // ----- Build info table ---------------------------
+            eframe::egui::Grid::new("about-build-info")
+                .num_columns(2)
+                .spacing([12.0, 4.0])
+                .show(ui, |ui| {
+                    let rows: [(&str, &str); 5] = [
+                        ("Version", ABOUT_VERSION),
+                        ("Commit", ABOUT_GIT_HASH),
+                        ("Built", ABOUT_BUILD_TIMESTAMP),
+                        ("Compiler", ABOUT_RUSTC_VERSION),
+                        ("Target", ABOUT_TARGET_TRIPLE),
+                    ];
+                    for (k, v) in rows {
+                        ui.label(eframe::egui::RichText::new(k).strong());
+                        ui.add(
+                            eframe::egui::Label::new(eframe::egui::RichText::new(v).monospace())
+                                .wrap(),
+                        );
+                        ui.end_row();
+                    }
+                });
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            // ----- What's in this build -----------------------
+            ui.label(eframe::egui::RichText::new("What's in this build").strong());
+            for bullet in ABOUT_FEATURES {
+                ui.label(format!("  • {bullet}"));
+            }
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            // ----- Links --------------------------------------
+            ui.label(eframe::egui::RichText::new("Links").strong());
+            ui.horizontal_wrapped(|ui| {
+                ui.hyperlink_to("GitHub", "https://github.com/meteora-pro/devboy-tools");
+                ui.label("·");
+                ui.hyperlink_to(
+                    "Changelog",
+                    "https://github.com/meteora-pro/devboy-tools/blob/main/CHANGELOG.md",
+                );
+                ui.label("·");
+                ui.hyperlink_to(
+                    "License (Apache-2.0)",
+                    "https://github.com/meteora-pro/devboy-tools/blob/main/LICENSE",
+                );
+                ui.label("·");
+                ui.hyperlink_to("meteora.pro", "https://meteora.pro");
+            });
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            // ----- Meteora wizard ASCII -----------------------
+            ui.label(
+                eframe::egui::RichText::new("brought to you by")
+                    .small()
+                    .weak(),
+            );
+            ui.add(
+                eframe::egui::Label::new(
+                    eframe::egui::RichText::new(ABOUT_WIZARD_ASCII)
+                        .monospace()
+                        .small(),
+                )
+                .wrap(),
+            );
+
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button("Close").clicked() {
+                    close = true;
+                }
+            });
+        });
+        if close {
+            self.show_about = false;
+        }
     }
 }
 
@@ -1646,6 +1761,47 @@ fn format_byte_size(bytes: usize) -> String {
     }
 }
 
+/// K23 — build-info pulled in by the `build.rs` script. Cargo
+/// turns `cargo:rustc-env=KEY=VALUE` lines into compile-time
+/// `env!()` lookups. Defaults to `"unknown"` (also set in the
+/// script) when git / rustc weren't reachable at build time.
+const ABOUT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const ABOUT_GIT_HASH: &str = env!("DEVBOY_GIT_HASH");
+const ABOUT_BUILD_TIMESTAMP: &str = env!("DEVBOY_BUILD_TIMESTAMP");
+const ABOUT_RUSTC_VERSION: &str = env!("DEVBOY_RUSTC_VERSION");
+const ABOUT_TARGET_TRIPLE: &str = env!("DEVBOY_TARGET_TRIPLE");
+
+/// Highlighted features for the About → "What's in this build"
+/// section. Curated bullet list (not a full changelog dump) —
+/// keep it short, the modal links out to the full CHANGELOG.
+const ABOUT_FEATURES: &[&str] = &[
+    "KDBX 4 (KeePass) read-only backend with passphrase / keyfile unlock",
+    "Per-entry multi-value reveal, copy, and attachment download",
+    "HashiCorp Vault (HCP) read source with namespace + KV-v2 support",
+    "Encrypted local vault (XChaCha20-Poly1305) with first-run wizard",
+    "Hierarchical inventory tree + search with Cmd/Ctrl-F focus",
+    "Catalog binding with token-pattern hints + provider chips",
+];
+
+/// ASCII-art Meteora wizard shown in the About modal footer.
+/// Decorative only — keeps the brand's playful tone without
+/// spending a render slot on a real raster.
+const ABOUT_WIZARD_ASCII: &str = r#"
+            *  .  *  .
+        .    /\___/\    .
+              (o   o)
+            .  \ ^ /  .
+        .     ( \"/ )     .
+             /  \_/  \
+            | M T R A |
+        .   \_________/   .
+              |  |  |
+              |  |  |
+             /   |   \
+        .   '----+----'   .
+             .meteora.
+"#;
+
 /// Determine the inline catalog-override badge for a row whose
 /// middle path segment is `provider_id`. Returns `None` for
 /// bundled sources (the common case — no chip needed) and for
@@ -1678,6 +1834,38 @@ fn catalog_override_for(
 
 impl eframe::App for InventoryApp {
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
+        // K23 — top menu bar. Stable surface for discoverable
+        // actions that don't fit in the per-row context: About,
+        // Changelog, bug report. Renders even while modals are
+        // up so the user can read build info during onboarding.
+        eframe::egui::MenuBar::new().ui(ui, |ui| {
+            ui.menu_button("Help", |ui| {
+                if ui.button("About devboy secrets…").clicked() {
+                    self.show_about = true;
+                    ui.close();
+                }
+                if ui.button("Open changelog").clicked() {
+                    ui.ctx().open_url(eframe::egui::OpenUrl::new_tab(
+                        "https://github.com/meteora-pro/devboy-tools/blob/main/CHANGELOG.md",
+                    ));
+                    ui.close();
+                }
+                if ui.button("Report a bug").clicked() {
+                    ui.ctx().open_url(eframe::egui::OpenUrl::new_tab(
+                        "https://github.com/meteora-pro/devboy-tools/issues/new",
+                    ));
+                    ui.close();
+                }
+            });
+        });
+
+        // About modal — rendered before onboarding so the user
+        // can pop it open from the menu mid-onboarding if they
+        // want build-info reassurance.
+        if self.show_about {
+            self.render_about_modal(ui.ctx());
+        }
+
         // First-run onboarding wizard — gates everything on the
         // very first launch. `onboarding` and `vault_unlock`
         // are mutually exclusive (a locked vault means the user
@@ -1775,6 +1963,22 @@ impl eframe::App for InventoryApp {
                     }
                 }
             }
+            // K23 — right-aligned About button. Uses
+            // with_layout(right_to_left) so the button sticks
+            // to the banner's trailing edge regardless of how
+            // many backend switchers landed before it.
+            ui.with_layout(
+                eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                |ui| {
+                    if ui
+                        .small_button("About")
+                        .on_hover_text("Version, build info, links")
+                        .clicked()
+                    {
+                        self.show_about = true;
+                    }
+                },
+            );
         });
         if switch_to_vault {
             // Existing `.dvb` → unlock flow; no file yet →
