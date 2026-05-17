@@ -24,8 +24,13 @@ use anyhow::Result;
 use clap::Parser;
 
 mod catalog_metadata;
+// Multi-wallet types (K25). Most methods are wired up
+// incrementally in K26-K30 — the `#[allow(dead_code)]` is
+// removed in K26 when the first caller lands.
 #[cfg(feature = "dev-screenshot")]
 mod screenshot;
+#[allow(dead_code)]
+mod wallets;
 
 /// Command-line surface mirrored from the original
 /// `devboy secrets ui` clap struct so existing users see
