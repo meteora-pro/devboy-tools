@@ -182,15 +182,30 @@ impl InventoryApp {
         let (rows, metadata_by_path) = load_inventory_or_empty(&backend, &catalogs);
         let (pending_url_confirms, pending_url_warnings) =
             partition_url_trust_errors(&catalog_errors);
-        // A locked local-vault arms the unlock modal at
-        // startup — the inventory loads (everything reads as
-        // not-provisioned, since `has_value` on a locked
-        // backend is `false`) but stays gated behind the modal
-        // until the user unlocks or picks the keychain hatch.
+        // A locked backend (local-vault OR KDBX) arms the
+        // unlock modal at startup — the inventory loads
+        // (everything reads as not-provisioned, since
+        // `has_value` on a locked backend is `false`) but
+        // stays gated behind the modal until the user unlocks
+        // or picks the keychain hatch. The copy is swapped per
+        // backend so the modal heading matches what's actually
+        // being opened.
         let vault_unlock = if backend.is_locked() {
-            Some(devboy_secrets_ui::VaultUnlockState::new(
+            let state = devboy_secrets_ui::VaultUnlockState::new(
                 devboy_secrets_ui::VaultUnlockMode::Unlock,
-            ))
+            );
+            let state = match &backend {
+                StorageBackend::KdbxLocked { file, .. } => state.with_copy(
+                    "Unlock KeePass database",
+                    format!(
+                        "Enter the passphrase that protects `{}`. The decrypted entries \
+                         are held only inside this window and are never sent to the agent.",
+                        file.display()
+                    ),
+                ),
+                _ => state,
+            };
+            Some(state)
         } else {
             None
         };
@@ -2447,7 +2462,10 @@ mod tests {
         match relocked {
             StorageBackend::KdbxLocked { file, keyfile } => {
                 assert_eq!(file, std::path::PathBuf::from("/tmp/x.kdbx"));
-                assert_eq!(keyfile.as_deref(), Some(std::path::Path::new("/tmp/x.keyx")));
+                assert_eq!(
+                    keyfile.as_deref(),
+                    Some(std::path::Path::new("/tmp/x.keyx"))
+                );
             }
             other => panic!("lock should land on KdbxLocked, got {other:?}"),
         }

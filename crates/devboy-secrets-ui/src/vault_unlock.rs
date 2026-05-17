@@ -128,6 +128,16 @@ pub struct VaultUnlockState {
     /// Whether the passphrase fields are unmasked. Same
     /// eye-toggle affordance as the provision dialog.
     reveal: bool,
+    /// Optional override for the modal heading. When `None` the
+    /// render uses `mode.title()`. Set when the modal is being
+    /// reused for a non-local-vault backend (e.g. KDBX 4 file
+    /// unlock) so the heading matches what's actually being
+    /// opened.
+    title_override: Option<String>,
+    /// Optional override for the explanatory blurb under the
+    /// heading. Falls back to the mode-derived default when
+    /// `None`.
+    blurb_override: Option<String>,
 }
 
 impl VaultUnlockState {
@@ -143,7 +153,36 @@ impl VaultUnlockState {
             focus: VaultUnlockFocus::Passphrase,
             status: VaultUnlockStatus::Idle,
             reveal: false,
+            title_override: None,
+            blurb_override: None,
         }
+    }
+
+    /// Builder — override the modal heading + blurb. Both
+    /// strings end up in the rendered modal verbatim; pass
+    /// short, plain text. Used to reuse the unlock view-model
+    /// for KDBX files where "Unlock local vault" would be
+    /// misleading.
+    pub fn with_copy(mut self, title: impl Into<String>, blurb: impl Into<String>) -> Self {
+        self.title_override = Some(title.into());
+        self.blurb_override = Some(blurb.into());
+        self
+    }
+
+    /// Heading the render should display. Override wins; falls
+    /// back to the mode-derived default when no override is set.
+    pub fn effective_title(&self) -> &str {
+        match self.title_override.as_deref() {
+            Some(t) => t,
+            None => self.mode.title(),
+        }
+    }
+
+    /// Blurb the render should display under the heading.
+    /// Override wins; the render is responsible for picking a
+    /// mode-derived default when this returns `None`.
+    pub fn effective_blurb(&self) -> Option<&str> {
+        self.blurb_override.as_deref()
     }
 
     pub fn mode(&self) -> VaultUnlockMode {
@@ -372,5 +411,25 @@ mod tests {
         let mut s = VaultUnlockState::new(VaultUnlockMode::Unlock);
         s.replace_passphrase_str("the-passphrase".into());
         assert_eq!(s.passphrase().expose_secret(), "the-passphrase");
+    }
+
+    #[test]
+    fn effective_title_falls_back_to_mode_when_not_overridden() {
+        let s = VaultUnlockState::new(VaultUnlockMode::Unlock);
+        assert_eq!(s.effective_title(), "Unlock local vault");
+        assert!(s.effective_blurb().is_none());
+    }
+
+    #[test]
+    fn with_copy_overrides_title_and_blurb_for_kdbx_use_case() {
+        let s = VaultUnlockState::new(VaultUnlockMode::Unlock).with_copy(
+            "Unlock KeePass database",
+            "Enter the passphrase that protects `/tmp/x.kdbx`.",
+        );
+        assert_eq!(s.effective_title(), "Unlock KeePass database");
+        assert_eq!(
+            s.effective_blurb(),
+            Some("Enter the passphrase that protects `/tmp/x.kdbx`.")
+        );
     }
 }

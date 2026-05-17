@@ -25,20 +25,23 @@ pub fn render(ui: &mut egui::Ui, state: &mut VaultUnlockState) -> VaultUnlockFra
     let mut out = VaultUnlockFrameResult::default();
     let mode = state.mode();
 
-    // 1. Heading.
-    ui.heading(mode.title());
+    // 1. Heading — honours `state.effective_title()` so the
+    //    KDBX-backend caller can override it.
+    ui.heading(state.effective_title());
 
-    // 2. Explanation — what this modal is gating.
-    let blurb = match mode {
+    // 2. Explanation — what this modal is gating. Override
+    //    wins; mode-derived default fills the gap for the
+    //    classic local-vault flow.
+    let blurb: &str = state.effective_blurb().unwrap_or(match mode {
         VaultUnlockMode::Unlock => {
             "Your secrets are stored in an encrypted local vault \
-             (XChaCha20-Poly1305 + Argon2id). Enter the passphrase to unlock it."
+                 (XChaCha20-Poly1305 + Argon2id). Enter the passphrase to unlock it."
         }
         VaultUnlockMode::Create => {
             "No local vault exists yet. Pick a passphrase to create one — \
-             you'll get a recovery phrase to save before the vault opens."
+                 you'll get a recovery phrase to save before the vault opens."
         }
-    };
+    });
     ui.label(egui::RichText::new(blurb).small().weak());
     ui.add_space(6.0);
 
