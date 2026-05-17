@@ -2256,6 +2256,36 @@ impl InventoryApp {
             ui.separator();
         }
 
+        // K30 — surface a small informational banner when one
+        // or more extra wallets are still locked. The chip
+        // strip above already lets the user unlock them with
+        // a click; this banner just makes discovery explicit
+        // ("there ARE more entries you haven't seen yet").
+        let locked_extras: Vec<&str> = self
+            .extra_wallets
+            .iter()
+            .filter(|w| w.backend.is_locked())
+            .map(|w| w.name.as_str())
+            .collect();
+        if !locked_extras.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    eframe::egui::RichText::new(format!("🔒 {} locked", locked_extras.len()))
+                        .small()
+                        .color(eframe::egui::Color32::from_rgb(0xcc, 0x99, 0x00)),
+                );
+                ui.label(
+                    eframe::egui::RichText::new(format!(
+                        "({}). Click a chip above to unlock and add its entries.",
+                        locked_extras.join(", ")
+                    ))
+                    .small()
+                    .weak(),
+                );
+            });
+            ui.add_space(4.0);
+        }
+
         // Track which row was selected before render so we can
         // detect a click → arm the dialog.
         let prev_selected = self.state.selected();
