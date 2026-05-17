@@ -30,6 +30,7 @@ members = [
     "crates/plugins/secrets/1password",
     "crates/plugins/secrets/vault",
     "crates/plugins/secrets/env-store",
+    "crates/plugins/secrets/kdbx",
     # Pipeline plugins
     "crates/plugins/format-pipeline",
     # Research eval tools
@@ -150,6 +151,7 @@ devboy-secret-local-vault = { version = "0.29.0", path = "crates/plugins/secrets
 devboy-secret-1password = { version = "0.29.0", path = "crates/plugins/secrets/1password" }
 devboy-secret-vault = { version = "0.29.0", path = "crates/plugins/secrets/vault" }
 devboy-secret-env-store = { version = "0.29.0", path = "crates/plugins/secrets/env-store" }
+devboy-secret-kdbx = { version = "0.29.0", path = "crates/plugins/secrets/kdbx" }
 
 [profile.release]
 lto = true
