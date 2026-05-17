@@ -3,11 +3,11 @@
 //!
 //! [ADR-023]: https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md
 
-use crate::inventory::{InventoryState, RowStatus, SortKey};
+use crate::inventory::{InventoryRow, InventoryState, RowStatus, SortKey, TreeNode, ViewMode};
 
 /// Render the inventory into the supplied [`egui::Ui`]. Mutates
 /// the state directly via clicks (row selection, sort key
-/// changes, filter changes, search query).
+/// changes, filter changes, search query, group expansion).
 pub fn render(ui: &mut egui::Ui, state: &mut InventoryState) {
     ui.heading("Secrets — inventory");
     ui.label(state.daemon_status().label());
@@ -16,10 +16,29 @@ pub fn render(ui: &mut egui::Ui, state: &mut InventoryState) {
 
     render_search_bar(ui, state);
     render_filters(ui, state);
+    render_view_mode_toggle(ui, state);
 
     ui.separator();
 
-    render_table(ui, state);
+    match state.view_mode() {
+        ViewMode::Flat => render_table(ui, state),
+        ViewMode::Tree => render_tree(ui, state),
+    }
+}
+
+/// Toggle between flat-list and tree-view. The default is
+/// picked from row-count in `InventoryState::new`; the user
+/// can override at any time.
+fn render_view_mode_toggle(ui: &mut egui::Ui, state: &mut InventoryState) {
+    ui.horizontal(|ui| {
+        ui.label("View:");
+        let current = state.view_mode();
+        for mode in [ViewMode::Flat, ViewMode::Tree] {
+            if ui.selectable_label(current == mode, mode.label()).clicked() {
+                state.set_view_mode(mode);
+            }
+        }
+    });
 }
 
 /// Top-bar search field. Drives `InventoryState.query`; the
@@ -149,6 +168,117 @@ fn render_table(ui: &mut egui::Ui, state: &mut InventoryState) {
                     }
                 });
         });
+}
+
+/// Render the inventory as a collapsible tree built from path
+/// segments. The visible-rows + sort + filter + query stack
+/// already applies in `state.build_tree()`, so this render
+/// just walks the resulting `TreeNode`s.
+///
+/// Click handling: clicking a leaf row sets it as the
+/// selection; clicking a group header toggles
+/// `state.expanded`. The `force_open` field on TreeNode wins
+/// over the user's expanded-set during active search so the
+/// user doesn't have to click through.
+fn render_tree(ui: &mut egui::Ui, state: &mut InventoryState) {
+    let nodes = state.build_tree();
+    // Action queue — we can't borrow `state` mutably while
+    // iterating nodes (the node tree was built from a borrow).
+    // Collect intents, apply after the walk.
+    let mut to_select: Option<String> = None;
+    let mut to_toggle: Option<String> = None;
+    let selected_path = state.selected_row().map(|r| r.path);
+    egui::ScrollArea::vertical()
+        .auto_shrink([false; 2])
+        .show(ui, |ui| {
+            for node in &nodes {
+                render_tree_node(
+                    ui,
+                    node,
+                    state,
+                    selected_path.as_deref(),
+                    &mut to_select,
+                    &mut to_toggle,
+                );
+            }
+        });
+    if let Some(path) = to_select {
+        // Map the path back to its index in visible_rows so
+        // `set_selected` lands the right place.
+        if let Some(idx) = state.visible_rows().iter().position(|r| r.path == path) {
+            state.set_selected(idx);
+        }
+    }
+    if let Some(prefix) = to_toggle {
+        state.toggle_expanded(&prefix);
+    }
+}
+
+/// Recursive group renderer. Emits a `CollapsingHeader` per
+/// group, then leaves inside, then descends into children.
+fn render_tree_node(
+    ui: &mut egui::Ui,
+    node: &TreeNode,
+    state: &InventoryState,
+    selected_path: Option<&str>,
+    to_select: &mut Option<String>,
+    to_toggle: &mut Option<String>,
+) {
+    let leaf_count = count_leaves(node);
+    let chip = format!("{} ({leaf_count})", node.label);
+    // Sticky-expand logic:
+    //   - `force_open` (search auto-expand) wins absolutely.
+    //   - Otherwise user's expanded-set decides.
+    let user_open = state.is_expanded(&node.prefix);
+    let initially_open = node.force_open || user_open;
+    let header = egui::CollapsingHeader::new(chip)
+        .id_salt(&node.prefix)
+        .default_open(initially_open);
+    let resp = header.show(ui, |ui| {
+        for leaf in &node.leaves {
+            render_leaf_row(ui, leaf, selected_path, to_select);
+        }
+        for child in &node.children {
+            render_tree_node(ui, child, state, selected_path, to_select, to_toggle);
+        }
+    });
+    // Track manual toggles — only when force_open is not set
+    // (otherwise the user can't collapse search-expanded
+    // groups, and that's intentional).
+    if !node.force_open && resp.header_response.clicked() {
+        *to_toggle = Some(node.prefix.clone());
+    }
+}
+
+/// Render one leaf row (a single `InventoryRow`) inside a
+/// tree group. Same path / status / catalog-override chip
+/// pattern as the flat-mode table but on one line.
+fn render_leaf_row(
+    ui: &mut egui::Ui,
+    leaf: &InventoryRow,
+    selected_path: Option<&str>,
+    to_select: &mut Option<String>,
+) {
+    let is_selected = selected_path == Some(leaf.path.as_str());
+    ui.horizontal(|ui| {
+        let label = ui.selectable_label(is_selected, leaf.path.as_str());
+        if label.clicked() {
+            *to_select = Some(leaf.path.clone());
+        }
+        if let Some(badge) = leaf.catalog_override.as_deref() {
+            ui.label(catalog_override_chip(badge));
+        }
+        ui.colored_label(status_color(leaf.status), leaf.status.label());
+        if let Some(expires) = leaf.expires_at.as_deref() {
+            ui.label(egui::RichText::new(format!("· {expires}")).small().weak());
+        }
+    });
+}
+
+/// Total leaf count under `node` (recursive). Cheap — used
+/// to render the per-group "N entries" chip in the header.
+fn count_leaves(node: &TreeNode) -> usize {
+    node.leaves.len() + node.children.iter().map(count_leaves).sum::<usize>()
 }
 
 /// Map a free-form catalog-override badge (`"user"`, `"project"`,

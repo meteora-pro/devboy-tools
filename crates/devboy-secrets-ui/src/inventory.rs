@@ -212,6 +212,34 @@ impl Focus {
 // View-model
 // =============================================================================
 
+/// How the inventory is laid out — either a single flat list
+/// or a collapsible tree built from path segments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    /// Default for small inventories — every row is a line in
+    /// the table.
+    Flat,
+    /// Group rows by their path prefix segments (great for
+    /// imported KeePass DBs with hundreds of entries). The
+    /// render layer uses [`InventoryState::expanded`] to track
+    /// which group nodes are open.
+    Tree,
+}
+
+impl ViewMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Flat => "flat",
+            Self::Tree => "tree",
+        }
+    }
+}
+
+/// Above this many rows the default view-mode is `Tree`. Below
+/// it, `Flat` makes more sense (the user can scan everything at
+/// a glance and a tree just adds chrome).
+const TREE_MODE_THRESHOLD: usize = 20;
+
 /// Self-contained Inventory state. Built by the orchestration
 /// layer, mutated by key handlers, consumed by [`render`].
 #[derive(Debug, Clone)]
@@ -230,6 +258,16 @@ pub struct InventoryState {
     /// owns the input widget; this is just the canonical
     /// holder so the filter logic can read it.
     query: String,
+    /// Flat-list vs tree layout. Default depends on row count
+    /// (see [`TREE_MODE_THRESHOLD`]).
+    view_mode: ViewMode,
+    /// Prefixes the user has explicitly expanded in tree mode.
+    /// Keyed by the prefix string (e.g. `"kdbx/personal"`).
+    /// Render layer mutates via `toggle_expanded` / `expand` /
+    /// `collapse`. Defaults: every top-level prefix is expanded
+    /// on the first switch to Tree mode (see
+    /// `expand_top_level_defaults`).
+    expanded: std::collections::HashSet<String>,
     /// Index into the *visible* rows list; clamped to
     /// `[0, visible_rows().len())` whenever filters or rows
     /// change.
@@ -245,14 +283,41 @@ impl InventoryState {
     /// Defaults: sort by `ExpiresAt`, focus on the table, daemon
     /// status `Unknown`, no query.
     pub fn new(rows: Vec<InventoryRow>) -> Self {
-        Self {
+        let view_mode = if rows.len() >= TREE_MODE_THRESHOLD {
+            ViewMode::Tree
+        } else {
+            ViewMode::Flat
+        };
+        let mut state = Self {
             rows,
             filters: InventoryFilters::default(),
             sort_key: SortKey::ExpiresAt,
             query: String::new(),
+            view_mode,
+            expanded: std::collections::HashSet::new(),
             selected: 0,
             focus: Focus::Table,
             daemon_status: DaemonStatus::Unknown,
+        };
+        // Initial tree mode: expand every top-level prefix so
+        // the user sees structure at a glance. The user can
+        // collapse from there.
+        if state.view_mode == ViewMode::Tree {
+            state.expand_top_level_defaults();
+        }
+        state
+    }
+
+    /// Populate `self.expanded` with every distinct
+    /// first-segment prefix in the row set. Idempotent — safe
+    /// to call repeatedly.
+    fn expand_top_level_defaults(&mut self) {
+        for row in &self.rows {
+            if let Some(top) = row.path.split('/').next()
+                && !top.is_empty()
+            {
+                self.expanded.insert(top.to_owned());
+            }
         }
     }
 
@@ -286,6 +351,49 @@ impl InventoryState {
     pub fn set_query(&mut self, query: impl Into<String>) {
         self.query = query.into();
         self.clamp_selection();
+    }
+
+    /// Current layout mode (Flat or Tree). Render layer
+    /// branches on this.
+    pub fn view_mode(&self) -> ViewMode {
+        self.view_mode
+    }
+
+    /// Switch layout mode. Switching INTO Tree mode populates
+    /// the default expanded-set if it's empty (so the user
+    /// sees structure on first toggle).
+    pub fn set_view_mode(&mut self, mode: ViewMode) {
+        self.view_mode = mode;
+        if mode == ViewMode::Tree && self.expanded.is_empty() {
+            self.expand_top_level_defaults();
+        }
+    }
+
+    /// `true` when the user has expanded `prefix` in tree mode.
+    pub fn is_expanded(&self, prefix: &str) -> bool {
+        self.expanded.contains(prefix)
+    }
+
+    /// Toggle the expanded state of `prefix`. Render layer
+    /// calls this when the user clicks a collapsing header.
+    pub fn toggle_expanded(&mut self, prefix: &str) {
+        if !self.expanded.remove(prefix) {
+            self.expanded.insert(prefix.to_owned());
+        }
+    }
+
+    /// Build a forest of [`TreeNode`]s from `visible_rows()`.
+    /// Used by the tree-mode render. Pure over the row set;
+    /// safe to call every frame.
+    ///
+    /// `auto_expand_under_query` should be set when there's a
+    /// non-empty query in flight — every ancestor of every
+    /// matched leaf is then marked as `force_open` so the
+    /// matches surface without the user clicking through.
+    pub fn build_tree(&self) -> Vec<TreeNode> {
+        let auto_expand = !self.query.trim().is_empty();
+        let rows: Vec<InventoryRow> = self.visible_rows().iter().map(|r| (*r).clone()).collect();
+        build_tree_from_rows(&rows, &self.expanded, auto_expand)
     }
 
     /// Replace the row list and clamp the cursor. Called when
@@ -444,6 +552,136 @@ pub fn row_matches_query(row: &InventoryRow, query_lc: &str) -> bool {
         return true;
     }
     false
+}
+
+// =============================================================================
+// Tree-mode view-model
+// =============================================================================
+
+/// One node in the inventory's tree-mode forest. Either a
+/// group (with children + leaves) or a leaf row at the deepest
+/// level. The render walks recursively and uses `prefix` as
+/// the `CollapsingHeader` id key + the lookup key for
+/// `InventoryState::is_expanded`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeNode {
+    /// Last path segment — displayed in the collapsing header.
+    pub label: String,
+    /// Full prefix from root, e.g. `kdbx/personal/cloud`. Used
+    /// as the unique key for the expanded set.
+    pub prefix: String,
+    /// Sub-group nodes. Empty for leaf-only groups.
+    pub children: Vec<TreeNode>,
+    /// Entries that sit DIRECTLY in this group (paths whose
+    /// segment count equals `prefix.split('/').count() + 1`).
+    /// Already filter / sort applied by `visible_rows`.
+    pub leaves: Vec<InventoryRow>,
+    /// `true` when the render should ignore the user's manual
+    /// expanded-set and force the node open. Set during search:
+    /// every ancestor of a matching leaf is force-expanded so
+    /// the user doesn't have to click through.
+    pub force_open: bool,
+}
+
+/// Construct the tree forest from a flat row list. Pure +
+/// deterministic over `rows`. `expanded` is the user's
+/// manual expanded-prefix set; `auto_expand` (when `true`)
+/// flips `force_open` on every group so search matches
+/// surface without the user clicking through.
+///
+/// Layout rules:
+///
+/// - A row whose path has no `/` lands as a leaf at the
+///   top level (rare in practice — all our paths are 3+ seg).
+/// - Otherwise the first segment becomes a top-level group;
+///   the rest of the path is recursively classified.
+/// - Within a group, a row whose remaining path has only one
+///   segment (no more `/`) is a leaf of that group; deeper
+///   rows recurse into nested groups.
+/// - Leaves preserve the row's full original path verbatim
+///   (so click handlers + search keep working).
+pub fn build_tree_from_rows(
+    rows: &[InventoryRow],
+    expanded: &std::collections::HashSet<String>,
+    auto_expand: bool,
+) -> Vec<TreeNode> {
+    // Owned views with `(full_path, remaining_after_prefix)`
+    // so the recursion can strip without re-cloning the row.
+    // We track (row.clone(), remaining_path_str) as the
+    // working pair.
+    let pairs: Vec<(InventoryRow, String)> =
+        rows.iter().map(|r| (r.clone(), r.path.clone())).collect();
+    let (top_leaves, groups) = split_at_level("", &pairs, expanded, auto_expand);
+    // Top-level "leaves" (rows with no `/` at all) get
+    // promoted into pseudo-groups so the render layer's
+    // recursion stays uniform. Vanishingly rare in practice.
+    let mut out = groups;
+    for leaf in top_leaves {
+        out.push(TreeNode {
+            label: leaf.path.clone(),
+            prefix: leaf.path.clone(),
+            children: Vec::new(),
+            leaves: vec![leaf],
+            force_open: auto_expand,
+        });
+    }
+    out.sort_by(|a, b| a.label.cmp(&b.label));
+    out
+}
+
+/// Internal: for the rows under `prefix` (with `remaining` =
+/// path after `prefix/` stripped), bucket them into
+/// "leaves here" + "sub-groups". Returns the leaves AT this
+/// level + the constructed child groups.
+fn split_at_level(
+    prefix: &str,
+    pairs: &[(InventoryRow, String)],
+    expanded: &std::collections::HashSet<String>,
+    auto_expand: bool,
+) -> (Vec<InventoryRow>, Vec<TreeNode>) {
+    use std::collections::BTreeMap;
+    let mut leaves: Vec<InventoryRow> = Vec::new();
+    let mut buckets: BTreeMap<String, Vec<(InventoryRow, String)>> = BTreeMap::new();
+    for (row, remaining) in pairs {
+        let mut iter = remaining.splitn(2, '/');
+        let head = iter.next().unwrap_or("");
+        let rest = iter.next();
+        match rest {
+            None | Some("") => {
+                // No more segments — this row is a leaf at the
+                // current level.
+                leaves.push(row.clone());
+            }
+            Some(rest_str) => {
+                buckets
+                    .entry(head.to_owned())
+                    .or_default()
+                    .push((row.clone(), rest_str.to_owned()));
+            }
+        }
+    }
+    leaves.sort_by(|a, b| a.path.cmp(&b.path));
+    let children: Vec<TreeNode> = buckets
+        .into_iter()
+        .map(|(label, sub_pairs)| {
+            let child_prefix = if prefix.is_empty() {
+                label.clone()
+            } else {
+                format!("{prefix}/{label}")
+            };
+            let (sub_leaves, sub_children) =
+                split_at_level(&child_prefix, &sub_pairs, expanded, auto_expand);
+            let force_open = auto_expand || expanded.contains(&child_prefix);
+            TreeNode {
+                label,
+                prefix: child_prefix,
+                children: sub_children,
+                leaves: sub_leaves,
+                force_open,
+            }
+        })
+        .collect();
+    (leaves, children)
 }
 
 // =============================================================================
@@ -978,6 +1216,159 @@ mod tests {
         s.set_query("github");
         assert!(s.selected() < s.visible_rows().len());
         assert!(s.selected() <= prev);
+    }
+
+    // -- K10 — tree builder ---------------------------------
+
+    fn rows_for_tree() -> Vec<InventoryRow> {
+        vec![
+            row(
+                "kdbx/personal/cloud/aws",
+                RowStatus::Provisioned,
+                Some("kdbx"),
+                None,
+                Some("personal"),
+            ),
+            row(
+                "kdbx/personal/cloud/gcp",
+                RowStatus::Provisioned,
+                Some("kdbx"),
+                None,
+                Some("personal"),
+            ),
+            row(
+                "kdbx/work/stripe",
+                RowStatus::Provisioned,
+                Some("kdbx"),
+                None,
+                Some("work"),
+            ),
+            row(
+                "team/jira/api-key",
+                RowStatus::Missing,
+                None,
+                None,
+                Some("jira"),
+            ),
+        ]
+    }
+
+    #[test]
+    fn build_tree_groups_rows_by_path_segments() {
+        let mut s = InventoryState::new(rows_for_tree());
+        s.set_view_mode(ViewMode::Tree);
+        let forest = s.build_tree();
+        // Top-level nodes ordered alphabetically.
+        let labels: Vec<&str> = forest.iter().map(|n| n.label.as_str()).collect();
+        assert_eq!(labels, vec!["kdbx", "team"]);
+
+        // `kdbx` has two sub-groups: personal + work.
+        let kdbx = &forest[0];
+        let sub_labels: Vec<&str> = kdbx.children.iter().map(|n| n.label.as_str()).collect();
+        assert_eq!(sub_labels, vec!["personal", "work"]);
+
+        // `kdbx/personal/cloud` has TWO leaves (aws, gcp).
+        let cloud = &kdbx.children[0].children[0];
+        assert_eq!(cloud.label, "cloud");
+        assert_eq!(cloud.prefix, "kdbx/personal/cloud");
+        assert_eq!(cloud.leaves.len(), 2);
+        // Leaf paths preserved verbatim.
+        let leaf_paths: Vec<&str> = cloud.leaves.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(
+            leaf_paths,
+            vec!["kdbx/personal/cloud/aws", "kdbx/personal/cloud/gcp"]
+        );
+
+        // `kdbx/work` has one leaf (stripe), no sub-groups.
+        let work = &kdbx.children[1];
+        assert_eq!(work.label, "work");
+        assert!(work.children.is_empty());
+        assert_eq!(work.leaves.len(), 1);
+        assert_eq!(work.leaves[0].path, "kdbx/work/stripe");
+
+        // `team/jira/api-key` lands under team/jira.
+        let team = &forest[1];
+        assert_eq!(team.children[0].label, "jira");
+        assert_eq!(team.children[0].leaves.len(), 1);
+        assert_eq!(team.children[0].leaves[0].path, "team/jira/api-key");
+    }
+
+    #[test]
+    fn build_tree_respects_user_expanded_set() {
+        let mut s = InventoryState::new(rows_for_tree());
+        s.set_view_mode(ViewMode::Tree);
+        // Wipe defaults so we start from a known empty state.
+        for path in &["kdbx", "team"] {
+            if s.is_expanded(path) {
+                s.toggle_expanded(path);
+            }
+        }
+        let forest = s.build_tree();
+        assert!(!forest[0].force_open, "kdbx must not be open initially");
+        s.toggle_expanded("kdbx");
+        let forest = s.build_tree();
+        // The root "kdbx" group's prefix == "kdbx" so it picks
+        // up the user-expanded flag.
+        assert!(
+            forest
+                .iter()
+                .find(|n| n.prefix == "kdbx")
+                .unwrap()
+                .force_open,
+            "kdbx must be force_open after user-toggle"
+        );
+    }
+
+    #[test]
+    fn build_tree_force_opens_every_group_when_query_active() {
+        let mut s = InventoryState::new(rows_for_tree());
+        s.set_view_mode(ViewMode::Tree);
+        s.set_query("stripe");
+        let forest = s.build_tree();
+        // Only `kdbx` branch remains (matches kdbx/work/stripe).
+        // Every node in that branch is force_open.
+        let kdbx = &forest[0];
+        assert!(kdbx.force_open);
+        assert!(kdbx.children.iter().all(|c| c.force_open));
+    }
+
+    #[test]
+    fn view_mode_default_is_tree_when_row_count_exceeds_threshold() {
+        // ≥ TREE_MODE_THRESHOLD (20) rows → default tree.
+        let mut many = Vec::new();
+        for i in 0..30 {
+            many.push(row(
+                &format!("kdbx/group/{i:02}"),
+                RowStatus::Provisioned,
+                None,
+                None,
+                None,
+            ));
+        }
+        let s = InventoryState::new(many);
+        assert_eq!(s.view_mode(), ViewMode::Tree);
+    }
+
+    #[test]
+    fn view_mode_default_is_flat_for_small_inventories() {
+        let s = InventoryState::new(vec![row(
+            "team/x/y",
+            RowStatus::Provisioned,
+            None,
+            None,
+            None,
+        )]);
+        assert_eq!(s.view_mode(), ViewMode::Flat);
+    }
+
+    #[test]
+    fn toggle_expanded_round_trips() {
+        let mut s = InventoryState::new(rows_for_tree());
+        let was = s.is_expanded("kdbx");
+        s.toggle_expanded("kdbx");
+        assert_eq!(s.is_expanded("kdbx"), !was);
+        s.toggle_expanded("kdbx");
+        assert_eq!(s.is_expanded("kdbx"), was);
     }
 
     #[test]
