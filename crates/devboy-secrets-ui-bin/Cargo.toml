@@ -20,6 +20,12 @@ rustdoc-args = ["--cfg", "docsrs"]
 [[bin]]
 name = "devboy-secrets-ui"
 path = "src/main.rs"
+# Skip rustdoc generation for this bin target — it shares the
+# output filename with the `devboy-secrets-ui` lib crate, which
+# trips a collision warning that becomes a hard error under the
+# CI's `RUSTDOCFLAGS=-Dwarnings`. The lib's docs are what
+# downstream consumers want; the bin is a private entrypoint.
+doc = false
 
 [features]
 default = []

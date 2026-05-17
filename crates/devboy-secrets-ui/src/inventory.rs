@@ -221,8 +221,8 @@ pub enum ViewMode {
     Flat,
     /// Group rows by their path prefix segments (great for
     /// imported KeePass DBs with hundreds of entries). The
-    /// render layer uses [`InventoryState::expanded`] to track
-    /// which group nodes are open.
+    /// render layer uses [`InventoryState`]'s internal
+    /// expansion set to track which group nodes are open.
     Tree,
 }
 

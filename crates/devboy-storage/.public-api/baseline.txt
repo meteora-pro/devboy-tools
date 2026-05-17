@@ -1357,6 +1357,33 @@ impl core::marker::Unpin for devboy_storage::router_config::RouterConfigError
 impl core::marker::UnsafeUnpin for devboy_storage::router_config::RouterConfigError
 impl !core::panic::unwind_safe::RefUnwindSafe for devboy_storage::router_config::RouterConfigError
 impl !core::panic::unwind_safe::UnwindSafe for devboy_storage::router_config::RouterConfigError
+pub enum devboy_storage::router_config::SourceAccess
+pub devboy_storage::router_config::SourceAccess::Read
+pub devboy_storage::router_config::SourceAccess::ReadWrite
+impl devboy_storage::router_config::SourceAccess
+pub fn devboy_storage::router_config::SourceAccess::mask(self, declared: devboy_storage::source::Capabilities) -> devboy_storage::source::Capabilities
+impl core::clone::Clone for devboy_storage::router_config::SourceAccess
+pub fn devboy_storage::router_config::SourceAccess::clone(&self) -> devboy_storage::router_config::SourceAccess
+impl core::cmp::Eq for devboy_storage::router_config::SourceAccess
+impl core::cmp::PartialEq for devboy_storage::router_config::SourceAccess
+pub fn devboy_storage::router_config::SourceAccess::eq(&self, other: &devboy_storage::router_config::SourceAccess) -> bool
+impl core::default::Default for devboy_storage::router_config::SourceAccess
+pub fn devboy_storage::router_config::SourceAccess::default() -> devboy_storage::router_config::SourceAccess
+impl core::fmt::Debug for devboy_storage::router_config::SourceAccess
+pub fn devboy_storage::router_config::SourceAccess::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_storage::router_config::SourceAccess
+impl core::marker::StructuralPartialEq for devboy_storage::router_config::SourceAccess
+impl serde_core::ser::Serialize for devboy_storage::router_config::SourceAccess
+pub fn devboy_storage::router_config::SourceAccess::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_storage::router_config::SourceAccess
+pub fn devboy_storage::router_config::SourceAccess::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_storage::router_config::SourceAccess
+impl core::marker::Send for devboy_storage::router_config::SourceAccess
+impl core::marker::Sync for devboy_storage::router_config::SourceAccess
+impl core::marker::Unpin for devboy_storage::router_config::SourceAccess
+impl core::marker::UnsafeUnpin for devboy_storage::router_config::SourceAccess
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::router_config::SourceAccess
+impl core::panic::unwind_safe::UnwindSafe for devboy_storage::router_config::SourceAccess
 pub struct devboy_storage::router_config::DefaultRoute
 pub devboy_storage::router_config::DefaultRoute::fallback: core::option::Option<alloc::string::String>
 pub devboy_storage::router_config::DefaultRoute::source: alloc::string::String
@@ -1440,9 +1467,12 @@ impl core::marker::UnsafeUnpin for devboy_storage::router_config::SecretOverride
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::router_config::SecretOverride
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::router_config::SecretOverride
 pub struct devboy_storage::router_config::SourceDefinition
+pub devboy_storage::router_config::SourceDefinition::access: devboy_storage::router_config::SourceAccess
 pub devboy_storage::router_config::SourceDefinition::name: alloc::string::String
 pub devboy_storage::router_config::SourceDefinition::settings: alloc::collections::btree::map::BTreeMap<alloc::string::String, toml::value::Value>
 pub devboy_storage::router_config::SourceDefinition::source_type: alloc::string::String
+impl devboy_storage::router_config::SourceDefinition
+pub fn devboy_storage::router_config::SourceDefinition::effective_capabilities(&self, declared: devboy_storage::source::Capabilities) -> devboy_storage::source::Capabilities
 impl core::clone::Clone for devboy_storage::router_config::SourceDefinition
 pub fn devboy_storage::router_config::SourceDefinition::clone(&self) -> devboy_storage::router_config::SourceDefinition
 impl core::cmp::PartialEq for devboy_storage::router_config::SourceDefinition
@@ -2403,6 +2433,33 @@ impl core::marker::Unpin for devboy_storage::merge::SecretOrigin
 impl core::marker::UnsafeUnpin for devboy_storage::merge::SecretOrigin
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::merge::SecretOrigin
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::merge::SecretOrigin
+pub enum devboy_storage::SourceAccess
+pub devboy_storage::SourceAccess::Read
+pub devboy_storage::SourceAccess::ReadWrite
+impl devboy_storage::router_config::SourceAccess
+pub fn devboy_storage::router_config::SourceAccess::mask(self, declared: devboy_storage::source::Capabilities) -> devboy_storage::source::Capabilities
+impl core::clone::Clone for devboy_storage::router_config::SourceAccess
+pub fn devboy_storage::router_config::SourceAccess::clone(&self) -> devboy_storage::router_config::SourceAccess
+impl core::cmp::Eq for devboy_storage::router_config::SourceAccess
+impl core::cmp::PartialEq for devboy_storage::router_config::SourceAccess
+pub fn devboy_storage::router_config::SourceAccess::eq(&self, other: &devboy_storage::router_config::SourceAccess) -> bool
+impl core::default::Default for devboy_storage::router_config::SourceAccess
+pub fn devboy_storage::router_config::SourceAccess::default() -> devboy_storage::router_config::SourceAccess
+impl core::fmt::Debug for devboy_storage::router_config::SourceAccess
+pub fn devboy_storage::router_config::SourceAccess::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_storage::router_config::SourceAccess
+impl core::marker::StructuralPartialEq for devboy_storage::router_config::SourceAccess
+impl serde_core::ser::Serialize for devboy_storage::router_config::SourceAccess
+pub fn devboy_storage::router_config::SourceAccess::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_storage::router_config::SourceAccess
+pub fn devboy_storage::router_config::SourceAccess::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_storage::router_config::SourceAccess
+impl core::marker::Send for devboy_storage::router_config::SourceAccess
+impl core::marker::Sync for devboy_storage::router_config::SourceAccess
+impl core::marker::Unpin for devboy_storage::router_config::SourceAccess
+impl core::marker::UnsafeUnpin for devboy_storage::router_config::SourceAccess
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::router_config::SourceAccess
+impl core::panic::unwind_safe::UnwindSafe for devboy_storage::router_config::SourceAccess
 pub enum devboy_storage::SourceError
 pub devboy_storage::SourceError::BadReference
 pub devboy_storage::SourceError::BadReference::name: alloc::string::String
@@ -3143,9 +3200,12 @@ impl core::marker::UnsafeUnpin for devboy_storage::secret_path::SecretPath
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::secret_path::SecretPath
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::secret_path::SecretPath
 pub struct devboy_storage::SourceDefinition
+pub devboy_storage::SourceDefinition::access: devboy_storage::router_config::SourceAccess
 pub devboy_storage::SourceDefinition::name: alloc::string::String
 pub devboy_storage::SourceDefinition::settings: alloc::collections::btree::map::BTreeMap<alloc::string::String, toml::value::Value>
 pub devboy_storage::SourceDefinition::source_type: alloc::string::String
+impl devboy_storage::router_config::SourceDefinition
+pub fn devboy_storage::router_config::SourceDefinition::effective_capabilities(&self, declared: devboy_storage::source::Capabilities) -> devboy_storage::source::Capabilities
 impl core::clone::Clone for devboy_storage::router_config::SourceDefinition
 pub fn devboy_storage::router_config::SourceDefinition::clone(&self) -> devboy_storage::router_config::SourceDefinition
 impl core::cmp::PartialEq for devboy_storage::router_config::SourceDefinition

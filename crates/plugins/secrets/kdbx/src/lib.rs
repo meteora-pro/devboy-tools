@@ -164,13 +164,13 @@ pub struct KdbxEntry {
     /// KeePass tags (already a `Vec<String>` in the upstream
     /// type — preserved verbatim).
     pub tags: Vec<String>,
-    /// ISO 8601 string of [`keepass::Times::creation`].
+    /// ISO 8601 string of `keepass::Times::creation`.
     pub created_at: Option<String>,
-    /// ISO 8601 string of [`keepass::Times::last_modification`].
+    /// ISO 8601 string of `keepass::Times::last_modification`.
     /// The UI uses this as a `last_rotated_at` heuristic.
     pub modified_at: Option<String>,
-    /// ISO 8601 string of [`keepass::Times::expiry`], **only**
-    /// when [`keepass::Times::expires`] is `Some(true)`. KeePass
+    /// ISO 8601 string of `keepass::Times::expiry`, **only**
+    /// when `keepass::Times::expires` is `Some(true)`. KeePass
     /// stores an expiry timestamp even when expiry isn't
     /// enabled; we hide that "ghost" value here so downstream
     /// rotation warnings don't fire on it.

@@ -1552,7 +1552,7 @@ fn load_inventory_or_empty(
 ///
 /// Field mapping:
 ///
-/// - `description` — multiline block: "KeePass entry: <title>" +
+/// - `description` — multiline block: `KeePass entry: TITLE` +
 ///   optional value-source note + Notes + tags + custom string
 ///   keys + attachment names + UUID + OTP marker.
 /// - `retrieval_url` — URL field (so the context card renders the
@@ -1843,8 +1843,8 @@ fn render_kdbx_attachments_section(
 /// Execute the K21 save flow synchronously: re-derive the KDBX
 /// body via Argon2id, walk to the entry by UUID, grab the
 /// attachment by name, write it to `dest`. Returns a single-line
-/// toast message describing the outcome — green path: "Saved
-/// <name> → <path>"; red paths: "Failed: <reason>".
+/// toast message describing the outcome — green path: `Saved
+/// NAME → PATH`; red paths: `Failed: REASON`.
 ///
 /// Synchronous on purpose. Attachments are typically small
 /// (certs, keys, screenshots), Argon2id was already paid at

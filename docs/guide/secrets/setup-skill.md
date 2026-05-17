@@ -202,7 +202,7 @@ The UI handles the locked → unlocked transition itself: a modal asks for the p
 
 **First-run onboarding.** When nothing is configured anywhere (no `sources.toml`, no `.dvb`, no env passphrase), the UI opens an onboarding wizard: a backend picker for keychain / local-vault / HCP Vault, combinations allowed, one marked primary. It writes `sources.toml` and creates the local vault if asked. The HCP Vault entry carries an `access = "read" | "readwrite"` mask — `read` narrows the source's capabilities to `READ | LIST | VALIDATE`.
 
-Full walkthrough: [`local-vault.md`](./local-vault.md) ("Unlocking from the secrets UI", "First-run onboarding wizard", "External Vault as a read-source"). Contracts: [`scenarios/vault-unlock.feature`](./scenarios/vault-unlock.feature), [`scenarios/onboarding.feature`](./scenarios/onboarding.feature).
+Full walkthrough: [`local-vault.md`](./local-vault.md) ("Unlocking from the secrets UI", "First-run onboarding wizard", "External Vault as a read-source"). Contracts: [`scenarios/vault-unlock.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/vault-unlock.feature), [`scenarios/onboarding.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/onboarding.feature).
 
 ## See also
 
@@ -210,8 +210,8 @@ Full walkthrough: [`local-vault.md`](./local-vault.md) ("Unlocking from the secr
 - [ADR-023](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md) §3.8 — formal spec of the eight-step flow.
 - [`onboarding.md`](./onboarding.md) — manual equivalent for users without an agent.
 - [`agent-protocol.md`](./agent-protocol.md) — MCP tool surface used in steps 5-6 (`secrets_request_provision`, `secrets_poll_status`).
-- [`scenarios/ui-catalog-rendering.feature`](./scenarios/ui-catalog-rendering.feature) — Gherkin contract for the provision dialog's catalog binding.
-- [`scenarios/vault-unlock.feature`](./scenarios/vault-unlock.feature) — Gherkin contract for the local-vault unlock / create flow.
+- [`scenarios/ui-catalog-rendering.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/ui-catalog-rendering.feature) — Gherkin contract for the provision dialog's catalog binding.
+- [`scenarios/vault-unlock.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/vault-unlock.feature) — Gherkin contract for the local-vault unlock / create flow.
 - [`local-vault.md`](./local-vault.md) — local-vault file format, the UI unlock paths, recovery, and backup.
 - `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/SKILL.md` — the skill manifest and procedure walkthrough the agent loads at activation time.
 - `crates/devboy-cli/src/secrets_setup.rs` — the CLI-side scanner / proposer / wizard runner, including `read_setup_state`.

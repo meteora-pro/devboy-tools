@@ -37,7 +37,6 @@ devboy-secrets-agent = { workspace = true }
 # `gui` feature pulls in egui and is consumed by the standalone
 # `devboy-secrets-ui-bin` crate, not by the CLI.
 devboy-secrets-ui = { workspace = true }
-devboy-vault-crypto = { workspace = true }
 devboy-token-catalog = { workspace = true }
 regex.workspace = true
 ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
