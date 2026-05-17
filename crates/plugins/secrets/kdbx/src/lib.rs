@@ -1551,9 +1551,23 @@ mod tests {
     #[test]
     fn derive_working_copy_path_drops_into_source_dir_with_timestamp() {
         let p = derive_working_copy_path(std::path::Path::new("/tmp/x.kdbx"));
-        let s = p.to_string_lossy();
-        assert!(s.starts_with("/tmp/x.devboy-working-"), "got: {s}");
-        assert!(s.ends_with(".kdbx"), "got: {s}");
+        // Assert via structured path APIs rather than string
+        // prefix so the test passes under Windows too, where
+        // PathBuf round-trips the original `/tmp/` separator
+        // verbatim but file-stem-derived joins use `\`.
+        assert_eq!(
+            p.parent().and_then(|p| p.to_str()),
+            Some("/tmp"),
+            "got: {}",
+            p.display()
+        );
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        assert!(
+            name.starts_with("x.devboy-working-"),
+            "got: {}",
+            p.display()
+        );
+        assert!(name.ends_with(".kdbx"), "got: {}", p.display());
     }
 
     #[test]
