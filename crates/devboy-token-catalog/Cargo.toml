@@ -1,0 +1,39 @@
+[package]
+name = "devboy-token-catalog"
+description = "Backend-driven token catalog for devboy-tools — JSON-defined per-provider variants (CN/global/coding tiers, region-specific endpoints), used by `secrets ui` to render dynamic provision forms."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["devboy", "secrets", "tokens", "catalog"]
+categories = ["authentication", "configuration"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+dirs.workspace = true
+toml.workspace = true
+# `blocking` is the URL fetcher's transport. JSON / TLS bits come
+# from the workspace-level reqwest feature set.
+reqwest = { workspace = true, features = ["blocking"] }
+# Body fingerprinting for the SHA256 pin (P23.3) and the
+# disk-cache key (P23.5).
+sha2.workspace = true
+# RFC3339 timestamps for the audit log (P23.7).
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+# Auto-discovery for bundled JSON catalogs under `data/` so
+# adding a new provider is one file drop with zero source
+# changes (mirrors the same pattern in devboy-skills).
+rust-embed = { version = "8", default-features = false, features = ["include-exclude"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+httpmock.workspace = true
+
+[lints]
+workspace = true

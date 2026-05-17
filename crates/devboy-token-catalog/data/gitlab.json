@@ -1,0 +1,98 @@
+{
+  "$schema": "../schema/v1.json",
+  "schema_version": 1,
+  "provider_id": "gitlab",
+  "display_name": "GitLab",
+  "description": "GitLab access tokens — three flavours. Personal Access Tokens (`PAT`) follow the user; Project / Group Access Tokens are scoped to one project or group; Deploy Tokens are credential pairs for read-only registry / repo pulls in CI. Self-hosted GitLab uses the same shapes.",
+  "variants": [
+    {
+      "id": "gitlab-pat",
+      "display_name": "Personal Access Token",
+      "description": "User-scoped `glpat-…` token. Inherits the user's permissions across every project they can access. Right for local development / CLI use; avoid in CI where a Project Access Token tracks the project boundary cleanly.",
+      "format_regex": "^glpat-[A-Za-z0-9_-]{20}$",
+      "format_hint": "starts with `glpat-`, 20 chars of [A-Za-z0-9_-] after the prefix",
+      "retrieval": {
+        "console_url": "https://gitlab.com/-/user_settings/personal_access_tokens",
+        "docs_url": "https://docs.gitlab.com/user/profile/personal_access_tokens/",
+        "steps": [
+          "Open https://gitlab.com/-/user_settings/personal_access_tokens (self-hosted: replace gitlab.com with your host)",
+          "Pick a name describing where the token will live (`devboy-laptop`, `ci-pipeline`)",
+          "Set an expiration — required since GitLab 15.4, max 1 year",
+          "Pick scopes (`api` for full read/write; `read_api` if read-only)",
+          "Click Create personal access token, copy the value (shown once)"
+        ],
+        "notes": "Self-hosted GitLab on a private host is fine — but make sure the host is publicly reachable from devboy if you want liveness probes to succeed. The `api` scope grants every action your account can perform; lean on `read_api` whenever the tool only reads."
+      },
+      "liveness": {
+        "kind": "http",
+        "url": "https://gitlab.com/api/v4/user",
+        "method": "GET",
+        "auth": { "kind": "bearer" },
+        "expect_status": 200
+      },
+      "rotation": {
+        "method": "provider-api",
+        "every_days": 90,
+        "guide_url": "https://docs.gitlab.com/api/personal_access_tokens/#rotate-a-personal-access-token",
+        "notes": "GitLab supports atomic API-driven rotation: `POST /personal_access_tokens/:id/rotate` (or the `self/rotate` form) revokes the old token and returns a new one in a single call, with a 1-week default expiry on the replacement. The UI exposes the same as a Rotate button on the token row. Atomic rotation has no overlap window — update the consumer with the response value immediately."
+      }
+    },
+    {
+      "id": "gitlab-project-token",
+      "display_name": "Project Access Token",
+      "description": "Project-scoped `glpat-…` token issued under a service-account identity. Stays valid even when the human who created it leaves; right for CI bots and project-bound automation.",
+      "format_regex": "^glpat-[A-Za-z0-9_-]{20}$",
+      "format_hint": "starts with `glpat-`, 20 chars of [A-Za-z0-9_-] after the prefix (same shape as a PAT)",
+      "retrieval": {
+        "console_url": "https://gitlab.com/<group>/<project>/-/settings/access_tokens",
+        "docs_url": "https://docs.gitlab.com/user/project/settings/project_access_tokens/",
+        "steps": [
+          "Open the project's Settings → Access Tokens page",
+          "Pick a name describing the bot (`ci-deploy-bot`, `release-publisher`)",
+          "Set an expiration — required, max 1 year",
+          "Pick a role (`Maintainer` for CI; `Developer` is enough for read+pipeline-trigger)",
+          "Pick scopes (`api`, `read_repository`, `write_repository` are the common ones)",
+          "Click Create project access token, copy the value (shown once)"
+        ],
+        "notes": "Project tokens automatically create a service-account user that counts against the seat limit on paid GitLab plans. Group Access Tokens (one level up) are similar in shape — same regex, same liveness — and cover every project under the group."
+      },
+      "liveness": {
+        "kind": "http",
+        "url": "https://gitlab.com/api/v4/user",
+        "method": "GET",
+        "auth": { "kind": "bearer" },
+        "expect_status": 200
+      },
+      "rotation": {
+        "method": "provider-api",
+        "every_days": 90,
+        "guide_url": "https://docs.gitlab.com/api/project_access_tokens/#rotate-a-project-access-token",
+        "notes": "`POST /projects/:id/access_tokens/:token_id/rotate` revokes the old token and returns a fresh one atomically. The same Rotate button is on the token row in Settings → Access Tokens. Because the token is bound to a service-account user, rotation does not change the identity — only the credential — so CI permissions stay intact."
+      }
+    },
+    {
+      "id": "gitlab-deploy-token",
+      "display_name": "Deploy Token",
+      "description": "Username + token pair scoped to a project. Read-only against the registry, repo, or package registry — the workhorse for `docker login` and `git clone` in CI without burning a Project Access Token seat.",
+      "format_hint": "no prefix, opaque alnum string of provider-defined length",
+      "retrieval": {
+        "console_url": "https://gitlab.com/<group>/<project>/-/settings/repository#js-deploy-tokens-settings",
+        "docs_url": "https://docs.gitlab.com/user/project/deploy_tokens/",
+        "steps": [
+          "Open the project's Settings → Repository → Deploy tokens",
+          "Pick a name (`ci-registry-pull`)",
+          "Set an expiration",
+          "Pick scopes (`read_registry` for `docker login`, `read_repository` for `git clone`)",
+          "Click Create deploy token, save BOTH the username and the token value (each shown once)"
+        ],
+        "notes": "Deploy tokens authenticate as `gitlab-deploy-token-<id>` rather than as a user. There is no liveness URL that pairs with a Deploy Token alone — verify by attempting the operation it was issued for (e.g. `docker login` against the project registry)."
+      },
+      "rotation": {
+        "method": "manual",
+        "every_days": 180,
+        "guide_url": "https://docs.gitlab.com/user/project/deploy_tokens/#revoke-a-deploy-token",
+        "notes": "Deploy tokens have NO rotate API — unlike PATs and Project Access Tokens. Create a new deploy token, update the CI variables (both the username and value change), then revoke the old one from the same settings page. The longer 180-day cadence reflects the read-only scope."
+      }
+    }
+  ]
+}

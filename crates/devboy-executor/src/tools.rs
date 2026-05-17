@@ -923,6 +923,221 @@ pub fn mcp_only_tools() -> Vec<McpOnlyTool> {
             description: "Get current active context name.".into(),
             input_schema: ToolSchema::new(),
         },
+        McpOnlyTool {
+            name: "secrets_list".into(),
+            description: "List secrets the active context's manifest declares. \
+                Returns metadata only — values are never included. \
+                Optional filter narrows by path substring, scope, status, or \
+                whether to include framework-internal paths."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "path_contains",
+                    PropertySchema::string("Substring to match against the full ADR-020 path."),
+                );
+                s.add_property(
+                    "scope",
+                    PropertySchema::string(
+                        "Exact match against the first path segment (e.g. team / personal).",
+                    ),
+                );
+                s.add_property(
+                    "status",
+                    PropertySchema::string_enum(
+                        &["registered", "expiring", "expired"],
+                        "Lifecycle status filter computed from expires_at.",
+                    ),
+                );
+                s.add_property(
+                    "include_internal",
+                    PropertySchema::boolean("Include framework-internal paths (default: false)."),
+                );
+                s
+            },
+        },
+        McpOnlyTool {
+            name: "secrets_describe".into(),
+            description: "Describe one secret by ADR-020 path. Returns the same \
+                metadata fields as `secrets_list` plus description, retrieval URL, \
+                rotation method, last rotated date, rotation cadence, and pattern \
+                ID. The value is never returned."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "path",
+                    PropertySchema::string("Full ADR-020 path to describe."),
+                );
+                s.set_required("path", true);
+                s
+            },
+        },
+        McpOnlyTool {
+            name: "secrets_request_provision".into(),
+            description: "Open the provisioning UI dialog for the given ADR-020 \
+                path. The dialog hands the user-entered value directly to the \
+                local daemon — the agent never sees it. Returns a `request_id` \
+                that can be polled with `secrets_poll_status`. Mode defaults to \
+                `provision`; pass `rotation` to surface the destructive-confirm \
+                checkbox. Pending requests expire 5 minutes after issuance."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "path",
+                    PropertySchema::string("Full ADR-020 path to provision."),
+                );
+                s.add_property(
+                    "mode",
+                    PropertySchema::string_enum(
+                        &["provision", "rotation"],
+                        "Dialog mode (default: provision).",
+                    ),
+                );
+                s.set_required("path", true);
+                s
+            },
+        },
+        McpOnlyTool {
+            name: "secrets_poll_status".into(),
+            description: "Poll a provisioning or rotation request issued by \
+                `secrets_request_provision` / `secrets_request_rotation`. Returns \
+                one of pending / ok / cancelled / expired / failed plus the \
+                request's age in seconds and the path it was opened for."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "request_id",
+                    PropertySchema::string(
+                        "Opaque id returned by request_provision / request_rotation.",
+                    ),
+                );
+                s.set_required("request_id", true);
+                s
+            },
+        },
+        McpOnlyTool {
+            name: "secrets_request_rotation".into(),
+            description: "Open the rotation UI dialog for the given ADR-020 \
+                path. Same lifecycle as `secrets_request_provision` but the \
+                dialog surfaces the destructive-confirm checkbox so the user \
+                explicitly acknowledges that the existing value is being \
+                overwritten. Reuses `secrets_poll_status` for status. Pending \
+                requests expire 5 minutes after issuance."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "path",
+                    PropertySchema::string("Full ADR-020 path to rotate."),
+                );
+                s.set_required("path", true);
+                s
+            },
+        },
+        McpOnlyTool {
+            name: "secrets_request_use_approval".into(),
+            description: "Open the use-approval dialog for an ADR-020 path \
+                whose `approve_on_use` is set to `session` or `per-call`. \
+                The agent supplies a short human-facing `reason` that the \
+                dialog renders verbatim alongside the path; the user picks \
+                `once`, `session`, or `denied`. Returns a `request_id` to \
+                poll via `secrets_poll_status`. Pending requests expire 5 \
+                minutes after issuance; `ttl_seconds` may shorten the \
+                window but never extend it. The agent never sees the \
+                secret — only whether the user approved its use."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "path",
+                    PropertySchema::string("Full ADR-020 path the agent intends to resolve."),
+                );
+                s.add_property(
+                    "reason",
+                    PropertySchema::string(
+                        "Short human-facing reason rendered in the dialog \
+                         (e.g. 'pushing image to staging registry').",
+                    ),
+                );
+                s.add_property(
+                    "ttl_seconds",
+                    PropertySchema {
+                        schema_type: "integer".into(),
+                        description: Some(
+                            "Optional lifetime in seconds; capped at the \
+                             registry-wide TTL (5 minutes)."
+                                .into(),
+                        ),
+                        ..Default::default()
+                    },
+                );
+                s.set_required("path", true);
+                s.set_required("reason", true);
+                s
+            },
+        },
+        McpOnlyTool {
+            name: "secrets_propose_metadata".into(),
+            description: "Suggest metadata edits for an existing ADR-020 \
+                path. The dialog renders the manifest's current values as the \
+                diff baseline (read straight from the index — agent strings \
+                never replace trusted fields, mitigating prompt-injection). \
+                The user picks which proposed fields to accept. Reuses \
+                `secrets_poll_status` for status. Pending requests expire 5 \
+                minutes after issuance."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("path", PropertySchema::string("Full ADR-020 path to edit."));
+                s.add_property(
+                    "fields",
+                    PropertySchema {
+                        schema_type: "object".into(),
+                        description: Some(
+                            "Proposed field overrides (description, retrieval_url, \
+                             rotate_every_days, expires_at, pattern_id). Omitted \
+                             fields are not proposed for change."
+                                .into(),
+                        ),
+                        ..Default::default()
+                    },
+                );
+                s.set_required("path", true);
+                s.set_required("fields", true);
+                s
+            },
+        },
+        McpOnlyTool {
+            name: "secrets_propose_new_path".into(),
+            description: "Suggest registering a new secret at the given path. \
+                The dialog opens with the suggested path editable and the \
+                proposed metadata visible in a diff column for review. The \
+                user has the final say on the path and the metadata that \
+                lands in the manifest. Reuses `secrets_poll_status` for status. \
+                Pending requests expire 5 minutes after issuance."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "suggested_path",
+                    PropertySchema::string("Suggested ADR-020 path; user may edit."),
+                );
+                s.add_property(
+                    "metadata",
+                    PropertySchema {
+                        schema_type: "object".into(),
+                        description: Some("Proposed metadata fields for the new entry.".into()),
+                        ..Default::default()
+                    },
+                );
+                s.set_required("suggested_path", true);
+                s.set_required("metadata", true);
+                s
+            },
+        },
     ]
 }
 

@@ -22,6 +22,12 @@ devboy-assets = { workspace = true }
 devboy-executor = { workspace = true }
 devboy-confluence = { workspace = true }
 devboy-format-pipeline = { workspace = true }
+devboy-storage = { workspace = true }
+# K16 — `kdbx_describe_metadata` + `kdbx_edit_metadata` MCP
+# tools route directly into the KDBX plugin. Pulls in the
+# `keepass` crate transitively (~Argon2 KDF + chacha20).
+devboy-secret-kdbx = { workspace = true }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -8,6 +8,7 @@
 #![deny(rustdoc::private_intra_doc_links)]
 #![deny(rustdoc::invalid_html_tags)]
 mod client;
+pub mod liveness;
 
 pub use client::{SlackAuthInfo, SlackClient};
 

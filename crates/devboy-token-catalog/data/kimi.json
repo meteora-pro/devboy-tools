@@ -1,0 +1,102 @@
+{
+  "$schema": "../schema/v1.json",
+  "schema_version": 1,
+  "provider_id": "kimi",
+  "display_name": "Kimi (Moonshot AI)",
+  "description": "Moonshot's Kimi LLM ships three independent token kinds — pick the one matching how you signed up. Each has its own console, API host, regex, and billing flow.",
+  "variants": [
+    {
+      "id": "kimi-cn",
+      "display_name": "Kimi (CN, platform.moonshot.cn)",
+      "description": "Mainland-China tier. CNY billing, OpenAI-compatible endpoint at api.moonshot.cn. Default for users who signed up via WeChat / Alipay.",
+      "format_regex": "^sk-[A-Za-z0-9]{32,}$",
+      "format_hint": "starts with sk-, 32+ alphanumeric chars",
+      "retrieval": {
+        "console_url": "https://platform.moonshot.cn/console/api-keys",
+        "docs_url": "https://platform.moonshot.cn/docs/api-reference",
+        "steps": [
+          "Open https://platform.moonshot.cn/console/api-keys (CN site)",
+          "Sign in with your Moonshot account (WeChat / phone OTP)",
+          "Click 创建 API Key (Create API Key)",
+          "Name the key (free-form), select scope, confirm",
+          "Copy the value — it is only shown once"
+        ],
+        "notes": "If you also use the Anthropic-compatible endpoint added in 2026 Q1, the same key works at https://api.moonshot.cn/anthropic. No extra issuance step."
+      },
+      "liveness": {
+        "kind": "http",
+        "url": "https://api.moonshot.cn/v1/models",
+        "method": "GET",
+        "auth": { "kind": "bearer" },
+        "expect_status": 200
+      },
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "notes": "Moonshot has no dedicated rotation page. Create a fresh key in the CN console, deploy it, then delete the old one — multiple keys can coexist on one account, so rotation is zero-downtime. Deleting a key revokes it immediately on both the OpenAI- and Anthropic-compatible endpoints."
+      }
+    },
+    {
+      "id": "kimi-global",
+      "display_name": "Kimi (Global, platform.moonshot.ai)",
+      "description": "Global tier. USD billing via card / invoice, OpenAI-compatible endpoint at api.moonshot.ai. Default for users who signed up via email outside CN.",
+      "format_regex": "^sk-[A-Za-z0-9]{32,}$",
+      "format_hint": "starts with sk-, 32+ alphanumeric chars",
+      "retrieval": {
+        "console_url": "https://platform.moonshot.ai/console/api-keys",
+        "docs_url": "https://platform.moonshot.ai/docs/api-reference",
+        "steps": [
+          "Open https://platform.moonshot.ai/console/api-keys (global site)",
+          "Sign in (email + OTP, or Google SSO)",
+          "Click Create API Key",
+          "Pick scope + optional rate limit",
+          "Copy the value — it is only shown once"
+        ],
+        "notes": "Global tier shares regex with CN but routes to a different host. Crossing the keys produces 401 — check the endpoint host before debugging."
+      },
+      "liveness": {
+        "kind": "http",
+        "url": "https://api.moonshot.ai/v1/models",
+        "method": "GET",
+        "auth": { "kind": "bearer" },
+        "expect_status": 200
+      },
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "notes": "Same procedure as the CN tier: create a fresh key in the global console, deploy it, delete the old. Keys are independent across the CN and global tiers — rotating one does not touch the other."
+      }
+    },
+    {
+      "id": "kimi-coding",
+      "display_name": "Kimi Coding (kimi.com/dev)",
+      "description": "Flat-rate Coding subscription tier (~ $20/mo). Separate quota pool from CN / global API; key works only against the dev endpoint.",
+      "format_regex": "^kc-[A-Za-z0-9]{40,}$",
+      "format_hint": "starts with kc-, 40+ alphanumeric chars",
+      "retrieval": {
+        "console_url": "https://kimi.com/dev",
+        "docs_url": "https://kimi.com/dev/docs",
+        "steps": [
+          "Open https://kimi.com/dev",
+          "Subscribe to the Coding tier (one-click; flat $20/mo)",
+          "Open the Coding dashboard → API Keys panel",
+          "Click Create new key",
+          "Copy the value — it is only shown once"
+        ],
+        "notes": "Coding-tier keys do NOT work against api.moonshot.cn or api.moonshot.ai. They route exclusively through api.kimi.com/coding/."
+      },
+      "liveness": {
+        "kind": "http",
+        "url": "https://api.kimi.com/coding/v1/models",
+        "method": "GET",
+        "auth": { "kind": "bearer" },
+        "expect_status": 200
+      },
+      "rotation": {
+        "method": "manual",
+        "every_days": 30,
+        "notes": "Rotate from the Coding dashboard → API Keys panel: create a new key, swap consumers, delete the old. The tighter 30-day cadence reflects the flat-rate subscription model — a leaked Coding key drains your subscription quota, not a metered balance you'd notice on a bill."
+      }
+    }
+  ]
+}

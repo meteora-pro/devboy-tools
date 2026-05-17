@@ -8,9 +8,10 @@
 #![deny(rustdoc::invalid_html_tags)]
 mod client;
 pub mod enricher;
+pub mod liveness;
 pub mod types;
 
-pub use client::{AuthScheme, GitLabClient};
+pub use client::GitLabClient;
 pub use enricher::GitLabSchemaEnricher;
 pub use types::*;
 

@@ -26,7 +26,10 @@ version = 2
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
-ignore = []
+# `paste` is unmaintained but still functional and pulled in transitively
+# by egui/eframe (no published successor). Tracked upstream; revisit when
+# egui drops the dependency.
+ignore = ["RUSTSEC-2024-0436"]
 
 # ---------------------------------------------------------------------------
 # Licenses
@@ -57,6 +60,9 @@ allow = [
     # Transitive-only entries:
     "bzip2-1.0.6",                 # bzip2 itself — used by zip → libbz2
     "CDLA-Permissive-2.0",         # webpki-roots ships CA bundle under CDLA
+    "BSL-1.0",                     # Boost Software License — clipboard-win, error-code (eframe deps)
+    "OFL-1.1",                     # SIL Open Font License — epaint_default_fonts (eframe deps), font files only
+    "Ubuntu-font-1.0",             # Ubuntu Font License — epaint_default_fonts, font files only
 ]
 # Crate-level confidence threshold for license detection.
 confidence-threshold = 0.8

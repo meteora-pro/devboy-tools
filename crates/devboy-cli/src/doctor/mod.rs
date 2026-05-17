@@ -1,18 +1,27 @@
-mod checks;
+// `pub(crate)` so sibling modules (e.g. `crate::secrets_migrate`)
+// can reuse the `legacy_keys::{known_legacy_keys,
+// suggest_canonical_path}` helpers without re-implementing them.
+// The doctor surface itself is still private to the crate; this
+// only opens internal paths.
+pub(crate) mod checks;
 mod output;
 
 use self::checks::config::{ActiveContextCheck, ConfigExistsCheck, ConfigValidTomlCheck};
+use self::checks::context_secrets::ContextSecretsCheck;
 use self::checks::credentials::{
     ClickUpTokenCheck, ConfluenceTokenCheck, GitHubTokenCheck, GitLabTokenCheck, JiraTokenCheck,
     SlackTokenCheck,
 };
 use self::checks::environment::{ConfigDirCheck, CredentialStoreCheck, OsSupportCheck};
+use self::checks::legacy_keys::LegacyKeysCheck;
 use self::checks::mcp::McpToolsCheck;
 use self::checks::providers::{
     ClickUpApiCheck, ConfluenceApiCheck, GitHubApiCheck, GitLabApiCheck, JiraApiCheck,
     SlackApiCheck,
 };
 use self::checks::proxy::ProxyServersCheck;
+use self::checks::rotation::RotationRemindersCheck;
+use self::checks::sources::SourcesCheck;
 use self::output::console::{print_check_list, print_report, summarize};
 use self::output::json::print_json_report;
 use crate::get_credential_store;
@@ -163,6 +172,10 @@ impl CheckRegistry {
         registry.register(Box::new(SlackApiCheck));
         registry.register(Box::new(McpToolsCheck));
         registry.register(Box::new(ProxyServersCheck));
+        registry.register(Box::new(SourcesCheck));
+        registry.register(Box::new(ContextSecretsCheck));
+        registry.register(Box::new(RotationRemindersCheck));
+        registry.register(Box::new(LegacyKeysCheck));
         registry
     }
 

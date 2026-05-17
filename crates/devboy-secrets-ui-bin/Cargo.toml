@@ -1,0 +1,85 @@
+[package]
+name = "devboy-secrets-ui-bin"
+description = "Native GUI window for the devboy-tools secrets inventory. Ships as the `devboy-secrets-ui` binary so the main `devboy` CLI does not need to link eframe/egui (ADR-023 §3.4)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["devboy", "secrets", "ui", "gui", "egui"]
+categories = ["command-line-utilities", "gui"]
+publish = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[[bin]]
+name = "devboy-secrets-ui"
+path = "src/main.rs"
+
+[features]
+default = []
+# `dev-screenshot` adds the `--screenshot <path>` flag: renders one
+# provision-dialog frame to a PNG through an offscreen egui_kittest
+# wgpu harness and exits, instead of running the eframe event loop.
+# Pure development tooling — lets an automated agent visually verify
+# GUI changes without a human looking at the native window. Off by
+# default so the shipped binary does not link a second (wgpu)
+# rendering backend.
+dev-screenshot = ["dep:egui_kittest"]
+
+[dependencies]
+devboy-secrets-ui = { workspace = true, features = ["gui"] }
+devboy-storage = { workspace = true }
+devboy-token-catalog = { workspace = true }
+devboy-vault-crypto = { workspace = true }
+devboy-secret-patterns = { workspace = true }
+# HCP / HashiCorp Vault read-source. `VaultSource` is async;
+# `StorageBackend::HttpVault` block_on's it on a small current-
+# thread runtime (one request per inventory probe / save).
+devboy-secret-vault = { workspace = true }
+# KDBX 4 (KeePass) read-source. The UI bin opens the file directly
+# via `open_kdbx_into_snapshot` on the unlock-modal submit; the
+# decrypted snapshot lives inside this process address space only.
+devboy-secret-kdbx = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros"] }
+# `eframe` powers the native window. Pinned to the same egui 0.34.x
+# range that `devboy-secrets-ui::gui` uses so widget code and the host
+# run against the same types. `default-features = false` drops the
+# persistence feature we don't need (no app-state save between runs).
+eframe = { version = "0.34", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+# Offscreen egui renderer for `--screenshot` (dev-screenshot feature).
+# Version-locked to egui 0.34.x so the harness renders the exact same
+# widget tree the live app builds.
+egui_kittest = { version = "0.34.2", optional = true, features = ["wgpu", "snapshot"] }
+# `image` is unconditional: K22 decodes the bundled PNG icon at
+# startup. dev-screenshot uses it too (PNG encoder for the
+# offscreen render) so the extra features are gated below.
+image = { version = "0.25", default-features = false, features = ["png"] }
+anyhow.workspace = true
+clap.workspace = true
+secrecy.workspace = true
+regex.workspace = true
+reqwest = { workspace = true, features = ["json", "rustls-tls", "blocking"] }
+dirs.workspace = true
+# K26 — read `[[source]]` `settings` blocks from `sources.toml`
+# (the workspace `toml = "0.8"` crate is already on path via
+# devboy-storage). We import it directly here so wallets.rs can
+# match on toml::Value when building backend instances.
+toml.workspace = true
+# Native file-picker for the K21 "Save attachment" flow.
+# `rfd` shells out to the OS picker (NSSavePanel on macOS,
+# GTK / xdg-desktop-portal on Linux, IFileSaveDialog on
+# Windows) so we don't reinvent that wheel inside egui.
+rfd = "0.15"
+
+[dev-dependencies]
+tempfile.workspace = true
+temp-env = "0.3"
+
+[lints]
+workspace = true

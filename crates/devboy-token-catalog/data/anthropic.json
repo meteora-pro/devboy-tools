@@ -1,0 +1,79 @@
+{
+  "$schema": "../schema/v1.json",
+  "schema_version": 1,
+  "provider_id": "anthropic",
+  "display_name": "Anthropic",
+  "description": "Claude API keys (`sk-ant-...`). One shape covers all surfaces — Messages, Files, Batches, Citations — the same key authenticates every endpoint under api.anthropic.com. Admin keys (`sk-ant-admin01-...`) carry org-management capabilities and are intentionally separate from the API tier.",
+  "variants": [
+    {
+      "id": "anthropic-api-key",
+      "display_name": "Anthropic API key",
+      "description": "Workspace API key issued at console.anthropic.com. Recommended shape for everything — chat completions, batches, file uploads, citations. Does not carry org-admin privileges.",
+      "format_regex": "^sk-ant-api03-[A-Za-z0-9_-]{93,}$",
+      "format_hint": "starts with sk-ant-api03-, 93+ chars [A-Za-z0-9_-]",
+      "retrieval": {
+        "console_url": "https://console.anthropic.com/settings/keys",
+        "docs_url": "https://docs.anthropic.com/en/api/getting-started",
+        "steps": [
+          "Open https://console.anthropic.com/settings/keys",
+          "Sign in with your Anthropic account (workspace SSO if applicable)",
+          "Click Create Key",
+          "Pick a name describing where the key will live (`devboy-laptop`, `ci-pipeline`)",
+          "Pick the workspace + permissions (Read & Write is the default)",
+          "Copy the value — shown once and never again"
+        ],
+        "notes": "Workspace keys inherit billing from the parent workspace and can be revoked independently. Admin-level operations (creating workspaces, managing users) require a separate `sk-ant-admin01-...` key issued via the org-admin console; do not attempt to use those for the Messages API."
+      },
+      "liveness": {
+        "kind": "http",
+        "url": "https://api.anthropic.com/v1/models",
+        "method": "GET",
+        "auth": { "kind": "header", "name": "x-api-key" },
+        "expect_status": 200
+      },
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "guide_url": "https://docs.anthropic.com/en/api/rate-limits#api-key-best-practices",
+        "notes": "Create the replacement key in the console, deploy it everywhere, THEN delete the old one. Both keys authenticate against the Messages API until you remove the old — no forced overlap window. Anthropic keys cannot be edited in place; deletion is the only revocation."
+      }
+    },
+    {
+      "id": "anthropic-admin-key",
+      "display_name": "Anthropic admin key",
+      "description": "Org-admin `sk-ant-admin01-...` key. Manages workspaces, members, billing. Does NOT call the Messages API — that's the API key tier above. Issue only for tooling that needs the admin endpoints.",
+      "format_regex": "^sk-ant-admin01-[A-Za-z0-9_-]{93,}$",
+      "format_hint": "starts with sk-ant-admin01-, 93+ chars [A-Za-z0-9_-]",
+      "retrieval": {
+        "console_url": "https://console.anthropic.com/settings/admin-keys",
+        "docs_url": "https://docs.anthropic.com/en/api/administration-api",
+        "steps": [
+          "Open https://console.anthropic.com/settings/admin-keys (org admins only)",
+          "Click Create Admin Key",
+          "Pick a name and the org permissions",
+          "Copy the value — shown once"
+        ],
+        "notes": "Admin keys must NOT live alongside API keys in the same env var family — keep them in a `team/anthropic/admin` path so a leak of the API key namespace does not also leak admin scope."
+      },
+      "rotation": {
+        "method": "manual",
+        "every_days": 30,
+        "guide_url": "https://docs.anthropic.com/en/api/administration-api",
+        "notes": "Admin keys rotate like API keys — create the replacement, deploy it, delete the old. Because they carry org-management scope (workspaces, members, billing) the 30-day cadence is deliberately tighter; revoke the old key promptly once the new one is confirmed working."
+      }
+    }
+  ],
+  "env_var_patterns": [
+    { "matches": ["ANTHROPIC_API_KEY"], "variant": "anthropic-api-key" },
+    { "matches": ["E2E_ANTHROPIC_API_KEY"], "variant": "anthropic-api-key", "scope": "personal" },
+    { "matches": ["ANTHROPIC_ADMIN_KEY"], "variant": "anthropic-admin-key" }
+  ],
+  "env_var_skip": [
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_CONCURRENCY",
+    "ANTHROPIC_*_URL",
+    "ANTHROPIC_*_TIMEOUT",
+    "ANTHROPIC_LOG_LEVEL"
+  ]
+}

@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://devboy-tools.dev/schemas/token-catalog/v1.json",
+  "title": "DevBoy Token Catalog v1",
+  "description": "Per-provider token catalog file. One file = one provider. Each provider declares N variants (regions, tiers, subscriptions); each variant has its own retrieval URL, regex, liveness probe, and step-by-step guide. Shipped as `~/.devboy/secrets/catalog/<provider>.json`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "provider_id", "display_name", "variants"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Pinned to 1 for this schema. Future major bumps will fail to load on older builds; minor changes go through optional fields."
+    },
+    "provider_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Lowercase kebab-case identifier. Matches the filename without extension (e.g. `kimi.json` → `kimi`)."
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable name shown in the variant picker."
+    },
+    "description": {
+      "type": "string",
+      "description": "Short description shown above the variant list. Optional."
+    },
+    "variants": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/variant" }
+    },
+    "env_var_patterns": {
+      "type": "array",
+      "description": "Env-var → variant patterns the `setup-secrets` proposer (devboy-cli) consults to map a scanned env-var name to an ADR-020 path. Optional and additive.",
+      "items": { "$ref": "#/$defs/env_var_pattern" }
+    },
+    "env_var_skip": {
+      "type": "array",
+      "description": "Env-var names this provider asks the proposer to skip outright (configuration toggles like `<PROVIDER>_BASE_URL` that look like credentials at first glance). Globs use `*` as a single-segment wildcard.",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "env_var_pattern": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["matches", "variant"],
+      "properties": {
+        "matches": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "One or more env-var names. Bare names are matched literally; names with `*` are globs (single underscore segment per `*`)."
+        },
+        "variant": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Variant id (must exist in the same catalog's `variants` list) the matched env-var maps to."
+        },
+        "scope": {
+          "type": "string",
+          "enum": ["team", "personal", "sandbox"],
+          "default": "team",
+          "description": "ADR-020 scope segment for the resulting path."
+        }
+      }
+    },
+    "variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "display_name", "description", "retrieval"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "Stable identifier scoped to the provider, e.g. `kimi-cn`, `kimi-global`, `kimi-coding`."
+        },
+        "display_name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "format_regex": {
+          "type": "string",
+          "description": "Rust-flavored regex the value must match (use anchors). Optional."
+        },
+        "format_hint": {
+          "type": "string",
+          "description": "Human-readable shape hint, e.g. `sk- + 32 alnum`. Independent of `format_regex` so the user sees something readable even when the regex is gnarly."
+        },
+        "retrieval": { "$ref": "#/$defs/retrieval" },
+        "liveness": { "$ref": "#/$defs/liveness" },
+        "rotation": { "$ref": "#/$defs/rotation" },
+        "default_keychain_account": {
+          "type": "string",
+          "description": "When the user opts to store via OS keychain, this overrides the default `account = path` convention. Useful for legacy providers that already have an established keychain entry name."
+        }
+      }
+    },
+    "retrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["console_url", "steps"],
+      "properties": {
+        "console_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Provider's console / settings URL — the creation page. The `Open URL` button in the provision dialog points here."
+        },
+        "docs_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Provider's official documentation for this credential — scopes, security best practices, auth model. Distinct from `console_url` (where you make the key). Optional; the dialog renders a 'Provider docs' link when present."
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Numbered procedure the user follows on the console UI."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-form gotchas / scope requirements / billing caveats."
+        }
+      }
+    },
+    "liveness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "url", "auth", "expect_status"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["http"],
+          "description": "Currently always `http`. Reserved tag for future probe kinds."
+        },
+        "url": { "type": "string", "format": "uri" },
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "HEAD"],
+          "default": "GET"
+        },
+        "auth": { "$ref": "#/$defs/auth" },
+        "expect_status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        }
+      }
+    },
+    "auth": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "type": "string", "enum": ["bearer", "basic-user", "basic-password"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "type": "string", "const": "header" },
+            "name": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "rotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "every_days"],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": ["manual", "provider-ui", "provider-api"]
+        },
+        "every_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
+        },
+        "guide_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Provider's rotation / key-hygiene guide. Optional — many providers have no dedicated page, in which case `notes` carries the procedure. The dialog renders a 'Rotation guide' link when present."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Concrete rotation procedure / caveats — the 'how', not the 'when'. E.g. atomic pair rotation, reinstall-after-scope-change, overlap window. Rendered as a block in the dialog's rotation section."
+        }
+      }
+    }
+  }
+}

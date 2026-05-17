@@ -16,6 +16,7 @@ impl core::marker::Unpin for devboy_jira::enricher::JiraSchemaEnricher
 impl core::marker::UnsafeUnpin for devboy_jira::enricher::JiraSchemaEnricher
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_jira::enricher::JiraSchemaEnricher
 impl core::panic::unwind_safe::UnwindSafe for devboy_jira::enricher::JiraSchemaEnricher
+pub mod devboy_jira::liveness
 pub mod devboy_jira::metadata
 pub enum devboy_jira::metadata::JiraFieldType
 pub devboy_jira::metadata::JiraFieldType::Any
@@ -305,6 +306,8 @@ pub fn devboy_jira::JiraClient::with_base_url(base_url: impl core::convert::Into
 pub fn devboy_jira::JiraClient::with_flavor(self, flavor: devboy_jira::JiraFlavor) -> Self
 pub fn devboy_jira::JiraClient::with_instance_url(self, url: impl core::convert::Into<alloc::string::String>) -> Self
 pub fn devboy_jira::JiraClient::with_proxy(self, headers: std::collections::hash::map::HashMap<alloc::string::String, alloc::string::String>) -> Self
+impl devboy_core::liveness::LivenessProbe for devboy_jira::JiraClient
+pub fn devboy_jira::JiraClient::provider_name(&self) -> &str
 impl devboy_core::provider::IssueProvider for devboy_jira::JiraClient
 pub fn devboy_jira::JiraClient::add_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, issue_key: &'life1 str, body: &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Comment>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn devboy_jira::JiraClient::add_structure_generator<'life0, 'async_trait>(&'life0 self, input: devboy_core::types::AddStructureGeneratorInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::StructureGenerator>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait

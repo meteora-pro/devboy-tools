@@ -42,8 +42,53 @@ use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, warn};
 
 pub mod cache;
+pub mod ci;
+pub mod expiry;
+pub mod index;
+pub mod manifest;
+pub mod merge;
+pub mod pattern_resolution;
+pub mod plugin_client;
+pub mod plugin_manifest;
+pub mod plugin_protocol;
+pub mod router_cache;
+pub mod router_config;
+pub mod router_credentials;
+pub mod router_resolve;
+pub mod secret_path;
+pub mod source;
+pub mod validation;
 
 pub use cache::CachedStore;
+pub use ci::{
+    CI_HEURISTIC_VARS, CiActivation, CiDetection, CiPolicy, DEVBOY_CI_ENV, detect_ci_mode,
+};
+pub use expiry::{ExpiryWarning, ExpiryWarningKind, WARNING_WINDOW_DAYS, check_rotation_reminders};
+pub use index::{ApproveOnUse, Gate, GlobalIndex, IndexEntry, IndexError, RotationMethod};
+pub use manifest::{
+    MANIFEST_RELATIVE_PATH, ManifestError, OverrideEntry, PathRole, ProjectManifest,
+};
+pub use merge::{
+    MergeError, MergeOutput, MergeWarning, MergeWarningKind, OverrideField, ResolvedSecret,
+    SecretOrigin, merge_manifest,
+};
+pub use pattern_resolution::{
+    InheritanceWarning, InheritanceWarningKind, apply_pattern_inheritance,
+};
+pub use router_cache::{AdaptiveCache, CacheClock, DEFAULT_BASE_TTL, ManualClock, SystemClock};
+pub use router_config::{
+    DefaultRoute, RouteRule, RouterConfig, RouterConfigError, SOURCES_FILENAME, SecretOverride,
+    SourceAccess, SourceDefinition,
+};
+pub use router_credentials::{
+    CredentialGraphError, SOURCE_CREDENTIALS_PREFIX, validate_source_credentials,
+};
+pub use router_resolve::{PathResolver, ResolveError, RouteDecision};
+pub use secret_path::{PathError, SecretPath};
+pub use source::{
+    Capabilities, CredentialRef, GetOutcome, RemoteRef, SecretSource, SourceError, SourceStatus,
+};
+pub use validation::{FormatCheck, FormatRuleSource, validate_format};
 
 /// Service name used in OS keychain.
 const SERVICE_NAME: &str = "devboy-tools";
