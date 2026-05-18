@@ -10,8 +10,20 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use devboy_core::{BuiltinToolsConfig, Provider};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
+
+/// K16 — serde helper for three-state Option<Option<T>> fields.
+/// Distinguishes "missing" (`None`) from "explicit null"
+/// (`Some(None)`) — needed for `expires_at` patch semantics
+/// (leave / clear / set).
+fn deserialize_double_option<'de, T, D>(d: D) -> std::result::Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
 use tokio::sync::oneshot;
 
 use crate::layered::{SessionPipeline, extract_file_path as file_path_from_args, is_mutating_tool};
@@ -57,6 +69,12 @@ pub struct McpServer {
     /// response passes through L0 dedup before being returned to the client
     /// (Paper 2 §Implementation Status).
     layered_pipeline: Option<SessionPipeline>,
+    /// Registry for in-flight `secrets_request_provision` calls.
+    /// Defaults to a registry with the `NoopUiLauncher`; the host
+    /// swaps in a real daemon-backed launcher via
+    /// [`Self::set_secrets_provision_registry`] once the agent
+    /// socket is available.
+    secrets_provision: Arc<crate::secrets_provision::ProvisionRegistry>,
 }
 
 impl McpServer {
@@ -81,7 +99,26 @@ impl McpServer {
             telemetry: None,
             deferred_init: None,
             layered_pipeline: None,
+            secrets_provision: Arc::new(crate::secrets_provision::ProvisionRegistry::new()),
         }
+    }
+
+    /// Replace the provisioning-request registry — used by the
+    /// host to inject a daemon-backed launcher once the agent
+    /// socket is reachable. Tests inject a [`crate::secrets_provision::FakeUiLauncher`]-backed
+    /// registry instead.
+    pub fn set_secrets_provision_registry(
+        &mut self,
+        registry: Arc<crate::secrets_provision::ProvisionRegistry>,
+    ) {
+        self.secrets_provision = registry;
+    }
+
+    /// Borrow the provisioning registry — exposed primarily so
+    /// the daemon glue can call `resolve()` from outside the
+    /// server when the dialog reports back.
+    pub fn secrets_provision_registry(&self) -> Arc<crate::secrets_provision::ProvisionRegistry> {
+        Arc::clone(&self.secrets_provision)
     }
 
     /// Enable the Paper 2 layered pipeline (L0 cross-turn dedup) for the
@@ -750,7 +787,530 @@ impl McpServer {
                     None => ToolCallResult::error("Missing required parameter: name".to_string()),
                 })
             }
+            "secrets_list" => Some(self.handle_secrets_list(params)),
+            "secrets_describe" => Some(self.handle_secrets_describe(params)),
+            "secrets_request_provision" => Some(self.handle_secrets_request_provision(params)),
+            "secrets_request_rotation" => Some(self.handle_secrets_request_rotation(params)),
+            "secrets_request_use_approval" => {
+                Some(self.handle_secrets_request_use_approval(params))
+            }
+            "secrets_propose_metadata" => Some(self.handle_secrets_propose_metadata(params)),
+            "secrets_propose_new_path" => Some(self.handle_secrets_propose_new_path(params)),
+            "secrets_poll_status" => Some(self.handle_secrets_poll_status(params)),
+            "kdbx_describe_metadata" => Some(Self::handle_kdbx_describe_metadata(params)),
+            "kdbx_edit_metadata" => Some(Self::handle_kdbx_edit_metadata(params)),
             _ => None,
+        }
+    }
+
+    fn handle_secrets_list(&self, params: &ToolCallParams) -> ToolCallResult {
+        use crate::secrets_tool::{self, SecretsListFilter};
+        use devboy_storage::{GlobalIndex, ProjectManifest};
+
+        let filter: SecretsListFilter = match &params.arguments {
+            Some(args) => match serde_json::from_value(args.clone()) {
+                Ok(f) => f,
+                Err(e) => return ToolCallResult::error(format!("invalid filter: {e}")),
+            },
+            None => SecretsListFilter::default(),
+        };
+
+        let index = match GlobalIndex::load() {
+            Ok(i) => i,
+            Err(e) => return ToolCallResult::error(format!("could not load global index: {e}")),
+        };
+        let manifest = match ProjectManifest::load() {
+            Ok(m) => m,
+            Err(e) => {
+                return ToolCallResult::error(format!("could not load project manifest: {e}"));
+            }
+        };
+
+        match secrets_tool::list(&index, &manifest, &filter, secrets_tool::today_local()) {
+            Ok(rows) => match serde_json::to_value(&rows) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            Err(e) => ToolCallResult::error(format!("secrets_list failed: {e:?}")),
+        }
+    }
+
+    fn handle_secrets_describe(&self, params: &ToolCallParams) -> ToolCallResult {
+        use crate::secrets_tool;
+        use devboy_storage::{GlobalIndex, ProjectManifest};
+
+        #[derive(Deserialize)]
+        struct DescribeParams {
+            path: String,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<DescribeParams>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => return ToolCallResult::error("missing required parameter: path".to_string()),
+        };
+
+        let index = match GlobalIndex::load() {
+            Ok(i) => i,
+            Err(e) => return ToolCallResult::error(format!("could not load global index: {e}")),
+        };
+        let manifest = match ProjectManifest::load() {
+            Ok(m) => m,
+            Err(e) => {
+                return ToolCallResult::error(format!("could not load project manifest: {e}"));
+            }
+        };
+
+        match secrets_tool::describe(&index, &manifest, &args.path, secrets_tool::today_local()) {
+            Ok(reply) => match serde_json::to_value(&reply) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            Err(e) => ToolCallResult::error(format!("secrets_describe failed: {e:?}")),
+        }
+    }
+
+    /// K16 — MCP wrapper around
+    /// `devboy_secret_kdbx::describe_metadata`. Reads the
+    /// passphrase from the `DEVBOY_KDBX_PASSPHRASE` env var so
+    /// the agent never sees it on the wire. Path + UUID
+    /// (+ optional keyfile) come from the tool arguments.
+    ///
+    /// Same agent-blindness boundary as the K15 CLI command:
+    /// Password and Protected custom strings are filtered out
+    /// of the response.
+    fn handle_kdbx_describe_metadata(params: &ToolCallParams) -> ToolCallResult {
+        use secrecy::SecretString;
+
+        #[derive(Deserialize)]
+        struct Args {
+            file: std::path::PathBuf,
+            uuid: String,
+            #[serde(default)]
+            keyfile: Option<std::path::PathBuf>,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<Args>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => return ToolCallResult::error("missing arguments object".to_string()),
+        };
+        let Ok(passphrase) = std::env::var("DEVBOY_KDBX_PASSPHRASE") else {
+            return ToolCallResult::error(
+                "DEVBOY_KDBX_PASSPHRASE env var must be set for kdbx_* tools — \
+                 agents are not allowed to pass the KDBX passphrase over the wire"
+                    .to_string(),
+            );
+        };
+        if passphrase.is_empty() {
+            return ToolCallResult::error(
+                "DEVBOY_KDBX_PASSPHRASE is empty; refusing to open".to_string(),
+            );
+        }
+        match devboy_secret_kdbx::describe_metadata(
+            &args.file,
+            &SecretString::new(passphrase.into()),
+            args.keyfile.as_deref(),
+            &args.uuid,
+        ) {
+            Ok(Some(meta)) => {
+                let json = serde_json::json!({
+                    "uuid": meta.uuid,
+                    "title": meta.title,
+                    "username": meta.username,
+                    "url": meta.url,
+                    "notes": meta.notes,
+                    "tags": meta.tags,
+                    "created_at": meta.created_at,
+                    "modified_at": meta.modified_at,
+                    "expires_at": meta.expires_at,
+                    "otp_present": meta.otp.is_some(),
+                    "attachments": meta.attachments.iter().map(|a| serde_json::json!({
+                        "name": a.name,
+                        "size_bytes": a.size_bytes,
+                    })).collect::<Vec<_>>(),
+                    "custom_string_names": meta.custom_string_names,
+                });
+                ToolCallResult::text(json.to_string())
+            }
+            Ok(None) => ToolCallResult::error(format!(
+                "no entry with uuid {} in {}",
+                args.uuid,
+                args.file.display()
+            )),
+            Err(e) => ToolCallResult::error(format!("kdbx_describe_metadata failed: {e}")),
+        }
+    }
+
+    /// K16 — MCP wrapper around
+    /// `devboy_secret_kdbx::edit_metadata`. Reads passphrase
+    /// from `DEVBOY_KDBX_PASSPHRASE` env var; tool arguments
+    /// carry file / uuid / keyfile / patch.
+    ///
+    /// The patch payload is structurally the same as
+    /// `MetadataPatch`:
+    /// ```json
+    /// {
+    ///   "file": "/abs/path.kdbx",
+    ///   "uuid": "12345678-90ab-cdef-1234-567890abcdef",
+    ///   "patch": {
+    ///     "title": "...", "username": "...", "url": "...",
+    ///     "notes": "...", "tags": ["a","b"],
+    ///     "expires_at": "2027-01-15T00:00:00Z" | null
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Honours K13 working-copy safety: the underlying call
+    /// writes verbatim to the path we hand it; this wrapper
+    /// derives the working-copy path + `prepare_working_copy`
+    /// before invoking `edit_metadata`. Working-copy path is
+    /// included in the response so the caller can sync back.
+    fn handle_kdbx_edit_metadata(params: &ToolCallParams) -> ToolCallResult {
+        use secrecy::SecretString;
+
+        #[derive(Deserialize)]
+        struct Args {
+            file: std::path::PathBuf,
+            uuid: String,
+            #[serde(default)]
+            keyfile: Option<std::path::PathBuf>,
+            patch: PatchArgs,
+        }
+        #[derive(Deserialize, Default)]
+        struct PatchArgs {
+            #[serde(default)]
+            title: Option<String>,
+            #[serde(default)]
+            username: Option<String>,
+            #[serde(default)]
+            url: Option<String>,
+            #[serde(default)]
+            notes: Option<String>,
+            #[serde(default)]
+            tags: Option<Vec<String>>,
+            /// `Some("2027-…")` → set, `Some(null)` → clear,
+            /// missing → leave alone. JSON-serde encodes the
+            /// three-state via Option<Option<String>>.
+            #[serde(default, deserialize_with = "deserialize_double_option")]
+            expires_at: Option<Option<String>>,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<Args>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => return ToolCallResult::error("missing arguments object".to_string()),
+        };
+        let Ok(passphrase) = std::env::var("DEVBOY_KDBX_PASSPHRASE") else {
+            return ToolCallResult::error(
+                "DEVBOY_KDBX_PASSPHRASE env var must be set for kdbx_* tools — \
+                 agents are not allowed to pass the KDBX passphrase over the wire"
+                    .to_string(),
+            );
+        };
+        if passphrase.is_empty() {
+            return ToolCallResult::error(
+                "DEVBOY_KDBX_PASSPHRASE is empty; refusing to open".to_string(),
+            );
+        }
+        let patch = devboy_secret_kdbx::MetadataPatch {
+            title: args.patch.title,
+            username: args.patch.username,
+            url: args.patch.url,
+            notes: args.patch.notes,
+            tags: args.patch.tags,
+            expires_at: args.patch.expires_at,
+        };
+        if patch == devboy_secret_kdbx::MetadataPatch::default() {
+            return ToolCallResult::error("patch is empty — pass at least one field".to_string());
+        }
+        let working_copy = devboy_secret_kdbx::derive_working_copy_path(&args.file);
+        if let Err(e) = devboy_secret_kdbx::prepare_working_copy(&args.file, &working_copy) {
+            return ToolCallResult::error(format!(
+                "could not prepare working copy at {}: {e}",
+                working_copy.display()
+            ));
+        }
+        match devboy_secret_kdbx::edit_metadata(
+            &working_copy,
+            &SecretString::new(passphrase.into()),
+            args.keyfile.as_deref(),
+            &args.uuid,
+            &patch,
+        ) {
+            Ok(()) => {
+                let reply = serde_json::json!({
+                    "ok": true,
+                    "source": args.file.display().to_string(),
+                    "working_copy": working_copy.display().to_string(),
+                    "uuid": args.uuid,
+                });
+                ToolCallResult::text(reply.to_string())
+            }
+            Err(e) => ToolCallResult::error(format!("kdbx_edit_metadata failed: {e}")),
+        }
+    }
+
+    fn handle_secrets_request_provision(&self, params: &ToolCallParams) -> ToolCallResult {
+        use crate::secrets_provision::ProvisionMode;
+        use devboy_storage::SecretPath;
+
+        #[derive(Deserialize)]
+        struct RequestParams {
+            path: String,
+            #[serde(default)]
+            mode: Option<ProvisionMode>,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<RequestParams>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => return ToolCallResult::error("missing required parameter: path".to_string()),
+        };
+
+        let path = match SecretPath::parse(&args.path) {
+            Ok(p) => p,
+            Err(e) => {
+                return ToolCallResult::error(format!(
+                    "`{}` is not a valid ADR-020 path: {e}",
+                    args.path
+                ));
+            }
+        };
+
+        let mode = args.mode.unwrap_or_default();
+        match self.secrets_provision.request_provision(path, mode) {
+            Ok(id) => match serde_json::to_value(crate::secrets_provision::RequestIdReply {
+                request_id: id.0,
+            }) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            Err(e) => ToolCallResult::error(format!("secrets_request_provision failed: {e}")),
+        }
+    }
+
+    fn handle_secrets_request_rotation(&self, params: &ToolCallParams) -> ToolCallResult {
+        use crate::secrets_provision::ProvisionMode;
+        use devboy_storage::SecretPath;
+
+        #[derive(Deserialize)]
+        struct RotateParams {
+            path: String,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<RotateParams>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => return ToolCallResult::error("missing required parameter: path".to_string()),
+        };
+
+        let path = match SecretPath::parse(&args.path) {
+            Ok(p) => p,
+            Err(e) => {
+                return ToolCallResult::error(format!(
+                    "`{}` is not a valid ADR-020 path: {e}",
+                    args.path
+                ));
+            }
+        };
+
+        match self
+            .secrets_provision
+            .request_provision(path, ProvisionMode::Rotation)
+        {
+            Ok(id) => match serde_json::to_value(crate::secrets_provision::RequestIdReply {
+                request_id: id.0,
+            }) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            Err(e) => ToolCallResult::error(format!("secrets_request_rotation failed: {e}")),
+        }
+    }
+
+    fn handle_secrets_request_use_approval(&self, params: &ToolCallParams) -> ToolCallResult {
+        use devboy_storage::SecretPath;
+
+        #[derive(Deserialize)]
+        struct UseApprovalParams {
+            path: String,
+            reason: String,
+            #[serde(default)]
+            ttl_seconds: Option<u64>,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<UseApprovalParams>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => {
+                return ToolCallResult::error(
+                    "missing required parameters: path, reason".to_string(),
+                );
+            }
+        };
+
+        let path = match SecretPath::parse(&args.path) {
+            Ok(p) => p,
+            Err(e) => {
+                return ToolCallResult::error(format!(
+                    "`{}` is not a valid ADR-020 path: {e}",
+                    args.path
+                ));
+            }
+        };
+
+        if args.reason.trim().is_empty() {
+            return ToolCallResult::error(
+                "`reason` must be a non-empty human-facing explanation".to_string(),
+            );
+        }
+
+        match self
+            .secrets_provision
+            .request_use_approval(path, args.reason, args.ttl_seconds)
+        {
+            Ok(id) => match serde_json::to_value(crate::secrets_provision::RequestIdReply {
+                request_id: id.0,
+            }) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            Err(e) => ToolCallResult::error(format!("secrets_request_use_approval failed: {e}")),
+        }
+    }
+
+    fn handle_secrets_propose_metadata(&self, params: &ToolCallParams) -> ToolCallResult {
+        use crate::secrets_provision::ProposedMetadata;
+        use devboy_storage::SecretPath;
+
+        #[derive(Deserialize)]
+        struct ProposeParams {
+            path: String,
+            #[serde(default)]
+            fields: ProposedMetadata,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<ProposeParams>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => {
+                return ToolCallResult::error(
+                    "missing required parameters: path, fields".to_string(),
+                );
+            }
+        };
+
+        let path = match SecretPath::parse(&args.path) {
+            Ok(p) => p,
+            Err(e) => {
+                return ToolCallResult::error(format!(
+                    "`{}` is not a valid ADR-020 path: {e}",
+                    args.path
+                ));
+            }
+        };
+
+        match self
+            .secrets_provision
+            .request_metadata_proposal(path, args.fields)
+        {
+            Ok(id) => match serde_json::to_value(crate::secrets_provision::RequestIdReply {
+                request_id: id.0,
+            }) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            Err(e) => ToolCallResult::error(format!("secrets_propose_metadata failed: {e}")),
+        }
+    }
+
+    fn handle_secrets_propose_new_path(&self, params: &ToolCallParams) -> ToolCallResult {
+        use crate::secrets_provision::ProposedMetadata;
+        use devboy_storage::SecretPath;
+
+        #[derive(Deserialize)]
+        struct ProposeParams {
+            suggested_path: String,
+            #[serde(default)]
+            metadata: ProposedMetadata,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<ProposeParams>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => {
+                return ToolCallResult::error(
+                    "missing required parameters: suggested_path, metadata".to_string(),
+                );
+            }
+        };
+
+        let suggested = match SecretPath::parse(&args.suggested_path) {
+            Ok(p) => p,
+            Err(e) => {
+                return ToolCallResult::error(format!(
+                    "`{}` is not a valid ADR-020 path: {e}",
+                    args.suggested_path
+                ));
+            }
+        };
+
+        match self
+            .secrets_provision
+            .request_new_path_proposal(suggested, args.metadata)
+        {
+            Ok(id) => match serde_json::to_value(crate::secrets_provision::RequestIdReply {
+                request_id: id.0,
+            }) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            Err(e) => ToolCallResult::error(format!("secrets_propose_new_path failed: {e}")),
+        }
+    }
+
+    fn handle_secrets_poll_status(&self, params: &ToolCallParams) -> ToolCallResult {
+        use crate::secrets_provision::RequestId;
+
+        #[derive(Deserialize)]
+        struct PollParams {
+            request_id: String,
+        }
+
+        let args = match &params.arguments {
+            Some(a) => match serde_json::from_value::<PollParams>(a.clone()) {
+                Ok(p) => p,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => {
+                return ToolCallResult::error("missing required parameter: request_id".to_string());
+            }
+        };
+
+        let id = RequestId(args.request_id);
+        match self.secrets_provision.poll_status(&id) {
+            Some(reply) => match serde_json::to_value(&reply) {
+                Ok(v) => ToolCallResult::text(v.to_string()),
+                Err(e) => ToolCallResult::error(format!("serialization failed: {e}")),
+            },
+            None => ToolCallResult::error(format!("unknown request_id: {}", id.0)),
         }
     }
 
@@ -936,7 +1496,20 @@ impl McpServer {
     fn is_internal_tool(name: &str) -> bool {
         matches!(
             name,
-            "use_context" | "list_contexts" | "get_current_context" | "switch_context"
+            "use_context"
+                | "list_contexts"
+                | "get_current_context"
+                | "switch_context"
+                | "secrets_list"
+                | "secrets_describe"
+                | "secrets_request_provision"
+                | "secrets_request_rotation"
+                | "secrets_request_use_approval"
+                | "secrets_propose_metadata"
+                | "secrets_propose_new_path"
+                | "secrets_poll_status"
+                | "kdbx_describe_metadata"
+                | "kdbx_edit_metadata"
         )
     }
 
@@ -1645,6 +2218,178 @@ mod tests {
 
         let resp = server.handle_request(req).await;
         assert!(resp.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn secrets_propose_metadata_dispatches_to_metadata_proposal_launcher() {
+        use crate::secrets_provision::{FakeUiLauncher, ProvisionRegistry};
+
+        let fake = Arc::new(FakeUiLauncher::new());
+        let registry = Arc::new(ProvisionRegistry::with_launcher(fake.clone()));
+        let mut server = McpServer::new();
+        server.set_secrets_provision_registry(registry);
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "secrets_propose_metadata",
+                "arguments": {
+                    "path": "team/jira/api-key",
+                    "fields": {
+                        "description": "Jira API token (proposed)",
+                        "rotate_every_days": 90
+                    }
+                }
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none(), "got error {:?}", resp.error);
+
+        let calls = fake.metadata_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].2.description.as_deref(),
+            Some("Jira API token (proposed)")
+        );
+        assert_eq!(calls[0].2.rotate_every_days, Some(90));
+    }
+
+    #[tokio::test]
+    async fn secrets_propose_new_path_dispatches_to_new_path_launcher() {
+        use crate::secrets_provision::{FakeUiLauncher, ProvisionRegistry};
+
+        let fake = Arc::new(FakeUiLauncher::new());
+        let registry = Arc::new(ProvisionRegistry::with_launcher(fake.clone()));
+        let mut server = McpServer::new();
+        server.set_secrets_provision_registry(registry);
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "secrets_propose_new_path",
+                "arguments": {
+                    "suggested_path": "team/openai/api-key",
+                    "metadata": {
+                        "description": "OpenAI API key",
+                        "pattern_id": "openai-api-key"
+                    }
+                }
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none(), "got error {:?}", resp.error);
+
+        let calls = fake.new_path_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1.as_str(), "team/openai/api-key");
+        assert_eq!(calls[0].2.pattern_id.as_deref(), Some("openai-api-key"));
+    }
+
+    #[tokio::test]
+    async fn secrets_request_rotation_dispatches_with_rotation_mode() {
+        use crate::secrets_provision::{FakeUiLauncher, ProvisionMode, ProvisionRegistry};
+
+        let fake = Arc::new(FakeUiLauncher::new());
+        let registry = Arc::new(ProvisionRegistry::with_launcher(fake.clone()));
+        let mut server = McpServer::new();
+        server.set_secrets_provision_registry(registry);
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "secrets_request_rotation",
+                "arguments": { "path": "team/jira/api-key" }
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        assert!(
+            resp.error.is_none(),
+            "secrets_request_rotation must succeed; got error {:?}",
+            resp.error
+        );
+
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 1, "fake launcher must record one call");
+        assert_eq!(
+            calls[0].2,
+            ProvisionMode::Rotation,
+            "request_rotation must always invoke the dialog with mode=Rotation"
+        );
+    }
+
+    #[tokio::test]
+    async fn secrets_request_rotation_rejects_invalid_path() {
+        let mut server = McpServer::new();
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "secrets_request_rotation",
+                "arguments": { "path": "not a path" }
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        // Tool-level error (not protocol error) — `result` is set
+        // with `is_error: true`.
+        assert!(resp.result.is_some(), "result should still be set");
+    }
+
+    #[tokio::test]
+    async fn secrets_request_use_approval_dispatches_to_use_approval_launcher() {
+        use crate::secrets_provision::{FakeUiLauncher, ProvisionRegistry};
+
+        let fake = Arc::new(FakeUiLauncher::new());
+        let registry = Arc::new(ProvisionRegistry::with_launcher(fake.clone()));
+        let mut server = McpServer::new();
+        server.set_secrets_provision_registry(registry);
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "secrets_request_use_approval",
+                "arguments": {
+                    "path": "team/jira/api-key",
+                    "reason": "pushing image to staging"
+                }
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none(), "got error {:?}", resp.error);
+
+        let calls = fake.use_approval_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1.as_str(), "team/jira/api-key");
+        assert_eq!(calls[0].2, "pushing image to staging");
+    }
+
+    #[tokio::test]
+    async fn secrets_request_use_approval_rejects_empty_reason() {
+        let mut server = McpServer::new();
+
+        let req = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: RequestId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "secrets_request_use_approval",
+                "arguments": {
+                    "path": "team/jira/api-key",
+                    "reason": "   "
+                }
+            })),
+        };
+        let resp = server.handle_request(req).await;
+        assert!(resp.result.is_some());
     }
 
     #[test]

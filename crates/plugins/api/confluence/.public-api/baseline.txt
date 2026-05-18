@@ -1,4 +1,5 @@
 pub mod devboy_confluence
+pub mod devboy_confluence::liveness
 pub enum devboy_confluence::ConfluenceAuth
 pub devboy_confluence::ConfluenceAuth::Basic
 pub devboy_confluence::ConfluenceAuth::Basic::password: secrecy::SecretString
@@ -37,6 +38,8 @@ impl core::clone::Clone for devboy_confluence::ConfluenceClient
 pub fn devboy_confluence::ConfluenceClient::clone(&self) -> devboy_confluence::ConfluenceClient
 impl core::fmt::Debug for devboy_confluence::ConfluenceClient
 pub fn devboy_confluence::ConfluenceClient::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl devboy_core::liveness::LivenessProbe for devboy_confluence::ConfluenceClient
+pub fn devboy_confluence::ConfluenceClient::provider_name(&self) -> &str
 impl devboy_core::provider::KnowledgeBaseProvider for devboy_confluence::ConfluenceClient
 pub fn devboy_confluence::ConfluenceClient::create_page<'life0, 'async_trait>(&'life0 self, params: devboy_core::types::CreatePageParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::KbPage>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_confluence::ConfluenceClient::get_page<'life0, 'life1, 'async_trait>(&'life0 self, page_id: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::KbPageContent>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait

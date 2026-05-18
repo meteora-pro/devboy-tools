@@ -205,6 +205,34 @@ Adding a provider is a Rust crate implementing `Provider` + a `ToolEnricher` ([A
 
 ---
 
+## Secret management
+
+Provider tokens, deploy keys, API tokens — `devboy-tools` ships a first-class secret framework so values never sit in plaintext config files and AI agents never see raw values.
+
+- **Manifest-driven** — projects declare required and optional secrets in `.devboy/secrets.toml` ([ADR-020](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-020-secret-manifest-and-alias-resolution.md)). The merged inventory is the source of truth for `secrets list`, `doctor`, and the inventory view.
+- **Pluggable sources** — keychain, local-vault, 1Password, Vault (HTTP KV v2), env-store ship in-tree; community plugins extend the set via a stdio JSON-RPC subprocess protocol ([ADR-021](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-021-secret-source-router.md)).
+- **Native UI** — TUI on ratatui + GUI on egui sharing one view-model layer; backend autodetected from `$DISPLAY`/`$WAYLAND_DISPLAY` ([ADR-023](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md) §3.4).
+- **Agent-safe by construction** — MCP `secrets_*` tools return metadata only. Trust boundary is enforced by a marker trait, a CI grep gate, and a sentinel-based negative test (ADR-023 §3.7).
+- **Three deployment modes** — desktop (OS keychain), team (local-vault), CI (env-store). End-to-end smoke tests cover all three on every PR.
+
+Four guides for the framework live under [`docs/guide/secrets/`](./secrets/onboarding):
+
+- [Onboarding](./secrets/onboarding) — manual install → first source → manifest → validate → doctor.
+- [Local Vault](./secrets/local-vault) — file format, recovery flow, backup recommendations.
+- [Agent Protocol (MCP)](./secrets/agent-protocol) — every `secrets_*` tool, examples, the "no `secrets.get`" rule.
+- [Source Plugin Protocol](./secrets/source-plugin-protocol) — stdio JSON-RPC reference + working echo-source example in [`examples/secrets-source-echo/`](https://github.com/meteora-pro/devboy-tools/blob/main/examples/secrets-source-echo/).
+
+```bash
+devboy secrets list                # see what the active context expects
+devboy doctor --secrets            # is everything provisioned?
+devboy secrets ui                  # TUI/GUI inventory
+devboy secrets rotate <path>       # opens provider URL + prompts for new value
+```
+
+For AI-driven setup, point the agent at the [`setup-secrets` skill](https://github.com/meteora-pro/devboy-tools/blob/main/crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/SKILL.md) — it walks the eight-step wizard with a state file at `~/.devboy/secrets/setup-state.toml`.
+
+---
+
 ## Research
 
 Every non-trivial optimisation in the pipeline is backed by a paper grounded in a real corpus — 523 Claude Code sessions, 10,644 MCP responses from production traffic. The full [`docs/research/INDEX.md`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/research/INDEX.md) tracks methods, datasets, and reproducibility scripts.
@@ -298,6 +326,7 @@ Architecture details: [executor](./architecture/executor), [enrichers](./archite
 - **Tool reference** (auto-generated) — [`docs/guide/reference/tools.md`](./reference/tools)
 - **Skills user guide** — [`docs/guide/skills/`](./skills/)
 - **Configuration** (env vars, contexts, doctor, proxy, format pipeline) — [`docs/guide/configuration/`](./configuration/)
+- **Secret management** (onboarding, local-vault, agent protocol, source plugins) — [`docs/guide/secrets/`](./secrets/onboarding)
 - **Architecture** — [`docs/guide/architecture/`](./architecture/)
 - **ADRs** — [`docs/architecture/adr/INDEX.md`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/INDEX.md) (18 decisions logged)
 - **Research papers** — [`docs/research/INDEX.md`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/research/INDEX.md)

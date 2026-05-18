@@ -1,0 +1,47 @@
+[package]
+name = "devboy-secrets-agent"
+description = "Long-running daemon that owns the unlocked local-vault and serves it over JSON-RPC on a UNIX socket (ADR-023 §3.3)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["devboy", "secrets", "daemon", "json-rpc", "ipc"]
+categories = ["authentication", "command-line-utilities"]
+publish = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[[bin]]
+name = "devboy-secrets-agent"
+path = "src/main.rs"
+
+[lib]
+name = "devboy_secrets_agent"
+path = "src/lib.rs"
+
+[dependencies]
+devboy-vault-crypto.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+secrecy.workspace = true
+dirs.workspace = true
+
+# Unix-only deps for socket creation, file permissions, and peer credential checks.
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", default-features = false, features = ["user", "process"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+temp-env = "0.3"
+
+[lints]
+workspace = true

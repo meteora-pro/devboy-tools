@@ -15,7 +15,8 @@
     "x64"
   ],
   "files": [
-    "bin/devboy"
+    "bin/devboy",
+    "bin/devboy-secrets-ui"
   ],
   "preferUnplugged": true
 }

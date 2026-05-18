@@ -1,4 +1,5 @@
 pub mod devboy_slack
+pub mod devboy_slack::liveness
 pub struct devboy_slack::SlackAuthInfo
 pub devboy_slack::SlackAuthInfo::bot_id: core::option::Option<alloc::string::String>
 pub devboy_slack::SlackAuthInfo::missing_scopes: alloc::vec::Vec<alloc::string::String>
@@ -35,6 +36,8 @@ impl core::clone::Clone for devboy_slack::SlackClient
 pub fn devboy_slack::SlackClient::clone(&self) -> devboy_slack::SlackClient
 impl core::fmt::Debug for devboy_slack::SlackClient
 pub fn devboy_slack::SlackClient::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl devboy_core::liveness::LivenessProbe for devboy_slack::SlackClient
+pub fn devboy_slack::SlackClient::provider_name(&self) -> &str
 impl devboy_core::provider::MessengerProvider for devboy_slack::SlackClient
 pub fn devboy_slack::SlackClient::get_chats<'life0, 'async_trait>(&'life0 self, params: devboy_core::types::GetChatsParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::MessengerChat>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_slack::SlackClient::get_messages<'life0, 'async_trait>(&'life0 self, params: devboy_core::types::GetMessagesParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::MessengerMessage>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait

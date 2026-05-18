@@ -53,6 +53,20 @@ impl GitHubClient {
         }
     }
 
+    /// Base URL the client was configured against. Public so the
+    /// liveness probe (and any future sibling module) can build
+    /// its own requests without re-walking the constructor.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Borrow the underlying [`reqwest::Client`]. Same rationale as
+    /// [`Self::base_url`] — the liveness probe issues its own
+    /// auth-introspection request and reuses the connection pool.
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.client
+    }
+
     /// Build request with common headers.
     fn request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
         let mut builder = self

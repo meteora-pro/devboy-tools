@@ -1,9 +1,13 @@
 pub mod config;
+pub mod context_secrets;
 pub mod credentials;
 pub mod environment;
+pub mod legacy_keys;
 pub mod mcp;
 pub mod providers;
 pub mod proxy;
+pub mod rotation;
+pub mod sources;
 
 use crate::doctor::DiagnosticContext;
 use devboy_core::{Config, ContextConfig};

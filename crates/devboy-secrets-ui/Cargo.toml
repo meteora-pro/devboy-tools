@@ -1,0 +1,54 @@
+[package]
+name = "devboy-secrets-ui"
+description = "Native UI (TUI on ratatui + GUI on egui) for managing devboy-tools secrets without exposing values to the agent (ADR-023 §3.4)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["devboy", "secrets", "ui", "tui", "egui"]
+categories = ["command-line-interface", "gui"]
+publish = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = ["tui"]
+tui = []
+gui = ["dep:egui"]
+
+[package.metadata.cargo-machete]
+# `crossterm` is referenced via the `ratatui` `crossterm` feature, not
+# directly imported in any source file — keep it as a direct dep so
+# version bumps are visible here, but tell machete it's a true
+# pin-the-feature-graph dep, not a leak.
+ignored = ["crossterm"]
+
+[dependencies]
+secrecy.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+# `ratatui` and `crossterm` are pulled in unconditionally and gated
+# only by `#[cfg(feature = "tui")]` in code. Marking them
+# `optional` and using `dep:` activation in the `tui` feature would
+# be cleaner, but `cargo clippy --all-targets` then trips on
+# unresolved imports inside `#[cfg(feature = "tui")]` blocks
+# because the lib build re-evaluates without the feature dispatch
+# the test target carries. Keeping the deps direct and the gate
+# in code is the simplest configuration that keeps both
+# `--no-default-features` and the default build green.
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+crossterm = "0.28"
+# `egui` is fully optional and only activated by the `gui` feature.
+# Unlike `ratatui` (which is referenced by the always-compiled
+# inventory.rs), the egui code lives entirely behind
+# `#[cfg(feature = "gui")] pub mod gui` — so clippy never sees
+# the imports outside the feature-on build.
+egui = { version = "0.34", optional = true, default-features = false }
+
+[lints]
+workspace = true

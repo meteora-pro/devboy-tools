@@ -1,0 +1,44 @@
+[package]
+name = "devboy-vault-crypto"
+description = "Encrypted local vault primitives for devboy-tools — XChaCha20-Poly1305 + Argon2id with envelope encryption (ADR-023)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["devboy", "secrets", "vault", "encryption", "argon2"]
+categories = ["cryptography", "authentication"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+secrecy.workspace = true
+zeroize = { version = "1.8", features = ["derive"] }
+toml.workspace = true
+base64.workspace = true
+tempfile.workspace = true
+chacha20poly1305.workspace = true
+getrandom.workspace = true
+argon2.workspace = true
+bip39.workspace = true
+hkdf.workspace = true
+sha2.workspace = true
+
+# Keychain access (macOS only — the keychain envelope from ADR-023 §3.2
+# is a no-op on every other platform).
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[dev-dependencies]
+# tempfile is in [dependencies] above (used by atomic write); no
+# extra dev-only deps for this crate yet.
+
+[lints]
+workspace = true

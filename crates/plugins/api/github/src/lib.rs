@@ -8,6 +8,7 @@
 #![deny(rustdoc::invalid_html_tags)]
 mod client;
 pub mod enricher;
+pub mod liveness;
 mod types;
 
 pub use client::GitHubClient;

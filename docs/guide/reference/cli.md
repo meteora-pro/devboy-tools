@@ -45,6 +45,35 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy agents`↴](#devboy-agents)
 * [`devboy agents list`↴](#devboy-agents-list)
 * [`devboy onboard`↴](#devboy-onboard)
+* [`devboy secrets`↴](#devboy-secrets)
+* [`devboy secrets list`↴](#devboy-secrets-list)
+* [`devboy secrets describe`↴](#devboy-secrets-describe)
+* [`devboy secrets validate`↴](#devboy-secrets-validate)
+* [`devboy secrets migrate`↴](#devboy-secrets-migrate)
+* [`devboy secrets agent`↴](#devboy-secrets-agent)
+* [`devboy secrets agent status`↴](#devboy-secrets-agent-status)
+* [`devboy secrets agent start`↴](#devboy-secrets-agent-start)
+* [`devboy secrets agent install`↴](#devboy-secrets-agent-install)
+* [`devboy secrets agent uninstall`↴](#devboy-secrets-agent-uninstall)
+* [`devboy secrets ui`↴](#devboy-secrets-ui)
+* [`devboy secrets rotate`↴](#devboy-secrets-rotate)
+* [`devboy secrets catalog`↴](#devboy-secrets-catalog)
+* [`devboy secrets catalog list`↴](#devboy-secrets-catalog-list)
+* [`devboy secrets catalog status`↴](#devboy-secrets-catalog-status)
+* [`devboy secrets catalog add-url`↴](#devboy-secrets-catalog-add-url)
+* [`devboy secrets catalog refresh`↴](#devboy-secrets-catalog-refresh)
+* [`devboy secrets catalog forget`↴](#devboy-secrets-catalog-forget)
+* [`devboy secrets catalog pin`↴](#devboy-secrets-catalog-pin)
+* [`devboy secrets catalog validate`↴](#devboy-secrets-catalog-validate)
+* [`devboy secrets setup`↴](#devboy-secrets-setup)
+* [`devboy secrets kdbx`↴](#devboy-secrets-kdbx)
+* [`devboy secrets kdbx peek`↴](#devboy-secrets-kdbx-peek)
+* [`devboy secrets kdbx describe-metadata`↴](#devboy-secrets-kdbx-describe-metadata)
+* [`devboy secrets kdbx edit-metadata`↴](#devboy-secrets-kdbx-edit-metadata)
+* [`devboy hooks`↴](#devboy-hooks)
+* [`devboy hooks install`↴](#devboy-hooks-install)
+* [`devboy hooks check`↴](#devboy-hooks-check)
+* [`devboy hooks check secret-alias`↴](#devboy-hooks-check-secret-alias)
 * [`devboy trace`↴](#devboy-trace)
 * [`devboy trace begin`↴](#devboy-trace-begin)
 * [`devboy trace event`↴](#devboy-trace-event)
@@ -75,6 +104,8 @@ DevBoy - AI-powered development tools
 * `skills` — Manage skills — procedural recipes installed alongside the tool bundle
 * `agents` — Inspect AI coding agents installed on this machine
 * `onboard` — First-run setup: detect your AI agent and install the right skills bundle
+* `secrets` — Discover and inspect declared secrets (metadata only — values are never shown)
+* `hooks` — Manage git hooks installed by devboy (e.g. the secret-alias pre-commit lint, ADR-020 §5)
 * `trace` — Write to a skill's self-feedback session trace (ADR-015)
 * `doctor` — Run diagnostic checks for the local DevBoy setup
 * `upgrade` — Upgrade devboy to the latest version
@@ -84,6 +115,7 @@ DevBoy - AI-powered development tools
 ###### **Options:**
 
 * `-v`, `--verbose` — Enable verbose output
+* `--ci` — Force CI routing mode for the whole invocation. Equivalent to setting `DEVBOY_CI=1`. CI mode promotes the env-store source to the front of the chain, skips `NotInstalled` sources silently, and refuses interactive unlock prompts (local-vault PIN, biometric). See ADR-021 §8
 
 
 
@@ -682,6 +714,446 @@ First-run setup: detect your AI agent and install the right skills bundle
 
 
 
+## `devboy secrets`
+
+Discover and inspect declared secrets (metadata only — values are never shown)
+
+**Usage:** `devboy secrets <COMMAND>`
+
+###### **Subcommands:**
+
+* `list` — List every path the active project's manifest declares, merged with the global index. Values are never shown
+* `describe` — Print the resolved metadata card for a single secret path
+* `validate` — Validate manifest paths' format / liveness as a CI gate. Format-only by default; pass `--liveness` to also probe upstreams (github + gitlab). See ADR-021 §6
+* `migrate` — Move a legacy keychain entry under the ADR-020 path convention. See `doctor` "Legacy keychain entries" (P10.1) for what's eligible
+* `agent` — Manage the local secret-store agent daemon (ADR-023 §3.3)
+* `ui` — Open the native UI (TUI in a terminal, GUI in a window). Backend autodetected from `$DISPLAY` / `$WAYLAND_DISPLAY` on Linux and the OS on macOS / Windows; override with `--tui` or `--gui`. See ADR-023 §3.4
+* `rotate` — Rotate a secret: open the provider URL in the browser, destructive-confirm, read the new value, format-validate, and record `last_rotated_at`. See ADR-023 §3.4
+* `catalog` — Manage the token catalog (provider procedure files the `secrets ui` form binds to). See ADR-023 §3.4
+* `setup` — Run the setup-secrets wizard against the current directory. Default mode is `--scan-only` — read-only preview of what the wizard would propose. Pass `--write-manifest` to commit the proposals to `<repo>/.devboy/secrets.toml`. See ADR-023 §3.8 and `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/`
+* `kdbx` — Work with KDBX 4 (KeePass) files as a SecretSource. The passphrase is prompted from stdin with no echo; the decrypted body lives only inside this process and is dropped on exit. See ADR-021 §8 + `crates/plugins/secrets/kdbx/`
+
+
+
+## `devboy secrets list`
+
+List every path the active project's manifest declares, merged with the global index. Values are never shown
+
+**Usage:** `devboy secrets list [OPTIONS]`
+
+###### **Options:**
+
+* `--internal` — Include framework-internal paths (`__*`) in the output. Hidden by default per ADR-021 §5
+* `--json` — Print as JSON instead of a human-readable table
+
+
+
+## `devboy secrets describe`
+
+Print the resolved metadata card for a single secret path
+
+**Usage:** `devboy secrets describe [OPTIONS] <PATH>`
+
+###### **Arguments:**
+
+* `<PATH>` — The secret path (e.g. `team/gitlab/token-deploy`)
+
+###### **Options:**
+
+* `--json` — Print as JSON instead of a human-readable card
+
+
+
+## `devboy secrets validate`
+
+Validate manifest paths' format / liveness as a CI gate. Format-only by default; pass `--liveness` to also probe upstreams (github + gitlab). See ADR-021 §6
+
+**Usage:** `devboy secrets validate [OPTIONS] [PATH]`
+
+###### **Arguments:**
+
+* `<PATH>` — Validate just one path. Defaults to all manifest paths
+
+###### **Options:**
+
+* `--format-only` — Format check only — skip the upstream liveness probe. This is the implied default; pass `--format-only` to be explicit (e.g. when `--liveness` is set in a CI variable you want to override locally)
+* `--liveness` — Run upstream liveness probes (github, gitlab) in addition to the format check
+* `--all` — Print every path, including ones that pass cleanly. By default the command shows only failures, warnings, and skipped rows
+* `--json` — Print as JSON (one object per path) instead of a human-readable table
+
+
+
+## `devboy secrets migrate`
+
+Move a legacy keychain entry under the ADR-020 path convention. See `doctor` "Legacy keychain entries" (P10.1) for what's eligible
+
+**Usage:** `devboy secrets migrate [OPTIONS] [LEGACY_KEY]`
+
+###### **Arguments:**
+
+* `<LEGACY_KEY>` — Legacy keychain key to migrate (e.g. `github/token`). Required unless `--all` is set
+
+###### **Options:**
+
+* `--all` — Migrate every present legacy entry in one go. Uses the suggested target path for each; pass `--keep-legacy` to also retain the source rows (the default in batch mode)
+* `--target <TARGET>` — Pre-supply the target path; bypasses the interactive prompt for the single-entry flow
+* `--keep-legacy` — Don't delete the legacy entry after a successful write. Defaults to `true` in `--all` mode (cautious)
+* `--dry-run` — Print the plan without writing anything
+* `-y`, `--yes` — Skip the prompts entirely. Equivalent to `--target <suggested>` and not deleting unless `--no-keep-legacy` is set
+
+
+
+## `devboy secrets agent`
+
+Manage the local secret-store agent daemon (ADR-023 §3.3)
+
+**Usage:** `devboy secrets agent <COMMAND>`
+
+###### **Subcommands:**
+
+* `status` — Report the agent socket path and whether the daemon is currently accepting connections
+* `start` — Spawn the agent if it isn't already running. Idempotent — no-op when the socket is already live
+* `install` — Install a per-user service unit so the daemon starts at login and respawns on failure. macOS writes a launchd plist at `~/Library/LaunchAgents/dev.devboy.secrets.plist`; Linux writes a systemd-user unit at `~/.config/systemd/user/devboy-secrets-agent.service`. After install: verify with `launchctl print gui/$(id -u)/dev.devboy.secrets` (macOS) or `systemctl --user status devboy-secrets-agent.service` (Linux)
+* `uninstall` — Stop the user service (if loaded) and remove the unit file written by `install`. Idempotent — running it twice is fine
+
+
+
+## `devboy secrets agent status`
+
+Report the agent socket path and whether the daemon is currently accepting connections
+
+**Usage:** `devboy secrets agent status`
+
+
+
+## `devboy secrets agent start`
+
+Spawn the agent if it isn't already running. Idempotent — no-op when the socket is already live
+
+**Usage:** `devboy secrets agent start [OPTIONS]`
+
+###### **Options:**
+
+* `--vault <VAULT>` — Override the vault file the daemon will operate on. Defaults to `<config_dir>/devboy-tools/secrets/vault.dvb`
+* `--timeout-secs <TIMEOUT_SECS>` — Cap on the wait-for-socket loop, in seconds. Defaults to [`secrets_agent::DEFAULT_SPAWN_TIMEOUT`]
+
+
+
+## `devboy secrets agent install`
+
+Install a per-user service unit so the daemon starts at login and respawns on failure. macOS writes a launchd plist at `~/Library/LaunchAgents/dev.devboy.secrets.plist`; Linux writes a systemd-user unit at `~/.config/systemd/user/devboy-secrets-agent.service`. After install: verify with `launchctl print gui/$(id -u)/dev.devboy.secrets` (macOS) or `systemctl --user status devboy-secrets-agent.service` (Linux)
+
+**Usage:** `devboy secrets agent install [OPTIONS]`
+
+###### **Options:**
+
+* `--binary <BINARY>` — Override the path to the `devboy-secrets-agent` binary. By default the same lookup as `secrets agent start` is used (env override → sibling-of-current_exe → `PATH`)
+* `--socket <SOCKET>` — Override the daemon's socket path (`DEVBOY_AGENT_SOCKET`)
+* `--vault <VAULT>` — Override the daemon's vault path (`DEVBOY_VAULT_PATH`)
+* `--no-load` — Skip the platform service-manager activation step (just write the unit file). Useful for previewing what would land on disk; the unit is loaded next time `launchctl/systemctl` scans its directory anyway
+
+  Default value: `false`
+
+
+
+## `devboy secrets agent uninstall`
+
+Stop the user service (if loaded) and remove the unit file written by `install`. Idempotent — running it twice is fine
+
+**Usage:** `devboy secrets agent uninstall [OPTIONS]`
+
+###### **Options:**
+
+* `--no-unload` — Skip the platform service-manager teardown step (just remove the unit file). The next reboot will pick up the removal anyway
+
+  Default value: `false`
+
+
+
+## `devboy secrets ui`
+
+Open the native UI (TUI in a terminal, GUI in a window). Backend autodetected from `$DISPLAY` / `$WAYLAND_DISPLAY` on Linux and the OS on macOS / Windows; override with `--tui` or `--gui`. See ADR-023 §3.4
+
+**Usage:** `devboy secrets ui [OPTIONS]`
+
+###### **Options:**
+
+* `--tui` — Force the terminal renderer (ratatui)
+* `--gui` — Force the windowed renderer (egui). Opens a native window via eframe; runs until the user closes it
+* `--provision <PATH>` — Open the provision dialog focused on the given path. The window still opens with the full inventory in the background, but the dialog overlay is armed at startup — useful when the AI agent (or a script) wants to put the user one click away from filling a known-missing secret. Path must be valid ADR-020
+
+
+
+## `devboy secrets rotate`
+
+Rotate a secret: open the provider URL in the browser, destructive-confirm, read the new value, format-validate, and record `last_rotated_at`. See ADR-023 §3.4
+
+**Usage:** `devboy secrets rotate [OPTIONS] <PATH>`
+
+###### **Arguments:**
+
+* `<PATH>` — ADR-020 path of the secret to rotate (e.g. `team/jira/api-key`)
+
+###### **Options:**
+
+* `--no-browser` — Skip the OS-browser hand-off. Useful in CI / scripts that rotate values fetched out-of-band
+* `--yes` — Skip the destructive-confirm prompt. Required when stdin isn't a TTY (the prompt would have nothing to read)
+* `--from-stdin` — Read the new value from stdin (one line, no echo) instead of the interactive prompt. Useful for `vault read` / `op read` shell pipelines and for tests
+* `--index <INDEX>` — Override the path the global index is loaded from / saved to. Defaults to the platform's config dir
+
+
+
+## `devboy secrets catalog`
+
+Manage the token catalog (provider procedure files the `secrets ui` form binds to). See ADR-023 §3.4
+
+**Usage:** `devboy secrets catalog <COMMAND>`
+
+###### **Subcommands:**
+
+* `list` — List every loaded provider catalog with its source (bundled / user / project) and variant count. Useful to debug which override is winning when a team has its own project-scope file shadowing the bundled default
+* `status` — Inspect every catalog at every active source — bundled, user, project, AND URL — with origin, variant count, and (for URL sources) cache state. Replaces the older `list` command for the URL-loaded catalog flow (P23)
+* `add-url` — Subscribe to a remote catalog by URL. Fetches once through every P23 defence layer (HTTPS-only, SSRF guard, size cap, content-type, schema version), prints the body SHA256 + variant summary, asks for trust confirmation (or accepts a `--pin` for unattended use), then appends a `[[source]]` entry to `~/.devboy/secrets/catalog/sources.toml`
+* `refresh` — Re-fetch URL catalogs from `sources.toml`. Without `--force` the loader honours each source's `refresh_seconds` TTL — sources within their window are reported as "fresh" and not re-fetched. With `--force` the cache for matching sources is dropped before the fetch so every source goes back to the network. Optional positional `<filter>` matches as a case-insensitive substring against the source URL
+* `forget` — Drop URL entries from `known_hashes.toml` so the next fetch re-establishes TOFU. Positional `<filter>` is a case-insensitive URL substring; without it, every recorded entry is dropped (with confirmation unless `--yes` is set). Use this after a deliberate upstream rotation that you want devboy to re-trust
+* `pin` — Promote a TOFU entry to a hard SHA pin in `sources.toml`. Positional `<filter>` is a case- insensitive URL substring matching the source to pin. With explicit `<sha>` argument, that exact value is written; without it, the current `known_hashes.toml` entry is read and copied. Future fetches from this source refuse any mismatch
+* `validate` — Validate a single catalog JSON file. Loads the file, runs schema deserialisation (`deny_unknown_fields` is strict), then per-variant checks that the regex compiles and that every URL parses. Exit non-zero on any failure
+
+
+
+## `devboy secrets catalog list`
+
+List every loaded provider catalog with its source (bundled / user / project) and variant count. Useful to debug which override is winning when a team has its own project-scope file shadowing the bundled default
+
+**Usage:** `devboy secrets catalog list`
+
+
+
+## `devboy secrets catalog status`
+
+Inspect every catalog at every active source — bundled, user, project, AND URL — with origin, variant count, and (for URL sources) cache state. Replaces the older `list` command for the URL-loaded catalog flow (P23)
+
+**Usage:** `devboy secrets catalog status [OPTIONS]`
+
+###### **Options:**
+
+* `--json` — Print as machine-readable JSON instead of a human table
+
+
+
+## `devboy secrets catalog add-url`
+
+Subscribe to a remote catalog by URL. Fetches once through every P23 defence layer (HTTPS-only, SSRF guard, size cap, content-type, schema version), prints the body SHA256 + variant summary, asks for trust confirmation (or accepts a `--pin` for unattended use), then appends a `[[source]]` entry to `~/.devboy/secrets/catalog/sources.toml`
+
+**Usage:** `devboy secrets catalog add-url [OPTIONS] <URL>`
+
+###### **Arguments:**
+
+* `<URL>` — HTTPS URL of the JSON catalog (e.g. a GitHub raw link). `http://` is rejected outright by the fetcher's first defence layer
+
+###### **Options:**
+
+* `--pin <HEX>` — Pin the body to this SHA256 (lower-case hex, no `sha256:` prefix). Future fetches refuse any mismatch. When omitted, the loader falls back to TOFU and records the body's SHA in `known_hashes.toml` on first fetch
+* `--refresh-seconds <REFRESH_SECONDS>` — How long the cached body stays fresh before the loader re-fetches. Defaults to 24 hours
+
+  Default value: `86400`
+* `--enable` — Also flip `enable_url_catalogs = true` in the same `sources.toml`. Without this flag the entry is added but the master kill-switch remains off — the URL is not loaded until the user explicitly enables it
+* `--yes` — Skip the interactive trust-confirm prompt. Implied when `--pin` is set (the pin already locks the body). Required for non-tty / CI invocations
+
+
+
+## `devboy secrets catalog refresh`
+
+Re-fetch URL catalogs from `sources.toml`. Without `--force` the loader honours each source's `refresh_seconds` TTL — sources within their window are reported as "fresh" and not re-fetched. With `--force` the cache for matching sources is dropped before the fetch so every source goes back to the network. Optional positional `<filter>` matches as a case-insensitive substring against the source URL
+
+**Usage:** `devboy secrets catalog refresh [OPTIONS] [FILTER]`
+
+###### **Arguments:**
+
+* `<FILTER>` — Optional case-insensitive substring; only sources whose URL matches are re-fetched. Without this argument every URL source is processed
+
+###### **Options:**
+
+* `--force` — Bypass each source's `refresh_seconds` TTL and force a re-fetch over the network. Cache for matching sources is removed before the fetch so the loader cannot serve a stale body
+
+
+
+## `devboy secrets catalog forget`
+
+Drop URL entries from `known_hashes.toml` so the next fetch re-establishes TOFU. Positional `<filter>` is a case-insensitive URL substring; without it, every recorded entry is dropped (with confirmation unless `--yes` is set). Use this after a deliberate upstream rotation that you want devboy to re-trust
+
+**Usage:** `devboy secrets catalog forget [OPTIONS] [FILTER]`
+
+###### **Arguments:**
+
+* `<FILTER>` — Optional case-insensitive substring against the URL. Without this argument, every recorded TOFU entry is dropped (subject to `--yes`)
+
+###### **Options:**
+
+* `--yes` — Skip the interactive confirmation prompt. Required when no filter is given (bulk-clearing all TOFU entries is destructive enough to warrant explicit opt-in)
+
+
+
+## `devboy secrets catalog pin`
+
+Promote a TOFU entry to a hard SHA pin in `sources.toml`. Positional `<filter>` is a case- insensitive URL substring matching the source to pin. With explicit `<sha>` argument, that exact value is written; without it, the current `known_hashes.toml` entry is read and copied. Future fetches from this source refuse any mismatch
+
+**Usage:** `devboy secrets catalog pin <FILTER> [SHA]`
+
+###### **Arguments:**
+
+* `<FILTER>` — Case-insensitive URL substring identifying the source to pin. Must match exactly one source; ambiguity is an error
+* `<SHA>` — Explicit lower-case-hex SHA256 to write to `sources.toml`. When omitted, the current TOFU entry for the matched source is read from `known_hashes.toml` and copied
+
+
+
+## `devboy secrets catalog validate`
+
+Validate a single catalog JSON file. Loads the file, runs schema deserialisation (`deny_unknown_fields` is strict), then per-variant checks that the regex compiles and that every URL parses. Exit non-zero on any failure
+
+**Usage:** `devboy secrets catalog validate <PATH>`
+
+###### **Arguments:**
+
+* `<PATH>` — Path to the JSON catalog file. Use `-` to read from stdin
+
+
+
+## `devboy secrets setup`
+
+Run the setup-secrets wizard against the current directory. Default mode is `--scan-only` — read-only preview of what the wizard would propose. Pass `--write-manifest` to commit the proposals to `<repo>/.devboy/secrets.toml`. See ADR-023 §3.8 and `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/`
+
+**Usage:** `devboy secrets setup [OPTIONS]`
+
+###### **Options:**
+
+* `--root <ROOT>` — Project root to scan. Defaults to the current directory
+* `--scan-only` — Print the scan + propose preview without touching disk. This is the default mode — included as an explicit flag for self-documenting scripts
+* `--write-manifest` — Commit the proposed paths to `<root>/.devboy/secrets.toml`. Refuses to overwrite an existing manifest unless `--force` is passed too — drift in the manifest is the user's own authoritative copy and the wizard treats it as opaque
+* `--force` — Allow `--write-manifest` to overwrite an existing `<root>/.devboy/secrets.toml`. No-op without `--write-manifest`
+* `--resume` — Resume the wizard from the recorded state file (`~/.devboy/secrets/setup-state.toml`). Skips phases already marked `done` / `skipped`. Implies a full wizard run, not just the scan preview
+* `--json` — Emit JSON-lines events to stdout instead of human prose. One event per line with shape `{"phase":"scan","status":"completed","message":"…"}` — designed for the AI agent driving the skill. The `message` key is optional: only `PhaseProgress`, `PhaseCompleted`, `PhaseSkipped`, and `PhaseFailed` carry a body; `PhaseStarted` and the terminal `wizard-completed` event omit it
+
+
+
+## `devboy secrets kdbx`
+
+Work with KDBX 4 (KeePass) files as a SecretSource. The passphrase is prompted from stdin with no echo; the decrypted body lives only inside this process and is dropped on exit. See ADR-021 §8 + `crates/plugins/secrets/kdbx/`
+
+**Usage:** `devboy secrets kdbx <COMMAND>`
+
+###### **Subcommands:**
+
+* `peek` — Open a `.kdbx` file with a prompted passphrase and print the per-entry inventory (path + Title + UserName + URL + whether a Password is set). Values are NEVER printed — this is a read-only sanity check that the file opens and our path normalisation produces sensible references
+* `describe-metadata` — Read-only metadata projection for ONE entry by UUID. Prints title / username / url / notes / tags / expires_at / attachment names / custom-string names. Password and every Protected custom string are deliberately excluded from the output — same agent-blindness boundary as `edit-metadata` (K14)
+* `edit-metadata` — Edit non-value metadata on ONE entry by UUID. Allows updating title / username / url / notes / tags / expiry timestamp; the value-bearing Password and any Protected custom string are unreachable from this surface. Writes through `derive_working_copy_path` so the user's original `.kdbx` is never overwritten — the working copy path is printed at the end so callers can sync back on their own schedule
+
+
+
+## `devboy secrets kdbx peek`
+
+Open a `.kdbx` file with a prompted passphrase and print the per-entry inventory (path + Title + UserName + URL + whether a Password is set). Values are NEVER printed — this is a read-only sanity check that the file opens and our path normalisation produces sensible references
+
+**Usage:** `devboy secrets kdbx peek [OPTIONS] --file <FILE>`
+
+###### **Options:**
+
+* `--file <FILE>` — Absolute path to the `.kdbx` file. Required — there is no default discovery for KDBX files (the user opts in per-invocation)
+* `--keyfile <KEYFILE>` — Optional path to a keyfile companion (KeePass two-factor unlock). Omit for passphrase-only databases
+* `--json` — Print as JSON (one entry per object) instead of the default human table. Useful for scripted verification
+
+
+
+## `devboy secrets kdbx describe-metadata`
+
+Read-only metadata projection for ONE entry by UUID. Prints title / username / url / notes / tags / expires_at / attachment names / custom-string names. Password and every Protected custom string are deliberately excluded from the output — same agent-blindness boundary as `edit-metadata` (K14)
+
+**Usage:** `devboy secrets kdbx describe-metadata [OPTIONS] --file <FILE> --uuid <UUID>`
+
+###### **Options:**
+
+* `--file <FILE>` — Absolute path to the `.kdbx` file
+* `--keyfile <KEYFILE>` — Optional keyfile companion (KeePass two-factor unlock)
+* `--uuid <UUID>` — UUID of the entry to project. Hyphenated hex (`12345678-90ab-cdef-1234-567890abcdef`). See `kdbx peek --json` for a complete UUID listing
+* `--json` — Print as JSON instead of the default human key/value table. JSON output is the contract for scripted / MCP-wrapper consumers
+
+
+
+## `devboy secrets kdbx edit-metadata`
+
+Edit non-value metadata on ONE entry by UUID. Allows updating title / username / url / notes / tags / expiry timestamp; the value-bearing Password and any Protected custom string are unreachable from this surface. Writes through `derive_working_copy_path` so the user's original `.kdbx` is never overwritten — the working copy path is printed at the end so callers can sync back on their own schedule
+
+**Usage:** `devboy secrets kdbx edit-metadata [OPTIONS] --file <FILE> --uuid <UUID>`
+
+###### **Options:**
+
+* `--file <FILE>` — Absolute path to the `.kdbx` file. The edit goes to the derived working copy, not this path — see the printed `working_copy` line on success
+* `--keyfile <KEYFILE>` — Optional keyfile companion (KeePass two-factor unlock)
+* `--uuid <UUID>` — UUID of the entry to edit. Hyphenated hex
+* `--title <TITLE>` — New Title. Empty string clears
+* `--username <USERNAME>` — New UserName. Empty string clears
+* `--url <URL>` — New URL. Empty string clears
+* `--notes <NOTES>` — New Notes (multiline allowed via shell escapes / `--notes "$(cat notes.md)"`). Empty string clears
+* `--tag <TAGS>` — Replace the tag list with these values. Pass `--tag` once per tag; omit the flag entirely to leave existing tags alone; pass `--clear-tags` to drop all tags
+* `--clear-tags` — Wipe all tags on the entry. Mutually exclusive with `--tag`; if both appear, `--clear-tags` wins
+* `--expires-at <ISO8601>` — New expiry timestamp (RFC 3339, e.g. `2027-01-15T00:00:00Z`). Pass `--no-expiry` to clear an existing expiry. Without either, the field is left alone
+* `--no-expiry` — Clear any existing expiry timestamp. Mutually exclusive with `--expires-at`; if both appear, `--no-expiry` wins
+* `--json` — Print as JSON instead of the default human summary
+
+
+
+## `devboy hooks`
+
+Manage git hooks installed by devboy (e.g. the secret-alias pre-commit lint, ADR-020 §5)
+
+**Usage:** `devboy hooks <COMMAND>`
+
+###### **Subcommands:**
+
+* `install` — Install git hooks. Currently only the secret-alias-lint pre-commit hook is supported; future hooks land as additional flags on the same subcommand
+* `check` — Run a hook check directly. Used by the installed hooks but also as a standalone way to lint the staged diff before committing
+
+
+
+## `devboy hooks install`
+
+Install git hooks. Currently only the secret-alias-lint pre-commit hook is supported; future hooks land as additional flags on the same subcommand
+
+**Usage:** `devboy hooks install [OPTIONS]`
+
+###### **Options:**
+
+* `--secret-alias-lint` — Install the secret-alias pre-commit lint. Currently the only thing `install` knows about; the flag is required so future hooks can be added without changing the verb
+* `-f`, `--force` — Replace an existing `pre-commit` hook. Without this the install refuses when the hook file already exists
+
+  Default value: `false`
+
+
+
+## `devboy hooks check`
+
+Run a hook check directly. Used by the installed hooks but also as a standalone way to lint the staged diff before committing
+
+**Usage:** `devboy hooks check <COMMAND>`
+
+###### **Subcommands:**
+
+* `secret-alias` — Scan the staged git diff for `@secret:<path>` aliases in files not known to be alias-aware. Exits non-zero on hits
+
+
+
+## `devboy hooks check secret-alias`
+
+Scan the staged git diff for `@secret:<path>` aliases in files not known to be alias-aware. Exits non-zero on hits
+
+**Usage:** `devboy hooks check secret-alias [OPTIONS]`
+
+###### **Options:**
+
+* `--repo <REPO>` — Override the working directory the check runs in. Mostly useful for tests; defaults to the current process CWD
+
+
+
 ## `devboy trace`
 
 Write to a skill's self-feedback session trace (ADR-015)
@@ -760,6 +1232,7 @@ Run diagnostic checks for the local DevBoy setup
 
 * `--list-checks` — List available check IDs and exit
 * `--checks <CHECKS>` — Run only the specified check IDs (comma-delimited or repeated)
+* `--secrets` — Shorthand for `--checks context-secrets` — focuses doctor on the secret-framework checks (manifest gating, missing values, format validation, source health). See ADR-023 §3.7
 
 
 

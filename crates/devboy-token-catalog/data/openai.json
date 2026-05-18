@@ -1,0 +1,41 @@
+{
+  "$schema": "../schema/v1.json",
+  "schema_version": 1,
+  "provider_id": "openai",
+  "display_name": "OpenAI",
+  "description": "OpenAI API key. Used for chat completions, embeddings, audio, images, and the file API. The same key authenticates every endpoint under api.openai.com.",
+  "variants": [
+    {
+      "id": "openai-api-key",
+      "display_name": "OpenAI API key",
+      "description": "Personal or workspace key issued at platform.openai.com. The `sk-proj-...` shape was introduced in 2024 for project-scoped keys; older user-scoped keys still match the unprefixed shape.",
+      "format_regex": "^sk-(proj-)?[A-Za-z0-9_-]{20,}$",
+      "format_hint": "starts with sk- (or sk-proj-), 20+ characters [A-Za-z0-9_-]",
+      "retrieval": {
+        "console_url": "https://platform.openai.com/api-keys",
+        "docs_url": "https://platform.openai.com/docs/api-reference/authentication",
+        "steps": [
+          "Open https://platform.openai.com/api-keys",
+          "Sign in with your OpenAI account (workspace SSO if applicable)",
+          "Click Create new secret key",
+          "Pick a name + the project / workspace scope",
+          "Copy the value — it is shown once and never again"
+        ],
+        "notes": "Project-scoped keys (`sk-proj-...`) inherit billing from the parent project and can be revoked independently. For server-to-server use, prefer them over user-scoped keys."
+      },
+      "liveness": {
+        "kind": "http",
+        "url": "https://api.openai.com/v1/models",
+        "method": "GET",
+        "auth": { "kind": "bearer" },
+        "expect_status": 200
+      },
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "guide_url": "https://platform.openai.com/docs/guides/production-best-practices",
+        "notes": "Create the replacement key first and deploy it everywhere, THEN delete the old one from the same page. OpenAI imposes no overlap window — both keys stay live until you delete the old, so there is no race. Never edit a key in place; deletion is the only revocation."
+      }
+    }
+  ]
+}
