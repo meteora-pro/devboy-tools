@@ -129,6 +129,26 @@ pub enum FormatError {
         /// The offending path.
         path: std::path::PathBuf,
     },
+
+    /// One of the Argon2id KDF parameters in the header exceeds the
+    /// sanity caps we'll honour without a DoS guard. Stops a tampered
+    /// vault (compromised sync folder, malicious cotenant) from
+    /// OOM-killing the agent process via `m_cost = u32::MAX`.
+    /// Lower bounds are enforced by `argon2::Params::new` and surface
+    /// as the upstream error; we only police the upper bounds.
+    #[error(
+        "vault file KDF param `{param}` = {value} exceeds the sanity cap ({cap}); the file is \
+         either corrupt or was tampered with — refusing to open"
+    )]
+    KdfParamOutOfRange {
+        /// Which Argon2id parameter (`m_cost`, `t_cost`, `p_cost`,
+        /// or `salt_len`) tripped the cap.
+        param: &'static str,
+        /// The header's value, verbatim.
+        value: u32,
+        /// The maximum we'll accept.
+        cap: u32,
+    },
 }
 
 // =============================================================================
@@ -163,6 +183,64 @@ impl KdfParams {
         p_cost: 1,
         salt_len: 32,
     };
+
+    /// Sanity upper bounds enforced at header read time. None of
+    /// these are about cryptographic safety — the `argon2` crate
+    /// already enforces *lower* bounds (m ≥ 8 KiB, t ≥ 1). These
+    /// caps stop a tampered file with `m_cost = u32::MAX` from
+    /// asking the allocator for 4 TiB and OOM-killing the agent
+    /// process. Picked generously above the OWASP defaults
+    /// (64 MiB / 3 / 1) so any *legitimate* future tuning fits
+    /// without a code change:
+    ///
+    /// * `m_cost`: 1 GiB. Way above the 64 MiB default, well
+    ///   below "wedge a 32 GiB workstation".
+    /// * `t_cost`: 64 iterations. ≥10s of CPU per derive at our
+    ///   memory cost — clearly not legitimate user-facing.
+    /// * `p_cost`: 16 lanes. Above the default of 1; above this
+    ///   the lane synchronisation cost dominates anyway.
+    /// * `salt_len`: 256 bytes. The on-disk salt is fixed at 32
+    ///   bytes; this guards against a header that claims a
+    ///   huge salt to confuse downstream consumers.
+    pub const MAX_M_COST_KIB: u32 = 1024 * 1024;
+    pub const MAX_T_COST: u32 = 64;
+    pub const MAX_P_COST: u32 = 16;
+    pub const MAX_SALT_LEN: u32 = 256;
+
+    /// R4 (PR #265 review) — return `KdfParamOutOfRange` for any
+    /// header value over the cap. Called by `Header::read` before
+    /// the params reach `Argon2::new`.
+    pub fn check_within_caps(&self) -> Result<(), FormatError> {
+        if self.m_cost > Self::MAX_M_COST_KIB {
+            return Err(FormatError::KdfParamOutOfRange {
+                param: "m_cost",
+                value: self.m_cost,
+                cap: Self::MAX_M_COST_KIB,
+            });
+        }
+        if self.t_cost > Self::MAX_T_COST {
+            return Err(FormatError::KdfParamOutOfRange {
+                param: "t_cost",
+                value: self.t_cost,
+                cap: Self::MAX_T_COST,
+            });
+        }
+        if self.p_cost > Self::MAX_P_COST {
+            return Err(FormatError::KdfParamOutOfRange {
+                param: "p_cost",
+                value: self.p_cost,
+                cap: Self::MAX_P_COST,
+            });
+        }
+        if self.salt_len > Self::MAX_SALT_LEN {
+            return Err(FormatError::KdfParamOutOfRange {
+                param: "salt_len",
+                value: self.salt_len,
+                cap: Self::MAX_SALT_LEN,
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Fixed-width binary header at the start of every vault file.
@@ -216,6 +294,7 @@ impl Header {
             p_cost: u32::from_le_bytes(buf[13..17].try_into().unwrap()),
             salt_len: u32::from_le_bytes(buf[17..21].try_into().unwrap()),
         };
+        kdf_params.check_within_caps()?;
 
         let salt: [u8; 32] = buf[21..53].try_into().expect("32 bytes");
 
@@ -634,6 +713,63 @@ mod tests {
             FormatError::MagicMismatch { got } => assert_eq!(got, *b"XYZ!"),
             other => panic!("expected MagicMismatch, got {other:?}"),
         }
+    }
+
+    /// R4 (PR #265 review) — synthesize a header whose
+    /// Argon2id params are over the sanity caps and confirm
+    /// Header::read rejects it with KdfParamOutOfRange rather
+    /// than forwarding the values to `argon2::Params::new` (which
+    /// would happily try to allocate the requested memory).
+    #[test]
+    fn header_rejects_over_capped_m_cost() {
+        let buf = synth_header_with_kdf(u32::MAX, 3, 1, 32);
+        match Header::read(&mut Cursor::new(&buf)).unwrap_err() {
+            FormatError::KdfParamOutOfRange { param, value, cap } => {
+                assert_eq!(param, "m_cost");
+                assert_eq!(value, u32::MAX);
+                assert_eq!(cap, KdfParams::MAX_M_COST_KIB);
+            }
+            other => panic!("expected KdfParamOutOfRange, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn header_rejects_over_capped_t_cost() {
+        let buf = synth_header_with_kdf(64 * 1024, 1000, 1, 32);
+        match Header::read(&mut Cursor::new(&buf)).unwrap_err() {
+            FormatError::KdfParamOutOfRange { param, .. } => assert_eq!(param, "t_cost"),
+            other => panic!("expected KdfParamOutOfRange, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn header_rejects_over_capped_p_cost() {
+        let buf = synth_header_with_kdf(64 * 1024, 3, 9999, 32);
+        match Header::read(&mut Cursor::new(&buf)).unwrap_err() {
+            FormatError::KdfParamOutOfRange { param, .. } => assert_eq!(param, "p_cost"),
+            other => panic!("expected KdfParamOutOfRange, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn header_rejects_over_capped_salt_len() {
+        let buf = synth_header_with_kdf(64 * 1024, 3, 1, 1024);
+        match Header::read(&mut Cursor::new(&buf)).unwrap_err() {
+            FormatError::KdfParamOutOfRange { param, .. } => assert_eq!(param, "salt_len"),
+            other => panic!("expected KdfParamOutOfRange, got {other:?}"),
+        }
+    }
+
+    fn synth_header_with_kdf(m: u32, t: u32, p: u32, salt_len: u32) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(HEADER_LEN);
+        buf.extend_from_slice(&MAGIC);
+        buf.push(VERSION_V1);
+        buf.extend_from_slice(&m.to_le_bytes());
+        buf.extend_from_slice(&t.to_le_bytes());
+        buf.extend_from_slice(&p.to_le_bytes());
+        buf.extend_from_slice(&salt_len.to_le_bytes());
+        buf.extend(std::iter::repeat_n(0u8, HEADER_LEN - buf.len()));
+        buf
     }
 
     #[test]

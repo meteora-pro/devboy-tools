@@ -181,8 +181,12 @@ struct InventoryApp {
     /// Recovery phrase to surface once after first vault create.
     /// `None` until a vault is created, then `Some` for the
     /// rest of the session — the user must save it somewhere
-    /// before closing the window.
-    recovery_phrase_to_show: Option<String>,
+    /// before closing the window. Wrapped in `SecretString` so
+    /// the BIP39 mnemonic (master-equivalent: anyone with the
+    /// 24 words can re-derive the wrap key offline) zeroizes on
+    /// drop and stays out of stray `Debug` formatters. The
+    /// render site is the only `expose_secret()` call.
+    recovery_phrase_to_show: Option<secrecy::SecretString>,
     /// `id` of the currently selected token variant, when the
     /// dialog's path resolves to a multi-variant provider.
     /// `None` when the provider has only one variant (auto-
@@ -440,7 +444,7 @@ impl InventoryApp {
                     // Surface the recovery phrase exactly once
                     // (create flow only — `unlock` returns None).
                     if let Some(phrase) = recovery {
-                        self.recovery_phrase_to_show = Some(phrase);
+                        self.recovery_phrase_to_show = Some(secrecy::SecretString::from(phrase));
                     }
                     // Re-read the inventory: a locked / keychain
                     // backend may have reported rows differently;
@@ -545,7 +549,7 @@ impl InventoryApp {
             match StorageBackend::create_vault(default_vault_path(), local_pass) {
                 Ok((backend, recovery)) => {
                     if let Some(phrase) = recovery {
-                        self.recovery_phrase_to_show = Some(phrase);
+                        self.recovery_phrase_to_show = Some(secrecy::SecretString::from(phrase));
                     }
                     created_local = Some(backend);
                 }
@@ -1180,25 +1184,19 @@ impl StorageBackend {
                 matches!(vault.get(path), Ok(Some(_)))
             }
             StorageBackend::HttpVault { .. } => {
-                // `VaultSource::get` is async; block_on it on a
-                // tiny current-thread runtime. Any error (no
-                // network, bad token, sealed) collapses to
-                // "not provisioned" — the same forgiving render
-                // contract the other backends follow.
-                use devboy_storage::SecretSource as _;
-                match self.http_vault_source() {
-                    Some(src) => {
-                        let reference = self.http_vault_reference(path);
-                        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                        else {
-                            return false;
-                        };
-                        rt.block_on(async move { matches!(src.get(&reference).await, Ok(Some(_))) })
-                    }
-                    None => false,
-                }
+                // R2 (PR #265 review) — DO NOT block_on() an HTTP
+                // round-trip on the egui render thread. Pre-R2
+                // every inventory reload froze the UI for N×RTT
+                // (one per HTTP-backed row). Render rows as
+                // "presence-unknown" instead — clicking a row
+                // still opens the dialog, which has its own async
+                // path for the actual GET.
+                //
+                // The downside is that `Provisioned` / `Missing`
+                // status badges stay grey for HTTP-Vault entries
+                // until the user touches them; that's a fair
+                // trade for a responsive UI on a slow link.
+                false
             }
             StorageBackend::KdbxLocked { .. } => false,
             StorageBackend::Kdbx { snapshot, .. } => snapshot
@@ -1210,7 +1208,11 @@ impl StorageBackend {
 
     /// Build a `VaultSource` from an `HttpVault` backend.
     /// `None` for any other variant (or if the HTTP client
-    /// fails to build, which is essentially never).
+    /// fails to build, which is essentially never). Currently
+    /// only used from tests + the future async-aware dialog
+    /// path; the render-loop `has_value` short-circuits to
+    /// `false` for HttpVault backends (see R2 in PR #265).
+    #[allow(dead_code)]
     fn http_vault_source(&self) -> Option<devboy_secret_vault::VaultSource> {
         let StorageBackend::HttpVault {
             addr,
@@ -1234,7 +1236,11 @@ impl StorageBackend {
     }
 
     /// Translate an ADR-020 path into a Vault KV v2 reference:
-    /// `<mount>/<path>` (e.g. `secret/data/team/openai/api-key`).
+    /// `mount/path` (e.g. `secret/data/team/openai/api-key`).
+    /// Same dead-code disclaimer as `http_vault_source` —
+    /// callable from tests + future code, not from the current
+    /// render path.
+    #[allow(dead_code)]
     fn http_vault_reference(&self, path: &str) -> String {
         match self {
             StorageBackend::HttpVault { mount, .. } => {
@@ -2325,13 +2331,17 @@ impl InventoryApp {
         // scrolled away by accident.
         let mut recovery_acknowledged = false;
         if let Some(phrase) = &self.recovery_phrase_to_show {
+            use secrecy::ExposeSecret as _;
             ui.label(
                 eframe::egui::RichText::new("⚠ Save your recovery phrase")
                     .strong()
                     .color(eframe::egui::Color32::from_rgb(0xcc, 0xa0, 0x33)),
             );
+            // Single expose_secret() call — the only place we
+            // unwrap the SecretString. Drops back to wrapped on
+            // the next frame because RichText copies the str.
             ui.label(
-                eframe::egui::RichText::new(phrase)
+                eframe::egui::RichText::new(phrase.expose_secret())
                     .monospace()
                     .background_color(eframe::egui::Color32::from_rgb(0x33, 0x33, 0x33)),
             );
@@ -2776,7 +2786,8 @@ impl InventoryApp {
                                 d.apply_status(devboy_secrets_ui::DialogStatus::Saved);
                             }
                             if let Some(phrase) = maybe_recovery {
-                                self.recovery_phrase_to_show = Some(phrase);
+                                self.recovery_phrase_to_show =
+                                    Some(secrecy::SecretString::from(phrase));
                             }
                             close = true;
                             self.reload();

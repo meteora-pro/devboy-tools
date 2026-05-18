@@ -45,6 +45,9 @@ mockall.workspace = true
 httpmock.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+# Scoped env-var mutation in tests; the workspace `unsafe_code
+# = "forbid"` lint blocks the bare `std::env::remove_var` call.
+temp-env = { version = "0.3", features = ["async_closure"] }
 
 [lints]
 workspace = true

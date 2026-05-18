@@ -38,7 +38,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::warn;
@@ -309,11 +309,23 @@ impl Catalogue {
                     });
                 }
 
-                let regex = Regex::new(&entry.format_regex).map_err(|e| LoadError::BadRegex {
-                    path: path.clone(),
-                    id: entry.id.clone(),
-                    source: e,
-                })?;
+                // R5 (PR #265 review) — clamp the compiled DFA
+                // to 64 KiB. The default regex `size_limit` is
+                // 10 MiB; a malformed user pattern hitting that
+                // bound surfaces a generic "compiled regex
+                // exceeds size limit" error with the path long
+                // gone from the call chain. 64 KiB is far above
+                // anything legitimate (the bundled catalogue's
+                // largest regex is < 200 bytes) and the failure
+                // now points at the offending toml + entry id.
+                let regex = RegexBuilder::new(&entry.format_regex)
+                    .size_limit(64 * 1024)
+                    .build()
+                    .map_err(|e| LoadError::BadRegex {
+                        path: path.clone(),
+                        id: entry.id.clone(),
+                        source: e,
+                    })?;
 
                 let metadata = if entry.provider_id.is_some()
                     || entry.retrieval_url_template.is_some()

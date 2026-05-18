@@ -372,15 +372,33 @@ impl VaultServer {
 
     // -- fresh_unlock verification ----------------------------------------
 
-    /// Re-validate that `fresh_unlock` opens the same vault that's
-    /// currently held in `self.vault`. Cheaper than rebuilding the
-    /// whole `Vault` because the AEAD round-trip is bounded by the
-    /// envelope size (one wrap key, ~50 bytes), not the total entry
-    /// count.
-    fn verify_fresh_unlock(&self, fresh_unlock: &UnlockParams) -> Result<(), JsonRpcError> {
+    /// Re-validate that `fresh_unlock` opens the vault on disk AND
+    /// swap the freshly-opened handle into `self.vault` so the
+    /// subsequent put/rotate sees current state rather than the
+    /// snapshot we captured at the original `vault.unlock` call.
+    ///
+    /// Closes two TOCTOU windows:
+    ///
+    /// * Concurrent writer (another process, another agent run, the
+    ///   UI binary) mutated the file on disk between our last
+    ///   unlock and this put — without the swap, our put would
+    ///   atomically replace the on-disk update with our stale tree.
+    /// * Vault was re-keyed under us and the new envelope still
+    ///   accepts the supplied passphrase — without the swap we'd
+    ///   write entries encrypted under the OLD wrap key, and the
+    ///   next reader couldn't decrypt with the NEW envelope.
+    ///
+    /// Cost is the same Argon2id derive that the per-call
+    /// `fresh_unlock` already pays. Adopting the new handle is just
+    /// a `self.vault = Some(handle)` — entry data is already in
+    /// memory by the time `Vault::open` returns.
+    fn verify_fresh_unlock(&mut self, fresh_unlock: &UnlockParams) -> Result<(), JsonRpcError> {
         let unlock_method = fresh_unlock.clone().into_unlock_method()?;
         match Vault::open(&self.vault_path, unlock_method) {
-            Ok(_handle) => Ok(()),
+            Ok(handle) => {
+                self.vault = Some(handle);
+                Ok(())
+            }
             Err(_) => Err(JsonRpcError::new(
                 BAD_UNLOCK,
                 "fresh_unlock did not validate",
@@ -811,6 +829,72 @@ mod tests {
             .handle_request(req(4, "secret.get", json!({"path": "a/b/c"})))
             .await;
         assert_eq!(get.result.unwrap()["value"], "v2");
+    }
+
+    /// R1 (PR #265 review) — verify_fresh_unlock must replace
+    /// self.vault with the freshly-opened handle so a put/rotate
+    /// sees concurrent on-disk writes. Reproduces the silent-
+    /// rollback case: server A unlocks + caches snapshot, server
+    /// B writes a new entry to the same file, server A then puts
+    /// via fresh_unlock. Before R1 server A's put would
+    /// atomically replace B's entry with the stale snapshot;
+    /// after R1 verify_fresh_unlock re-reads the file and B's
+    /// entry survives.
+    #[tokio::test]
+    async fn verify_fresh_unlock_picks_up_concurrent_write() {
+        let (_dir, mut server_a) = fresh_vault("p");
+        let vault_path = server_a.vault_path.clone();
+
+        server_a
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+
+        // Server B mimics another process / agent run writing
+        // directly to the same vault on disk.
+        let mut vault_b = Vault::open(
+            &vault_path,
+            UnlockMethod::Passphrase(SecretString::from("p")),
+        )
+        .unwrap();
+        vault_b
+            .put(
+                "out/of/band/path",
+                &SecretString::from("out-of-band-value"),
+                Default::default(),
+            )
+            .unwrap();
+        drop(vault_b);
+
+        // Server A's put goes through fresh_unlock; the post-R1
+        // swap of self.vault must adopt B's new tree, so A's put
+        // doesn't atomically overwrite B's entry.
+        server_a
+            .handle_request(req(
+                2,
+                "secret.put",
+                json!({
+                    "path": "a/b/c",
+                    "value": "a-value",
+                    "fresh_unlock": {"kind": "passphrase", "secret": "p"}
+                }),
+            ))
+            .await;
+
+        // Re-open from scratch and assert BOTH writes survived.
+        let vault_check = Vault::open(
+            &vault_path,
+            UnlockMethod::Passphrase(SecretString::from("p")),
+        )
+        .unwrap();
+        use secrecy::ExposeSecret as _;
+        let a = vault_check.get("a/b/c").unwrap().unwrap();
+        let b = vault_check.get("out/of/band/path").unwrap().unwrap();
+        assert_eq!(a.expose_secret(), "a-value");
+        assert_eq!(b.expose_secret(), "out-of-band-value");
     }
 
     #[tokio::test]

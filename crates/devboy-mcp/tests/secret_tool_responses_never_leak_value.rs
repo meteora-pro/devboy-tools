@@ -121,6 +121,63 @@ async fn secrets_request_use_approval_response_never_carries_sentinel() {
     assert_no_sentinel(&resp, "secrets_request_use_approval");
 }
 
+/// R6 (PR #265 review) — same agent-input-echo guarantee for
+/// the K16 `kdbx_describe_metadata` tool. The tool needs a real
+/// KDBX file + DEVBOY_KDBX_PASSPHRASE env var to do anything
+/// useful, but the input-echo invariant should hold even on the
+/// "missing env / missing file" error path — neither the error
+/// message nor any other response field should bounce the
+/// agent-supplied UUID back.
+#[tokio::test]
+async fn kdbx_describe_metadata_response_never_carries_sentinel() {
+    // Use temp_env to scope the env-var removal — the workspace
+    // `unsafe_code = "forbid"` lint blocks the bare
+    // `std::env::remove_var` call this would otherwise need.
+    let resp = temp_env::async_with_vars([("DEVBOY_KDBX_PASSPHRASE", None::<&str>)], async {
+        let server = build_server();
+        call(
+            &server,
+            "kdbx_describe_metadata",
+            serde_json::json!({
+                "file": "/nonexistent/test.kdbx",
+                "uuid": SENTINEL,
+            }),
+        )
+        .await
+    })
+    .await;
+    assert_no_sentinel(&resp, "kdbx_describe_metadata");
+}
+
+/// R6 (PR #265 review) — same for `kdbx_edit_metadata`. Inject
+/// the sentinel into every patch field (title / username / url
+/// / notes / tags) plus the UUID; assert it never shows up in
+/// the response.
+#[tokio::test]
+async fn kdbx_edit_metadata_response_never_carries_sentinel() {
+    let resp = temp_env::async_with_vars([("DEVBOY_KDBX_PASSPHRASE", None::<&str>)], async {
+        let server = build_server();
+        call(
+            &server,
+            "kdbx_edit_metadata",
+            serde_json::json!({
+                "file": "/nonexistent/test.kdbx",
+                "uuid": SENTINEL,
+                "patch": {
+                    "title": SENTINEL,
+                    "username": SENTINEL,
+                    "url": format!("https://example.invalid/{SENTINEL}"),
+                    "notes": format!("agent note: {SENTINEL}"),
+                    "tags": [SENTINEL, format!("prod-{SENTINEL}")],
+                }
+            }),
+        )
+        .await
+    })
+    .await;
+    assert_no_sentinel(&resp, "kdbx_edit_metadata");
+}
+
 #[tokio::test]
 async fn secrets_poll_status_response_never_carries_sentinel() {
     // poll_status reads the registry; the value-shaped fields
