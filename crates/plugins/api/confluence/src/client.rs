@@ -57,6 +57,13 @@ impl ConfluenceAuth {
 #[derive(Clone)]
 pub struct ConfluenceClient {
     base_url: String,
+    /// Original Confluence instance URL for generating browse links
+    /// (`_links.webui`, `/pages/<id>`). When the client is configured
+    /// for proxy mode, `base_url` points at the proxy host so API
+    /// requests transit it, while `instance_url` stays pinned to the
+    /// real Confluence host so URLs returned in responses remain
+    /// clickable. Defaults to `base_url` when not overridden.
+    instance_url: String,
     api_path: String,
     page_api_path: String,
     space_api_path: String,
@@ -69,6 +76,7 @@ impl fmt::Debug for ConfluenceClient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ConfluenceClient")
             .field("base_url", &self.base_url)
+            .field("instance_url", &self.instance_url)
             .field("api_path", &self.api_path)
             .field("page_api_path", &self.page_api_path)
             .field("space_api_path", &self.space_api_path)
@@ -80,8 +88,10 @@ impl fmt::Debug for ConfluenceClient {
 
 impl ConfluenceClient {
     pub fn new(base_url: impl Into<String>, auth: ConfluenceAuth) -> Self {
+        let base = normalize_base_url(base_url.into());
         Self {
-            base_url: normalize_base_url(base_url.into()),
+            instance_url: base.clone(),
+            base_url: base,
             api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
             page_api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
             space_api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
@@ -100,6 +110,13 @@ impl ConfluenceClient {
         &self.base_url
     }
 
+    /// Real Confluence host used in user-facing links. Equal to
+    /// `base_url()` unless `with_instance_url` was called (the typical
+    /// proxy case).
+    pub fn instance_url(&self) -> &str {
+        &self.instance_url
+    }
+
     pub fn auth(&self) -> &ConfluenceAuth {
         &self.auth
     }
@@ -112,8 +129,19 @@ impl ConfluenceClient {
 
     /// Configure proxy mode with headers added to every request.
     /// When proxy is active, provider auth headers are suppressed.
+    /// Note: this does **not** change browse-link generation — set
+    /// `with_instance_url` to the real Confluence host so links in
+    /// responses don't point at the proxy.
     pub fn with_proxy(mut self, headers: HashMap<String, String>) -> Self {
         self.proxy_headers = Some(headers);
+        self
+    }
+
+    /// Override the host used for generating browse links (`_links.webui`,
+    /// `/pages/<id>`). Useful when `base_url` is a proxy URL — callers
+    /// would otherwise see proxy-host URLs in tool responses.
+    pub fn with_instance_url(mut self, url: impl Into<String>) -> Self {
+        self.instance_url = normalize_base_url(url.into());
         self
     }
 
@@ -1314,9 +1342,9 @@ impl ConfluenceClient {
                 let detail: ConfluencePage = client
                     .get_json_from_api(&client.page_api_path, &detail_path)
                     .await?;
-                let mut summary = map_page_summary(&client.base_url, &detail);
+                let mut summary = map_page_summary(&client.instance_url, &detail);
                 if summary.url.is_none() {
-                    summary.url = Some(format!("{}/pages/{}", client.base_url, detail.id));
+                    summary.url = Some(format!("{}/pages/{}", client.instance_url, detail.id));
                 }
                 Ok::<(usize, KbPage), Error>((index, summary))
             });
@@ -1380,7 +1408,7 @@ impl ConfluenceClient {
         let items = response
             .results
             .into_iter()
-            .map(|space| map_space(&self.base_url, space))
+            .map(|space| map_space(&self.instance_url, space))
             .collect::<Vec<_>>();
 
         Ok(ProviderResult::new(items).with_pagination(pagination))
@@ -1415,7 +1443,7 @@ impl ConfluenceClient {
         let mut items = response
             .results
             .iter()
-            .map(|page| map_page_summary(&self.base_url, page))
+            .map(|page| map_page_summary(&self.instance_url, page))
             .collect::<Vec<_>>();
 
         if let Some(search) = params.search.as_ref() {
@@ -1438,7 +1466,7 @@ impl ConfluenceClient {
             "content/{page_id}?expand=space,version,history.lastUpdated,body.storage,metadata.labels,ancestors"
         );
         let page: ConfluencePage = self.get_json(&path).await?;
-        let summary = map_page_summary(&self.base_url, &page);
+        let summary = map_page_summary(&self.instance_url, &page);
         let storage_content = page
             .body
             .as_ref()
@@ -1455,7 +1483,7 @@ impl ConfluenceClient {
                 title: ancestor.title.clone(),
                 space_key: None,
                 url: join_link(
-                    &self.base_url,
+                    &self.instance_url,
                     ancestor._links.base.as_deref(),
                     ancestor._links.webui.as_deref(),
                 ),
@@ -1501,7 +1529,7 @@ impl ConfluenceClient {
 
         let page: ConfluencePage = self.post_json("content", &payload).await?;
         self.add_labels(&page.id, &params.labels).await?;
-        Ok(map_page_summary(&self.base_url, &page))
+        Ok(map_page_summary(&self.instance_url, &page))
     }
 
     async fn update_page_v1(&self, params: UpdatePageParams) -> Result<KbPage> {
@@ -1578,7 +1606,7 @@ impl ConfluenceClient {
             self.sync_labels(&params.page_id, labels, &current_labels)
                 .await?;
         }
-        Ok(map_page_summary(&self.base_url, &page))
+        Ok(map_page_summary(&self.instance_url, &page))
     }
 
     async fn list_pages_v2(&self, params: ListPagesParams) -> Result<ProviderResult<KbPage>> {
@@ -1606,12 +1634,12 @@ impl ConfluenceClient {
             .results
             .iter()
             .map(|page| {
-                let mut summary = map_page_summary(&self.base_url, page);
+                let mut summary = map_page_summary(&self.instance_url, page);
                 if summary.space_key.is_none() {
                     summary.space_key = Some(params.space_key.clone());
                 }
                 if summary.url.is_none() {
-                    summary.url = Some(format!("{}/pages/{}", self.base_url, page.id));
+                    summary.url = Some(format!("{}/pages/{}", self.instance_url, page.id));
                 }
                 summary
             })
@@ -1635,14 +1663,14 @@ impl ConfluenceClient {
     async fn get_page_v2(&self, page_id: &str) -> Result<KbPageContent> {
         let path = format!("pages/{page_id}?body-format=storage&include-labels=true");
         let page: ConfluencePage = self.get_json_from_api(&self.page_api_path, &path).await?;
-        let mut summary = map_page_summary(&self.base_url, &page);
+        let mut summary = map_page_summary(&self.instance_url, &page);
         if summary.space_key.is_none()
             && let Some(space_id) = page.space_id.as_deref()
         {
             summary.space_key = self.resolve_space_key_by_id(space_id).await?;
         }
         if summary.url.is_none() {
-            summary.url = Some(format!("{}/pages/{}", self.base_url, page.id));
+            summary.url = Some(format!("{}/pages/{}", self.instance_url, page.id));
         }
 
         let storage_content = page.body.as_ref().and_then(body_value).unwrap_or_default();
@@ -1683,12 +1711,12 @@ impl ConfluenceClient {
             .post_json_to_api(&self.page_api_path, "pages", &payload)
             .await?;
         self.add_labels(&page.id, &params.labels).await?;
-        let mut summary = map_page_summary(&self.base_url, &page);
+        let mut summary = map_page_summary(&self.instance_url, &page);
         if summary.space_key.is_none() {
             summary.space_key = Some(params.space_key);
         }
         if summary.url.is_none() {
-            summary.url = Some(format!("{}/pages/{}", self.base_url, page.id));
+            summary.url = Some(format!("{}/pages/{}", self.instance_url, page.id));
         }
         Ok(summary)
     }
@@ -1776,12 +1804,12 @@ impl ConfluenceClient {
             self.sync_labels(&params.page_id, labels, &current_labels)
                 .await?;
         }
-        let mut summary = map_page_summary(&self.base_url, &page);
+        let mut summary = map_page_summary(&self.instance_url, &page);
         if summary.space_key.is_none() {
             summary.space_key = self.resolve_space_key_by_id(space_id).await?;
         }
         if summary.url.is_none() {
-            summary.url = Some(format!("{}/pages/{}", self.base_url, page.id));
+            summary.url = Some(format!("{}/pages/{}", self.instance_url, page.id));
         }
         Ok(summary)
     }
@@ -1808,7 +1836,7 @@ impl KnowledgeBaseProvider for ConfluenceClient {
             let items = response
                 .results
                 .into_iter()
-                .map(|space| map_space(&self.base_url, space))
+                .map(|space| map_space(&self.instance_url, space))
                 .collect::<Vec<_>>();
 
             Ok(ProviderResult::new(items).with_pagination(pagination))
@@ -1891,7 +1919,7 @@ impl KnowledgeBaseProvider for ConfluenceClient {
         let items = response
             .results
             .iter()
-            .map(|page| map_page_summary(&self.base_url, page))
+            .map(|page| map_page_summary(&self.instance_url, page))
             .collect::<Vec<_>>();
 
         Ok(ProviderResult::new(items).with_pagination(pagination))
@@ -1937,6 +1965,44 @@ mod tests {
             client.space_api_url("space"),
             "https://wiki.example.com/api/v2/space"
         );
+    }
+
+    #[tokio::test]
+    async fn with_instance_url_keeps_browse_links_on_real_host_in_proxy_mode() {
+        // The proxy use case: API requests go through the proxy host,
+        // but `_links.webui` / `/pages/<id>` URLs returned to callers
+        // must point at the real Confluence so they remain clickable.
+        let api = MockServer::start();
+        let _mock = api.mock(|when, then| {
+            when.method(GET).path("/rest/api/space");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{"results":[{"id":"42","key":"OPS","name":"Ops","type":"global","_links":{"webui":"/display/OPS"}}],"start":0,"limit":100,"size":1,"_links":{}}"#,
+                );
+        });
+
+        let client = ConfluenceClient::new(api.base_url(), ConfluenceAuth::bearer("t"))
+            .with_proxy(HashMap::new())
+            .with_instance_url("https://wiki.example.com");
+
+        assert_eq!(client.instance_url(), "https://wiki.example.com");
+        assert_ne!(client.base_url(), client.instance_url());
+
+        let resp = client.get_spaces().await.unwrap();
+        let url = resp.items[0].url.as_deref().unwrap_or_default();
+        assert!(
+            url.starts_with("https://wiki.example.com"),
+            "browse link must point at the real instance, not the proxy. got: {url}"
+        );
+    }
+
+    #[tokio::test]
+    async fn with_instance_url_defaults_to_base_url_when_unset() {
+        let client =
+            ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("t"));
+        assert_eq!(client.base_url(), client.instance_url());
+        assert_eq!(client.instance_url(), "https://wiki.example.com");
     }
 
     #[tokio::test]

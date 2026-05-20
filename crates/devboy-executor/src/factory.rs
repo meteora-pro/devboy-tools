@@ -168,6 +168,9 @@ pub fn create_knowledge_base_provider(
                 )
                 .with_api_version(api_version.as_deref())
                 .with_proxy(proxy.headers.clone())
+                // Browse links in `_links.webui` / `/pages/<id>` must
+                // point at the real Confluence host, not the proxy.
+                .with_instance_url(base_url)
             } else {
                 devboy_confluence::ConfluenceClient::new(base_url, confluence_auth(auth))
                     .with_api_version(api_version.as_deref())
