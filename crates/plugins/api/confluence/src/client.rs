@@ -241,15 +241,32 @@ impl ConfluenceClient {
             .map_err(|e| Error::Network(e.to_string()))?;
 
         let status = response.status();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let body = response
+            .text()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?;
+
         if !status.is_success() {
-            let message = response.text().await.unwrap_or_default();
-            return Err(Error::from_status(status.as_u16(), message));
+            return Err(Error::from_status(status.as_u16(), body));
         }
 
-        response
-            .json()
-            .await
-            .map_err(|e| Error::InvalidData(e.to_string()))
+        serde_json::from_str::<T>(&body).map_err(|e| {
+            // Surface enough context to diagnose self-hosted misconfigs:
+            // a successful HTTP status with a non-JSON body usually means
+            // the request landed on an auth gateway (HTML login page) or
+            // a reverse proxy that rewrote the response.
+            let preview: String = body.chars().take(200).collect();
+            Error::InvalidData(format!(
+                "JSON decode failed (status={}, content-type='{}'): {}; body preview: {:?}",
+                status, content_type, e, preview
+            ))
+        })
     }
 
     async fn send_empty(&self, request: RequestBuilder) -> Result<()> {
@@ -322,6 +339,45 @@ fn api_path_for_version(api_version: Option<&str>) -> String {
     }
 }
 
+// Cloud Confluence v2 returns object ids as strings; on-prem Server / DC
+// `/rest/api/space` returns them as JSON integers. Accept both so the
+// same code path works against either flavour.
+fn deserialize_id_string_or_int<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrInt {
+        String(String),
+        Int(i64),
+    }
+    Ok(match StringOrInt::deserialize(deserializer)? {
+        StringOrInt::String(s) => s,
+        StringOrInt::Int(i) => i.to_string(),
+    })
+}
+
+fn deserialize_opt_id_string_or_int<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrInt {
+        String(String),
+        Int(i64),
+    }
+    Ok(
+        Option::<StringOrInt>::deserialize(deserializer)?.map(|v| match v {
+            StringOrInt::String(s) => s,
+            StringOrInt::Int(i) => i.to_string(),
+        }),
+    )
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(bound(deserialize = "T: Deserialize<'de>"))]
 struct ConfluenceListResponse<T> {
@@ -351,6 +407,7 @@ struct ConfluenceLinks {
 
 #[derive(Debug, Deserialize)]
 struct ConfluenceSpace {
+    #[serde(deserialize_with = "deserialize_id_string_or_int")]
     id: String,
     key: String,
     name: String,
@@ -380,13 +437,22 @@ struct ConfluenceValueContainer {
 
 #[derive(Debug, Clone, Deserialize)]
 struct ConfluencePage {
+    #[serde(deserialize_with = "deserialize_id_string_or_int")]
     id: String,
     title: String,
     #[serde(default)]
     space: Option<ConfluenceSpaceRef>,
-    #[serde(default, rename = "spaceId")]
+    #[serde(
+        default,
+        rename = "spaceId",
+        deserialize_with = "deserialize_opt_id_string_or_int"
+    )]
     space_id: Option<String>,
-    #[serde(default, rename = "parentId")]
+    #[serde(
+        default,
+        rename = "parentId",
+        deserialize_with = "deserialize_opt_id_string_or_int"
+    )]
     parent_id: Option<String>,
     #[serde(default)]
     version: Option<ConfluenceVersion>,
@@ -406,7 +472,7 @@ struct ConfluencePage {
 
 #[derive(Debug, Clone, Deserialize)]
 struct ConfluenceSpaceRef {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_id_string_or_int")]
     id: Option<String>,
     #[serde(default)]
     key: Option<String>,
@@ -1871,6 +1937,56 @@ mod tests {
             client.space_api_url("space"),
             "https://wiki.example.com/api/v2/space"
         );
+    }
+
+    #[tokio::test]
+    async fn get_spaces_accepts_integer_id_from_self_hosted_server() {
+        // Cloud Confluence v2 returns `"id": "<string>"`; on-prem Server / DC
+        // `/rest/api/space` returns it as a JSON integer. The client must
+        // accept both flavours without breaking decoding.
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(GET).path("/rest/api/space");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{"results":[{"id":190119946,"key":"1LS","name":"1 line support","type":"global","_links":{"webui":"/display/1LS"}}],"start":0,"limit":100,"size":1,"_links":{}}"#,
+                );
+        });
+
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
+
+        let response = client.get_spaces().await.unwrap();
+        assert_eq!(response.items.len(), 1);
+        assert_eq!(response.items[0].id, "190119946");
+        assert_eq!(response.items[0].key, "1LS");
+    }
+
+    #[tokio::test]
+    async fn send_json_decode_failure_surfaces_status_and_body_preview() {
+        // When a self-hosted reverse proxy or auth gateway rewrites a 200
+        // response to HTML, the decode failure has to surface enough
+        // diagnostic context (status, content-type, body preview) so the
+        // caller can tell it's a misconfig rather than a tool routing
+        // problem.
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(GET).path("/rest/api/space");
+            then.status(200)
+                .header("content-type", "text/html")
+                .body("<html><body>Login required</body></html>");
+        });
+
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
+
+        let err = client.get_spaces().await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("JSON decode failed"), "got: {msg}");
+        assert!(msg.contains("status=200"), "got: {msg}");
+        assert!(msg.contains("text/html"), "got: {msg}");
+        assert!(msg.contains("Login required"), "got: {msg}");
     }
 
     #[tokio::test]
