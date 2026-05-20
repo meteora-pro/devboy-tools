@@ -1684,8 +1684,8 @@ fn should_try_next_provider(e: &devboy_core::Error) -> bool {
         // to contain both words ("invalid type ... \"key\"...") in a
         // body preview — those are real upstream payload bugs and must
         // bubble up to the caller.
-        let is_key_prefix_mismatch = lower.starts_with("invalid ")
-            && (lower.contains(" key:") || lower.contains(" key "))
+        let is_key_prefix_mismatch = (lower.starts_with("invalid ")
+            && (lower.contains(" key:") || lower.contains(" key ")))
             || lower.starts_with("unsupported key prefix");
         if is_key_prefix_mismatch {
             return true;

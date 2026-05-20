@@ -26,6 +26,7 @@ pub fn devboy_confluence::ConfluenceClient::auth(&self) -> &devboy_confluence::C
 pub fn devboy_confluence::ConfluenceClient::base_url(&self) -> &str
 pub async fn devboy_confluence::ConfluenceClient::delete_empty(&self, path: &str) -> devboy_core::error::Result<()>
 pub async fn devboy_confluence::ConfluenceClient::get_json<T>(&self, path: &str) -> devboy_core::error::Result<T> where T: serde_core::de::DeserializeOwned
+pub fn devboy_confluence::ConfluenceClient::instance_url(&self) -> &str
 pub fn devboy_confluence::ConfluenceClient::new(base_url: impl core::convert::Into<alloc::string::String>, auth: devboy_confluence::ConfluenceAuth) -> Self
 pub async fn devboy_confluence::ConfluenceClient::post_empty_json<B>(&self, path: &str, body: &B) -> devboy_core::error::Result<()> where B: serde_core::ser::Serialize + ?core::marker::Sized
 pub async fn devboy_confluence::ConfluenceClient::post_json<T, B>(&self, path: &str, body: &B) -> devboy_core::error::Result<T> where T: serde_core::de::DeserializeOwned, B: serde_core::ser::Serialize + ?core::marker::Sized
@@ -33,6 +34,7 @@ pub async fn devboy_confluence::ConfluenceClient::put_json<T, B>(&self, path: &s
 pub fn devboy_confluence::ConfluenceClient::rest_api_url(&self, path: &str) -> alloc::string::String
 pub fn devboy_confluence::ConfluenceClient::with_api_version(self, api_version: core::option::Option<&str>) -> Self
 pub fn devboy_confluence::ConfluenceClient::with_http_client(self, http: reqwest::async_impl::client::Client) -> Self
+pub fn devboy_confluence::ConfluenceClient::with_instance_url(self, url: impl core::convert::Into<alloc::string::String>) -> Self
 pub fn devboy_confluence::ConfluenceClient::with_proxy(self, headers: std::collections::hash::map::HashMap<alloc::string::String, alloc::string::String>) -> Self
 impl core::clone::Clone for devboy_confluence::ConfluenceClient
 pub fn devboy_confluence::ConfluenceClient::clone(&self) -> devboy_confluence::ConfluenceClient

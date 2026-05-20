@@ -275,21 +275,30 @@ impl ConfluenceClient {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
+        // Read once as bytes — `from_slice` lets us decode the happy
+        // path without an extra UTF-8 validation pass over multi-MB
+        // page bodies (Copilot review on PR #286). Lossy decode is
+        // reserved for the error branch when we actually need a
+        // human-readable preview.
         let body = response
-            .text()
+            .bytes()
             .await
             .map_err(|e| Error::Network(e.to_string()))?;
 
         if !status.is_success() {
-            return Err(Error::from_status(status.as_u16(), body));
+            return Err(Error::from_status(
+                status.as_u16(),
+                String::from_utf8_lossy(&body).into_owned(),
+            ));
         }
 
-        serde_json::from_str::<T>(&body).map_err(|e| {
+        serde_json::from_slice::<T>(&body).map_err(|e| {
             // Surface enough context to diagnose self-hosted misconfigs:
             // a successful HTTP status with a non-JSON body usually means
             // the request landed on an auth gateway (HTML login page) or
             // a reverse proxy that rewrote the response.
-            let preview: String = body.chars().take(200).collect();
+            let preview_bytes = &body[..body.len().min(200)];
+            let preview = String::from_utf8_lossy(preview_bytes);
             Error::InvalidData(format!(
                 "JSON decode failed (status={}, content-type='{}'): {}; body preview: {:?}",
                 status, content_type, e, preview
@@ -660,17 +669,69 @@ struct ConfluenceV2UpdatePayload<'a> {
     version: ConfluenceUpdateVersion,
 }
 
+/// Build a fully-qualified browse URL out of a relative path returned
+/// by Confluence (`_links.webui`).
+///
+/// Historically this honoured `_links.base` from the response over the
+/// caller-supplied `base_url`, on the theory that Confluence knows its
+/// own canonical host better than the client. In proxy mode that flips
+/// against us: if the upstream is fronted by a reverse proxy that
+/// rewrites `_links.base` to the proxy host (or worse, an internal
+/// hostname unreachable from the client), every link returned to the
+/// caller would point at the wrong place.
+///
+/// `instance_url` (DEV / ADR) is the single source of truth for the
+/// user-facing host; only fall back to `base_hint` when it shares the
+/// same host as `base_url` (a tail-path override like `/wiki` on
+/// Cloud) or when the upstream returned an absolute URL on the same
+/// host. Cross-host hints are ignored.
 fn join_link(base_url: &str, base_hint: Option<&str>, path: Option<&str>) -> Option<String> {
     let path = path?;
     if path.starts_with("http://") || path.starts_with("https://") {
         return Some(path.to_string());
     }
-    let base = base_hint.unwrap_or(base_url).trim_end_matches('/');
+    let base = base_url.trim_end_matches('/');
+    // `_links.base` is honoured only when it stays on the same host as
+    // `base_url` (i.e. is just a path-prefix variant, e.g. `/wiki`).
+    // Cross-host hints — including the proxy host upstream might
+    // advertise — are discarded so links always come out clickable.
+    let effective_base = match base_hint {
+        Some(hint) if same_host_prefix(base, hint) => hint.trim_end_matches('/'),
+        _ => base,
+    };
     if path.starts_with('/') {
-        Some(format!("{base}{path}"))
+        Some(format!("{effective_base}{path}"))
     } else {
-        Some(format!("{base}/{path}"))
+        Some(format!("{effective_base}/{path}"))
     }
+}
+
+/// True when `hint` is an absolute URL on the same scheme+host as
+/// `base_url`, or a relative path. Anything else (different host,
+/// different scheme) is treated as untrusted.
+fn same_host_prefix(base_url: &str, hint: &str) -> bool {
+    if hint.starts_with('/') || !hint.contains("://") {
+        // Relative — by definition same host.
+        return true;
+    }
+    let base_origin = url_origin(base_url);
+    let hint_origin = url_origin(hint);
+    match (base_origin, hint_origin) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Return the `scheme://host[:port]` part of a URL, lowercased, without
+/// any trailing slash. `None` if the input isn't a recognisable
+/// absolute URL.
+fn url_origin(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let host = rest.split('/').next()?;
+    if host.is_empty() {
+        return None;
+    }
+    Some(format!("{}://{}", scheme.to_ascii_lowercase(), host))
 }
 
 fn display_name(user: Option<&ConfluenceUser>) -> Option<String> {
@@ -2168,6 +2229,31 @@ mod tests {
     #[tokio::test]
     async fn get_spaces_maps_confluence_spaces() {
         let server = MockServer::start();
+        // `_links.base` echoes the same origin as the client's base URL —
+        // the realistic Cloud / Server case where Confluence advertises
+        // its own host back to us. In that situation the hint is
+        // honoured verbatim (it may carry a path prefix like `/wiki`).
+        let server_origin = server.base_url();
+        let body = format!(
+            r#"{{
+                "results": [
+                    {{
+                        "id": "123",
+                        "key": "ENG",
+                        "name": "Engineering",
+                        "type": "global",
+                        "status": "current",
+                        "description": {{ "plain": {{ "value": "Team docs" }} }},
+                        "_links": {{ "base": "{server_origin}", "webui": "/spaces/ENG/overview" }}
+                    }}
+                ],
+                "start": 0,
+                "limit": 100,
+                "size": 1,
+                "totalSize": 1,
+                "_links": {{}}
+            }}"#,
+        );
         let mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/rest/api/space")
@@ -2175,26 +2261,7 @@ mod tests {
                 .query_param("type", "global,personal");
             then.status(200)
                 .header("content-type", "application/json")
-                .body(
-                    r#"{
-                        "results": [
-                            {
-                                "id": "123",
-                                "key": "ENG",
-                                "name": "Engineering",
-                                "type": "global",
-                                "status": "current",
-                                "description": { "plain": { "value": "Team docs" } },
-                                "_links": { "base": "https://wiki.example.com", "webui": "/spaces/ENG/overview" }
-                            }
-                        ],
-                        "start": 0,
-                        "limit": 100,
-                        "size": 1,
-                        "totalSize": 1,
-                        "_links": {}
-                    }"#,
-                );
+                .body(&body);
         });
 
         let client =
@@ -2208,9 +2275,58 @@ mod tests {
         assert_eq!(result.items[0].description.as_deref(), Some("Team docs"));
         assert_eq!(
             result.items[0].url.as_deref(),
-            Some("https://wiki.example.com/spaces/ENG/overview")
+            Some(format!("{server_origin}/spaces/ENG/overview").as_str())
         );
         assert_eq!(result.pagination.unwrap().total, Some(1));
+    }
+
+    #[tokio::test]
+    async fn map_link_ignores_cross_host_links_base_in_proxy_mode() {
+        // Regression for Copilot review on PR #286: when Confluence is
+        // fronted by a reverse proxy that rewrites `_links.base` to the
+        // proxy host (or to an internal hostname unreachable from the
+        // client), the browse URL we return must still resolve against
+        // the caller-supplied `instance_url`, not the misleading hint.
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "results": [
+                            {
+                                "id": "123",
+                                "key": "OPS",
+                                "name": "Ops",
+                                "type": "global",
+                                "_links": {
+                                    "base": "https://internal-proxy.local",
+                                    "webui": "/display/OPS"
+                                }
+                            }
+                        ],
+                        "start": 0,
+                        "limit": 100,
+                        "size": 1,
+                        "_links": {}
+                    }"#,
+                );
+        });
+
+        let client = ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("t"))
+            .with_instance_url("https://wiki.example.com");
+        let result = client.get_spaces().await.unwrap();
+
+        let url = result.items[0].url.as_deref().unwrap_or_default();
+        assert!(
+            url.starts_with("https://wiki.example.com"),
+            "cross-host `_links.base` must be ignored in favour of \
+             `instance_url`. got: {url}"
+        );
     }
 
     #[tokio::test]
