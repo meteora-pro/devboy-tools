@@ -1541,46 +1541,62 @@ impl McpServer {
 
         match category {
             Some(devboy_core::ToolCategory::MeetingNotes) => {
+                if self.meeting_providers.is_empty() {
+                    return ToolCallResult::error("No meeting providers configured".to_string());
+                }
                 for provider in &self.meeting_providers {
                     match executor
                         .execute_direct_meeting(name, args.clone(), provider.as_ref())
                         .await
                     {
                         Ok(output) => return output_to_result(output),
-                        Err(e) => {
+                        Err(e) if should_try_next_provider(&e) => {
                             tracing::debug!("Meeting provider failed: {}", e);
                             continue;
                         }
+                        Err(e) => return ToolCallResult::error(format!("{e}")),
                     }
                 }
                 ToolCallResult::error(format!("No meeting provider supports '{}'", name))
             }
             Some(devboy_core::ToolCategory::Messenger) => {
-                for provider in &self.active_messenger_providers() {
+                let providers = self.active_messenger_providers();
+                if providers.is_empty() {
+                    return ToolCallResult::error("No messenger providers configured".to_string());
+                }
+                for provider in &providers {
                     match executor
                         .execute_direct_messenger(name, args.clone(), provider.as_ref())
                         .await
                     {
                         Ok(output) => return output_to_result(output),
-                        Err(e) => {
+                        Err(e) if should_try_next_provider(&e) => {
                             tracing::debug!("Messenger provider failed: {}", e);
                             continue;
                         }
+                        Err(e) => return ToolCallResult::error(format!("{e}")),
                     }
                 }
                 ToolCallResult::error(format!("No messenger provider supports '{}'", name))
             }
             Some(devboy_core::ToolCategory::KnowledgeBase) => {
-                for provider in &self.active_knowledge_base_providers() {
+                let providers = self.active_knowledge_base_providers();
+                if providers.is_empty() {
+                    return ToolCallResult::error(
+                        "No knowledge base providers configured".to_string(),
+                    );
+                }
+                for provider in &providers {
                     match executor
                         .execute_direct_knowledge_base(name, args.clone(), provider.as_ref())
                         .await
                     {
                         Ok(output) => return output_to_result(output),
-                        Err(e) => {
+                        Err(e) if should_try_next_provider(&e) => {
                             tracing::debug!("Knowledge base provider failed: {}", e);
                             continue;
                         }
+                        Err(e) => return ToolCallResult::error(format!("{e}")),
                     }
                 }
                 ToolCallResult::error(format!("No knowledge base provider supports '{}'", name))
@@ -1661,8 +1677,16 @@ fn should_try_next_provider(e: &devboy_core::Error) -> bool {
     // deserialisation, etc.) bubble up.
     if let devboy_core::Error::InvalidData(msg) = e {
         let lower = msg.to_ascii_lowercase();
-        let is_key_prefix_mismatch = (lower.contains("invalid") && lower.contains("key"))
-            || lower.contains("unsupported key prefix");
+        // `Invalid {issue,mr,pr} key: <k>` (and similar trimmed
+        // variants) appear at the *start* of the message, never
+        // embedded mid-sentence. Anchoring on `starts_with` avoids
+        // false positives like `serde_json` decode errors that happen
+        // to contain both words ("invalid type ... \"key\"...") in a
+        // body preview — those are real upstream payload bugs and must
+        // bubble up to the caller.
+        let is_key_prefix_mismatch = (lower.starts_with("invalid ")
+            && (lower.contains(" key:") || lower.contains(" key ")))
+            || lower.starts_with("unsupported key prefix");
         if is_key_prefix_mismatch {
             return true;
         }
@@ -1732,6 +1756,19 @@ mod tests {
         // params" from parse_tool_params).
         assert!(!should_try_next_provider(&devboy_core::Error::InvalidData(
             "invalid get_issues params: expected string, found integer".into()
+        )));
+        // A real upstream payload decoding error embedding the word
+        // "key" in a body preview must bubble up: self-hosted Confluence
+        // returns `{"id": 190119946, "key": "1LS", ...}` where the
+        // `id` is an integer while the Rust struct expects a string;
+        // the resulting serde_json error contains both "invalid" (mid-
+        // sentence) and "key" (inside the JSON preview) but is a real
+        // payload bug, not a routing key mismatch.
+        assert!(!should_try_next_provider(&devboy_core::Error::InvalidData(
+            "JSON decode failed (status=200 OK, content-type='application/json'): \
+             invalid type: integer `190119946`, expected a string at line 1 column 27; \
+             body preview: \"{\\\"results\\\":[{\\\"id\\\":190119946,\\\"key\\\":\\\"1LS\\\"}]}\""
+                .into()
         )));
     }
 
