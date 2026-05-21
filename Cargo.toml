@@ -109,6 +109,7 @@ devboy-jira = { version = "0.28.0", path = "crates/plugins/api/jira" }
 devboy-confluence = { version = "0.28.0", path = "crates/plugins/api/confluence" }
 devboy-fireflies = { version = "0.28.0", path = "crates/plugins/api/fireflies" }
 devboy-slack = { version = "0.28.0", path = "crates/plugins/api/slack" }
+devboy-telegram = { version = "0.28.0", path = "crates/plugins/api/telegram" }
 
 [profile.release]
 lto = true
