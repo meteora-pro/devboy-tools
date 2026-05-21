@@ -1,0 +1,10 @@
+name = "echo"
+version = "0.1.0"
+executable = "devboy-source-echo.py"
+# Echo plugin doesn't need any host env. List PATH only so the
+# Python interpreter can find itself when invoked via `env`.
+allowed_env_vars = ["PATH"]
+# Replace this with the actual SHA-256 of the executable file
+# you install. The value below is a placeholder — the host will
+# refuse to spawn until it matches `shasum -a 256 devboy-source-echo.py`.
+checksum_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"

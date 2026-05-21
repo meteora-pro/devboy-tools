@@ -1,8 +1,11 @@
 pub mod devboy_fireflies
+pub mod devboy_fireflies::liveness
 pub struct devboy_fireflies::FirefliesClient
 impl devboy_fireflies::FirefliesClient
 pub fn devboy_fireflies::FirefliesClient::new(api_key: secrecy::SecretString) -> Self
 pub fn devboy_fireflies::FirefliesClient::with_api_url(self, url: impl core::convert::Into<alloc::string::String>) -> Self
+impl devboy_core::liveness::LivenessProbe for devboy_fireflies::FirefliesClient
+pub fn devboy_fireflies::FirefliesClient::provider_name(&self) -> &str
 impl devboy_core::provider::MeetingNotesProvider for devboy_fireflies::FirefliesClient
 pub fn devboy_fireflies::FirefliesClient::get_meetings<'life0, 'async_trait>(&'life0 self, filter: devboy_core::types::MeetingFilter) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::MeetingNote>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_fireflies::FirefliesClient::get_transcript<'life0, 'life1, 'async_trait>(&'life0 self, meeting_id: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::MeetingTranscript>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait

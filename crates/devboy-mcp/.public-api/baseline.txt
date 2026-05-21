@@ -9,6 +9,12 @@ pub use devboy_mcp::SUPPORTED_TOOLS
 pub use devboy_mcp::ToolEnricher
 pub use devboy_mcp::ToolOutput
 pub use devboy_mcp::ToolSchema
+pub mod devboy_mcp::agent_safety
+pub trait devboy_mcp::agent_safety::AgentSafeReply: serde_core::ser::Serialize
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_provision::ProvisionStatusReply
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_provision::RequestIdReply
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_tool::SecretsDescribeReply
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_tool::SecretsListItem
 pub mod devboy_mcp::handlers
 pub const devboy_mcp::handlers::KNOWN_BUILTIN_TOOLS: &[&str]
 pub mod devboy_mcp::layered
@@ -516,6 +522,72 @@ impl core::marker::Unpin for devboy_mcp::proxy::ProxyManager
 impl core::marker::UnsafeUnpin for devboy_mcp::proxy::ProxyManager
 impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::proxy::ProxyManager
 impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::proxy::ProxyManager
+pub mod devboy_mcp::proxy_secrets
+pub enum devboy_mcp::proxy_secrets::ProxyHeaderError
+pub devboy_mcp::proxy_secrets::ProxyHeaderError::InvalidHeaderValue
+pub devboy_mcp::proxy_secrets::ProxyHeaderError::InvalidHeaderValue::header: alloc::string::String
+pub devboy_mcp::proxy_secrets::ProxyHeaderError::InvalidHeaderValue::source_error: http::header::value::InvalidHeaderValue
+pub devboy_mcp::proxy_secrets::ProxyHeaderError::Resolve
+pub devboy_mcp::proxy_secrets::ProxyHeaderError::Resolve::header: alloc::string::String
+pub devboy_mcp::proxy_secrets::ProxyHeaderError::Resolve::path: alloc::string::String
+pub devboy_mcp::proxy_secrets::ProxyHeaderError::Resolve::source_error: devboy_core::alias::AliasResolverError
+impl core::error::Error for devboy_mcp::proxy_secrets::ProxyHeaderError
+pub fn devboy_mcp::proxy_secrets::ProxyHeaderError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for devboy_mcp::proxy_secrets::ProxyHeaderError
+pub fn devboy_mcp::proxy_secrets::ProxyHeaderError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_mcp::proxy_secrets::ProxyHeaderError
+pub fn devboy_mcp::proxy_secrets::ProxyHeaderError::fmt(&self, __formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::proxy_secrets::ProxyHeaderError
+impl core::marker::Send for devboy_mcp::proxy_secrets::ProxyHeaderError
+impl core::marker::Sync for devboy_mcp::proxy_secrets::ProxyHeaderError
+impl core::marker::Unpin for devboy_mcp::proxy_secrets::ProxyHeaderError
+impl core::marker::UnsafeUnpin for devboy_mcp::proxy_secrets::ProxyHeaderError
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::proxy_secrets::ProxyHeaderError
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::proxy_secrets::ProxyHeaderError
+pub struct devboy_mcp::proxy_secrets::HeaderRewrite
+pub devboy_mcp::proxy_secrets::HeaderRewrite::header_name: alloc::string::String
+pub devboy_mcp::proxy_secrets::HeaderRewrite::original_alias: alloc::string::String
+pub devboy_mcp::proxy_secrets::HeaderRewrite::scheme: core::option::Option<alloc::string::String>
+impl devboy_mcp::proxy_secrets::HeaderRewrite
+pub fn devboy_mcp::proxy_secrets::HeaderRewrite::transcript_value(&self) -> alloc::string::String
+impl core::clone::Clone for devboy_mcp::proxy_secrets::HeaderRewrite
+pub fn devboy_mcp::proxy_secrets::HeaderRewrite::clone(&self) -> devboy_mcp::proxy_secrets::HeaderRewrite
+impl core::cmp::Eq for devboy_mcp::proxy_secrets::HeaderRewrite
+impl core::cmp::PartialEq for devboy_mcp::proxy_secrets::HeaderRewrite
+pub fn devboy_mcp::proxy_secrets::HeaderRewrite::eq(&self, other: &devboy_mcp::proxy_secrets::HeaderRewrite) -> bool
+impl core::fmt::Debug for devboy_mcp::proxy_secrets::HeaderRewrite
+pub fn devboy_mcp::proxy_secrets::HeaderRewrite::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::proxy_secrets::HeaderRewrite
+impl core::marker::Freeze for devboy_mcp::proxy_secrets::HeaderRewrite
+impl core::marker::Send for devboy_mcp::proxy_secrets::HeaderRewrite
+impl core::marker::Sync for devboy_mcp::proxy_secrets::HeaderRewrite
+impl core::marker::Unpin for devboy_mcp::proxy_secrets::HeaderRewrite
+impl core::marker::UnsafeUnpin for devboy_mcp::proxy_secrets::HeaderRewrite
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::proxy_secrets::HeaderRewrite
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::proxy_secrets::HeaderRewrite
+pub struct devboy_mcp::proxy_secrets::RewriteOutcome
+pub devboy_mcp::proxy_secrets::RewriteOutcome::rewrites: alloc::vec::Vec<devboy_mcp::proxy_secrets::HeaderRewrite>
+impl devboy_mcp::proxy_secrets::RewriteOutcome
+pub fn devboy_mcp::proxy_secrets::RewriteOutcome::changed(&self) -> bool
+impl core::clone::Clone for devboy_mcp::proxy_secrets::RewriteOutcome
+pub fn devboy_mcp::proxy_secrets::RewriteOutcome::clone(&self) -> devboy_mcp::proxy_secrets::RewriteOutcome
+impl core::cmp::Eq for devboy_mcp::proxy_secrets::RewriteOutcome
+impl core::cmp::PartialEq for devboy_mcp::proxy_secrets::RewriteOutcome
+pub fn devboy_mcp::proxy_secrets::RewriteOutcome::eq(&self, other: &devboy_mcp::proxy_secrets::RewriteOutcome) -> bool
+impl core::default::Default for devboy_mcp::proxy_secrets::RewriteOutcome
+pub fn devboy_mcp::proxy_secrets::RewriteOutcome::default() -> devboy_mcp::proxy_secrets::RewriteOutcome
+impl core::fmt::Debug for devboy_mcp::proxy_secrets::RewriteOutcome
+pub fn devboy_mcp::proxy_secrets::RewriteOutcome::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::proxy_secrets::RewriteOutcome
+impl core::marker::Freeze for devboy_mcp::proxy_secrets::RewriteOutcome
+impl core::marker::Send for devboy_mcp::proxy_secrets::RewriteOutcome
+impl core::marker::Sync for devboy_mcp::proxy_secrets::RewriteOutcome
+impl core::marker::Unpin for devboy_mcp::proxy_secrets::RewriteOutcome
+impl core::marker::UnsafeUnpin for devboy_mcp::proxy_secrets::RewriteOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::proxy_secrets::RewriteOutcome
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::proxy_secrets::RewriteOutcome
+pub const devboy_mcp::proxy_secrets::WHITELISTED_HEADERS: &[&str]
+pub fn devboy_mcp::proxy_secrets::rewrite_outgoing_headers<R, F>(headers: &mut http::header::map::HeaderMap, resolver: &devboy_core::secret_approval::ApprovalGatedResolver<R, F>) -> core::result::Result<devboy_mcp::proxy_secrets::RewriteOutcome, devboy_mcp::proxy_secrets::ProxyHeaderError> where R: devboy_core::alias::SecretResolver, F: core::ops::function::Fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy + core::marker::Send + core::marker::Sync
 pub mod devboy_mcp::routing
 pub enum devboy_mcp::routing::RoutingReason
 pub devboy_mcp::routing::RoutingReason::ExplicitPrefix
@@ -644,6 +716,411 @@ impl core::marker::Unpin for devboy_mcp::routing::RoutingEngine
 impl core::marker::UnsafeUnpin for devboy_mcp::routing::RoutingEngine
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::routing::RoutingEngine
 impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::routing::RoutingEngine
+pub mod devboy_mcp::secrets_provision
+pub enum devboy_mcp::secrets_provision::ProvisionMode
+pub devboy_mcp::secrets_provision::ProvisionMode::Provision
+pub devboy_mcp::secrets_provision::ProvisionMode::Rotation
+impl core::clone::Clone for devboy_mcp::secrets_provision::ProvisionMode
+pub fn devboy_mcp::secrets_provision::ProvisionMode::clone(&self) -> devboy_mcp::secrets_provision::ProvisionMode
+impl core::cmp::Eq for devboy_mcp::secrets_provision::ProvisionMode
+impl core::cmp::PartialEq for devboy_mcp::secrets_provision::ProvisionMode
+pub fn devboy_mcp::secrets_provision::ProvisionMode::eq(&self, other: &devboy_mcp::secrets_provision::ProvisionMode) -> bool
+impl core::default::Default for devboy_mcp::secrets_provision::ProvisionMode
+pub fn devboy_mcp::secrets_provision::ProvisionMode::default() -> devboy_mcp::secrets_provision::ProvisionMode
+impl core::fmt::Debug for devboy_mcp::secrets_provision::ProvisionMode
+pub fn devboy_mcp::secrets_provision::ProvisionMode::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for devboy_mcp::secrets_provision::ProvisionMode
+pub fn devboy_mcp::secrets_provision::ProvisionMode::hash<__H: core::hash::Hasher>(&self, state: &mut __H)
+impl core::marker::Copy for devboy_mcp::secrets_provision::ProvisionMode
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_provision::ProvisionMode
+impl serde_core::ser::Serialize for devboy_mcp::secrets_provision::ProvisionMode
+pub fn devboy_mcp::secrets_provision::ProvisionMode::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_provision::ProvisionMode
+pub fn devboy_mcp::secrets_provision::ProvisionMode::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_provision::ProvisionMode
+impl core::marker::Send for devboy_mcp::secrets_provision::ProvisionMode
+impl core::marker::Sync for devboy_mcp::secrets_provision::ProvisionMode
+impl core::marker::Unpin for devboy_mcp::secrets_provision::ProvisionMode
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_provision::ProvisionMode
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_provision::ProvisionMode
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_provision::ProvisionMode
+pub enum devboy_mcp::secrets_provision::ProvisionStatus
+pub devboy_mcp::secrets_provision::ProvisionStatus::Cancelled
+pub devboy_mcp::secrets_provision::ProvisionStatus::Denied
+pub devboy_mcp::secrets_provision::ProvisionStatus::Expired
+pub devboy_mcp::secrets_provision::ProvisionStatus::Failed
+pub devboy_mcp::secrets_provision::ProvisionStatus::Failed::reason: alloc::string::String
+pub devboy_mcp::secrets_provision::ProvisionStatus::Ok
+pub devboy_mcp::secrets_provision::ProvisionStatus::Once
+pub devboy_mcp::secrets_provision::ProvisionStatus::Pending
+pub devboy_mcp::secrets_provision::ProvisionStatus::Session
+impl devboy_mcp::secrets_provision::ProvisionStatus
+pub fn devboy_mcp::secrets_provision::ProvisionStatus::label(&self) -> &str
+impl core::clone::Clone for devboy_mcp::secrets_provision::ProvisionStatus
+pub fn devboy_mcp::secrets_provision::ProvisionStatus::clone(&self) -> devboy_mcp::secrets_provision::ProvisionStatus
+impl core::cmp::Eq for devboy_mcp::secrets_provision::ProvisionStatus
+impl core::cmp::PartialEq for devboy_mcp::secrets_provision::ProvisionStatus
+pub fn devboy_mcp::secrets_provision::ProvisionStatus::eq(&self, other: &devboy_mcp::secrets_provision::ProvisionStatus) -> bool
+impl core::fmt::Debug for devboy_mcp::secrets_provision::ProvisionStatus
+pub fn devboy_mcp::secrets_provision::ProvisionStatus::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_provision::ProvisionStatus
+impl serde_core::ser::Serialize for devboy_mcp::secrets_provision::ProvisionStatus
+pub fn devboy_mcp::secrets_provision::ProvisionStatus::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_provision::ProvisionStatus
+pub fn devboy_mcp::secrets_provision::ProvisionStatus::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_provision::ProvisionStatus
+impl core::marker::Send for devboy_mcp::secrets_provision::ProvisionStatus
+impl core::marker::Sync for devboy_mcp::secrets_provision::ProvisionStatus
+impl core::marker::Unpin for devboy_mcp::secrets_provision::ProvisionStatus
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_provision::ProvisionStatus
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_provision::ProvisionStatus
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_provision::ProvisionStatus
+pub enum devboy_mcp::secrets_provision::RequestKind
+pub devboy_mcp::secrets_provision::RequestKind::MetadataProposal
+pub devboy_mcp::secrets_provision::RequestKind::NewPathProposal
+pub devboy_mcp::secrets_provision::RequestKind::Provision
+pub devboy_mcp::secrets_provision::RequestKind::Rotation
+pub devboy_mcp::secrets_provision::RequestKind::UseApproval
+impl devboy_mcp::secrets_provision::RequestKind
+pub fn devboy_mcp::secrets_provision::RequestKind::label(self) -> &'static str
+impl core::clone::Clone for devboy_mcp::secrets_provision::RequestKind
+pub fn devboy_mcp::secrets_provision::RequestKind::clone(&self) -> devboy_mcp::secrets_provision::RequestKind
+impl core::cmp::Eq for devboy_mcp::secrets_provision::RequestKind
+impl core::cmp::PartialEq for devboy_mcp::secrets_provision::RequestKind
+pub fn devboy_mcp::secrets_provision::RequestKind::eq(&self, other: &devboy_mcp::secrets_provision::RequestKind) -> bool
+impl core::fmt::Debug for devboy_mcp::secrets_provision::RequestKind
+pub fn devboy_mcp::secrets_provision::RequestKind::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for devboy_mcp::secrets_provision::RequestKind
+pub fn devboy_mcp::secrets_provision::RequestKind::hash<__H: core::hash::Hasher>(&self, state: &mut __H)
+impl core::marker::Copy for devboy_mcp::secrets_provision::RequestKind
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_provision::RequestKind
+impl serde_core::ser::Serialize for devboy_mcp::secrets_provision::RequestKind
+pub fn devboy_mcp::secrets_provision::RequestKind::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_provision::RequestKind
+pub fn devboy_mcp::secrets_provision::RequestKind::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_provision::RequestKind
+impl core::marker::Send for devboy_mcp::secrets_provision::RequestKind
+impl core::marker::Sync for devboy_mcp::secrets_provision::RequestKind
+impl core::marker::Unpin for devboy_mcp::secrets_provision::RequestKind
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_provision::RequestKind
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_provision::RequestKind
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_provision::RequestKind
+pub struct devboy_mcp::secrets_provision::FakeUiLauncher
+impl devboy_mcp::secrets_provision::FakeUiLauncher
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::calls(&self) -> alloc::vec::Vec<(devboy_mcp::secrets_provision::RequestId, devboy_storage::secret_path::SecretPath, devboy_mcp::secrets_provision::ProvisionMode)>
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::fail_next_with(&self, reason: impl core::convert::Into<alloc::string::String>)
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::metadata_calls(&self) -> alloc::vec::Vec<(devboy_mcp::secrets_provision::RequestId, devboy_storage::secret_path::SecretPath, devboy_mcp::secrets_provision::ProposedMetadata)>
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::new() -> Self
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::new_path_calls(&self) -> alloc::vec::Vec<(devboy_mcp::secrets_provision::RequestId, devboy_storage::secret_path::SecretPath, devboy_mcp::secrets_provision::ProposedMetadata)>
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::use_approval_calls(&self) -> alloc::vec::Vec<(devboy_mcp::secrets_provision::RequestId, devboy_storage::secret_path::SecretPath, alloc::string::String)>
+impl core::default::Default for devboy_mcp::secrets_provision::FakeUiLauncher
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::default() -> devboy_mcp::secrets_provision::FakeUiLauncher
+impl core::fmt::Debug for devboy_mcp::secrets_provision::FakeUiLauncher
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl devboy_mcp::secrets_provision::UiDialogLauncher for devboy_mcp::secrets_provision::FakeUiLauncher
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open(&self, request_id: &devboy_mcp::secrets_provision::RequestId, path: &devboy_storage::secret_path::SecretPath, mode: devboy_mcp::secrets_provision::ProvisionMode) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open_metadata_proposal(&self, request_id: &devboy_mcp::secrets_provision::RequestId, path: &devboy_storage::secret_path::SecretPath, proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open_new_path_proposal(&self, request_id: &devboy_mcp::secrets_provision::RequestId, suggested_path: &devboy_storage::secret_path::SecretPath, proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open_use_approval(&self, request_id: &devboy_mcp::secrets_provision::RequestId, path: &devboy_storage::secret_path::SecretPath, reason: &str) -> core::result::Result<(), alloc::string::String>
+impl !core::marker::Freeze for devboy_mcp::secrets_provision::FakeUiLauncher
+impl core::marker::Send for devboy_mcp::secrets_provision::FakeUiLauncher
+impl core::marker::Sync for devboy_mcp::secrets_provision::FakeUiLauncher
+impl core::marker::Unpin for devboy_mcp::secrets_provision::FakeUiLauncher
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_provision::FakeUiLauncher
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_provision::FakeUiLauncher
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_provision::FakeUiLauncher
+pub struct devboy_mcp::secrets_provision::NoopUiLauncher
+impl core::default::Default for devboy_mcp::secrets_provision::NoopUiLauncher
+pub fn devboy_mcp::secrets_provision::NoopUiLauncher::default() -> devboy_mcp::secrets_provision::NoopUiLauncher
+impl core::fmt::Debug for devboy_mcp::secrets_provision::NoopUiLauncher
+pub fn devboy_mcp::secrets_provision::NoopUiLauncher::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl devboy_mcp::secrets_provision::UiDialogLauncher for devboy_mcp::secrets_provision::NoopUiLauncher
+pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _mode: devboy_mcp::secrets_provision::ProvisionMode) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open_metadata_proposal(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open_new_path_proposal(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _suggested_path: &devboy_storage::secret_path::SecretPath, _proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open_use_approval(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _reason: &str) -> core::result::Result<(), alloc::string::String>
+impl core::marker::Freeze for devboy_mcp::secrets_provision::NoopUiLauncher
+impl core::marker::Send for devboy_mcp::secrets_provision::NoopUiLauncher
+impl core::marker::Sync for devboy_mcp::secrets_provision::NoopUiLauncher
+impl core::marker::Unpin for devboy_mcp::secrets_provision::NoopUiLauncher
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_provision::NoopUiLauncher
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_provision::NoopUiLauncher
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_provision::NoopUiLauncher
+pub struct devboy_mcp::secrets_provision::ProposedMetadata
+pub devboy_mcp::secrets_provision::ProposedMetadata::description: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_provision::ProposedMetadata::expires_at: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_provision::ProposedMetadata::pattern_id: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_provision::ProposedMetadata::retrieval_url: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_provision::ProposedMetadata::rotate_every_days: core::option::Option<u32>
+impl core::clone::Clone for devboy_mcp::secrets_provision::ProposedMetadata
+pub fn devboy_mcp::secrets_provision::ProposedMetadata::clone(&self) -> devboy_mcp::secrets_provision::ProposedMetadata
+impl core::cmp::Eq for devboy_mcp::secrets_provision::ProposedMetadata
+impl core::cmp::PartialEq for devboy_mcp::secrets_provision::ProposedMetadata
+pub fn devboy_mcp::secrets_provision::ProposedMetadata::eq(&self, other: &devboy_mcp::secrets_provision::ProposedMetadata) -> bool
+impl core::default::Default for devboy_mcp::secrets_provision::ProposedMetadata
+pub fn devboy_mcp::secrets_provision::ProposedMetadata::default() -> devboy_mcp::secrets_provision::ProposedMetadata
+impl core::fmt::Debug for devboy_mcp::secrets_provision::ProposedMetadata
+pub fn devboy_mcp::secrets_provision::ProposedMetadata::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_provision::ProposedMetadata
+impl serde_core::ser::Serialize for devboy_mcp::secrets_provision::ProposedMetadata
+pub fn devboy_mcp::secrets_provision::ProposedMetadata::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_provision::ProposedMetadata
+pub fn devboy_mcp::secrets_provision::ProposedMetadata::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_provision::ProposedMetadata
+impl core::marker::Send for devboy_mcp::secrets_provision::ProposedMetadata
+impl core::marker::Sync for devboy_mcp::secrets_provision::ProposedMetadata
+impl core::marker::Unpin for devboy_mcp::secrets_provision::ProposedMetadata
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_provision::ProposedMetadata
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_provision::ProposedMetadata
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_provision::ProposedMetadata
+pub struct devboy_mcp::secrets_provision::ProvisionRegistry
+impl devboy_mcp::secrets_provision::ProvisionRegistry
+pub fn devboy_mcp::secrets_provision::ProvisionRegistry::new() -> Self
+pub fn devboy_mcp::secrets_provision::ProvisionRegistry::poll_status(&self, id: &devboy_mcp::secrets_provision::RequestId) -> core::option::Option<devboy_mcp::secrets_provision::ProvisionStatusReply>
+pub fn devboy_mcp::secrets_provision::ProvisionRegistry::request_metadata_proposal(&self, path: devboy_storage::secret_path::SecretPath, proposed: devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<devboy_mcp::secrets_provision::RequestId, alloc::string::String>
+pub fn devboy_mcp::secrets_provision::ProvisionRegistry::request_new_path_proposal(&self, suggested_path: devboy_storage::secret_path::SecretPath, proposed: devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<devboy_mcp::secrets_provision::RequestId, alloc::string::String>
+pub fn devboy_mcp::secrets_provision::ProvisionRegistry::request_provision(&self, path: devboy_storage::secret_path::SecretPath, mode: devboy_mcp::secrets_provision::ProvisionMode) -> core::result::Result<devboy_mcp::secrets_provision::RequestId, alloc::string::String>
+pub fn devboy_mcp::secrets_provision::ProvisionRegistry::request_use_approval(&self, path: devboy_storage::secret_path::SecretPath, reason: alloc::string::String, ttl_seconds: core::option::Option<u64>) -> core::result::Result<devboy_mcp::secrets_provision::RequestId, alloc::string::String>
+pub fn devboy_mcp::secrets_provision::ProvisionRegistry::resolve(&self, id: &devboy_mcp::secrets_provision::RequestId, status: devboy_mcp::secrets_provision::ProvisionStatus)
+pub fn devboy_mcp::secrets_provision::ProvisionRegistry::sweep_settled(&self, older_than: core::time::Duration) -> usize
+pub fn devboy_mcp::secrets_provision::ProvisionRegistry::with_launcher(launcher: alloc::sync::Arc<dyn devboy_mcp::secrets_provision::UiDialogLauncher>) -> Self
+pub fn devboy_mcp::secrets_provision::ProvisionRegistry::with_ttl(self, ttl: core::time::Duration) -> Self
+impl core::default::Default for devboy_mcp::secrets_provision::ProvisionRegistry
+pub fn devboy_mcp::secrets_provision::ProvisionRegistry::default() -> Self
+impl core::fmt::Debug for devboy_mcp::secrets_provision::ProvisionRegistry
+pub fn devboy_mcp::secrets_provision::ProvisionRegistry::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl !core::marker::Freeze for devboy_mcp::secrets_provision::ProvisionRegistry
+impl core::marker::Send for devboy_mcp::secrets_provision::ProvisionRegistry
+impl core::marker::Sync for devboy_mcp::secrets_provision::ProvisionRegistry
+impl core::marker::Unpin for devboy_mcp::secrets_provision::ProvisionRegistry
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_provision::ProvisionRegistry
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_provision::ProvisionRegistry
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_provision::ProvisionRegistry
+pub struct devboy_mcp::secrets_provision::ProvisionStatusReply
+pub devboy_mcp::secrets_provision::ProvisionStatusReply::age_seconds: u64
+pub devboy_mcp::secrets_provision::ProvisionStatusReply::kind: devboy_mcp::secrets_provision::RequestKind
+pub devboy_mcp::secrets_provision::ProvisionStatusReply::path: alloc::string::String
+pub devboy_mcp::secrets_provision::ProvisionStatusReply::request_id: devboy_mcp::secrets_provision::RequestId
+pub devboy_mcp::secrets_provision::ProvisionStatusReply::status: devboy_mcp::secrets_provision::ProvisionStatus
+impl core::clone::Clone for devboy_mcp::secrets_provision::ProvisionStatusReply
+pub fn devboy_mcp::secrets_provision::ProvisionStatusReply::clone(&self) -> devboy_mcp::secrets_provision::ProvisionStatusReply
+impl core::cmp::Eq for devboy_mcp::secrets_provision::ProvisionStatusReply
+impl core::cmp::PartialEq for devboy_mcp::secrets_provision::ProvisionStatusReply
+pub fn devboy_mcp::secrets_provision::ProvisionStatusReply::eq(&self, other: &devboy_mcp::secrets_provision::ProvisionStatusReply) -> bool
+impl core::fmt::Debug for devboy_mcp::secrets_provision::ProvisionStatusReply
+pub fn devboy_mcp::secrets_provision::ProvisionStatusReply::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_provision::ProvisionStatusReply
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_provision::ProvisionStatusReply
+impl serde_core::ser::Serialize for devboy_mcp::secrets_provision::ProvisionStatusReply
+pub fn devboy_mcp::secrets_provision::ProvisionStatusReply::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_provision::ProvisionStatusReply
+pub fn devboy_mcp::secrets_provision::ProvisionStatusReply::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_provision::ProvisionStatusReply
+impl core::marker::Send for devboy_mcp::secrets_provision::ProvisionStatusReply
+impl core::marker::Sync for devboy_mcp::secrets_provision::ProvisionStatusReply
+impl core::marker::Unpin for devboy_mcp::secrets_provision::ProvisionStatusReply
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_provision::ProvisionStatusReply
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_provision::ProvisionStatusReply
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_provision::ProvisionStatusReply
+pub struct devboy_mcp::secrets_provision::RequestId(pub alloc::string::String)
+impl core::clone::Clone for devboy_mcp::secrets_provision::RequestId
+pub fn devboy_mcp::secrets_provision::RequestId::clone(&self) -> devboy_mcp::secrets_provision::RequestId
+impl core::cmp::Eq for devboy_mcp::secrets_provision::RequestId
+impl core::cmp::PartialEq for devboy_mcp::secrets_provision::RequestId
+pub fn devboy_mcp::secrets_provision::RequestId::eq(&self, other: &devboy_mcp::secrets_provision::RequestId) -> bool
+impl core::fmt::Debug for devboy_mcp::secrets_provision::RequestId
+pub fn devboy_mcp::secrets_provision::RequestId::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_mcp::secrets_provision::RequestId
+pub fn devboy_mcp::secrets_provision::RequestId::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for devboy_mcp::secrets_provision::RequestId
+pub fn devboy_mcp::secrets_provision::RequestId::hash<__H: core::hash::Hasher>(&self, state: &mut __H)
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_provision::RequestId
+impl serde_core::ser::Serialize for devboy_mcp::secrets_provision::RequestId
+pub fn devboy_mcp::secrets_provision::RequestId::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_provision::RequestId
+pub fn devboy_mcp::secrets_provision::RequestId::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_provision::RequestId
+impl core::marker::Send for devboy_mcp::secrets_provision::RequestId
+impl core::marker::Sync for devboy_mcp::secrets_provision::RequestId
+impl core::marker::Unpin for devboy_mcp::secrets_provision::RequestId
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_provision::RequestId
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_provision::RequestId
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_provision::RequestId
+pub struct devboy_mcp::secrets_provision::RequestIdReply
+pub devboy_mcp::secrets_provision::RequestIdReply::request_id: alloc::string::String
+impl core::clone::Clone for devboy_mcp::secrets_provision::RequestIdReply
+pub fn devboy_mcp::secrets_provision::RequestIdReply::clone(&self) -> devboy_mcp::secrets_provision::RequestIdReply
+impl core::cmp::Eq for devboy_mcp::secrets_provision::RequestIdReply
+impl core::cmp::PartialEq for devboy_mcp::secrets_provision::RequestIdReply
+pub fn devboy_mcp::secrets_provision::RequestIdReply::eq(&self, other: &devboy_mcp::secrets_provision::RequestIdReply) -> bool
+impl core::fmt::Debug for devboy_mcp::secrets_provision::RequestIdReply
+pub fn devboy_mcp::secrets_provision::RequestIdReply::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_provision::RequestIdReply
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_provision::RequestIdReply
+impl serde_core::ser::Serialize for devboy_mcp::secrets_provision::RequestIdReply
+pub fn devboy_mcp::secrets_provision::RequestIdReply::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_provision::RequestIdReply
+pub fn devboy_mcp::secrets_provision::RequestIdReply::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_provision::RequestIdReply
+impl core::marker::Send for devboy_mcp::secrets_provision::RequestIdReply
+impl core::marker::Sync for devboy_mcp::secrets_provision::RequestIdReply
+impl core::marker::Unpin for devboy_mcp::secrets_provision::RequestIdReply
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_provision::RequestIdReply
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_provision::RequestIdReply
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_provision::RequestIdReply
+pub const devboy_mcp::secrets_provision::DEFAULT_TTL: core::time::Duration
+pub trait devboy_mcp::secrets_provision::UiDialogLauncher: core::marker::Send + core::marker::Sync + core::fmt::Debug
+pub fn devboy_mcp::secrets_provision::UiDialogLauncher::open(&self, request_id: &devboy_mcp::secrets_provision::RequestId, path: &devboy_storage::secret_path::SecretPath, mode: devboy_mcp::secrets_provision::ProvisionMode) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::UiDialogLauncher::open_metadata_proposal(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::UiDialogLauncher::open_new_path_proposal(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _suggested_path: &devboy_storage::secret_path::SecretPath, _proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::UiDialogLauncher::open_use_approval(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _reason: &str) -> core::result::Result<(), alloc::string::String>
+impl devboy_mcp::secrets_provision::UiDialogLauncher for devboy_mcp::secrets_provision::FakeUiLauncher
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open(&self, request_id: &devboy_mcp::secrets_provision::RequestId, path: &devboy_storage::secret_path::SecretPath, mode: devboy_mcp::secrets_provision::ProvisionMode) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open_metadata_proposal(&self, request_id: &devboy_mcp::secrets_provision::RequestId, path: &devboy_storage::secret_path::SecretPath, proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open_new_path_proposal(&self, request_id: &devboy_mcp::secrets_provision::RequestId, suggested_path: &devboy_storage::secret_path::SecretPath, proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::FakeUiLauncher::open_use_approval(&self, request_id: &devboy_mcp::secrets_provision::RequestId, path: &devboy_storage::secret_path::SecretPath, reason: &str) -> core::result::Result<(), alloc::string::String>
+impl devboy_mcp::secrets_provision::UiDialogLauncher for devboy_mcp::secrets_provision::NoopUiLauncher
+pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _mode: devboy_mcp::secrets_provision::ProvisionMode) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open_metadata_proposal(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open_new_path_proposal(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _suggested_path: &devboy_storage::secret_path::SecretPath, _proposed: &devboy_mcp::secrets_provision::ProposedMetadata) -> core::result::Result<(), alloc::string::String>
+pub fn devboy_mcp::secrets_provision::NoopUiLauncher::open_use_approval(&self, _request_id: &devboy_mcp::secrets_provision::RequestId, _path: &devboy_storage::secret_path::SecretPath, _reason: &str) -> core::result::Result<(), alloc::string::String>
+pub mod devboy_mcp::secrets_tool
+pub enum devboy_mcp::secrets_tool::SecretsStatus
+pub devboy_mcp::secrets_tool::SecretsStatus::Expired
+pub devboy_mcp::secrets_tool::SecretsStatus::Expiring
+pub devboy_mcp::secrets_tool::SecretsStatus::Registered
+impl devboy_mcp::secrets_tool::SecretsStatus
+pub fn devboy_mcp::secrets_tool::SecretsStatus::label(self) -> &'static str
+impl core::clone::Clone for devboy_mcp::secrets_tool::SecretsStatus
+pub fn devboy_mcp::secrets_tool::SecretsStatus::clone(&self) -> devboy_mcp::secrets_tool::SecretsStatus
+impl core::cmp::Eq for devboy_mcp::secrets_tool::SecretsStatus
+impl core::cmp::PartialEq for devboy_mcp::secrets_tool::SecretsStatus
+pub fn devboy_mcp::secrets_tool::SecretsStatus::eq(&self, other: &devboy_mcp::secrets_tool::SecretsStatus) -> bool
+impl core::fmt::Debug for devboy_mcp::secrets_tool::SecretsStatus
+pub fn devboy_mcp::secrets_tool::SecretsStatus::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_mcp::secrets_tool::SecretsStatus
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_tool::SecretsStatus
+impl serde_core::ser::Serialize for devboy_mcp::secrets_tool::SecretsStatus
+pub fn devboy_mcp::secrets_tool::SecretsStatus::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_tool::SecretsStatus
+pub fn devboy_mcp::secrets_tool::SecretsStatus::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_tool::SecretsStatus
+impl core::marker::Send for devboy_mcp::secrets_tool::SecretsStatus
+impl core::marker::Sync for devboy_mcp::secrets_tool::SecretsStatus
+impl core::marker::Unpin for devboy_mcp::secrets_tool::SecretsStatus
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_tool::SecretsStatus
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_tool::SecretsStatus
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_tool::SecretsStatus
+pub enum devboy_mcp::secrets_tool::SecretsToolError
+pub devboy_mcp::secrets_tool::SecretsToolError::InvalidPath
+pub devboy_mcp::secrets_tool::SecretsToolError::InvalidPath::path: alloc::string::String
+pub devboy_mcp::secrets_tool::SecretsToolError::InvalidPath::reason: alloc::string::String
+pub devboy_mcp::secrets_tool::SecretsToolError::MergeFailed
+pub devboy_mcp::secrets_tool::SecretsToolError::MergeFailed::reason: alloc::string::String
+pub devboy_mcp::secrets_tool::SecretsToolError::NotFound
+pub devboy_mcp::secrets_tool::SecretsToolError::NotFound::path: alloc::string::String
+impl core::clone::Clone for devboy_mcp::secrets_tool::SecretsToolError
+pub fn devboy_mcp::secrets_tool::SecretsToolError::clone(&self) -> devboy_mcp::secrets_tool::SecretsToolError
+impl core::cmp::Eq for devboy_mcp::secrets_tool::SecretsToolError
+impl core::cmp::PartialEq for devboy_mcp::secrets_tool::SecretsToolError
+pub fn devboy_mcp::secrets_tool::SecretsToolError::eq(&self, other: &devboy_mcp::secrets_tool::SecretsToolError) -> bool
+impl core::fmt::Debug for devboy_mcp::secrets_tool::SecretsToolError
+pub fn devboy_mcp::secrets_tool::SecretsToolError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_tool::SecretsToolError
+impl serde_core::ser::Serialize for devboy_mcp::secrets_tool::SecretsToolError
+pub fn devboy_mcp::secrets_tool::SecretsToolError::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_tool::SecretsToolError
+pub fn devboy_mcp::secrets_tool::SecretsToolError::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_tool::SecretsToolError
+impl core::marker::Send for devboy_mcp::secrets_tool::SecretsToolError
+impl core::marker::Sync for devboy_mcp::secrets_tool::SecretsToolError
+impl core::marker::Unpin for devboy_mcp::secrets_tool::SecretsToolError
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_tool::SecretsToolError
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_tool::SecretsToolError
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_tool::SecretsToolError
+pub struct devboy_mcp::secrets_tool::SecretsDescribeReply
+pub devboy_mcp::secrets_tool::SecretsDescribeReply::approve_on_use: core::option::Option<devboy_storage::index::ApproveOnUse>
+pub devboy_mcp::secrets_tool::SecretsDescribeReply::capabilities_hint: alloc::string::String
+pub devboy_mcp::secrets_tool::SecretsDescribeReply::description: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_tool::SecretsDescribeReply::expires_at: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_tool::SecretsDescribeReply::last_rotated_at: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_tool::SecretsDescribeReply::path: alloc::string::String
+pub devboy_mcp::secrets_tool::SecretsDescribeReply::pattern_id: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_tool::SecretsDescribeReply::retrieval_url: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_tool::SecretsDescribeReply::rotate_every_days: core::option::Option<u32>
+pub devboy_mcp::secrets_tool::SecretsDescribeReply::rotation_method: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_tool::SecretsDescribeReply::source_name: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_tool::SecretsDescribeReply::status: devboy_mcp::secrets_tool::SecretsStatus
+impl core::clone::Clone for devboy_mcp::secrets_tool::SecretsDescribeReply
+pub fn devboy_mcp::secrets_tool::SecretsDescribeReply::clone(&self) -> devboy_mcp::secrets_tool::SecretsDescribeReply
+impl core::cmp::Eq for devboy_mcp::secrets_tool::SecretsDescribeReply
+impl core::cmp::PartialEq for devboy_mcp::secrets_tool::SecretsDescribeReply
+pub fn devboy_mcp::secrets_tool::SecretsDescribeReply::eq(&self, other: &devboy_mcp::secrets_tool::SecretsDescribeReply) -> bool
+impl core::fmt::Debug for devboy_mcp::secrets_tool::SecretsDescribeReply
+pub fn devboy_mcp::secrets_tool::SecretsDescribeReply::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_tool::SecretsDescribeReply
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_tool::SecretsDescribeReply
+impl serde_core::ser::Serialize for devboy_mcp::secrets_tool::SecretsDescribeReply
+pub fn devboy_mcp::secrets_tool::SecretsDescribeReply::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_tool::SecretsDescribeReply
+pub fn devboy_mcp::secrets_tool::SecretsDescribeReply::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_tool::SecretsDescribeReply
+impl core::marker::Send for devboy_mcp::secrets_tool::SecretsDescribeReply
+impl core::marker::Sync for devboy_mcp::secrets_tool::SecretsDescribeReply
+impl core::marker::Unpin for devboy_mcp::secrets_tool::SecretsDescribeReply
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_tool::SecretsDescribeReply
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_tool::SecretsDescribeReply
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_tool::SecretsDescribeReply
+pub struct devboy_mcp::secrets_tool::SecretsListFilter
+pub devboy_mcp::secrets_tool::SecretsListFilter::include_internal: bool
+pub devboy_mcp::secrets_tool::SecretsListFilter::path_contains: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_tool::SecretsListFilter::scope: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_tool::SecretsListFilter::status: core::option::Option<devboy_mcp::secrets_tool::SecretsStatus>
+impl core::clone::Clone for devboy_mcp::secrets_tool::SecretsListFilter
+pub fn devboy_mcp::secrets_tool::SecretsListFilter::clone(&self) -> devboy_mcp::secrets_tool::SecretsListFilter
+impl core::default::Default for devboy_mcp::secrets_tool::SecretsListFilter
+pub fn devboy_mcp::secrets_tool::SecretsListFilter::default() -> devboy_mcp::secrets_tool::SecretsListFilter
+impl core::fmt::Debug for devboy_mcp::secrets_tool::SecretsListFilter
+pub fn devboy_mcp::secrets_tool::SecretsListFilter::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_tool::SecretsListFilter where devboy_mcp::secrets_tool::SecretsListFilter: core::default::Default
+pub fn devboy_mcp::secrets_tool::SecretsListFilter::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_tool::SecretsListFilter
+impl core::marker::Send for devboy_mcp::secrets_tool::SecretsListFilter
+impl core::marker::Sync for devboy_mcp::secrets_tool::SecretsListFilter
+impl core::marker::Unpin for devboy_mcp::secrets_tool::SecretsListFilter
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_tool::SecretsListFilter
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_tool::SecretsListFilter
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_tool::SecretsListFilter
+pub struct devboy_mcp::secrets_tool::SecretsListItem
+pub devboy_mcp::secrets_tool::SecretsListItem::approve_on_use: core::option::Option<devboy_storage::index::ApproveOnUse>
+pub devboy_mcp::secrets_tool::SecretsListItem::capabilities_hint: alloc::string::String
+pub devboy_mcp::secrets_tool::SecretsListItem::expires_at: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_tool::SecretsListItem::path: alloc::string::String
+pub devboy_mcp::secrets_tool::SecretsListItem::source_name: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_tool::SecretsListItem::status: devboy_mcp::secrets_tool::SecretsStatus
+impl core::clone::Clone for devboy_mcp::secrets_tool::SecretsListItem
+pub fn devboy_mcp::secrets_tool::SecretsListItem::clone(&self) -> devboy_mcp::secrets_tool::SecretsListItem
+impl core::cmp::Eq for devboy_mcp::secrets_tool::SecretsListItem
+impl core::cmp::PartialEq for devboy_mcp::secrets_tool::SecretsListItem
+pub fn devboy_mcp::secrets_tool::SecretsListItem::eq(&self, other: &devboy_mcp::secrets_tool::SecretsListItem) -> bool
+impl core::fmt::Debug for devboy_mcp::secrets_tool::SecretsListItem
+pub fn devboy_mcp::secrets_tool::SecretsListItem::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_tool::SecretsListItem
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_tool::SecretsListItem
+impl serde_core::ser::Serialize for devboy_mcp::secrets_tool::SecretsListItem
+pub fn devboy_mcp::secrets_tool::SecretsListItem::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_tool::SecretsListItem
+pub fn devboy_mcp::secrets_tool::SecretsListItem::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_tool::SecretsListItem
+impl core::marker::Send for devboy_mcp::secrets_tool::SecretsListItem
+impl core::marker::Sync for devboy_mcp::secrets_tool::SecretsListItem
+impl core::marker::Unpin for devboy_mcp::secrets_tool::SecretsListItem
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_tool::SecretsListItem
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_tool::SecretsListItem
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_tool::SecretsListItem
+pub fn devboy_mcp::secrets_tool::describe(index: &devboy_storage::index::GlobalIndex, manifest: &devboy_storage::manifest::ProjectManifest, path: &str, today: chrono::naive::date::NaiveDate) -> core::result::Result<devboy_mcp::secrets_tool::SecretsDescribeReply, devboy_mcp::secrets_tool::SecretsToolError>
+pub fn devboy_mcp::secrets_tool::list(index: &devboy_storage::index::GlobalIndex, manifest: &devboy_storage::manifest::ProjectManifest, filter: &devboy_mcp::secrets_tool::SecretsListFilter, today: chrono::naive::date::NaiveDate) -> core::result::Result<alloc::vec::Vec<devboy_mcp::secrets_tool::SecretsListItem>, devboy_mcp::secrets_tool::SecretsToolError>
+pub fn devboy_mcp::secrets_tool::today_local() -> chrono::naive::date::NaiveDate
 pub mod devboy_mcp::server
 pub struct devboy_mcp::server::DeferredInit
 pub devboy_mcp::server::DeferredInit::builtin_tools_config: core::option::Option<devboy_core::config::BuiltinToolsConfig>
@@ -679,11 +1156,13 @@ pub fn devboy_mcp::server::McpServer::new() -> Self
 pub fn devboy_mcp::server::McpServer::on_compaction_boundary(&self)
 pub fn devboy_mcp::server::McpServer::providers(&self) -> &[alloc::sync::Arc<dyn devboy_core::provider::Provider>]
 pub async fn devboy_mcp::server::McpServer::run(&mut self) -> devboy_core::error::Result<()>
+pub fn devboy_mcp::server::McpServer::secrets_provision_registry(&self) -> alloc::sync::Arc<devboy_mcp::secrets_provision::ProvisionRegistry>
 pub fn devboy_mcp::server::McpServer::set_active_context(&self, context: &str) -> devboy_core::error::Result<()>
 pub fn devboy_mcp::server::McpServer::set_builtin_tools_config(&mut self, config: devboy_core::config::BuiltinToolsConfig) -> devboy_core::error::Result<()>
 pub fn devboy_mcp::server::McpServer::set_deferred_init(&mut self, receiver: tokio::sync::oneshot::Receiver<devboy_mcp::server::DeferredInit>)
 pub fn devboy_mcp::server::McpServer::set_proxy_manager(&mut self, proxy_manager: devboy_mcp::proxy::ProxyManager)
 pub fn devboy_mcp::server::McpServer::set_routing_engine(&mut self, engine: alloc::sync::Arc<devboy_mcp::routing::RoutingEngine>)
+pub fn devboy_mcp::server::McpServer::set_secrets_provision_registry(&mut self, registry: alloc::sync::Arc<devboy_mcp::secrets_provision::ProvisionRegistry>)
 pub fn devboy_mcp::server::McpServer::set_telemetry(&mut self, buffer: devboy_mcp::telemetry::TelemetryBuffer)
 impl core::default::Default for devboy_mcp::server::McpServer
 pub fn devboy_mcp::server::McpServer::default() -> Self
@@ -1260,11 +1739,13 @@ pub fn devboy_mcp::server::McpServer::new() -> Self
 pub fn devboy_mcp::server::McpServer::on_compaction_boundary(&self)
 pub fn devboy_mcp::server::McpServer::providers(&self) -> &[alloc::sync::Arc<dyn devboy_core::provider::Provider>]
 pub async fn devboy_mcp::server::McpServer::run(&mut self) -> devboy_core::error::Result<()>
+pub fn devboy_mcp::server::McpServer::secrets_provision_registry(&self) -> alloc::sync::Arc<devboy_mcp::secrets_provision::ProvisionRegistry>
 pub fn devboy_mcp::server::McpServer::set_active_context(&self, context: &str) -> devboy_core::error::Result<()>
 pub fn devboy_mcp::server::McpServer::set_builtin_tools_config(&mut self, config: devboy_core::config::BuiltinToolsConfig) -> devboy_core::error::Result<()>
 pub fn devboy_mcp::server::McpServer::set_deferred_init(&mut self, receiver: tokio::sync::oneshot::Receiver<devboy_mcp::server::DeferredInit>)
 pub fn devboy_mcp::server::McpServer::set_proxy_manager(&mut self, proxy_manager: devboy_mcp::proxy::ProxyManager)
 pub fn devboy_mcp::server::McpServer::set_routing_engine(&mut self, engine: alloc::sync::Arc<devboy_mcp::routing::RoutingEngine>)
+pub fn devboy_mcp::server::McpServer::set_secrets_provision_registry(&mut self, registry: alloc::sync::Arc<devboy_mcp::secrets_provision::ProvisionRegistry>)
 pub fn devboy_mcp::server::McpServer::set_telemetry(&mut self, buffer: devboy_mcp::telemetry::TelemetryBuffer)
 impl core::default::Default for devboy_mcp::server::McpServer
 pub fn devboy_mcp::server::McpServer::default() -> Self

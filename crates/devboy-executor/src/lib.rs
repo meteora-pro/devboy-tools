@@ -43,6 +43,8 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(rustdoc::private_intra_doc_links)]
 #![deny(rustdoc::invalid_html_tags)]
+
+pub mod argv_secrets;
 /// Typed runtime context: provider configs, scopes, additional metadata.
 pub mod context;
 pub mod enricher;

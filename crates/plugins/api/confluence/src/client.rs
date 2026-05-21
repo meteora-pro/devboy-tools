@@ -57,6 +57,13 @@ impl ConfluenceAuth {
 #[derive(Clone)]
 pub struct ConfluenceClient {
     base_url: String,
+    /// Original Confluence instance URL for generating browse links
+    /// (`_links.webui`, `/pages/<id>`). When the client is configured
+    /// for proxy mode, `base_url` points at the proxy host so API
+    /// requests transit it, while `instance_url` stays pinned to the
+    /// real Confluence host so URLs returned in responses remain
+    /// clickable. Defaults to `base_url` when not overridden.
+    instance_url: String,
     api_path: String,
     page_api_path: String,
     space_api_path: String,
@@ -69,6 +76,7 @@ impl fmt::Debug for ConfluenceClient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ConfluenceClient")
             .field("base_url", &self.base_url)
+            .field("instance_url", &self.instance_url)
             .field("api_path", &self.api_path)
             .field("page_api_path", &self.page_api_path)
             .field("space_api_path", &self.space_api_path)
@@ -80,8 +88,10 @@ impl fmt::Debug for ConfluenceClient {
 
 impl ConfluenceClient {
     pub fn new(base_url: impl Into<String>, auth: ConfluenceAuth) -> Self {
+        let base = normalize_base_url(base_url.into());
         Self {
-            base_url: normalize_base_url(base_url.into()),
+            instance_url: base.clone(),
+            base_url: base,
             api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
             page_api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
             space_api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
@@ -100,6 +110,13 @@ impl ConfluenceClient {
         &self.base_url
     }
 
+    /// Real Confluence host used in user-facing links. Equal to
+    /// `base_url()` unless `with_instance_url` was called (the typical
+    /// proxy case).
+    pub fn instance_url(&self) -> &str {
+        &self.instance_url
+    }
+
     pub fn auth(&self) -> &ConfluenceAuth {
         &self.auth
     }
@@ -112,8 +129,19 @@ impl ConfluenceClient {
 
     /// Configure proxy mode with headers added to every request.
     /// When proxy is active, provider auth headers are suppressed.
+    /// Note: this does **not** change browse-link generation — set
+    /// `with_instance_url` to the real Confluence host so links in
+    /// responses don't point at the proxy.
     pub fn with_proxy(mut self, headers: HashMap<String, String>) -> Self {
         self.proxy_headers = Some(headers);
+        self
+    }
+
+    /// Override the host used for generating browse links (`_links.webui`,
+    /// `/pages/<id>`). Useful when `base_url` is a proxy URL — callers
+    /// would otherwise see proxy-host URLs in tool responses.
+    pub fn with_instance_url(mut self, url: impl Into<String>) -> Self {
+        self.instance_url = normalize_base_url(url.into());
         self
     }
 
@@ -241,15 +269,41 @@ impl ConfluenceClient {
             .map_err(|e| Error::Network(e.to_string()))?;
 
         let status = response.status();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        // Read once as bytes — `from_slice` lets us decode the happy
+        // path without an extra UTF-8 validation pass over multi-MB
+        // page bodies (Copilot review on PR #286). Lossy decode is
+        // reserved for the error branch when we actually need a
+        // human-readable preview.
+        let body = response
+            .bytes()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?;
+
         if !status.is_success() {
-            let message = response.text().await.unwrap_or_default();
-            return Err(Error::from_status(status.as_u16(), message));
+            return Err(Error::from_status(
+                status.as_u16(),
+                String::from_utf8_lossy(&body).into_owned(),
+            ));
         }
 
-        response
-            .json()
-            .await
-            .map_err(|e| Error::InvalidData(e.to_string()))
+        serde_json::from_slice::<T>(&body).map_err(|e| {
+            // Surface enough context to diagnose self-hosted misconfigs:
+            // a successful HTTP status with a non-JSON body usually means
+            // the request landed on an auth gateway (HTML login page) or
+            // a reverse proxy that rewrote the response.
+            let preview_bytes = &body[..body.len().min(200)];
+            let preview = String::from_utf8_lossy(preview_bytes);
+            Error::InvalidData(format!(
+                "JSON decode failed (status={}, content-type='{}'): {}; body preview: {:?}",
+                status, content_type, e, preview
+            ))
+        })
     }
 
     async fn send_empty(&self, request: RequestBuilder) -> Result<()> {
@@ -322,6 +376,45 @@ fn api_path_for_version(api_version: Option<&str>) -> String {
     }
 }
 
+// Cloud Confluence v2 returns object ids as strings; on-prem Server / DC
+// `/rest/api/space` returns them as JSON integers. Accept both so the
+// same code path works against either flavour.
+fn deserialize_id_string_or_int<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrInt {
+        String(String),
+        Int(i64),
+    }
+    Ok(match StringOrInt::deserialize(deserializer)? {
+        StringOrInt::String(s) => s,
+        StringOrInt::Int(i) => i.to_string(),
+    })
+}
+
+fn deserialize_opt_id_string_or_int<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrInt {
+        String(String),
+        Int(i64),
+    }
+    Ok(
+        Option::<StringOrInt>::deserialize(deserializer)?.map(|v| match v {
+            StringOrInt::String(s) => s,
+            StringOrInt::Int(i) => i.to_string(),
+        }),
+    )
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(bound(deserialize = "T: Deserialize<'de>"))]
 struct ConfluenceListResponse<T> {
@@ -351,6 +444,7 @@ struct ConfluenceLinks {
 
 #[derive(Debug, Deserialize)]
 struct ConfluenceSpace {
+    #[serde(deserialize_with = "deserialize_id_string_or_int")]
     id: String,
     key: String,
     name: String,
@@ -380,13 +474,22 @@ struct ConfluenceValueContainer {
 
 #[derive(Debug, Clone, Deserialize)]
 struct ConfluencePage {
+    #[serde(deserialize_with = "deserialize_id_string_or_int")]
     id: String,
     title: String,
     #[serde(default)]
     space: Option<ConfluenceSpaceRef>,
-    #[serde(default, rename = "spaceId")]
+    #[serde(
+        default,
+        rename = "spaceId",
+        deserialize_with = "deserialize_opt_id_string_or_int"
+    )]
     space_id: Option<String>,
-    #[serde(default, rename = "parentId")]
+    #[serde(
+        default,
+        rename = "parentId",
+        deserialize_with = "deserialize_opt_id_string_or_int"
+    )]
     parent_id: Option<String>,
     #[serde(default)]
     version: Option<ConfluenceVersion>,
@@ -406,7 +509,7 @@ struct ConfluencePage {
 
 #[derive(Debug, Clone, Deserialize)]
 struct ConfluenceSpaceRef {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_id_string_or_int")]
     id: Option<String>,
     #[serde(default)]
     key: Option<String>,
@@ -566,17 +669,69 @@ struct ConfluenceV2UpdatePayload<'a> {
     version: ConfluenceUpdateVersion,
 }
 
+/// Build a fully-qualified browse URL out of a relative path returned
+/// by Confluence (`_links.webui`).
+///
+/// Historically this honoured `_links.base` from the response over the
+/// caller-supplied `base_url`, on the theory that Confluence knows its
+/// own canonical host better than the client. In proxy mode that flips
+/// against us: if the upstream is fronted by a reverse proxy that
+/// rewrites `_links.base` to the proxy host (or worse, an internal
+/// hostname unreachable from the client), every link returned to the
+/// caller would point at the wrong place.
+///
+/// `instance_url` (DEV / ADR) is the single source of truth for the
+/// user-facing host; only fall back to `base_hint` when it shares the
+/// same host as `base_url` (a tail-path override like `/wiki` on
+/// Cloud) or when the upstream returned an absolute URL on the same
+/// host. Cross-host hints are ignored.
 fn join_link(base_url: &str, base_hint: Option<&str>, path: Option<&str>) -> Option<String> {
     let path = path?;
     if path.starts_with("http://") || path.starts_with("https://") {
         return Some(path.to_string());
     }
-    let base = base_hint.unwrap_or(base_url).trim_end_matches('/');
+    let base = base_url.trim_end_matches('/');
+    // `_links.base` is honoured only when it stays on the same host as
+    // `base_url` (i.e. is just a path-prefix variant, e.g. `/wiki`).
+    // Cross-host hints — including the proxy host upstream might
+    // advertise — are discarded so links always come out clickable.
+    let effective_base = match base_hint {
+        Some(hint) if same_host_prefix(base, hint) => hint.trim_end_matches('/'),
+        _ => base,
+    };
     if path.starts_with('/') {
-        Some(format!("{base}{path}"))
+        Some(format!("{effective_base}{path}"))
     } else {
-        Some(format!("{base}/{path}"))
+        Some(format!("{effective_base}/{path}"))
     }
+}
+
+/// True when `hint` is an absolute URL on the same scheme+host as
+/// `base_url`, or a relative path. Anything else (different host,
+/// different scheme) is treated as untrusted.
+fn same_host_prefix(base_url: &str, hint: &str) -> bool {
+    if hint.starts_with('/') || !hint.contains("://") {
+        // Relative — by definition same host.
+        return true;
+    }
+    let base_origin = url_origin(base_url);
+    let hint_origin = url_origin(hint);
+    match (base_origin, hint_origin) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Return the `scheme://host[:port]` part of a URL, lowercased, without
+/// any trailing slash. `None` if the input isn't a recognisable
+/// absolute URL.
+fn url_origin(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let host = rest.split('/').next()?;
+    if host.is_empty() {
+        return None;
+    }
+    Some(format!("{}://{}", scheme.to_ascii_lowercase(), host))
 }
 
 fn display_name(user: Option<&ConfluenceUser>) -> Option<String> {
@@ -1248,9 +1403,9 @@ impl ConfluenceClient {
                 let detail: ConfluencePage = client
                     .get_json_from_api(&client.page_api_path, &detail_path)
                     .await?;
-                let mut summary = map_page_summary(&client.base_url, &detail);
+                let mut summary = map_page_summary(&client.instance_url, &detail);
                 if summary.url.is_none() {
-                    summary.url = Some(format!("{}/pages/{}", client.base_url, detail.id));
+                    summary.url = Some(format!("{}/pages/{}", client.instance_url, detail.id));
                 }
                 Ok::<(usize, KbPage), Error>((index, summary))
             });
@@ -1314,7 +1469,7 @@ impl ConfluenceClient {
         let items = response
             .results
             .into_iter()
-            .map(|space| map_space(&self.base_url, space))
+            .map(|space| map_space(&self.instance_url, space))
             .collect::<Vec<_>>();
 
         Ok(ProviderResult::new(items).with_pagination(pagination))
@@ -1349,7 +1504,7 @@ impl ConfluenceClient {
         let mut items = response
             .results
             .iter()
-            .map(|page| map_page_summary(&self.base_url, page))
+            .map(|page| map_page_summary(&self.instance_url, page))
             .collect::<Vec<_>>();
 
         if let Some(search) = params.search.as_ref() {
@@ -1372,7 +1527,7 @@ impl ConfluenceClient {
             "content/{page_id}?expand=space,version,history.lastUpdated,body.storage,metadata.labels,ancestors"
         );
         let page: ConfluencePage = self.get_json(&path).await?;
-        let summary = map_page_summary(&self.base_url, &page);
+        let summary = map_page_summary(&self.instance_url, &page);
         let storage_content = page
             .body
             .as_ref()
@@ -1389,7 +1544,7 @@ impl ConfluenceClient {
                 title: ancestor.title.clone(),
                 space_key: None,
                 url: join_link(
-                    &self.base_url,
+                    &self.instance_url,
                     ancestor._links.base.as_deref(),
                     ancestor._links.webui.as_deref(),
                 ),
@@ -1435,7 +1590,7 @@ impl ConfluenceClient {
 
         let page: ConfluencePage = self.post_json("content", &payload).await?;
         self.add_labels(&page.id, &params.labels).await?;
-        Ok(map_page_summary(&self.base_url, &page))
+        Ok(map_page_summary(&self.instance_url, &page))
     }
 
     async fn update_page_v1(&self, params: UpdatePageParams) -> Result<KbPage> {
@@ -1512,7 +1667,7 @@ impl ConfluenceClient {
             self.sync_labels(&params.page_id, labels, &current_labels)
                 .await?;
         }
-        Ok(map_page_summary(&self.base_url, &page))
+        Ok(map_page_summary(&self.instance_url, &page))
     }
 
     async fn list_pages_v2(&self, params: ListPagesParams) -> Result<ProviderResult<KbPage>> {
@@ -1540,12 +1695,12 @@ impl ConfluenceClient {
             .results
             .iter()
             .map(|page| {
-                let mut summary = map_page_summary(&self.base_url, page);
+                let mut summary = map_page_summary(&self.instance_url, page);
                 if summary.space_key.is_none() {
                     summary.space_key = Some(params.space_key.clone());
                 }
                 if summary.url.is_none() {
-                    summary.url = Some(format!("{}/pages/{}", self.base_url, page.id));
+                    summary.url = Some(format!("{}/pages/{}", self.instance_url, page.id));
                 }
                 summary
             })
@@ -1569,14 +1724,14 @@ impl ConfluenceClient {
     async fn get_page_v2(&self, page_id: &str) -> Result<KbPageContent> {
         let path = format!("pages/{page_id}?body-format=storage&include-labels=true");
         let page: ConfluencePage = self.get_json_from_api(&self.page_api_path, &path).await?;
-        let mut summary = map_page_summary(&self.base_url, &page);
+        let mut summary = map_page_summary(&self.instance_url, &page);
         if summary.space_key.is_none()
             && let Some(space_id) = page.space_id.as_deref()
         {
             summary.space_key = self.resolve_space_key_by_id(space_id).await?;
         }
         if summary.url.is_none() {
-            summary.url = Some(format!("{}/pages/{}", self.base_url, page.id));
+            summary.url = Some(format!("{}/pages/{}", self.instance_url, page.id));
         }
 
         let storage_content = page.body.as_ref().and_then(body_value).unwrap_or_default();
@@ -1617,12 +1772,12 @@ impl ConfluenceClient {
             .post_json_to_api(&self.page_api_path, "pages", &payload)
             .await?;
         self.add_labels(&page.id, &params.labels).await?;
-        let mut summary = map_page_summary(&self.base_url, &page);
+        let mut summary = map_page_summary(&self.instance_url, &page);
         if summary.space_key.is_none() {
             summary.space_key = Some(params.space_key);
         }
         if summary.url.is_none() {
-            summary.url = Some(format!("{}/pages/{}", self.base_url, page.id));
+            summary.url = Some(format!("{}/pages/{}", self.instance_url, page.id));
         }
         Ok(summary)
     }
@@ -1710,12 +1865,12 @@ impl ConfluenceClient {
             self.sync_labels(&params.page_id, labels, &current_labels)
                 .await?;
         }
-        let mut summary = map_page_summary(&self.base_url, &page);
+        let mut summary = map_page_summary(&self.instance_url, &page);
         if summary.space_key.is_none() {
             summary.space_key = self.resolve_space_key_by_id(space_id).await?;
         }
         if summary.url.is_none() {
-            summary.url = Some(format!("{}/pages/{}", self.base_url, page.id));
+            summary.url = Some(format!("{}/pages/{}", self.instance_url, page.id));
         }
         Ok(summary)
     }
@@ -1742,7 +1897,7 @@ impl KnowledgeBaseProvider for ConfluenceClient {
             let items = response
                 .results
                 .into_iter()
-                .map(|space| map_space(&self.base_url, space))
+                .map(|space| map_space(&self.instance_url, space))
                 .collect::<Vec<_>>();
 
             Ok(ProviderResult::new(items).with_pagination(pagination))
@@ -1825,7 +1980,7 @@ impl KnowledgeBaseProvider for ConfluenceClient {
         let items = response
             .results
             .iter()
-            .map(|page| map_page_summary(&self.base_url, page))
+            .map(|page| map_page_summary(&self.instance_url, page))
             .collect::<Vec<_>>();
 
         Ok(ProviderResult::new(items).with_pagination(pagination))
@@ -1871,6 +2026,94 @@ mod tests {
             client.space_api_url("space"),
             "https://wiki.example.com/api/v2/space"
         );
+    }
+
+    #[tokio::test]
+    async fn with_instance_url_keeps_browse_links_on_real_host_in_proxy_mode() {
+        // The proxy use case: API requests go through the proxy host,
+        // but `_links.webui` / `/pages/<id>` URLs returned to callers
+        // must point at the real Confluence so they remain clickable.
+        let api = MockServer::start();
+        let _mock = api.mock(|when, then| {
+            when.method(GET).path("/rest/api/space");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{"results":[{"id":"42","key":"OPS","name":"Ops","type":"global","_links":{"webui":"/display/OPS"}}],"start":0,"limit":100,"size":1,"_links":{}}"#,
+                );
+        });
+
+        let client = ConfluenceClient::new(api.base_url(), ConfluenceAuth::bearer("t"))
+            .with_proxy(HashMap::new())
+            .with_instance_url("https://wiki.example.com");
+
+        assert_eq!(client.instance_url(), "https://wiki.example.com");
+        assert_ne!(client.base_url(), client.instance_url());
+
+        let resp = client.get_spaces().await.unwrap();
+        let url = resp.items[0].url.as_deref().unwrap_or_default();
+        assert!(
+            url.starts_with("https://wiki.example.com"),
+            "browse link must point at the real instance, not the proxy. got: {url}"
+        );
+    }
+
+    #[tokio::test]
+    async fn with_instance_url_defaults_to_base_url_when_unset() {
+        let client =
+            ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("t"));
+        assert_eq!(client.base_url(), client.instance_url());
+        assert_eq!(client.instance_url(), "https://wiki.example.com");
+    }
+
+    #[tokio::test]
+    async fn get_spaces_accepts_integer_id_from_self_hosted_server() {
+        // Cloud Confluence v2 returns `"id": "<string>"`; on-prem Server / DC
+        // `/rest/api/space` returns it as a JSON integer. The client must
+        // accept both flavours without breaking decoding.
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(GET).path("/rest/api/space");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{"results":[{"id":190119946,"key":"1LS","name":"1 line support","type":"global","_links":{"webui":"/display/1LS"}}],"start":0,"limit":100,"size":1,"_links":{}}"#,
+                );
+        });
+
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
+
+        let response = client.get_spaces().await.unwrap();
+        assert_eq!(response.items.len(), 1);
+        assert_eq!(response.items[0].id, "190119946");
+        assert_eq!(response.items[0].key, "1LS");
+    }
+
+    #[tokio::test]
+    async fn send_json_decode_failure_surfaces_status_and_body_preview() {
+        // When a self-hosted reverse proxy or auth gateway rewrites a 200
+        // response to HTML, the decode failure has to surface enough
+        // diagnostic context (status, content-type, body preview) so the
+        // caller can tell it's a misconfig rather than a tool routing
+        // problem.
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(GET).path("/rest/api/space");
+            then.status(200)
+                .header("content-type", "text/html")
+                .body("<html><body>Login required</body></html>");
+        });
+
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"));
+
+        let err = client.get_spaces().await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("JSON decode failed"), "got: {msg}");
+        assert!(msg.contains("status=200"), "got: {msg}");
+        assert!(msg.contains("text/html"), "got: {msg}");
+        assert!(msg.contains("Login required"), "got: {msg}");
     }
 
     #[tokio::test]
@@ -1986,6 +2229,31 @@ mod tests {
     #[tokio::test]
     async fn get_spaces_maps_confluence_spaces() {
         let server = MockServer::start();
+        // `_links.base` echoes the same origin as the client's base URL —
+        // the realistic Cloud / Server case where Confluence advertises
+        // its own host back to us. In that situation the hint is
+        // honoured verbatim (it may carry a path prefix like `/wiki`).
+        let server_origin = server.base_url();
+        let body = format!(
+            r#"{{
+                "results": [
+                    {{
+                        "id": "123",
+                        "key": "ENG",
+                        "name": "Engineering",
+                        "type": "global",
+                        "status": "current",
+                        "description": {{ "plain": {{ "value": "Team docs" }} }},
+                        "_links": {{ "base": "{server_origin}", "webui": "/spaces/ENG/overview" }}
+                    }}
+                ],
+                "start": 0,
+                "limit": 100,
+                "size": 1,
+                "totalSize": 1,
+                "_links": {{}}
+            }}"#,
+        );
         let mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/rest/api/space")
@@ -1993,26 +2261,7 @@ mod tests {
                 .query_param("type", "global,personal");
             then.status(200)
                 .header("content-type", "application/json")
-                .body(
-                    r#"{
-                        "results": [
-                            {
-                                "id": "123",
-                                "key": "ENG",
-                                "name": "Engineering",
-                                "type": "global",
-                                "status": "current",
-                                "description": { "plain": { "value": "Team docs" } },
-                                "_links": { "base": "https://wiki.example.com", "webui": "/spaces/ENG/overview" }
-                            }
-                        ],
-                        "start": 0,
-                        "limit": 100,
-                        "size": 1,
-                        "totalSize": 1,
-                        "_links": {}
-                    }"#,
-                );
+                .body(&body);
         });
 
         let client =
@@ -2026,9 +2275,58 @@ mod tests {
         assert_eq!(result.items[0].description.as_deref(), Some("Team docs"));
         assert_eq!(
             result.items[0].url.as_deref(),
-            Some("https://wiki.example.com/spaces/ENG/overview")
+            Some(format!("{server_origin}/spaces/ENG/overview").as_str())
         );
         assert_eq!(result.pagination.unwrap().total, Some(1));
+    }
+
+    #[tokio::test]
+    async fn map_link_ignores_cross_host_links_base_in_proxy_mode() {
+        // Regression for Copilot review on PR #286: when Confluence is
+        // fronted by a reverse proxy that rewrites `_links.base` to the
+        // proxy host (or to an internal hostname unreachable from the
+        // client), the browse URL we return must still resolve against
+        // the caller-supplied `instance_url`, not the misleading hint.
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "results": [
+                            {
+                                "id": "123",
+                                "key": "OPS",
+                                "name": "Ops",
+                                "type": "global",
+                                "_links": {
+                                    "base": "https://internal-proxy.local",
+                                    "webui": "/display/OPS"
+                                }
+                            }
+                        ],
+                        "start": 0,
+                        "limit": 100,
+                        "size": 1,
+                        "_links": {}
+                    }"#,
+                );
+        });
+
+        let client = ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("t"))
+            .with_instance_url("https://wiki.example.com");
+        let result = client.get_spaces().await.unwrap();
+
+        let url = result.items[0].url.as_deref().unwrap_or_default();
+        assert!(
+            url.starts_with("https://wiki.example.com"),
+            "cross-host `_links.base` must be ignored in favour of \
+             `instance_url`. got: {url}"
+        );
     }
 
     #[tokio::test]

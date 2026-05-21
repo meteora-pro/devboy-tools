@@ -9,6 +9,7 @@
 #![deny(rustdoc::invalid_html_tags)]
 mod client;
 pub mod enricher;
+pub mod liveness;
 pub mod metadata;
 mod types;
 

@@ -1,0 +1,78 @@
+{
+  "$schema": "../schema/v1.json",
+  "schema_version": 1,
+  "provider_id": "langfuse",
+  "display_name": "Langfuse",
+  "description": "LLM observability platform — issues credentials in PAIRS: a public key (`pk-lf-...`) used as the basic-auth username and a secret key (`sk-lf-...`) used as the basic-auth password. Both must be present for the SDK to authenticate; rotating one without the other breaks ingest. Self-hosted Langfuse uses the same shapes; only the host URL changes.",
+  "variants": [
+    {
+      "id": "langfuse-public-key",
+      "display_name": "Langfuse public key",
+      "description": "Pairs with the secret key for basic auth against `/api/public/*` endpoints. Safe to expose in client-side code (it identifies the project, does not authorise writes alone) but the framework still treats it as a secret because rotating it requires the matching secret-key rotation.",
+      "format_regex": "^pk-lf-[A-Za-z0-9-]{36}$",
+      "format_hint": "starts with `pk-lf-`, then 36 chars [A-Za-z0-9-] (uuid-shaped)",
+      "retrieval": {
+        "console_url": "https://cloud.langfuse.com/project/_/settings/api-keys",
+        "docs_url": "https://langfuse.com/docs/api-and-data-platform/features/public-api",
+        "steps": [
+          "Open https://cloud.langfuse.com (or your self-hosted host)",
+          "Pick the project from the top-left switcher",
+          "Settings → API keys → Create new keys",
+          "Copy BOTH the public and secret key — the secret is shown once, the public can be re-fetched"
+        ],
+        "notes": "Langfuse rotates the pair atomically — clicking Create generates a new (public, secret) tuple together. Update both env vars in lockstep when you rotate."
+      },
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "guide_url": "https://langfuse.com/faq/all/api-keys",
+        "notes": "Langfuse credentials rotate as a PAIR. Click Create new keys to mint a fresh (public, secret) tuple, update BOTH LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY in lockstep, then delete the old pair. The old pair keeps working until you delete it — that is your manual overlap window. Rotating only one half breaks ingest with a 401."
+      }
+    },
+    {
+      "id": "langfuse-secret-key",
+      "display_name": "Langfuse secret key",
+      "description": "Pairs with the public key for basic auth. Treat as a real password — leaking it lets anyone write to your Langfuse project's traces.",
+      "format_regex": "^sk-lf-[A-Za-z0-9-]{36}$",
+      "format_hint": "starts with `sk-lf-`, then 36 chars [A-Za-z0-9-] (uuid-shaped)",
+      "retrieval": {
+        "console_url": "https://cloud.langfuse.com/project/_/settings/api-keys",
+        "docs_url": "https://langfuse.com/docs/api-and-data-platform/features/public-api",
+        "steps": [
+          "Open https://cloud.langfuse.com (or your self-hosted host)",
+          "Pick the project from the top-left switcher",
+          "Settings → API keys → Create new keys",
+          "Copy BOTH the public and secret key — the secret is shown once and CANNOT be recovered"
+        ],
+        "notes": "Lost secret keys cannot be re-displayed — you must rotate (which generates a new pair, invalidating the old public key too). Ingest stops until both new keys land in the consumer."
+      },
+      "liveness": {
+        "kind": "http",
+        "url": "https://cloud.langfuse.com/api/public/health",
+        "method": "GET",
+        "auth": { "kind": "basic-password" },
+        "expect_status": 200
+      },
+      "rotation": {
+        "method": "manual",
+        "every_days": 90,
+        "guide_url": "https://langfuse.com/faq/all/api-keys",
+        "notes": "The secret key rotates only as part of the (public, secret) pair — see the public-key variant for the full procedure. Never rotate the secret alone: the matching public key is invalidated at the same time, so a half-rotation is a guaranteed 401."
+      }
+    }
+  ],
+  "env_var_patterns": [
+    { "matches": ["LANGFUSE_PUBLIC_KEY"], "variant": "langfuse-public-key" },
+    { "matches": ["LANGFUSE_SECRET_KEY"], "variant": "langfuse-secret-key" },
+    { "matches": ["E2E_LANGFUSE_PUBLIC_KEY"], "variant": "langfuse-public-key", "scope": "personal" },
+    { "matches": ["E2E_LANGFUSE_SECRET_KEY"], "variant": "langfuse-secret-key", "scope": "personal" }
+  ],
+  "env_var_skip": [
+    "LANGFUSE_HOST",
+    "LANGFUSE_BASEURL",
+    "LANGFUSE_BASE_URL",
+    "LANGFUSE_*_URL",
+    "LANGFUSE_RELEASE",
+    "LANGFUSE_SAMPLE_RATE"
+  ]
+}

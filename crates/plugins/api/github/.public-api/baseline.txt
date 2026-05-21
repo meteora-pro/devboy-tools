@@ -14,6 +14,7 @@ impl core::marker::Unpin for devboy_github::enricher::GitHubSchemaEnricher
 impl core::marker::UnsafeUnpin for devboy_github::enricher::GitHubSchemaEnricher
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::enricher::GitHubSchemaEnricher
 impl core::panic::unwind_safe::UnwindSafe for devboy_github::enricher::GitHubSchemaEnricher
+pub mod devboy_github::liveness
 pub struct devboy_github::CreateCommentRequest
 pub devboy_github::CreateCommentRequest::body: alloc::string::String
 impl core::clone::Clone for devboy_github::CreateCommentRequest
@@ -106,8 +107,13 @@ impl core::panic::unwind_safe::RefUnwindSafe for devboy_github::GitHubBranchRef
 impl core::panic::unwind_safe::UnwindSafe for devboy_github::GitHubBranchRef
 pub struct devboy_github::GitHubClient
 impl devboy_github::GitHubClient
+pub fn devboy_github::GitHubClient::base_url(&self) -> &str
+pub fn devboy_github::GitHubClient::http_client(&self) -> &reqwest::async_impl::client::Client
 pub fn devboy_github::GitHubClient::new(owner: impl core::convert::Into<alloc::string::String>, repo: impl core::convert::Into<alloc::string::String>, token: secrecy::SecretString) -> Self
 pub fn devboy_github::GitHubClient::with_base_url(base_url: impl core::convert::Into<alloc::string::String>, owner: impl core::convert::Into<alloc::string::String>, repo: impl core::convert::Into<alloc::string::String>, token: secrecy::SecretString) -> Self
+impl devboy_core::liveness::LivenessProbe for devboy_github::GitHubClient
+pub fn devboy_github::GitHubClient::provider_name(&self) -> &str
+pub fn devboy_github::GitHubClient::test<'life0, 'life1, 'async_trait>(&'life0 self, token: &'life1 secrecy::SecretString) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::liveness::LivenessResult>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 impl devboy_core::provider::IssueProvider for devboy_github::GitHubClient
 pub fn devboy_github::GitHubClient::add_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, issue_key: &'life1 str, body: &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Comment>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn devboy_github::GitHubClient::asset_capabilities(&self) -> devboy_core::asset::AssetCapabilities

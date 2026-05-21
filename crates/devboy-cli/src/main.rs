@@ -2,7 +2,16 @@
 
 mod agents_cmd;
 mod doctor;
+mod hooks_cmd;
 mod onboard_cmd;
+mod secrets_agent;
+mod secrets_agent_service;
+mod secrets_cmd;
+mod secrets_migrate;
+mod secrets_rotate;
+mod secrets_setup;
+mod secrets_ui;
+mod secrets_validate;
 mod skills_cmd;
 mod update_check;
 mod upgrade;
@@ -113,6 +122,14 @@ struct Cli {
     /// Enable verbose output
     #[arg(short, long, global = true)]
     verbose: bool,
+
+    /// Force CI routing mode for the whole invocation. Equivalent
+    /// to setting `DEVBOY_CI=1`. CI mode promotes the env-store
+    /// source to the front of the chain, skips `NotInstalled`
+    /// sources silently, and refuses interactive unlock prompts
+    /// (local-vault PIN, biometric). See ADR-021 §8.
+    #[arg(long, global = true)]
+    ci: bool,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -293,6 +310,18 @@ enum Commands {
     /// First-run setup: detect your AI agent and install the right skills bundle
     Onboard(onboard_cmd::OnboardArgs),
 
+    /// Discover and inspect declared secrets (metadata only — values are never shown)
+    Secrets {
+        #[command(subcommand)]
+        command: secrets_cmd::SecretsCommands,
+    },
+
+    /// Manage git hooks installed by devboy (e.g. the secret-alias pre-commit lint, ADR-020 §5)
+    Hooks {
+        #[command(subcommand)]
+        command: hooks_cmd::HooksCommands,
+    },
+
     /// Write to a skill's self-feedback session trace (ADR-015)
     Trace {
         #[command(subcommand)]
@@ -312,6 +341,12 @@ enum Commands {
         /// Run only the specified check IDs (comma-delimited or repeated)
         #[arg(long, value_delimiter = ',')]
         checks: Vec<String>,
+
+        /// Shorthand for `--checks context-secrets` — focuses doctor on
+        /// the secret-framework checks (manifest gating, missing
+        /// values, format validation, source health). See ADR-023 §3.7.
+        #[arg(long, conflicts_with = "checks")]
+        secrets: bool,
     },
 
     /// Upgrade devboy to the latest version
@@ -797,6 +832,16 @@ async fn main() -> Result<()> {
         EnvFilter::new("info")
     };
 
+    // ADR-021 §8: detect CI mode early. The `--ci` flag and
+    // `DEVBOY_CI=1` are explicit opt-ins; heuristic signals
+    // (`CI`, `GITLAB_CI`, …) only emit a notice — they never
+    // flip routing on their own. The notice goes to stderr so
+    // it does not pollute scriptable subcommands' stdout.
+    let ci_detection = devboy_storage::detect_ci_mode(cli.ci, None);
+    if let Some(notice) = ci_detection.doctor_notice() {
+        eprintln!("warning: {notice}");
+    }
+
     // stdout is a transport-layer channel for `devboy mcp` (JSON-RPC messages) and
     // any subcommand a script is expected to parse (`tools call` → MCP tool-result
     // JSON, `tools list` → plain-text output users pipe to grep/sed, `format-pipeline`
@@ -948,6 +993,13 @@ async fn main() -> Result<()> {
             Some(Commands::Skills { command }) => {
                 skills_cmd::handle(command).await?;
             }
+            Some(Commands::Secrets { command }) => {
+                secrets_cmd::handle(command).await?;
+            }
+
+            Some(Commands::Hooks { command }) => {
+                hooks_cmd::handle(command)?;
+            }
 
             Some(Commands::Agents { command }) => {
                 agents_cmd::handle(command)?;
@@ -964,8 +1016,12 @@ async fn main() -> Result<()> {
             Some(Commands::Doctor {
                 format,
                 list_checks,
-                checks,
+                mut checks,
+                secrets,
             }) => {
+                if secrets {
+                    checks.push("context-secrets".to_string());
+                }
                 let exit_code = doctor::handle_doctor_command(DoctorOptions {
                     verbose: cli.verbose,
                     output_format: format.map(Into::into),

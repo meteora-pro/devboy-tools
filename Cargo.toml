@@ -9,6 +9,13 @@ members = [
     "crates/devboy-mcp",
     "crates/devboy-cli",
     "crates/devboy-skills",
+    # Secret framework crates (epic #247 — ADR-020/021/023)
+    "crates/devboy-vault-crypto",
+    "crates/devboy-secret-patterns",
+    "crates/devboy-secrets-agent",
+    "crates/devboy-secrets-ui",
+    "crates/devboy-secrets-ui-bin",
+    "crates/devboy-token-catalog",
     # API plugins
     "crates/plugins/api/gitlab",
     "crates/plugins/api/github",
@@ -18,6 +25,13 @@ members = [
     "crates/plugins/api/fireflies",
     "crates/plugins/api/slack",
     "crates/plugins/api/telegram",
+    # Secret-source plugins (epic #247 — ADR-021)
+    "crates/plugins/secrets/keychain",
+    "crates/plugins/secrets/local-vault",
+    "crates/plugins/secrets/1password",
+    "crates/plugins/secrets/vault",
+    "crates/plugins/secrets/env-store",
+    "crates/plugins/secrets/kdbx",
     # Pipeline plugins
     "crates/plugins/format-pipeline",
     # Research eval tools
@@ -25,7 +39,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.28.0"
+version = "0.29.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/meteora-pro/devboy-tools"
@@ -85,6 +99,24 @@ tempfile = "3.15"
 # Asset management
 sha2 = "0.10"
 
+# Regular expressions (used by secret patterns and provider plugins)
+regex = "1"
+
+# Base64 encoding (used by the vault file format for binary payloads in TOML)
+base64 = "0.22"
+
+# AEAD primitives for the local vault (ADR-023 §3.1 — XChaCha20-Poly1305).
+# `getrandom` is the OS-level CSPRNG used to source per-entry nonces.
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }
+getrandom = { version = "0.2", features = ["std"] }
+
+# Argon2id KDF for the local vault's passphrase envelope (ADR-023 §3.2).
+argon2 = "0.5"
+
+# BIP39 mnemonic + HKDF for the local vault's recovery envelope (ADR-023 §3.2).
+bip39 = "2"
+hkdf = "0.12"
+
 # Observability (optional)
 sentry = { version = "0.35", default-features = false, features = ["rustls", "reqwest", "tracing", "panic", "backtrace", "contexts"] }
 sentry-tracing = "0.35"
@@ -95,21 +127,34 @@ secrecy = { version = "0.10", features = ["serde"] }
 # Internal workspace crates — `version` lets crates.io resolve them when
 # the package is published; `path` keeps local builds resolving in-tree.
 # Keep `version` synced with `[workspace.package].version`.
-devboy-core = { version = "0.28.0", path = "crates/devboy-core" }
-devboy-storage = { version = "0.28.0", path = "crates/devboy-storage" }
-devboy-assets = { version = "0.28.0", path = "crates/devboy-assets" }
-devboy-executor = { version = "0.28.0", path = "crates/devboy-executor" }
-devboy-mcp = { version = "0.28.0", path = "crates/devboy-mcp" }
-devboy-skills = { version = "0.28.0", path = "crates/devboy-skills" }
-devboy-format-pipeline = { version = "0.28.0", path = "crates/plugins/format-pipeline" }
-devboy-gitlab = { version = "0.28.0", path = "crates/plugins/api/gitlab" }
-devboy-github = { version = "0.28.0", path = "crates/plugins/api/github" }
-devboy-clickup = { version = "0.28.0", path = "crates/plugins/api/clickup" }
-devboy-jira = { version = "0.28.0", path = "crates/plugins/api/jira" }
-devboy-confluence = { version = "0.28.0", path = "crates/plugins/api/confluence" }
-devboy-fireflies = { version = "0.28.0", path = "crates/plugins/api/fireflies" }
-devboy-slack = { version = "0.28.0", path = "crates/plugins/api/slack" }
-devboy-telegram = { version = "0.28.0", path = "crates/plugins/api/telegram" }
+devboy-core = { version = "0.29.0", path = "crates/devboy-core" }
+devboy-storage = { version = "0.29.0", path = "crates/devboy-storage" }
+devboy-token-catalog = { version = "0.29.0", path = "crates/devboy-token-catalog" }
+devboy-assets = { version = "0.29.0", path = "crates/devboy-assets" }
+devboy-executor = { version = "0.29.0", path = "crates/devboy-executor" }
+devboy-mcp = { version = "0.29.0", path = "crates/devboy-mcp" }
+devboy-skills = { version = "0.29.0", path = "crates/devboy-skills" }
+devboy-format-pipeline = { version = "0.29.0", path = "crates/plugins/format-pipeline" }
+devboy-gitlab = { version = "0.29.0", path = "crates/plugins/api/gitlab" }
+devboy-github = { version = "0.29.0", path = "crates/plugins/api/github" }
+devboy-clickup = { version = "0.29.0", path = "crates/plugins/api/clickup" }
+devboy-jira = { version = "0.29.0", path = "crates/plugins/api/jira" }
+devboy-confluence = { version = "0.29.0", path = "crates/plugins/api/confluence" }
+devboy-fireflies = { version = "0.29.0", path = "crates/plugins/api/fireflies" }
+devboy-slack = { version = "0.29.0", path = "crates/plugins/api/slack" }
+devboy-telegram = { version = "0.29.0", path = "crates/plugins/api/telegram" }
+
+# Secret framework crates (epic #247)
+devboy-vault-crypto = { version = "0.29.0", path = "crates/devboy-vault-crypto" }
+devboy-secret-patterns = { version = "0.29.0", path = "crates/devboy-secret-patterns" }
+devboy-secrets-agent = { version = "0.29.0", path = "crates/devboy-secrets-agent" }
+devboy-secrets-ui = { version = "0.29.0", path = "crates/devboy-secrets-ui" }
+devboy-secret-keychain = { version = "0.29.0", path = "crates/plugins/secrets/keychain" }
+devboy-secret-local-vault = { version = "0.29.0", path = "crates/plugins/secrets/local-vault" }
+devboy-secret-1password = { version = "0.29.0", path = "crates/plugins/secrets/1password" }
+devboy-secret-vault = { version = "0.29.0", path = "crates/plugins/secrets/vault" }
+devboy-secret-env-store = { version = "0.29.0", path = "crates/plugins/secrets/env-store" }
+devboy-secret-kdbx = { version = "0.29.0", path = "crates/plugins/secrets/kdbx" }
 
 [profile.release]
 lto = true

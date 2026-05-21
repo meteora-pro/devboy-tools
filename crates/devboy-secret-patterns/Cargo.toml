@@ -1,0 +1,31 @@
+[package]
+name = "devboy-secret-patterns"
+description = "Catalogue of secret types (regex + retrieval URL + rotation hints) shared by the secret store, OTLP sanitizer, and OTEL scan tools (ADR-023 §3.6)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["devboy", "secrets", "patterns", "regex", "leak-detection"]
+categories = ["authentication", "development-tools"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+toml.workspace = true
+regex.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

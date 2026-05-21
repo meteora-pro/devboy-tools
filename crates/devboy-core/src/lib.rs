@@ -26,11 +26,16 @@
 #![deny(rustdoc::private_intra_doc_links)]
 #![deny(rustdoc::invalid_html_tags)]
 pub mod agents;
+pub mod alias;
 pub mod asset;
 pub mod config;
 pub mod enricher;
 pub mod error;
+pub mod liveness;
 pub mod provider;
+pub mod secret_approval;
+
+pub use liveness::{LivenessProbe, LivenessResult, LivenessStatus};
 pub mod remote_config;
 #[cfg(feature = "sentry")]
 pub mod sentry_integration;

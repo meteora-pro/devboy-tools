@@ -19,12 +19,52 @@ use crate::types::{
     GitLabMergeRequestChanges, GitLabNote, GitLabNotePosition, GitLabUser, UpdateIssueRequest,
 };
 
+/// How to send the token to GitLab.
+///
+/// GitLab self-hosted accepts two distinct auth headers depending on
+/// token type:
+/// - **PRIVATE-TOKEN** — Personal Access Tokens (`glpat-*`), OAuth
+///   Application Secrets used as PAT (`gloas-*`), Deploy Tokens
+///   (`gldt-*`), Runner Authentication Tokens (`glrt-*`).
+/// - **Authorization: Bearer** — OAuth access_tokens issued by the
+///   `/oauth/token` Doorkeeper endpoint (no documented prefix).
+///
+/// Sending an OAuth access_token via `PRIVATE-TOKEN` returns `401
+/// Unauthorized`; sending a PAT via `Authorization: Bearer` works
+/// against `gitlab.com` but is rejected by some self-hosted setups.
+/// `AuthScheme::Auto` keeps the historical behaviour of detecting
+/// the scheme by the well-known prefix; `PrivateToken` / `Bearer`
+/// let the caller force the choice when they already know the
+/// token's origin.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AuthScheme {
+    /// Detect by token prefix (default — backward compatible).
+    #[default]
+    Auto,
+    /// Force `PRIVATE-TOKEN: <token>`.
+    PrivateToken,
+    /// Force `Authorization: Bearer <token>`.
+    Bearer,
+}
+
 pub struct GitLabClient {
     base_url: String,
     project_id: String,
     token: SecretString,
+    auth_scheme: AuthScheme,
     proxy_headers: Option<std::collections::HashMap<String, String>>,
     client: reqwest::Client,
+}
+
+/// Heuristic — does this token look like a GitLab Personal Access
+/// Token (or similar) that goes via `PRIVATE-TOKEN`? Anything else
+/// (notably OAuth access_tokens) is assumed to need
+/// `Authorization: Bearer`.
+fn is_pat_prefix(token: &str) -> bool {
+    token.starts_with("glpat-")
+        || token.starts_with("gloas-")
+        || token.starts_with("gldt-")
+        || token.starts_with("glrt-")
 }
 
 impl GitLabClient {
@@ -43,9 +83,33 @@ impl GitLabClient {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             project_id: project_id.into(),
             token,
+            auth_scheme: AuthScheme::default(),
             proxy_headers: None,
             client: reqwest::Client::new(),
         }
+    }
+
+    /// Override the auth header scheme. By default `AuthScheme::Auto`
+    /// is used (detect by GitLab token prefix). Use this when the
+    /// caller already knows whether the token is a PAT or an OAuth
+    /// access_token — avoids relying on prefix heuristics for tokens
+    /// from non-standard GitLab distributions.
+    pub fn with_auth_scheme(mut self, scheme: AuthScheme) -> Self {
+        self.auth_scheme = scheme;
+        self
+    }
+
+    /// Base URL the client was configured against. Public so the
+    /// liveness probe (and any future sibling module) can build
+    /// its own requests without re-walking the constructor.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Borrow the underlying [`reqwest::Client`]. Same rationale as
+    /// [`Self::base_url`].
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.client
     }
 
     /// Configure proxy mode with extra headers added to every request.
@@ -67,7 +131,17 @@ impl GitLabClient {
                 req = req.header(key.as_str(), value.as_str());
             }
         } else {
-            req = req.header("PRIVATE-TOKEN", self.token.expose_secret());
+            let tok = self.token.expose_secret();
+            let use_bearer = match self.auth_scheme {
+                AuthScheme::Bearer => true,
+                AuthScheme::PrivateToken => false,
+                AuthScheme::Auto => !is_pat_prefix(tok),
+            };
+            if use_bearer {
+                req = req.header("Authorization", format!("Bearer {tok}"));
+            } else {
+                req = req.header("PRIVATE-TOKEN", tok);
+            }
         }
         req
     }
@@ -1926,7 +2000,7 @@ mod tests {
         }
 
         fn create_test_client(server: &MockServer) -> GitLabClient {
-            GitLabClient::with_base_url(server.base_url(), "123", token("test-token"))
+            GitLabClient::with_base_url(server.base_url(), "123", token("glpat-test-token"))
         }
 
         #[tokio::test]
@@ -1938,7 +2012,7 @@ mod tests {
                     .path("/api/v4/projects/123/issues")
                     .query_param("state", "opened")
                     .query_param("per_page", "10")
-                    .header("PRIVATE-TOKEN", "test-token");
+                    .header("PRIVATE-TOKEN", "glpat-test-token");
                 then.status(200).json_body(serde_json::json!([
                     {
                         "id": 1,
@@ -1985,7 +2059,7 @@ mod tests {
             server.mock(|when, then| {
                 when.method(GET)
                     .path("/api/v4/projects/123/issues/42")
-                    .header("PRIVATE-TOKEN", "test-token");
+                    .header("PRIVATE-TOKEN", "glpat-test-token");
                 then.status(200).json_body(serde_json::json!({
                     "id": 1,
                     "iid": 42,
@@ -2018,7 +2092,7 @@ mod tests {
             server.mock(|when, then| {
                 when.method(POST)
                     .path("/api/v4/projects/123/issues")
-                    .header("PRIVATE-TOKEN", "test-token")
+                    .header("PRIVATE-TOKEN", "glpat-test-token")
                     .body_includes("\"title\":\"New Issue\"")
                     .body_includes("\"labels\":\"bug,feature\"");
                 then.status(201).json_body(serde_json::json!({
@@ -2058,7 +2132,7 @@ mod tests {
             server.mock(|when, then| {
                 when.method(PUT)
                     .path("/api/v4/projects/123/issues/42")
-                    .header("PRIVATE-TOKEN", "test-token")
+                    .header("PRIVATE-TOKEN", "glpat-test-token")
                     .body_includes("\"state_event\":\"close\"");
                 then.status(200).json_body(serde_json::json!({
                     "id": 1,
@@ -2095,7 +2169,7 @@ mod tests {
             server.mock(|when, then| {
                 when.method(GET)
                     .path("/api/v4/projects/123/merge_requests")
-                    .header("PRIVATE-TOKEN", "test-token");
+                    .header("PRIVATE-TOKEN", "glpat-test-token");
                 then.status(200).json_body(serde_json::json!([
                     {
                         "id": 1,
@@ -2147,7 +2221,7 @@ mod tests {
             server.mock(|when, then| {
                 when.method(GET)
                     .path("/api/v4/projects/123/merge_requests/50/discussions")
-                    .header("PRIVATE-TOKEN", "test-token");
+                    .header("PRIVATE-TOKEN", "glpat-test-token");
                 then.status(200).json_body(serde_json::json!([
                     {
                         "id": "disc-1",
@@ -2213,7 +2287,7 @@ mod tests {
             server.mock(|when, then| {
                 when.method(GET)
                     .path("/api/v4/projects/123/merge_requests/50/changes")
-                    .header("PRIVATE-TOKEN", "test-token");
+                    .header("PRIVATE-TOKEN", "glpat-test-token");
                 then.status(200).json_body(serde_json::json!({
                     "changes": [
                         {
@@ -2254,7 +2328,7 @@ mod tests {
             server.mock(|when, then| {
                 when.method(POST)
                     .path("/api/v4/projects/123/merge_requests/50/notes")
-                    .header("PRIVATE-TOKEN", "test-token")
+                    .header("PRIVATE-TOKEN", "glpat-test-token")
                     .body_includes("\"body\":\"General comment\"");
                 then.status(201).json_body(serde_json::json!({
                     "id": 300,
@@ -2366,7 +2440,7 @@ mod tests {
             server.mock(|when, then| {
                 when.method(POST)
                     .path("/api/v4/projects/123/merge_requests/50/discussions/disc-1/notes")
-                    .header("PRIVATE-TOKEN", "test-token")
+                    .header("PRIVATE-TOKEN", "glpat-test-token")
                     .body_includes("\"body\":\"Thread reply\"");
                 then.status(201).json_body(serde_json::json!({
                     "id": 401,
@@ -2403,7 +2477,7 @@ mod tests {
             server.mock(|when, then| {
                 when.method(GET)
                     .path("/api/v4/user")
-                    .header("PRIVATE-TOKEN", "test-token");
+                    .header("PRIVATE-TOKEN", "glpat-test-token");
                 then.status(200).json_body(serde_json::json!({
                     "id": 42,
                     "username": "current_user",

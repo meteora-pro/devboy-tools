@@ -1,0 +1,4147 @@
+//! `devboy-secrets-ui` — native GUI window for the
+//! devboy-tools secrets inventory.
+//!
+//! This binary is split out of the main `devboy` CLI so the
+//! eframe/egui rendering stack (eframe + egui + winit +
+//! glow/wayland/x11 + skrifa fonts + image decoders) is not
+//! linked into the CLI on machines that never open the GUI
+//! (CI runners doing `secrets list` / `secrets validate`,
+//! mostly). See ADR-023 §3.4.
+//!
+//! Invocation contract (the `devboy` CLI launches us as a
+//! subprocess; humans normally don't call this directly):
+//!
+//! ```text
+//! devboy-secrets-ui [--provision <PATH>]
+//! ```
+//!
+//! `--provision <PATH>` opens the inventory window with the
+//! provision dialog pre-armed on `<PATH>` — same UX as
+//! `devboy secrets ui --gui --provision <PATH>` was before
+//! the split.
+
+use anyhow::Result;
+use clap::Parser;
+
+mod catalog_metadata;
+#[cfg(feature = "dev-screenshot")]
+mod screenshot;
+// Multi-wallet types (K25 + K26). Some helpers are wired up
+// incrementally in K27-K30; the loader + name helper land
+// here, and `WalletList` itself stays unused for now (its
+// shape pre-bakes the K27 aggregation refactor).
+#[allow(dead_code)]
+mod wallets;
+
+/// Command-line surface mirrored from the original
+/// `devboy secrets ui` clap struct so existing users see
+/// the same flags when they call the subprocess directly.
+#[derive(Parser, Debug)]
+#[command(
+    name = "devboy-secrets-ui",
+    version,
+    about = "Native GUI window for the devboy-tools secrets inventory.",
+    long_about = "Launches an eframe/egui window that renders the merged \
+                  secrets inventory and offers a provision dialog. Normally \
+                  spawned by `devboy secrets ui --gui`; called directly only \
+                  for debugging the GUI in isolation."
+)]
+struct Cli {
+    /// ADR-020 path the provision dialog should focus on at
+    /// startup. When omitted the window opens on the
+    /// inventory list with no dialog armed.
+    #[arg(long, value_name = "PATH")]
+    provision: Option<String>,
+
+    /// Dev-only: render one UI frame to a PNG at this path and
+    /// exit, instead of opening a window. Built only with
+    /// `--features dev-screenshot`. Lets an automated agent
+    /// visually verify GUI changes without a human at the
+    /// screen. Pair with `--screenshot-view` to pick which view.
+    #[arg(long, value_name = "PATH")]
+    screenshot: Option<std::path::PathBuf>,
+
+    /// Dev-only: which view `--screenshot` renders — `provision`
+    /// (default), `unlock`, or `create`. Ignored without
+    /// `--screenshot`.
+    #[arg(long, value_name = "VIEW", default_value = "provision")]
+    screenshot_view: String,
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    #[cfg(feature = "dev-screenshot")]
+    if let Some(out) = cli.screenshot.as_deref() {
+        let view = screenshot::ScreenshotView::parse(&cli.screenshot_view)?;
+        return screenshot::render_to_png(view, out);
+    }
+    #[cfg(not(feature = "dev-screenshot"))]
+    if cli.screenshot.is_some() {
+        anyhow::bail!(
+            "--screenshot requires a build with `--features dev-screenshot`; \
+             this binary was built without it"
+        );
+    }
+
+    launch_gui(cli.provision.as_deref())
+}
+
+// =============================================================================
+// GUI launcher
+// =============================================================================
+
+/// Embedded devboy brand logo (`assets/devboy-logo.png`).
+/// Bundled into the binary via `include_bytes!` so the app
+/// stays single-file shippable — no runtime asset lookup, no
+/// `OPENBOX_RESOURCE_DIR`-style env vars.
+const APP_ICON_PNG: &[u8] = include_bytes!("../assets/devboy-logo.png");
+
+/// Decode `APP_ICON_PNG` into the RGBA buffer eframe expects.
+/// Returns `None` (silently) when the embedded bytes fail to
+/// decode — that is a packaging bug, not a runtime error the
+/// user can act on, so we don't surface it in the UI.
+fn load_icon() -> Option<eframe::egui::IconData> {
+    let img = image::load_from_memory(APP_ICON_PNG).ok()?.into_rgba8();
+    let (width, height) = img.dimensions();
+    Some(eframe::egui::IconData {
+        rgba: img.into_raw(),
+        width,
+        height,
+    })
+}
+
+fn launch_gui(provision_path: Option<&str>) -> Result<()> {
+    let initial_path = provision_path.map(str::to_owned);
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_inner_size([1024.0, 640.0])
+        .with_title("devboy — secrets inventory");
+    // K22 — devboy brand icon for the OS window (Dock on
+    // macOS, taskbar on Windows, wm-hints on X11/Wayland).
+    // `load_icon` decodes the embedded PNG at startup; if the
+    // bytes ever go corrupt we log + skip rather than crash
+    // the launch — a window without an icon still works.
+    if let Some(icon) = load_icon() {
+        viewport = viewport.with_icon(icon);
+    }
+    let options = eframe::NativeOptions {
+        viewport,
+        ..Default::default()
+    };
+    eframe::run_native(
+        "devboy-secrets",
+        options,
+        Box::new(move |_cc| Ok(Box::new(InventoryApp::new_with_initial(initial_path)))),
+    )
+    .map_err(|e| anyhow::anyhow!("eframe failed to run native window: {e}"))
+}
+
+// =============================================================================
+// InventoryApp
+// =============================================================================
+
+/// `eframe::App` shell that:
+///
+/// 1. Loads the global index + project manifest at startup and
+///    populates the inventory view-model with one row per
+///    declared path.
+/// 2. Renders the inventory list in the central area; clicking
+///    a row arms the provision dialog with the row's metadata.
+/// 3. When armed, shows the provision dialog as a true modal
+///    overlay (`egui::Modal`) — dimmed backdrop over the
+///    inventory, ESC / click-outside to dismiss. On `Save`,
+///    writes the value straight to the OS keychain via
+///    `KeychainStore` and refreshes the row's status.
+///
+/// `inventory_rows_for(...)` is the orchestration glue — pure
+/// data + no `egui` types so it's testable on its own.
+struct InventoryApp {
+    state: devboy_secrets_ui::InventoryState,
+    metadata_by_path: std::collections::HashMap<String, devboy_storage::IndexEntry>,
+    dialog: Option<devboy_secrets_ui::DialogState>,
+    dialog_path: Option<String>,
+    last_save_error: Option<String>,
+    /// Selected backend (keychain or local-vault), picked at
+    /// app construction from env vars. This is the *primary*
+    /// wallet — writes go here.
+    backend: StorageBackend,
+    /// K26 — extra wallets loaded from `sources.toml` beyond
+    /// the env-driven primary. Each entry is a
+    /// `NamedBackend { name, backend }` that the wallet bar
+    /// (K28) renders as a chip and that K27 inventory
+    /// aggregation folds into the combined row list when
+    /// unlocked. Mutated by the K29 per-wallet unlock flow.
+    extra_wallets: Vec<wallets::NamedBackend>,
+    /// K29 — when the user clicked an entry in K28's wallet bar
+    /// or a K30 lazy-unlock placeholder row, this is the name
+    /// of the wallet that owns the upcoming unlock attempt.
+    /// `None` targets the primary backend (preserves the K22
+    /// behaviour for the existing single-wallet unlock flow).
+    pending_unlock_target: Option<String>,
+    /// Recovery phrase to surface once after first vault create.
+    /// `None` until a vault is created, then `Some` for the
+    /// rest of the session — the user must save it somewhere
+    /// before closing the window. Wrapped in `SecretString` so
+    /// the BIP39 mnemonic (master-equivalent: anyone with the
+    /// 24 words can re-derive the wrap key offline) zeroizes on
+    /// drop and stays out of stray `Debug` formatters. The
+    /// render site is the only `expose_secret()` call.
+    recovery_phrase_to_show: Option<secrecy::SecretString>,
+    /// `id` of the currently selected token variant, when the
+    /// dialog's path resolves to a multi-variant provider.
+    /// `None` when the provider has only one variant (auto-
+    /// resolved) or no catalog match at all. Driven by the
+    /// radio-button picker rendered above the context card.
+    selected_variant_id: Option<String>,
+    /// Names of KDBX value fields the user has explicitly
+    /// revealed in the current dialog. Cleared every time
+    /// `open_dialog_for` runs so a new entry starts masked.
+    /// Used by the K19 reveal-values section in the dialog.
+    revealed_kdbx_values: std::collections::HashSet<String>,
+    /// Toast message shown for ~3s after the K21 attachment-
+    /// save flow completes. `(message, expires_at)`. Cleared
+    /// on the next dialog open or after the timestamp passes.
+    attachment_toast: Option<(String, std::time::Instant)>,
+    /// K23 — `true` while the About modal is open. Toggled by
+    /// the "Help → About" menu item and the "About" small-
+    /// button in the backend banner.
+    show_about: bool,
+    /// Backend-driven token catalogs loaded at startup.
+    /// Sources: bundled (compiled in), user
+    /// (`~/.devboy/secrets/catalog/`), project
+    /// (`<cwd>/.devboy/secrets/catalog/`). Drives the variant
+    /// picker, retrieval steps, and on-Save liveness probes
+    /// in subsequent P20.x tasks.
+    catalogs: Vec<devboy_token_catalog::LoadedCatalog>,
+    /// Per-file errors from catalog loading. Empty on the
+    /// happy path; surfaced as a banner above inventory when
+    /// non-empty so authors know which file is broken.
+    catalog_errors: Vec<devboy_token_catalog::CatalogError>,
+    /// URLs that are listed in `sources.toml` but have no entry
+    /// in `known_hashes.toml` — the user must explicitly trust
+    /// them via the confirm dialog (P23.6) before the catalog
+    /// activates. Each tuple is `(url, sha256-of-fetched-body)`.
+    pending_url_confirms: Vec<(String, String)>,
+    /// URLs whose body now hashes to a value different from
+    /// `known_hashes.toml`. The user must explicitly accept the
+    /// new hash via the warning dialog or reject the load.
+    /// Tuple: `(url, known_sha, actual_sha)`.
+    pending_url_warnings: Vec<(String, String, String)>,
+    /// Vault unlock / create modal state. `Some` while the
+    /// backend is a locked local-vault and the user hasn't
+    /// unlocked it (or chosen the keychain escape hatch) yet —
+    /// the inventory renders dimmed underneath until this is
+    /// `None`.
+    vault_unlock: Option<devboy_secrets_ui::VaultUnlockState>,
+    /// First-run onboarding wizard. `Some` on the very first
+    /// launch (no `sources.toml`, no vault file, no env
+    /// passphrase) until the user finishes or skips it.
+    onboarding: Option<devboy_secrets_ui::OnboardingState>,
+}
+
+impl InventoryApp {
+    fn new_with_initial(initial_path: Option<String>) -> Self {
+        let backend = StorageBackend::detect_from_env();
+        // K26 — load every [[source]] entry from sources.toml
+        // that isn't the env-driven primary. Each becomes a
+        // separate wallet the user can unlock independently.
+        // Synthetic name for the primary derives from the
+        // backend's natural identifier (keychain / local-vault
+        // / KDBX file stem) so toml-side dedup works without
+        // extra config.
+        let primary_name = wallets::synthetic_name_for(&backend);
+        let extra_wallets = wallets::load_extra_wallets_from_router_config(&primary_name);
+        // Catalogs first — `load_inventory_or_empty` needs them
+        // to populate the per-row `catalog_override` chip (P22.2).
+        let (catalogs, catalog_errors) = load_token_catalogs();
+        let (rows, metadata_by_path) = load_inventory_or_empty(&backend, &extra_wallets, &catalogs);
+        let (pending_url_confirms, pending_url_warnings) =
+            partition_url_trust_errors(&catalog_errors);
+        // A locked backend (local-vault OR KDBX) arms the
+        // unlock modal at startup — the inventory loads
+        // (everything reads as not-provisioned, since
+        // `has_value` on a locked backend is `false`) but
+        // stays gated behind the modal until the user unlocks
+        // or picks the keychain hatch. The copy is swapped per
+        // backend so the modal heading matches what's actually
+        // being opened.
+        let vault_unlock = if backend.is_locked() {
+            let state = devboy_secrets_ui::VaultUnlockState::new(
+                devboy_secrets_ui::VaultUnlockMode::Unlock,
+            );
+            let state = match &backend {
+                StorageBackend::KdbxLocked { file, .. } => state.with_copy(
+                    "Unlock KeePass database",
+                    format!(
+                        "Enter the passphrase that protects `{}`. The decrypted entries \
+                         are held only inside this window and are never sent to the agent.",
+                        file.display()
+                    ),
+                ),
+                _ => state,
+            };
+            Some(state)
+        } else {
+            None
+        };
+        // First run — nothing configured anywhere — arms the
+        // onboarding wizard. `vault_unlock` and `onboarding`
+        // are mutually exclusive: a locked vault means the
+        // user already onboarded, so `is_first_run()` returns
+        // false in that case.
+        let onboarding = if is_first_run() {
+            Some(devboy_secrets_ui::OnboardingState::new())
+        } else {
+            None
+        };
+        let mut app = Self {
+            state: devboy_secrets_ui::InventoryState::new(rows),
+            metadata_by_path,
+            dialog: None,
+            dialog_path: None,
+            last_save_error: None,
+            backend,
+            extra_wallets,
+            pending_unlock_target: None,
+            recovery_phrase_to_show: None,
+            selected_variant_id: None,
+            revealed_kdbx_values: std::collections::HashSet::new(),
+            attachment_toast: None,
+            show_about: false,
+            catalogs,
+            catalog_errors,
+            pending_url_confirms,
+            pending_url_warnings,
+            vault_unlock,
+            onboarding,
+        };
+        if let Some(path) = initial_path {
+            app.open_dialog_for(&path);
+        }
+        app
+    }
+
+    /// Re-walk the catalog sources after the user has accepted
+    /// or rejected an outstanding URL prompt. Side-effect-free
+    /// in the happy path: nothing changes if the resolution
+    /// did not affect any source.
+    fn reload_catalogs(&mut self) {
+        let (catalogs, catalog_errors) = load_token_catalogs();
+        let (pending_url_confirms, pending_url_warnings) =
+            partition_url_trust_errors(&catalog_errors);
+        self.catalogs = catalogs;
+        self.catalog_errors = catalog_errors;
+        self.pending_url_confirms = pending_url_confirms;
+        self.pending_url_warnings = pending_url_warnings;
+    }
+
+    fn reload(&mut self) {
+        let (rows, metadata) =
+            load_inventory_or_empty(&self.backend, &self.extra_wallets, &self.catalogs);
+        self.state.replace_rows(rows);
+        self.metadata_by_path = metadata;
+    }
+
+    /// Render the vault unlock / create modal and apply its
+    /// outcome. No-op when `self.vault_unlock` is `None`.
+    ///
+    /// On submit: attempt `backend.unlock(passphrase)`. Success
+    /// swaps in the unlocked backend, clears the modal, and
+    /// reloads the inventory so rows show real has-value
+    /// status. Failure keeps the modal open with the reason in
+    /// red. The "Use keychain instead" hatch switches the
+    /// backend to keychain for the session.
+    fn render_vault_unlock_modal(&mut self, ctx: &eframe::egui::Context) {
+        if self.vault_unlock.is_none() {
+            return;
+        }
+        let mut submit = false;
+        let mut use_keychain = false;
+        {
+            let state = self.vault_unlock.as_mut().unwrap();
+            eframe::egui::Modal::new(eframe::egui::Id::new("vault-unlock-modal")).show(ctx, |ui| {
+                ui.set_max_width(fit_modal_width(ui.ctx(), 420.0));
+                let result = devboy_secrets_ui::gui::vault_unlock::render(ui, state);
+                submit = result.submit;
+                use_keychain = result.use_keychain;
+            });
+        }
+
+        if submit {
+            // Snapshot the passphrase + mode, flip the modal to
+            // "working", then attempt the real open / create.
+            let modal = self.vault_unlock.as_ref().expect("guarded above");
+            let passphrase = modal.passphrase().clone();
+            let mode = modal.mode();
+            if let Some(s) = self.vault_unlock.as_mut() {
+                s.apply_status(devboy_secrets_ui::VaultUnlockStatus::Working);
+            }
+
+            // K29 — when an extra wallet's chip armed this
+            // modal, route the unlock to that wallet instead
+            // of the primary backend. `pending_unlock_target =
+            // None` keeps the legacy single-wallet path for
+            // the primary-locked-at-startup case.
+            let target_extra = self.pending_unlock_target.clone();
+            let outcome: Result<(StorageBackend, Option<String>, Option<String>), String> =
+                match mode {
+                    // Unlock — open an existing `.dvb` file or the
+                    // matching KDBX file. If targeting an extra, we
+                    // pull its current backend out, unlock it, and
+                    // return alongside the wallet name so the
+                    // post-write step knows where to put it back.
+                    devboy_secrets_ui::VaultUnlockMode::Unlock => match &target_extra {
+                        Some(name) => match self.extra_wallets.iter().find(|w| &w.name == name) {
+                            Some(extra) => extra
+                                .backend
+                                .unlock(passphrase)
+                                .map(|b| (b, None, Some(name.clone()))),
+                            None => Err(format!("wallet `{name}` is gone")),
+                        },
+                        None => self.backend.unlock(passphrase).map(|b| (b, None, None)),
+                    },
+                    // Create — mint a new vault. The path is the
+                    // locked backend's path if we have one,
+                    // otherwise the default location.
+                    devboy_secrets_ui::VaultUnlockMode::Create => {
+                        let vault_path = match &self.backend {
+                            StorageBackend::LocalVaultLocked { vault_path }
+                            | StorageBackend::LocalVault { vault_path, .. } => vault_path.clone(),
+                            // Keychain, HTTP-Vault, or KDBX backend → a
+                            // newly created local-vault lands at the
+                            // default path. The user can always pick
+                            // a different file later via the
+                            // backend-picker (V5).
+                            StorageBackend::Keychain
+                            | StorageBackend::HttpVault { .. }
+                            | StorageBackend::KdbxLocked { .. }
+                            | StorageBackend::Kdbx { .. } => default_vault_path(),
+                        };
+                        StorageBackend::create_vault(vault_path, passphrase)
+                            .map(|(b, recovery)| (b, recovery, None))
+                    }
+                };
+
+            match outcome {
+                Ok((backend, recovery, target_name)) => {
+                    // K29 — route the unlocked backend back to
+                    // either the primary slot (legacy path) or
+                    // the matching extra wallet slot.
+                    match target_name {
+                        Some(name) => {
+                            if let Some(slot) =
+                                self.extra_wallets.iter_mut().find(|w| w.name == name)
+                            {
+                                slot.backend = backend;
+                            }
+                        }
+                        None => {
+                            self.backend = backend;
+                        }
+                    }
+                    self.pending_unlock_target = None;
+                    self.vault_unlock = None;
+                    // Surface the recovery phrase exactly once
+                    // (create flow only — `unlock` returns None).
+                    if let Some(phrase) = recovery {
+                        self.recovery_phrase_to_show = Some(secrecy::SecretString::from(phrase));
+                    }
+                    // Re-read the inventory: a locked / keychain
+                    // backend may have reported rows differently;
+                    // now it shows the real state.
+                    self.reload();
+                }
+                Err(reason) => {
+                    if let Some(s) = self.vault_unlock.as_mut() {
+                        s.apply_status(devboy_secrets_ui::VaultUnlockStatus::Failed { reason });
+                    }
+                }
+            }
+        } else if use_keychain {
+            // Escape hatch — fall back to the OS keychain for
+            // this session. Only applies to the primary; if a
+            // K28 extra-wallet unlock was in progress we just
+            // close the modal without touching the keychain.
+            if self.pending_unlock_target.is_none() {
+                self.backend = StorageBackend::Keychain;
+            }
+            self.pending_unlock_target = None;
+            self.vault_unlock = None;
+            self.reload();
+        }
+    }
+
+    /// Render the first-run onboarding modal and apply its
+    /// outcome. No-op when `self.onboarding` is `None`.
+    ///
+    /// On "Finish setup": write `sources.toml`, create the
+    /// local-vault if the user picked one (surfacing the
+    /// recovery phrase), then resolve `self.backend` to the
+    /// chosen primary provider. On "Skip": straight to the
+    /// keychain, no files written.
+    fn render_onboarding_modal(&mut self, ctx: &eframe::egui::Context) {
+        if self.onboarding.is_none() {
+            return;
+        }
+        let mut finish = false;
+        let mut skip = false;
+        {
+            let state = self.onboarding.as_mut().unwrap();
+            eframe::egui::Modal::new(eframe::egui::Id::new("onboarding-modal")).show(ctx, |ui| {
+                ui.set_max_width(fit_modal_width(ui.ctx(), 480.0));
+                let result = devboy_secrets_ui::gui::onboarding::render(ui, state);
+                finish = result.finish;
+                skip = result.skip;
+            });
+        }
+
+        if skip {
+            self.backend = StorageBackend::Keychain;
+            self.onboarding = None;
+            self.reload();
+            return;
+        }
+        if !finish {
+            return;
+        }
+
+        // Snapshot everything off the modal before mutating
+        // `self` (the modal borrow has to end first).
+        let state = self.onboarding.as_ref().expect("guarded above");
+        let toml_body = state.to_sources_toml();
+        let primary = state.primary();
+        let wants_local = state.local_vault_selected();
+        let local_pass = state.local_passphrase().clone();
+        let http = if state.http_vault_selected() {
+            let access = match state.http_access() {
+                devboy_secrets_ui::OnboardingAccess::Read => devboy_storage::SourceAccess::Read,
+                devboy_secrets_ui::OnboardingAccess::ReadWrite => {
+                    devboy_storage::SourceAccess::ReadWrite
+                }
+            };
+            let ns = state.http_namespace().trim();
+            Some((
+                state.http_addr().trim().to_owned(),
+                (!ns.is_empty()).then(|| ns.to_owned()),
+                state.http_mount().trim().to_owned(),
+                state.http_token().clone(),
+                access,
+            ))
+        } else {
+            None
+        };
+
+        if let Some(s) = self.onboarding.as_mut() {
+            s.apply_status(devboy_secrets_ui::OnboardingStatus::Working);
+        }
+
+        // 1. Write sources.toml.
+        if let Err(reason) = write_sources_toml(&toml_body) {
+            if let Some(s) = self.onboarding.as_mut() {
+                s.apply_status(devboy_secrets_ui::OnboardingStatus::Failed { reason });
+            }
+            return;
+        }
+
+        // 2. Create the local-vault if the user picked one.
+        let mut created_local: Option<StorageBackend> = None;
+        if wants_local {
+            match StorageBackend::create_vault(default_vault_path(), local_pass) {
+                Ok((backend, recovery)) => {
+                    if let Some(phrase) = recovery {
+                        self.recovery_phrase_to_show = Some(secrecy::SecretString::from(phrase));
+                    }
+                    created_local = Some(backend);
+                }
+                Err(reason) => {
+                    if let Some(s) = self.onboarding.as_mut() {
+                        s.apply_status(devboy_secrets_ui::OnboardingStatus::Failed { reason });
+                    }
+                    return;
+                }
+            }
+        }
+
+        // 3. Resolve `self.backend` to the chosen primary.
+        self.backend = match primary {
+            devboy_secrets_ui::OnboardingProvider::Keychain => StorageBackend::Keychain,
+            devboy_secrets_ui::OnboardingProvider::LocalVault => {
+                // `wants_local` must be true if local-vault is
+                // primary (the wizard only lets you pick a
+                // selected provider) — but fall back to
+                // keychain rather than panic if something drifts.
+                created_local.unwrap_or(StorageBackend::Keychain)
+            }
+            devboy_secrets_ui::OnboardingProvider::HttpVault => {
+                let (addr, namespace, mount, token, access) =
+                    http.expect("http-vault primary implies http-vault selected");
+                StorageBackend::HttpVault {
+                    addr,
+                    namespace,
+                    mount,
+                    token,
+                    access,
+                }
+            }
+        };
+        self.onboarding = None;
+        self.reload();
+    }
+
+    /// K23 — About modal. Bundles version + git hash + build
+    /// timestamp + rustc + target triple in a fixed-width
+    /// table, lists what's-in-this-build bullets, exposes
+    /// clickable repo / changelog / license links, and signs
+    /// off with the Meteora wizard ASCII art. Read-only —
+    /// closes on the Close button or by clicking outside the
+    /// modal.
+    fn render_about_modal(&mut self, ctx: &eframe::egui::Context) {
+        if !self.show_about {
+            return;
+        }
+        let mut close = false;
+        eframe::egui::Modal::new(eframe::egui::Id::new("about-modal")).show(ctx, |ui| {
+            // 720 px keeps the meteora-landing wizard ASCII
+            // (~80 cols × ~7 px/glyph) inside the modal at the
+            // default 1024-wide window without forcing the
+            // user into horizontal scroll. Long links wrap.
+            // K31 — clamp to the live screen width so a tiny
+            // window doesn't push the modal off-canvas.
+            ui.set_max_width(fit_modal_width(ui.ctx(), 720.0));
+
+            ui.heading("devboy secrets");
+            ui.label(
+                eframe::egui::RichText::new(
+                    "Local-first credentials wrangler for AI-coding workflows.",
+                )
+                .small()
+                .weak(),
+            );
+            ui.add_space(8.0);
+
+            // ----- Build info table ---------------------------
+            eframe::egui::Grid::new("about-build-info")
+                .num_columns(2)
+                .spacing([12.0, 4.0])
+                .show(ui, |ui| {
+                    let rows: [(&str, &str); 5] = [
+                        ("Version", ABOUT_VERSION),
+                        ("Commit", ABOUT_GIT_HASH),
+                        ("Built", ABOUT_BUILD_TIMESTAMP),
+                        ("Compiler", ABOUT_RUSTC_VERSION),
+                        ("Target", ABOUT_TARGET_TRIPLE),
+                    ];
+                    for (k, v) in rows {
+                        ui.label(eframe::egui::RichText::new(k).strong());
+                        ui.add(
+                            eframe::egui::Label::new(eframe::egui::RichText::new(v).monospace())
+                                .wrap(),
+                        );
+                        ui.end_row();
+                    }
+                });
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            // ----- What's in this build -----------------------
+            ui.label(eframe::egui::RichText::new("What's in this build").strong());
+            for bullet in ABOUT_FEATURES {
+                ui.label(format!("  • {bullet}"));
+            }
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            // ----- Links --------------------------------------
+            ui.label(eframe::egui::RichText::new("Links").strong());
+            ui.horizontal_wrapped(|ui| {
+                ui.hyperlink_to("GitHub", "https://github.com/meteora-pro/devboy-tools");
+                ui.label("·");
+                ui.hyperlink_to(
+                    "Changelog",
+                    "https://github.com/meteora-pro/devboy-tools/releases",
+                );
+                ui.label("·");
+                ui.hyperlink_to(
+                    "License (Apache-2.0)",
+                    "https://github.com/meteora-pro/devboy-tools/blob/main/LICENSE",
+                );
+                ui.label("·");
+                ui.hyperlink_to("meteora.pro", "https://meteora.pro");
+            });
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            // ----- Meteora wizard ASCII -----------------------
+            ui.label(
+                eframe::egui::RichText::new("brought to you by")
+                    .small()
+                    .weak(),
+            );
+            // The art is a fixed grid — wrapping it would
+            // destroy the picture. Use a horizontal ScrollArea
+            // so a narrower window still renders it gracefully,
+            // and TextWrapMode::Extend to keep each row on a
+            // single line. 8 pt monospace makes the 80-col art
+            // fit ~ 640 px wide — within the 720 px modal cap.
+            eframe::egui::ScrollArea::horizontal()
+                .id_salt("about-wizard-scroll")
+                .max_height(360.0)
+                .show(ui, |ui| {
+                    ui.add(
+                        eframe::egui::Label::new(
+                            eframe::egui::RichText::new(ABOUT_WIZARD_ASCII)
+                                .monospace()
+                                .size(8.0),
+                        )
+                        .wrap_mode(eframe::egui::TextWrapMode::Extend),
+                    );
+                });
+
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button("Close").clicked() {
+                    close = true;
+                }
+            });
+        });
+        if close {
+            self.show_about = false;
+        }
+    }
+}
+
+/// Write `body` to the canonical `sources.toml` path, creating
+/// the parent directory if needed. Surfaces a human-facing
+/// reason on failure.
+fn write_sources_toml(body: &str) -> Result<(), String> {
+    let path = devboy_storage::RouterConfig::default_path()
+        .map_err(|e| format!("could not resolve the sources.toml path: {e}"))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("could not create the secrets config directory: {e}"))?;
+    }
+    std::fs::write(&path, body).map_err(|e| format!("could not write {}: {e}", path.display()))
+}
+
+// =============================================================================
+// StorageBackend
+// =============================================================================
+
+/// Resolve which KDBX file the backend should actually open.
+///
+/// When `DEVBOY_KDBX_WORKING_COPY` is set, we materialise (or
+/// reuse) a working copy of the original `.kdbx` file and
+/// return its path. This protects the user's primary KeePass
+/// DB from any write surface (K14+) that we, the agent, or
+/// the user wire up via the UI / MCP — the original is never
+/// touched.
+///
+/// Modes:
+/// - **unset** (default) — read-only path; return the original
+///   file verbatim.
+/// - **`auto`** — derive a destination next to the source
+///   (`<stem>.devboy-working-<UTC-timestamp>.kdbx`), copy the
+///   bytes if the file doesn't already exist, return the
+///   destination.
+/// - **any other value** — treated as an explicit absolute path
+///   for the working copy. Same copy-once-if-missing logic.
+///
+/// Failures during the copy step are intentionally swallowed:
+/// we fall back to the original file and let the unlock flow
+/// surface any downstream error. (The user can still see the
+/// original is untouched because they can re-open it in
+/// KeePass and confirm.)
+fn resolve_kdbx_working_copy(original: &std::path::Path) -> std::path::PathBuf {
+    let Ok(mode) = std::env::var("DEVBOY_KDBX_WORKING_COPY") else {
+        return original.to_path_buf();
+    };
+    if mode.is_empty() {
+        return original.to_path_buf();
+    }
+    let destination = if mode.eq_ignore_ascii_case("auto") {
+        devboy_secret_kdbx::derive_working_copy_path(original)
+    } else {
+        std::path::PathBuf::from(mode)
+    };
+    match devboy_secret_kdbx::prepare_working_copy(original, &destination) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!(
+                "devboy: failed to prepare KDBX working copy ({e}); falling back to the original file (read-only)"
+            );
+            original.to_path_buf()
+        }
+    }
+}
+
+/// Resolve the local-vault file path: `DEVBOY_VAULT_PATH` if
+/// set, otherwise `<config>/devboy-tools/secrets/local-vault.dvb`.
+fn default_vault_path() -> std::path::PathBuf {
+    std::env::var("DEVBOY_VAULT_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            let mut p = dirs::config_dir().unwrap_or_else(std::env::temp_dir);
+            p.push("devboy-tools");
+            p.push("secrets");
+            p.push("local-vault.dvb");
+            p
+        })
+}
+
+/// `true` when nothing is configured anywhere — no
+/// `sources.toml`, no local-vault file, no
+/// `DEVBOY_VAULT_PASSPHRASE`. That's the signal to show the
+/// first-run onboarding wizard. Any one of those three
+/// existing means the user has been here before, so the
+/// wizard is skipped (the unlock modal or the env fast-path
+/// takes over instead).
+fn is_first_run() -> bool {
+    let sources_exists = devboy_storage::RouterConfig::default_path()
+        .map(|p| p.exists())
+        .unwrap_or(false);
+    let vault_exists = default_vault_path().exists();
+    let env_passphrase = std::env::var("DEVBOY_VAULT_PASSPHRASE")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    !sources_exists && !vault_exists && !env_passphrase
+}
+
+/// Which backend the GUI should write secrets to.
+///
+/// Picked at app construction time. The passphrase-bearing
+/// `LocalVault` variant can be reached two ways: the
+/// `DEVBOY_VAULT_PASSPHRASE` env var (resolved straight to
+/// unlocked at startup), or interactively — `LocalVaultLocked`
+/// is the intermediate state the UI shows an unlock prompt for.
+/// The user can also switch backends live (V5).
+#[derive(Debug, Clone)]
+enum StorageBackend {
+    /// Default — OS keychain via `devboy_storage::KeychainStore`.
+    Keychain,
+    /// Local-vault file exists but no passphrase is held yet —
+    /// the UI must prompt for one before reads / writes work.
+    /// Reached when a `.dvb` file is present but
+    /// `DEVBOY_VAULT_PASSPHRASE` was not set.
+    LocalVaultLocked { vault_path: std::path::PathBuf },
+    /// Local-vault file at `vault_path`, unlocked with
+    /// `passphrase`. Reached from the env var, from a
+    /// successful [`StorageBackend::unlock`], or from a
+    /// first-run create flow. The file is created on first save
+    /// if it doesn't exist.
+    LocalVault {
+        vault_path: std::path::PathBuf,
+        passphrase: secrecy::SecretString,
+    },
+    /// A remote HashiCorp / HCP Vault, reached over the HTTP
+    /// KV v2 API via `devboy_secret_vault::VaultSource`.
+    /// Configured through the onboarding wizard (W3-W5) and
+    /// written into `sources.toml`.
+    ///
+    /// Read-only in practice: the `SecretSource` trait has no
+    /// write surface yet (that's P15), so `store` refuses with
+    /// an honest message. `access` still carries the configured
+    /// `read` / `readwrite` so the UI can explain *why* a write
+    /// was refused.
+    HttpVault {
+        addr: String,
+        namespace: Option<String>,
+        /// KV v2 data mount prefix, e.g. `secret/data`. An
+        /// ADR-020 path `team/openai/api-key` becomes the Vault
+        /// reference `<mount>/team/openai/api-key`.
+        mount: String,
+        token: secrecy::SecretString,
+        access: devboy_storage::SourceAccess,
+    },
+    /// KDBX file declared (env var `DEVBOY_KDBX_FILE`) but the
+    /// passphrase has not been collected yet — the UI shows the
+    /// passphrase prompt modal (K4) before any read.
+    KdbxLocked {
+        file: std::path::PathBuf,
+        keyfile: Option<std::path::PathBuf>,
+    },
+    /// KDBX file unlocked. The decrypted snapshot is held in
+    /// process so `has_value` / inventory probes don't repeat the
+    /// Argon2id KDF on every call (an 8 MiB DB takes ~1s of CPU
+    /// to derive). Snapshot is shared via `Arc` so the enum stays
+    /// `Clone` without re-decrypting.
+    ///
+    /// Read-only MVP: `store` refuses with an honest message
+    /// until the KDBX write path (K6 follow-up) ships.
+    Kdbx {
+        file: std::path::PathBuf,
+        keyfile: Option<std::path::PathBuf>,
+        /// Held so the user can re-unlock after a `lock()` cycle
+        /// without re-entering the passphrase. Lives only inside
+        /// this process — never sent to the agent.
+        passphrase: secrecy::SecretString,
+        /// Flattened, decrypted entries.
+        snapshot: std::sync::Arc<devboy_secret_kdbx::KdbxSnapshot>,
+    },
+}
+
+impl StorageBackend {
+    fn detect_from_env() -> Self {
+        // 1. Explicit env passphrase → unlocked straight away.
+        if let Ok(pass) = std::env::var("DEVBOY_VAULT_PASSPHRASE")
+            && !pass.is_empty()
+        {
+            return StorageBackend::LocalVault {
+                vault_path: default_vault_path(),
+                passphrase: secrecy::SecretString::new(pass.into()),
+            };
+        }
+        // 2. DEVBOY_KDBX_FILE pointed at a real file → either
+        //    locked (passphrase modal) or unlocked-via-env (the
+        //    DEVBOY_KDBX_PASSPHRASE escape hatch, mostly for
+        //    tests and CI dry-runs). Always preferred over the
+        //    local-vault default when set, since the user
+        //    explicitly opted into the KDBX backend.
+        if let Ok(kdbx_path) = std::env::var("DEVBOY_KDBX_FILE")
+            && !kdbx_path.is_empty()
+        {
+            let original = std::path::PathBuf::from(kdbx_path);
+            let keyfile = std::env::var("DEVBOY_KDBX_KEYFILE")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(std::path::PathBuf::from);
+            // Working-copy mode (K13): when
+            // DEVBOY_KDBX_WORKING_COPY=auto we copy the original
+            // off to the side and operate on the copy from this
+            // point forward. Any custom string value passes
+            // straight through as the destination path.
+            let file = resolve_kdbx_working_copy(&original);
+            if file.exists()
+                && let Ok(pass) = std::env::var("DEVBOY_KDBX_PASSPHRASE")
+                && !pass.is_empty()
+            {
+                // Try to unlock straight away. If the open fails
+                // (wrong passphrase, corrupt body), fall through
+                // to the Locked variant so the UI can show its
+                // unlock modal with a fresh prompt.
+                let passphrase = secrecy::SecretString::new(pass.into());
+                match devboy_secret_kdbx::open_kdbx_into_snapshot(
+                    &file,
+                    &passphrase,
+                    keyfile.as_deref(),
+                ) {
+                    Ok(snapshot) => {
+                        return StorageBackend::Kdbx {
+                            file,
+                            keyfile,
+                            passphrase,
+                            snapshot: std::sync::Arc::new(snapshot),
+                        };
+                    }
+                    Err(_) => return StorageBackend::KdbxLocked { file, keyfile },
+                }
+            }
+            // No env passphrase OR the unlock attempt failed →
+            // hand to the UI's unlock-modal flow.
+            return StorageBackend::KdbxLocked { file, keyfile };
+        }
+        // 3. No env passphrase, but a vault file exists → the UI
+        //    should prompt for the passphrase (V2 unlock modal).
+        let vault_path = default_vault_path();
+        if vault_path.exists() {
+            return StorageBackend::LocalVaultLocked { vault_path };
+        }
+        // 4. Nothing → keychain default.
+        StorageBackend::Keychain
+    }
+
+    /// Whether the backend needs a passphrase before reads /
+    /// writes will work — drives whether the UI shows the
+    /// unlock modal at startup.
+    fn is_locked(&self) -> bool {
+        matches!(
+            self,
+            StorageBackend::LocalVaultLocked { .. } | StorageBackend::KdbxLocked { .. }
+        )
+    }
+
+    /// Attempt to unlock a `LocalVaultLocked` or `KdbxLocked`
+    /// backend with `passphrase`. On success returns the
+    /// unlocked variant; on failure returns a human-facing
+    /// reason (wrong passphrase, corrupt file, …). Error for
+    /// already-unlocked / keychain / HTTP-vault backends.
+    fn unlock(&self, passphrase: secrecy::SecretString) -> Result<StorageBackend, String> {
+        match self {
+            StorageBackend::LocalVaultLocked { vault_path } => {
+                let unlock = devboy_vault_crypto::UnlockMethod::Passphrase(passphrase.clone());
+                devboy_vault_crypto::Vault::open(vault_path, unlock).map_err(|e| format!("{e}"))?;
+                Ok(StorageBackend::LocalVault {
+                    vault_path: vault_path.clone(),
+                    passphrase,
+                })
+            }
+            StorageBackend::KdbxLocked { file, keyfile } => {
+                let snapshot = devboy_secret_kdbx::open_kdbx_into_snapshot(
+                    file,
+                    &passphrase,
+                    keyfile.as_deref(),
+                )
+                .map_err(|e| format!("{e}"))?;
+                Ok(StorageBackend::Kdbx {
+                    file: file.clone(),
+                    keyfile: keyfile.clone(),
+                    passphrase,
+                    snapshot: std::sync::Arc::new(snapshot),
+                })
+            }
+            _ => Err("backend does not have a passphrase-locked state".to_owned()),
+        }
+    }
+
+    /// Re-open the KDBX file with the already-held passphrase
+    /// and rebuild the snapshot. Lets the user pick up edits
+    /// they made in KeePass / KeePassXC without re-typing the
+    /// passphrase. No-op (returns the original backend) for
+    /// every other variant.
+    ///
+    /// Wired into the UI's reload-from-manifest button in K4
+    /// (silenced for now so the K3 build is warning-clean).
+    #[allow(dead_code)]
+    fn refresh(&self) -> Result<StorageBackend, String> {
+        let StorageBackend::Kdbx {
+            file,
+            keyfile,
+            passphrase,
+            ..
+        } = self
+        else {
+            return Ok(self.clone());
+        };
+        let snapshot =
+            devboy_secret_kdbx::open_kdbx_into_snapshot(file, passphrase, keyfile.as_deref())
+                .map_err(|e| format!("{e}"))?;
+        Ok(StorageBackend::Kdbx {
+            file: file.clone(),
+            keyfile: keyfile.clone(),
+            passphrase: passphrase.clone(),
+            snapshot: std::sync::Arc::new(snapshot),
+        })
+    }
+
+    /// Drop the held passphrase + snapshot, returning the
+    /// backend to its locked state. No-op for keychain /
+    /// already-locked / HTTP Vault (the Vault token lives in
+    /// `sources.toml`, there is no in-memory unlock state to
+    /// drop).
+    fn lock(&self) -> StorageBackend {
+        match self {
+            StorageBackend::LocalVault { vault_path, .. }
+            | StorageBackend::LocalVaultLocked { vault_path } => StorageBackend::LocalVaultLocked {
+                vault_path: vault_path.clone(),
+            },
+            StorageBackend::Kdbx { file, keyfile, .. }
+            | StorageBackend::KdbxLocked { file, keyfile } => StorageBackend::KdbxLocked {
+                file: file.clone(),
+                keyfile: keyfile.clone(),
+            },
+            StorageBackend::Keychain => StorageBackend::Keychain,
+            StorageBackend::HttpVault { .. } => self.clone(),
+        }
+    }
+
+    /// Create a brand-new encrypted vault at `vault_path` with
+    /// `passphrase`, with a recovery phrase generated. On
+    /// success returns the unlocked `LocalVault` backend plus
+    /// the recovery phrase the UI must surface exactly once.
+    ///
+    /// Refuses if a file already exists at `vault_path` — the
+    /// caller should have routed to `unlock` instead.
+    fn create_vault(
+        vault_path: std::path::PathBuf,
+        passphrase: secrecy::SecretString,
+    ) -> Result<(StorageBackend, Option<String>), String> {
+        use devboy_vault_crypto::{InitialUnlock, Vault};
+        if vault_path.exists() {
+            return Err(format!(
+                "a vault file already exists at {} — unlock it instead of creating a new one",
+                vault_path.display()
+            ));
+        }
+        if let Some(parent) = vault_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("could not create vault directory: {e}"))?;
+        }
+        let outcome = Vault::create(
+            &vault_path,
+            InitialUnlock {
+                passphrase: passphrase.clone(),
+                with_recovery: true,
+                with_keychain_account: None,
+                passphrase_params: None,
+            },
+        )
+        .map_err(|e| format!("vault create failed: {e}"))?;
+        let recovery = outcome.recovery_phrase.map(|p| p.expose_words().to_owned());
+        Ok((
+            StorageBackend::LocalVault {
+                vault_path,
+                passphrase,
+            },
+            recovery,
+        ))
+    }
+
+    fn label(&self) -> String {
+        match self {
+            StorageBackend::Keychain => {
+                "macOS Keychain — service `devboy-tools`, account = path".to_owned()
+            }
+            StorageBackend::LocalVaultLocked { vault_path } => {
+                format!(
+                    "local-vault (locked) — file `{}`, awaiting passphrase",
+                    vault_path.display()
+                )
+            }
+            StorageBackend::LocalVault { vault_path, .. } => {
+                format!(
+                    "local-vault — file `{}`, XChaCha20-Poly1305 + Argon2id passphrase",
+                    vault_path.display()
+                )
+            }
+            StorageBackend::HttpVault {
+                addr,
+                namespace,
+                access,
+                ..
+            } => {
+                let ns = namespace
+                    .as_deref()
+                    .map(|n| format!(", namespace `{n}`"))
+                    .unwrap_or_default();
+                let mode = match access {
+                    devboy_storage::SourceAccess::Read => "read-only",
+                    devboy_storage::SourceAccess::ReadWrite => "read-write",
+                };
+                format!("HashiCorp Vault — `{addr}`{ns} ({mode})")
+            }
+            StorageBackend::KdbxLocked { file, .. } => {
+                format!(
+                    "KDBX (locked) — file `{}`, awaiting passphrase",
+                    file.display()
+                )
+            }
+            StorageBackend::Kdbx { file, snapshot, .. } => {
+                format!(
+                    "KDBX 4 — file `{}`, {} entr{} loaded (read-only)",
+                    file.display(),
+                    snapshot.entries.len(),
+                    if snapshot.entries.len() == 1 {
+                        "y"
+                    } else {
+                        "ies"
+                    }
+                )
+            }
+        }
+    }
+
+    fn source_label(&self) -> &'static str {
+        match self {
+            StorageBackend::Keychain => "default-keychain",
+            StorageBackend::LocalVaultLocked { .. } | StorageBackend::LocalVault { .. } => {
+                "local-vault"
+            }
+            StorageBackend::HttpVault { .. } => "vault",
+            StorageBackend::KdbxLocked { .. } | StorageBackend::Kdbx { .. } => "kdbx",
+        }
+    }
+
+    /// Probe whether `path` already has a value. Errors collapse
+    /// to "not provisioned" to keep the inventory render simple.
+    /// A locked vault reports everything as not-provisioned —
+    /// the UI gates on the unlock modal before this matters.
+    fn has_value(&self, path: &str) -> bool {
+        match self {
+            StorageBackend::Keychain => {
+                let store = devboy_storage::KeychainStore::new();
+                matches!(
+                    devboy_storage::CredentialStore::get(&store, path),
+                    Ok(Some(_))
+                )
+            }
+            StorageBackend::LocalVaultLocked { .. } => false,
+            StorageBackend::LocalVault {
+                vault_path,
+                passphrase,
+            } => {
+                if !vault_path.exists() {
+                    return false;
+                }
+                let unlock = devboy_vault_crypto::UnlockMethod::Passphrase(passphrase.clone());
+                let Ok(vault) = devboy_vault_crypto::Vault::open(vault_path, unlock) else {
+                    return false;
+                };
+                matches!(vault.get(path), Ok(Some(_)))
+            }
+            StorageBackend::HttpVault { .. } => {
+                // R2 (PR #265 review) — DO NOT block_on() an HTTP
+                // round-trip on the egui render thread. Pre-R2
+                // every inventory reload froze the UI for N×RTT
+                // (one per HTTP-backed row). Render rows as
+                // "presence-unknown" instead — clicking a row
+                // still opens the dialog, which has its own async
+                // path for the actual GET.
+                //
+                // The downside is that `Provisioned` / `Missing`
+                // status badges stay grey for HTTP-Vault entries
+                // until the user touches them; that's a fair
+                // trade for a responsive UI on a slow link.
+                false
+            }
+            StorageBackend::KdbxLocked { .. } => false,
+            StorageBackend::Kdbx { snapshot, .. } => snapshot
+                .entries
+                .iter()
+                .any(|e| e.path == path && !e.values.is_empty()),
+        }
+    }
+
+    /// Build a `VaultSource` from an `HttpVault` backend.
+    /// `None` for any other variant (or if the HTTP client
+    /// fails to build, which is essentially never). Currently
+    /// only used from tests + the future async-aware dialog
+    /// path; the render-loop `has_value` short-circuits to
+    /// `false` for HttpVault backends (see R2 in PR #265).
+    #[allow(dead_code)]
+    fn http_vault_source(&self) -> Option<devboy_secret_vault::VaultSource> {
+        let StorageBackend::HttpVault {
+            addr,
+            namespace,
+            token,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        let mut src = devboy_secret_vault::VaultSource::new(
+            "http-vault",
+            addr.clone(),
+            devboy_secret_vault::VaultAuth::Token(token.clone()),
+        )
+        .ok()?;
+        if let Some(ns) = namespace {
+            src = src.with_namespace(ns);
+        }
+        Some(src)
+    }
+
+    /// Translate an ADR-020 path into a Vault KV v2 reference:
+    /// `mount/path` (e.g. `secret/data/team/openai/api-key`).
+    /// Same dead-code disclaimer as `http_vault_source` —
+    /// callable from tests + future code, not from the current
+    /// render path.
+    #[allow(dead_code)]
+    fn http_vault_reference(&self, path: &str) -> String {
+        match self {
+            StorageBackend::HttpVault { mount, .. } => {
+                format!("{}/{}", mount.trim_end_matches('/'), path)
+            }
+            // Not an HTTP-vault backend — return the path
+            // verbatim; callers only reach this on the HttpVault
+            // arm anyway.
+            _ => path.to_owned(),
+        }
+    }
+
+    /// Write `value` to the backend. Creates a vault file if it
+    /// doesn't exist (LocalVault). Returns the optional recovery
+    /// phrase the user must save (only on first vault create).
+    /// A locked vault refuses the write — the UI must unlock it
+    /// first.
+    fn store(&self, path: &str, value: &secrecy::SecretString) -> Result<Option<String>, String> {
+        match self {
+            StorageBackend::Keychain => {
+                let store = devboy_storage::KeychainStore::new();
+                devboy_storage::CredentialStore::store(&store, path, value)
+                    .map_err(|e| format!("{e}"))?;
+                Ok(None)
+            }
+            StorageBackend::LocalVaultLocked { .. } => Err(
+                "local-vault is locked — unlock it with your passphrase before saving".to_owned(),
+            ),
+            StorageBackend::LocalVault {
+                vault_path,
+                passphrase,
+            } => {
+                use devboy_vault_crypto::{EntryMetadata, InitialUnlock, UnlockMethod, Vault};
+                if let Some(parent) = vault_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let recovery = if vault_path.exists() {
+                    let mut vault =
+                        Vault::open(vault_path, UnlockMethod::Passphrase(passphrase.clone()))
+                            .map_err(|e| format!("vault open: {e}"))?;
+                    vault
+                        .put(path, value, EntryMetadata::default())
+                        .map_err(|e| format!("vault put: {e}"))?;
+                    None
+                } else {
+                    let outcome = Vault::create(
+                        vault_path,
+                        InitialUnlock {
+                            passphrase: passphrase.clone(),
+                            with_recovery: true,
+                            with_keychain_account: None,
+                            passphrase_params: None,
+                        },
+                    )
+                    .map_err(|e| format!("vault create: {e}"))?;
+                    let mut vault = outcome.vault;
+                    vault
+                        .put(path, value, EntryMetadata::default())
+                        .map_err(|e| format!("vault put: {e}"))?;
+                    outcome.recovery_phrase.map(|p| p.expose_words().to_owned())
+                };
+                Ok(recovery)
+            }
+            StorageBackend::KdbxLocked { .. } => {
+                Err("KDBX file is locked — unlock it with your passphrase before saving".to_owned())
+            }
+            StorageBackend::Kdbx { .. } => Err(
+                "writing to a KDBX file is not implemented yet (read-only MVP) — \
+                 edit the entry in KeePass / KeePassXC and reload the inventory"
+                    .to_owned(),
+            ),
+            // HTTP Vault is read-only from the UI today. The
+            // `SecretSource` trait has no write surface yet
+            // (P15) — refuse honestly rather than silently
+            // dropping the value. `access` distinguishes "you
+            // chose read-only" from "writes aren't built yet".
+            StorageBackend::HttpVault { access, .. } => match access {
+                devboy_storage::SourceAccess::Read => Err(
+                    "this Vault source is configured read-only (`access = \"read\"`) — \
+                     change it to `readwrite` in sources.toml once write support lands"
+                        .to_owned(),
+                ),
+                devboy_storage::SourceAccess::ReadWrite => Err(
+                    "writing to HashiCorp Vault from the UI is not implemented yet — \
+                     the SecretSource write surface ships in P15. Until then, write the \
+                     value with the Vault CLI / UI and devboy will read it back."
+                        .to_owned(),
+                ),
+            },
+        }
+    }
+}
+
+/// `(url, sha256)` for a URL whose trust must be confirmed
+/// for the first time.
+type FirstFetchPrompt = (String, String);
+/// `(url, known_sha, current_sha)` for a URL whose body now
+/// hashes to a different value than `known_hashes.toml` records.
+type TofuPrompt = (String, String, String);
+
+/// Split catalog-load errors into the two trust-related lists
+/// the GUI needs: first-fetch URLs awaiting user confirmation
+/// and TOFU mismatches awaiting a "trust the new sha?" decision.
+/// Anything else stays in `catalog_errors` for the inline banner.
+fn partition_url_trust_errors(
+    errors: &[devboy_token_catalog::CatalogError],
+) -> (Vec<FirstFetchPrompt>, Vec<TofuPrompt>) {
+    use devboy_token_catalog::{CatalogError, FetchError};
+    let mut confirms = Vec::new();
+    let mut warnings = Vec::new();
+    for e in errors {
+        if let CatalogError::Fetch { source, .. } = e {
+            match source {
+                FetchError::FirstFetchNeedsConfirmation { url, sha256 } => {
+                    confirms.push((url.clone(), sha256.clone()));
+                }
+                FetchError::TofuMismatch { url, known, actual } => {
+                    warnings.push((url.clone(), known.clone(), actual.clone()));
+                }
+                _ => {}
+            }
+        }
+    }
+    (confirms, warnings)
+}
+
+/// Load token catalogs from every configured source and merge them.
+///
+/// Sources walked, least-to-most specific: bundled (compiled in),
+/// user (`~/.devboy/secrets/catalog/`), project
+/// (`<cwd>/.devboy/secrets/catalog/`), URL (`sources.toml`, opt-in).
+/// Later sources override earlier ones on `provider_id` collision —
+/// see `devboy_token_catalog::load_all_with_urls` for the rule.
+///
+/// First-fetch policy is `RequireConfirmation`: a URL whose hash
+/// has not yet been recorded in `known_hashes.toml` surfaces a
+/// `FirstFetchNeedsConfirmation` error instead of being silently
+/// trusted. The GUI catches it and shows a confirm dialog.
+fn load_token_catalogs() -> (
+    Vec<devboy_token_catalog::LoadedCatalog>,
+    Vec<devboy_token_catalog::CatalogError>,
+) {
+    let bundled = devboy_token_catalog::bundled_catalogs();
+    let user_dir = devboy_token_catalog::default_user_catalog_dir();
+    let project_dir = std::env::current_dir()
+        .ok()
+        .map(|cwd| devboy_token_catalog::default_project_catalog_dir(&cwd));
+    let url_config = devboy_token_catalog::default_sources_toml_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|body| devboy_token_catalog::parse_sources_toml(&body).ok());
+    let known_hashes_path = devboy_token_catalog::default_known_hashes_path();
+    let cache_dir = devboy_token_catalog::default_catalog_cache_dir();
+    let audit_log_path = devboy_token_catalog::default_catalog_audit_log_path();
+    devboy_token_catalog::load_all_with_urls(
+        &bundled,
+        user_dir.as_deref(),
+        project_dir.as_deref(),
+        url_config.as_ref(),
+        known_hashes_path.as_deref(),
+        cache_dir.as_deref(),
+        devboy_token_catalog::FirstFetchPolicy::RequireConfirmation,
+        audit_log_path.as_deref(),
+    )
+}
+
+/// Walk global index + project manifest in CWD, merge them, and
+/// return inventory rows ready for `InventoryState::replace_rows`
+/// plus a `path → IndexEntry` map the dialog uses to populate
+/// its metadata fields.
+///
+/// `catalogs` feeds the per-row `catalog_override` chip (P22.2):
+/// when a row's middle path segment matches a catalog whose
+/// source is *not* `Bundled`, the chip is set so the GUI can
+/// render a coloured tag inline.
+fn load_inventory_or_empty(
+    backend: &StorageBackend,
+    extras: &[wallets::NamedBackend],
+    catalogs: &[devboy_token_catalog::LoadedCatalog],
+) -> (
+    Vec<devboy_secrets_ui::InventoryRow>,
+    std::collections::HashMap<String, devboy_storage::IndexEntry>,
+) {
+    use devboy_storage::{GlobalIndex, ProjectManifest, merge_manifest};
+
+    let Ok(index) = GlobalIndex::load() else {
+        return (Vec::new(), std::collections::HashMap::new());
+    };
+    let Ok(manifest) = ProjectManifest::load() else {
+        return (Vec::new(), std::collections::HashMap::new());
+    };
+    let Ok(merged) = merge_manifest(&index, &manifest) else {
+        return (Vec::new(), std::collections::HashMap::new());
+    };
+
+    // K27 — combined view: primary first (matches the daemon's
+    // primary-source-of-record routing), then extras in
+    // sources.toml declaration order. The status / KDBX-row
+    // probes walk this slice in order, so primary always wins
+    // a multi-wallet collision.
+    let combined: Vec<(&str, &StorageBackend)> = std::iter::once(("primary", backend))
+        .chain(extras.iter().map(|w| (w.name.as_str(), &w.backend)))
+        .collect();
+
+    let mut rows = Vec::with_capacity(merged.secrets.len());
+    let mut metadata = std::collections::HashMap::with_capacity(merged.secrets.len());
+    for resolved in merged.secrets.values() {
+        let path_str = resolved.path.to_string();
+        // Find the FIRST wallet that has this path — primary
+        // checked first, then extras in declaration order.
+        // `Some(name)` → Provisioned + tag the routed_source
+        // with that wallet's label. `None` → Missing.
+        let routed = combined
+            .iter()
+            .find(|(_, b)| b.has_value(&path_str))
+            .map(|(name, b)| {
+                if *name == "primary" {
+                    backend.source_label().to_owned()
+                } else {
+                    format!("{} ({})", b.source_label(), name)
+                }
+            });
+        let status = if routed.is_some() {
+            devboy_secrets_ui::RowStatus::Provisioned
+        } else {
+            devboy_secrets_ui::RowStatus::Missing
+        };
+        let provider_segment = resolved.path.as_str().split('/').nth(1);
+        rows.push(devboy_secrets_ui::InventoryRow {
+            path: path_str.clone(),
+            status,
+            routed_source: routed,
+            expires_at: resolved.metadata.expires_at.clone(),
+            provider: provider_segment.map(str::to_owned),
+            scope: resolved
+                .path
+                .as_str()
+                .split('/')
+                .next()
+                .unwrap_or("")
+                .to_owned(),
+            catalog_override: provider_segment.and_then(|p| catalog_override_for(catalogs, p)),
+        });
+        metadata.insert(path_str, resolved.metadata.clone());
+    }
+
+    // K27 — KDBX-backed rows: include every decrypted entry
+    // from EVERY unlocked KDBX wallet (primary OR extras).
+    // Each row gets tagged with the source wallet name so the
+    // user can tell two KDBX vaults apart at a glance.
+    for (wallet_name, b) in &combined {
+        let StorageBackend::Kdbx { snapshot, .. } = b else {
+            continue;
+        };
+        for entry in &snapshot.entries {
+            // Skip duplicates already covered by the manifest
+            // pass — manifest entries take precedence so the
+            // user's curated descriptions / rotation hints
+            // win. Also skip duplicates from earlier wallets
+            // (primary > extras > later extras).
+            if rows.iter().any(|r| r.path == entry.path) {
+                continue;
+            }
+            let scope = entry.path.split('/').next().unwrap_or("kdbx").to_owned();
+            let path_provider_segment = entry.path.split('/').nth(1);
+            // K20 — heuristic provider detection. Path
+            // segments from a hand-curated KDBX usually don't
+            // line up with catalog provider_ids (the user
+            // organises by group, not by provider). Try the
+            // entry's URL + title + username against every
+            // loaded catalog before falling back to the
+            // path-segment guess.
+            let detected_provider = detect_kdbx_catalog_binding(entry, catalogs);
+            let provider = detected_provider
+                .clone()
+                .or_else(|| path_provider_segment.map(str::to_owned));
+            let source_tag = if *wallet_name == "primary" {
+                b.source_label().to_owned()
+            } else {
+                format!("{} ({})", b.source_label(), wallet_name)
+            };
+            // KDBX entries are always "provisioned" — they exist
+            // in the unlocked snapshot, that's the whole point.
+            // `expires_at` flows straight through so the
+            // inventory's rotation column lights up for entries
+            // KeePass has marked as expiring.
+            rows.push(devboy_secrets_ui::InventoryRow {
+                path: entry.path.clone(),
+                status: devboy_secrets_ui::RowStatus::Provisioned,
+                routed_source: Some(source_tag),
+                expires_at: entry.expires_at.clone(),
+                provider,
+                scope,
+                catalog_override: detected_provider
+                    .as_deref()
+                    .or(path_provider_segment)
+                    .and_then(|p| catalog_override_for(catalogs, p)),
+            });
+            // Surface KDBX metadata in the index-entry map so
+            // the provision dialog's context card can show the
+            // KeePass-side Title / UserName / URL / Notes / tags
+            // / custom strings / attachments / UUID / OTP.
+            metadata.insert(entry.path.clone(), kdbx_entry_to_index_entry(entry));
+        }
+    }
+
+    (rows, metadata)
+}
+
+/// Project a `KdbxEntry` into the storage-layer `IndexEntry`
+/// shape the UI's existing context card already understands.
+/// Folds the K7 metadata fields (custom strings, tags, UUID,
+/// OTP, attachments, modification time) into the IndexEntry's
+/// existing slots so the inventory view + provision dialog
+/// light up without any per-backend special-casing.
+///
+/// Field mapping:
+///
+/// - `description` — multiline block: `KeePass entry: TITLE` +
+///   optional value-source note + Notes + tags + custom string
+///   keys + attachment names + UUID + OTP marker.
+/// - `retrieval_url` — URL field (so the context card renders the
+///   clickable hyperlink the user already expects).
+/// - `env_var` — UserName (mapped to the "alias" slot — closest
+///   semantic match in the existing IndexEntry shape).
+/// - `expires_at` — K7 expires_at (only when KeePass's Expires
+///   flag was true).
+/// - `last_rotated_at` — K7 modified_at; KeePass's
+///   LastModificationTime is a reasonable proxy for "when was
+///   this token last touched" until the user opts into a proper
+///   rotation flow.
+fn kdbx_entry_to_index_entry(entry: &devboy_secret_kdbx::KdbxEntry) -> devboy_storage::IndexEntry {
+    use secrecy::ExposeSecret as _;
+    use std::fmt::Write as _;
+    let mut description = String::with_capacity(256);
+    let _ = writeln!(description, "KeePass entry: {}", entry.title);
+    if let Some(notes) = entry.notes.as_deref()
+        && !notes.is_empty()
+    {
+        description.push('\n');
+        description.push_str("Notes:\n");
+        description.push_str(notes);
+        description.push('\n');
+    }
+    if !entry.tags.is_empty() {
+        let _ = writeln!(description, "\nTags: {}", entry.tags.join(", "));
+    }
+    // K18 — every value-bearing field is in `entry.values`.
+    // Protected fields are masked (key name only); Unprotected
+    // fields show a short preview so config-shaped strings
+    // like `account_id` / `region` stay visible. Long /
+    // multiline values are always omitted regardless of
+    // protection state (could still leak by length).
+    if !entry.values.is_empty() {
+        description.push_str("\nValue fields:\n");
+        for v in &entry.values {
+            let lock = if v.is_protected { "🔒" } else { "  " };
+            let preview = if v.is_protected {
+                "<masked, reveal in UI>".to_owned()
+            } else {
+                let raw = v.value.expose_secret();
+                if raw.len() > 32 || raw.contains('\n') {
+                    "<value omitted>".to_owned()
+                } else if raw.is_empty() {
+                    "<empty>".to_owned()
+                } else {
+                    raw.to_owned()
+                }
+            };
+            let _ = writeln!(description, "  {lock} {}: {preview}", v.name);
+        }
+    }
+    if !entry.attachments.is_empty() {
+        description.push_str("\nAttachments:\n");
+        for att in &entry.attachments {
+            let _ = writeln!(description, "  📎 {} ({} bytes)", att.name, att.size_bytes);
+        }
+    }
+    if entry.otp.is_some() {
+        description.push_str("\n🔐 TOTP source available (otp field set)\n");
+    }
+    let _ = writeln!(description, "\nKeePass UUID: {}", entry.uuid);
+
+    devboy_storage::IndexEntry {
+        description: Some(description.trim_end().to_owned()),
+        retrieval_url: entry.url.clone(),
+        env_var: entry.username.clone(),
+        expires_at: entry.expires_at.clone(),
+        last_rotated_at: entry.modified_at.clone(),
+        ..devboy_storage::IndexEntry::default()
+    }
+}
+
+/// K24 — max width (logical pixels) for the value column in
+/// the KDBX Values grid + the name column in Attachments.
+/// Below ~480 px the modal looks cramped; much above and a
+/// long unbroken token still overflows the 1024-px default
+/// window. 420 leaves room for two action buttons + spacing.
+const VALUE_COL_MAX_WIDTH: f32 = 420.0;
+
+/// Locate the KDBX entry for `path` and clone its value list,
+/// when the backend is KDBX. Returns `None` for any other
+/// backend (the dialog falls back to its single-value render).
+///
+/// Cloning is intentional — the `KdbxValue` Vec is small
+/// (typically 1-5 fields per entry) and the egui render layer
+/// wants borrow-free access. SecretString implements clone via
+/// allocation; the original snapshot owns the canonical copy.
+fn kdbx_values_for_path(
+    backend: &StorageBackend,
+    path: &str,
+) -> Option<Vec<devboy_secret_kdbx::KdbxValue>> {
+    let StorageBackend::Kdbx { snapshot, .. } = backend else {
+        return None;
+    };
+    let entry = snapshot.entries.iter().find(|e| e.path == path)?;
+    if entry.values.is_empty() {
+        return None;
+    }
+    Some(entry.values.to_vec())
+}
+
+/// Render the K19 "Values" section inside the provision
+/// dialog: one row per value field with name + masked/revealed
+/// text + 👁 reveal + 📋 copy. Mutates `revealed` (the set of
+/// field names currently shown in plaintext) on user input.
+///
+/// Agent-blindness: this render runs inside the UI process
+/// only. The plaintext is held in `KdbxValue.value` (zeroizing
+/// SecretString) and exposed via `expose_secret()` only to the
+/// `Label` / clipboard at the very last moment.
+fn render_kdbx_values_section(
+    ui: &mut eframe::egui::Ui,
+    values: &[devboy_secret_kdbx::KdbxValue],
+    revealed: &mut std::collections::HashSet<String>,
+) {
+    use secrecy::ExposeSecret as _;
+    ui.label(eframe::egui::RichText::new(format!("Values ({})", values.len())).strong());
+    ui.label(
+        eframe::egui::RichText::new(
+            "KeePass entries can carry multiple Protected fields. \
+             Each row reveals independently; copy lands on the clipboard.",
+        )
+        .small()
+        .weak(),
+    );
+    ui.add_space(4.0);
+
+    eframe::egui::Grid::new("kdbx-values-grid")
+        .num_columns(4)
+        .spacing([10.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            for v in values {
+                // Column 1 — lock chip + field name.
+                let lock = if v.is_protected { "🔒" } else { "·" };
+                ui.label(format!("{lock} {}", v.name));
+
+                // Column 2 — value (masked or revealed).
+                // K24 — wrap long values inside a max-width
+                // scope so a multi-hundred-char API token
+                // doesn't push the row past the modal edge.
+                // egui's Grid column would otherwise stretch
+                // to fit the longest unbroken run.
+                let is_revealed = revealed.contains(&v.name) || !v.is_protected;
+                let body: String = if is_revealed {
+                    v.value.expose_secret().to_owned()
+                } else {
+                    "•".repeat(8)
+                };
+                ui.scope(|ui| {
+                    ui.set_max_width(VALUE_COL_MAX_WIDTH);
+                    ui.add(
+                        eframe::egui::Label::new(eframe::egui::RichText::new(body).monospace())
+                            .wrap(),
+                    );
+                });
+
+                // Column 3 — reveal toggle (only meaningful
+                // for Protected fields; Unprotected rows show
+                // a disabled placeholder for layout symmetry).
+                if v.is_protected {
+                    let (glyph, hover) = if is_revealed {
+                        ("🙈", "Hide value")
+                    } else {
+                        ("👁", "Reveal value")
+                    };
+                    if ui.button(glyph).on_hover_text(hover).clicked() {
+                        if is_revealed {
+                            revealed.remove(&v.name);
+                        } else {
+                            revealed.insert(v.name.clone());
+                        }
+                    }
+                } else {
+                    ui.label("  ");
+                }
+
+                // Column 4 — copy to clipboard. Honours the
+                // user-supplied value verbatim; egui handles
+                // the OS-level clipboard write on macOS /
+                // Linux / Windows.
+                if ui.button("📋").on_hover_text("Copy to clipboard").clicked() {
+                    ui.ctx().copy_text(v.value.expose_secret().to_owned());
+                }
+                ui.end_row();
+            }
+        });
+}
+
+/// K21 — render the "Attachments" section of the KDBX entry
+/// dialog. Pulls the metadata list (name + size) from the
+/// snapshot and adds a 💾 button per row that re-opens the
+/// KDBX file, extracts the body, and offers a native save-as
+/// dialog. Returns `Some(toast)` when a save attempt finished
+/// this frame (success OR failure) so the caller can display a
+/// short-lived banner; otherwise `None`.
+///
+/// Agent-blindness: the extraction call runs synchronously
+/// inside this UI process. The decrypted bytes never enter the
+/// `KdbxSnapshot` cache and stay in scope only long enough to
+/// hit `std::fs::write`. Same passphrase the user typed at
+/// unlock-time is reused — we never re-prompt.
+fn render_kdbx_attachments_section(
+    ui: &mut eframe::egui::Ui,
+    backend: &StorageBackend,
+    path: &str,
+) -> Option<String> {
+    let StorageBackend::Kdbx {
+        file,
+        keyfile,
+        passphrase,
+        snapshot,
+    } = backend
+    else {
+        return None;
+    };
+    let entry = snapshot.entries.iter().find(|e| e.path == path)?;
+    if entry.attachments.is_empty() {
+        return None;
+    }
+
+    let mut toast: Option<String> = None;
+
+    ui.label(
+        eframe::egui::RichText::new(format!("Attachments ({})", entry.attachments.len())).strong(),
+    );
+    ui.label(
+        eframe::egui::RichText::new(
+            "Files stored inside this KeePass entry. Save extracts the body \
+             to disk — bytes are decrypted on demand and never cached.",
+        )
+        .small()
+        .weak(),
+    );
+    ui.add_space(4.0);
+
+    eframe::egui::Grid::new("kdbx-attachments-grid")
+        .num_columns(3)
+        .spacing([10.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            for att in &entry.attachments {
+                // Column 1 — name with paperclip glyph.
+                // K24 — wrap inside max-width scope so a long
+                // attachment name (PEM bundles often have
+                // 40-char filenames) doesn't push the Save
+                // button off-screen.
+                ui.scope(|ui| {
+                    ui.set_max_width(VALUE_COL_MAX_WIDTH);
+                    ui.add(eframe::egui::Label::new(format!("📎 {}", att.name)).wrap());
+                });
+
+                // Column 2 — human-readable size.
+                ui.label(
+                    eframe::egui::RichText::new(format_byte_size(att.size_bytes))
+                        .monospace()
+                        .weak(),
+                );
+
+                // Column 3 — Save button. Opens the OS picker;
+                // on confirm extracts the bytes and writes them.
+                if ui
+                    .button("💾 Save")
+                    .on_hover_text("Pick a destination and write the attachment to disk")
+                    .clicked()
+                {
+                    let destination = rfd::FileDialog::new().set_file_name(&att.name).save_file();
+                    if let Some(dest) = destination {
+                        toast = Some(perform_attachment_save(
+                            file,
+                            passphrase,
+                            keyfile.as_deref(),
+                            &entry.uuid,
+                            &att.name,
+                            &dest,
+                        ));
+                    }
+                }
+                ui.end_row();
+            }
+        });
+
+    toast
+}
+
+/// Execute the K21 save flow synchronously: re-derive the KDBX
+/// body via Argon2id, walk to the entry by UUID, grab the
+/// attachment by name, write it to `dest`. Returns a single-line
+/// toast message describing the outcome — green path: `Saved
+/// NAME → PATH`; red paths: `Failed: REASON`.
+///
+/// Synchronous on purpose. Attachments are typically small
+/// (certs, keys, screenshots), Argon2id was already paid at
+/// unlock-time so cold-cache cost on macOS is sub-second, and
+/// keeping it on the UI thread avoids the spawn_blocking +
+/// channel boilerplate. If a user complains it freezes the
+/// window on giant blobs, switch to tokio::spawn_blocking.
+fn perform_attachment_save(
+    file: &std::path::Path,
+    passphrase: &secrecy::SecretString,
+    keyfile: Option<&std::path::Path>,
+    entry_uuid: &str,
+    attachment_name: &str,
+    dest: &std::path::Path,
+) -> String {
+    match devboy_secret_kdbx::extract_attachment(
+        file,
+        passphrase,
+        keyfile,
+        entry_uuid,
+        attachment_name,
+    ) {
+        Ok(Some(bytes)) => match std::fs::write(dest, &bytes) {
+            Ok(()) => format!("Saved {} → {}", attachment_name, dest.display()),
+            Err(e) => format!("Failed: {e}"),
+        },
+        Ok(None) => format!("Failed: attachment {attachment_name:?} not found"),
+        Err(e) => format!("Failed: {e}"),
+    }
+}
+
+/// Format a byte count as a short human-readable string (e.g.
+/// `42 B`, `1.4 KiB`, `2.3 MiB`). Used by the K21 attachments
+/// grid so the row stays compact even for multi-megabyte blobs.
+fn format_byte_size(bytes: usize) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let b = bytes as f64;
+    if b >= GIB {
+        format!("{:.1} GiB", b / GIB)
+    } else if b >= MIB {
+        format!("{:.1} MiB", b / MIB)
+    } else if b >= KIB {
+        format!("{:.1} KiB", b / KIB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+/// K31 — clamp a modal's preferred max width to fit inside the
+/// current viewport when the user has shrunk the window past
+/// it. Leaves 32 px of padding on each side and floors at 280
+/// px so the modal stays usable on a tiny window. Returns the
+/// effective max-width to feed `ui.set_max_width`.
+fn fit_modal_width(ctx: &eframe::egui::Context, preferred: f32) -> f32 {
+    let screen_w = ctx.content_rect().width();
+    preferred.min(screen_w - 32.0).max(280.0)
+}
+
+/// K23 — build-info pulled in by the `build.rs` script. Cargo
+/// turns `cargo:rustc-env=KEY=VALUE` lines into compile-time
+/// `env!()` lookups. Defaults to `"unknown"` (also set in the
+/// script) when git / rustc weren't reachable at build time.
+const ABOUT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const ABOUT_GIT_HASH: &str = env!("DEVBOY_GIT_HASH");
+const ABOUT_BUILD_TIMESTAMP: &str = env!("DEVBOY_BUILD_TIMESTAMP");
+const ABOUT_RUSTC_VERSION: &str = env!("DEVBOY_RUSTC_VERSION");
+const ABOUT_TARGET_TRIPLE: &str = env!("DEVBOY_TARGET_TRIPLE");
+
+/// Highlighted features for the About → "What's in this build"
+/// section. Curated bullet list (not a full changelog dump) —
+/// keep it short, the modal links out to the full CHANGELOG.
+const ABOUT_FEATURES: &[&str] = &[
+    "KDBX 4 (KeePass) read-only backend with passphrase / keyfile unlock",
+    "Per-entry multi-value reveal, copy, and attachment download",
+    "HashiCorp Vault (HCP) read source with namespace + KV-v2 support",
+    "Encrypted local vault (XChaCha20-Poly1305) with first-run wizard",
+    "Hierarchical inventory tree + search with Cmd/Ctrl-F focus",
+    "Catalog binding with token-pattern hints + provider chips",
+];
+
+/// ASCII-art Meteora wizard shown in the About modal footer.
+/// Canonical art from the meteora.pro landing — uses block
+/// glyphs (`▌▐▀▄▁▂▃▄▅▆▒░▓█`) so it renders crisply in a
+/// monospace egui label without anti-aliasing artefacts.
+const ABOUT_WIZARD_ASCII: &str = r#"▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▐▐▐▐▐▐▀▀▀▄▄▁▁▁▁▂▂▂▂▂▂▂▂▂▂▁▁▁▁▄▄▄▀▀▐▐▐▐▐▌░▒▒▓▒▓▓▓▓
+▌▌▌▌▌▌▌▌▌▌▌▌▌░▌▌▌▌▌░▌▌▌▌▌▌▌▌▌▐▐▐▐▐▐▀▀▄▄▄▁▁▂▂▂▂▃▃▃▃▃▃▃▃▃▂▂▂▂▁▄▄▄▄▀▐▌▒▒░▌▌▌▌░▒▒▓▓█
+▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▐▐▐▐▐▀▀▀▄▄▁▁▂▂▂▃▃▃▅▅▅▅▅▅▅▅▃▅▃▂@>*##@░▀▄▀▓>█▐▌▌░░▒▒▓▓█
+▌▌▌▌▌▌▌▌▌▌▌▌░░░▌▌▌▌▌▌▌▌▌▌▌▐▐▐▐▐▀▀▀▄▁▁▂▂▂▃▃▅▅▅▅▅▅▆▆▆▅▅▅▅▄=~+▓-#@█▓▀▀=█▐▌▌░▒▒▒▒▓██
+▌▌▌▌▌▌▌▌▌▌░░░▌▌▌▌▌▌▌▌▌▌▌▌▐▐▐▐▀▀▀▄▄▁▁▂▂▃▃▂█*>==##▄▆▅▂▄▂▃%>▓*+@▁▄▄▄▄▒█▒▌▆▆▅▁▓▓▓▓▓█
+▌▌▌▌▌▌▌▌▌▌░▌▌▌▌▌▌▌▌▌▌▌▌▌▌▐▐▐▐▀▀▄▄▁▁▂▁░%><=-+-++++-=▁▄▂▂▅▅▃▂▂▁▄▄▀▐▐▌▌▂▆▆▅▅▃█▓▓▓██
+▌▌▌▌▌▌▌▌▌▌░░░░░░▌▌▌▌▌▌▌▌▐▐▐▐▐▀▀▀▄▁▄%>==+-_//||/\_~--▀▅▃▃▃▂▂▁▄▀▀▐▐▐▌▌▌▆▆▅▂▓▓█████
+▌▌▌░▌░▌▌░░░░░░░░▌▌▌▌▌▌▌▌▌▐▐▐▐▀▀▀▄▌*=~|!!l!lIIii;:;:l_▄▃▂▂▁▁▄▄▀▀▐▐▌▌░░▒▒▒▓▓▓▓█@██
+░▌░░░▌░░░░░░░░░░░░▌▌▌▌▌▌▌▐▐▐▐▀▀▀▐>_/||!!ll!III;;:::,,~*▂▁▁▄▄▀▐▐▌▌▌░░░▒▒▒▓▓▓▓▓█@@
+▌▌▌░░░░░░░░░░░░░░░░▌▌▌▌▌▌▌▐▐▐▐▀▀~\/|!||!!!!Iii;;;:,:,:,/▄▀▀▀▐▐▌▌░░░▒▒▒▒▒▓▓▓▓▓▓██
+░░░░░░░░░░░░░░░░░░░▌▌▌▌▌▌▌▌▐▐▐▐_///||!li;:,,,,......,:,:>▀▐▌▌▌▌░░░░▒▒▒▒▒▒▓▓▓▓▓▓█
+░░░░░░░░░░░░░░░░░░░░▌▌▌▌▌▌▌▐▐▐█\\/!l:!=%##%%%%>-/l:   ,;_▐▐▌░▒▒░░░░▒▒▒▒▓▒▓▓▓▓▓▓▓
+░░░░░░░░░░░░░░░░░░░▌░░▌▌▌▌▌▌▌▐▓_|I,!+*~<██@█%-l!\_\|:  :l▐▌▌▌░▒▒▒▒▒▒▒▒▒▒▒▓▓▓▓▓▓▓
+░░░░░░░░░░░░░░░░░░░░░▌▌▌▌▌▌▌▌▌▓/; |▓@@%+=%█*\lI!!l/~~;  i▌▌▌░░░▒▓▓▓▒▒▒▒▒▒▒▒▒▓▓▓▓
+░░░░░░░░░░░░░░░░░░░░░░░▌▌▌▌▌▌▓%=l;%░▒▒%++▓▌█\|\~__=+-/  .▒▌░░░░░▒▓▓▓▓▒▒▒▒▒▒▒▒▓▓▓
+░░░░░░░░░░░░░░░░░░░░░░▌▌▌▌▌▌▌▌@~!\-░▌░░░▌░▌█~-*@@@*+-/;:/▓▒▒░░░░░▒▒▓▓▓▓▓▒▒▒▒▒▒▒▓
+░░░░░░░░░░░░░░░░░░░░░░░░▌░▌▌▌░*_|I!░▌░▓=*▌░>-+_+><-~_|i.,_░▌▌░░░░░░▒▒▓▓▓▓▓▒▒▒▒▒▒
+░░░░░░░░░░░░░░░░░░░░░░░░░▌▌▌▌▌@-/lI▓▒#~<@#*_iI!|/\_|_!i,.!_▌░░░░░░░░▒▒▒▒▒▓▒▒▒▒▒▒
+░░░░░░░░░░░░░░░░░░░░░░░░░▌▌▌▌▌▌▒+I~@█=//\=~//!l:II!I!l::iI!\▓▌░▌░░░░░░░▒▒▒▒▒▒▒▒▒
+░░░░░░░░░░░░░░░░░░░░░░░░▌▌▌▌▌▌▌▌▒+!>==\%@%*+-_\\!Ii;i..;iiIl/░▌▌▌▌▌▌▌▌▌░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░▌▌▌▌▌▌▌▌▌░▒%+!/\=██*<++__lI...ii;:,,,l<░░▌░░░░▒░▌▌▌▌▌▌▐▀▄
+░░░░░░░░░░░░░░░░░░░░░░▌▌▌▌▌▌▌▌▌▌▐▐▐▒+!__+<=_~__/l,,. ;;!|//_+=<>*%%*>>>>*#▄▁▁▁▁▁
+░░░░░░░░░░░░░░░░░░░░░▌▌▌▌▌▌▌▌▌▌▐▐▐▌%|I\/_-=~\!Ii,. .. ;!ll=>****%%%%>>>>>**>>▓▄▁
+░░░░░░░░░░░░░░░░░░░░▌▌▌▌▌▌▌▌▌▌▐▐▐░#%%>~!ll!/:,,...,,:;I\<*%%%**%%**%>><=-l;:-~~▂
+░░░░░░░░░░░░░░░░░░▌▌▌▌▌▌▌▌▌▐▐▐▐▐▓**%i||++!I\i  .,,;I\->**%#%%**#*>*%<<~l;>▓▒#<<█
+░░░░░░░░░░░░░░░░▌▌▌▌▌▌▌▌▌▐▐▐▌█#*>%%**|I!%I.  ,;l~++=*%%*%###**%%**%%+/;\█░▒█%%><
+░░░░░░░░░░░░░░░▌▌▌▌▌▌▌▌▐▐▓####>*%%#+-\-~/\~\-<*<<***##*%%###%%#%**%*l.I@▒█#><>>>
+░░░░░░░░░░░░░▌▌▌▌▌▌▌▐▐▒%##%@%%%%%*#%###@%%%%@***%%>#@%>*%###%%%*>**+;~>▒█%=_+<<=
+░░░░░░░░░░░▌▌▌▌▌▌▌▐▐░@*%*%@*%%%%#%%@@@>*@@*%*<<#█%##*>*%%#@##%**>><--!l▓█>~!;_l\
+░░░░░░░░▌▌▌▌▌▌▌▐▐▐▐▌%#*>##>*#%%##%%#%>%@#%<=<*@█%▁▌▀▓▓██#▓▌%%*><+++_:l*▒%+\I.|_@
+░░░░░░▌▌▌▌▌▌▌▌▐▐▀▄▀%*%*=>*>%#%###%%*>#%%#><>*#█*<▌░@%**##@%*>>=--+\,/@░░█<+!,/||
+▒░░░▌▌▌▌▌▌▐▀▁▁▁▂▂▄%%>>->#>*#####%%%>%*##*>>*#@><>*%%%*%%**><<>=-=\:I#░▌▒█%*>i/!!
+░░▌▌▐▐▄▁▁▁▂▁▂▂▂▂▂▓**<++#*>#@###%%***%##%*<*@#*%>*%%*>%%%%%*>=-~+_,.+▒▌▒%>-_-||!!
+▀▄▁▁▁▁▁▁▁▁▁▁▁▁▂▁▐*<>==%***@###%%**@%%#%*<**%##%*>>*%%%%%%%>-//-*+__*░▐▌#-\\\/lll
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▄>-+<>#%**#@##%***@#%%%%>***#@%%*%%**%%##%%<\!|@▒▓@*>@▓▓%=_\/llll
+▄▁▁▁▁▁▁▁▁▁▁▁▁▁▁#*<-<>*%%%@###%*>%@#%%%>***%*%%%##<=>*%##█▒█>==#▓@>~_~---~\\|IIIl
+▄▁▁▁▁▁▁▁▁▁▁▁▁▁█***+=<%*%*%###%**%@#%%>>>**%%#@@#><<>*%###▓*=--<%><-\_\\\\\/iIIII
+▄▁▁▁▁▁▁▁▁▁▁▁▁▒%%*%<\+#%**%###%**%#%%**<>*%#####%*><<*█@#*<~___\____\||///!;;iIII
+▁▁▁▁▁▁▁▁▁▁▁▁▀%%%%%>_!%*>*#####*>*###*>*%#%#####%*><<*▓#<<*#█▓▓%+_\\/|/|!I,,iiiii
+▁▁▁▁▁▁▁▁▁▁▁▁%%**>>=~/*>*%%%%##%**%#**%%#@%#####%*>=+>#<~\__---+-_/\\/!i. .iiiiii
+▁▁▁▁▁▁▁▁▁▁▁**%*>>>=\l>>****%%%%%*%#%**#@#%#%##%%%=~=%>_||//\\_////|!i. .:;iiiiii
+▁▁▁▁▁▁▁▁▁▁@*%%><==+!.+>>****#%%%**%%#@@@%*#%%#%%%=+>~ll!!!!I!_--_i:  .:iIiiiiiii
+▁▁▁▁▁▁▁▁▁▒<+~_~~~--_/_>>>*%%#%#%%*%#####%*%#%%%**><<<<==+++=<<<<<=~/!lIIiIiIiiii
+▁▁▁▁▁▁▁▁▀>><=--~_\/\_\><<*%##%%%%%%#%%%%%*%%****><=+--------~~~~_\\__\/|!!llIIIi"#;
+
+/// K20 — heuristic provider detection for a KDBX entry. Tries
+/// (in order):
+///
+/// 1. URL host match — `entry.url`'s host vs every catalog
+///    variant's `retrieval.console_url` host. `platform.openai
+///    .com` → `openai`. Stripping a leading `www.` on both
+///    sides; substring match so subdomain trees collapse
+///    (`api.openai.com` still matches `platform.openai.com`'s
+///    parent domain via the second-level token).
+///
+/// 2. Title / username substring vs catalog `provider_id` and
+///    `display_name`, case-insensitive. "OpenAI prod token"
+///    → `openai`.
+///
+/// Returns the first match's `provider_id`. No match → None;
+/// the caller falls back to the path-segment guess.
+fn detect_kdbx_catalog_binding(
+    entry: &devboy_secret_kdbx::KdbxEntry,
+    catalogs: &[devboy_token_catalog::LoadedCatalog],
+) -> Option<String> {
+    // ----- 1. URL host match ------------------------------
+    if let Some(url) = entry.url.as_deref()
+        && let Some(host) = reqwest::Url::parse(url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_owned))
+    {
+        let host_key = host.strip_prefix("www.").unwrap_or(&host).to_lowercase();
+        let host_core = second_level_domain(&host_key);
+        for loaded in catalogs {
+            for variant in &loaded.catalog.variants {
+                let console = &variant.retrieval.console_url;
+                if let Some(c_host) = reqwest::Url::parse(console)
+                    .ok()
+                    .and_then(|u| u.host_str().map(str::to_owned))
+                {
+                    let c_key = c_host
+                        .strip_prefix("www.")
+                        .unwrap_or(&c_host)
+                        .to_lowercase();
+                    if c_key == host_key || second_level_domain(&c_key) == host_core {
+                        return Some(loaded.catalog.provider_id.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // ----- 2. Title / username substring vs provider_id /
+    //          display_name ----------------------------------
+    let needle = format!(
+        "{} {}",
+        entry.title.to_lowercase(),
+        entry.username.as_deref().unwrap_or("").to_lowercase()
+    );
+    for loaded in catalogs {
+        let pid = loaded.catalog.provider_id.to_lowercase();
+        let dn = loaded.catalog.display_name.to_lowercase();
+        // Require provider id / display name to be at least 3
+        // chars so we don't match "go" against "google" by
+        // accident on tiny tokens. Hyphens / underscores are
+        // tolerated by lowercase normalisation.
+        if pid.len() >= 3 && needle.contains(&pid) {
+            return Some(loaded.catalog.provider_id.clone());
+        }
+        if dn.len() >= 3 && needle.contains(&dn) {
+            return Some(loaded.catalog.provider_id.clone());
+        }
+    }
+    None
+}
+
+/// Reduce a host string to its second-level + TLD (`api.openai
+/// .com` → `openai.com`, `platform.openai.com` → `openai.com`).
+/// Used by the URL-host match so subdomain trees collapse
+/// against the catalog's console_url even when the user's
+/// KeePass URL points at a different sub-host.
+///
+/// Pure label arithmetic — doesn't know about effective TLDs
+/// (`.co.uk` etc) and won't collapse `app.example.co.uk` to
+/// `example.co.uk`. That's a known limitation; the second-pass
+/// title-substring match catches what URL-match misses.
+fn second_level_domain(host: &str) -> String {
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() <= 2 {
+        host.to_owned()
+    } else {
+        parts[parts.len() - 2..].join(".")
+    }
+}
+
+/// Determine the inline catalog-override badge for a row whose
+/// middle path segment is `provider_id`. Returns `None` for
+/// bundled sources (the common case — no chip needed) and for
+/// paths whose provider isn't in any loaded catalog.
+fn catalog_override_for(
+    catalogs: &[devboy_token_catalog::LoadedCatalog],
+    provider_id: &str,
+) -> Option<String> {
+    use devboy_token_catalog::CatalogSource;
+    let loaded = catalogs
+        .iter()
+        .find(|l| l.catalog.provider_id == provider_id)?;
+    match &loaded.source {
+        CatalogSource::Bundled => None,
+        CatalogSource::User => Some("user".to_owned()),
+        CatalogSource::Project => Some("project".to_owned()),
+        CatalogSource::Url { url, .. } => {
+            let host = reqwest::Url::parse(url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned))
+                .unwrap_or_else(|| "url".to_owned());
+            Some(format!("url:{host}"))
+        }
+    }
+}
+
+// =============================================================================
+// eframe::App impl
+// =============================================================================
+
+impl eframe::App for InventoryApp {
+    fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
+        // K23 — top menu bar. Stable surface for discoverable
+        // actions that don't fit in the per-row context: About,
+        // Changelog, bug report. Renders even while modals are
+        // up so the user can read build info during onboarding.
+        eframe::egui::MenuBar::new().ui(ui, |ui| {
+            ui.menu_button("Help", |ui| {
+                if ui.button("About devboy secrets…").clicked() {
+                    self.show_about = true;
+                    ui.close();
+                }
+                if ui.button("Open changelog").clicked() {
+                    ui.ctx().open_url(eframe::egui::OpenUrl::new_tab(
+                        "https://github.com/meteora-pro/devboy-tools/releases",
+                    ));
+                    ui.close();
+                }
+                if ui.button("Report a bug").clicked() {
+                    ui.ctx().open_url(eframe::egui::OpenUrl::new_tab(
+                        "https://github.com/meteora-pro/devboy-tools/issues/new",
+                    ));
+                    ui.close();
+                }
+            });
+        });
+
+        // About modal — rendered before onboarding so the user
+        // can pop it open from the menu mid-onboarding if they
+        // want build-info reassurance.
+        if self.show_about {
+            self.render_about_modal(ui.ctx());
+        }
+
+        // First-run onboarding wizard — gates everything on the
+        // very first launch. `onboarding` and `vault_unlock`
+        // are mutually exclusive (a locked vault means the user
+        // already onboarded), so checking onboarding first is
+        // safe.
+        if self.onboarding.is_some() {
+            self.render_onboarding_modal(ui.ctx());
+        }
+
+        // Vault unlock / create modal — gates everything else
+        // while the backend is a locked local-vault. The
+        // `egui::Modal` dims the inventory underneath; the
+        // user can't touch a row until they unlock or pick the
+        // keychain escape hatch.
+        if self.vault_unlock.is_some() {
+            self.render_vault_unlock_modal(ui.ctx());
+        }
+
+        // K31 — responsive scroll fallback. The body (banner +
+        // inventory + dialog) lives inside ScrollArea::both()
+        // so a small window scrolls instead of clipping. Modals
+        // render through `ctx` above, so they stay outside this
+        // scope and remain centred regardless of scroll state.
+        // `auto_shrink([false; 2])` keeps the scroll bars
+        // reserving space even when content fits — prevents the
+        // layout from jumping as rows appear / disappear.
+        eframe::egui::ScrollArea::both()
+            .id_salt("inventory-root-scroll")
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                self.render_body(ui);
+            });
+    }
+}
+
+impl InventoryApp {
+    /// K31 — extracted body render so the outer `ui()` can
+    /// keep the menu bar + modals fixed and put just the
+    /// scrollable surface inside `ScrollArea::both`. Behaviour
+    /// is identical to the pre-K31 monolithic `ui()` body; this
+    /// is a pure structural extraction.
+    fn render_body(&mut self, ui: &mut eframe::egui::Ui) {
+        // K28 — wallet bar. One chip per connected wallet
+        // (primary first, then extras), each showing the
+        // lock state + name + a "★ primary" marker. Click a
+        // 🔒 chip to arm the K29 unlock flow for that wallet;
+        // click 🔓 on an extra to lock it back; click 🔒 on
+        // the primary opens the legacy single-wallet unlock
+        // modal (same UX as pre-K28).
+        self.render_wallet_bar(ui);
+        ui.separator();
+
+        // Backend banner + switcher — tells the user where
+        // saves go, and lets them flip keychain ↔ local-vault
+        // live (V5). The switch is session-scoped; the env var
+        // stays the durable override.
+        let backend_label = self.backend.label();
+        let mut switch_to_vault = false;
+        let mut lock_vault = false;
+        let mut switch_to_keychain = false;
+        ui.horizontal(|ui| {
+            ui.label(
+                eframe::egui::RichText::new(format!("Backend: {backend_label}"))
+                    .small()
+                    .color(eframe::egui::Color32::from_rgb(0x55, 0xaa, 0xff)),
+            );
+            match &self.backend {
+                StorageBackend::Keychain => {
+                    if ui
+                        .small_button("Switch to encrypted vault")
+                        .on_hover_text(
+                            "Use the on-disk XChaCha20-Poly1305 vault instead of the OS keychain",
+                        )
+                        .clicked()
+                    {
+                        switch_to_vault = true;
+                    }
+                }
+                StorageBackend::LocalVault { .. } => {
+                    if ui
+                        .small_button("Lock vault")
+                        .on_hover_text("Drop the passphrase; the unlock prompt returns")
+                        .clicked()
+                    {
+                        lock_vault = true;
+                    }
+                    if ui
+                        .small_button("Switch to keychain")
+                        .on_hover_text("Use the OS keychain for this session")
+                        .clicked()
+                    {
+                        switch_to_keychain = true;
+                    }
+                }
+                // Locked → the unlock modal is already up; no
+                // extra switcher button needed (the modal has
+                // its own "Use keychain instead" hatch).
+                StorageBackend::LocalVaultLocked { .. } => {}
+                // HTTP Vault is configured in sources.toml — the
+                // only live switch is back to the keychain for
+                // the session.
+                StorageBackend::HttpVault { .. } => {
+                    if ui
+                        .small_button("Switch to keychain")
+                        .on_hover_text("Use the OS keychain for this session")
+                        .clicked()
+                    {
+                        switch_to_keychain = true;
+                    }
+                }
+                // KDBX: locked → unlock modal already up. Unlocked
+                // → offer "Lock" to drop the passphrase + snapshot
+                // and "Switch to keychain" as an escape hatch.
+                StorageBackend::KdbxLocked { .. } => {}
+                StorageBackend::Kdbx { .. } => {
+                    if ui
+                        .small_button("Lock KDBX")
+                        .on_hover_text("Drop the passphrase + snapshot; the unlock prompt returns")
+                        .clicked()
+                    {
+                        lock_vault = true;
+                    }
+                    if ui
+                        .small_button("Switch to keychain")
+                        .on_hover_text("Use the OS keychain for this session")
+                        .clicked()
+                    {
+                        switch_to_keychain = true;
+                    }
+                }
+            }
+            // K23 — right-aligned About button. Uses
+            // with_layout(right_to_left) so the button sticks
+            // to the banner's trailing edge regardless of how
+            // many backend switchers landed before it.
+            ui.with_layout(
+                eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                |ui| {
+                    if ui
+                        .small_button("About")
+                        .on_hover_text("Version, build info, links")
+                        .clicked()
+                    {
+                        self.show_about = true;
+                    }
+                },
+            );
+        });
+        if switch_to_vault {
+            // Existing `.dvb` → unlock flow; no file yet →
+            // create flow.
+            let vault_path = default_vault_path();
+            let mode = if vault_path.exists() {
+                // `unlock` needs a `LocalVaultLocked` backend to
+                // act on, so move there first.
+                self.backend = StorageBackend::LocalVaultLocked { vault_path };
+                devboy_secrets_ui::VaultUnlockMode::Unlock
+            } else {
+                devboy_secrets_ui::VaultUnlockMode::Create
+            };
+            self.vault_unlock = Some(devboy_secrets_ui::VaultUnlockState::new(mode));
+        }
+        if lock_vault {
+            self.backend = self.backend.lock();
+            self.vault_unlock = Some(devboy_secrets_ui::VaultUnlockState::new(
+                devboy_secrets_ui::VaultUnlockMode::Unlock,
+            ));
+            self.reload();
+        }
+        if switch_to_keychain {
+            self.backend = StorageBackend::Keychain;
+            self.reload();
+        }
+        ui.separator();
+
+        // URL trust prompts (P23.6). Surface as modeless `egui::Window`s
+        // so the user can compare against the inventory before deciding.
+        // Each is rendered through `render_url_trust_prompts`, which
+        // returns the user's decision + the URL it concerns; we apply
+        // it before the rest of the frame so the next reload reflects
+        // the new state.
+        let trust_decisions = self.render_url_trust_prompts(ui.ctx());
+        if !trust_decisions.is_empty() {
+            self.apply_trust_decisions(trust_decisions);
+        }
+
+        // Recovery phrase — surfaced exactly once after first
+        // vault create. The user must save this somewhere; we
+        // do not show it again across runs. An explicit
+        // "I've saved this" acknowledgement is the gate — the
+        // banner stays until the user confirms, so a freshly
+        // created vault can't have its only recovery path
+        // scrolled away by accident.
+        let mut recovery_acknowledged = false;
+        if let Some(phrase) = &self.recovery_phrase_to_show {
+            use secrecy::ExposeSecret as _;
+            ui.label(
+                eframe::egui::RichText::new("⚠ Save your recovery phrase")
+                    .strong()
+                    .color(eframe::egui::Color32::from_rgb(0xcc, 0xa0, 0x33)),
+            );
+            // Single expose_secret() call — the only place we
+            // unwrap the SecretString. Drops back to wrapped on
+            // the next frame because RichText copies the str.
+            ui.label(
+                eframe::egui::RichText::new(phrase.expose_secret())
+                    .monospace()
+                    .background_color(eframe::egui::Color32::from_rgb(0x33, 0x33, 0x33)),
+            );
+            ui.label(
+                eframe::egui::RichText::new(
+                    "Without this phrase you cannot recover the vault if you forget the passphrase.",
+                )
+                .small()
+                .italics(),
+            );
+            if ui
+                .button("I've saved this phrase — dismiss")
+                .on_hover_text("The phrase is shown only once; copy it somewhere safe first")
+                .clicked()
+            {
+                recovery_acknowledged = true;
+            }
+            ui.separator();
+        }
+        if recovery_acknowledged {
+            self.recovery_phrase_to_show = None;
+        }
+
+        if let Some(err) = &self.last_save_error {
+            ui.colored_label(eframe::egui::Color32::from_rgb(0xcc, 0x44, 0x44), err);
+            ui.separator();
+        }
+
+        // K30 — surface a small informational banner when one
+        // or more extra wallets are still locked. The chip
+        // strip above already lets the user unlock them with
+        // a click; this banner just makes discovery explicit
+        // ("there ARE more entries you haven't seen yet").
+        let locked_extras: Vec<&str> = self
+            .extra_wallets
+            .iter()
+            .filter(|w| w.backend.is_locked())
+            .map(|w| w.name.as_str())
+            .collect();
+        if !locked_extras.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    eframe::egui::RichText::new(format!("🔒 {} locked", locked_extras.len()))
+                        .small()
+                        .color(eframe::egui::Color32::from_rgb(0xcc, 0x99, 0x00)),
+                );
+                ui.label(
+                    eframe::egui::RichText::new(format!(
+                        "({}). Click a chip above to unlock and add its entries.",
+                        locked_extras.join(", ")
+                    ))
+                    .small()
+                    .weak(),
+                );
+            });
+            ui.add_space(4.0);
+        }
+
+        // Track which row was selected before render so we can
+        // detect a click → arm the dialog.
+        let prev_selected = self.state.selected();
+        devboy_secrets_ui::gui::inventory::render(ui, &mut self.state);
+
+        // Top buttons: open dialog for selected row, refresh.
+        ui.horizontal(|ui| {
+            let has_row = self.state.selected_row().is_some();
+            if ui
+                .add_enabled(
+                    has_row,
+                    eframe::egui::Button::new("Add / update value for selected"),
+                )
+                .clicked()
+                && let Some(row) = self.state.selected_row()
+            {
+                self.open_dialog_for(&row.path);
+            }
+            if ui.button("Reload from manifest").clicked() {
+                self.reload();
+            }
+            // Surface the catalog count so the operator knows
+            // how many providers + errors are loaded. The
+            // variant-picker widget and per-variant rendering
+            // land in P20.2+; for P20.1 this is the only proof
+            // the data path actually works.
+            ui.label(
+                eframe::egui::RichText::new(format!(
+                    "catalogs: {} loaded, {} error(s)",
+                    self.catalogs.len(),
+                    self.catalog_errors.len()
+                ))
+                .small(),
+            );
+        });
+
+        // Detect click that changed selection → auto-open dialog
+        // (UX convenience — same effect as the explicit button).
+        if self.state.selected() != prev_selected
+            && let Some(row) = self.state.selected_row()
+        {
+            self.open_dialog_for(&row.path);
+        }
+
+        // Dialog overlay.
+        if self.dialog.is_some() {
+            let mut close = false;
+            let mut submitted_value = None;
+            let mut submitted_path = None;
+            // Render the dialog inside an egui::Window. The
+            // window has two stacked sections:
+            //   1. Context card  — full description, retrieval
+            //      URL as a clickable hyperlink, env_var alias,
+            //      pattern hint, expiry & rotation reminders.
+            //      Pulled from the index entry the dialog was
+            //      opened against — gives the user enough info
+            //      to know WHAT to fill and WHERE to get it.
+            //   2. Provision form — the existing
+            //      `gui::provision_dialog` widget (path, hidden
+            //      input, save / cancel).
+            let dialog_path = self.dialog_path.clone().unwrap_or_default();
+            let entry = self.metadata_by_path.get(&dialog_path).cloned();
+            // Render the dialog as a true modal overlay: a dimmed
+            // backdrop over the inventory, focus trapped, ESC /
+            // click-outside dismiss it. `egui::Modal` (vs the old
+            // `egui::Window`) is the window-in-window primitive —
+            // the inventory stays visible underneath instead of
+            // being replaced like a route.
+            let modal = eframe::egui::Modal::new(eframe::egui::Id::new("provision-modal")).show(
+                ui.ctx(),
+                |ui| {
+                    // Cap the width so the modal reads as a card,
+                    // not a full-bleed panel. K31 — clamp to the
+                    // live screen width so a narrow window still
+                    // gets the modal in-frame.
+                    ui.set_max_width(fit_modal_width(ui.ctx(), 560.0));
+                    // Variant picker — only visible when the
+                    // active path resolves to a catalog provider
+                    // with more than one variant. Single-variant
+                    // providers skip the picker entirely (we
+                    // already pre-selected the only choice in
+                    // open_dialog_for).
+                    if let Some((loaded, _)) = self.current_provider_and_variant()
+                        && loaded.catalog.variants.len() > 1
+                    {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                eframe::egui::RichText::new(format!(
+                                    "{} — pick a variant:",
+                                    loaded.catalog.display_name
+                                ))
+                                .strong(),
+                            );
+                            ui.label(catalog_source_chip(&loaded.source));
+                        });
+                        let variants: Vec<(String, String)> = loaded
+                            .catalog
+                            .variants
+                            .iter()
+                            .map(|v| (v.id.clone(), v.display_name.clone()))
+                            .collect();
+                        for (vid, vname) in variants {
+                            let selected = self
+                                .selected_variant_id
+                                .as_deref()
+                                .map(|s| s == vid)
+                                .unwrap_or(false);
+                            if ui.radio(selected, vname).clicked() {
+                                self.selected_variant_id = Some(vid);
+                            }
+                        }
+                        ui.separator();
+                    }
+
+                    let variant_for_card = self
+                        .current_provider_and_variant()
+                        .map(|(loaded, v)| (v, &loaded.source));
+                    render_context_card(
+                        ui,
+                        &dialog_path,
+                        entry.as_ref(),
+                        &self.backend,
+                        variant_for_card,
+                    );
+                    ui.separator();
+
+                    // K19 — KDBX-only "Values" section. When the
+                    // active backend is KDBX and the dialog path
+                    // matches one of its entries, list EVERY
+                    // value field (multiple Protected strings are
+                    // routine in KeePass — see K18). Each row
+                    // gets its own 👁 reveal + 📋 copy buttons;
+                    // values stay masked by default, revealed
+                    // one at a time at the user's request.
+                    let kdbx_values = kdbx_values_for_path(&self.backend, &dialog_path);
+                    let is_kdbx_row = kdbx_values.is_some();
+                    if let Some(values) = kdbx_values {
+                        render_kdbx_values_section(ui, &values, &mut self.revealed_kdbx_values);
+                        ui.separator();
+                    }
+
+                    // For KDBX rows the provision-input below
+                    // would be misleading: writes aren't
+                    // implemented yet (read-only MVP) and the
+                    // K19 Values section above already covers
+                    // the "view + copy" need. Show a small
+                    // close-only footer instead of the whole
+                    // format-hint / regex-feedback / hidden-
+                    // input stack the local-vault flow uses.
+                    if is_kdbx_row {
+                        // K21 — attachments section. Pulls
+                        // metadata (name + size) from the
+                        // snapshot; clicking 💾 triggers a
+                        // re-open of the KDBX file with the
+                        // cached passphrase to extract the
+                        // body, then a native save-as dialog.
+                        if let Some(toast) =
+                            render_kdbx_attachments_section(ui, &self.backend, &dialog_path)
+                        {
+                            self.attachment_toast = Some((
+                                toast,
+                                std::time::Instant::now() + std::time::Duration::from_secs(4),
+                            ));
+                        }
+                        if let Some((msg, deadline)) = self.attachment_toast.as_ref() {
+                            if std::time::Instant::now() < *deadline {
+                                ui.colored_label(
+                                    eframe::egui::Color32::from_rgb(0x55, 0xaa, 0x55),
+                                    msg.as_str(),
+                                );
+                                // Repaint so the toast clears
+                                // visually when the deadline
+                                // passes, not on the next
+                                // user interaction.
+                                ui.ctx().request_repaint();
+                            } else {
+                                self.attachment_toast = None;
+                            }
+                        }
+                        ui.label(
+                            eframe::egui::RichText::new(
+                                "Read-only: KDBX write support lands in a follow-up. \
+                                 Use the Values block above to copy any field.",
+                            )
+                            .small()
+                            .weak()
+                            .italics(),
+                        );
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Close").clicked() {
+                                close = true;
+                            }
+                        });
+                        // Skip the provision-input render
+                        // entirely — early-return out of the
+                        // modal show closure for this entry.
+                        return;
+                    }
+
+                    // Format hint (P22.1). Human-readable shape
+                    // ("starts with sk-, 32+ alphanumeric") sourced
+                    // from the catalog variant's `format_hint`.
+                    // Distinct from the regex feedback rendered
+                    // *below* the input: the hint is a shape the
+                    // user reads BEFORE typing; the feedback
+                    // confirms what they typed AFTER.
+                    let variant_format_hint: Option<String> = self
+                        .current_provider_and_variant()
+                        .and_then(|(_, v)| v.format_hint.clone());
+                    if let Some(hint) = variant_format_hint {
+                        ui.label(
+                            eframe::egui::RichText::new(format!("Format: {hint}"))
+                                .small()
+                                .italics(),
+                        );
+                    }
+
+                    // The value's masked / unmasked state lives
+                    // in `DialogState` now — the provision-dialog
+                    // widget renders the eye-toggle right next to
+                    // the input (standard password-field UX). No
+                    // separate "Show entered value" checkbox, no
+                    // echoed `current value: «…»` line here.
+
+                    // Live regex feedback — visible to the user
+                    // while they're typing. Resolution order:
+                    //   variant.format_regex (catalog override),
+                    //   entry.format_regex (manifest-inline),
+                    //   pattern_id → rust catalogue.
+                    let variant_format_regex: Option<String> = self
+                        .current_provider_and_variant()
+                        .and_then(|(_, v)| v.format_regex.clone());
+                    if let Some(d) = self.dialog.as_ref() {
+                        let val = d.value_clone_for_edit();
+                        let pattern = variant_format_regex.clone().or_else(|| {
+                            entry.as_ref().and_then(|e| {
+                                if let Some(re) = e.format_regex.as_deref() {
+                                    Some(re.to_owned())
+                                } else if let Some(pid) = e.pattern_id.as_deref() {
+                                    let cat = devboy_secret_patterns::Catalogue::builtins_only();
+                                    cat.find(pid).map(|p| p.format_regex().as_str().to_owned())
+                                } else {
+                                    None
+                                }
+                            })
+                        });
+                        match pattern {
+                            Some(re) if !val.is_empty() => match regex::Regex::new(&re) {
+                                Ok(compiled) => {
+                                    if compiled.is_match(&val) {
+                                        ui.colored_label(
+                                            eframe::egui::Color32::from_rgb(0x55, 0xaa, 0x55),
+                                            format!("✓ matches /{re}/"),
+                                        );
+                                    } else {
+                                        ui.colored_label(
+                                            eframe::egui::Color32::from_rgb(0xcc, 0x44, 0x44),
+                                            format!("✗ mismatch — expected /{re}/"),
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    ui.colored_label(
+                                        eframe::egui::Color32::from_rgb(0xcc, 0xa0, 0x33),
+                                        format!("regex error: {e}"),
+                                    );
+                                }
+                            },
+                            Some(re) => {
+                                ui.label(
+                                    eframe::egui::RichText::new(format!("expected format: /{re}/"))
+                                        .small()
+                                        .italics(),
+                                );
+                            }
+                            None => {
+                                ui.label(
+                                    eframe::egui::RichText::new(
+                                        "no format rule declared for this path \
+                                         (any value will pass format check)",
+                                    )
+                                    .small()
+                                    .italics(),
+                                );
+                            }
+                        }
+                    }
+                    ui.separator();
+
+                    let dialog = self.dialog.as_mut().unwrap();
+                    let result = devboy_secrets_ui::gui::provision_dialog::render(ui, dialog);
+                    if let Some(submission) = result.submission {
+                        submitted_value = Some(submission.value);
+                        submitted_path = Some(submission.path);
+                    } else if result.cancelled {
+                        close = true;
+                    }
+                    // The console / docs / rotation-guide links are
+                    // real egui hyperlinks now — egui opens the OS
+                    // browser itself. No `open_url_clicked` to
+                    // broker, no subprocess to spawn.
+                },
+            );
+
+            // ESC or a click on the dimmed backdrop dismisses the
+            // modal — same path as the dialog's Cancel button.
+            if modal.should_close() {
+                close = true;
+            }
+
+            if let (Some(value), Some(path)) = (submitted_value, submitted_path) {
+                use secrecy::ExposeSecret;
+                let entry = self.metadata_by_path.get(&path).cloned();
+                // Snapshot the variant slot up-front: format
+                // regex AND liveness spec. The catalog wins over
+                // the rust pattern catalogue when both apply.
+                let (variant_regex, variant_liveness) = self
+                    .current_provider_and_variant()
+                    .map(|(_, v)| (v.format_regex.clone(), v.liveness.clone()))
+                    .unwrap_or((None, None));
+
+                // Stage 1 — format validation. Catalog regex
+                // wins; otherwise reuse `validate_format` (the
+                // same path `secrets validate` walks on CI).
+                let format_problem: Option<String> = if let Some(re_str) = variant_regex.as_deref()
+                {
+                    match regex::Regex::new(re_str) {
+                        Ok(re) if !re.is_match(value.expose_secret()) => Some(format!(
+                            "value does not match the catalog format (`{re_str}`)"
+                        )),
+                        Ok(_) => None,
+                        Err(e) => Some(format!("catalog format rule could not be compiled: {e}")),
+                    }
+                } else {
+                    let format_check = entry.as_ref().map(|e| {
+                        let catalogue = devboy_secret_patterns::Catalogue::builtins_only();
+                        devboy_storage::validate_format(e, value.expose_secret(), &catalogue)
+                    });
+                    match &format_check {
+                        Some(devboy_storage::FormatCheck::Mismatch { source, expected }) => {
+                            Some(format!(
+                                "value does not match the declared format ({source:?}, expected `{expected}`)"
+                            ))
+                        }
+                        Some(devboy_storage::FormatCheck::Error { message }) => {
+                            Some(format!("format rule could not be evaluated: {message}"))
+                        }
+                        _ => None,
+                    }
+                };
+
+                if let Some(reason) = format_problem {
+                    self.last_save_error = Some(format!("rejected before write: {reason}"));
+                    if let Some(d) = self.dialog.as_mut() {
+                        d.apply_status(devboy_secrets_ui::DialogStatus::ValidationFailed {
+                            reason,
+                        });
+                    }
+                } else if let Some(reason) =
+                    liveness_probe(entry.as_ref(), variant_liveness.as_ref(), &value).err()
+                {
+                    // Stage 2 — actually call the provider's
+                    // endpoint (when the pattern declares one).
+                    // Synchronous blocking probe — UI hangs for
+                    // up to 5s. The trade-off: we never let a
+                    // dead token land in the vault.
+                    self.last_save_error = Some(format!("liveness probe failed: {reason}"));
+                    if let Some(d) = self.dialog.as_mut() {
+                        d.apply_status(devboy_secrets_ui::DialogStatus::ValidationFailed {
+                            reason,
+                        });
+                    }
+                } else {
+                    // Stage 3 — write through the selected
+                    // backend (keychain or local-vault).
+                    match self.backend.store(
+                        &path,
+                        &secrecy::SecretString::new(value.expose_secret().to_string().into()),
+                    ) {
+                        Ok(maybe_recovery) => {
+                            self.last_save_error = None;
+                            if let Some(d) = self.dialog.as_mut() {
+                                d.apply_status(devboy_secrets_ui::DialogStatus::Saved);
+                            }
+                            if let Some(phrase) = maybe_recovery {
+                                self.recovery_phrase_to_show =
+                                    Some(secrecy::SecretString::from(phrase));
+                            }
+                            close = true;
+                            self.reload();
+                        }
+                        Err(e) => {
+                            self.last_save_error = Some(format!("backend write failed: {e}"));
+                            if let Some(d) = self.dialog.as_mut() {
+                                d.apply_status(devboy_secrets_ui::DialogStatus::ValidationFailed {
+                                    reason: format!("backend: {e}"),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            if close {
+                self.dialog = None;
+                self.dialog_path = None;
+            }
+        }
+    }
+
+    /// K28 — render the per-wallet chip strip above the backend
+    /// banner. Each wallet renders as a small button with
+    /// 🔒/🔓 + name + optional `(N)` entry-count. Click:
+    ///
+    /// * primary, locked → arms the legacy single-wallet unlock
+    ///   modal (same code path as pre-K28)
+    /// * primary, unlocked → no-op; the existing banner below
+    ///   still owns the "Lock vault" / switcher buttons
+    /// * extra, locked → arms K29's per-wallet unlock modal
+    ///   targeting that wallet's name
+    /// * extra, unlocked → locks it back via `StorageBackend::lock`
+    fn render_wallet_bar(&mut self, ui: &mut eframe::egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                eframe::egui::RichText::new("Wallets:")
+                    .small()
+                    .color(eframe::egui::Color32::from_rgb(0xaa, 0xaa, 0xaa)),
+            );
+            // Primary chip first.
+            let primary_name = wallets::synthetic_name_for(&self.backend);
+            let primary_locked = self.backend.is_locked();
+            let primary_count = wallet_entry_count(&self.backend);
+            let primary_label = chip_label("primary", &primary_name, primary_locked, primary_count);
+            let resp = ui.small_button(primary_label).on_hover_text(format!(
+                "Primary wallet ({}). Click to {} it.",
+                self.backend.source_label(),
+                if primary_locked { "unlock" } else { "manage" }
+            ));
+            if resp.clicked() && primary_locked && self.vault_unlock.is_none() {
+                // Re-use the existing locked-startup arm flow.
+                let state = devboy_secrets_ui::VaultUnlockState::new(
+                    devboy_secrets_ui::VaultUnlockMode::Unlock,
+                );
+                let state = match &self.backend {
+                    StorageBackend::KdbxLocked { file, .. } => state.with_copy(
+                        "Unlock KeePass database",
+                        format!("Enter the passphrase that protects `{}`.", file.display()),
+                    ),
+                    _ => state,
+                };
+                self.vault_unlock = Some(state);
+                self.pending_unlock_target = None; // primary
+            }
+
+            // Extra wallets in declaration order. Captured into
+            // per-frame intent flags so we can mutate
+            // self.extra_wallets / self.vault_unlock after the
+            // loop finishes (avoid double borrow).
+            let mut unlock_request: Option<String> = None;
+            let mut lock_request: Option<String> = None;
+            for w in &self.extra_wallets {
+                let count = wallet_entry_count(&w.backend);
+                let locked = w.backend.is_locked();
+                let label = chip_label("extra", &w.name, locked, count);
+                let resp = ui.small_button(label).on_hover_text(format!(
+                    "{} wallet `{}` ({}). Click to {} it.",
+                    w.backend.source_label(),
+                    w.name,
+                    if locked { "locked" } else { "unlocked" },
+                    if locked { "unlock" } else { "lock" }
+                ));
+                if resp.clicked() {
+                    if locked {
+                        unlock_request = Some(w.name.clone());
+                    } else {
+                        lock_request = Some(w.name.clone());
+                    }
+                }
+            }
+            if let Some(name) = unlock_request
+                && self.vault_unlock.is_none()
+            {
+                let target = self.extra_wallets.iter().find(|w| w.name == name);
+                let state = devboy_secrets_ui::VaultUnlockState::new(
+                    devboy_secrets_ui::VaultUnlockMode::Unlock,
+                );
+                let state = match target.map(|w| &w.backend) {
+                    Some(StorageBackend::KdbxLocked { file, .. }) => state.with_copy(
+                        format!("Unlock `{name}`"),
+                        format!("Enter the passphrase that protects `{}`.", file.display()),
+                    ),
+                    Some(StorageBackend::LocalVaultLocked { vault_path }) => state.with_copy(
+                        format!("Unlock `{name}`"),
+                        format!(
+                            "Enter the passphrase for the encrypted vault at `{}`.",
+                            vault_path.display()
+                        ),
+                    ),
+                    _ => state.with_copy(format!("Unlock `{name}`"), String::new()),
+                };
+                self.vault_unlock = Some(state);
+                self.pending_unlock_target = Some(name);
+            }
+            if let Some(name) = lock_request
+                && let Some(slot) = self.extra_wallets.iter_mut().find(|w| w.name == name)
+            {
+                slot.backend = slot.backend.lock();
+                self.reload();
+            }
+        });
+    }
+}
+
+/// K28 — entry-count for an unlocked wallet's chip. Unlocked
+/// KDBX vaults report their snapshot length; everything else
+/// returns `None` (no on-the-spot count without an extra round
+/// trip to the daemon).
+fn wallet_entry_count(backend: &StorageBackend) -> Option<usize> {
+    match backend {
+        StorageBackend::Kdbx { snapshot, .. } => Some(snapshot.entries.len()),
+        _ => None,
+    }
+}
+
+/// K28 — chip label: `🔒 name` (locked) or `🔓 name (N)`
+/// (unlocked, optional count). `role = "primary"` adds a
+/// trailing `★` so the primary stands out at a glance.
+fn chip_label(role: &str, name: &str, locked: bool, count: Option<usize>) -> String {
+    let lock = if locked { "🔒" } else { "🔓" };
+    let marker = if role == "primary" { " ★" } else { "" };
+    let count_suffix = match count {
+        Some(n) if !locked => format!(" ({n})"),
+        _ => String::new(),
+    };
+    format!("{lock} {name}{count_suffix}{marker}")
+}
+
+// =============================================================================
+// Liveness probes
+// =============================================================================
+
+/// Try to call the provider's liveness endpoint with the
+/// given value. Resolution order:
+///
+/// 1. `catalog_liveness` (the variant's JSON-declared probe) —
+///    catalog wins because the user explicitly picked a variant.
+/// 2. `entry.pattern_id` → rust catalogue's `LivenessSpec`.
+///
+/// Returns `Ok(())` when no probe is declared (nothing to do),
+/// when the probe returned the expected HTTP status, or when
+/// neither resolution path yields a spec. Returns `Err(reason)`
+/// when the probe ran and the upstream rejected the value, or
+/// when the network call itself failed — we'd rather block save
+/// on a transient than silently land a dead token.
+fn liveness_probe(
+    entry: Option<&devboy_storage::IndexEntry>,
+    catalog_liveness: Option<&devboy_token_catalog::LivenessSpec>,
+    value: &secrecy::SecretString,
+) -> Result<(), String> {
+    use devboy_secret_patterns::{HttpMethod, LivenessAuth, LivenessKind};
+    use secrecy::ExposeSecret;
+
+    // Catalog override path — variant's JSON-declared probe.
+    if let Some(spec) = catalog_liveness {
+        return run_catalog_liveness(spec, value);
+    }
+
+    let Some(entry) = entry else { return Ok(()) };
+    let Some(pid) = entry.pattern_id.as_deref() else {
+        return Ok(());
+    };
+    let cat = devboy_secret_patterns::Catalogue::builtins_only();
+    let Some(pattern) = cat.find(pid) else {
+        return Ok(());
+    };
+    let Some(spec) = pattern.liveness() else {
+        return Ok(());
+    };
+    let LivenessKind::Http {
+        url,
+        method,
+        auth,
+        expect_status,
+    } = &spec.kind;
+
+    // SSRF guard — refuse to dial private / loopback / link-local
+    // / cloud-metadata addresses even when the rust-catalogue
+    // ships them (defence in depth: same check fires in
+    // `run_catalog_liveness`). See P23.4.
+    devboy_token_catalog::check_ssrf_safe(url)
+        .map_err(|e| format!("liveness URL refused for safety: {e}"))?;
+
+    // Blocking client — we run inside an egui frame so async
+    // wouldn't help anyway. 5-second timeout. The SSRF-safe
+    // builder re-checks every redirect target so an HTTPS
+    // upstream cannot 30x into RFC1918 / cloud-metadata after
+    // the original-URL guard passes.
+    let client = devboy_token_catalog::ssrf_safe_blocking_client(std::time::Duration::from_secs(5))
+        .map_err(|e| format!("could not build HTTP client: {e}"))?;
+    let mut req = match method {
+        HttpMethod::Get => client.get(*url),
+        HttpMethod::Post => client.post(*url),
+        HttpMethod::Head => client.head(*url),
+    };
+    let raw = value.expose_secret();
+    req = match auth {
+        LivenessAuth::Bearer => req.bearer_auth(raw),
+        LivenessAuth::BasicUser => req.basic_auth(raw, None::<&str>),
+        LivenessAuth::BasicPassword => req.basic_auth("", Some(raw)),
+        LivenessAuth::Header { name } => req.header(*name, raw),
+    };
+    let resp = req.send().map_err(|e| format!("network: {e}"))?;
+    let status = resp.status();
+    if status.as_u16() == *expect_status {
+        Ok(())
+    } else {
+        Err(format!(
+            "upstream returned HTTP {status} (expected {expect_status})"
+        ))
+    }
+}
+
+/// Run an HTTP liveness probe defined in a `devboy-token-catalog`
+/// JSON entry. Mirrors the rust-catalogue path in
+/// [`liveness_probe`] but reads its config from the
+/// string-typed JSON shape instead.
+fn run_catalog_liveness(
+    spec: &devboy_token_catalog::LivenessSpec,
+    value: &secrecy::SecretString,
+) -> Result<(), String> {
+    use secrecy::ExposeSecret;
+    if spec.kind != "http" {
+        return Err(format!("unsupported liveness kind: {}", spec.kind));
+    }
+
+    // SSRF guard — same check the rust-catalogue path runs.
+    // The catalog gets to declare *where* the GUI ships a
+    // freshly-typed secret, so this is the most security-
+    // critical chokepoint in the URL-source threat model. See
+    // P23.4 / `project_url_catalog_design.md`.
+    devboy_token_catalog::check_ssrf_safe(&spec.url)
+        .map_err(|e| format!("liveness URL refused for safety: {e}"))?;
+
+    // SSRF-safe blocking client — re-checks redirects so the
+    // catalog-declared liveness URL cannot 30x into private
+    // / loopback / cloud-metadata space.
+    let client = devboy_token_catalog::ssrf_safe_blocking_client(std::time::Duration::from_secs(5))
+        .map_err(|e| format!("could not build HTTP client: {e}"))?;
+    let mut req = match spec.method.to_ascii_uppercase().as_str() {
+        "GET" => client.get(&spec.url),
+        "POST" => client.post(&spec.url),
+        "HEAD" => client.head(&spec.url),
+        m => return Err(format!("unsupported HTTP method: {m}")),
+    };
+    let raw = value.expose_secret();
+    req = match &spec.auth {
+        devboy_token_catalog::AuthSpec::Bearer => req.bearer_auth(raw),
+        devboy_token_catalog::AuthSpec::BasicUser => req.basic_auth(raw, None::<&str>),
+        devboy_token_catalog::AuthSpec::BasicPassword => req.basic_auth("", Some(raw)),
+        devboy_token_catalog::AuthSpec::Header { name } => req.header(name.as_str(), raw),
+    };
+    let resp = req.send().map_err(|e| format!("network: {e}"))?;
+    let status = resp.status();
+    if status.as_u16() == spec.expect_status {
+        Ok(())
+    } else {
+        Err(format!(
+            "upstream returned HTTP {} (expected {})",
+            status, spec.expect_status
+        ))
+    }
+}
+
+// =============================================================================
+// Render helpers
+// =============================================================================
+
+/// Render-ready chip indicating where a catalog entry came
+/// from. Used both in the multi-variant picker title and in
+/// the context card so a team override (project-scope JSON
+/// shadowing the bundled default) is visible at a glance.
+fn catalog_source_chip(source: &devboy_token_catalog::CatalogSource) -> eframe::egui::RichText {
+    use devboy_token_catalog::CatalogSource;
+    use eframe::egui::{Color32, RichText};
+    let (label, color) = match source {
+        CatalogSource::Bundled => ("bundled".to_owned(), Color32::from_rgb(0x99, 0x99, 0x99)),
+        CatalogSource::User => ("user".to_owned(), Color32::from_rgb(0x55, 0xa0, 0xcc)),
+        CatalogSource::Project => ("project".to_owned(), Color32::from_rgb(0x55, 0xaa, 0x55)),
+        // URL sources get an orange chip + the hostname so the
+        // user can see at a glance whether a remote catalog is
+        // shadowing a bundled default. P23.6 layers the
+        // first-fetch confirm + diff-on-change UX on top of
+        // this; the chip itself is the always-on tell.
+        CatalogSource::Url { url, .. } => {
+            let host = reqwest::Url::parse(url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned))
+                .unwrap_or_else(|| "url".to_owned());
+            (format!("url:{host}"), Color32::from_rgb(0xdd, 0x88, 0x33))
+        }
+    };
+    RichText::new(format!("[{label}]")).small().color(color)
+}
+
+fn render_context_card(
+    ui: &mut eframe::egui::Ui,
+    path: &str,
+    entry: Option<&devboy_storage::IndexEntry>,
+    backend: &StorageBackend,
+    variant: Option<(
+        &devboy_token_catalog::TokenVariant,
+        &devboy_token_catalog::CatalogSource,
+    )>,
+) {
+    use eframe::egui::{Color32, RichText};
+
+    ui.heading("How to fill this secret");
+    ui.add_space(4.0);
+
+    // Variant block — when the active path resolved to a
+    // catalog variant, render the source-origin chip followed
+    // by `description`, the `console_url` hyperlink, the
+    // `retrieval.steps` as a numbered procedure, and finally
+    // `retrieval.notes` (if any) as a small italic footnote.
+    // The grid below skips rows it would duplicate
+    // (Description, Where to take from) when a variant is
+    // present.
+    if let Some((v, source)) = variant {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(&v.display_name).strong());
+            ui.label(catalog_source_chip(source));
+        });
+        ui.label(&v.description);
+        ui.add_space(2.0);
+        ui.hyperlink_to("Where to take from →", &v.retrieval.console_url);
+        ui.add_space(4.0);
+        for (idx, step) in v.retrieval.steps.iter().enumerate() {
+            ui.label(format!("{}. {}", idx + 1, step));
+        }
+        if let Some(notes) = v.retrieval.notes.as_deref() {
+            ui.add_space(4.0);
+            ui.label(RichText::new(notes).small().italics());
+        }
+        ui.add_space(6.0);
+    }
+
+    eframe::egui::Grid::new(format!("ctx-grid-{path}"))
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            ui.label(RichText::new("Path").strong());
+            ui.label(RichText::new(path).monospace());
+            ui.end_row();
+
+            if let Some(e) = entry {
+                if variant.is_none()
+                    && let Some(desc) = e.description.as_deref()
+                {
+                    ui.label(RichText::new("Description").strong());
+                    ui.label(desc);
+                    ui.end_row();
+                }
+                if variant.is_none()
+                    && let Some(url) = e.retrieval_url.as_deref()
+                {
+                    ui.label(RichText::new("Where to take from").strong());
+                    ui.hyperlink(url);
+                    ui.end_row();
+                }
+                if let Some(env_var) = e.env_var.as_deref() {
+                    ui.label(RichText::new("Env var alias").strong());
+                    ui.label(RichText::new(env_var).monospace());
+                    ui.end_row();
+                }
+                if let Some(pat) = e.pattern_id.as_deref() {
+                    ui.label(RichText::new("Pattern").strong());
+                    ui.label(RichText::new(pat).monospace());
+                    ui.end_row();
+                }
+                if let Some(method) = e.rotation_method {
+                    ui.label(RichText::new("Rotation").strong());
+                    ui.label(format!(
+                        "{method:?} ({} days)",
+                        e.rotate_every_days.unwrap_or(0)
+                    ));
+                    ui.end_row();
+                }
+                if let Some(last) = e.last_rotated_at.as_deref() {
+                    ui.label(RichText::new("Last rotated").strong());
+                    ui.label(last);
+                    ui.end_row();
+                }
+                if let Some(exp) = e.expires_at.as_deref() {
+                    ui.label(RichText::new("Expires at").strong());
+                    ui.label(exp);
+                    ui.end_row();
+                }
+            } else {
+                ui.label(RichText::new("Note").strong());
+                ui.label(
+                    RichText::new(
+                        "no metadata for this path in the global index — \
+                         only the manifest declared it",
+                    )
+                    .color(Color32::from_rgb(0xcc, 0xa0, 0x33)),
+                );
+                ui.end_row();
+            }
+
+            ui.label(RichText::new("Stored in").strong());
+            ui.label(RichText::new(backend.label()).small());
+            ui.end_row();
+        });
+
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new(
+            "Paste the value below. It is held in a SecretString \
+             (zeroized on drop) and written straight to the OS keychain — \
+             the agent layer never sees it.",
+        )
+        .small()
+        .italics(),
+    );
+}
+
+// =============================================================================
+// InventoryApp helpers + dialog open
+// =============================================================================
+
+impl InventoryApp {
+    fn open_dialog_for(&mut self, path: &str) {
+        let entry = match self.metadata_by_path.get(path) {
+            Some(e) => e.clone(),
+            None => devboy_storage::IndexEntry::default(),
+        };
+        // Resolve the variant first so the catalog builder can
+        // surface the matching variant's description / steps /
+        // notes (P26 / S2). Falls back to the catalog's first
+        // variant inside the builder when nothing matched.
+        self.selected_variant_id = self.resolve_initial_variant(&entry);
+        let metadata = crate::catalog_metadata::metadata_from_catalog_and_entry(
+            path,
+            &entry,
+            &self.catalogs,
+            self.selected_variant_id.as_deref(),
+        );
+        self.dialog = Some(devboy_secrets_ui::DialogState::new(
+            devboy_secrets_ui::DialogMode::Provision,
+            metadata,
+        ));
+        self.dialog_path = Some(path.to_owned());
+        self.last_save_error = None;
+        // Every new dialog starts with every Protected field
+        // masked — the user re-clicks 👁 to reveal one at a
+        // time. Stops a value-shaped string from staying on
+        // screen after the user moved on to a different entry.
+        self.revealed_kdbx_values.clear();
+        // Drop any stale "saved to <path>" toast from a
+        // previous dialog so it doesn't bleed into the new
+        // one's render.
+        self.attachment_toast = None;
+    }
+
+    /// Pick the variant that should be selected when the
+    /// dialog opens. Two strategies in priority order:
+    ///
+    /// 1. `entry.pattern_id` matches a specific variant id
+    ///    (`kimi-cn`, `kimi-global`, …) — pre-select that
+    ///    one.
+    /// 2. `entry.pattern_id` matches a `provider_id` (`kimi`)
+    ///    — pre-select the provider's first variant. The
+    ///    user can flip via radio.
+    ///
+    /// Returns `None` when no catalog match — the dialog
+    /// renders without a picker.
+    fn resolve_initial_variant(&self, entry: &devboy_storage::IndexEntry) -> Option<String> {
+        let pid = entry.pattern_id.as_deref()?;
+        // Specific-variant match wins.
+        if let Some((_, variant)) = devboy_token_catalog::find_variant_by_id(
+            &self
+                .catalogs
+                .iter()
+                .map(|l| l.catalog.clone())
+                .collect::<Vec<_>>(),
+            pid,
+        ) {
+            return Some(variant.id.clone());
+        }
+        // Otherwise: pick first variant of the matching provider.
+        self.catalogs
+            .iter()
+            .find(|l| l.catalog.provider_id == pid)
+            .and_then(|l| l.catalog.variants.first().map(|v| v.id.clone()))
+    }
+
+    /// Look up the loaded catalog whose provider owns the
+    /// currently-selected variant. Returns the catalog plus
+    /// the variant slot, when both resolve.
+    fn current_provider_and_variant(
+        &self,
+    ) -> Option<(
+        &devboy_token_catalog::LoadedCatalog,
+        &devboy_token_catalog::TokenVariant,
+    )> {
+        let variant_id = self.selected_variant_id.as_deref()?;
+        for loaded in &self.catalogs {
+            if let Some(v) = loaded.catalog.variants.iter().find(|v| v.id == variant_id) {
+                return Some((loaded, v));
+            }
+        }
+        None
+    }
+
+    /// Render every outstanding URL trust prompt and collect
+    /// the user's responses. Modeless `egui::Window`s — the
+    /// user can compare against the rest of the GUI before
+    /// deciding. Returned tuples are applied by
+    /// [`Self::apply_trust_decisions`].
+    fn render_url_trust_prompts(&mut self, ctx: &eframe::egui::Context) -> Vec<UrlTrustDecision> {
+        use eframe::egui::{Color32, RichText};
+        let mut out: Vec<UrlTrustDecision> = Vec::new();
+
+        // First-fetch confirms — orange chip; "Trust this catalog"
+        // accepts and persists the SHA into known_hashes.toml.
+        for (url, sha) in self.pending_url_confirms.clone() {
+            let title = format!("Trust new URL catalog: {url}");
+            eframe::egui::Window::new(&title)
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.label(
+                        RichText::new(
+                            "This URL is listed in sources.toml but has not been seen before.",
+                        )
+                        .strong(),
+                    );
+                    ui.label("Verify the URL is one your team operates before accepting.");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("URL:").strong());
+                        ui.hyperlink(&url);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("SHA256:").strong());
+                        ui.label(RichText::new(&sha).monospace());
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(
+                                RichText::new("Trust this catalog")
+                                    .color(Color32::from_rgb(0x55, 0xaa, 0x55)),
+                            )
+                            .clicked()
+                        {
+                            out.push(UrlTrustDecision::Accept {
+                                url: url.clone(),
+                                sha256: sha.clone(),
+                            });
+                        }
+                        if ui
+                            .button(
+                                RichText::new("Reject").color(Color32::from_rgb(0xcc, 0x44, 0x44)),
+                            )
+                            .clicked()
+                        {
+                            out.push(UrlTrustDecision::Reject { url: url.clone() });
+                        }
+                    });
+                });
+        }
+
+        // SHA mismatch — red chip; far stronger language. The
+        // legitimate-rotation case is recoverable via the
+        // "Trust the new SHA" button, but the typical reason
+        // for surfacing this is upstream compromise — so the
+        // copy leans toward suspicion.
+        for (url, known, actual) in self.pending_url_warnings.clone() {
+            let title = format!("⚠ Catalog SHA changed: {url}");
+            eframe::egui::Window::new(&title)
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.label(
+                        RichText::new("This URL's body has changed since you last trusted it.")
+                            .color(Color32::from_rgb(0xcc, 0x44, 0x44))
+                            .strong(),
+                    );
+                    ui.label(
+                        "Most often this is the upstream rotating its file legitimately, \
+                         but it is also exactly what an upstream compromise looks like. \
+                         When in doubt, refuse and verify out-of-band before accepting.",
+                    );
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("URL:").strong());
+                        ui.hyperlink(&url);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Known SHA256:").strong());
+                        ui.label(RichText::new(&known).monospace());
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Current SHA256:").strong());
+                        ui.label(
+                            RichText::new(&actual)
+                                .monospace()
+                                .color(Color32::from_rgb(0xcc, 0x44, 0x44)),
+                        );
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("Trust the new SHA")).clicked() {
+                            out.push(UrlTrustDecision::Accept {
+                                url: url.clone(),
+                                sha256: actual.clone(),
+                            });
+                        }
+                        if ui
+                            .button(
+                                RichText::new("Reject and keep old SHA")
+                                    .color(Color32::from_rgb(0xcc, 0x44, 0x44)),
+                            )
+                            .clicked()
+                        {
+                            out.push(UrlTrustDecision::Reject { url: url.clone() });
+                        }
+                    });
+                });
+        }
+
+        out
+    }
+
+    /// Apply user decisions from
+    /// [`Self::render_url_trust_prompts`] to `known_hashes.toml`,
+    /// then re-walk the catalog sources so accepted catalogs
+    /// activate (or rejected ones drop from the pending list).
+    fn apply_trust_decisions(&mut self, decisions: Vec<UrlTrustDecision>) {
+        if decisions.is_empty() {
+            return;
+        }
+        let Some(known_hashes_path) = devboy_token_catalog::default_known_hashes_path() else {
+            self.last_save_error = Some("could not resolve known_hashes.toml path".to_owned());
+            return;
+        };
+        for decision in decisions {
+            match decision {
+                UrlTrustDecision::Accept { url, sha256 } => {
+                    if let Err(e) =
+                        devboy_token_catalog::record_url_trust(&known_hashes_path, &url, &sha256)
+                    {
+                        self.last_save_error =
+                            Some(format!("could not record trust for {url}: {e}"));
+                    }
+                }
+                UrlTrustDecision::Reject { url } => {
+                    self.pending_url_confirms.retain(|(u, _)| u != &url);
+                    self.pending_url_warnings.retain(|(u, _, _)| u != &url);
+                }
+            }
+        }
+        self.reload_catalogs();
+    }
+}
+
+/// One decision the user made about a pending URL trust prompt.
+/// Emitted by [`InventoryApp::render_url_trust_prompts`] and
+/// consumed by [`InventoryApp::apply_trust_decisions`].
+#[derive(Debug, Clone)]
+enum UrlTrustDecision {
+    Accept { url: String, sha256: String },
+    Reject { url: String },
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use secrecy::SecretString;
+
+    /// A vault path inside a fresh tempdir — never collides with
+    /// a real `~/.devboy` vault, cleaned up on drop.
+    fn temp_vault_path(dir: &tempfile::TempDir) -> std::path::PathBuf {
+        dir.path().join("test-vault.dvb")
+    }
+
+    // -- StorageBackend state machine --------------------------
+
+    #[test]
+    fn is_locked_only_true_for_the_locked_variant() {
+        assert!(!StorageBackend::Keychain.is_locked());
+        let dir = tempfile::tempdir().unwrap();
+        let locked = StorageBackend::LocalVaultLocked {
+            vault_path: temp_vault_path(&dir),
+        };
+        assert!(locked.is_locked());
+        let unlocked = StorageBackend::LocalVault {
+            vault_path: temp_vault_path(&dir),
+            passphrase: SecretString::new("p".to_string().into()),
+        };
+        assert!(!unlocked.is_locked());
+    }
+
+    #[test]
+    fn lock_drops_the_passphrase_back_to_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_vault_path(&dir);
+        let unlocked = StorageBackend::LocalVault {
+            vault_path: path.clone(),
+            passphrase: SecretString::new("p".to_string().into()),
+        };
+        let locked = unlocked.lock();
+        assert!(matches!(
+            locked,
+            StorageBackend::LocalVaultLocked { vault_path } if vault_path == path
+        ));
+        // Keychain is unaffected by lock.
+        assert!(matches!(
+            StorageBackend::Keychain.lock(),
+            StorageBackend::Keychain
+        ));
+    }
+
+    // -- create_vault → unlock round-trip ----------------------
+
+    #[test]
+    fn create_vault_mints_a_file_and_returns_a_recovery_phrase() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_vault_path(&dir);
+        let (backend, recovery) = StorageBackend::create_vault(
+            path.clone(),
+            SecretString::new("correct-horse".to_string().into()),
+        )
+        .expect("create must succeed on a fresh path");
+        assert!(path.exists(), "the .dvb file must be written");
+        assert!(
+            matches!(backend, StorageBackend::LocalVault { .. }),
+            "create returns an unlocked backend"
+        );
+        let phrase = recovery.expect("with_recovery: true must yield a phrase");
+        assert!(
+            phrase.split_whitespace().count() >= 12,
+            "recovery phrase should be a multi-word mnemonic, got: {phrase}"
+        );
+    }
+
+    #[test]
+    fn create_vault_refuses_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_vault_path(&dir);
+        StorageBackend::create_vault(path.clone(), SecretString::new("first".to_string().into()))
+            .unwrap();
+        // Second create against the same path must refuse.
+        let err =
+            StorageBackend::create_vault(path, SecretString::new("second".to_string().into()))
+                .unwrap_err();
+        assert!(
+            err.contains("already exists"),
+            "error must explain the file clash, got: {err}"
+        );
+    }
+
+    #[test]
+    fn unlock_opens_a_vault_created_with_the_same_passphrase() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_vault_path(&dir);
+        StorageBackend::create_vault(
+            path.clone(),
+            SecretString::new("the-passphrase".to_string().into()),
+        )
+        .unwrap();
+        // Now resolve as locked and unlock with the right pass.
+        let locked = StorageBackend::LocalVaultLocked {
+            vault_path: path.clone(),
+        };
+        let unlocked = locked
+            .unlock(SecretString::new("the-passphrase".to_string().into()))
+            .expect("correct passphrase must unlock");
+        assert!(matches!(
+            unlocked,
+            StorageBackend::LocalVault { vault_path, .. } if vault_path == path
+        ));
+    }
+
+    #[test]
+    fn unlock_rejects_a_wrong_passphrase() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_vault_path(&dir);
+        StorageBackend::create_vault(
+            path.clone(),
+            SecretString::new("the-real-one".to_string().into()),
+        )
+        .unwrap();
+        let locked = StorageBackend::LocalVaultLocked { vault_path: path };
+        let err = locked
+            .unlock(SecretString::new("a-wrong-guess".to_string().into()))
+            .expect_err("a wrong passphrase must not unlock the vault");
+        assert!(
+            !err.is_empty(),
+            "unlock failure must carry a human-facing reason"
+        );
+    }
+
+    #[test]
+    fn unlock_is_a_no_op_error_on_a_keychain_backend() {
+        let err = StorageBackend::Keychain
+            .unlock(SecretString::new("p".to_string().into()))
+            .expect_err("keychain has nothing to unlock");
+        assert!(
+            err.contains("does not have a passphrase-locked state"),
+            "got: {err}"
+        );
+    }
+
+    // -- Kdbx backend variants --------------------------------
+
+    #[test]
+    fn kdbx_locked_reports_locked_and_refuses_writes() {
+        let backend = StorageBackend::KdbxLocked {
+            file: std::path::PathBuf::from("/tmp/nonexistent.kdbx"),
+            keyfile: None,
+        };
+        assert!(backend.is_locked());
+        assert!(!backend.has_value("any/path"));
+        let err = backend
+            .store("any/path", &SecretString::new("v".to_string().into()))
+            .expect_err("locked KDBX must refuse writes");
+        assert!(err.contains("unlock it"), "got: {err}");
+    }
+
+    #[test]
+    fn kdbx_source_label_is_kdbx_in_both_states() {
+        let locked = StorageBackend::KdbxLocked {
+            file: std::path::PathBuf::from("/tmp/x.kdbx"),
+            keyfile: None,
+        };
+        assert_eq!(locked.source_label(), "kdbx");
+    }
+
+    #[test]
+    fn kdbx_lock_round_trip_clears_passphrase_back_to_locked() {
+        // Build an unlocked Kdbx variant with an empty snapshot.
+        let unlocked = StorageBackend::Kdbx {
+            file: std::path::PathBuf::from("/tmp/x.kdbx"),
+            keyfile: Some(std::path::PathBuf::from("/tmp/x.keyx")),
+            passphrase: SecretString::new("hunter2".to_string().into()),
+            snapshot: std::sync::Arc::new(devboy_secret_kdbx::KdbxSnapshot::default()),
+        };
+        let relocked = unlocked.lock();
+        match relocked {
+            StorageBackend::KdbxLocked { file, keyfile } => {
+                assert_eq!(file, std::path::PathBuf::from("/tmp/x.kdbx"));
+                assert_eq!(
+                    keyfile.as_deref(),
+                    Some(std::path::Path::new("/tmp/x.keyx"))
+                );
+            }
+            other => panic!("lock should land on KdbxLocked, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn kdbx_unlocked_writes_are_refused_with_read_only_message() {
+        let backend = StorageBackend::Kdbx {
+            file: std::path::PathBuf::from("/tmp/x.kdbx"),
+            keyfile: None,
+            passphrase: SecretString::new("p".to_string().into()),
+            snapshot: std::sync::Arc::new(devboy_secret_kdbx::KdbxSnapshot::default()),
+        };
+        let err = backend
+            .store("any/path", &SecretString::new("v".to_string().into()))
+            .expect_err("KDBX is read-only");
+        assert!(err.contains("not implemented yet"), "got: {err}");
+    }
+
+    // -- has_value / store on a locked backend -----------------
+
+    #[test]
+    fn locked_backend_reports_no_values_and_refuses_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let locked = StorageBackend::LocalVaultLocked {
+            vault_path: temp_vault_path(&dir),
+        };
+        // A locked vault reads as empty — the UI gates on the
+        // unlock modal before this matters.
+        assert!(!locked.has_value("team/openai/api-key"));
+        // …and refuses writes with a clear message.
+        let err = locked
+            .store(
+                "team/openai/api-key",
+                &SecretString::new("sk-whatever".to_string().into()),
+            )
+            .expect_err("a locked vault must refuse a write");
+        assert!(err.contains("locked"), "got: {err}");
+    }
+
+    // -- labels ------------------------------------------------
+
+    #[test]
+    fn labels_distinguish_the_three_backend_states() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_vault_path(&dir);
+        assert!(StorageBackend::Keychain.label().contains("Keychain"));
+        assert!(
+            StorageBackend::LocalVaultLocked {
+                vault_path: path.clone()
+            }
+            .label()
+            .contains("locked")
+        );
+        let unlocked = StorageBackend::LocalVault {
+            vault_path: path,
+            passphrase: SecretString::new("p".to_string().into()),
+        };
+        let label = unlocked.label();
+        assert!(label.contains("local-vault") && !label.contains("locked"));
+    }
+
+    #[test]
+    fn source_label_collapses_both_vault_states_to_local_vault() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_vault_path(&dir);
+        assert_eq!(StorageBackend::Keychain.source_label(), "default-keychain");
+        assert_eq!(
+            StorageBackend::LocalVaultLocked {
+                vault_path: path.clone()
+            }
+            .source_label(),
+            "local-vault"
+        );
+        assert_eq!(
+            StorageBackend::LocalVault {
+                vault_path: path,
+                passphrase: SecretString::new("p".to_string().into()),
+            }
+            .source_label(),
+            "local-vault"
+        );
+    }
+
+    // -- StorageBackend::HttpVault (W2) ------------------------
+
+    fn http_vault(access: devboy_storage::SourceAccess) -> StorageBackend {
+        StorageBackend::HttpVault {
+            addr: "https://vault.example.invalid:8200".to_owned(),
+            namespace: Some("admin".to_owned()),
+            mount: "secret/data".to_owned(),
+            token: SecretString::new("hvs.tok".to_string().into()),
+            access,
+        }
+    }
+
+    #[test]
+    fn http_vault_label_surfaces_addr_namespace_and_access_mode() {
+        let read = http_vault(devboy_storage::SourceAccess::Read).label();
+        assert!(read.contains("HashiCorp Vault"));
+        assert!(read.contains("vault.example.invalid"));
+        assert!(read.contains("namespace `admin`"));
+        assert!(read.contains("read-only"));
+        let rw = http_vault(devboy_storage::SourceAccess::ReadWrite).label();
+        assert!(rw.contains("read-write"));
+    }
+
+    #[test]
+    fn http_vault_source_label_is_vault() {
+        assert_eq!(
+            http_vault(devboy_storage::SourceAccess::ReadWrite).source_label(),
+            "vault"
+        );
+    }
+
+    #[test]
+    fn http_vault_reference_prefixes_the_mount() {
+        let backend = http_vault(devboy_storage::SourceAccess::ReadWrite);
+        assert_eq!(
+            backend.http_vault_reference("team/openai/api-key"),
+            "secret/data/team/openai/api-key"
+        );
+    }
+
+    #[test]
+    fn http_vault_reference_trims_a_trailing_slash_on_the_mount() {
+        let backend = StorageBackend::HttpVault {
+            addr: "https://v.invalid".to_owned(),
+            namespace: None,
+            mount: "secret/data/".to_owned(),
+            token: SecretString::new("t".to_string().into()),
+            access: devboy_storage::SourceAccess::ReadWrite,
+        };
+        assert_eq!(
+            backend.http_vault_reference("team/x/y"),
+            "secret/data/team/x/y"
+        );
+    }
+
+    #[test]
+    fn http_vault_read_access_refuses_a_write_pointing_at_the_config() {
+        let err = http_vault(devboy_storage::SourceAccess::Read)
+            .store("team/x/y", &SecretString::new("v".to_string().into()))
+            .expect_err("read-only HTTP Vault must refuse a write");
+        assert!(err.contains("read-only"), "got: {err}");
+        assert!(err.contains("sources.toml"), "got: {err}");
+    }
+
+    #[test]
+    fn http_vault_readwrite_refuses_a_write_pointing_at_p15() {
+        // `readwrite` doesn't mean write WORKS yet — the
+        // SecretSource write surface ships in P15. The refusal
+        // must say so honestly rather than silently dropping
+        // the value.
+        let err = http_vault(devboy_storage::SourceAccess::ReadWrite)
+            .store("team/x/y", &SecretString::new("v".to_string().into()))
+            .expect_err("HTTP Vault write is not implemented yet");
+        assert!(err.contains("P15"), "got: {err}");
+    }
+
+    #[test]
+    fn http_vault_source_builds_with_namespace() {
+        // `http_vault_source` should produce a `VaultSource`
+        // for an HttpVault backend (and `None` for others).
+        let backend = http_vault(devboy_storage::SourceAccess::ReadWrite);
+        assert!(backend.http_vault_source().is_some());
+        assert!(StorageBackend::Keychain.http_vault_source().is_none());
+    }
+
+    #[test]
+    fn http_vault_lock_is_a_no_op() {
+        // The Vault token lives in sources.toml — there is no
+        // in-memory unlock state to drop, so `lock` returns the
+        // backend unchanged.
+        let backend = http_vault(devboy_storage::SourceAccess::Read);
+        assert!(matches!(backend.lock(), StorageBackend::HttpVault { .. }));
+        assert!(!backend.is_locked());
+    }
+
+    // -- K8 — KdbxEntry → IndexEntry projection --------------
+
+    fn fixture_kdbx_entry() -> devboy_secret_kdbx::KdbxEntry {
+        // K18 model: every value-bearing field is in `values`.
+        // Mix of standard Password + Protected + Unprotected
+        // custom strings to exercise every render branch.
+        let values = vec![
+            devboy_secret_kdbx::KdbxValue {
+                name: "Password".into(),
+                value: SecretString::new("sk_live".to_string().into()),
+                is_protected: true,
+            },
+            devboy_secret_kdbx::KdbxValue {
+                name: "client_id".into(),
+                value: SecretString::new("acct_1abc".to_string().into()),
+                is_protected: false,
+            },
+            devboy_secret_kdbx::KdbxValue {
+                name: "very_long_value".into(),
+                value: SecretString::new("x".repeat(120).into()),
+                is_protected: false,
+            },
+            devboy_secret_kdbx::KdbxValue {
+                name: "blank".into(),
+                value: SecretString::new(String::new().into()),
+                is_protected: false,
+            },
+        ];
+        devboy_secret_kdbx::KdbxEntry {
+            path: "kdbx/work/stripe-api".into(),
+            values,
+            title: "Stripe API".into(),
+            username: Some("ops@example.com".into()),
+            url: Some("https://dashboard.stripe.com/apikeys".into()),
+            notes: Some("Quarterly rotation".into()),
+            uuid: "11111111-2222-3333-4444-555555555555".into(),
+            tags: vec!["ops".into(), "billing".into()],
+            created_at: Some("2026-01-01T00:00:00Z".into()),
+            modified_at: Some("2026-05-01T00:00:00Z".into()),
+            expires_at: Some("2027-01-15T00:00:00Z".into()),
+            otp: Some("otpauth://totp/Stripe".into()),
+            attachments: vec![devboy_secret_kdbx::KdbxAttachmentMeta {
+                name: "server.pem".into(),
+                size_bytes: 1024,
+            }],
+        }
+    }
+
+    #[test]
+    fn kdbx_to_index_entry_maps_all_first_class_fields() {
+        let entry = fixture_kdbx_entry();
+        let mapped = kdbx_entry_to_index_entry(&entry);
+        assert_eq!(
+            mapped.retrieval_url.as_deref(),
+            Some("https://dashboard.stripe.com/apikeys")
+        );
+        assert_eq!(mapped.env_var.as_deref(), Some("ops@example.com"));
+        assert_eq!(mapped.expires_at.as_deref(), Some("2027-01-15T00:00:00Z"));
+        assert_eq!(
+            mapped.last_rotated_at.as_deref(),
+            Some("2026-05-01T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn kdbx_to_index_entry_includes_metadata_blocks_in_description() {
+        let entry = fixture_kdbx_entry();
+        let mapped = kdbx_entry_to_index_entry(&entry);
+        let desc = mapped.description.expect("description populated");
+        assert!(desc.contains("KeePass entry: Stripe API"));
+        assert!(desc.contains("Notes:\nQuarterly rotation"));
+        assert!(desc.contains("Tags: ops, billing"));
+        // K18 — value fields block lists every field by name.
+        assert!(desc.contains("Value fields:"));
+        // Protected Password field: masked.
+        assert!(
+            desc.contains("🔒 Password: <masked, reveal in UI>"),
+            "Password row must be masked, got:\n{desc}"
+        );
+        // Unprotected short custom: preview shown.
+        assert!(desc.contains("client_id: acct_1abc"));
+        // Long Unprotected: redacted by length.
+        assert!(desc.contains("<value omitted>"));
+        // Empty Unprotected: marker.
+        assert!(desc.contains("blank: <empty>"));
+        assert!(desc.contains("📎 server.pem (1024 bytes)"));
+        assert!(desc.contains("TOTP source available"));
+        assert!(desc.contains("KeePass UUID: 11111111"));
+    }
+
+    #[test]
+    fn kdbx_to_index_entry_masks_every_protected_field_in_description() {
+        // K18: a Protected custom string is masked just like
+        // the standard Password — value name is shown so the
+        // user knows it exists, value never appears in
+        // description.
+        let mut entry = fixture_kdbx_entry();
+        entry.values.push(devboy_secret_kdbx::KdbxValue {
+            name: "api_token".into(),
+            value: SecretString::new("ghp_super_secret_value".to_string().into()),
+            is_protected: true,
+        });
+        let mapped = kdbx_entry_to_index_entry(&entry);
+        let desc = mapped.description.unwrap();
+        assert!(
+            desc.contains("🔒 api_token: <masked, reveal in UI>"),
+            "Protected custom must be masked in description, got:\n{desc}"
+        );
+        assert!(
+            !desc.contains("ghp_super_secret_value"),
+            "Protected value must NEVER appear in description"
+        );
+    }
+
+    // -- K13 — working-copy resolution ----------------------
+
+    #[test]
+    fn resolve_kdbx_working_copy_returns_original_when_env_unset() {
+        // Make sure we're not polluted by an outer env var.
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("orig.kdbx");
+        std::fs::write(&src, b"x").unwrap();
+        temp_env::with_var("DEVBOY_KDBX_WORKING_COPY", None::<&str>, || {
+            let got = resolve_kdbx_working_copy(&src);
+            assert_eq!(got, src);
+        });
+    }
+
+    #[test]
+    fn resolve_kdbx_working_copy_auto_creates_sibling_with_timestamp() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("orig.kdbx");
+        std::fs::write(&src, b"hello-kdbx").unwrap();
+        temp_env::with_var("DEVBOY_KDBX_WORKING_COPY", Some("auto"), || {
+            let got = resolve_kdbx_working_copy(&src);
+            assert_ne!(got, src, "working copy must differ from original");
+            assert!(got.exists(), "working copy must exist");
+            assert_eq!(std::fs::read(&got).unwrap(), b"hello-kdbx");
+            let stem = got.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(
+                stem.starts_with("orig.devboy-working-"),
+                "unexpected filename: {stem}"
+            );
+        });
+    }
+
+    #[test]
+    fn resolve_kdbx_working_copy_explicit_path_is_honoured() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("orig.kdbx");
+        let dst = dir.path().join("override.kdbx");
+        std::fs::write(&src, b"hello-kdbx").unwrap();
+        temp_env::with_var(
+            "DEVBOY_KDBX_WORKING_COPY",
+            Some(dst.to_str().unwrap()),
+            || {
+                let got = resolve_kdbx_working_copy(&src);
+                assert_eq!(got, dst);
+                assert!(dst.exists());
+                assert_eq!(std::fs::read(&dst).unwrap(), b"hello-kdbx");
+            },
+        );
+    }
+
+    #[test]
+    fn resolve_kdbx_working_copy_falls_back_to_original_on_copy_failure() {
+        // Source doesn't exist → prepare_working_copy errors;
+        // resolve falls back to the original path so the
+        // downstream unlock can surface its own error.
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("nope.kdbx");
+        temp_env::with_var("DEVBOY_KDBX_WORKING_COPY", Some("auto"), || {
+            let got = resolve_kdbx_working_copy(&src);
+            assert_eq!(got, src);
+        });
+    }
+
+    // -- K20 — catalog binding heuristics ---------------------
+
+    #[test]
+    fn second_level_domain_collapses_subdomains() {
+        assert_eq!(second_level_domain("openai.com"), "openai.com");
+        assert_eq!(second_level_domain("platform.openai.com"), "openai.com");
+        assert_eq!(second_level_domain("api.us-east.openai.com"), "openai.com");
+        // Two-label hosts pass through unchanged.
+        assert_eq!(second_level_domain("localhost"), "localhost");
+    }
+
+    /// Build a minimal in-memory KdbxEntry for the K20 tests
+    /// — we only care about title / username / url here so
+    /// most fields are zero-value placeholders.
+    fn fake_kdbx_entry(
+        title: &str,
+        username: Option<&str>,
+        url: Option<&str>,
+    ) -> devboy_secret_kdbx::KdbxEntry {
+        devboy_secret_kdbx::KdbxEntry {
+            path: format!("kdbx/test/{}", title.to_lowercase().replace(' ', "-")),
+            values: Vec::new(),
+            title: title.to_owned(),
+            username: username.map(str::to_owned),
+            url: url.map(str::to_owned),
+            notes: None,
+            uuid: "00000000-0000-0000-0000-000000000000".to_owned(),
+            tags: Vec::new(),
+            created_at: None,
+            modified_at: None,
+            expires_at: None,
+            otp: None,
+            attachments: Vec::new(),
+        }
+    }
+
+    fn fake_loaded_catalog(
+        provider_id: &str,
+        display_name: &str,
+        console_url: &str,
+    ) -> devboy_token_catalog::LoadedCatalog {
+        devboy_token_catalog::LoadedCatalog {
+            catalog: devboy_token_catalog::ProviderCatalog {
+                schema: None,
+                schema_version: 1,
+                provider_id: provider_id.to_owned(),
+                display_name: display_name.to_owned(),
+                description: None,
+                variants: vec![devboy_token_catalog::TokenVariant {
+                    id: "default".to_owned(),
+                    display_name: "default".to_owned(),
+                    description: "fixture".to_owned(),
+                    format_regex: None,
+                    format_hint: None,
+                    retrieval: devboy_token_catalog::RetrievalSpec {
+                        console_url: console_url.to_owned(),
+                        docs_url: None,
+                        steps: vec!["create".to_owned()],
+                        notes: None,
+                    },
+                    liveness: None,
+                    rotation: None,
+                    default_keychain_account: None,
+                }],
+                env_var_patterns: Vec::new(),
+                env_var_skip: Vec::new(),
+            },
+            source: devboy_token_catalog::CatalogSource::Bundled,
+            path: None,
+        }
+    }
+
+    #[test]
+    fn detect_kdbx_catalog_binding_via_url_host_match() {
+        let catalogs = vec![
+            fake_loaded_catalog("openai", "OpenAI", "https://platform.openai.com/api-keys"),
+            fake_loaded_catalog("stripe", "Stripe", "https://dashboard.stripe.com/apikeys"),
+        ];
+        let entry = fake_kdbx_entry(
+            "Production key",
+            Some("ops@example.com"),
+            Some("https://api.openai.com/v1/models"),
+        );
+        assert_eq!(
+            detect_kdbx_catalog_binding(&entry, &catalogs).as_deref(),
+            Some("openai")
+        );
+    }
+
+    #[test]
+    fn detect_kdbx_catalog_binding_via_title_substring() {
+        let catalogs = vec![fake_loaded_catalog(
+            "stripe",
+            "Stripe",
+            "https://dashboard.stripe.com/apikeys",
+        )];
+        // No URL → title carries the signal.
+        let entry = fake_kdbx_entry("Stripe live keys", None, None);
+        assert_eq!(
+            detect_kdbx_catalog_binding(&entry, &catalogs).as_deref(),
+            Some("stripe")
+        );
+    }
+
+    #[test]
+    fn detect_kdbx_catalog_binding_returns_none_when_no_signal() {
+        let catalogs = vec![fake_loaded_catalog(
+            "openai",
+            "OpenAI",
+            "https://platform.openai.com/api-keys",
+        )];
+        let entry = fake_kdbx_entry("Personal SSH key", None, None);
+        assert!(detect_kdbx_catalog_binding(&entry, &catalogs).is_none());
+    }
+
+    #[test]
+    fn detect_kdbx_catalog_binding_short_provider_id_does_not_match_random_substring() {
+        // Three-char minimum + lowercase normalisation should
+        // stop e.g. "ai" matching "AIRBNB" via substring.
+        let catalogs = vec![fake_loaded_catalog(
+            "ai",
+            "AI",
+            "https://example.invalid/console",
+        )];
+        let entry = fake_kdbx_entry("Airbnb host login", None, None);
+        assert!(detect_kdbx_catalog_binding(&entry, &catalogs).is_none());
+    }
+}

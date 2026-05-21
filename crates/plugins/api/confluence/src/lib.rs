@@ -9,6 +9,7 @@
 #![deny(rustdoc::invalid_html_tags)]
 mod client;
 mod enricher;
+pub mod liveness;
 
 pub use client::{ConfluenceAuth, ConfluenceClient};
 pub use enricher::ConfluenceSchemaEnricher;

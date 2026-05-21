@@ -29,6 +29,27 @@ devboy-core = { workspace = true }
 devboy-executor = { workspace = true }
 devboy-mcp = { workspace = true }
 devboy-storage = { workspace = true }
+devboy-secret-patterns = { workspace = true }
+devboy-secrets-agent = { workspace = true }
+# `devboy-secrets-ui` (no `gui` feature here) supplies the TUI
+# inventory/dialog rendering and the shared inventory data types
+# (InventoryRow, InventoryState, DialogState, RowStatus). The
+# `gui` feature pulls in egui and is consumed by the standalone
+# `devboy-secrets-ui-bin` crate, not by the CLI.
+devboy-secrets-ui = { workspace = true }
+devboy-token-catalog = { workspace = true }
+regex.workspace = true
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+crossterm = "0.28"
+devboy-secret-keychain = { workspace = true }
+devboy-secret-local-vault = { workspace = true }
+devboy-secret-1password = { workspace = true }
+# Drives `devboy secrets kdbx peek` — reads a KDBX 4 file and
+# prints its entry inventory without the values. Pulled in only
+# for the CLI peek path; the heavy-weight UI integration sits in
+# devboy-secrets-ui-bin.
+devboy-secret-kdbx = { workspace = true }
+devboy-secret-env-store = { workspace = true }
 devboy-github = { workspace = true }
 devboy-gitlab = { workspace = true }
 devboy-clickup = { workspace = true }
@@ -50,7 +71,7 @@ tracing-subscriber.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["json", "rustls-tls", "multipart", "blocking"] }
 dialoguer = "0.11"
 chrono = "0.4"
 toml.workspace = true

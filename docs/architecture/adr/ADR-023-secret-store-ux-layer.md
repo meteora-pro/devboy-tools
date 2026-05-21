@@ -595,7 +595,67 @@ secrets.propose_new_path(suggested_path, metadata)
   Opens a registration dialog. The user can accept the suggested
   path, edit it, or reject. Used by the agent when it detects a
   project consuming a token that has no manifest entry.
+
+secrets.request_use_approval(path, reason, ttl_seconds?)            (P25)
+  → { request_id, status: "pending" }
+  Opens the use-approval dialog. The agent supplies a short
+  human-facing reason rendered verbatim. poll_status settles to
+  one of "once" / "session" / "denied". Wired only when the
+  manifest's `approve_on_use` field is "session" or "per-call";
+  paths default to "never" and resolve silently. ttl_seconds
+  may NARROW the registry-wide TTL (capped at 5 min) — agents
+  cannot enlarge the window.
 ```
+
+#### Approve-on-use protocol (P25 phase)
+
+`approve_on_use` is a per-path policy on the `IndexEntry` and
+`OverrideEntry`:
+
+- `never` (default) — alias resolves silently. Preserves the
+  existing zero-prompt resolve path so most paths stay
+  frictionless.
+- `session` — first resolve in the running process opens the
+  dialog; once the user clicks "Allow always (this session)"
+  the in-process `SessionApprovalCache`
+  (`devboy-core::secret_approval`) caches the approval and
+  further resolves of the same path skip the dialog until the
+  TTL expires.
+- `per-call` — every resolve opens the dialog, regardless of
+  any cached entry. Right for high-stakes paths (production
+  database password, signing keys).
+
+Override precedence per [ADR-020](./ADR-020-secret-manifest-and-alias-resolution.md)
+§4: a project's `[overrides."<path>"].approve_on_use` wins
+over the global index's value. The project owner can therefore
+TIGHTEN (`never` → `per-call`) or RELAX (`per-call` → `never`)
+the policy without rewriting the global index.
+
+Decision contract:
+
+- The dialog renders three buttons: `Allow always (this
+  session)`, `Allow once`, `Deny`. They map to
+  `ProvisionStatus::{Session, Once, Denied}` on the wire.
+- `once` and `denied` are NOT cached. Only `session` populates
+  the cache.
+- The cache is process-scoped — closing the agent session
+  clears every approval. Persisting the cache to disk is
+  out-of-scope for v1 (a deliberate restraint: the user's
+  trust window is the running session, not "for ever").
+- The agent has no way to ESCALATE a `denied`. There is no
+  MCP tool to override, extend, or forge an approval; the
+  user must re-issue from the UI.
+
+Threat model alignment:
+
+- The agent cannot bypass approve-on-use because the gate
+  fires inside the alias resolver before the value leaves the
+  daemon — same trust boundary as "agent never sees value".
+- The reason string is rendered as a label, never as an edit
+  field, mirroring the prompt-injection mitigation already in
+  place for `propose_metadata` (ADR-023 §3.4).
+- `ttl_seconds` is one-way — clients can shrink the window but
+  not enlarge it. The 5-minute registry TTL is the upper bound.
 
 #### "Agent never sees value" as an enforced invariant
 
@@ -893,3 +953,4 @@ named.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-05-09 | Andrei Mazniak | Initial draft as the umbrella UX layer above ADR-021 routing — local vault crypto, daemon, native UI, manual-assisted rotation, pattern catalogue, agent provisioning protocol, `setup-secrets` skill |
+| 2026-05-10 | Andrei Mazniak | §3.7 P25 phase — added `secrets_request_use_approval` MCP tool + `approve_on_use` policy field with `never / session / per-call` semantics, decision contract (`once / session / denied`) and process-scoped `SessionApprovalCache` |

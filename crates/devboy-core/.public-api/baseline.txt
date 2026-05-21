@@ -196,6 +196,35 @@ pub fn devboy_core::agents::compute_score(last_used: core::option::Option<chrono
 pub fn devboy_core::agents::detect_all() -> alloc::vec::Vec<devboy_core::agents::AgentSnapshot>
 pub fn devboy_core::agents::detect_all_with_home(home: &std::path::Path) -> alloc::vec::Vec<devboy_core::agents::AgentSnapshot>
 pub fn devboy_core::agents::pick_primary(snapshots: &[devboy_core::agents::AgentSnapshot]) -> core::option::Option<&devboy_core::agents::AgentSnapshot>
+pub mod devboy_core::alias
+pub enum devboy_core::alias::AliasResolverError
+pub devboy_core::alias::AliasResolverError::Backend
+pub devboy_core::alias::AliasResolverError::Backend::message: alloc::string::String
+pub devboy_core::alias::AliasResolverError::Backend::path: alloc::string::String
+pub devboy_core::alias::AliasResolverError::BadPath
+pub devboy_core::alias::AliasResolverError::BadPath::path: alloc::string::String
+pub devboy_core::alias::AliasResolverError::BadPath::reason: alloc::string::String
+pub devboy_core::alias::AliasResolverError::NotFound
+pub devboy_core::alias::AliasResolverError::NotFound::path: alloc::string::String
+impl core::error::Error for devboy_core::alias::AliasResolverError
+impl core::fmt::Debug for devboy_core::alias::AliasResolverError
+pub fn devboy_core::alias::AliasResolverError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_core::alias::AliasResolverError
+pub fn devboy_core::alias::AliasResolverError::fmt(&self, __formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_core::alias::AliasResolverError
+impl core::marker::Send for devboy_core::alias::AliasResolverError
+impl core::marker::Sync for devboy_core::alias::AliasResolverError
+impl core::marker::Unpin for devboy_core::alias::AliasResolverError
+impl core::marker::UnsafeUnpin for devboy_core::alias::AliasResolverError
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::alias::AliasResolverError
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::alias::AliasResolverError
+pub const devboy_core::alias::ALIAS_PREFIX: &str
+pub trait devboy_core::alias::SecretResolver: core::marker::Send + core::marker::Sync
+pub fn devboy_core::alias::SecretResolver::resolve(&self, path: &str) -> core::result::Result<secrecy::SecretString, devboy_core::alias::AliasResolverError>
+impl<R, F> devboy_core::alias::SecretResolver for devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: devboy_core::alias::SecretResolver, F: core::ops::function::Fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy + core::marker::Send + core::marker::Sync
+pub fn devboy_core::secret_approval::ApprovalGatedResolver<R, F>::resolve(&self, path: &str) -> core::result::Result<secrecy::SecretString, devboy_core::alias::AliasResolverError>
+pub fn devboy_core::alias::is_alias(s: &str) -> bool
+pub fn devboy_core::alias::parse_alias(s: &str) -> core::option::Option<&str>
 pub mod devboy_core::asset
 pub enum devboy_core::asset::AssetContext
 pub devboy_core::asset::AssetContext::Chat
@@ -567,6 +596,7 @@ pub devboy_core::config::Config::jira: core::option::Option<devboy_core::config:
 pub devboy_core::config::Config::proxy: devboy_core::config::ProxyConfig
 pub devboy_core::config::Config::proxy_mcp_servers: alloc::vec::Vec<devboy_core::config::ProxyMcpServerConfig>
 pub devboy_core::config::Config::remote_config: core::option::Option<devboy_core::config::RemoteConfigSettings>
+pub devboy_core::config::Config::secrets: core::option::Option<devboy_core::config::SecretsConfig>
 pub devboy_core::config::Config::sentry: core::option::Option<devboy_core::config::SentryConfig>
 pub devboy_core::config::Config::slack: core::option::Option<devboy_core::config::SlackConfig>
 impl devboy_core::config::Config
@@ -588,6 +618,8 @@ pub fn devboy_core::config::Config::save_to(&self, path: &std::path::PathBuf) ->
 pub fn devboy_core::config::Config::set(&mut self, key: &str, value: &str) -> devboy_core::error::Result<()>
 pub fn devboy_core::config::Config::set_active_context(&mut self, name: &str) -> devboy_core::error::Result<()>
 pub fn devboy_core::config::Config::validate(&self) -> devboy_core::error::Result<()>
+impl devboy_core::config::Config
+pub fn devboy_core::config::Config::is_secrets_migration_complete(&self) -> bool
 impl core::clone::Clone for devboy_core::config::Config
 pub fn devboy_core::config::Config::clone(&self) -> devboy_core::config::Config
 impl core::default::Default for devboy_core::config::Config
@@ -945,6 +977,29 @@ impl core::marker::Unpin for devboy_core::config::RemoteConfigSettings
 impl core::marker::UnsafeUnpin for devboy_core::config::RemoteConfigSettings
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::RemoteConfigSettings
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::RemoteConfigSettings
+pub struct devboy_core::config::SecretsConfig
+pub devboy_core::config::SecretsConfig::migration_complete: bool
+impl core::clone::Clone for devboy_core::config::SecretsConfig
+pub fn devboy_core::config::SecretsConfig::clone(&self) -> devboy_core::config::SecretsConfig
+impl core::cmp::Eq for devboy_core::config::SecretsConfig
+impl core::cmp::PartialEq for devboy_core::config::SecretsConfig
+pub fn devboy_core::config::SecretsConfig::eq(&self, other: &devboy_core::config::SecretsConfig) -> bool
+impl core::default::Default for devboy_core::config::SecretsConfig
+pub fn devboy_core::config::SecretsConfig::default() -> devboy_core::config::SecretsConfig
+impl core::fmt::Debug for devboy_core::config::SecretsConfig
+pub fn devboy_core::config::SecretsConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_core::config::SecretsConfig
+impl serde_core::ser::Serialize for devboy_core::config::SecretsConfig
+pub fn devboy_core::config::SecretsConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::config::SecretsConfig
+pub fn devboy_core::config::SecretsConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::config::SecretsConfig
+impl core::marker::Send for devboy_core::config::SecretsConfig
+impl core::marker::Sync for devboy_core::config::SecretsConfig
+impl core::marker::Unpin for devboy_core::config::SecretsConfig
+impl core::marker::UnsafeUnpin for devboy_core::config::SecretsConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::SecretsConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::SecretsConfig
 pub struct devboy_core::config::SentryConfig
 pub devboy_core::config::SentryConfig::dsn: core::option::Option<alloc::string::String>
 pub devboy_core::config::SentryConfig::environment: core::option::Option<alloc::string::String>
@@ -1124,6 +1179,59 @@ impl core::marker::UnsafeUnpin for devboy_core::error::Error
 impl !core::panic::unwind_safe::RefUnwindSafe for devboy_core::error::Error
 impl !core::panic::unwind_safe::UnwindSafe for devboy_core::error::Error
 pub type devboy_core::error::Result<T> = core::result::Result<T, devboy_core::error::Error>
+pub mod devboy_core::liveness
+pub enum devboy_core::liveness::LivenessStatus
+pub devboy_core::liveness::LivenessStatus::Error
+pub devboy_core::liveness::LivenessStatus::Expired
+pub devboy_core::liveness::LivenessStatus::Live
+pub devboy_core::liveness::LivenessStatus::NotImplemented
+pub devboy_core::liveness::LivenessStatus::Revoked
+pub devboy_core::liveness::LivenessStatus::Throttled
+impl core::clone::Clone for devboy_core::liveness::LivenessStatus
+pub fn devboy_core::liveness::LivenessStatus::clone(&self) -> devboy_core::liveness::LivenessStatus
+impl core::cmp::Eq for devboy_core::liveness::LivenessStatus
+impl core::cmp::PartialEq for devboy_core::liveness::LivenessStatus
+pub fn devboy_core::liveness::LivenessStatus::eq(&self, other: &devboy_core::liveness::LivenessStatus) -> bool
+impl core::fmt::Debug for devboy_core::liveness::LivenessStatus
+pub fn devboy_core::liveness::LivenessStatus::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_core::liveness::LivenessStatus
+impl core::marker::StructuralPartialEq for devboy_core::liveness::LivenessStatus
+impl core::marker::Freeze for devboy_core::liveness::LivenessStatus
+impl core::marker::Send for devboy_core::liveness::LivenessStatus
+impl core::marker::Sync for devboy_core::liveness::LivenessStatus
+impl core::marker::Unpin for devboy_core::liveness::LivenessStatus
+impl core::marker::UnsafeUnpin for devboy_core::liveness::LivenessStatus
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::liveness::LivenessStatus
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::liveness::LivenessStatus
+pub struct devboy_core::liveness::LivenessResult
+pub devboy_core::liveness::LivenessResult::detail: core::option::Option<alloc::string::String>
+pub devboy_core::liveness::LivenessResult::expires_at: core::option::Option<alloc::string::String>
+pub devboy_core::liveness::LivenessResult::status: devboy_core::liveness::LivenessStatus
+impl devboy_core::liveness::LivenessResult
+pub fn devboy_core::liveness::LivenessResult::error(detail: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_core::liveness::LivenessResult::expired(expires_at: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_core::liveness::LivenessResult::live(detail: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_core::liveness::LivenessResult::not_implemented(provider: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_core::liveness::LivenessResult::revoked(detail: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_core::liveness::LivenessResult::throttled(detail: impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for devboy_core::liveness::LivenessResult
+pub fn devboy_core::liveness::LivenessResult::clone(&self) -> devboy_core::liveness::LivenessResult
+impl core::cmp::Eq for devboy_core::liveness::LivenessResult
+impl core::cmp::PartialEq for devboy_core::liveness::LivenessResult
+pub fn devboy_core::liveness::LivenessResult::eq(&self, other: &devboy_core::liveness::LivenessResult) -> bool
+impl core::fmt::Debug for devboy_core::liveness::LivenessResult
+pub fn devboy_core::liveness::LivenessResult::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_core::liveness::LivenessResult
+impl core::marker::Freeze for devboy_core::liveness::LivenessResult
+impl core::marker::Send for devboy_core::liveness::LivenessResult
+impl core::marker::Sync for devboy_core::liveness::LivenessResult
+impl core::marker::Unpin for devboy_core::liveness::LivenessResult
+impl core::marker::UnsafeUnpin for devboy_core::liveness::LivenessResult
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::liveness::LivenessResult
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::liveness::LivenessResult
+pub trait devboy_core::liveness::LivenessProbe: core::marker::Send + core::marker::Sync
+pub fn devboy_core::liveness::LivenessProbe::provider_name(&self) -> &str
+pub fn devboy_core::liveness::LivenessProbe::test<'life0, 'life1, 'async_trait>(&'life0 self, _token: &'life1 secrecy::SecretString) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::liveness::LivenessResult>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub mod devboy_core::provider
 pub trait devboy_core::provider::IssueProvider: core::marker::Send + core::marker::Sync
 pub fn devboy_core::provider::IssueProvider::add_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, issue_key: &'life1 str, body: &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Comment>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
@@ -1210,6 +1318,84 @@ pub mod devboy_core::remote_config
 pub async fn devboy_core::remote_config::fetch_and_merge(local_config: devboy_core::config::Config, token_from_keychain: core::option::Option<&str>) -> devboy_core::config::Config
 pub fn devboy_core::remote_config::redact_url_for_display(raw: &str) -> alloc::string::String
 pub fn devboy_core::remote_config::resolve_url(local_config: &devboy_core::config::Config) -> core::option::Option<alloc::string::String>
+pub mod devboy_core::secret_approval
+pub enum devboy_core::secret_approval::ApprovalGate
+pub devboy_core::secret_approval::ApprovalGate::AlreadyApproved
+pub devboy_core::secret_approval::ApprovalGate::NotRequired
+pub devboy_core::secret_approval::ApprovalGate::PromptRequired
+impl core::clone::Clone for devboy_core::secret_approval::ApprovalGate
+pub fn devboy_core::secret_approval::ApprovalGate::clone(&self) -> devboy_core::secret_approval::ApprovalGate
+impl core::cmp::Eq for devboy_core::secret_approval::ApprovalGate
+impl core::cmp::PartialEq for devboy_core::secret_approval::ApprovalGate
+pub fn devboy_core::secret_approval::ApprovalGate::eq(&self, other: &devboy_core::secret_approval::ApprovalGate) -> bool
+impl core::fmt::Debug for devboy_core::secret_approval::ApprovalGate
+pub fn devboy_core::secret_approval::ApprovalGate::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_core::secret_approval::ApprovalGate
+impl core::marker::StructuralPartialEq for devboy_core::secret_approval::ApprovalGate
+impl core::marker::Freeze for devboy_core::secret_approval::ApprovalGate
+impl core::marker::Send for devboy_core::secret_approval::ApprovalGate
+impl core::marker::Sync for devboy_core::secret_approval::ApprovalGate
+impl core::marker::Unpin for devboy_core::secret_approval::ApprovalGate
+impl core::marker::UnsafeUnpin for devboy_core::secret_approval::ApprovalGate
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::secret_approval::ApprovalGate
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::secret_approval::ApprovalGate
+pub enum devboy_core::secret_approval::ApproveOnUsePolicy
+pub devboy_core::secret_approval::ApproveOnUsePolicy::Never
+pub devboy_core::secret_approval::ApproveOnUsePolicy::PerCall
+pub devboy_core::secret_approval::ApproveOnUsePolicy::Session
+impl core::clone::Clone for devboy_core::secret_approval::ApproveOnUsePolicy
+pub fn devboy_core::secret_approval::ApproveOnUsePolicy::clone(&self) -> devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::cmp::Eq for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::cmp::PartialEq for devboy_core::secret_approval::ApproveOnUsePolicy
+pub fn devboy_core::secret_approval::ApproveOnUsePolicy::eq(&self, other: &devboy_core::secret_approval::ApproveOnUsePolicy) -> bool
+impl core::default::Default for devboy_core::secret_approval::ApproveOnUsePolicy
+pub fn devboy_core::secret_approval::ApproveOnUsePolicy::default() -> devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::fmt::Debug for devboy_core::secret_approval::ApproveOnUsePolicy
+pub fn devboy_core::secret_approval::ApproveOnUsePolicy::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::marker::StructuralPartialEq for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::marker::Freeze for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::marker::Send for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::marker::Sync for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::marker::Unpin for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::marker::UnsafeUnpin for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::secret_approval::ApproveOnUsePolicy
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::secret_approval::ApproveOnUsePolicy
+pub struct devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: devboy_core::alias::SecretResolver, F: core::ops::function::Fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy + core::marker::Send + core::marker::Sync
+impl<R, F> devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: devboy_core::alias::SecretResolver, F: core::ops::function::Fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy + core::marker::Send + core::marker::Sync
+pub fn devboy_core::secret_approval::ApprovalGatedResolver<R, F>::cache(&self) -> &alloc::sync::Arc<devboy_core::secret_approval::SessionApprovalCache>
+pub fn devboy_core::secret_approval::ApprovalGatedResolver<R, F>::new(inner: R, cache: alloc::sync::Arc<devboy_core::secret_approval::SessionApprovalCache>, policy_for_path: F) -> Self
+impl<R, F> devboy_core::alias::SecretResolver for devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: devboy_core::alias::SecretResolver, F: core::ops::function::Fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy + core::marker::Send + core::marker::Sync
+pub fn devboy_core::secret_approval::ApprovalGatedResolver<R, F>::resolve(&self, path: &str) -> core::result::Result<secrecy::SecretString, devboy_core::alias::AliasResolverError>
+impl<R, F> core::marker::Freeze for devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: core::marker::Freeze, F: core::marker::Freeze
+impl<R, F> core::marker::Send for devboy_core::secret_approval::ApprovalGatedResolver<R, F>
+impl<R, F> core::marker::Sync for devboy_core::secret_approval::ApprovalGatedResolver<R, F>
+impl<R, F> core::marker::Unpin for devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: core::marker::Unpin, F: core::marker::Unpin
+impl<R, F> core::marker::UnsafeUnpin for devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: core::marker::UnsafeUnpin, F: core::marker::UnsafeUnpin
+impl<R, F> core::panic::unwind_safe::RefUnwindSafe for devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: core::panic::unwind_safe::RefUnwindSafe, F: core::panic::unwind_safe::RefUnwindSafe
+impl<R, F> core::panic::unwind_safe::UnwindSafe for devboy_core::secret_approval::ApprovalGatedResolver<R, F> where R: core::panic::unwind_safe::UnwindSafe, F: core::panic::unwind_safe::UnwindSafe
+pub struct devboy_core::secret_approval::SessionApprovalCache
+impl devboy_core::secret_approval::SessionApprovalCache
+pub fn devboy_core::secret_approval::SessionApprovalCache::clear(&self)
+pub fn devboy_core::secret_approval::SessionApprovalCache::evaluate(&self, path: &str, policy: devboy_core::secret_approval::ApproveOnUsePolicy) -> devboy_core::secret_approval::ApprovalGate
+pub fn devboy_core::secret_approval::SessionApprovalCache::forget(&self, path: &str) -> bool
+pub fn devboy_core::secret_approval::SessionApprovalCache::is_approved(&self, path: &str) -> bool
+pub fn devboy_core::secret_approval::SessionApprovalCache::is_empty(&self) -> bool
+pub fn devboy_core::secret_approval::SessionApprovalCache::len(&self) -> usize
+pub fn devboy_core::secret_approval::SessionApprovalCache::new() -> Self
+pub fn devboy_core::secret_approval::SessionApprovalCache::record_session(&self, path: impl core::convert::Into<alloc::string::String>, ttl: core::time::Duration)
+pub fn devboy_core::secret_approval::SessionApprovalCache::sweep_expired(&self) -> usize
+impl core::default::Default for devboy_core::secret_approval::SessionApprovalCache
+pub fn devboy_core::secret_approval::SessionApprovalCache::default() -> devboy_core::secret_approval::SessionApprovalCache
+impl core::fmt::Debug for devboy_core::secret_approval::SessionApprovalCache
+pub fn devboy_core::secret_approval::SessionApprovalCache::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl !core::marker::Freeze for devboy_core::secret_approval::SessionApprovalCache
+impl core::marker::Send for devboy_core::secret_approval::SessionApprovalCache
+impl core::marker::Sync for devboy_core::secret_approval::SessionApprovalCache
+impl core::marker::Unpin for devboy_core::secret_approval::SessionApprovalCache
+impl core::marker::UnsafeUnpin for devboy_core::secret_approval::SessionApprovalCache
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::secret_approval::SessionApprovalCache
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::secret_approval::SessionApprovalCache
 pub mod devboy_core::tool_category
 pub enum devboy_core::tool_category::ToolCategory
 pub devboy_core::tool_category::ToolCategory::Epics
@@ -3646,6 +3832,29 @@ impl core::marker::Unpin for devboy_core::types::JobLogMode
 impl core::marker::UnsafeUnpin for devboy_core::types::JobLogMode
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::JobLogMode
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::JobLogMode
+pub enum devboy_core::LivenessStatus
+pub devboy_core::LivenessStatus::Error
+pub devboy_core::LivenessStatus::Expired
+pub devboy_core::LivenessStatus::Live
+pub devboy_core::LivenessStatus::NotImplemented
+pub devboy_core::LivenessStatus::Revoked
+pub devboy_core::LivenessStatus::Throttled
+impl core::clone::Clone for devboy_core::liveness::LivenessStatus
+pub fn devboy_core::liveness::LivenessStatus::clone(&self) -> devboy_core::liveness::LivenessStatus
+impl core::cmp::Eq for devboy_core::liveness::LivenessStatus
+impl core::cmp::PartialEq for devboy_core::liveness::LivenessStatus
+pub fn devboy_core::liveness::LivenessStatus::eq(&self, other: &devboy_core::liveness::LivenessStatus) -> bool
+impl core::fmt::Debug for devboy_core::liveness::LivenessStatus
+pub fn devboy_core::liveness::LivenessStatus::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_core::liveness::LivenessStatus
+impl core::marker::StructuralPartialEq for devboy_core::liveness::LivenessStatus
+impl core::marker::Freeze for devboy_core::liveness::LivenessStatus
+impl core::marker::Send for devboy_core::liveness::LivenessStatus
+impl core::marker::Sync for devboy_core::liveness::LivenessStatus
+impl core::marker::Unpin for devboy_core::liveness::LivenessStatus
+impl core::marker::UnsafeUnpin for devboy_core::liveness::LivenessStatus
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::liveness::LivenessStatus
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::liveness::LivenessStatus
 pub enum devboy_core::PipelineStatus
 pub devboy_core::PipelineStatus::Canceled
 pub devboy_core::PipelineStatus::Failed
@@ -4126,6 +4335,7 @@ pub devboy_core::Config::jira: core::option::Option<devboy_core::config::JiraCon
 pub devboy_core::Config::proxy: devboy_core::config::ProxyConfig
 pub devboy_core::Config::proxy_mcp_servers: alloc::vec::Vec<devboy_core::config::ProxyMcpServerConfig>
 pub devboy_core::Config::remote_config: core::option::Option<devboy_core::config::RemoteConfigSettings>
+pub devboy_core::Config::secrets: core::option::Option<devboy_core::config::SecretsConfig>
 pub devboy_core::Config::sentry: core::option::Option<devboy_core::config::SentryConfig>
 pub devboy_core::Config::slack: core::option::Option<devboy_core::config::SlackConfig>
 impl devboy_core::config::Config
@@ -4147,6 +4357,8 @@ pub fn devboy_core::config::Config::save_to(&self, path: &std::path::PathBuf) ->
 pub fn devboy_core::config::Config::set(&mut self, key: &str, value: &str) -> devboy_core::error::Result<()>
 pub fn devboy_core::config::Config::set_active_context(&mut self, name: &str) -> devboy_core::error::Result<()>
 pub fn devboy_core::config::Config::validate(&self) -> devboy_core::error::Result<()>
+impl devboy_core::config::Config
+pub fn devboy_core::config::Config::is_secrets_migration_complete(&self) -> bool
 impl core::clone::Clone for devboy_core::config::Config
 pub fn devboy_core::config::Config::clone(&self) -> devboy_core::config::Config
 impl core::default::Default for devboy_core::config::Config
@@ -5142,6 +5354,32 @@ impl core::marker::Unpin for devboy_core::types::ListProjectVersionsParams
 impl core::marker::UnsafeUnpin for devboy_core::types::ListProjectVersionsParams
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::ListProjectVersionsParams
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::ListProjectVersionsParams
+pub struct devboy_core::LivenessResult
+pub devboy_core::LivenessResult::detail: core::option::Option<alloc::string::String>
+pub devboy_core::LivenessResult::expires_at: core::option::Option<alloc::string::String>
+pub devboy_core::LivenessResult::status: devboy_core::liveness::LivenessStatus
+impl devboy_core::liveness::LivenessResult
+pub fn devboy_core::liveness::LivenessResult::error(detail: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_core::liveness::LivenessResult::expired(expires_at: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_core::liveness::LivenessResult::live(detail: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_core::liveness::LivenessResult::not_implemented(provider: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_core::liveness::LivenessResult::revoked(detail: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn devboy_core::liveness::LivenessResult::throttled(detail: impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for devboy_core::liveness::LivenessResult
+pub fn devboy_core::liveness::LivenessResult::clone(&self) -> devboy_core::liveness::LivenessResult
+impl core::cmp::Eq for devboy_core::liveness::LivenessResult
+impl core::cmp::PartialEq for devboy_core::liveness::LivenessResult
+pub fn devboy_core::liveness::LivenessResult::eq(&self, other: &devboy_core::liveness::LivenessResult) -> bool
+impl core::fmt::Debug for devboy_core::liveness::LivenessResult
+pub fn devboy_core::liveness::LivenessResult::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_core::liveness::LivenessResult
+impl core::marker::Freeze for devboy_core::liveness::LivenessResult
+impl core::marker::Send for devboy_core::liveness::LivenessResult
+impl core::marker::Sync for devboy_core::liveness::LivenessResult
+impl core::marker::Unpin for devboy_core::liveness::LivenessResult
+impl core::marker::UnsafeUnpin for devboy_core::liveness::LivenessResult
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::liveness::LivenessResult
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::liveness::LivenessResult
 pub struct devboy_core::MarkdownAttachment
 pub devboy_core::MarkdownAttachment::filename: alloc::string::String
 pub devboy_core::MarkdownAttachment::is_image: bool
@@ -6666,6 +6904,9 @@ pub fn devboy_core::KnowledgeBaseProvider::list_pages<'life0, 'async_trait>(&'li
 pub fn devboy_core::KnowledgeBaseProvider::provider_name(&self) -> &'static str
 pub fn devboy_core::KnowledgeBaseProvider::search<'life0, 'async_trait>(&'life0 self, params: devboy_core::types::SearchKbParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::KbPage>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_core::KnowledgeBaseProvider::update_page<'life0, 'async_trait>(&'life0 self, params: devboy_core::types::UpdatePageParams) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::KbPage>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub trait devboy_core::LivenessProbe: core::marker::Send + core::marker::Sync
+pub fn devboy_core::LivenessProbe::provider_name(&self) -> &str
+pub fn devboy_core::LivenessProbe::test<'life0, 'life1, 'async_trait>(&'life0 self, _token: &'life1 secrecy::SecretString) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::liveness::LivenessResult>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub trait devboy_core::MeetingNotesProvider: core::marker::Send + core::marker::Sync
 pub fn devboy_core::MeetingNotesProvider::get_meetings<'life0, 'async_trait>(&'life0 self, filter: devboy_core::types::MeetingFilter) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::ProviderResult<devboy_core::types::MeetingNote>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_core::MeetingNotesProvider::get_transcript<'life0, 'life1, 'async_trait>(&'life0 self, meeting_id: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::MeetingTranscript>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait

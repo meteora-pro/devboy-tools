@@ -329,9 +329,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: devboy-${{ matrix.target }}
+          # Both binaries are produced by `cargo build --release` of
+          # the whole workspace; CI uploads them together so downstream
+          # smoke tests can spawn `devboy secrets ui --gui` and find
+          # the sibling-of-current_exe binary the launcher discovers.
           path: |
             target/${{ matrix.target }}/release/devboy
             target/${{ matrix.target }}/release/devboy.exe
+            target/${{ matrix.target }}/release/devboy-secrets-ui
+            target/${{ matrix.target }}/release/devboy-secrets-ui.exe
           if-no-files-found: ignore
 
   coverage:

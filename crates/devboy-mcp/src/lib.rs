@@ -24,12 +24,17 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(rustdoc::private_intra_doc_links)]
 #![deny(rustdoc::invalid_html_tags)]
+
+pub mod agent_safety;
 pub mod handlers;
 pub mod layered;
 pub mod prefetch_adapter;
 pub mod protocol;
 pub mod proxy;
+pub mod proxy_secrets;
 pub mod routing;
+pub mod secrets_provision;
+pub mod secrets_tool;
 pub mod server;
 pub mod signature_match;
 pub mod speculation;
