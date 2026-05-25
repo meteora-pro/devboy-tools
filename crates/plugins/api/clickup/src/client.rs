@@ -220,6 +220,36 @@ impl ClickUpClient {
             .map_err(|e| Error::InvalidData(format!("Failed to parse response: {}", e)))
     }
 
+    /// Validate a literal ClickUp custom status name (#288) against the
+    /// list's configured statuses. Returns the canonical name from the
+    /// list (preserving the case as configured in ClickUp) when the
+    /// input matches case-insensitively. Errors with a clear message
+    /// listing valid statuses when there's no match — silent fallthrough
+    /// caused the regression on the cloud side where the MCP layer
+    /// accepted "in progress" and ClickUp returned 200 without changing
+    /// anything.
+    async fn validate_status_name(&self, requested: &str) -> Result<String> {
+        let url = format!("{}/list/{}", self.base_url, self.list_id);
+        let list_info: ClickUpListInfo = self.get(&url).await?;
+        if let Some(found) = list_info
+            .statuses
+            .iter()
+            .find(|s| s.status.eq_ignore_ascii_case(requested))
+        {
+            return Ok(found.status.clone());
+        }
+        let valid: Vec<&str> = list_info
+            .statuses
+            .iter()
+            .map(|s| s.status.as_str())
+            .collect();
+        Err(Error::InvalidData(format!(
+            "Unknown ClickUp status '{requested}' for list {}. Valid: [{}]",
+            self.list_id,
+            valid.join(", ")
+        )))
+    }
+
     /// Resolve a unified state name ("open"/"closed") to the actual ClickUp status name
     /// by fetching the list's configured statuses.
     /// If the state doesn't match a known type, it's passed as-is (exact status name).
@@ -975,9 +1005,17 @@ impl IssueProvider for ClickUpClient {
     async fn update_issue(&self, key: &str, input: UpdateIssueInput) -> Result<Issue> {
         let url = self.task_url(key)?;
 
-        let status = match input.state {
-            Some(s) => Some(self.resolve_status(&s).await?),
-            None => None,
+        // `status` takes precedence over `state` (#288). It is a literal
+        // ClickUp custom status name (e.g. "in progress", "review");
+        // we validate against the list's configured statuses
+        // (case-insensitive) and forward the canonical form. `state`
+        // is the legacy generic open/closed path resolved by type.
+        let status = if let Some(s) = input.status.as_deref() {
+            Some(self.validate_status_name(s).await?)
+        } else if let Some(s) = input.state.as_deref() {
+            Some(self.resolve_status(s).await?)
+        } else {
+            None
         };
 
         let priority = input.priority.as_deref().and_then(priority_to_clickup);
@@ -3803,6 +3841,206 @@ mod tests {
                 .await
                 .unwrap_err();
             assert!(matches!(err, Error::NotFound(_)));
+        }
+
+        // ===== Custom status support — regression tests for #288 =====
+        //
+        // Before this change the executor schema constrained the `state`
+        // field to enum ["open", "closed"], so ClickUp custom statuses
+        // like "in progress" / "review" were unreachable via the MCP
+        // layer. The new `status` field forwards the literal status
+        // name; it is validated against the list's configured statuses
+        // (case-insensitive) and the canonical case from the list is
+        // sent in the PUT body.
+
+        fn list_with_statuses() -> serde_json::Value {
+            serde_json::json!({
+                "statuses": [
+                    {"status": "to do", "type": "open"},
+                    {"status": "in progress", "type": "custom"},
+                    {"status": "review", "type": "custom"},
+                    {"status": "complete", "type": "closed"}
+                ]
+            })
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_status_sets_custom_status() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(list_with_statuses());
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"status\":\"in progress\"");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        status: Some("in progress".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_status_case_insensitive_match() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(list_with_statuses());
+            });
+
+            // Input "REVIEW", list has "review" → PUT body sends canonical "review".
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"status\":\"review\"");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        status: Some("REVIEW".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_status_unknown_fails_with_valid_list() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(list_with_statuses());
+            });
+
+            let put_mock = server.mock(|when, then| {
+                when.method(PUT).path("/task/abc123");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            let err = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        status: Some("released-to-prod".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect_err("unknown status must fail before PUT");
+            let msg = format!("{err:?}");
+            assert!(msg.contains("Unknown ClickUp status"), "msg: {msg}");
+            assert!(msg.contains("released-to-prod"), "msg: {msg}");
+            assert!(msg.contains("in progress"), "list of valids missing: {msg}");
+            put_mock.assert_calls(0);
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_status_overrides_state_when_both_set() {
+            let server = MockServer::start();
+
+            // List endpoint is only hit by validate_status_name (for
+            // `status`) — NOT by resolve_status (`state`); pin that with
+            // a single mock that's allowed to be called once.
+            let list_mock = server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(list_with_statuses());
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    // status wins → "in progress", not "to do" (open) /
+                    // "complete" (closed).
+                    .body_includes("\"status\":\"in progress\"");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        state: Some("closed".to_string()),
+                        status: Some("in progress".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "got {:?}", result.err());
+            list_mock.assert_calls(1);
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_state_path_unchanged_when_status_absent() {
+            // Regression guard: the legacy `state: "closed"` path must
+            // keep working through resolve_status (no behavior change
+            // for callers that never set `status`).
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(list_with_statuses());
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"status\":\"complete\"");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        state: Some("closed".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "got {:?}", result.err());
         }
     }
 }

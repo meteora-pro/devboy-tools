@@ -105,7 +105,8 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("key", PropertySchema::string("Issue key"));
                 s.add_property("title", PropertySchema::string("New title"));
                 s.add_property("description", PropertySchema::string("New description"));
-                s.add_property("state", PropertySchema::string_enum(&["open", "closed"], "New state"));
+                s.add_property("state", PropertySchema::string_enum(&["open", "closed"], "New state (generic open/closed). For ClickUp custom statuses (\"in progress\", \"review\", \"to do\", …) use `status` instead — `get_available_statuses` lists valid names."));
+                s.add_property("status", PropertySchema::string("Provider-specific status name. ClickUp: any custom status from `get_available_statuses` (e.g. \"in progress\", \"review\"). Other providers: ignored. Takes precedence over `state` when both are set."));
                 s.add_property("labels", PropertySchema::array(PropertySchema::string("label"), "New labels (replaces existing)"));
                 s.add_property("assignees", PropertySchema::array(PropertySchema::string("assignee"), "New assignees"));
                 s.add_property("parentId", PropertySchema::string("Parent issue key to move task as subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp."));
