@@ -887,6 +887,10 @@ mod tests {
         SecretString::from(value.to_string())
     }
 
+    fn telegram_message(value: serde_json::Value) -> TelegramMessage {
+        serde_json::from_value(value).unwrap()
+    }
+
     #[tokio::test]
     async fn get_chats_maps_unique_chats_from_updates() {
         let server = MockServer::start();
@@ -1398,5 +1402,281 @@ mod tests {
             Error::ProviderUnsupported { provider, operation }
             if provider == "telegram" && operation == "send_message attachments"
         ));
+    }
+
+    #[test]
+    fn map_telegram_api_payload_covers_success_and_error_paths() {
+        let missing_result = map_telegram_api_payload::<serde_json::Value>(
+            StatusCode::OK,
+            r#"{"ok":true}"#,
+        )
+        .unwrap_err();
+        assert!(matches!(missing_result, Error::InvalidData(message) if message.contains("missing result payload")));
+
+        let retry_limited = map_telegram_api_payload::<serde_json::Value>(
+            StatusCode::OK,
+            r#"{"ok":false,"parameters":{"retry_after":9}}"#,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            retry_limited,
+            Error::RateLimited {
+                retry_after: Some(9)
+            }
+        ));
+
+        let telegram_failure = map_telegram_api_payload::<serde_json::Value>(
+            StatusCode::OK,
+            r#"{"ok":false,"error_code":418,"description":"teapot"}"#,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            telegram_failure,
+            Error::Api { status, message }
+            if status == 418 && message == "teapot"
+        ));
+
+        let http_failure = map_telegram_api_payload::<serde_json::Value>(
+            StatusCode::FORBIDDEN,
+            r#"{"ok":false,"description":"denied"}"#,
+        )
+        .unwrap_err();
+        assert!(matches!(http_failure, Error::Forbidden(message) if message == "denied"));
+    }
+
+    #[test]
+    fn telegram_cursor_helpers_cover_integer_json_and_empty_inputs() {
+        let integer_cursor = parse_search_cursor(Some("42")).unwrap();
+        assert_eq!(integer_cursor.next_update_offset, Some(42));
+
+        let empty_cursor = parse_search_cursor(Some("   ")).unwrap();
+        assert_eq!(empty_cursor.next_update_offset, None);
+
+        let serialized = serialize_search_cursor(&TelegramSearchCursor {
+            next_update_offset: Some(42),
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(serialized, r#"{"next_update_offset":42}"#);
+
+        assert_eq!(
+            serialize_search_cursor(&TelegramSearchCursor::default()).unwrap(),
+            None
+        );
+
+        let invalid = parse_optional_i64("cursor", Some("not-an-int")).unwrap_err();
+        assert!(matches!(invalid, Error::InvalidData(message) if message.contains("Telegram integer timestamp or cursor")));
+    }
+
+    #[test]
+    fn telegram_helpers_cover_authors_names_types_and_attachments() {
+        let user = TelegramUser {
+            id: 7,
+            first_name: "Ada".to_string(),
+            last_name: Some("Lovelace".to_string()),
+            username: Some("ada".to_string()),
+        };
+        assert_eq!(telegram_user_name(&user), "Ada Lovelace");
+
+        let private_chat = TelegramChat {
+            id: 100,
+            kind: "private".to_string(),
+            title: None,
+            username: Some("ada".to_string()),
+            first_name: Some("Ada".to_string()),
+            last_name: None,
+        };
+        assert_eq!(telegram_chat_type(&private_chat), ChatType::Direct);
+
+        let group_chat = TelegramChat {
+            id: -200,
+            kind: "supergroup".to_string(),
+            title: Some("Engineering".to_string()),
+            username: None,
+            first_name: None,
+            last_name: None,
+        };
+        assert_eq!(telegram_chat_type(&group_chat), ChatType::Group);
+
+        let channel_chat = TelegramChat {
+            id: -300,
+            kind: "channel".to_string(),
+            title: Some("Announcements".to_string()),
+            username: Some("announcements".to_string()),
+            first_name: None,
+            last_name: None,
+        };
+        assert_eq!(telegram_chat_type(&channel_chat), ChatType::Channel);
+
+        assert!(telegram_membership_is_active("creator"));
+        assert!(telegram_membership_is_active("restricted"));
+        assert!(!telegram_membership_is_active("left"));
+
+        let sender_chat_message = telegram_message(serde_json::json!({
+            "message_id": 1,
+            "date": 1710000000,
+            "chat": { "id": -300, "type": "channel", "title": "Announcements", "username": "announcements" },
+            "sender_chat": { "id": -999, "type": "channel", "title": "Broadcast", "username": "broadcast" },
+            "text": "hello"
+        }));
+        let sender_author = message_author(&sender_chat_message);
+        assert_eq!(sender_author.id, "-999");
+        assert_eq!(sender_author.name, "Broadcast");
+        assert_eq!(sender_author.username.as_deref(), Some("broadcast"));
+
+        let unknown_author_message = telegram_message(serde_json::json!({
+            "message_id": 2,
+            "date": 1710000001,
+            "chat": { "id": 100, "type": "private", "first_name": "Ada" },
+            "text": "hello"
+        }));
+        let unknown_author = message_author(&unknown_author_message);
+        assert_eq!(unknown_author.name, "Unknown");
+
+        let attachment_message = telegram_message(serde_json::json!({
+            "message_id": 3,
+            "date": 1710000002,
+            "chat": { "id": -200, "type": "group", "title": "Engineering" },
+            "document": {
+                "file_id": "doc-1",
+                "file_name": "report.pdf",
+                "mime_type": "application/pdf",
+                "file_size": 100
+            },
+            "audio": {
+                "file_id": "audio-1",
+                "mime_type": "audio/ogg",
+                "file_size": 200
+            },
+            "video": {
+                "file_id": "video-1",
+                "mime_type": "video/mp4",
+                "file_size": 300
+            },
+            "voice": {
+                "file_id": "voice-1",
+                "mime_type": "audio/ogg",
+                "file_size": 400
+            },
+            "sticker": {
+                "file_id": "sticker-1",
+                "emoji": "🙂",
+                "file_size": 500
+            },
+            "photo": [
+                { "file_id": "photo-1", "file_size": 600 }
+            ]
+        }));
+        let attachments = map_attachments(&attachment_message);
+        assert_eq!(attachments.len(), 6);
+        assert_eq!(attachments[0].attachment_type.as_deref(), Some("file"));
+        assert_eq!(attachments[0].file_size, Some(100));
+        assert_eq!(attachments[1].attachment_type.as_deref(), Some("audio"));
+        assert_eq!(attachments[1].file_size, Some(200));
+        assert_eq!(attachments[2].attachment_type.as_deref(), Some("video"));
+        assert_eq!(attachments[2].file_size, Some(300));
+        assert_eq!(attachments[3].attachment_type.as_deref(), Some("voice"));
+        assert_eq!(attachments[3].file_size, Some(400));
+        assert_eq!(attachments[4].attachment_type.as_deref(), Some("sticker"));
+        assert_eq!(attachments[4].file_size, Some(500));
+        assert_eq!(attachments[5].attachment_type.as_deref(), Some("image"));
+        assert_eq!(attachments[5].file_size, Some(600));
+    }
+
+    #[tokio::test]
+    async fn get_chats_sets_next_cursor_when_limit_is_hit() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/botbot-token/getUpdates")
+                .query_param("timeout", "0")
+                .query_param("limit", "100");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "ok": true,
+                "result": [
+                    {
+                        "update_id": 60,
+                        "message": {
+                            "message_id": 1,
+                            "date": 1710000000,
+                            "chat": { "id": 100, "type": "private", "first_name": "Ada" },
+                            "from": { "id": 1, "is_bot": false, "first_name": "Ada" },
+                            "text": "hello"
+                        }
+                    },
+                    {
+                        "update_id": 61,
+                        "message": {
+                            "message_id": 2,
+                            "date": 1710000001,
+                            "chat": { "id": -200, "type": "supergroup", "title": "Eng" },
+                            "from": { "id": 2, "is_bot": false, "first_name": "Bob" },
+                            "text": "hi"
+                        }
+                    }
+                ]
+            }));
+        });
+
+        let result = TelegramClient::new(token("bot-token"))
+            .with_base_url(server.base_url())
+            .get_chats(GetChatsParams {
+                limit: Some(1),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.items.len(), 1);
+        assert!(result.pagination.as_ref().unwrap().next_cursor.is_some());
+    }
+
+    #[tokio::test]
+    async fn get_messages_sets_next_cursor_when_limit_is_hit() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/botbot-token/getUpdates")
+                .query_param("timeout", "0")
+                .query_param("limit", "100");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "ok": true,
+                "result": [
+                    {
+                        "update_id": 70,
+                        "message": {
+                            "message_id": 10,
+                            "date": 1710000100,
+                            "chat": { "id": -200, "type": "supergroup", "title": "Eng" },
+                            "from": { "id": 5, "is_bot": false, "first_name": "K" },
+                            "text": "first"
+                        }
+                    },
+                    {
+                        "update_id": 71,
+                        "message": {
+                            "message_id": 11,
+                            "date": 1710000200,
+                            "chat": { "id": -200, "type": "supergroup", "title": "Eng" },
+                            "from": { "id": 6, "is_bot": false, "first_name": "L" },
+                            "text": "second"
+                        }
+                    }
+                ]
+            }));
+        });
+
+        let result = TelegramClient::new(token("bot-token"))
+            .with_base_url(server.base_url())
+            .get_messages(GetMessagesParams {
+                chat_id: "-200".to_string(),
+                limit: Some(1),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.items.len(), 1);
+        assert!(result.pagination.as_ref().unwrap().next_cursor.is_some());
     }
 }
