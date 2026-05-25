@@ -1287,8 +1287,8 @@ mod tests {
 
     #[tokio::test]
     async fn search_messages_returns_cursor_for_follow_up_page() {
-        let first_server = MockServer::start();
-        first_server.mock(|when, then| {
+        let server = MockServer::start();
+        server.mock(|when, then| {
             when.method(GET)
                 .path("/botbot-token/getUpdates")
                 .query_param("timeout", "0")
@@ -1320,7 +1320,19 @@ mod tests {
             }));
         });
 
-        let client = TelegramClient::new(token("bot-token")).with_base_url(first_server.base_url());
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/botbot-token/getUpdates")
+                .query_param("timeout", "0")
+                .query_param("limit", "100")
+                .query_param("offset", "52");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "ok": true,
+                "result": []
+            }));
+        });
+
+        let client = TelegramClient::new(token("bot-token")).with_base_url(server.base_url());
         let first = client
             .search_messages(SearchMessagesParams {
                 query: "deploy failed".to_string(),
@@ -1337,32 +1349,7 @@ mod tests {
         let state = parse_search_cursor(Some(&cursor)).unwrap();
         assert_eq!(state.next_update_offset, Some(51));
 
-        let second_server = MockServer::start();
-        second_server.mock(|when, then| {
-            when.method(GET)
-                .path("/botbot-token/getUpdates")
-                .query_param("timeout", "0")
-                .query_param("limit", "100")
-                .query_param("offset", "51");
-            then.status(200).json_body_obj(&serde_json::json!({
-                "ok": true,
-                "result": [
-                    {
-                        "update_id": 51,
-                        "message": {
-                            "message_id": 201,
-                            "date": 1710002100,
-                            "chat": { "id": -200, "type": "supergroup", "title": "Eng" },
-                            "from": { "id": 6, "is_bot": false, "first_name": "L" },
-                            "text": "deploy failed beta"
-                        }
-                    }
-                ]
-            }));
-        });
-
-        let second = TelegramClient::new(token("bot-token"))
-            .with_base_url(second_server.base_url())
+        let second = client
             .search_messages(SearchMessagesParams {
                 query: "deploy failed".to_string(),
                 limit: Some(1),
