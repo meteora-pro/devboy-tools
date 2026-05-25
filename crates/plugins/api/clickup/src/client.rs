@@ -12,9 +12,9 @@ use tracing::{debug, warn};
 
 use crate::DEFAULT_CLICKUP_URL;
 use crate::types::{
-    ClickUpAttachment, ClickUpComment, ClickUpCommentList, ClickUpLinkedTask, ClickUpListInfo,
-    ClickUpPriority, ClickUpTask, ClickUpTaskList, ClickUpUser, CreateCommentRequest,
-    CreateCommentResponse, CreateTaskRequest, UpdateTaskRequest,
+    AssigneeDiff, ClickUpAttachment, ClickUpComment, ClickUpCommentList, ClickUpLinkedTask,
+    ClickUpListInfo, ClickUpPriority, ClickUpTask, ClickUpTaskList, ClickUpTeamsResponse,
+    ClickUpUser, CreateCommentRequest, CreateCommentResponse, CreateTaskRequest, UpdateTaskRequest,
 };
 
 /// Maximum number of tasks per page in ClickUp API.
@@ -244,6 +244,70 @@ impl ClickUpClient {
                     status_type, self.list_id
                 ))
             })
+    }
+
+    /// Fetch the auth user's workspaces with embedded members.
+    /// If a `team_id` is configured on the client, returns only that team's
+    /// members; otherwise flattens across all teams the token has access to.
+    async fn fetch_workspace_members(&self) -> Result<Vec<ClickUpUser>> {
+        let url = format!("{}/team", self.base_url);
+        let resp: ClickUpTeamsResponse = self.get(&url).await?;
+        let target = self.team_id.as_deref();
+        let members: Vec<ClickUpUser> = resp
+            .teams
+            .into_iter()
+            .filter(|t| target.is_none_or(|id| t.id == id))
+            .flat_map(|t| t.members.into_iter().map(|m| m.user))
+            .collect();
+        Ok(members)
+    }
+
+    /// Resolve a list of assignee identifiers (numeric ClickUp user IDs,
+    /// emails, or usernames) to numeric IDs.
+    ///
+    /// Numeric strings are accepted as-is without a lookup. Non-numeric
+    /// strings trigger a single `GET /team` call to load workspace
+    /// members; matching is case-insensitive against `email` first,
+    /// then `username`. Unresolvable identifiers fail the whole call
+    /// rather than silently dropping (callers expect that what they
+    /// asked for is what gets persisted).
+    async fn resolve_assignee_ids(&self, inputs: &[String]) -> Result<Vec<u64>> {
+        let mut resolved: Vec<u64> = Vec::with_capacity(inputs.len());
+        let mut needs_lookup: Vec<&str> = Vec::new();
+        for raw in inputs {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Ok(id) = trimmed.parse::<u64>() {
+                resolved.push(id);
+            } else {
+                needs_lookup.push(trimmed);
+            }
+        }
+        if needs_lookup.is_empty() {
+            return Ok(resolved);
+        }
+        let members = self.fetch_workspace_members().await?;
+        for needle in needs_lookup {
+            let id = members
+                .iter()
+                .find(|u| {
+                    u.email
+                        .as_deref()
+                        .is_some_and(|e| e.eq_ignore_ascii_case(needle))
+                        || u.username.eq_ignore_ascii_case(needle)
+                })
+                .map(|u| u.id);
+            let id = id.ok_or_else(|| {
+                Error::InvalidData(format!(
+                    "Cannot resolve assignee '{needle}' to a ClickUp user id \
+                     (not found by email or username in any accessible workspace)"
+                ))
+            })?;
+            resolved.push(id);
+        }
+        Ok(resolved)
     }
 
     /// Resolve a task key to its raw ClickUp task ID.
@@ -931,6 +995,15 @@ impl IssueProvider for ClickUpClient {
             (input.description, None)
         };
 
+        // ClickUp POST /task accepts a flat `assignees: [u64]` array (no
+        // diff envelope, unlike PUT). Resolve email/username strings to
+        // numeric ids — see `resolve_assignee_ids` for the lookup logic.
+        let assignees = if input.assignees.is_empty() {
+            None
+        } else {
+            Some(self.resolve_assignee_ids(&input.assignees).await?)
+        };
+
         let request = CreateTaskRequest {
             name: input.title,
             description,
@@ -939,7 +1012,7 @@ impl IssueProvider for ClickUpClient {
             status: None,
             priority,
             tags,
-            assignees: None, // ClickUp expects user IDs, not usernames
+            assignees,
         };
 
         let task: ClickUpTask = self.post(&url, &request).await?;
@@ -1007,6 +1080,36 @@ impl IssueProvider for ClickUpClient {
             None => None,
         };
 
+        // Compute assignee diff (`{add, rem}`) before the PUT. ClickUp
+        // silently drops a flat `assignees: [...]` array on update — see
+        // https://clickup.com/api/clickupreference/operation/UpdateTask/.
+        // `None` (not present in the request body) leaves the field
+        // untouched; `Some(empty_diff)` means input was provided but no
+        // change is needed.
+        let assignees_diff = match input.assignees.as_deref() {
+            Some(requested) => {
+                let new_ids = self.resolve_assignee_ids(requested).await?;
+                let current_task: ClickUpTask = self.get(&url).await?;
+                let current_ids: Vec<u64> = current_task.assignees.iter().map(|u| u.id).collect();
+                let add: Vec<u64> = new_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| !current_ids.contains(id))
+                    .collect();
+                let rem: Vec<u64> = current_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| !new_ids.contains(id))
+                    .collect();
+                if add.is_empty() && rem.is_empty() {
+                    None
+                } else {
+                    Some(AssigneeDiff { add, rem })
+                }
+            }
+            None => None,
+        };
+
         let request = UpdateTaskRequest {
             name: input.title,
             description,
@@ -1015,6 +1118,7 @@ impl IssueProvider for ClickUpClient {
             priority,
             parent,
             tags: None, // Tags updated via separate API below
+            assignees: assignees_diff,
         };
 
         let task: ClickUpTask = self.put(&url, &request).await?;
@@ -3803,6 +3907,331 @@ mod tests {
                 .await
                 .unwrap_err();
             assert!(matches!(err, Error::NotFound(_)));
+        }
+
+        // ===== Assignees on PUT /task — regression tests for #287 =====
+        //
+        // Prior to the fix, `UpdateTaskRequest` did not include an
+        // `assignees` field at all, so any `assignees` value passed via
+        // `UpdateIssueInput` was silently dropped — ClickUp returned
+        // 200 with no actual change. The tests below pin the PUT body
+        // shape ClickUp actually expects (`{add: [u64], rem: [u64]}`)
+        // and the diff computation.
+
+        fn team_payload(members: serde_json::Value) -> serde_json::Value {
+            serde_json::json!({
+                "teams": [
+                    {
+                        "id": "9876",
+                        "members": members,
+                    }
+                ]
+            })
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_assignees_resolves_email_and_sends_diff() {
+            let server = MockServer::start();
+
+            // Workspace lookup — used to resolve `m.kitaev@meteora.pro`.
+            server.mock(|when, then| {
+                when.method(GET).path("/team");
+                then.status(200).json_body(team_payload(serde_json::json!([
+                    {"user": {"id": 94519669, "username": "m.kitaev",
+                              "email": "m.kitaev@meteora.pro"}},
+                    {"user": {"id": 11111, "username": "other",
+                              "email": "other@meteora.pro"}}
+                ])));
+            });
+
+            // Current task — bot has no assignees, will add user 94519669.
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            // PUT body must contain `assignees: {add: [94519669]}`.
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"assignees\":{\"add\":[94519669]")
+                    .body_excludes("\"rem\":");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            let client = create_test_client_with_team(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        assignees: Some(vec!["m.kitaev@meteora.pro".to_string()]),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_assignees_accepts_numeric_id_without_lookup() {
+            let server = MockServer::start();
+
+            // No /team mock — must NOT be hit for numeric inputs.
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"assignees\":{\"add\":[42]");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        assignees: Some(vec!["42".to_string()]),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_assignees_diff_add_and_rem() {
+            let server = MockServer::start();
+
+            // Current = [1, 2]; new = [2, 3] → add=[3], rem=[1].
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "abc123", "name": "T",
+                    "status": {"status": "open", "type": "open"},
+                    "tags": [],
+                    "assignees": [
+                        {"id": 1, "username": "u1"},
+                        {"id": 2, "username": "u2"}
+                    ],
+                    "url": "https://app.clickup.com/t/abc123",
+                    "date_created": "1704067200000",
+                    "date_updated": "1704067200000"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"add\":[3]")
+                    .body_includes("\"rem\":[1]");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        assignees: Some(vec!["2".to_string(), "3".to_string()]),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_assignees_empty_input_clears_all() {
+            let server = MockServer::start();
+
+            // Current has [1, 2]; new = [] → add=[], rem=[1, 2].
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "abc123", "name": "T",
+                    "status": {"status": "open", "type": "open"},
+                    "tags": [],
+                    "assignees": [
+                        {"id": 1, "username": "u1"},
+                        {"id": 2, "username": "u2"}
+                    ],
+                    "url": "https://app.clickup.com/t/abc123",
+                    "date_created": "1704067200000",
+                    "date_updated": "1704067200000"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"rem\":[1,2]")
+                    .body_excludes("\"add\":");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        assignees: Some(vec![]),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_assignees_none_leaves_field_untouched() {
+            let server = MockServer::start();
+
+            // PUT body must NOT contain "assignees" — None means leave alone.
+            // Re-fetch GET still happens.
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_excludes("\"assignees\"");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        title: Some("renamed".to_string()),
+                        // assignees: None
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_assignees_unknown_email_fails_clearly() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/team");
+                then.status(200).json_body(team_payload(serde_json::json!([
+                    {"user": {"id": 1, "username": "u1", "email": "u1@x.com"}}
+                ])));
+            });
+
+            // PUT must NOT be called — resolution should fail first.
+            let put_mock = server.mock(|when, then| {
+                when.method(PUT).path("/task/abc123");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            let client = create_test_client(&server);
+            let err = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        assignees: Some(vec!["nobody@nowhere.com".to_string()]),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect_err("unresolvable email must fail");
+            assert!(
+                format!("{err:?}").contains("Cannot resolve assignee"),
+                "unexpected error: {err:?}"
+            );
+            put_mock.assert_calls(0);
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_assignees_no_change_omits_field() {
+            let server = MockServer::start();
+
+            // Current=[1]; new=[1] → diff empty → assignees field omitted.
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "abc123", "name": "T",
+                    "status": {"status": "open", "type": "open"},
+                    "tags": [],
+                    "assignees": [{"id": 1, "username": "u1"}],
+                    "url": "https://app.clickup.com/t/abc123",
+                    "date_created": "1704067200000",
+                    "date_updated": "1704067200000"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_excludes("\"assignees\"");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        assignees: Some(vec!["1".to_string()]),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_create_issue_assignees_resolves_and_sends_flat_array() {
+            let server = MockServer::start();
+
+            // Lookup by email.
+            server.mock(|when, then| {
+                when.method(GET).path("/team");
+                then.status(200).json_body(team_payload(serde_json::json!([
+                    {"user": {"id": 555, "username": "u",
+                              "email": "u@example.com"}}
+                ])));
+            });
+
+            // POST body must contain `assignees: [555]` (flat, no diff).
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/list/12345/task")
+                    .body_includes("\"assignees\":[555]");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .create_issue(CreateIssueInput {
+                    title: "New".to_string(),
+                    assignees: vec!["u@example.com".to_string()],
+                    ..Default::default()
+                })
+                .await;
+            assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        }
+
+        fn sample_task_no_assignees_json() -> serde_json::Value {
+            serde_json::json!({
+                "id": "abc123", "name": "Test Task",
+                "status": {"status": "open", "type": "open"},
+                "tags": [], "assignees": [],
+                "url": "https://app.clickup.com/t/abc123",
+                "date_created": "1704067200000",
+                "date_updated": "1704067200000"
+            })
         }
     }
 }
