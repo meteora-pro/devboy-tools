@@ -433,11 +433,11 @@ impl MessengerProvider for TelegramClient {
         let mut items = Vec::new();
         let mut next_cursor = None;
 
-        for update in state
-            .updates
-            .iter()
-            .filter(|update| offset.map(|cursor| update.update_id >= cursor).unwrap_or(true))
-        {
+        for update in state.updates.iter().filter(|update| {
+            offset
+                .map(|cursor| update.update_id >= cursor)
+                .unwrap_or(true)
+        }) {
             let Some((message, edited_from_update)) = update.clone().into_message() else {
                 continue;
             };
@@ -462,7 +462,12 @@ impl MessengerProvider for TelegramClient {
         let has_more = next_cursor
             .as_deref()
             .and_then(|cursor| cursor.parse::<i64>().ok())
-            .map(|next_offset| state.updates.iter().any(|update| update.update_id >= next_offset))
+            .map(|next_offset| {
+                state
+                    .updates
+                    .iter()
+                    .any(|update| update.update_id >= next_offset)
+            })
             .unwrap_or(false);
 
         Ok(ProviderResult::new(items).with_pagination(Pagination {
@@ -494,11 +499,11 @@ impl MessengerProvider for TelegramClient {
         self.refresh_updates().await?;
         let state = self.state.lock().unwrap();
 
-        for update in state
-            .updates
-            .iter()
-            .filter(|update| offset.map(|cursor| update.update_id >= cursor).unwrap_or(true))
-        {
+        for update in state.updates.iter().filter(|update| {
+            offset
+                .map(|cursor| update.update_id >= cursor)
+                .unwrap_or(true)
+        }) {
             let Some((message, edited_from_update)) = update.clone().into_message() else {
                 continue;
             };
@@ -1478,8 +1483,7 @@ mod tests {
             }));
         });
 
-        let client = TelegramClient::new(token("bot-token"))
-            .with_base_url(first_server.base_url());
+        let client = TelegramClient::new(token("bot-token")).with_base_url(first_server.base_url());
 
         let first = client
             .get_chats(GetChatsParams {
@@ -1556,8 +1560,7 @@ mod tests {
             }));
         });
 
-        let client = TelegramClient::new(token("bot-token"))
-            .with_base_url(first_server.base_url());
+        let client = TelegramClient::new(token("bot-token")).with_base_url(first_server.base_url());
 
         let first = client
             .get_messages(GetMessagesParams {
@@ -1589,12 +1592,12 @@ mod tests {
 
     #[test]
     fn map_telegram_api_payload_covers_success_and_error_paths() {
-        let missing_result = map_telegram_api_payload::<serde_json::Value>(
-            StatusCode::OK,
-            r#"{"ok":true}"#,
-        )
-        .unwrap_err();
-        assert!(matches!(missing_result, Error::InvalidData(message) if message.contains("missing result payload")));
+        let missing_result =
+            map_telegram_api_payload::<serde_json::Value>(StatusCode::OK, r#"{"ok":true}"#)
+                .unwrap_err();
+        assert!(
+            matches!(missing_result, Error::InvalidData(message) if message.contains("missing result payload"))
+        );
 
         let retry_limited = map_telegram_api_payload::<serde_json::Value>(
             StatusCode::OK,
@@ -1648,7 +1651,9 @@ mod tests {
         );
 
         let invalid = parse_optional_i64("cursor", Some("not-an-int")).unwrap_err();
-        assert!(matches!(invalid, Error::InvalidData(message) if message.contains("Telegram integer timestamp or cursor")));
+        assert!(
+            matches!(invalid, Error::InvalidData(message) if message.contains("Telegram integer timestamp or cursor"))
+        );
     }
 
     #[test]
