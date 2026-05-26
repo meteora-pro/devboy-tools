@@ -265,12 +265,26 @@ impl ClickUpClient {
     /// Resolve a list of assignee identifiers (numeric ClickUp user IDs,
     /// emails, or usernames) to numeric IDs.
     ///
-    /// Numeric strings are accepted as-is without a lookup. Non-numeric
-    /// strings trigger a single `GET /team` call to load workspace
-    /// members; matching is case-insensitive against `email` first,
-    /// then `username`. Unresolvable identifiers fail the whole call
-    /// rather than silently dropping (callers expect that what they
-    /// asked for is what gets persisted).
+    /// Resolution order per input:
+    ///   1. A string that parses as `u64` is treated as a ClickUp user ID
+    ///      and used as-is. **No verification** that the user exists in
+    ///      the workspace — ClickUp's PUT will simply ignore unknown IDs
+    ///      (the same silent-no-op we are fixing for the flat-array
+    ///      case is, ironically, still the failure mode for unknown
+    ///      numeric IDs on PUT). If you need verification, pass an
+    ///      email or username instead. We accept the trade-off because
+    ///      it lets numeric callers skip the workspace fetch entirely.
+    ///   2. Otherwise: a single `GET /team` call loads workspace members
+    ///      and the input is matched case-insensitively against `email`
+    ///      first, then `username`. Both fields are matched
+    ///      `eq_ignore_ascii_case` (ClickUp's UI treats both as
+    ///      case-insensitive; non-ASCII emails per RFC 6531 will fall
+    ///      back to exact-case comparison via the ASCII path, which is
+    ///      acceptable as ClickUp doesn't allow non-ASCII identifiers
+    ///      in practice).
+    ///   3. Unresolvable inputs fail the **whole** call rather than
+    ///      silently dropping — callers expect that what they pass to
+    ///      `assignees` is what gets persisted.
     async fn resolve_assignee_ids(&self, inputs: &[String]) -> Result<Vec<u64>> {
         let mut resolved: Vec<u64> = Vec::with_capacity(inputs.len());
         let mut needs_lookup: Vec<&str> = Vec::new();
@@ -1086,6 +1100,14 @@ impl IssueProvider for ClickUpClient {
         // `None` (not present in the request body) leaves the field
         // untouched; `Some(empty_diff)` means input was provided but no
         // change is needed.
+        //
+        // Race window: there is an inherent gap between this GET and the
+        // PUT below — a parallel actor that mutates assignees in between
+        // will see a stale diff applied. ClickUp doesn't offer
+        // optimistic-locking on `/task/:id`, so we can't close this
+        // cleanly here; the practical impact is small (assignee changes
+        // are rare and idempotent enough that the next call usually
+        // converges).
         let assignees_diff = match input.assignees.as_deref() {
             Some(requested) => {
                 let new_ids = self.resolve_assignee_ids(requested).await?;
