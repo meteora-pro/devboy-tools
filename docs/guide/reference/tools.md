@@ -409,6 +409,11 @@ Get the full transcript for a meeting. Returns speaker-attributed sentences with
 | Parameter | Type | Required | Description |
 |---|---|:---:|---|
 | `meeting_id` | string | ✅ | Meeting ID from get_meeting_notes |
+| `format` | string | — | Output format: 'flat' (default per-sentence) or 'grouped' (same-speaker runs collapsed) |
+| `limit` | integer | — | Maximum number of sentences (default: 50, max: 500). Range: 1 – 500 |
+| `offset` | integer | — | Number of sentences to skip for pagination (default: 0). Min: 0 |
+| `search_text` | string | — | Search sentence text (case-insensitive substring match) |
+| `speaker_filter` | string | — | Filter sentences by speaker name (case-insensitive substring match) |
 
 ### `search_meeting_notes`
 
