@@ -375,6 +375,17 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 let mut s = ToolSchema::new();
                 s.add_property("meeting_id", PropertySchema::string("Meeting ID from get_meeting_notes"));
                 s.set_required("meeting_id", true);
+                // gh#291: restore pagination + filter + format params dropped
+                // during the NestJS→Rust migration. Backend dispatcher
+                // (`TranscriptArgs` in consumer monorepo) already parses
+                // these — the schema gap left agents unable to paginate
+                // through long transcripts (1000+ sentences) or discover
+                // grouped output / speaker / text filters.
+                s.add_property("offset", PropertySchema::integer("Number of sentences to skip for pagination (default: 0)", Some(0.0), None));
+                s.add_property("limit", PropertySchema::integer("Maximum number of sentences (default: 50, max: 500)", Some(1.0), Some(500.0)));
+                s.add_property("speaker_filter", PropertySchema::string("Filter sentences by speaker name (case-insensitive substring match)"));
+                s.add_property("search_text", PropertySchema::string("Search sentence text (case-insensitive substring match)"));
+                s.add_property("format", PropertySchema::string("Output format: 'flat' (default per-sentence) or 'grouped' (same-speaker runs collapsed)"));
                 s
             },
         },
@@ -1409,6 +1420,36 @@ mod tests {
             .unwrap();
         assert!(statuses.input_schema.required.is_empty());
         assert!(statuses.input_schema.properties.is_empty());
+    }
+
+    /// gh#291: `get_meeting_transcript` schema must advertise pagination
+    /// and filter params, otherwise MCP agents cannot paginate through
+    /// long transcripts (default limit=50, max=500 in dispatcher) or
+    /// discover speaker/text filters or the grouped output format.
+    #[test]
+    fn test_get_meeting_transcript_exposes_pagination_and_filters() {
+        let tools = base_tool_definitions();
+        let t = tools
+            .iter()
+            .find(|t| t.name == "get_meeting_transcript")
+            .expect("get_meeting_transcript tool must exist");
+        // `meeting_id` is the only required param.
+        assert_eq!(t.input_schema.required, vec!["meeting_id".to_string()]);
+        // Optional params for pagination, filtering, output format —
+        // dropped during NestJS→Rust migration, restored in gh#291.
+        for prop in [
+            "meeting_id",
+            "offset",
+            "limit",
+            "speaker_filter",
+            "search_text",
+            "format",
+        ] {
+            assert!(
+                t.input_schema.properties.contains_key(prop),
+                "schema must advertise `{prop}` so MCP agents can use it"
+            );
+        }
     }
 
     #[test]
