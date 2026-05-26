@@ -157,6 +157,30 @@ pub struct ClickUpTaskList {
 }
 
 // =============================================================================
+// Team (workspace) — used to look up assignees by email/username.
+// =============================================================================
+
+/// Response from GET /api/v2/team — list workspaces the auth user is in,
+/// each with embedded members.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClickUpTeamsResponse {
+    #[serde(default)]
+    pub teams: Vec<ClickUpTeam>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClickUpTeam {
+    pub id: String,
+    #[serde(default)]
+    pub members: Vec<ClickUpTeamMember>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClickUpTeamMember {
+    pub user: ClickUpUser,
+}
+
+// =============================================================================
 // Comment
 // =============================================================================
 
@@ -251,6 +275,22 @@ pub struct UpdateTaskRequest {
     pub parent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    /// Assignee diff for PUT /task/:id. ClickUp does NOT accept a flat
+    /// `assignees: [...]` array on update — it silently 200's and drops
+    /// the field. The supported shape is `{ add: [u64], rem: [u64] }`.
+    /// `None` leaves assignees untouched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assignees: Option<AssigneeDiff>,
+}
+
+/// Diff envelope for PUT /task/:id `assignees` field.
+/// Both arrays are sent only when non-empty so ClickUp doesn't see noise.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct AssigneeDiff {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub add: Vec<u64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub rem: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

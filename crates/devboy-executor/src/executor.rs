@@ -1000,6 +1000,11 @@ struct UpdateIssueParams {
     title: Option<String>,
     description: Option<String>,
     state: Option<String>,
+    /// Provider-specific status name (#288). For ClickUp: any custom
+    /// status from `get_available_statuses` (e.g. "in progress",
+    /// "review"). Currently a no-op for other providers.
+    #[serde(default)]
+    status: Option<String>,
     labels: Option<Vec<String>>,
     assignees: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_string_or_number")]
@@ -1037,6 +1042,7 @@ async fn execute_update_issue(
         title: params.title,
         description: params.description,
         state: params.state,
+        status: params.status,
         labels: params.labels,
         assignees: params.assignees,
         priority: params.priority,
@@ -1636,6 +1642,12 @@ struct UpdateEpicParams {
     title: Option<String>,
     description: Option<String>,
     state: Option<String>,
+    /// Provider-specific status name (#288). Same semantics as
+    /// `UpdateIssueParams::status` — epics are stored as ClickUp tasks,
+    /// so the same custom-status workflow applies (e.g. "in progress",
+    /// "review", "complete").
+    #[serde(default)]
+    status: Option<String>,
     #[serde(rename = "goalId")]
     goal_id: Option<String>,
     labels: Option<Vec<String>>,
@@ -1695,6 +1707,7 @@ async fn execute_update_epic(
         title: params.title,
         description: params.description,
         state: params.state,
+        status: params.status,
         labels,
         assignees: params.assignees,
         priority: params.priority,

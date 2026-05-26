@@ -12,9 +12,9 @@ use tracing::{debug, warn};
 
 use crate::DEFAULT_CLICKUP_URL;
 use crate::types::{
-    ClickUpAttachment, ClickUpComment, ClickUpCommentList, ClickUpLinkedTask, ClickUpListInfo,
-    ClickUpPriority, ClickUpTask, ClickUpTaskList, ClickUpUser, CreateCommentRequest,
-    CreateCommentResponse, CreateTaskRequest, UpdateTaskRequest,
+    AssigneeDiff, ClickUpAttachment, ClickUpComment, ClickUpCommentList, ClickUpLinkedTask,
+    ClickUpListInfo, ClickUpPriority, ClickUpTask, ClickUpTaskList, ClickUpTeamsResponse,
+    ClickUpUser, CreateCommentRequest, CreateCommentResponse, CreateTaskRequest, UpdateTaskRequest,
 };
 
 /// Maximum number of tasks per page in ClickUp API.
@@ -220,6 +220,73 @@ impl ClickUpClient {
             .map_err(|e| Error::InvalidData(format!("Failed to parse response: {}", e)))
     }
 
+    /// Fetch the configured statuses for `self.list_id`. Shared by
+    /// `validate_status_name` (literal-name match, #288) and
+    /// `resolve_status` (generic open/closed → type-matched name);
+    /// extracted so both stay in sync if the list endpoint shape
+    /// evolves.
+    async fn fetch_list_statuses(&self) -> Result<ClickUpListInfo> {
+        let url = format!("{}/list/{}", self.base_url, self.list_id);
+        self.get(&url).await
+    }
+
+    /// Maximum number of status names embedded in the "Unknown status"
+    /// error message. Some workspaces have 50+ configured statuses and
+    /// dumping all of them creates wall-of-text errors that are worse
+    /// than just listing the common ones.
+    const STATUS_LIST_ERROR_LIMIT: usize = 10;
+
+    /// Validate a literal ClickUp custom status name (#288) against the
+    /// list's configured statuses. Returns the canonical name from the
+    /// list (preserving the case as configured in ClickUp) when the
+    /// input matches case-insensitively. Errors with a clear message
+    /// listing valid statuses when there's no match — silent fallthrough
+    /// caused the regression on the cloud side where the MCP layer
+    /// accepted "in progress" and ClickUp returned 200 without changing
+    /// anything.
+    ///
+    /// If the input looks like a generic state keyword (`open`,
+    /// `opened`, `closed`), the error message points the caller at the
+    /// `state` field instead. Those keywords are rarely actual ClickUp
+    /// status names; the most likely cause is the caller mistakenly
+    /// passing them through the wrong field.
+    async fn validate_status_name(&self, requested: &str) -> Result<String> {
+        let list_info = self.fetch_list_statuses().await?;
+        if let Some(found) = list_info
+            .statuses
+            .iter()
+            .find(|s| s.status.eq_ignore_ascii_case(requested))
+        {
+            return Ok(found.status.clone());
+        }
+        let total = list_info.statuses.len();
+        let valid_preview: Vec<&str> = list_info
+            .statuses
+            .iter()
+            .take(Self::STATUS_LIST_ERROR_LIMIT)
+            .map(|s| s.status.as_str())
+            .collect();
+        let valid_str = if total > Self::STATUS_LIST_ERROR_LIMIT {
+            format!(
+                "{}, …and {} more",
+                valid_preview.join(", "),
+                total - Self::STATUS_LIST_ERROR_LIMIT
+            )
+        } else {
+            valid_preview.join(", ")
+        };
+        let hint = match requested.to_ascii_lowercase().as_str() {
+            "open" | "opened" | "closed" => {
+                " (note: for generic open/closed transitions, pass via the `state` field instead)"
+            }
+            _ => "",
+        };
+        Err(Error::InvalidData(format!(
+            "Unknown ClickUp status '{requested}' for list {}. Valid: [{valid_str}]{hint}",
+            self.list_id
+        )))
+    }
+
     /// Resolve a unified state name ("open"/"closed") to the actual ClickUp status name
     /// by fetching the list's configured statuses.
     /// If the state doesn't match a known type, it's passed as-is (exact status name).
@@ -230,8 +297,7 @@ impl ClickUpClient {
             _ => return Ok(state.to_string()),
         };
 
-        let url = format!("{}/list/{}", self.base_url, self.list_id);
-        let list_info: ClickUpListInfo = self.get(&url).await?;
+        let list_info = self.fetch_list_statuses().await?;
 
         list_info
             .statuses
@@ -244,6 +310,84 @@ impl ClickUpClient {
                     status_type, self.list_id
                 ))
             })
+    }
+
+    /// Fetch the auth user's workspaces with embedded members.
+    /// If a `team_id` is configured on the client, returns only that team's
+    /// members; otherwise flattens across all teams the token has access to.
+    async fn fetch_workspace_members(&self) -> Result<Vec<ClickUpUser>> {
+        let url = format!("{}/team", self.base_url);
+        let resp: ClickUpTeamsResponse = self.get(&url).await?;
+        let target = self.team_id.as_deref();
+        let members: Vec<ClickUpUser> = resp
+            .teams
+            .into_iter()
+            .filter(|t| target.is_none_or(|id| t.id == id))
+            .flat_map(|t| t.members.into_iter().map(|m| m.user))
+            .collect();
+        Ok(members)
+    }
+
+    /// Resolve a list of assignee identifiers (numeric ClickUp user IDs,
+    /// emails, or usernames) to numeric IDs.
+    ///
+    /// Resolution order per input:
+    ///   1. A string that parses as `u64` is treated as a ClickUp user ID
+    ///      and used as-is. **No verification** that the user exists in
+    ///      the workspace — ClickUp's PUT will simply ignore unknown IDs
+    ///      (the same silent-no-op we are fixing for the flat-array
+    ///      case is, ironically, still the failure mode for unknown
+    ///      numeric IDs on PUT). If you need verification, pass an
+    ///      email or username instead. We accept the trade-off because
+    ///      it lets numeric callers skip the workspace fetch entirely.
+    ///   2. Otherwise: a single `GET /team` call loads workspace members
+    ///      and the input is matched case-insensitively against `email`
+    ///      first, then `username`. Both fields are matched
+    ///      `eq_ignore_ascii_case` (ClickUp's UI treats both as
+    ///      case-insensitive; non-ASCII emails per RFC 6531 will fall
+    ///      back to exact-case comparison via the ASCII path, which is
+    ///      acceptable as ClickUp doesn't allow non-ASCII identifiers
+    ///      in practice).
+    ///   3. Unresolvable inputs fail the **whole** call rather than
+    ///      silently dropping — callers expect that what they pass to
+    ///      `assignees` is what gets persisted.
+    async fn resolve_assignee_ids(&self, inputs: &[String]) -> Result<Vec<u64>> {
+        let mut resolved: Vec<u64> = Vec::with_capacity(inputs.len());
+        let mut needs_lookup: Vec<&str> = Vec::new();
+        for raw in inputs {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Ok(id) = trimmed.parse::<u64>() {
+                resolved.push(id);
+            } else {
+                needs_lookup.push(trimmed);
+            }
+        }
+        if needs_lookup.is_empty() {
+            return Ok(resolved);
+        }
+        let members = self.fetch_workspace_members().await?;
+        for needle in needs_lookup {
+            let id = members
+                .iter()
+                .find(|u| {
+                    u.email
+                        .as_deref()
+                        .is_some_and(|e| e.eq_ignore_ascii_case(needle))
+                        || u.username.eq_ignore_ascii_case(needle)
+                })
+                .map(|u| u.id);
+            let id = id.ok_or_else(|| {
+                Error::InvalidData(format!(
+                    "Cannot resolve assignee '{needle}' to a ClickUp user id \
+                     (not found by email or username in any accessible workspace)"
+                ))
+            })?;
+            resolved.push(id);
+        }
+        Ok(resolved)
     }
 
     /// Resolve a task key to its raw ClickUp task ID.
@@ -931,6 +1075,15 @@ impl IssueProvider for ClickUpClient {
             (input.description, None)
         };
 
+        // ClickUp POST /task accepts a flat `assignees: [u64]` array (no
+        // diff envelope, unlike PUT). Resolve email/username strings to
+        // numeric ids — see `resolve_assignee_ids` for the lookup logic.
+        let assignees = if input.assignees.is_empty() {
+            None
+        } else {
+            Some(self.resolve_assignee_ids(&input.assignees).await?)
+        };
+
         let request = CreateTaskRequest {
             name: input.title,
             description,
@@ -939,7 +1092,7 @@ impl IssueProvider for ClickUpClient {
             status: None,
             priority,
             tags,
-            assignees: None, // ClickUp expects user IDs, not usernames
+            assignees,
         };
 
         let task: ClickUpTask = self.post(&url, &request).await?;
@@ -975,9 +1128,17 @@ impl IssueProvider for ClickUpClient {
     async fn update_issue(&self, key: &str, input: UpdateIssueInput) -> Result<Issue> {
         let url = self.task_url(key)?;
 
-        let status = match input.state {
-            Some(s) => Some(self.resolve_status(&s).await?),
-            None => None,
+        // `status` takes precedence over `state` (#288). It is a literal
+        // ClickUp custom status name (e.g. "in progress", "review");
+        // we validate against the list's configured statuses
+        // (case-insensitive) and forward the canonical form. `state`
+        // is the legacy generic open/closed path resolved by type.
+        let status = if let Some(s) = input.status.as_deref() {
+            Some(self.validate_status_name(s).await?)
+        } else if let Some(s) = input.state.as_deref() {
+            Some(self.resolve_status(s).await?)
+        } else {
+            None
         };
 
         let priority = input.priority.as_deref().and_then(priority_to_clickup);
@@ -1007,6 +1168,44 @@ impl IssueProvider for ClickUpClient {
             None => None,
         };
 
+        // Compute assignee diff (`{add, rem}`) before the PUT. ClickUp
+        // silently drops a flat `assignees: [...]` array on update — see
+        // https://clickup.com/api/clickupreference/operation/UpdateTask/.
+        // `None` (not present in the request body) leaves the field
+        // untouched; `Some(empty_diff)` means input was provided but no
+        // change is needed.
+        //
+        // Race window: there is an inherent gap between this GET and the
+        // PUT below — a parallel actor that mutates assignees in between
+        // will see a stale diff applied. ClickUp doesn't offer
+        // optimistic-locking on `/task/:id`, so we can't close this
+        // cleanly here; the practical impact is small (assignee changes
+        // are rare and idempotent enough that the next call usually
+        // converges).
+        let assignees_diff = match input.assignees.as_deref() {
+            Some(requested) => {
+                let new_ids = self.resolve_assignee_ids(requested).await?;
+                let current_task: ClickUpTask = self.get(&url).await?;
+                let current_ids: Vec<u64> = current_task.assignees.iter().map(|u| u.id).collect();
+                let add: Vec<u64> = new_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| !current_ids.contains(id))
+                    .collect();
+                let rem: Vec<u64> = current_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| !new_ids.contains(id))
+                    .collect();
+                if add.is_empty() && rem.is_empty() {
+                    None
+                } else {
+                    Some(AssigneeDiff { add, rem })
+                }
+            }
+            None => None,
+        };
+
         let request = UpdateTaskRequest {
             name: input.title,
             description,
@@ -1015,6 +1214,7 @@ impl IssueProvider for ClickUpClient {
             priority,
             parent,
             tags: None, // Tags updated via separate API below
+            assignees: assignees_diff,
         };
 
         let task: ClickUpTask = self.put(&url, &request).await?;
@@ -3803,6 +4003,608 @@ mod tests {
                 .await
                 .unwrap_err();
             assert!(matches!(err, Error::NotFound(_)));
+        }
+
+        // ===== Custom status support — regression tests for #288 =====
+        //
+        // Before this change the executor schema constrained the `state`
+        // field to enum ["open", "closed"], so ClickUp custom statuses
+        // like "in progress" / "review" were unreachable via the MCP
+        // layer. The new `status` field forwards the literal status
+        // name; it is validated against the list's configured statuses
+        // (case-insensitive) and the canonical case from the list is
+        // sent in the PUT body.
+
+        fn list_with_statuses() -> serde_json::Value {
+            serde_json::json!({
+                "statuses": [
+                    {"status": "to do", "type": "open"},
+                    {"status": "in progress", "type": "custom"},
+                    {"status": "review", "type": "custom"},
+                    {"status": "complete", "type": "closed"}
+                ]
+            })
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_status_sets_custom_status() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(list_with_statuses());
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"status\":\"in progress\"");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        status: Some("in progress".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_status_case_insensitive_match() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(list_with_statuses());
+            });
+
+            // Input "REVIEW", list has "review" → PUT body sends canonical "review".
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"status\":\"review\"");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        status: Some("REVIEW".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_status_unknown_fails_with_valid_list() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(list_with_statuses());
+            });
+
+            let put_mock = server.mock(|when, then| {
+                when.method(PUT).path("/task/abc123");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            let err = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        status: Some("released-to-prod".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect_err("unknown status must fail before PUT");
+            let msg = format!("{err:?}");
+            assert!(msg.contains("Unknown ClickUp status"), "msg: {msg}");
+            assert!(msg.contains("released-to-prod"), "msg: {msg}");
+            assert!(msg.contains("in progress"), "list of valids missing: {msg}");
+            put_mock.assert_calls(0);
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_status_overrides_state_when_both_set() {
+            let server = MockServer::start();
+
+            // List endpoint is only hit by validate_status_name (for
+            // `status`) — NOT by resolve_status (`state`); pin that with
+            // a single mock that's allowed to be called once.
+            let list_mock = server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(list_with_statuses());
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    // status wins → "in progress", not "to do" (open) /
+                    // "complete" (closed).
+                    .body_includes("\"status\":\"in progress\"");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        state: Some("closed".to_string()),
+                        status: Some("in progress".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "got {:?}", result.err());
+            list_mock.assert_calls(1);
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_state_path_unchanged_when_status_absent() {
+            // Regression guard: the legacy `state: "closed"` path must
+            // keep working through resolve_status (no behavior change
+            // for callers that never set `status`).
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(list_with_statuses());
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"status\":\"complete\"");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        state: Some("closed".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_status_open_keyword_hints_at_state_field() {
+            // Regression for review feedback on #290: when a caller
+            // accidentally passes "open" / "closed" via `status` instead
+            // of `state`, the error must point them at the right field
+            // instead of just listing valid custom statuses.
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(list_with_statuses());
+            });
+
+            let put_mock = server.mock(|when, then| {
+                when.method(PUT).path("/task/abc123");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            for keyword in ["open", "Opened", "CLOSED"] {
+                let err = client
+                    .update_issue(
+                        "CU-abc123",
+                        UpdateIssueInput {
+                            status: Some(keyword.to_string()),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .expect_err("open/closed via `status` must fail");
+                let msg = format!("{err:?}");
+                assert!(msg.contains("state` field"), "keyword={keyword} msg={msg}");
+            }
+            put_mock.assert_calls(0);
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_status_unknown_truncates_large_status_list() {
+            // Some workspaces have 50+ statuses; the error message must
+            // not dump all of them verbatim. Truncates at 10 with
+            // "…and N more" suffix.
+            let server = MockServer::start();
+
+            let many_statuses: Vec<serde_json::Value> = (0..15)
+                .map(|i| serde_json::json!({"status": format!("status-{i:02}"), "type": "custom"}))
+                .collect();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200)
+                    .json_body(serde_json::json!({"statuses": many_statuses}));
+            });
+
+            let client = create_test_client(&server);
+            let err = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        status: Some("nonexistent".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect_err("must fail");
+            let msg = format!("{err:?}");
+            assert!(msg.contains("status-00"), "preview missing first: {msg}");
+            assert!(msg.contains("status-09"), "preview missing 10th: {msg}");
+            assert!(
+                !msg.contains("status-10"),
+                "11th status leaked past truncation: {msg}"
+            );
+            assert!(
+                msg.contains("…and 5 more"),
+                "truncation suffix missing: {msg}"
+            );
+        }
+
+        // ===== Assignees on PUT /task — regression tests for #287 =====
+        //
+        // Prior to the fix, `UpdateTaskRequest` did not include an
+        // `assignees` field at all, so any `assignees` value passed via
+        // `UpdateIssueInput` was silently dropped — ClickUp returned
+        // 200 with no actual change. The tests below pin the PUT body
+        // shape ClickUp actually expects (`{add: [u64], rem: [u64]}`)
+        // and the diff computation.
+
+        fn team_payload(members: serde_json::Value) -> serde_json::Value {
+            serde_json::json!({
+                "teams": [
+                    {
+                        "id": "9876",
+                        "members": members,
+                    }
+                ]
+            })
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_assignees_resolves_email_and_sends_diff() {
+            let server = MockServer::start();
+
+            // Workspace lookup — used to resolve `m.kitaev@meteora.pro`.
+            server.mock(|when, then| {
+                when.method(GET).path("/team");
+                then.status(200).json_body(team_payload(serde_json::json!([
+                    {"user": {"id": 94519669, "username": "m.kitaev",
+                              "email": "m.kitaev@meteora.pro"}},
+                    {"user": {"id": 11111, "username": "other",
+                              "email": "other@meteora.pro"}}
+                ])));
+            });
+
+            // Current task — bot has no assignees, will add user 94519669.
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            // PUT body must contain `assignees: {add: [94519669]}`.
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"assignees\":{\"add\":[94519669]")
+                    .body_excludes("\"rem\":");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            let client = create_test_client_with_team(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        assignees: Some(vec!["m.kitaev@meteora.pro".to_string()]),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_assignees_accepts_numeric_id_without_lookup() {
+            let server = MockServer::start();
+
+            // No /team mock — must NOT be hit for numeric inputs.
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"assignees\":{\"add\":[42]");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        assignees: Some(vec!["42".to_string()]),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_assignees_diff_add_and_rem() {
+            let server = MockServer::start();
+
+            // Current = [1, 2]; new = [2, 3] → add=[3], rem=[1].
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "abc123", "name": "T",
+                    "status": {"status": "open", "type": "open"},
+                    "tags": [],
+                    "assignees": [
+                        {"id": 1, "username": "u1"},
+                        {"id": 2, "username": "u2"}
+                    ],
+                    "url": "https://app.clickup.com/t/abc123",
+                    "date_created": "1704067200000",
+                    "date_updated": "1704067200000"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"add\":[3]")
+                    .body_includes("\"rem\":[1]");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        assignees: Some(vec!["2".to_string(), "3".to_string()]),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_assignees_empty_input_clears_all() {
+            let server = MockServer::start();
+
+            // Current has [1, 2]; new = [] → add=[], rem=[1, 2].
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "abc123", "name": "T",
+                    "status": {"status": "open", "type": "open"},
+                    "tags": [],
+                    "assignees": [
+                        {"id": 1, "username": "u1"},
+                        {"id": 2, "username": "u2"}
+                    ],
+                    "url": "https://app.clickup.com/t/abc123",
+                    "date_created": "1704067200000",
+                    "date_updated": "1704067200000"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_includes("\"rem\":[1,2]")
+                    .body_excludes("\"add\":");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        assignees: Some(vec![]),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_assignees_none_leaves_field_untouched() {
+            let server = MockServer::start();
+
+            // PUT body must NOT contain "assignees" — None means leave alone.
+            // Re-fetch GET still happens.
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_excludes("\"assignees\"");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        title: Some("renamed".to_string()),
+                        // assignees: None
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_assignees_unknown_email_fails_clearly() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/team");
+                then.status(200).json_body(team_payload(serde_json::json!([
+                    {"user": {"id": 1, "username": "u1", "email": "u1@x.com"}}
+                ])));
+            });
+
+            // PUT must NOT be called — resolution should fail first.
+            let put_mock = server.mock(|when, then| {
+                when.method(PUT).path("/task/abc123");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            let client = create_test_client(&server);
+            let err = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        assignees: Some(vec!["nobody@nowhere.com".to_string()]),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect_err("unresolvable email must fail");
+            assert!(
+                format!("{err:?}").contains("Cannot resolve assignee"),
+                "unexpected error: {err:?}"
+            );
+            put_mock.assert_calls(0);
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_assignees_no_change_omits_field() {
+            let server = MockServer::start();
+
+            // Current=[1]; new=[1] → diff empty → assignees field omitted.
+            server.mock(|when, then| {
+                when.method(GET).path("/task/abc123");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "abc123", "name": "T",
+                    "status": {"status": "open", "type": "open"},
+                    "tags": [],
+                    "assignees": [{"id": 1, "username": "u1"}],
+                    "url": "https://app.clickup.com/t/abc123",
+                    "date_created": "1704067200000",
+                    "date_updated": "1704067200000"
+                }));
+            });
+
+            server.mock(|when, then| {
+                when.method(PUT)
+                    .path("/task/abc123")
+                    .body_excludes("\"assignees\"");
+                then.status(200).json_body(sample_task_no_assignees_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        assignees: Some(vec!["1".to_string()]),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_create_issue_assignees_resolves_and_sends_flat_array() {
+            let server = MockServer::start();
+
+            // Lookup by email.
+            server.mock(|when, then| {
+                when.method(GET).path("/team");
+                then.status(200).json_body(team_payload(serde_json::json!([
+                    {"user": {"id": 555, "username": "u",
+                              "email": "u@example.com"}}
+                ])));
+            });
+
+            // POST body must contain `assignees: [555]` (flat, no diff).
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path("/list/12345/task")
+                    .body_includes("\"assignees\":[555]");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .create_issue(CreateIssueInput {
+                    title: "New".to_string(),
+                    assignees: vec!["u@example.com".to_string()],
+                    ..Default::default()
+                })
+                .await;
+            assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        }
+
+        fn sample_task_no_assignees_json() -> serde_json::Value {
+            serde_json::json!({
+                "id": "abc123", "name": "Test Task",
+                "status": {"status": "open", "type": "open"},
+                "tags": [], "assignees": [],
+                "url": "https://app.clickup.com/t/abc123",
+                "date_created": "1704067200000",
+                "date_updated": "1704067200000"
+            })
         }
     }
 }

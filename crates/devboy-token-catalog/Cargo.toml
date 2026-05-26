@@ -10,7 +10,7 @@ homepage.workspace = true
 authors.workspace = true
 readme = "README.md"
 keywords = ["devboy", "secrets", "tokens", "catalog"]
-categories = ["authentication", "configuration"]
+categories = ["authentication", "config"]
 
 [dependencies]
 serde.workspace = true

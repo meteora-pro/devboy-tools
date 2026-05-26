@@ -105,7 +105,8 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("key", PropertySchema::string("Issue key"));
                 s.add_property("title", PropertySchema::string("New title"));
                 s.add_property("description", PropertySchema::string("New description"));
-                s.add_property("state", PropertySchema::string_enum(&["open", "closed"], "New state"));
+                s.add_property("state", PropertySchema::string_enum(&["open", "closed"], "New state (generic open/closed). For ClickUp custom statuses (\"in progress\", \"review\", \"to do\", …) use `status` instead — `get_available_statuses` lists valid names"));
+                s.add_property("status", PropertySchema::string("Provider-specific status name. ClickUp: any custom status from `get_available_statuses` (e.g. \"in progress\", \"review\"). Other providers: ignored. Takes precedence over `state` when both are set."));
                 s.add_property("labels", PropertySchema::array(PropertySchema::string("label"), "New labels (replaces existing)"));
                 s.add_property("assignees", PropertySchema::array(PropertySchema::string("assignee"), "New assignees"));
                 s.add_property("parentId", PropertySchema::string("Parent issue key to move task as subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp."));
@@ -342,7 +343,8 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("epicKey", PropertySchema::string("Epic key (e.g., 'CU-abc', 'DEV-123')"));
                 s.add_property("title", PropertySchema::string("New title"));
                 s.add_property("description", PropertySchema::string("New description"));
-                s.add_property("state", PropertySchema::string("New epic state"));
+                s.add_property("state", PropertySchema::string("New epic state (generic open/closed). For ClickUp custom statuses use `status`."));
+                s.add_property("status", PropertySchema::string("Provider-specific status name. Same as `update_issue.status` — for ClickUp, any custom status from `get_available_statuses`. Takes precedence over `state`."));
                 s.add_property("goalId", PropertySchema::string("Goal ID (G1-G9) to associate with the epic"));
                 s.add_property("priority", PropertySchema::string("New priority (urgent/high/normal/low)"));
                 s.add_property("labels", PropertySchema::array(PropertySchema::string("label"), "Labels to set"));
@@ -375,6 +377,17 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 let mut s = ToolSchema::new();
                 s.add_property("meeting_id", PropertySchema::string("Meeting ID from get_meeting_notes"));
                 s.set_required("meeting_id", true);
+                // gh#291: restore pagination + filter + format params dropped
+                // during the NestJS→Rust migration. Backend dispatcher
+                // (`TranscriptArgs` in consumer monorepo) already parses
+                // these — the schema gap left agents unable to paginate
+                // through long transcripts (1000+ sentences) or discover
+                // grouped output / speaker / text filters.
+                s.add_property("offset", PropertySchema::integer("Number of sentences to skip for pagination (default: 0)", Some(0.0), None));
+                s.add_property("limit", PropertySchema::integer("Maximum number of sentences (default: 50, max: 500)", Some(1.0), Some(500.0)));
+                s.add_property("speaker_filter", PropertySchema::string("Filter sentences by speaker name (case-insensitive substring match)"));
+                s.add_property("search_text", PropertySchema::string("Search sentence text (case-insensitive substring match)"));
+                s.add_property("format", PropertySchema::string_enum(&["flat", "grouped"], "Output format: 'flat' (default, per-sentence) or 'grouped' (same-speaker runs collapsed)"));
                 s
             },
         },
@@ -1409,6 +1422,36 @@ mod tests {
             .unwrap();
         assert!(statuses.input_schema.required.is_empty());
         assert!(statuses.input_schema.properties.is_empty());
+    }
+
+    /// gh#291: `get_meeting_transcript` schema must advertise pagination
+    /// and filter params, otherwise MCP agents cannot paginate through
+    /// long transcripts (default limit=50, max=500 in dispatcher) or
+    /// discover speaker/text filters or the grouped output format.
+    #[test]
+    fn test_get_meeting_transcript_exposes_pagination_and_filters() {
+        let tools = base_tool_definitions();
+        let t = tools
+            .iter()
+            .find(|t| t.name == "get_meeting_transcript")
+            .expect("get_meeting_transcript tool must exist");
+        // `meeting_id` is the only required param.
+        assert_eq!(t.input_schema.required, vec!["meeting_id".to_string()]);
+        // Optional params for pagination, filtering, output format —
+        // dropped during NestJS→Rust migration, restored in gh#291.
+        for prop in [
+            "meeting_id",
+            "offset",
+            "limit",
+            "speaker_filter",
+            "search_text",
+            "format",
+        ] {
+            assert!(
+                t.input_schema.properties.contains_key(prop),
+                "schema must advertise `{prop}` so MCP agents can use it"
+            );
+        }
     }
 
     #[test]
