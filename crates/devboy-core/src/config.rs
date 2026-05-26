@@ -1648,6 +1648,7 @@ mod tests {
         let config = Config::default();
         assert!(config.github.is_none());
         assert!(config.gitlab.is_none());
+        assert!(config.telegram.is_none());
         assert!(config.contexts.is_empty());
         assert!(!config.has_any_provider());
         assert!(config.configured_providers().is_empty());
@@ -1689,6 +1690,33 @@ mod tests {
     }
 
     #[test]
+    fn test_set_and_get_telegram() {
+        let mut config = Config::default();
+
+        config
+            .set("telegram.base_url", "https://api.telegram.org")
+            .unwrap();
+        config.set("telegram.bot_username", "devboy_bot").unwrap();
+
+        assert_eq!(
+            config.get("telegram.base_url").unwrap(),
+            Some("https://api.telegram.org".to_string())
+        );
+        assert_eq!(
+            config.get("telegram.url").unwrap(),
+            Some("https://api.telegram.org".to_string())
+        );
+        assert_eq!(
+            config.get("telegram.bot_username").unwrap(),
+            Some("devboy_bot".to_string())
+        );
+        assert_eq!(
+            config.get("telegram.bot").unwrap(),
+            Some("devboy_bot".to_string())
+        );
+    }
+
+    #[test]
     fn test_default_slack_required_scopes_cover_default_conversation_types() {
         let scopes = default_slack_required_scopes();
 
@@ -1712,6 +1740,7 @@ mod tests {
 
         // Unknown provider
         assert!(config.set("unknown.field", "value").is_err());
+        assert!(config.set("telegram.unknown", "value").is_err());
 
         // When provider config doesn't exist, get returns Ok(None)
         assert_eq!(config.get("github.owner").unwrap(), None);
@@ -2001,6 +2030,7 @@ mod tests {
         assert_eq!(config.get("clickup.list_id").unwrap(), None);
         assert_eq!(config.get("jira.url").unwrap(), None);
         assert_eq!(config.get("confluence.base_url").unwrap(), None);
+        assert_eq!(config.get("telegram.base_url").unwrap(), None);
     }
 
     #[test]
@@ -2056,7 +2086,10 @@ mod tests {
             fireflies: None,
             confluence: None,
             slack: None,
-            telegram: None,
+            telegram: Some(TelegramConfig {
+                base_url: Some("https://api.telegram.org".to_string()),
+                bot_username: Some("devboy_bot".to_string()),
+            }),
             contexts: BTreeMap::new(),
             active_context: None,
             proxy_mcp_servers: Vec::new(),
@@ -2069,11 +2102,12 @@ mod tests {
         };
 
         let providers = config.configured_providers();
-        assert_eq!(providers.len(), 4);
+        assert_eq!(providers.len(), 5);
         assert!(providers.contains(&"github"));
         assert!(providers.contains(&"gitlab"));
         assert!(providers.contains(&"clickup"));
         assert!(providers.contains(&"jira"));
+        assert!(providers.contains(&"telegram"));
         assert!(config.has_any_provider());
     }
 
@@ -2142,7 +2176,10 @@ mod tests {
             fireflies: None,
             confluence: None,
             slack: None,
-            telegram: None,
+            telegram: Some(TelegramConfig {
+                base_url: Some("https://api.telegram.org".to_string()),
+                bot_username: Some("devboy_bot".to_string()),
+            }),
             contexts: BTreeMap::new(),
             active_context: None,
             proxy_mcp_servers: Vec::new(),
@@ -2157,6 +2194,7 @@ mod tests {
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(toml_str.contains("[github]"));
         assert!(toml_str.contains("[gitlab]"));
+        assert!(toml_str.contains("[telegram]"));
         assert!(!toml_str.contains("[clickup]"));
         assert!(!toml_str.contains("[jira]"));
 

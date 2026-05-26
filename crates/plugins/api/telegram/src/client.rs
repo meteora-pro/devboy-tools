@@ -1,5 +1,6 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::fmt;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use devboy_core::types::ChatType;
@@ -20,6 +21,8 @@ pub struct TelegramClient {
     base_url: String,
     http: reqwest::Client,
     bot_username: Option<String>,
+    state: Arc<Mutex<TelegramState>>,
+    refresh_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl fmt::Debug for TelegramClient {
@@ -47,7 +50,7 @@ struct TelegramResponseParameters {
     retry_after: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct TelegramUpdate {
     update_id: i64,
     message: Option<TelegramMessage>,
@@ -69,6 +72,47 @@ impl TelegramUpdate {
             return Some((message, false));
         }
         self.edited_channel_post.map(|message| (message, true))
+    }
+}
+
+#[derive(Debug, Default)]
+struct TelegramState {
+    next_update_offset: Option<i64>,
+    updates: Vec<TelegramUpdate>,
+    ordered_chat_ids: Vec<String>,
+    chats_by_id: HashMap<String, MessengerChat>,
+    membership_by_id: HashMap<String, bool>,
+}
+
+impl TelegramState {
+    fn ingest_update(&mut self, update: TelegramUpdate) {
+        self.next_update_offset = Some(update.update_id + 1);
+        self.updates.push(update);
+
+        let update_ref = self.updates.last().expect("update just pushed");
+
+        if let Some(member_update) = update_ref.my_chat_member.as_ref() {
+            let chat = map_chat(&member_update.chat);
+            let chat_id = chat.id.clone();
+            if !self.chats_by_id.contains_key(&chat_id) {
+                self.ordered_chat_ids.push(chat_id.clone());
+            }
+            self.membership_by_id.insert(
+                chat_id.clone(),
+                telegram_membership_is_active(&member_update.new_chat_member.status),
+            );
+            self.chats_by_id.insert(chat_id, chat);
+        }
+
+        if let Some((message, _)) = update_ref.clone().into_message() {
+            let chat = map_chat(&message.chat);
+            let chat_id = chat.id.clone();
+            if !self.chats_by_id.contains_key(&chat_id) {
+                self.ordered_chat_ids.push(chat_id.clone());
+            }
+            self.membership_by_id.entry(chat_id.clone()).or_insert(true);
+            self.chats_by_id.insert(chat_id, chat);
+        }
     }
 }
 
@@ -168,6 +212,8 @@ impl TelegramClient {
             base_url: DEFAULT_TELEGRAM_API_URL.to_string(),
             http: reqwest::Client::new(),
             bot_username: None,
+            state: Arc::new(Mutex::new(TelegramState::default())),
+            refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -243,6 +289,32 @@ impl TelegramClient {
         let body = response.text().await.map_err(map_reqwest_error)?;
         map_telegram_api_payload(status, &body)
     }
+
+    async fn refresh_updates(&self) -> Result<()> {
+        let _guard = self.refresh_lock.lock().await;
+
+        loop {
+            let offset = self.state.lock().unwrap().next_update_offset;
+            let updates = self.get_updates(offset, 100).await?;
+            if updates.is_empty() {
+                break;
+            }
+
+            let raw_len = updates.len();
+            {
+                let mut state = self.state.lock().unwrap();
+                for update in updates {
+                    state.ingest_update(update);
+                }
+            }
+
+            if raw_len < 100 {
+                break;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 fn map_telegram_api_payload<T>(status: StatusCode, body: &str) -> Result<T>
@@ -250,7 +322,22 @@ where
     T: DeserializeOwned,
 {
     if !status.is_success() {
-        return Err(map_http_error(status, body));
+        let payload = serde_json::from_str::<TelegramApiResponse<serde_json::Value>>(body).ok();
+        if status.as_u16() == 429
+            && let Some(retry_after) = payload
+                .as_ref()
+                .and_then(|payload| payload.parameters.as_ref())
+                .and_then(|parameters| parameters.retry_after)
+        {
+            return Err(Error::RateLimited {
+                retry_after: Some(retry_after),
+            });
+        }
+
+        let message = payload
+            .and_then(|payload| payload.description)
+            .unwrap_or_else(|| body.to_string());
+        return Err(Error::from_status(status.as_u16(), message));
     }
 
     let payload: TelegramApiResponse<T> = serde_json::from_str(body)?;
@@ -284,104 +371,51 @@ impl MessengerProvider for TelegramClient {
 
     async fn get_chats(&self, params: GetChatsParams) -> Result<ProviderResult<MessengerChat>> {
         let limit = params.limit.unwrap_or(20).min(100);
-        let mut offset = parse_cursor(params.cursor.as_deref())?;
+        self.refresh_updates().await?;
+        let index = parse_chat_cursor(params.cursor.as_deref())? as usize;
         let search = params.search.as_deref().map(str::to_lowercase);
         let include_inactive = params.include_inactive.unwrap_or(false);
-        let mut has_more = false;
+        let state = self.state.lock().unwrap();
+        let mut items = Vec::new();
         let mut next_cursor = None;
-        let mut ordered_chat_ids = Vec::new();
-        let mut seen_chat_ids = HashSet::new();
-        let mut chats_by_id = std::collections::HashMap::<String, MessengerChat>::new();
-        let mut membership_by_id = std::collections::HashMap::<String, bool>::new();
 
-        loop {
-            let updates = self.get_updates(offset, 100).await?;
-            if updates.is_empty() {
+        for (chat_index, chat_id) in state.ordered_chat_ids.iter().enumerate().skip(index) {
+            let Some(mut chat) = state.chats_by_id.get(chat_id).cloned() else {
+                continue;
+            };
+
+            if let Some(active) = state.membership_by_id.get(chat_id).copied() {
+                chat.is_active = active;
+            }
+            if !matches_chat_type(chat.chat_type, params.chat_type) {
+                continue;
+            }
+            if !matches_search(&chat, search.as_deref()) {
+                continue;
+            }
+            if !include_inactive && !chat.is_active {
+                continue;
+            }
+
+            items.push(chat);
+            if items.len() >= limit as usize {
+                next_cursor = Some((chat_index + 1).to_string());
                 break;
             }
-
-            let raw_len = updates.len();
-            for update in updates {
-                let resume_offset = update.update_id + 1;
-                offset = Some(resume_offset);
-                if let Some(member_update) = update.my_chat_member.as_ref() {
-                    let chat = map_chat(&member_update.chat);
-                    let chat_id = chat.id.clone();
-                    if seen_chat_ids.insert(chat_id.clone()) {
-                        ordered_chat_ids.push(chat_id.clone());
-                    }
-                    membership_by_id.insert(
-                        chat_id.clone(),
-                        telegram_membership_is_active(&member_update.new_chat_member.status),
-                    );
-                    chats_by_id.insert(chat_id, chat);
-                }
-                if let Some((message, _)) = update.into_message() {
-                    let chat = map_chat(&message.chat);
-                    let chat_id = chat.id.clone();
-                    if seen_chat_ids.insert(chat_id.clone()) {
-                        ordered_chat_ids.push(chat_id.clone());
-                    }
-                    membership_by_id.entry(chat_id.clone()).or_insert(true);
-                    chats_by_id.insert(chat_id, chat);
-                }
-            }
-
-            let matching_count = ordered_chat_ids
-                .iter()
-                .filter_map(|chat_id| chats_by_id.get(chat_id))
-                .filter(|chat| matches_chat_type(chat.chat_type, params.chat_type))
-                .filter(|chat| matches_search(chat, search.as_deref()))
-                .filter(|chat| {
-                    include_inactive
-                        || membership_by_id
-                            .get(&chat.id)
-                            .copied()
-                            .unwrap_or(chat.is_active)
-                })
-                .count();
-
-            if matching_count >= limit as usize {
-                has_more = raw_len == 100;
-                next_cursor = offset.map(|value| value.to_string());
-                break;
-            }
-
-            if raw_len < 100 {
-                break;
-            }
-
-            has_more = true;
-            next_cursor = offset.map(|value| value.to_string());
         }
 
-        let items = ordered_chat_ids
-            .into_iter()
-            .filter_map(|chat_id| chats_by_id.remove(&chat_id).map(|chat| (chat_id, chat)))
-            .filter_map(|(chat_id, mut chat)| {
-                if let Some(active) = membership_by_id.get(&chat_id).copied() {
-                    chat.is_active = active;
-                }
-                if !matches_chat_type(chat.chat_type, params.chat_type) {
-                    return None;
-                }
-                if !matches_search(&chat, search.as_deref()) {
-                    return None;
-                }
-                if !include_inactive && !chat.is_active {
-                    return None;
-                }
-                Some(chat)
-            })
-            .take(limit as usize)
-            .collect();
+        let has_more = next_cursor
+            .as_deref()
+            .and_then(|cursor| cursor.parse::<usize>().ok())
+            .map(|next_index| next_index < state.ordered_chat_ids.len())
+            .unwrap_or(false);
 
         Ok(ProviderResult::new(items).with_pagination(Pagination {
             offset: 0,
             limit,
             total: None,
             has_more,
-            next_cursor,
+            next_cursor: if has_more { next_cursor } else { None },
         }))
     }
 
@@ -390,65 +424,58 @@ impl MessengerProvider for TelegramClient {
         params: GetMessagesParams,
     ) -> Result<ProviderResult<MessengerMessage>> {
         let limit = params.limit.unwrap_or(100).min(100);
-        let mut offset = parse_cursor(params.cursor.as_deref())?;
+        self.refresh_updates().await?;
+        let offset = parse_cursor(params.cursor.as_deref())?;
         let since = parse_timestamp("since", params.since.as_deref())?;
         let until = parse_timestamp("until", params.until.as_deref())?;
         let thread_id = parse_optional_i64("thread_id", params.thread_id.as_deref())?;
+        let state = self.state.lock().unwrap();
         let mut items = Vec::new();
-        let mut has_more = false;
         let mut next_cursor = None;
 
-        loop {
-            let updates = self.get_updates(offset, 100).await?;
-            if updates.is_empty() {
-                break;
+        for update in state.updates.iter().filter(|update| {
+            offset
+                .map(|cursor| update.update_id >= cursor)
+                .unwrap_or(true)
+        }) {
+            let Some((message, edited_from_update)) = update.clone().into_message() else {
+                continue;
+            };
+
+            if message.chat.id.to_string() != params.chat_id {
+                continue;
+            }
+            if !matches_message_window(&message, since, until) {
+                continue;
+            }
+            if !matches_thread(&message, thread_id) {
+                continue;
             }
 
-            let raw_len = updates.len();
-            for (index, update) in updates.into_iter().enumerate() {
-                let resume_offset = update.update_id + 1;
-                let Some((message, edited_from_update)) = update.into_message() else {
-                    offset = Some(resume_offset);
-                    continue;
-                };
-                offset = Some(resume_offset);
-
-                if message.chat.id.to_string() != params.chat_id {
-                    continue;
-                }
-                if !matches_message_window(&message, since, until) {
-                    continue;
-                }
-                if !matches_thread(&message, thread_id) {
-                    continue;
-                }
-
-                items.push(map_message(message, edited_from_update));
-                if items.len() >= limit as usize {
-                    has_more = index + 1 < raw_len || raw_len == 100;
-                    next_cursor = Some(resume_offset.to_string());
-                    break;
-                }
-            }
-
+            items.push(map_message(message, edited_from_update));
             if items.len() >= limit as usize {
+                next_cursor = Some((update.update_id + 1).to_string());
                 break;
             }
-
-            if raw_len < 100 {
-                break;
-            }
-
-            has_more = true;
-            next_cursor = offset.map(|value| value.to_string());
         }
+
+        let has_more = next_cursor
+            .as_deref()
+            .and_then(|cursor| cursor.parse::<i64>().ok())
+            .map(|next_offset| {
+                state
+                    .updates
+                    .iter()
+                    .any(|update| update.update_id >= next_offset)
+            })
+            .unwrap_or(false);
 
         Ok(ProviderResult::new(items).with_pagination(Pagination {
             offset: 0,
             limit,
             total: None,
             has_more,
-            next_cursor,
+            next_cursor: if has_more { next_cursor } else { None },
         }))
     }
 
@@ -464,77 +491,69 @@ impl MessengerProvider for TelegramClient {
         }
 
         let limit = params.limit.unwrap_or(20).min(100) as usize;
-        let mut offset = parse_search_cursor(params.cursor.as_deref())?.next_update_offset;
+        let offset = parse_search_cursor(params.cursor.as_deref())?.next_update_offset;
         let since = parse_timestamp("since", params.since.as_deref())?;
         let until = parse_timestamp("until", params.until.as_deref())?;
         let mut found = Vec::new();
 
-        loop {
-            let updates = self.get_updates(offset, 100).await?;
-            if updates.is_empty() {
-                return Ok(ProviderResult::new(found).with_pagination(Pagination {
-                    offset: 0,
-                    limit: limit as u32,
-                    total: None,
-                    has_more: false,
-                    next_cursor: None,
-                }));
+        self.refresh_updates().await?;
+        let state = self.state.lock().unwrap();
+
+        for update in state.updates.iter().filter(|update| {
+            offset
+                .map(|cursor| update.update_id >= cursor)
+                .unwrap_or(true)
+        }) {
+            let Some((message, edited_from_update)) = update.clone().into_message() else {
+                continue;
+            };
+
+            if let Some(chat_id) = params.chat_id.as_deref()
+                && message.chat.id.to_string() != chat_id
+            {
+                continue;
+            }
+            if !matches_message_window(&message, since, until) {
+                continue;
             }
 
-            let raw_len = updates.len();
-            for (index, update) in updates.into_iter().enumerate() {
-                let resume_offset = update.update_id + 1;
-                let Some((message, edited_from_update)) = update.into_message() else {
-                    offset = Some(resume_offset);
-                    continue;
+            let normalized = normalized_message_text(&message);
+            if !normalized.contains(&query) {
+                continue;
+            }
+
+            found.push(map_message(message, edited_from_update));
+            if found.len() >= limit {
+                let next_update_offset = update.update_id + 1;
+                let has_more = state
+                    .updates
+                    .iter()
+                    .any(|candidate| candidate.update_id >= next_update_offset);
+                let next_cursor = if has_more {
+                    serialize_search_cursor(&TelegramSearchCursor {
+                        next_update_offset: Some(next_update_offset),
+                    })?
+                } else {
+                    None
                 };
-                offset = Some(resume_offset);
 
-                if let Some(chat_id) = params.chat_id.as_deref()
-                    && message.chat.id.to_string() != chat_id
-                {
-                    continue;
-                }
-                if !matches_message_window(&message, since, until) {
-                    continue;
-                }
-
-                let normalized = normalized_message_text(&message);
-                if !normalized.contains(&query) {
-                    continue;
-                }
-
-                found.push(map_message(message, edited_from_update));
-                if found.len() >= limit {
-                    let has_more = index + 1 < raw_len || raw_len == 100;
-                    let next_cursor = if has_more {
-                        serialize_search_cursor(&TelegramSearchCursor {
-                            next_update_offset: offset,
-                        })?
-                    } else {
-                        None
-                    };
-
-                    return Ok(ProviderResult::new(found).with_pagination(Pagination {
-                        offset: 0,
-                        limit: limit as u32,
-                        total: None,
-                        has_more,
-                        next_cursor,
-                    }));
-                }
-            }
-
-            if raw_len < 100 {
                 return Ok(ProviderResult::new(found).with_pagination(Pagination {
                     offset: 0,
                     limit: limit as u32,
                     total: None,
-                    has_more: false,
-                    next_cursor: None,
+                    has_more,
+                    next_cursor,
                 }));
             }
         }
+
+        Ok(ProviderResult::new(found).with_pagination(Pagination {
+            offset: 0,
+            limit: limit as u32,
+            total: None,
+            has_more: false,
+            next_cursor: None,
+        }))
     }
 
     async fn send_message(&self, params: SendMessageParams) -> Result<MessengerMessage> {
@@ -567,6 +586,10 @@ impl MessengerProvider for TelegramClient {
 
 fn parse_cursor(cursor: Option<&str>) -> Result<Option<i64>> {
     parse_optional_i64("cursor", cursor)
+}
+
+fn parse_chat_cursor(cursor: Option<&str>) -> Result<i64> {
+    Ok(parse_optional_i64("cursor", cursor)?.unwrap_or(0))
 }
 
 fn parse_search_cursor(cursor: Option<&str>) -> Result<TelegramSearchCursor> {
@@ -616,14 +639,6 @@ fn map_reqwest_error(error: reqwest::Error) -> Error {
     } else {
         Error::Http(error.to_string())
     }
-}
-
-fn map_http_error(status: StatusCode, body: &str) -> Error {
-    let message = serde_json::from_str::<TelegramApiResponse<serde_json::Value>>(body)
-        .ok()
-        .and_then(|payload| payload.description)
-        .unwrap_or_else(|| body.to_string());
-    Error::from_status(status.as_u16(), message)
 }
 
 fn map_chat(chat: &TelegramChat) -> MessengerChat {
@@ -885,6 +900,10 @@ mod tests {
 
     fn token(value: &str) -> SecretString {
         SecretString::from(value.to_string())
+    }
+
+    fn telegram_message(value: serde_json::Value) -> TelegramMessage {
+        serde_json::from_value(value).unwrap()
     }
 
     #[tokio::test]
@@ -1268,8 +1287,8 @@ mod tests {
 
     #[tokio::test]
     async fn search_messages_returns_cursor_for_follow_up_page() {
-        let first_server = MockServer::start();
-        first_server.mock(|when, then| {
+        let server = MockServer::start();
+        server.mock(|when, then| {
             when.method(GET)
                 .path("/botbot-token/getUpdates")
                 .query_param("timeout", "0")
@@ -1301,7 +1320,19 @@ mod tests {
             }));
         });
 
-        let client = TelegramClient::new(token("bot-token")).with_base_url(first_server.base_url());
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/botbot-token/getUpdates")
+                .query_param("timeout", "0")
+                .query_param("limit", "100")
+                .query_param("offset", "52");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "ok": true,
+                "result": []
+            }));
+        });
+
+        let client = TelegramClient::new(token("bot-token")).with_base_url(server.base_url());
         let first = client
             .search_messages(SearchMessagesParams {
                 query: "deploy failed".to_string(),
@@ -1318,32 +1349,7 @@ mod tests {
         let state = parse_search_cursor(Some(&cursor)).unwrap();
         assert_eq!(state.next_update_offset, Some(51));
 
-        let second_server = MockServer::start();
-        second_server.mock(|when, then| {
-            when.method(GET)
-                .path("/botbot-token/getUpdates")
-                .query_param("timeout", "0")
-                .query_param("limit", "100")
-                .query_param("offset", "51");
-            then.status(200).json_body_obj(&serde_json::json!({
-                "ok": true,
-                "result": [
-                    {
-                        "update_id": 51,
-                        "message": {
-                            "message_id": 201,
-                            "date": 1710002100,
-                            "chat": { "id": -200, "type": "supergroup", "title": "Eng" },
-                            "from": { "id": 6, "is_bot": false, "first_name": "L" },
-                            "text": "deploy failed beta"
-                        }
-                    }
-                ]
-            }));
-        });
-
-        let second = TelegramClient::new(token("bot-token"))
-            .with_base_url(second_server.base_url())
+        let second = client
             .search_messages(SearchMessagesParams {
                 query: "deploy failed".to_string(),
                 limit: Some(1),
@@ -1398,5 +1404,454 @@ mod tests {
             Error::ProviderUnsupported { provider, operation }
             if provider == "telegram" && operation == "send_message attachments"
         ));
+    }
+
+    #[test]
+    fn map_telegram_api_payload_preserves_retry_after_on_http_429() {
+        let err = map_telegram_api_payload::<serde_json::Value>(
+            StatusCode::TOO_MANY_REQUESTS,
+            r#"{"ok":false,"description":"Too Many Requests","parameters":{"retry_after":7}}"#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::RateLimited {
+                retry_after: Some(7)
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn get_chats_paginates_across_cached_updates_without_dropping_chats() {
+        let first_server = MockServer::start();
+        let first_batch = first_server.mock(|when, then| {
+            when.method(GET)
+                .path("/botbot-token/getUpdates")
+                .query_param("timeout", "0")
+                .query_param("limit", "100");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "ok": true,
+                "result": [
+                    {
+                        "update_id": 80,
+                        "message": {
+                            "message_id": 1,
+                            "date": 1710000000,
+                            "chat": { "id": 100, "type": "private", "first_name": "Ada" },
+                            "from": { "id": 1, "is_bot": false, "first_name": "Ada" },
+                            "text": "hello"
+                        }
+                    },
+                    {
+                        "update_id": 81,
+                        "message": {
+                            "message_id": 2,
+                            "date": 1710000001,
+                            "chat": { "id": -200, "type": "supergroup", "title": "Eng" },
+                            "from": { "id": 2, "is_bot": false, "first_name": "Bob" },
+                            "text": "hi"
+                        }
+                    }
+                ]
+            }));
+        });
+
+        let second_server = MockServer::start();
+        let second_batch = second_server.mock(|when, then| {
+            when.method(GET)
+                .path("/botbot-token/getUpdates")
+                .query_param("timeout", "0")
+                .query_param("limit", "100")
+                .query_param("offset", "82");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "ok": true,
+                "result": []
+            }));
+        });
+
+        let client = TelegramClient::new(token("bot-token")).with_base_url(first_server.base_url());
+
+        let first = client
+            .get_chats(GetChatsParams {
+                limit: Some(1),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(first.items.len(), 1);
+        let cursor = first.pagination.unwrap().next_cursor.unwrap();
+
+        let second = client
+            .clone()
+            .with_base_url(second_server.base_url())
+            .get_chats(GetChatsParams {
+                limit: Some(1),
+                cursor: Some(cursor),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        first_batch.assert_calls(1);
+        second_batch.assert_calls(1);
+        assert_eq!(second.items.len(), 1);
+        assert_eq!(second.items[0].id, "-200");
+    }
+
+    #[tokio::test]
+    async fn get_messages_uses_cached_updates_across_chat_queries() {
+        let first_server = MockServer::start();
+        let first_batch = first_server.mock(|when, then| {
+            when.method(GET)
+                .path("/botbot-token/getUpdates")
+                .query_param("timeout", "0")
+                .query_param("limit", "100");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "ok": true,
+                "result": [
+                    {
+                        "update_id": 90,
+                        "message": {
+                            "message_id": 10,
+                            "date": 1710001000,
+                            "chat": { "id": -200, "type": "supergroup", "title": "Eng" },
+                            "from": { "id": 5, "is_bot": false, "first_name": "K" },
+                            "text": "alpha"
+                        }
+                    },
+                    {
+                        "update_id": 91,
+                        "message": {
+                            "message_id": 11,
+                            "date": 1710001100,
+                            "chat": { "id": -300, "type": "supergroup", "title": "Ops" },
+                            "from": { "id": 6, "is_bot": false, "first_name": "L" },
+                            "text": "bravo"
+                        }
+                    }
+                ]
+            }));
+        });
+
+        let second_server = MockServer::start();
+        let second_batch = second_server.mock(|when, then| {
+            when.method(GET)
+                .path("/botbot-token/getUpdates")
+                .query_param("timeout", "0")
+                .query_param("limit", "100")
+                .query_param("offset", "92");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "ok": true,
+                "result": []
+            }));
+        });
+
+        let client = TelegramClient::new(token("bot-token")).with_base_url(first_server.base_url());
+
+        let first = client
+            .get_messages(GetMessagesParams {
+                chat_id: "-200".to_string(),
+                limit: Some(10),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(first.items.len(), 1);
+
+        let second = client
+            .clone()
+            .with_base_url(second_server.base_url())
+            .get_messages(GetMessagesParams {
+                chat_id: "-300".to_string(),
+                limit: Some(10),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        first_batch.assert_calls(1);
+        second_batch.assert_calls(1);
+        assert_eq!(second.items.len(), 1);
+        assert_eq!(second.items[0].chat_id, "-300");
+        assert_eq!(second.items[0].text, "bravo");
+    }
+
+    #[test]
+    fn map_telegram_api_payload_covers_success_and_error_paths() {
+        let missing_result =
+            map_telegram_api_payload::<serde_json::Value>(StatusCode::OK, r#"{"ok":true}"#)
+                .unwrap_err();
+        assert!(
+            matches!(missing_result, Error::InvalidData(message) if message.contains("missing result payload"))
+        );
+
+        let retry_limited = map_telegram_api_payload::<serde_json::Value>(
+            StatusCode::OK,
+            r#"{"ok":false,"parameters":{"retry_after":9}}"#,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            retry_limited,
+            Error::RateLimited {
+                retry_after: Some(9)
+            }
+        ));
+
+        let telegram_failure = map_telegram_api_payload::<serde_json::Value>(
+            StatusCode::OK,
+            r#"{"ok":false,"error_code":418,"description":"teapot"}"#,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            telegram_failure,
+            Error::Api { status, message }
+            if status == 418 && message == "teapot"
+        ));
+
+        let http_failure = map_telegram_api_payload::<serde_json::Value>(
+            StatusCode::FORBIDDEN,
+            r#"{"ok":false,"description":"denied"}"#,
+        )
+        .unwrap_err();
+        assert!(matches!(http_failure, Error::Forbidden(message) if message == "denied"));
+    }
+
+    #[test]
+    fn telegram_cursor_helpers_cover_integer_json_and_empty_inputs() {
+        let integer_cursor = parse_search_cursor(Some("42")).unwrap();
+        assert_eq!(integer_cursor.next_update_offset, Some(42));
+
+        let empty_cursor = parse_search_cursor(Some("   ")).unwrap();
+        assert_eq!(empty_cursor.next_update_offset, None);
+
+        let serialized = serialize_search_cursor(&TelegramSearchCursor {
+            next_update_offset: Some(42),
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(serialized, r#"{"next_update_offset":42}"#);
+
+        assert_eq!(
+            serialize_search_cursor(&TelegramSearchCursor::default()).unwrap(),
+            None
+        );
+
+        let invalid = parse_optional_i64("cursor", Some("not-an-int")).unwrap_err();
+        assert!(
+            matches!(invalid, Error::InvalidData(message) if message.contains("Telegram integer timestamp or cursor"))
+        );
+    }
+
+    #[test]
+    fn telegram_helpers_cover_authors_names_types_and_attachments() {
+        let user = TelegramUser {
+            id: 7,
+            first_name: "Ada".to_string(),
+            last_name: Some("Lovelace".to_string()),
+            username: Some("ada".to_string()),
+        };
+        assert_eq!(telegram_user_name(&user), "Ada Lovelace");
+
+        let private_chat = TelegramChat {
+            id: 100,
+            kind: "private".to_string(),
+            title: None,
+            username: Some("ada".to_string()),
+            first_name: Some("Ada".to_string()),
+            last_name: None,
+        };
+        assert_eq!(telegram_chat_type(&private_chat), ChatType::Direct);
+
+        let group_chat = TelegramChat {
+            id: -200,
+            kind: "supergroup".to_string(),
+            title: Some("Engineering".to_string()),
+            username: None,
+            first_name: None,
+            last_name: None,
+        };
+        assert_eq!(telegram_chat_type(&group_chat), ChatType::Group);
+
+        let channel_chat = TelegramChat {
+            id: -300,
+            kind: "channel".to_string(),
+            title: Some("Announcements".to_string()),
+            username: Some("announcements".to_string()),
+            first_name: None,
+            last_name: None,
+        };
+        assert_eq!(telegram_chat_type(&channel_chat), ChatType::Channel);
+
+        assert!(telegram_membership_is_active("creator"));
+        assert!(telegram_membership_is_active("restricted"));
+        assert!(!telegram_membership_is_active("left"));
+
+        let sender_chat_message = telegram_message(serde_json::json!({
+            "message_id": 1,
+            "date": 1710000000,
+            "chat": { "id": -300, "type": "channel", "title": "Announcements", "username": "announcements" },
+            "sender_chat": { "id": -999, "type": "channel", "title": "Broadcast", "username": "broadcast" },
+            "text": "hello"
+        }));
+        let sender_author = message_author(&sender_chat_message);
+        assert_eq!(sender_author.id, "-999");
+        assert_eq!(sender_author.name, "Broadcast");
+        assert_eq!(sender_author.username.as_deref(), Some("broadcast"));
+
+        let unknown_author_message = telegram_message(serde_json::json!({
+            "message_id": 2,
+            "date": 1710000001,
+            "chat": { "id": 100, "type": "private", "first_name": "Ada" },
+            "text": "hello"
+        }));
+        let unknown_author = message_author(&unknown_author_message);
+        assert_eq!(unknown_author.name, "Unknown");
+
+        let attachment_message = telegram_message(serde_json::json!({
+            "message_id": 3,
+            "date": 1710000002,
+            "chat": { "id": -200, "type": "group", "title": "Engineering" },
+            "document": {
+                "file_id": "doc-1",
+                "file_name": "report.pdf",
+                "mime_type": "application/pdf",
+                "file_size": 100
+            },
+            "audio": {
+                "file_id": "audio-1",
+                "mime_type": "audio/ogg",
+                "file_size": 200
+            },
+            "video": {
+                "file_id": "video-1",
+                "mime_type": "video/mp4",
+                "file_size": 300
+            },
+            "voice": {
+                "file_id": "voice-1",
+                "mime_type": "audio/ogg",
+                "file_size": 400
+            },
+            "sticker": {
+                "file_id": "sticker-1",
+                "emoji": "🙂",
+                "file_size": 500
+            },
+            "photo": [
+                { "file_id": "photo-1", "file_size": 600 }
+            ]
+        }));
+        let attachments = map_attachments(&attachment_message);
+        assert_eq!(attachments.len(), 6);
+        assert_eq!(attachments[0].attachment_type.as_deref(), Some("file"));
+        assert_eq!(attachments[0].file_size, Some(100));
+        assert_eq!(attachments[1].attachment_type.as_deref(), Some("audio"));
+        assert_eq!(attachments[1].file_size, Some(200));
+        assert_eq!(attachments[2].attachment_type.as_deref(), Some("video"));
+        assert_eq!(attachments[2].file_size, Some(300));
+        assert_eq!(attachments[3].attachment_type.as_deref(), Some("voice"));
+        assert_eq!(attachments[3].file_size, Some(400));
+        assert_eq!(attachments[4].attachment_type.as_deref(), Some("sticker"));
+        assert_eq!(attachments[4].file_size, Some(500));
+        assert_eq!(attachments[5].attachment_type.as_deref(), Some("image"));
+        assert_eq!(attachments[5].file_size, Some(600));
+    }
+
+    #[tokio::test]
+    async fn get_chats_sets_next_cursor_when_limit_is_hit() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/botbot-token/getUpdates")
+                .query_param("timeout", "0")
+                .query_param("limit", "100");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "ok": true,
+                "result": [
+                    {
+                        "update_id": 60,
+                        "message": {
+                            "message_id": 1,
+                            "date": 1710000000,
+                            "chat": { "id": 100, "type": "private", "first_name": "Ada" },
+                            "from": { "id": 1, "is_bot": false, "first_name": "Ada" },
+                            "text": "hello"
+                        }
+                    },
+                    {
+                        "update_id": 61,
+                        "message": {
+                            "message_id": 2,
+                            "date": 1710000001,
+                            "chat": { "id": -200, "type": "supergroup", "title": "Eng" },
+                            "from": { "id": 2, "is_bot": false, "first_name": "Bob" },
+                            "text": "hi"
+                        }
+                    }
+                ]
+            }));
+        });
+
+        let result = TelegramClient::new(token("bot-token"))
+            .with_base_url(server.base_url())
+            .get_chats(GetChatsParams {
+                limit: Some(1),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.items.len(), 1);
+        assert!(result.pagination.as_ref().unwrap().next_cursor.is_some());
+    }
+
+    #[tokio::test]
+    async fn get_messages_sets_next_cursor_when_limit_is_hit() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/botbot-token/getUpdates")
+                .query_param("timeout", "0")
+                .query_param("limit", "100");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "ok": true,
+                "result": [
+                    {
+                        "update_id": 70,
+                        "message": {
+                            "message_id": 10,
+                            "date": 1710000100,
+                            "chat": { "id": -200, "type": "supergroup", "title": "Eng" },
+                            "from": { "id": 5, "is_bot": false, "first_name": "K" },
+                            "text": "first"
+                        }
+                    },
+                    {
+                        "update_id": 71,
+                        "message": {
+                            "message_id": 11,
+                            "date": 1710000200,
+                            "chat": { "id": -200, "type": "supergroup", "title": "Eng" },
+                            "from": { "id": 6, "is_bot": false, "first_name": "L" },
+                            "text": "second"
+                        }
+                    }
+                ]
+            }));
+        });
+
+        let result = TelegramClient::new(token("bot-token"))
+            .with_base_url(server.base_url())
+            .get_messages(GetMessagesParams {
+                chat_id: "-200".to_string(),
+                limit: Some(1),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.items.len(), 1);
+        assert!(result.pagination.as_ref().unwrap().next_cursor.is_some());
     }
 }
