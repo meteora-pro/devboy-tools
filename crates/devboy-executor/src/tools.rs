@@ -385,7 +385,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("limit", PropertySchema::integer("Maximum number of sentences (default: 50, max: 500)", Some(1.0), Some(500.0)));
                 s.add_property("speaker_filter", PropertySchema::string("Filter sentences by speaker name (case-insensitive substring match)"));
                 s.add_property("search_text", PropertySchema::string("Search sentence text (case-insensitive substring match)"));
-                s.add_property("format", PropertySchema::string("Output format: 'flat' (default per-sentence) or 'grouped' (same-speaker runs collapsed)"));
+                s.add_property("format", PropertySchema::string_enum(&["flat", "grouped"], "Output format: 'flat' (default, per-sentence) or 'grouped' (same-speaker runs collapsed)"));
                 s
             },
         },
