@@ -1642,6 +1642,12 @@ struct UpdateEpicParams {
     title: Option<String>,
     description: Option<String>,
     state: Option<String>,
+    /// Provider-specific status name (#288). Same semantics as
+    /// `UpdateIssueParams::status` — epics are stored as ClickUp tasks,
+    /// so the same custom-status workflow applies (e.g. "in progress",
+    /// "review", "complete").
+    #[serde(default)]
+    status: Option<String>,
     #[serde(rename = "goalId")]
     goal_id: Option<String>,
     labels: Option<Vec<String>>,
@@ -1701,7 +1707,7 @@ async fn execute_update_epic(
         title: params.title,
         description: params.description,
         state: params.state,
-        status: None,
+        status: params.status,
         labels,
         assignees: params.assignees,
         priority: params.priority,

@@ -220,6 +220,22 @@ impl ClickUpClient {
             .map_err(|e| Error::InvalidData(format!("Failed to parse response: {}", e)))
     }
 
+    /// Fetch the configured statuses for `self.list_id`. Shared by
+    /// `validate_status_name` (literal-name match, #288) and
+    /// `resolve_status` (generic open/closed → type-matched name);
+    /// extracted so both stay in sync if the list endpoint shape
+    /// evolves.
+    async fn fetch_list_statuses(&self) -> Result<ClickUpListInfo> {
+        let url = format!("{}/list/{}", self.base_url, self.list_id);
+        self.get(&url).await
+    }
+
+    /// Maximum number of status names embedded in the "Unknown status"
+    /// error message. Some workspaces have 50+ configured statuses and
+    /// dumping all of them creates wall-of-text errors that are worse
+    /// than just listing the common ones.
+    const STATUS_LIST_ERROR_LIMIT: usize = 10;
+
     /// Validate a literal ClickUp custom status name (#288) against the
     /// list's configured statuses. Returns the canonical name from the
     /// list (preserving the case as configured in ClickUp) when the
@@ -228,9 +244,14 @@ impl ClickUpClient {
     /// caused the regression on the cloud side where the MCP layer
     /// accepted "in progress" and ClickUp returned 200 without changing
     /// anything.
+    ///
+    /// If the input looks like a generic state keyword (`open`,
+    /// `opened`, `closed`), the error message points the caller at the
+    /// `state` field instead. Those keywords are rarely actual ClickUp
+    /// status names; the most likely cause is the caller mistakenly
+    /// passing them through the wrong field.
     async fn validate_status_name(&self, requested: &str) -> Result<String> {
-        let url = format!("{}/list/{}", self.base_url, self.list_id);
-        let list_info: ClickUpListInfo = self.get(&url).await?;
+        let list_info = self.fetch_list_statuses().await?;
         if let Some(found) = list_info
             .statuses
             .iter()
@@ -238,15 +259,31 @@ impl ClickUpClient {
         {
             return Ok(found.status.clone());
         }
-        let valid: Vec<&str> = list_info
+        let total = list_info.statuses.len();
+        let valid_preview: Vec<&str> = list_info
             .statuses
             .iter()
+            .take(Self::STATUS_LIST_ERROR_LIMIT)
             .map(|s| s.status.as_str())
             .collect();
+        let valid_str = if total > Self::STATUS_LIST_ERROR_LIMIT {
+            format!(
+                "{}, …and {} more",
+                valid_preview.join(", "),
+                total - Self::STATUS_LIST_ERROR_LIMIT
+            )
+        } else {
+            valid_preview.join(", ")
+        };
+        let hint = match requested.to_ascii_lowercase().as_str() {
+            "open" | "opened" | "closed" => {
+                " (note: for generic open/closed transitions, pass via the `state` field instead)"
+            }
+            _ => "",
+        };
         Err(Error::InvalidData(format!(
-            "Unknown ClickUp status '{requested}' for list {}. Valid: [{}]",
-            self.list_id,
-            valid.join(", ")
+            "Unknown ClickUp status '{requested}' for list {}. Valid: [{valid_str}]{hint}",
+            self.list_id
         )))
     }
 
@@ -260,8 +297,7 @@ impl ClickUpClient {
             _ => return Ok(state.to_string()),
         };
 
-        let url = format!("{}/list/{}", self.base_url, self.list_id);
-        let list_info: ClickUpListInfo = self.get(&url).await?;
+        let list_info = self.fetch_list_statuses().await?;
 
         list_info
             .statuses
@@ -4041,6 +4077,83 @@ mod tests {
                 )
                 .await;
             assert!(result.is_ok(), "got {:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_status_open_keyword_hints_at_state_field() {
+            // Regression for review feedback on #290: when a caller
+            // accidentally passes "open" / "closed" via `status` instead
+            // of `state`, the error must point them at the right field
+            // instead of just listing valid custom statuses.
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200).json_body(list_with_statuses());
+            });
+
+            let put_mock = server.mock(|when, then| {
+                when.method(PUT).path("/task/abc123");
+                then.status(200).json_body(sample_task_json());
+            });
+
+            let client = create_test_client(&server);
+            for keyword in ["open", "Opened", "CLOSED"] {
+                let err = client
+                    .update_issue(
+                        "CU-abc123",
+                        UpdateIssueInput {
+                            status: Some(keyword.to_string()),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .expect_err("open/closed via `status` must fail");
+                let msg = format!("{err:?}");
+                assert!(msg.contains("state` field"), "keyword={keyword} msg={msg}");
+            }
+            put_mock.assert_calls(0);
+        }
+
+        #[tokio::test]
+        async fn test_update_issue_status_unknown_truncates_large_status_list() {
+            // Some workspaces have 50+ statuses; the error message must
+            // not dump all of them verbatim. Truncates at 10 with
+            // "…and N more" suffix.
+            let server = MockServer::start();
+
+            let many_statuses: Vec<serde_json::Value> = (0..15)
+                .map(|i| serde_json::json!({"status": format!("status-{i:02}"), "type": "custom"}))
+                .collect();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345");
+                then.status(200)
+                    .json_body(serde_json::json!({"statuses": many_statuses}));
+            });
+
+            let client = create_test_client(&server);
+            let err = client
+                .update_issue(
+                    "CU-abc123",
+                    UpdateIssueInput {
+                        status: Some("nonexistent".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect_err("must fail");
+            let msg = format!("{err:?}");
+            assert!(msg.contains("status-00"), "preview missing first: {msg}");
+            assert!(msg.contains("status-09"), "preview missing 10th: {msg}");
+            assert!(
+                !msg.contains("status-10"),
+                "11th status leaked past truncation: {msg}"
+            );
+            assert!(
+                msg.contains("…and 5 more"),
+                "truncation suffix missing: {msg}"
+            );
         }
     }
 }

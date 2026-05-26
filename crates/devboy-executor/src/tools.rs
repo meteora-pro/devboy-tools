@@ -343,7 +343,8 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("epicKey", PropertySchema::string("Epic key (e.g., 'CU-abc', 'DEV-123')"));
                 s.add_property("title", PropertySchema::string("New title"));
                 s.add_property("description", PropertySchema::string("New description"));
-                s.add_property("state", PropertySchema::string("New epic state"));
+                s.add_property("state", PropertySchema::string("New epic state (generic open/closed). For ClickUp custom statuses use `status`."));
+                s.add_property("status", PropertySchema::string("Provider-specific status name. Same as `update_issue.status` — for ClickUp, any custom status from `get_available_statuses`. Takes precedence over `state`."));
                 s.add_property("goalId", PropertySchema::string("Goal ID (G1-G9) to associate with the epic"));
                 s.add_property("priority", PropertySchema::string("New priority (urgent/high/normal/low)"));
                 s.add_property("labels", PropertySchema::array(PropertySchema::string("label"), "Labels to set"));
