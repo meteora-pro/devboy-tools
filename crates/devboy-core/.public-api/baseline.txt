@@ -3528,6 +3528,7 @@ pub devboy_core::types::UpdateIssueInput::parent_id: core::option::Option<alloc:
 pub devboy_core::types::UpdateIssueInput::priority: core::option::Option<alloc::string::String>
 pub devboy_core::types::UpdateIssueInput::sprint_id: core::option::Option<i64>
 pub devboy_core::types::UpdateIssueInput::state: core::option::Option<alloc::string::String>
+pub devboy_core::types::UpdateIssueInput::status: core::option::Option<alloc::string::String>
 pub devboy_core::types::UpdateIssueInput::title: core::option::Option<alloc::string::String>
 impl core::clone::Clone for devboy_core::types::UpdateIssueInput
 pub fn devboy_core::types::UpdateIssueInput::clone(&self) -> devboy_core::types::UpdateIssueInput
@@ -6725,6 +6726,7 @@ pub devboy_core::UpdateIssueInput::parent_id: core::option::Option<alloc::string
 pub devboy_core::UpdateIssueInput::priority: core::option::Option<alloc::string::String>
 pub devboy_core::UpdateIssueInput::sprint_id: core::option::Option<i64>
 pub devboy_core::UpdateIssueInput::state: core::option::Option<alloc::string::String>
+pub devboy_core::UpdateIssueInput::status: core::option::Option<alloc::string::String>
 pub devboy_core::UpdateIssueInput::title: core::option::Option<alloc::string::String>
 impl core::clone::Clone for devboy_core::types::UpdateIssueInput
 pub fn devboy_core::types::UpdateIssueInput::clone(&self) -> devboy_core::types::UpdateIssueInput

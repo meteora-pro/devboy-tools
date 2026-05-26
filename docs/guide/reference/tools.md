@@ -212,7 +212,8 @@ Update an existing issue. Only provided fields will be changed.
 | `labels` | array&lt;string&gt; | — | New labels (replaces existing) |
 | `markdown` | boolean | — | Whether the description is markdown (default: true). When true, ClickUp renders formatted text. |
 | `parentId` | string | — | Parent issue key to move task as subtask (e.g., 'CU-abc123' or 'DEV-42'). Only supported by ClickUp. |
-| `state` | string | — | New state. Allowed values: `open`, `closed` |
+| `state` | string | — | New state (generic open/closed). For ClickUp custom statuses ("in progress", "review", "to do", …) use `status` instead — `get_available_statuses` lists valid names. Allowed values: `open`, `closed` |
+| `status` | string | — | Provider-specific status name. ClickUp: any custom status from `get_available_statuses` (e.g. "in progress", "review"). Other providers: ignored. Takes precedence over `state` when both are set. |
 | `title` | string | — | New title |
 
 ### `upload_asset`
@@ -382,7 +383,8 @@ Update an existing epic.
 | `goalId` | string | — | Goal ID (G1-G9) to associate with the epic |
 | `labels` | array&lt;string&gt; | — | Labels to set |
 | `priority` | string | — | New priority (urgent/high/normal/low) |
-| `state` | string | — | New epic state |
+| `state` | string | — | New epic state (generic open/closed). For ClickUp custom statuses use `status`. |
+| `status` | string | — | Provider-specific status name. Same as `update_issue.status` — for ClickUp, any custom status from `get_available_statuses`. Takes precedence over `state`. |
 | `title` | string | — | New title |
 
 ## Meeting Notes Tools

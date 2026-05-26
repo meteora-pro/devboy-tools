@@ -267,8 +267,18 @@ pub struct UpdateIssueInput {
     pub title: Option<String>,
     /// New description
     pub description: Option<String>,
-    /// New state
+    /// New state (generic open/closed). For provider-specific custom
+    /// statuses (e.g. ClickUp "in progress" / "review") use
+    /// [`Self::status`] — that field takes precedence.
     pub state: Option<String>,
+    /// Provider-specific status name. ClickUp routes this directly to
+    /// `PUT /task/:id { "status": ... }`; the value must match one of
+    /// the statuses returned by `get_available_statuses` (case-
+    /// insensitive, the canonical name is sent). Other providers
+    /// currently ignore this field — see issue #288 for the path to
+    /// generic transitions for Jira / GitLab / GitHub.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
     /// New labels (replaces existing)
     pub labels: Option<Vec<String>>,
     /// New assignees (replaces existing)
@@ -321,6 +331,7 @@ impl Default for UpdateIssueInput {
             title: None,
             description: None,
             state: None,
+            status: None,
             labels: None,
             assignees: None,
             priority: None,
