@@ -5,7 +5,7 @@ use devboy_core::{
 
 use crate::context::{
     ClickUpScope, ConfluenceAuthConfig, ConfluenceScope, GitHubScope, GitLabScope, JiraScope,
-    ProviderConfig, ProviderMetadata, ProxyConfig, SlackScope,
+    ProviderConfig, ProviderMetadata, ProxyConfig, SlackScope, TelegramScope,
 };
 
 /// Create a provider instance from a typed `ProviderConfig`.
@@ -143,6 +143,11 @@ pub fn create_provider(
             operation: "Slack is a MessengerProvider, not a Provider. Use create_messenger_provider() instead.".into(),
         }),
 
+        ProviderConfig::Telegram { .. } => Err(Error::ProviderUnsupported {
+            provider: "telegram".into(),
+            operation: "Telegram is a MessengerProvider, not a Provider. Use create_messenger_provider() instead.".into(),
+        }),
+
         ProviderConfig::Custom { name, .. } => Err(Error::ProviderNotFound(format!(
             "custom provider '{name}' not yet supported"
         ))),
@@ -229,6 +234,16 @@ pub fn create_messenger_provider(config: &ProviderConfig) -> Result<Box<dyn Mess
                 .with_base_url(base_url)
                 .with_required_scopes(required_scopes.clone()),
         )),
+        ProviderConfig::Telegram {
+            base_url,
+            access_token,
+            scope: TelegramScope::Bot { bot_username },
+            ..
+        } => Ok(Box::new(
+            devboy_telegram::TelegramClient::new(access_token.clone())
+                .with_base_url(base_url)
+                .with_bot_username(bot_username.clone()),
+        )),
         other => Err(Error::ProviderUnsupported {
             provider: other.provider_name().into(),
             operation: "not a messenger provider".into(),
@@ -268,6 +283,7 @@ pub fn create_enricher(
             Some(Box::new(devboy_fireflies::FirefliesSchemaEnricher))
         }
         ProviderConfig::Slack { .. } => None,
+        ProviderConfig::Telegram { .. } => None,
         ProviderConfig::Custom { .. } => None,
     }
 }
@@ -290,7 +306,7 @@ fn confluence_auth(auth: &ConfluenceAuthConfig) -> devboy_confluence::Confluence
 mod tests {
     use super::*;
     use crate::context::*;
-    use devboy_core::{IssueProvider, KnowledgeBaseProvider};
+    use devboy_core::{IssueProvider, KnowledgeBaseProvider, MessengerProvider};
     use httpmock::Method::GET;
     use httpmock::MockServer;
     use std::collections::HashMap;
@@ -345,6 +361,24 @@ mod tests {
         assert_eq!(
             IssueProvider::provider_name(provider.unwrap().as_ref()),
             "clickup"
+        );
+    }
+
+    #[test]
+    fn test_create_telegram_provider() {
+        let config = ProviderConfig::Telegram {
+            base_url: "https://api.telegram.org".into(),
+            access_token: "bot-token".into(),
+            scope: TelegramScope::Bot {
+                bot_username: Some("devboy_bot".into()),
+            },
+            extra: HashMap::new(),
+        };
+        let provider = create_messenger_provider(&config);
+        assert!(provider.is_ok());
+        assert_eq!(
+            MessengerProvider::provider_name(provider.unwrap().as_ref()),
+            "telegram"
         );
     }
 
@@ -424,6 +458,24 @@ mod tests {
         assert!(matches!(
             result,
             Err(Error::ProviderUnsupported { provider, .. }) if provider == "confluence"
+        ));
+    }
+
+    #[test]
+    fn test_telegram_is_not_regular_provider() {
+        let config = ProviderConfig::Telegram {
+            base_url: "https://api.telegram.org".into(),
+            access_token: "bot-token".into(),
+            scope: TelegramScope::Bot {
+                bot_username: Some("devboy_bot".into()),
+            },
+            extra: HashMap::new(),
+        };
+
+        let result = create_provider(&config, None);
+        assert!(matches!(
+            result,
+            Err(Error::ProviderUnsupported { provider, .. }) if provider == "telegram"
         ));
     }
 
@@ -744,6 +796,19 @@ mod tests {
         let config = ProviderConfig::Custom {
             name: "custom-plugin".into(),
             config: HashMap::new(),
+        };
+        assert!(create_enricher(&config, None).is_none());
+    }
+
+    #[test]
+    fn test_create_enricher_telegram_returns_none() {
+        let config = ProviderConfig::Telegram {
+            base_url: "https://api.telegram.org".into(),
+            access_token: "bot-token".into(),
+            scope: TelegramScope::Bot {
+                bot_username: Some("devboy_bot".into()),
+            },
+            extra: HashMap::new(),
         };
         assert!(create_enricher(&config, None).is_none());
     }

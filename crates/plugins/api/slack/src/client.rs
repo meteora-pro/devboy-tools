@@ -218,6 +218,7 @@ struct SlackFile {
     name: Option<String>,
     mimetype: Option<String>,
     filetype: Option<String>,
+    size: Option<u64>,
     url_private: Option<String>,
     permalink: Option<String>,
 }
@@ -485,6 +486,7 @@ impl SlackClient {
             reply_to_id,
             attachments: map_attachments(&message),
             is_edited: message.edited.is_some(),
+            edit_date: None,
         })
     }
 
@@ -919,6 +921,7 @@ fn map_attachments(message: &SlackMessage) -> Vec<MessageAttachment> {
             attachment_type: file.filetype.clone().or_else(|| Some("file".to_string())),
             url: file.permalink.clone().or_else(|| file.url_private.clone()),
             mime_type: file.mimetype.clone(),
+            file_size: file.size,
         }));
     }
 
@@ -936,6 +939,7 @@ fn map_attachments(message: &SlackMessage) -> Vec<MessageAttachment> {
                     .clone()
                     .or_else(|| attachment.from_url.clone()),
                 mime_type: None,
+                file_size: None,
             }
         }));
     }
@@ -1536,6 +1540,7 @@ mod tests {
                     attachment_type: None,
                     url: None,
                     mime_type: None,
+                    file_size: None,
                 }],
             })
             .await
@@ -1892,6 +1897,7 @@ mod tests {
                 name: Some("report.pdf".to_string()),
                 mimetype: Some("application/pdf".to_string()),
                 filetype: None,
+                size: Some(1234),
                 url_private: Some("https://private.example/report.pdf".to_string()),
                 permalink: None,
             }]),

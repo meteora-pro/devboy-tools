@@ -26,6 +26,7 @@ devboy-jira = { workspace = true }
 devboy-confluence = { workspace = true }
 devboy-fireflies = { workspace = true }
 devboy-slack = { workspace = true }
+devboy-telegram = { workspace = true }
 devboy-format-pipeline = { workspace = true }
 
 tokio.workspace = true

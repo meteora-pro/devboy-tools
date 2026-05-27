@@ -1410,6 +1410,8 @@ pub struct MessageAttachment {
     pub url: Option<String>,
     /// Optional mime type.
     pub mime_type: Option<String>,
+    /// Optional file size in bytes.
+    pub file_size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -1432,6 +1434,8 @@ pub struct MessengerMessage {
     pub attachments: Vec<MessageAttachment>,
     /// Whether the message was edited after creation.
     pub is_edited: bool,
+    /// Provider-specific edit timestamp when available.
+    pub edit_date: Option<String>,
 }
 
 /// Parameters for listing available messenger chats.

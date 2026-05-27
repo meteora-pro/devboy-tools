@@ -1934,6 +1934,7 @@ mod tests {
                 reply_to_id: None,
                 attachments: vec![],
                 is_edited: false,
+                edit_date: None,
             })
         }
     }

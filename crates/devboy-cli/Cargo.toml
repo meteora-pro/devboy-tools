@@ -57,6 +57,7 @@ devboy-jira = { workspace = true }
 devboy-confluence = { workspace = true }
 devboy-fireflies = { workspace = true }
 devboy-slack = { workspace = true }
+devboy-telegram = { workspace = true }
 devboy-format-pipeline = { workspace = true }
 devboy-skills = { workspace = true }
 serde_yaml = "0.9"
