@@ -1,14 +1,23 @@
 [package]
 name = "devboy-telegram"
-description = "Telegram provider implementation for devboy-tools"
+description = "Telegram provider for devboy-tools — MessengerProvider/Provider implementation against the Telegram Bot API."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["devboy", "telegram", "messaging", "chatops", "ai-agents"]
+categories = ["api-bindings", "development-tools"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-devboy-core = { path = "../../../devboy-core" }
+devboy-core = { workspace = true }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

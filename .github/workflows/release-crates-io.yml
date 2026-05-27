@@ -134,7 +134,8 @@ jobs:
               devboy-clickup \
               devboy-confluence \
               devboy-fireflies \
-              devboy-slack ; do
+              devboy-slack \
+              devboy-telegram ; do
             publish_if_new "$crate"
             sleep 20
           done
