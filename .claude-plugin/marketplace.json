@@ -11,7 +11,7 @@
     {
       "name": "devboy",
       "description": "Providers (GitHub/GitLab/Jira/ClickUp/Slack/Fireflies/Confluence), MCP server, and 24 skills with token-aware output compression.",
-      "version": "0.29.2",
+      "version": "0.30.0",
       "category": "development",
       "source": {
         "source": "github",
