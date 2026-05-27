@@ -35,3 +35,94 @@ pub struct Viewer {
     #[serde(default)]
     pub email: Option<String>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct LinearIssueData {
+    pub issue: Option<LinearIssue>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearIssuesData {
+    pub issues: LinearIssueConnection,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearIssueConnection {
+    #[serde(default)]
+    pub nodes: Vec<LinearIssue>,
+    #[serde(rename = "pageInfo")]
+    pub page_info: LinearPageInfo,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearPageInfo {
+    #[serde(rename = "hasNextPage")]
+    pub has_next_page: bool,
+    #[serde(rename = "endCursor")]
+    #[serde(default)]
+    pub end_cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearIssue {
+    pub id: String,
+    pub identifier: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub priority: Option<i32>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(rename = "createdAt")]
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(rename = "updatedAt")]
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    #[serde(default)]
+    pub state: Option<LinearWorkflowState>,
+    #[serde(default)]
+    pub labels: LinearLabelConnection,
+    #[serde(default)]
+    pub assignee: Option<LinearUser>,
+    #[serde(default)]
+    pub parent: Option<LinearIssueParent>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearWorkflowState {
+    pub name: String,
+    #[serde(default)]
+    pub r#type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct LinearLabelConnection {
+    #[serde(default)]
+    pub nodes: Vec<LinearLabel>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearLabel {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearUser {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "displayName")]
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(rename = "avatarUrl")]
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearIssueParent {
+    pub identifier: String,
+}
