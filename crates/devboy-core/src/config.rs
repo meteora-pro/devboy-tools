@@ -55,6 +55,9 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jira: Option<JiraConfig>,
 
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linear: Option<LinearConfig>,
+
     /// Fireflies.ai configuration (meeting notes)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fireflies: Option<FirefliesConfig>,
@@ -180,6 +183,10 @@ fn default_auth_none() -> String {
     "none".to_string()
 }
 
+fn default_linear_url() -> String {
+    "https://api.linear.app/graphql".to_string()
+}
+
 /// Per-context provider configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ContextConfig {
@@ -194,6 +201,9 @@ pub struct ContextConfig {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jira: Option<JiraConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linear: Option<LinearConfig>,
 
     /// Fireflies.ai configuration (meeting notes)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -247,6 +257,18 @@ pub struct JiraConfig {
     pub project_key: String,
     /// User email (required for Jira auth)
     pub email: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinearConfig {
+    /// Linear GraphQL endpoint.
+    #[serde(default = "default_linear_url")]
+    pub url: String,
+    /// Default Linear team UUID used for issue operations.
+    pub team_id: String,
+    /// Optional human-readable team key (e.g. `ENG`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_key: Option<String>,
 }
 
 /// Fireflies.ai provider configuration (meeting notes).
@@ -1005,6 +1027,7 @@ impl Config {
             || self.gitlab.is_some()
             || self.clickup.is_some()
             || self.jira.is_some()
+            || self.linear.is_some()
             || self.fireflies.is_some()
             || self.confluence.is_some()
             || self.slack.is_some()
@@ -1026,6 +1049,9 @@ impl Config {
         }
         if self.jira.is_some() {
             providers.push("jira");
+        }
+        if self.linear.is_some() {
+            providers.push("linear");
         }
         if self.confluence.is_some() {
             providers.push("confluence");
@@ -1095,6 +1121,7 @@ impl Config {
             gitlab: self.gitlab.clone(),
             clickup: self.clickup.clone(),
             jira: self.jira.clone(),
+            linear: self.linear.clone(),
             fireflies: self.fireflies.clone(),
             confluence: self.confluence.clone(),
             slack: self.slack.clone(),
@@ -1194,6 +1221,24 @@ impl Config {
                     _ => {
                         return Err(Error::Config(format!(
                             "Unknown Jira config field: {}",
+                            field
+                        )));
+                    }
+                }
+            }
+            "linear" => {
+                let config = self.linear.get_or_insert_with(|| LinearConfig {
+                    url: default_linear_url(),
+                    team_id: String::new(),
+                    team_key: None,
+                });
+                match field {
+                    "url" | "base_url" => config.url = value.to_string(),
+                    "team_id" | "team" => config.team_id = value.to_string(),
+                    "team_key" | "key" => config.team_key = Some(value.to_string()),
+                    _ => {
+                        return Err(Error::Config(format!(
+                            "Unknown Linear config field: {}",
                             field
                         )));
                     }
@@ -1600,6 +1645,7 @@ impl ContextConfig {
             || self.gitlab.is_some()
             || self.clickup.is_some()
             || self.jira.is_some()
+            || self.linear.is_some()
             || self.fireflies.is_some()
             || self.confluence.is_some()
             || self.slack.is_some()
@@ -1620,6 +1666,9 @@ impl ContextConfig {
         }
         if self.jira.is_some() {
             providers.push("jira");
+        }
+        if self.linear.is_some() {
+            providers.push("linear");
         }
         if self.confluence.is_some() {
             providers.push("confluence");
@@ -2083,6 +2132,7 @@ mod tests {
                 project_key: "k".to_string(),
                 email: "e".to_string(),
             }),
+            linear: None,
             fireflies: None,
             confluence: None,
             slack: None,
@@ -2173,6 +2223,7 @@ mod tests {
             }),
             clickup: None,
             jira: None,
+            linear: None,
             fireflies: None,
             confluence: None,
             slack: None,
