@@ -6,7 +6,18 @@
 
 Linear provider for [`devboy-tools`](https://github.com/meteora-pro/devboy-tools).
 
-This crate currently provides the provider skeleton, authenticated user lookup, and liveness probing against Linear's GraphQL API. Issue operations land in follow-up changes.
+This crate provides a GraphQL-backed Linear issue tracker provider for `devboy-tools`.
+
+Current capabilities:
+- authenticated user lookup
+- liveness probing
+- issue listing and single-issue lookup
+- issue creation and updates
+- issue comment listing and comment creation
+
+The schema enricher includes Linear-specific issue schema adjustments such as
+priority enums and supported filter parameters. Team-specific workflow state
+enumeration is not yet metadata-driven.
 
 ## Add to your project
 
