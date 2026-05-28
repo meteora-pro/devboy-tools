@@ -42,8 +42,49 @@ pub struct LinearIssueData {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct LinearIssueCreateData {
+    #[serde(rename = "issueCreate")]
+    pub issue_create: LinearIssueCreatePayload,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearIssueCreatePayload {
+    pub success: bool,
+    pub issue: Option<LinearIssue>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct LinearIssuesData {
     pub issues: LinearIssueConnection,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearUsersData {
+    pub users: LinearUserConnection,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearUserConnection {
+    #[serde(default)]
+    pub nodes: Vec<LinearUser>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearIssueLabelsData {
+    #[serde(rename = "issueLabels")]
+    pub issue_labels: LinearLabelConnectionWithIds,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct LinearLabelConnectionWithIds {
+    #[serde(default)]
+    pub nodes: Vec<LinearLabelWithId>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearLabelWithId {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Deserialize)]

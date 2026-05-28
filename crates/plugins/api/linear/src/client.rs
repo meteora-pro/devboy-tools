@@ -12,7 +12,8 @@ use tracing::debug;
 
 use crate::DEFAULT_LINEAR_URL;
 use crate::types::{
-    GraphQlResponse, LinearIssue, LinearIssueData, LinearIssuesData, LinearUser, Viewer, ViewerData,
+    GraphQlResponse, LinearIssue, LinearIssueCreateData, LinearIssueData, LinearIssueLabelsData,
+    LinearIssuesData, LinearUser, LinearUsersData, Viewer, ViewerData,
 };
 
 const VIEWER_QUERY: &str = r#"
@@ -95,6 +96,68 @@ query Issues($first: Int!, $after: String, $filter: IssueFilter) {
     pageInfo {
       hasNextPage
       endCursor
+    }
+  }
+}
+"#;
+
+const USERS_QUERY: &str = r#"
+query Users($first: Int!, $filter: UserFilter) {
+  users(first: $first, filter: $filter) {
+    nodes {
+      id
+      name
+      displayName
+      email
+      avatarUrl
+    }
+  }
+}
+"#;
+
+const ISSUE_LABELS_QUERY: &str = r#"
+query IssueLabels($first: Int!, $filter: IssueLabelFilter) {
+  issueLabels(first: $first, filter: $filter) {
+    nodes {
+      id
+      name
+    }
+  }
+}
+"#;
+
+const ISSUE_CREATE_MUTATION: &str = r#"
+mutation IssueCreate($input: IssueCreateInput!) {
+  issueCreate(input: $input) {
+    success
+    issue {
+      id
+      identifier
+      title
+      description
+      priority
+      url
+      createdAt
+      updatedAt
+      state {
+        name
+        type
+      }
+      labels {
+        nodes {
+          name
+        }
+      }
+      assignee {
+        id
+        name
+        displayName
+        email
+        avatarUrl
+      }
+      parent {
+        identifier
+      }
     }
   }
 }
@@ -240,13 +303,32 @@ impl LinearClient {
     }
 
     async fn get_issue_by_native_id(&self, id: &str) -> Result<Option<Issue>> {
+        Ok(self
+            .get_linear_issue_by_native_id(id)
+            .await?
+            .as_ref()
+            .map(map_issue))
+    }
+
+    async fn get_linear_issue_by_native_id(&self, id: &str) -> Result<Option<LinearIssue>> {
         let data: LinearIssueData = self
             .graphql(ISSUE_BY_ID_QUERY, json!({ "id": id }), &self.token)
             .await?;
-        Ok(data.issue.as_ref().map(map_issue))
+        Ok(data.issue)
     }
 
     async fn get_issue_by_identifier(&self, identifier: &str) -> Result<Option<Issue>> {
+        Ok(self
+            .get_linear_issue_by_identifier(identifier)
+            .await?
+            .as_ref()
+            .map(map_issue))
+    }
+
+    async fn get_linear_issue_by_identifier(
+        &self,
+        identifier: &str,
+    ) -> Result<Option<LinearIssue>> {
         let number = parse_linear_identifier(identifier)
             .map(|(_, number)| number)
             .ok_or_else(|| {
@@ -273,7 +355,135 @@ impl LinearClient {
         });
 
         let data = self.list_issues_page(1, None, filter).await?;
-        Ok(data.issues.nodes.first().map(map_issue))
+        Ok(data.issues.nodes.into_iter().next())
+    }
+
+    async fn resolve_assignee_id(&self, assignee: &str) -> Result<String> {
+        if looks_like_uuid(assignee) {
+            return Ok(assignee.to_string());
+        }
+
+        let filter = json!({
+            "or": [
+                {
+                    "name": {
+                        "eqIgnoreCase": assignee
+                    }
+                },
+                {
+                    "displayName": {
+                        "eqIgnoreCase": assignee
+                    }
+                },
+                {
+                    "email": {
+                        "eqIgnoreCase": assignee
+                    }
+                }
+            ]
+        });
+        let variables = json!({
+            "first": 10,
+            "filter": filter,
+        });
+        let data: LinearUsersData = self.graphql(USERS_QUERY, variables, &self.token).await?;
+        let user = data
+            .users
+            .nodes
+            .into_iter()
+            .find(|user| {
+                user.name.eq_ignore_ascii_case(assignee)
+                    || user
+                        .display_name
+                        .as_deref()
+                        .is_some_and(|display| display.eq_ignore_ascii_case(assignee))
+                    || user
+                        .email
+                        .as_deref()
+                        .is_some_and(|email| email.eq_ignore_ascii_case(assignee))
+            })
+            .ok_or_else(|| Error::NotFound(format!("Linear user not found: {assignee}")))?;
+        Ok(user.id)
+    }
+
+    async fn resolve_label_ids(&self, labels: &[String]) -> Result<Vec<String>> {
+        if labels.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let variables = json!({
+            "first": 100,
+            "filter": {
+                "team": {
+                    "id": {
+                        "eq": self.team_id
+                    }
+                },
+                "name": {
+                    "in": labels
+                }
+            }
+        });
+        let data: LinearIssueLabelsData = self
+            .graphql(ISSUE_LABELS_QUERY, variables, &self.token)
+            .await?;
+
+        let mut ids = Vec::with_capacity(labels.len());
+        let mut missing = Vec::new();
+        for wanted in labels {
+            if let Some(label) = data
+                .issue_labels
+                .nodes
+                .iter()
+                .find(|label| label.name.eq_ignore_ascii_case(wanted))
+            {
+                ids.push(label.id.clone());
+            } else {
+                missing.push(wanted.clone());
+            }
+        }
+
+        if !missing.is_empty() {
+            return Err(Error::NotFound(format!(
+                "Linear labels not found for team {}: {}",
+                self.team_id,
+                missing.join(", ")
+            )));
+        }
+
+        Ok(ids)
+    }
+
+    async fn resolve_parent_id(&self, parent: &str) -> Result<String> {
+        if looks_like_uuid(parent) {
+            return Ok(parent.to_string());
+        }
+
+        let issue = self
+            .get_linear_issue_by_identifier(parent)
+            .await?
+            .ok_or_else(|| Error::NotFound(format!("Linear parent issue not found: {parent}")))?;
+        Ok(issue.id)
+    }
+
+    fn map_create_priority(priority: Option<&str>) -> Result<Option<i32>> {
+        let Some(priority) = priority.map(str::trim).filter(|p| !p.is_empty()) else {
+            return Ok(None);
+        };
+
+        match priority.to_ascii_lowercase().as_str() {
+            "none" | "no priority" => Ok(Some(0)),
+            "urgent" => Ok(Some(1)),
+            "high" => Ok(Some(2)),
+            "normal" | "medium" => Ok(Some(3)),
+            "low" => Ok(Some(4)),
+            other => match other.parse::<i32>() {
+                Ok(value @ 0..=4) => Ok(Some(value)),
+                _ => Err(Error::InvalidData(format!(
+                    "Unsupported Linear priority '{priority}'. Expected urgent/high/normal/low or 0-4"
+                ))),
+            },
+        }
     }
 }
 
@@ -601,8 +811,64 @@ impl IssueProvider for LinearClient {
         issue.ok_or_else(|| Error::NotFound(format!("Linear issue not found: {key}")))
     }
 
-    async fn create_issue(&self, _input: CreateIssueInput) -> Result<Issue> {
-        self.unsupported("create_issue")
+    async fn create_issue(&self, input: CreateIssueInput) -> Result<Issue> {
+        let assignee_id = match input.assignees.first() {
+            Some(assignee) => Some(self.resolve_assignee_id(assignee).await?),
+            None => None,
+        };
+        let label_ids = self.resolve_label_ids(&input.labels).await?;
+        let parent_id = match input.parent.as_deref() {
+            Some(parent) => Some(self.resolve_parent_id(parent).await?),
+            None => None,
+        };
+        let priority = Self::map_create_priority(input.priority.as_deref())?;
+
+        let mut payload = Map::new();
+        payload.insert("teamId".to_string(), Value::String(self.team_id.clone()));
+        payload.insert("title".to_string(), Value::String(input.title));
+
+        if let Some(description) = input.description {
+            payload.insert("description".to_string(), Value::String(description));
+        }
+        if let Some(priority) = priority {
+            payload.insert("priority".to_string(), Value::Number(priority.into()));
+        }
+        if let Some(assignee_id) = assignee_id {
+            payload.insert("assigneeId".to_string(), Value::String(assignee_id));
+        }
+        if let Some(parent_id) = parent_id {
+            payload.insert("parentId".to_string(), Value::String(parent_id));
+        }
+        if let Some(project_id) = input.project_id {
+            payload.insert("projectId".to_string(), Value::String(project_id));
+        }
+        if !label_ids.is_empty() {
+            payload.insert(
+                "labelIds".to_string(),
+                Value::Array(label_ids.into_iter().map(Value::String).collect()),
+            );
+        }
+
+        let data: LinearIssueCreateData = self
+            .graphql(
+                ISSUE_CREATE_MUTATION,
+                json!({
+                    "input": Value::Object(payload),
+                }),
+                &self.token,
+            )
+            .await?;
+        if !data.issue_create.success {
+            return Err(Error::Api {
+                status: 200,
+                message: "Linear issueCreate returned success=false".to_string(),
+            });
+        }
+
+        let issue = data.issue_create.issue.ok_or_else(|| {
+            Error::InvalidData("Linear issueCreate returned no issue payload".to_string())
+        })?;
+        Ok(map_issue(&issue))
     }
 
     async fn update_issue(&self, _key: &str, _input: UpdateIssueInput) -> Result<Issue> {
@@ -888,5 +1154,129 @@ mod tests {
 
         page_1.assert();
         assert_eq!(page_2.calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn create_issue_resolves_inputs_and_returns_created_issue() {
+        let server = MockServer::start();
+        let users = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("query Users")
+                .body_includes(r#""displayName":{"eqIgnoreCase":"alice"}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "users": {
+                            "nodes": [
+                                {
+                                    "id": "user-1",
+                                    "name": "Alice Doe",
+                                    "displayName": "alice",
+                                    "email": "alice@example.com",
+                                    "avatarUrl": "https://example.com/alice.png"
+                                }
+                            ]
+                        }
+                    }
+                }));
+        });
+        let labels = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("query IssueLabels")
+                .body_includes(r#""team":{"id":{"eq":"team-1"}}"#)
+                .body_includes(r#""name":{"in":["bug","backend"]}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "issueLabels": {
+                            "nodes": [
+                                { "id": "label-1", "name": "bug" },
+                                { "id": "label-2", "name": "backend" }
+                            ]
+                        }
+                    }
+                }));
+        });
+        let parent = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("query Issues")
+                .body_includes(r#""number":{"eq":1}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "issues": {
+                            "nodes": [
+                                linear_issue("ENG-1", "Parent issue", "Backlog")
+                            ],
+                            "pageInfo": {
+                                "hasNextPage": false,
+                                "endCursor": null
+                            }
+                        }
+                    }
+                }));
+        });
+        let create = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("mutation IssueCreate")
+                .body_includes(r#""teamId":"team-1""#)
+                .body_includes(r#""title":"Create login flow""#)
+                .body_includes(r#""description":"Ship the first pass""#)
+                .body_includes(r#""priority":1"#)
+                .body_includes(r#""assigneeId":"user-1""#)
+                .body_includes(r#""parentId":"id-ENG-1""#)
+                .body_includes(r#""projectId":"project-1""#)
+                .body_includes(r#""labelIds":["label-1","label-2"]"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "issueCreate": {
+                            "success": true,
+                            "issue": linear_issue("ENG-99", "Create login flow", "Backlog")
+                        }
+                    }
+                }));
+        });
+
+        let client = LinearClient::with_base_url(
+            format!("{}/graphql", server.base_url()),
+            "team-1",
+            SecretString::from("lin_api_test".to_owned()),
+        );
+
+        let issue = client
+            .create_issue(CreateIssueInput {
+                title: "Create login flow".to_string(),
+                description: Some("Ship the first pass".to_string()),
+                labels: vec!["bug".to_string(), "backend".to_string()],
+                assignees: vec!["alice".to_string()],
+                priority: Some("urgent".to_string()),
+                parent: Some("ENG-1".to_string()),
+                project_id: Some("project-1".to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(issue.key, "ENG-99");
+        assert_eq!(issue.title, "Create login flow");
+        assert_eq!(issue.priority.as_deref(), Some("high"));
+        assert_eq!(issue.parent.as_deref(), Some("ENG-1"));
+        assert_eq!(issue.assignees.len(), 1);
+        assert_eq!(issue.assignees[0].username, "alice");
+        assert_eq!(issue.labels, vec!["bug".to_string()]);
+
+        users.assert();
+        labels.assert();
+        parent.assert();
+        create.assert();
     }
 }
