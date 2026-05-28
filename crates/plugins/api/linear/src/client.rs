@@ -419,13 +419,18 @@ impl LinearClient {
         &self,
         identifier: &str,
     ) -> Result<Option<LinearIssue>> {
-        let number = parse_linear_identifier(identifier)
-            .map(|(_, number)| number)
+        let (prefix, number) = parse_linear_identifier(identifier)
             .ok_or_else(|| {
                 Error::InvalidData(format!(
                     "Linear issue key '{identifier}' must be a UUID or team-key identifier like ENG-123"
                 ))
             })?;
+
+        if let Some(team_key) = self.team_key()
+            && !prefix.eq_ignore_ascii_case(team_key)
+        {
+            return Ok(None);
+        }
 
         let filter = json!({
             "and": [
@@ -1441,6 +1446,20 @@ mod tests {
         assert_eq!(issue.assignees[0].username, "alice");
 
         mock.assert();
+    }
+
+    #[tokio::test]
+    async fn get_issue_by_identifier_rejects_mismatched_team_prefix() {
+        let server = MockServer::start();
+        let client = LinearClient::with_base_url(
+            format!("{}/graphql", server.base_url()),
+            "team-1",
+            SecretString::from("lin_api_test".to_owned()),
+        )
+        .with_team_key("ENG");
+
+        let result = client.get_issue("OPS-42").await;
+        assert!(matches!(result, Err(Error::NotFound(msg)) if msg.contains("OPS-42")));
     }
 
     #[tokio::test]
