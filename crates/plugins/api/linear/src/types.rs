@@ -206,6 +206,8 @@ pub struct LinearIssue {
     pub assignee: Option<LinearUser>,
     #[serde(default)]
     pub parent: Option<LinearIssueParent>,
+    #[serde(default)]
+    pub team: Option<LinearTeamRef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -243,4 +245,9 @@ pub struct LinearUser {
 #[derive(Debug, Deserialize)]
 pub struct LinearIssueParent {
     pub identifier: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearTeamRef {
+    pub id: String,
 }

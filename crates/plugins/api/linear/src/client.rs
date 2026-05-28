@@ -58,6 +58,10 @@ query IssueById($id: String!) {
     parent {
       identifier
     }
+    team {
+      id
+      key
+    }
   }
 }
 "#;
@@ -92,6 +96,10 @@ query Issues($first: Int!, $after: String, $filter: IssueFilter) {
       }
       parent {
         identifier
+      }
+      team {
+        id
+        key
       }
     }
     pageInfo {
@@ -159,6 +167,10 @@ mutation IssueCreate($input: IssueCreateInput!) {
       parent {
         identifier
       }
+      team {
+        id
+        key
+      }
     }
   }
 }
@@ -207,6 +219,10 @@ mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) {
       }
       parent {
         identifier
+      }
+      team {
+        id
+        key
       }
     }
   }
@@ -392,27 +408,16 @@ impl LinearClient {
         self.graphql(ISSUES_QUERY, variables, &self.token).await
     }
 
-    async fn get_issue_by_native_id(&self, id: &str) -> Result<Option<Issue>> {
-        Ok(self
-            .get_linear_issue_by_native_id(id)
-            .await?
-            .as_ref()
-            .map(map_issue))
-    }
-
     async fn get_linear_issue_by_native_id(&self, id: &str) -> Result<Option<LinearIssue>> {
         let data: LinearIssueData = self
             .graphql(ISSUE_BY_ID_QUERY, json!({ "id": id }), &self.token)
             .await?;
-        Ok(data.issue)
-    }
-
-    async fn get_issue_by_identifier(&self, identifier: &str) -> Result<Option<Issue>> {
-        Ok(self
-            .get_linear_issue_by_identifier(identifier)
-            .await?
-            .as_ref()
-            .map(map_issue))
+        Ok(data.issue.filter(|issue| {
+            issue
+                .team
+                .as_ref()
+                .is_some_and(|team| team.id == self.team_id)
+        }))
     }
 
     async fn get_linear_issue_by_identifier(
@@ -451,6 +456,16 @@ impl LinearClient {
 
         let data = self.list_issues_page(1, None, filter).await?;
         Ok(data.issues.nodes.into_iter().next())
+    }
+
+    async fn resolve_scoped_issue(&self, key: &str) -> Result<LinearIssue> {
+        let issue = if looks_like_uuid(key) {
+            self.get_linear_issue_by_native_id(key).await?
+        } else {
+            self.get_linear_issue_by_identifier(key).await?
+        };
+
+        issue.ok_or_else(|| Error::NotFound(format!("Linear issue not found: {key}")))
     }
 
     async fn resolve_assignee_id(&self, assignee: &str) -> Result<String> {
@@ -1012,13 +1027,7 @@ impl IssueProvider for LinearClient {
     }
 
     async fn get_issue(&self, key: &str) -> Result<Issue> {
-        let issue = if looks_like_uuid(key) {
-            self.get_issue_by_native_id(key).await?
-        } else {
-            self.get_issue_by_identifier(key).await?
-        };
-
-        issue.ok_or_else(|| Error::NotFound(format!("Linear issue not found: {key}")))
+        Ok(map_issue(&self.resolve_scoped_issue(key).await?))
     }
 
     async fn create_issue(&self, input: CreateIssueInput) -> Result<Issue> {
@@ -1082,14 +1091,7 @@ impl IssueProvider for LinearClient {
     }
 
     async fn update_issue(&self, key: &str, input: UpdateIssueInput) -> Result<Issue> {
-        let issue_id = if looks_like_uuid(key) {
-            key.to_string()
-        } else {
-            self.get_linear_issue_by_identifier(key)
-                .await?
-                .ok_or_else(|| Error::NotFound(format!("Linear issue not found: {key}")))?
-                .id
-        };
+        let issue_id = self.resolve_scoped_issue(key).await?.id;
 
         let assignee_id = match input.assignees.as_ref() {
             Some(assignees) if assignees.is_empty() => Some(Value::Null),
@@ -1170,14 +1172,7 @@ impl IssueProvider for LinearClient {
     }
 
     async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>> {
-        let issue_id = if looks_like_uuid(issue_key) {
-            issue_key.to_string()
-        } else {
-            self.get_linear_issue_by_identifier(issue_key)
-                .await?
-                .ok_or_else(|| Error::NotFound(format!("Linear issue not found: {issue_key}")))?
-                .id
-        };
+        let issue_id = self.resolve_scoped_issue(issue_key).await?.id;
 
         let mut after: Option<String> = None;
         let mut comments = Vec::new();
@@ -1216,14 +1211,7 @@ impl IssueProvider for LinearClient {
     }
 
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment> {
-        let issue_id = if looks_like_uuid(issue_key) {
-            issue_key.to_string()
-        } else {
-            self.get_linear_issue_by_identifier(issue_key)
-                .await?
-                .ok_or_else(|| Error::NotFound(format!("Linear issue not found: {issue_key}")))?
-                .id
-        };
+        let issue_id = self.resolve_scoped_issue(issue_key).await?.id;
 
         let data: LinearCommentCreateData = self
             .graphql(
@@ -1347,6 +1335,10 @@ mod tests {
             },
             "parent": {
                 "identifier": "ENG-1"
+            },
+            "team": {
+                "id": "team-1",
+                "key": "ENG"
             }
         })
     }
@@ -1488,6 +1480,56 @@ mod tests {
         let uuid = "3d1b0f7a-8f3a-4b2a-9c1a-2b6a0c4b9a11";
         let issue = client.get_issue(uuid).await.unwrap();
         assert_eq!(issue.key, "ENG-7");
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn get_issue_by_native_id_rejects_issue_from_other_team() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("query IssueById")
+                .body_includes(r#""id":"3d1b0f7a-8f3a-4b2a-9c1a-2b6a0c4b9a11""#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "issue": {
+                            "id": "3d1b0f7a-8f3a-4b2a-9c1a-2b6a0c4b9a11",
+                            "identifier": "OPS-7",
+                            "title": "Foreign team issue",
+                            "description": "Should not resolve",
+                            "priority": 2,
+                            "url": "https://linear.app/acme/issue/OPS-7/foreign-team-issue",
+                            "createdAt": "2026-05-01T10:00:00.000Z",
+                            "updatedAt": "2026-05-02T10:00:00.000Z",
+                            "state": {
+                                "name": "Backlog",
+                                "type": "backlog"
+                            },
+                            "labels": { "nodes": [] },
+                            "assignee": null,
+                            "parent": null,
+                            "team": {
+                                "id": "team-2",
+                                "key": "OPS"
+                            }
+                        }
+                    }
+                }));
+        });
+
+        let client = LinearClient::with_base_url(
+            format!("{}/graphql", server.base_url()),
+            "team-1",
+            SecretString::from("lin_api_test".to_owned()),
+        );
+
+        let uuid = "3d1b0f7a-8f3a-4b2a-9c1a-2b6a0c4b9a11";
+        let result = client.get_issue(uuid).await;
+        assert!(matches!(result, Err(Error::NotFound(msg)) if msg.contains(uuid)));
 
         mock.assert();
     }
