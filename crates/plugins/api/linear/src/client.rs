@@ -424,12 +424,11 @@ impl LinearClient {
         &self,
         identifier: &str,
     ) -> Result<Option<LinearIssue>> {
-        let (prefix, number) = parse_linear_identifier(identifier)
-            .ok_or_else(|| {
-                Error::InvalidData(format!(
-                    "Linear issue key '{identifier}' must be a UUID or team-key identifier like ENG-123"
-                ))
-            })?;
+        let (prefix, number) = parse_linear_identifier(identifier).ok_or_else(|| {
+            Error::InvalidData(format!(
+                "Linear issue key '{identifier}' must be a UUID or team-key identifier like ENG-123"
+            ))
+        })?;
 
         if let Some(team_key) = self.team_key()
             && !prefix.eq_ignore_ascii_case(team_key)
