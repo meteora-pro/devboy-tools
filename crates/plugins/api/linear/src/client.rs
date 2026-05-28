@@ -12,9 +12,9 @@ use tracing::debug;
 
 use crate::DEFAULT_LINEAR_URL;
 use crate::types::{
-    GraphQlResponse, LinearIssue, LinearIssueCreateData, LinearIssueData, LinearIssueLabelsData,
-    LinearIssueUpdateData, LinearIssuesData, LinearUser, LinearUsersData, LinearWorkflowStatesData,
-    Viewer, ViewerData,
+    GraphQlResponse, LinearComment, LinearCommentCreateData, LinearIssue, LinearIssueCommentsData,
+    LinearIssueCreateData, LinearIssueData, LinearIssueLabelsData, LinearIssueUpdateData,
+    LinearIssuesData, LinearUser, LinearUsersData, LinearWorkflowStatesData, Viewer, ViewerData,
 };
 
 const VIEWER_QUERY: &str = r#"
@@ -213,6 +213,53 @@ mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) {
 }
 "#;
 
+const ISSUE_COMMENTS_QUERY: &str = r#"
+query IssueComments($id: String!, $first: Int!, $after: String) {
+  issue(id: $id) {
+    comments(first: $first, after: $after) {
+      nodes {
+        id
+        body
+        createdAt
+        updatedAt
+        user {
+          id
+          name
+          displayName
+          email
+          avatarUrl
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+}
+"#;
+
+const COMMENT_CREATE_MUTATION: &str = r#"
+mutation CommentCreate($input: CommentCreateInput!) {
+  commentCreate(input: $input) {
+    success
+    comment {
+      id
+      body
+      createdAt
+      updatedAt
+      user {
+        id
+        name
+        displayName
+        email
+        avatarUrl
+      }
+    }
+  }
+}
+"#;
+
 pub struct LinearClient {
     base_url: String,
     team_id: String,
@@ -329,13 +376,6 @@ impl LinearClient {
         gql_response
             .data
             .ok_or_else(|| Error::InvalidData("Linear API returned no data".to_string()))
-    }
-
-    fn unsupported<T>(&self, operation: &str) -> Result<T> {
-        Err(Error::ProviderUnsupported {
-            provider: "linear".to_string(),
-            operation: operation.to_string(),
-        })
     }
 
     async fn list_issues_page(
@@ -707,6 +747,17 @@ fn map_issue(issue: &LinearIssue) -> Issue {
             .as_ref()
             .map(|parent| parent.identifier.clone()),
         subtasks: Vec::new(),
+    }
+}
+
+fn map_comment(comment: &LinearComment) -> Comment {
+    Comment {
+        id: comment.id.clone(),
+        body: comment.body.clone().unwrap_or_default(),
+        author: map_user(comment.user.as_ref()),
+        created_at: comment.created_at.clone(),
+        updated_at: comment.updated_at.clone(),
+        position: None,
     }
 }
 
@@ -1098,12 +1149,85 @@ impl IssueProvider for LinearClient {
         Ok(map_issue(&issue))
     }
 
-    async fn get_comments(&self, _issue_key: &str) -> Result<ProviderResult<Comment>> {
-        self.unsupported("get_comments")
+    async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>> {
+        let issue_id = if looks_like_uuid(issue_key) {
+            issue_key.to_string()
+        } else {
+            self.get_linear_issue_by_identifier(issue_key)
+                .await?
+                .ok_or_else(|| Error::NotFound(format!("Linear issue not found: {issue_key}")))?
+                .id
+        };
+
+        let mut after: Option<String> = None;
+        let mut comments = Vec::new();
+
+        loop {
+            let data: LinearIssueCommentsData = self
+                .graphql(
+                    ISSUE_COMMENTS_QUERY,
+                    json!({
+                        "id": issue_id,
+                        "first": 100,
+                        "after": after,
+                    }),
+                    &self.token,
+                )
+                .await?;
+            let issue = data.issue.ok_or_else(|| {
+                Error::NotFound(format!(
+                    "Linear issue not found when fetching comments: {issue_key}"
+                ))
+            })?;
+
+            let page_info = issue.comments.page_info;
+            comments.extend(issue.comments.nodes.iter().map(map_comment));
+
+            if !page_info.has_next_page {
+                break;
+            }
+            after = page_info.end_cursor;
+            if after.is_none() {
+                break;
+            }
+        }
+
+        Ok(comments.into())
     }
 
-    async fn add_comment(&self, _issue_key: &str, _body: &str) -> Result<Comment> {
-        self.unsupported("add_comment")
+    async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment> {
+        let issue_id = if looks_like_uuid(issue_key) {
+            issue_key.to_string()
+        } else {
+            self.get_linear_issue_by_identifier(issue_key)
+                .await?
+                .ok_or_else(|| Error::NotFound(format!("Linear issue not found: {issue_key}")))?
+                .id
+        };
+
+        let data: LinearCommentCreateData = self
+            .graphql(
+                COMMENT_CREATE_MUTATION,
+                json!({
+                    "input": {
+                        "issueId": issue_id,
+                        "body": body,
+                    }
+                }),
+                &self.token,
+            )
+            .await?;
+        if !data.comment_create.success {
+            return Err(Error::Api {
+                status: 200,
+                message: "Linear commentCreate returned success=false".to_string(),
+            });
+        }
+
+        let comment = data.comment_create.comment.ok_or_else(|| {
+            Error::InvalidData("Linear commentCreate returned no comment payload".to_string())
+        })?;
+        Ok(map_comment(&comment))
     }
 
     fn provider_name(&self) -> &'static str {
@@ -1177,6 +1301,22 @@ mod tests {
             },
             "parent": {
                 "identifier": "ENG-1"
+            }
+        })
+    }
+
+    fn linear_comment(id: &str, body: &str) -> Value {
+        json!({
+            "id": id,
+            "body": body,
+            "createdAt": "2026-05-04T10:00:00.000Z",
+            "updatedAt": "2026-05-05T10:00:00.000Z",
+            "user": {
+                "id": "u1",
+                "name": "Alice Doe",
+                "displayName": "alice",
+                "email": "alice@example.com",
+                "avatarUrl": "https://example.com/alice.png"
             }
         })
     }
@@ -1626,5 +1766,163 @@ mod tests {
         issue_lookup.assert();
         workflow_states.assert();
         update.assert();
+    }
+
+    #[tokio::test]
+    async fn get_comments_paginates_and_maps_authors() {
+        let server = MockServer::start();
+        let issue_lookup = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("query Issues")
+                .body_includes(r#""number":{"eq":42}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "issues": {
+                            "nodes": [
+                                linear_issue("ENG-42", "Issue for comments", "Backlog")
+                            ],
+                            "pageInfo": {
+                                "hasNextPage": false,
+                                "endCursor": null
+                            }
+                        }
+                    }
+                }));
+        });
+        let comments_page_1 = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("query IssueComments")
+                .body_includes(r#""id":"id-ENG-42""#)
+                .body_includes(r#""first":100"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "issue": {
+                            "comments": {
+                                "nodes": [
+                                    linear_comment("comment-1", "First comment")
+                                ],
+                                "pageInfo": {
+                                    "hasNextPage": true,
+                                    "endCursor": "cursor-1"
+                                }
+                            }
+                        }
+                    }
+                }));
+        });
+        let comments_page_2 = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes(r#""after":"cursor-1""#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "issue": {
+                            "comments": {
+                                "nodes": [
+                                    linear_comment("comment-2", "Second comment")
+                                ],
+                                "pageInfo": {
+                                    "hasNextPage": false,
+                                    "endCursor": "cursor-2"
+                                }
+                            }
+                        }
+                    }
+                }));
+        });
+
+        let client = LinearClient::with_base_url(
+            format!("{}/graphql", server.base_url()),
+            "team-1",
+            SecretString::from("lin_api_test".to_owned()),
+        );
+
+        let comments = client.get_comments("ENG-42").await.unwrap();
+        assert_eq!(comments.items.len(), 2);
+        assert_eq!(comments.items[0].id, "comment-1");
+        assert_eq!(comments.items[0].body, "First comment");
+        assert_eq!(
+            comments.items[0]
+                .author
+                .as_ref()
+                .map(|u| u.username.as_str()),
+            Some("alice")
+        );
+        assert_eq!(comments.items[1].id, "comment-2");
+
+        issue_lookup.assert();
+        comments_page_1.assert();
+        comments_page_2.assert();
+    }
+
+    #[tokio::test]
+    async fn add_comment_resolves_issue_and_returns_comment() {
+        let server = MockServer::start();
+        let issue_lookup = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("query Issues")
+                .body_includes(r#""number":{"eq":42}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "issues": {
+                            "nodes": [
+                                linear_issue("ENG-42", "Issue for add comment", "Backlog")
+                            ],
+                            "pageInfo": {
+                                "hasNextPage": false,
+                                "endCursor": null
+                            }
+                        }
+                    }
+                }));
+        });
+        let create = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("mutation CommentCreate")
+                .body_includes(r#""issueId":"id-ENG-42""#)
+                .body_includes(r#""body":"Need a follow-up here.""#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "commentCreate": {
+                            "success": true,
+                            "comment": linear_comment("comment-3", "Need a follow-up here.")
+                        }
+                    }
+                }));
+        });
+
+        let client = LinearClient::with_base_url(
+            format!("{}/graphql", server.base_url()),
+            "team-1",
+            SecretString::from("lin_api_test".to_owned()),
+        );
+
+        let comment =
+            devboy_core::IssueProvider::add_comment(&client, "ENG-42", "Need a follow-up here.")
+                .await
+                .unwrap();
+        assert_eq!(comment.id, "comment-3");
+        assert_eq!(comment.body, "Need a follow-up here.");
+        assert_eq!(
+            comment.author.as_ref().map(|u| u.username.as_str()),
+            Some("alice")
+        );
+
+        issue_lookup.assert();
+        create.assert();
     }
 }

@@ -66,6 +66,36 @@ pub struct LinearIssueUpdatePayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct LinearIssueCommentsData {
+    pub issue: Option<LinearIssueComments>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearIssueComments {
+    pub comments: LinearCommentConnection,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearCommentConnection {
+    #[serde(default)]
+    pub nodes: Vec<LinearComment>,
+    #[serde(rename = "pageInfo")]
+    pub page_info: LinearPageInfo,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearCommentCreateData {
+    #[serde(rename = "commentCreate")]
+    pub comment_create: LinearCommentCreatePayload,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearCommentCreatePayload {
+    pub success: bool,
+    pub comment: Option<LinearComment>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct LinearIssuesData {
     pub issues: LinearIssueConnection,
 }
@@ -105,6 +135,21 @@ pub struct LinearWorkflowStateWithId {
     pub name: String,
     #[serde(default)]
     pub r#type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearComment {
+    pub id: String,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(rename = "createdAt")]
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(rename = "updatedAt")]
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    #[serde(default)]
+    pub user: Option<LinearUser>,
 }
 
 #[derive(Debug, Deserialize, Default)]
