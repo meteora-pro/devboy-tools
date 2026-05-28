@@ -206,7 +206,7 @@ pub enum devboy_storage::index::IndexError
 pub devboy_storage::index::IndexError::NoConfigDir
 pub devboy_storage::index::IndexError::Parse
 pub devboy_storage::index::IndexError::Parse::path: std::path::PathBuf
-pub devboy_storage::index::IndexError::Parse::source: toml::de::Error
+pub devboy_storage::index::IndexError::Parse::source: alloc::boxed::Box<toml::de::Error>
 pub devboy_storage::index::IndexError::Path
 pub devboy_storage::index::IndexError::Path::source: devboy_storage::secret_path::PathError
 pub devboy_storage::index::IndexError::Read
@@ -328,7 +328,7 @@ pub mod devboy_storage::manifest
 pub enum devboy_storage::manifest::ManifestError
 pub devboy_storage::manifest::ManifestError::Parse
 pub devboy_storage::manifest::ManifestError::Parse::path: std::path::PathBuf
-pub devboy_storage::manifest::ManifestError::Parse::source: toml::de::Error
+pub devboy_storage::manifest::ManifestError::Parse::source: alloc::boxed::Box<toml::de::Error>
 pub devboy_storage::manifest::ManifestError::Path
 pub devboy_storage::manifest::ManifestError::Path::role: devboy_storage::manifest::PathRole
 pub devboy_storage::manifest::ManifestError::Path::source: devboy_storage::secret_path::PathError
@@ -778,7 +778,7 @@ pub devboy_storage::plugin_manifest::ManifestError::NameMismatch::from_filename:
 pub devboy_storage::plugin_manifest::ManifestError::NameMismatch::path: std::path::PathBuf
 pub devboy_storage::plugin_manifest::ManifestError::Parse
 pub devboy_storage::plugin_manifest::ManifestError::Parse::path: std::path::PathBuf
-pub devboy_storage::plugin_manifest::ManifestError::Parse::source: toml::de::Error
+pub devboy_storage::plugin_manifest::ManifestError::Parse::source: alloc::boxed::Box<toml::de::Error>
 pub devboy_storage::plugin_manifest::ManifestError::Read
 pub devboy_storage::plugin_manifest::ManifestError::Read::path: std::path::PathBuf
 pub devboy_storage::plugin_manifest::ManifestError::Read::source: std::io::error::Error
@@ -1330,7 +1330,7 @@ pub devboy_storage::router_config::RouterConfigError::DuplicateSource::name: all
 pub devboy_storage::router_config::RouterConfigError::NoConfigDir
 pub devboy_storage::router_config::RouterConfigError::Parse
 pub devboy_storage::router_config::RouterConfigError::Parse::path: std::path::PathBuf
-pub devboy_storage::router_config::RouterConfigError::Parse::source: toml::de::Error
+pub devboy_storage::router_config::RouterConfigError::Parse::source: alloc::boxed::Box<toml::de::Error>
 pub devboy_storage::router_config::RouterConfigError::Read
 pub devboy_storage::router_config::RouterConfigError::Read::path: std::path::PathBuf
 pub devboy_storage::router_config::RouterConfigError::Read::source: std::io::error::Error
@@ -2111,7 +2111,7 @@ pub enum devboy_storage::IndexError
 pub devboy_storage::IndexError::NoConfigDir
 pub devboy_storage::IndexError::Parse
 pub devboy_storage::IndexError::Parse::path: std::path::PathBuf
-pub devboy_storage::IndexError::Parse::source: toml::de::Error
+pub devboy_storage::IndexError::Parse::source: alloc::boxed::Box<toml::de::Error>
 pub devboy_storage::IndexError::Path
 pub devboy_storage::IndexError::Path::source: devboy_storage::secret_path::PathError
 pub devboy_storage::IndexError::Read
@@ -2155,7 +2155,7 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_storage::pattern_resolution
 pub enum devboy_storage::ManifestError
 pub devboy_storage::ManifestError::Parse
 pub devboy_storage::ManifestError::Parse::path: std::path::PathBuf
-pub devboy_storage::ManifestError::Parse::source: toml::de::Error
+pub devboy_storage::ManifestError::Parse::source: alloc::boxed::Box<toml::de::Error>
 pub devboy_storage::ManifestError::Path
 pub devboy_storage::ManifestError::Path::role: devboy_storage::manifest::PathRole
 pub devboy_storage::ManifestError::Path::source: devboy_storage::secret_path::PathError
@@ -2387,7 +2387,7 @@ pub devboy_storage::RouterConfigError::DuplicateSource::name: alloc::string::Str
 pub devboy_storage::RouterConfigError::NoConfigDir
 pub devboy_storage::RouterConfigError::Parse
 pub devboy_storage::RouterConfigError::Parse::path: std::path::PathBuf
-pub devboy_storage::RouterConfigError::Parse::source: toml::de::Error
+pub devboy_storage::RouterConfigError::Parse::source: alloc::boxed::Box<toml::de::Error>
 pub devboy_storage::RouterConfigError::Read
 pub devboy_storage::RouterConfigError::Read::path: std::path::PathBuf
 pub devboy_storage::RouterConfigError::Read::source: std::io::error::Error
