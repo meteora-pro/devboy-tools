@@ -2,9 +2,9 @@
 
 use async_trait::async_trait;
 use devboy_core::{
-    Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, MergeRequestProvider,
-    Pagination, PipelineProvider, Provider, ProviderResult, Result, SortInfo, SortOrder,
-    UpdateIssueInput, User,
+    Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, IssueStatus,
+    MergeRequestProvider, Pagination, PipelineProvider, Provider, ProviderResult, Result, SortInfo,
+    SortOrder, UpdateIssueInput, User,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Map, Value, json};
@@ -645,6 +645,21 @@ impl LinearClient {
             })
     }
 
+    async fn list_workflow_states(&self) -> Result<LinearWorkflowStatesData> {
+        let variables = json!({
+            "first": 100,
+            "filter": {
+                "team": {
+                    "id": {
+                        "eq": self.team_id
+                    }
+                }
+            }
+        });
+        self.graphql(WORKFLOW_STATES_QUERY, variables, &self.token)
+            .await
+    }
+
     fn map_create_priority(priority: Option<&str>) -> Result<Option<i32>> {
         let Some(priority) = priority.map(str::trim).filter(|p| !p.is_empty()) else {
             return Ok(None);
@@ -1228,6 +1243,32 @@ impl IssueProvider for LinearClient {
             Error::InvalidData("Linear commentCreate returned no comment payload".to_string())
         })?;
         Ok(map_comment(&comment))
+    }
+
+    async fn get_statuses(&self) -> Result<ProviderResult<IssueStatus>> {
+        let data = self.list_workflow_states().await?;
+        let statuses = data
+            .workflow_states
+            .nodes
+            .into_iter()
+            .enumerate()
+            .map(|(idx, state)| IssueStatus {
+                id: state.id,
+                name: state.name,
+                category: match state.r#type.as_deref() {
+                    Some("backlog") => "backlog".to_string(),
+                    Some("unstarted") => "todo".to_string(),
+                    Some("started") => "in_progress".to_string(),
+                    Some("completed") => "done".to_string(),
+                    Some("canceled") => "cancelled".to_string(),
+                    Some(other) => other.to_string(),
+                    None => "custom".to_string(),
+                },
+                color: None,
+                order: Some(idx as u32),
+            })
+            .collect::<Vec<_>>();
+        Ok(statuses.into())
     }
 
     fn provider_name(&self) -> &'static str {
@@ -1925,5 +1966,44 @@ mod tests {
 
         issue_lookup.assert();
         create.assert();
+    }
+
+    #[tokio::test]
+    async fn get_statuses_returns_team_workflow_states() {
+        let server = MockServer::start();
+        let states = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("query WorkflowStates")
+                .body_includes(r#""team":{"id":{"eq":"team-1"}}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "workflowStates": {
+                            "nodes": [
+                                { "id": "s1", "name": "Backlog", "type": "backlog" },
+                                { "id": "s2", "name": "In Review", "type": "started" },
+                                { "id": "s3", "name": "Done", "type": "completed" }
+                            ]
+                        }
+                    }
+                }));
+        });
+
+        let client = LinearClient::with_base_url(
+            format!("{}/graphql", server.base_url()),
+            "team-1",
+            SecretString::from("lin_api_test".to_owned()),
+        );
+
+        let statuses = client.get_statuses().await.unwrap();
+        assert_eq!(statuses.items.len(), 3);
+        assert_eq!(statuses.items[0].name, "Backlog");
+        assert_eq!(statuses.items[0].category, "backlog");
+        assert_eq!(statuses.items[1].category, "in_progress");
+        assert_eq!(statuses.items[2].category, "done");
+
+        states.assert();
     }
 }

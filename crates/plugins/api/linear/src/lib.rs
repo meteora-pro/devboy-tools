@@ -12,9 +12,11 @@
 mod client;
 pub mod enricher;
 pub mod liveness;
+pub mod metadata;
 mod types;
 
 pub use client::LinearClient;
 pub use enricher::LinearSchemaEnricher;
+pub use metadata::LinearMetadata;
 
 pub const DEFAULT_LINEAR_URL: &str = "https://api.linear.app/graphql";

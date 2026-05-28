@@ -14,10 +14,11 @@ Current capabilities:
 - issue listing and single-issue lookup
 - issue creation and updates
 - issue comment listing and comment creation
+- workflow status discovery via `get_available_statuses`
 
 The schema enricher includes Linear-specific issue schema adjustments such as
-priority enums and supported filter parameters. Team-specific workflow state
-enumeration is not yet metadata-driven.
+priority enums, supported filter parameters, and team-specific workflow state
+enums when Linear metadata is available.
 
 ## Add to your project
 

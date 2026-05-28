@@ -11,7 +11,12 @@
 use devboy_core::{ToolCategory, ToolEnricher, ToolSchema};
 use serde_json::Value;
 
+use crate::metadata::LinearMetadata;
+
 pub struct LinearSchemaEnricher;
+pub struct DynamicLinearSchemaEnricher {
+    metadata: LinearMetadata,
+}
 
 const CREATE_UPDATE_REMOVE_PARAMS: &[&str] = &["issueType"];
 const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery"];
@@ -19,6 +24,12 @@ const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery"];
 const PRIORITY_VALUES: &[&str] = &["urgent", "high", "normal", "low"];
 const STATE_CATEGORY_VALUES: &[&str] = &["backlog", "todo", "in_progress", "done", "cancelled"];
 const LABELS_OPERATOR_VALUES: &[&str] = &["and", "or"];
+
+impl DynamicLinearSchemaEnricher {
+    pub fn new(metadata: LinearMetadata) -> Self {
+        Self { metadata }
+    }
+}
 
 impl ToolEnricher for LinearSchemaEnricher {
     fn supported_categories(&self) -> &[ToolCategory] {
@@ -78,6 +89,51 @@ impl ToolEnricher for LinearSchemaEnricher {
             schema.set_description(
                 "assignee",
                 "Filter by assignee name, display name, or email.",
+            );
+        }
+    }
+
+    fn transform_args(&self, _tool_name: &str, _args: &mut Value) {}
+}
+
+impl ToolEnricher for DynamicLinearSchemaEnricher {
+    fn supported_categories(&self) -> &[ToolCategory] {
+        &[ToolCategory::IssueTracker]
+    }
+
+    fn enrich_schema(&self, tool_name: &str, schema: &mut ToolSchema) {
+        LinearSchemaEnricher.enrich_schema(tool_name, schema);
+
+        if tool_name == "update_issue" && !self.metadata.statuses.is_empty() {
+            let names: Vec<String> = self
+                .metadata
+                .statuses
+                .iter()
+                .map(|status| status.name.clone())
+                .collect();
+            schema.set_enum("status", &names);
+            schema.set_description(
+                "status",
+                &format!(
+                    "Exact Linear workflow state name for this team. Available: {}. Takes precedence over `state`.",
+                    names.join(", ")
+                ),
+            );
+        }
+
+        if tool_name == "get_issues" && !self.metadata.statuses.is_empty() {
+            let names: Vec<String> = self
+                .metadata
+                .statuses
+                .iter()
+                .map(|status| status.name.clone())
+                .collect();
+            schema.set_description(
+                "state",
+                &format!(
+                    "Filter by issue state. Built-in values: `open`, `closed`, `all`. You can also pass an exact Linear workflow state name. Known team states: {}",
+                    names.join(", ")
+                ),
             );
         }
     }
@@ -170,6 +226,48 @@ mod tests {
                 .as_deref()
                 .unwrap()
                 .contains("Generic state shortcut")
+        );
+    }
+
+    #[test]
+    fn dynamic_linear_enricher_sets_exact_status_enum() {
+        let enricher = DynamicLinearSchemaEnricher::new(LinearMetadata {
+            statuses: vec![
+                crate::metadata::LinearStatus {
+                    id: "1".into(),
+                    name: "Backlog".into(),
+                    category: Some("backlog".into()),
+                },
+                crate::metadata::LinearStatus {
+                    id: "2".into(),
+                    name: "In Review".into(),
+                    category: Some("in_progress".into()),
+                },
+            ],
+        });
+        let mut update_issue = ToolSchema::from_json(&json!({
+            "type": "object",
+            "properties": {
+                "status": { "type": "string" },
+                "state": { "type": "string" }
+            }
+        }));
+
+        enricher.enrich_schema("update_issue", &mut update_issue);
+
+        assert_eq!(
+            update_issue.properties["status"]
+                .enum_values
+                .as_ref()
+                .unwrap(),
+            &vec!["Backlog".to_string(), "In Review".to_string()]
+        );
+        assert!(
+            update_issue.properties["status"]
+                .description
+                .as_deref()
+                .unwrap()
+                .contains("Available: Backlog, In Review")
         );
     }
 }
