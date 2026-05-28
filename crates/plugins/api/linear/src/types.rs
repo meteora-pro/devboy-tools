@@ -54,6 +54,18 @@ pub struct LinearIssueCreatePayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct LinearIssueUpdateData {
+    #[serde(rename = "issueUpdate")]
+    pub issue_update: LinearIssueUpdatePayload,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearIssueUpdatePayload {
+    pub success: bool,
+    pub issue: Option<LinearIssue>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct LinearIssuesData {
     pub issues: LinearIssueConnection,
 }
@@ -73,6 +85,26 @@ pub struct LinearUserConnection {
 pub struct LinearIssueLabelsData {
     #[serde(rename = "issueLabels")]
     pub issue_labels: LinearLabelConnectionWithIds,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearWorkflowStatesData {
+    #[serde(rename = "workflowStates")]
+    pub workflow_states: LinearWorkflowStateConnection,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct LinearWorkflowStateConnection {
+    #[serde(default)]
+    pub nodes: Vec<LinearWorkflowStateWithId>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinearWorkflowStateWithId {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub r#type: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]

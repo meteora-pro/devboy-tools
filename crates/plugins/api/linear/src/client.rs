@@ -13,7 +13,8 @@ use tracing::debug;
 use crate::DEFAULT_LINEAR_URL;
 use crate::types::{
     GraphQlResponse, LinearIssue, LinearIssueCreateData, LinearIssueData, LinearIssueLabelsData,
-    LinearIssuesData, LinearUser, LinearUsersData, Viewer, ViewerData,
+    LinearIssueUpdateData, LinearIssuesData, LinearUser, LinearUsersData, LinearWorkflowStatesData,
+    Viewer, ViewerData,
 };
 
 const VIEWER_QUERY: &str = r#"
@@ -129,6 +130,55 @@ query IssueLabels($first: Int!, $filter: IssueLabelFilter) {
 const ISSUE_CREATE_MUTATION: &str = r#"
 mutation IssueCreate($input: IssueCreateInput!) {
   issueCreate(input: $input) {
+    success
+    issue {
+      id
+      identifier
+      title
+      description
+      priority
+      url
+      createdAt
+      updatedAt
+      state {
+        name
+        type
+      }
+      labels {
+        nodes {
+          name
+        }
+      }
+      assignee {
+        id
+        name
+        displayName
+        email
+        avatarUrl
+      }
+      parent {
+        identifier
+      }
+    }
+  }
+}
+"#;
+
+const WORKFLOW_STATES_QUERY: &str = r#"
+query WorkflowStates($first: Int!, $filter: WorkflowStateFilter) {
+  workflowStates(first: $first, filter: $filter) {
+    nodes {
+      id
+      name
+      type
+    }
+  }
+}
+"#;
+
+const ISSUE_UPDATE_MUTATION: &str = r#"
+mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) {
+  issueUpdate(id: $id, input: $input) {
     success
     issue {
       id
@@ -464,6 +514,95 @@ impl LinearClient {
             .await?
             .ok_or_else(|| Error::NotFound(format!("Linear parent issue not found: {parent}")))?;
         Ok(issue.id)
+    }
+
+    async fn resolve_workflow_state_id(&self, state: &str) -> Result<String> {
+        let state = state.trim();
+        if state.is_empty() {
+            return Err(Error::InvalidData(
+                "Linear state/status must not be empty".to_string(),
+            ));
+        }
+
+        let target_name = match state.to_ascii_lowercase().as_str() {
+            "open" | "opened" => None,
+            "closed" => Some("completed"),
+            "cancelled" | "canceled" => Some("canceled"),
+            "backlog" => Some("backlog"),
+            "todo" => Some("unstarted"),
+            "in_progress" | "in progress" | "started" => Some("started"),
+            "done" | "completed" => Some("completed"),
+            other => {
+                return self.resolve_workflow_state_id_by_name(other).await;
+            }
+        };
+
+        let variables = json!({
+            "first": 100,
+            "filter": {
+                "team": {
+                    "id": {
+                        "eq": self.team_id
+                    }
+                }
+            }
+        });
+        let data: LinearWorkflowStatesData = self
+            .graphql(WORKFLOW_STATES_QUERY, variables, &self.token)
+            .await?;
+
+        let state_id = if let Some(target_type) = target_name {
+            data.workflow_states
+                .nodes
+                .into_iter()
+                .find(|node| node.r#type.as_deref() == Some(target_type))
+                .map(|node| node.id)
+        } else {
+            data.workflow_states
+                .nodes
+                .into_iter()
+                .find(|node| {
+                    !matches!(node.r#type.as_deref(), Some("completed") | Some("canceled"))
+                })
+                .map(|node| node.id)
+        };
+
+        state_id.ok_or_else(|| {
+            Error::NotFound(format!(
+                "Linear workflow state not found for '{}' in team {}",
+                state, self.team_id
+            ))
+        })
+    }
+
+    async fn resolve_workflow_state_id_by_name(&self, state_name: &str) -> Result<String> {
+        let variables = json!({
+            "first": 100,
+            "filter": {
+                "team": {
+                    "id": {
+                        "eq": self.team_id
+                    }
+                },
+                "name": {
+                    "eqIgnoreCase": state_name
+                }
+            }
+        });
+        let data: LinearWorkflowStatesData = self
+            .graphql(WORKFLOW_STATES_QUERY, variables, &self.token)
+            .await?;
+        data.workflow_states
+            .nodes
+            .into_iter()
+            .find(|node| node.name.eq_ignore_ascii_case(state_name))
+            .map(|node| node.id)
+            .ok_or_else(|| {
+                Error::NotFound(format!(
+                    "Linear workflow state not found by name '{}' in team {}",
+                    state_name, self.team_id
+                ))
+            })
     }
 
     fn map_create_priority(priority: Option<&str>) -> Result<Option<i32>> {
@@ -871,8 +1010,92 @@ impl IssueProvider for LinearClient {
         Ok(map_issue(&issue))
     }
 
-    async fn update_issue(&self, _key: &str, _input: UpdateIssueInput) -> Result<Issue> {
-        self.unsupported("update_issue")
+    async fn update_issue(&self, key: &str, input: UpdateIssueInput) -> Result<Issue> {
+        let issue_id = if looks_like_uuid(key) {
+            key.to_string()
+        } else {
+            self.get_linear_issue_by_identifier(key)
+                .await?
+                .ok_or_else(|| Error::NotFound(format!("Linear issue not found: {key}")))?
+                .id
+        };
+
+        let assignee_id = match input.assignees.as_ref() {
+            Some(assignees) if assignees.is_empty() => Some(Value::Null),
+            Some(assignees) => Some(Value::String(
+                self.resolve_assignee_id(&assignees[0]).await?,
+            )),
+            None => None,
+        };
+        let label_ids = match input.labels.as_ref() {
+            Some(labels) => Some(
+                self.resolve_label_ids(labels)
+                    .await?
+                    .into_iter()
+                    .map(Value::String)
+                    .collect::<Vec<_>>(),
+            ),
+            None => None,
+        };
+        let parent_id = match input.parent_id.as_deref() {
+            Some("none") | Some("") => Some(Value::Null),
+            Some(parent) => Some(Value::String(self.resolve_parent_id(parent).await?)),
+            None => None,
+        };
+        let priority = Self::map_create_priority(input.priority.as_deref())?;
+        let state_id = match input.status.as_deref().or(input.state.as_deref()) {
+            Some(state) => Some(self.resolve_workflow_state_id(state).await?),
+            None => None,
+        };
+
+        let mut payload = Map::new();
+        if let Some(title) = input.title {
+            payload.insert("title".to_string(), Value::String(title));
+        }
+        if let Some(description) = input.description {
+            payload.insert("description".to_string(), Value::String(description));
+        }
+        if let Some(priority) = priority {
+            payload.insert("priority".to_string(), Value::Number(priority.into()));
+        }
+        if let Some(assignee_id) = assignee_id {
+            payload.insert("assigneeId".to_string(), assignee_id);
+        }
+        if let Some(parent_id) = parent_id {
+            payload.insert("parentId".to_string(), parent_id);
+        }
+        if let Some(label_ids) = label_ids {
+            payload.insert("labelIds".to_string(), Value::Array(label_ids));
+        }
+        if let Some(state_id) = state_id {
+            payload.insert("stateId".to_string(), Value::String(state_id));
+        }
+
+        if payload.is_empty() {
+            return self.get_issue(key).await;
+        }
+
+        let data: LinearIssueUpdateData = self
+            .graphql(
+                ISSUE_UPDATE_MUTATION,
+                json!({
+                    "id": issue_id,
+                    "input": Value::Object(payload),
+                }),
+                &self.token,
+            )
+            .await?;
+        if !data.issue_update.success {
+            return Err(Error::Api {
+                status: 200,
+                message: "Linear issueUpdate returned success=false".to_string(),
+            });
+        }
+
+        let issue = data.issue_update.issue.ok_or_else(|| {
+            Error::InvalidData("Linear issueUpdate returned no issue payload".to_string())
+        })?;
+        Ok(map_issue(&issue))
     }
 
     async fn get_comments(&self, _issue_key: &str) -> Result<ProviderResult<Comment>> {
@@ -1278,5 +1501,130 @@ mod tests {
         labels.assert();
         parent.assert();
         create.assert();
+    }
+
+    #[tokio::test]
+    async fn update_issue_resolves_status_and_clears_optional_fields() {
+        let server = MockServer::start();
+        let issue_lookup = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("query Issues")
+                .body_includes(r#""number":{"eq":42}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "issues": {
+                            "nodes": [
+                                linear_issue("ENG-42", "Original issue", "Backlog")
+                            ],
+                            "pageInfo": {
+                                "hasNextPage": false,
+                                "endCursor": null
+                            }
+                        }
+                    }
+                }));
+        });
+        let workflow_states = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("query WorkflowStates")
+                .body_includes(r#""name":{"eqIgnoreCase":"in review"}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "workflowStates": {
+                            "nodes": [
+                                {
+                                    "id": "workflow-2",
+                                    "name": "In Review",
+                                    "type": "started"
+                                }
+                            ]
+                        }
+                    }
+                }));
+        });
+        let update = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("mutation IssueUpdate")
+                .body_includes(r#""id":"id-ENG-42""#)
+                .body_includes(r#""title":"Updated issue title""#)
+                .body_includes(r#""description":"Updated description""#)
+                .body_includes(r#""priority":4"#)
+                .body_includes(r#""assigneeId":null"#)
+                .body_includes(r#""parentId":null"#)
+                .body_includes(r#""labelIds":[]"#)
+                .body_includes(r#""stateId":"workflow-2""#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "issueUpdate": {
+                            "success": true,
+                            "issue": {
+                                "id": "id-ENG-42",
+                                "identifier": "ENG-42",
+                                "title": "Updated issue title",
+                                "description": "Updated description",
+                                "priority": 4,
+                                "url": "https://linear.app/acme/issue/ENG-42/updated-issue-title",
+                                "createdAt": "2026-05-01T10:00:00.000Z",
+                                "updatedAt": "2026-05-03T10:00:00.000Z",
+                                "state": {
+                                    "name": "In Review",
+                                    "type": "started"
+                                },
+                                "labels": {
+                                    "nodes": []
+                                },
+                                "assignee": null,
+                                "parent": null
+                            }
+                        }
+                    }
+                }));
+        });
+
+        let client = LinearClient::with_base_url(
+            format!("{}/graphql", server.base_url()),
+            "team-1",
+            SecretString::from("lin_api_test".to_owned()),
+        );
+
+        let issue = client
+            .update_issue(
+                "ENG-42",
+                UpdateIssueInput {
+                    title: Some("Updated issue title".to_string()),
+                    description: Some("Updated description".to_string()),
+                    state: Some("closed".to_string()),
+                    status: Some("In Review".to_string()),
+                    labels: Some(vec![]),
+                    assignees: Some(vec![]),
+                    priority: Some("low".to_string()),
+                    parent_id: Some("none".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(issue.key, "ENG-42");
+        assert_eq!(issue.title, "Updated issue title");
+        assert_eq!(issue.description.as_deref(), Some("Updated description"));
+        assert_eq!(issue.state, "In Review");
+        assert_eq!(issue.priority.as_deref(), Some("low"));
+        assert!(issue.labels.is_empty());
+        assert!(issue.assignees.is_empty());
+        assert_eq!(issue.parent, None);
+
+        issue_lookup.assert();
+        workflow_states.assert();
+        update.assert();
     }
 }
