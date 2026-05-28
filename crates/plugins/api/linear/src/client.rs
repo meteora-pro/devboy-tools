@@ -1797,7 +1797,8 @@ mod tests {
                 .path("/graphql")
                 .body_includes("query IssueComments")
                 .body_includes(r#""id":"id-ENG-42""#)
-                .body_includes(r#""first":100"#);
+                .body_includes(r#""first":100"#)
+                .body_includes(r#""after":null"#);
             then.status(200)
                 .header("content-type", "application/json")
                 .json_body(json!({
