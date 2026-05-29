@@ -2128,7 +2128,7 @@ mod tests {
             .unwrap();
 
         assert!(result.items.is_empty());
-        assert_eq!(result.pagination.unwrap().has_more, false);
+        assert!(!result.pagination.unwrap().has_more);
         mock.assert();
     }
 
