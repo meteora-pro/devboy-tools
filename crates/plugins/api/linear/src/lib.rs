@@ -1,9 +1,8 @@
 //! Linear provider implementation for devboy-tools.
 //!
-//! This crate provides a GraphQL-backed provider shell for Linear.
-//! The initial slice wires configuration, provider construction,
-//! authenticated user lookup, and liveness probing. Issue
-//! operations are added in follow-up changes.
+//! This crate provides a GraphQL-backed Linear provider with
+//! configuration, provider construction, authenticated user lookup,
+//! liveness probing, issue operations, comments, and status discovery.
 
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(rustdoc::private_intra_doc_links)]
