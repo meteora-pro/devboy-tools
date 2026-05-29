@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 use devboy_core::{
     Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, IssueStatus,
-    MergeRequestProvider, Pagination, PipelineProvider, Provider, ProviderResult, Result, SortInfo,
-    SortOrder, UpdateIssueInput, User,
+    MergeRequestProvider, Pagination, PipelineProvider, Provider, ProviderResult, Result,
+    UpdateIssueInput, User,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Map, Value, json};
@@ -814,6 +814,13 @@ fn build_issue_filter(team_id: &str, filter: &IssueFilter) -> Result<Value> {
         });
     }
 
+    if filter.sort_by.is_some() || filter.sort_order.is_some() {
+        return Err(Error::ProviderUnsupported {
+            provider: "linear".to_string(),
+            operation: "get_issues(sort_by/sort_order)".to_string(),
+        });
+    }
+
     let mut clauses = vec![json!({
         "team": {
             "id": {
@@ -1010,18 +1017,7 @@ impl IssueProvider for LinearClient {
                 has_more,
                 next_cursor,
             }),
-            sort_info: Some(SortInfo {
-                sort_by: filter.sort_by.clone(),
-                sort_order: match filter.sort_order.as_deref() {
-                    Some("asc") => SortOrder::Asc,
-                    _ => SortOrder::Desc,
-                },
-                available_sorts: vec![
-                    "created_at".to_string(),
-                    "updated_at".to_string(),
-                    "priority".to_string(),
-                ],
-            }),
+            sort_info: None,
         })
     }
 
@@ -1599,8 +1595,6 @@ mod tests {
                 assignee: Some("alice".to_string()),
                 limit: Some(2),
                 offset: Some(1),
-                sort_by: Some("updated_at".to_string()),
-                sort_order: Some("desc".to_string()),
                 ..Default::default()
             })
             .await
@@ -1618,6 +1612,35 @@ mod tests {
 
         page_1.assert();
         assert_eq!(page_2.calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn get_issues_rejects_unsupported_sorting() {
+        let client = LinearClient::with_base_url(
+            "https://api.linear.app/graphql",
+            "team-1",
+            SecretString::from("lin_api_test".to_owned()),
+        );
+
+        let err = client
+            .get_issues(IssueFilter {
+                sort_by: Some("updated_at".to_string()),
+                sort_order: Some("desc".to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+
+        match err {
+            Error::ProviderUnsupported {
+                provider,
+                operation,
+            } => {
+                assert_eq!(provider, "linear");
+                assert_eq!(operation, "get_issues(sort_by/sort_order)");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[tokio::test]

@@ -19,7 +19,7 @@ pub struct DynamicLinearSchemaEnricher {
 }
 
 const CREATE_UPDATE_REMOVE_PARAMS: &[&str] = &["issueType"];
-const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery"];
+const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery", "sort_by", "sort_order"];
 
 const PRIORITY_VALUES: &[&str] = &["urgent", "high", "normal", "low"];
 const STATE_CATEGORY_VALUES: &[&str] = &["backlog", "todo", "in_progress", "done", "cancelled"];
