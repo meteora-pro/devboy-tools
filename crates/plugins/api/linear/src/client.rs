@@ -2159,7 +2159,10 @@ mod tests {
             SecretString::from("lin_api_throttled".to_owned()),
         );
         let throttled_err = throttled_client.get_current_user().await.unwrap_err();
-        assert!(matches!(throttled_err, Error::RateLimited { retry_after: None }));
+        assert!(matches!(
+            throttled_err,
+            Error::RateLimited { retry_after: None }
+        ));
         throttled_mock.assert();
 
         let gql_error = MockServer::start();
@@ -2260,7 +2263,9 @@ mod tests {
             Err(Error::InvalidData(message)) if message.contains("Unsupported Linear priority")
         ));
 
-        let invalid_identifier = client.update_issue("ENG", UpdateIssueInput::default()).await;
+        let invalid_identifier = client
+            .update_issue("ENG", UpdateIssueInput::default())
+            .await;
         assert!(matches!(
             invalid_identifier,
             Err(Error::InvalidData(message)) if message.contains("must be a UUID or team-key identifier")

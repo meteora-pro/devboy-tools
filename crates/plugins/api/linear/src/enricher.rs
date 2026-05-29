@@ -274,7 +274,10 @@ mod tests {
     #[test]
     fn linear_enricher_reports_supported_category_and_preserves_unknown_tools() {
         let enricher = LinearSchemaEnricher;
-        assert_eq!(enricher.supported_categories(), &[ToolCategory::IssueTracker]);
+        assert_eq!(
+            enricher.supported_categories(),
+            &[ToolCategory::IssueTracker]
+        );
 
         let original = json!({
             "type": "object",
